@@ -51,7 +51,7 @@ class Event:
 
     def __repr__(self):
         return (
-            f"Event("
+            f"{self.__class__.__name__}("
             f"cid={self.cid}, "
             f"name={self.name}, "
             f"bucket={self.bucket}, "

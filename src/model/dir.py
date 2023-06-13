@@ -14,7 +14,11 @@ class Dir:
         self.permissions = permissions
 
     def __repr__(self):
-        return f"Dir(path={self.path}, permissions={self.permissions})"
+        return (
+            f"{self.__class__.__name__}("
+            f"path={self.path}, "
+            f"permissions={self.permissions})"
+        )
 
     def _get_permissions(obj_path) -> str:
         obj_stat = os_stat(obj_path)
