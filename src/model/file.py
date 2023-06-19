@@ -54,7 +54,8 @@ class File:
 
     def __repr__(self):
         return (
-            f"{self.__class__.__name__}(filepath={self.filepath}, "
+            f"{self.__class__.__name__}("
+            f"filepath={self.filepath}, "
             f"name={self.name}, "
             f"ctime={self.ctime}, "
             f"mtime={self.mtime}, "
