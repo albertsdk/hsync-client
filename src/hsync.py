@@ -926,7 +926,7 @@ def main():
         type=valid_resync,
         required=False,
         help=(
-            "Automatic reconnection after the given seconds "
+            "Automatic re-syncronization after the given seconds "
             "(only on continuous synchronization)."
         ),
     )
