@@ -1,19 +1,18 @@
-[project]
+[tool.poetry]
 name = "hsync-client"
 version = "0.1.0"
 description = "HSYNC Client"
-authors = [
-    {name = "Alberto Basso",email = "alberto.sdk@gmail.com"}
-]
+authors = ["Alberto Basso <alberto.sdk@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
-dependencies = [
-    "pyinstaller (>=6.12.0,<7.0.0)",
-    "websockets (>=15.0.1,<16.0.0)",
-    "watchdog (>=6.0.0,<7.0.0)"
-]
+package-mode = false
 
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+pyinstaller = "^6.12.0"
+websockets = "^16.0"
+watchdog = "^6.0.0"
+requests = "^2.32.3"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

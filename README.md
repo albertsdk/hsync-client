@@ -15,6 +15,7 @@ CLI client for HTTP-based file synchronization with WebSocket support for real-t
 ## Requirements
 
 - Python ≥3.12, <3.14
+- Poetry (for dependency management)
 
 ## Installation
 
@@ -109,11 +110,8 @@ python src/hsync.py -u http://localhost:8765 -b mybucket -c -l /var/log/hsync.lo
 ## Build Standalone Binary
 
 ```bash
-# Activate the venv
-source .venv/bin/activate
-
 # Build with PyInstaller
-pyinstaller --onefile src/hsync.py
+poetry run pyinstaller --onefile src/hsync.py
 
 # The binary will be in dist/hsync
 ./dist/hsync -u http://localhost:8765 -b mybucket
