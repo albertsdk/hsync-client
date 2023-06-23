@@ -240,11 +240,12 @@ class File:
             raise ValueError("Set dir_prefix to strip it.")
 
         data_filepath = data.get("filepath", "")
-        filepath = (
-            str(data_filepath).removeprefix(dir_prefix).lstrip("/")
-            if strip_dir_prefix
-            else join(dir_prefix, str(data_filepath).lstrip("/"))
-        )
+        if strip_dir_prefix and dir_prefix:
+            filepath = str(data_filepath).removeprefix(dir_prefix).lstrip("/")
+        elif dir_prefix:
+            filepath = join(dir_prefix, str(data_filepath).lstrip("/"))
+        else:
+            filepath = str(data_filepath)
 
         return cls(
             filepath=filepath,
