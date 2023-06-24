@@ -43,7 +43,11 @@ The client uses environment variables:
 ### Basic Syntax
 
 ```bash
-python src/hsync.py -u <server_url> -b <bucket_name> [options]
+# Using poetry run
+poetry run hsync -u <server_url> -b <bucket_name> [options]
+
+# Or run as a module
+poetry run python -m hsync_client -u <server_url> -b <bucket_name> [options]
 ```
 
 ### CLI Options
@@ -70,27 +74,27 @@ python src/hsync.py -u <server_url> -b <bucket_name> [options]
 **Single synchronization:**
 ```bash
 export HSYNC_API_KEY="your-api-key"
-python src/hsync.py -u http://localhost:8765 -b mybucket -d /path/to/local/dir
+poetry run hsync -u http://localhost:8765 -b mybucket -d /path/to/local/dir
 ```
 
 **Continuous synchronization:**
 ```bash
-python src/hsync.py -u http://localhost:8765 -b mybucket -d /path/to/dir -c
+poetry run hsync -u http://localhost:8765 -b mybucket -d /path/to/dir -c
 ```
 
 **With automatic re-sync every 5 minutes:**
 ```bash
-python src/hsync.py -u http://localhost:8765 -b mybucket -c --resync 300
+poetry run hsync -u http://localhost:8765 -b mybucket -c --resync 300
 ```
 
 **Dry-run (preview operations):**
 ```bash
-python src/hsync.py -u http://localhost:8765 -b mybucket --dryrun
+poetry run hsync -u http://localhost:8765 -b mybucket --dryrun
 ```
 
 **With file logging:**
 ```bash
-python src/hsync.py -u http://localhost:8765 -b mybucket -c -l /var/log/hsync.log
+poetry run hsync -u http://localhost:8765 -b mybucket -c -l /var/log/hsync.log
 ```
 
 ## Log Legend
@@ -111,7 +115,7 @@ python src/hsync.py -u http://localhost:8765 -b mybucket -c -l /var/log/hsync.lo
 
 ```bash
 # Build with PyInstaller
-poetry run pyinstaller --onefile src/hsync.py
+poetry run pyinstaller --onefile hsync_client/cli.py --name hsync
 
 # The binary will be in dist/hsync
 ./dist/hsync -u http://localhost:8765 -b mybucket
@@ -132,11 +136,19 @@ Performs a synchronization and exits.
 
 ```
 hsync-client/
-├── src/
-│   ├── hsync.py        # CLI entry point
-│   └── model/          # Data models
-├── .venv/              # Virtual environment
+├── hsync_client/           # Main Python package
+│   ├── __init__.py
+│   ├── __main__.py         # Entry point: python -m hsync_client
+│   ├── cli.py              # CLI logic
+│   └── models/             # Data models
+│       ├── __init__.py
+│       ├── dir.py
+│       ├── event.py
+│       ├── file.py
+│       └── sync_action.py
+├── tests/                  # Test files
 ├── pyproject.toml
+├── poetry.lock
 └── README.md
 ```
 

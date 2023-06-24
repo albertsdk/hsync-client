@@ -2,4 +2,4 @@
 
 . .venv/bin/activate
 
-pyinstaller --clean --onefile src/hsync.py --name hsync
+pyinstaller --clean --onefile hsync_client/cli.py --name hsync
