@@ -22,8 +22,10 @@ Author: HSYNC Project
 Version: 0.1.0
 """
 
+import logging
 import stat
 
+from hsync_client.logging import setup_logging, log_with_data
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
@@ -31,14 +33,12 @@ from hsync_client.models.sync_action import SyncAction, SyncActionName
 from argparse import ArgumentParser, ArgumentTypeError, HelpFormatter
 from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe, sleep
 from copy import deepcopy
-from datetime import datetime
 from hashlib import md5
 from json import dumps, loads
 from os import (
     chmod,
     environ,
     getcwd,
-    getpid,
     makedirs,
     remove,
     rename,
@@ -79,38 +79,32 @@ from watchdog.events import FileSystemEventHandler
 # Application version
 HSYNC_VERSION = "0.1.0"
 
+# Logger instance - initialized in main()
+LOG: logging.Logger = logging.getLogger("hsync")
+
 
 def log(message: str = "", data: Optional[object] = None) -> None:
     """
-    Log a message with timestamp, process ID, and log level.
+    Log a message with optional JSON data.
 
-    Messages are formatted with ISO 8601 timestamps and can optionally
-    include structured data as formatted JSON. Output goes to stdout
-    or to a log file if configured.
+    Uses the standard logging module with a format matching the server.
+    Message prefixes like [I], [E], [W], [-] indicate the action type
+    and are used to determine the appropriate log level.
 
     Args:
         message: The message to be logged.
         data: Optional data to include as formatted JSON (dict, list, etc.).
     """
-    if CONFIG and CONFIG["QUIET"]:
-        return
+    # Determine log level from message prefix
+    level = logging.INFO
+    if message.startswith("[E]"):
+        level = logging.ERROR
+    elif message.startswith("[W]"):
+        level = logging.WARNING
+    elif message.startswith("[-]") or message.startswith("[I]") and DEBUG:
+        level = logging.DEBUG
 
-    # Format timestamp in ISO 8601 format with milliseconds
-    time = datetime.now()
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S") + f"Z.{time.microsecond // 1000:03d}"
-    level = "DEBUG" if DEBUG else "INFO"
-    string = f"{timestamp} - [{getpid()}] {level}: {message}"
-
-    # Append JSON data if provided
-    if data:
-        string = string + "\n" + dumps(data, indent=4, sort_keys=True, default=str)
-
-    # Output to file or stdout
-    if CONFIG and CONFIG["LOGFILE"]:
-        with open(CONFIG["LOGFILE"], "a") as file:
-            file.write(f"{string}\n")
-    else:
-        print(string)
+    log_with_data(LOG, level, message, data)
 
 
 def is_valid_logfile(path_string: str) -> bool:
@@ -1370,7 +1364,7 @@ def main() -> None:
     the global CONFIG dictionary, and starts either a single sync
     or continuous synchronization mode.
     """
-    global CONFIG, DEBUG
+    global CONFIG, DEBUG, LOG
 
     class SortedHelpFormatter(HelpFormatter):
         """Custom help formatter that sorts arguments alphabetically."""
@@ -1525,14 +1519,21 @@ def main() -> None:
     # =========================================================================
     args = parser.parse_args()
 
+    # Initialize logging early so we can log validation errors
+    LOG = setup_logging(
+        debug=args.debug,
+        quiet=args.quiet,
+        logfile=args.logfile if hasattr(args, 'logfile') and args.logfile and is_valid_logfile(args.logfile) else None,
+    )
+
     # Validate local directory exists
     if not exists(args.dir):
-        log(f"[E] Directory '{args.dir}' does not exist")
+        LOG.error(f"[E] Directory '{args.dir}' does not exist")
         return
 
     # Validate log file path
     if args.logfile and not is_valid_logfile(args.logfile):
-        log(f"[E] Invalid logfile '{args.logfile}'")
+        LOG.error(f"[E] Invalid logfile '{args.logfile}'")
         return
 
     # =========================================================================
@@ -1593,14 +1594,13 @@ def main() -> None:
     DEBUG = args.debug
 
     # Log configuration in debug mode
-    if DEBUG:
-        log("[I] Local configuration:", CONFIG)
+    LOG.debug("[I] Local configuration:", extra={'json_data': CONFIG})
 
     # =========================================================================
     # Display Legend (if requested)
     # =========================================================================
     if args.legend:
-        log("[I] Log legend")
+        LOG.info("[I] Log legend")
         log_levels = {
             "-": "File not changed (no action required)",
             "D": "Download file",
@@ -1613,14 +1613,14 @@ def main() -> None:
             "W": "Warning",
         }
         for key, description in log_levels.items():
-            log(f"    {key}: {description}")
+            LOG.info(f"    {key}: {description}")
 
     # =========================================================================
     # Execute Sync
     # =========================================================================
     if CONFIG["DRYRUN"] and args.continuous:
         # Dry-run is incompatible with continuous mode
-        log("[W] Continuous sync is disabled due to dryrun option set")
+        LOG.warning("[W] Continuous sync is disabled due to dryrun option set")
     elif not CONFIG["DRYRUN"] and args.continuous:
         # Start continuous synchronization with WebSocket events
         run(remote_connect())
