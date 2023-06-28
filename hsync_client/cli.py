@@ -83,26 +83,62 @@ HSYNC_VERSION = "0.1.0"
 LOG: logging.Logger = logging.getLogger("hsync")
 
 
+# Action prefixes for sync operations (kept for visual distinction)
+ACTION_PREFIX = {
+    "download": "↓",      # Download file
+    "upload": "↑",        # Upload file
+    "move": "→",          # Move/Rename
+    "remove": "✕",        # Remove/Delete
+    "create": "+",        # Create directory
+    "permission": "⚙",    # Set permission
+    "skip": "·",          # No change (skipped)
+}
+
+
 def log(message: str = "", data: Optional[object] = None) -> None:
     """
     Log a message with optional JSON data.
 
     Uses the standard logging module with a format matching the server.
-    Message prefixes like [I], [E], [W], [-] indicate the action type
-    and are used to determine the appropriate log level.
+    Automatically determines log level and removes redundant prefixes.
 
     Args:
         message: The message to be logged.
         data: Optional data to include as formatted JSON (dict, list, etc.).
     """
-    # Determine log level from message prefix
+    # Determine log level and clean message
     level = logging.INFO
-    if message.startswith("[E]"):
+
+    # Handle error messages
+    if message.startswith("[E] "):
         level = logging.ERROR
-    elif message.startswith("[W]"):
+        message = message[4:]  # Remove "[E] " prefix
+    # Handle warning messages
+    elif message.startswith("[W] "):
         level = logging.WARNING
-    elif message.startswith("[-]") or message.startswith("[I]") and DEBUG:
+        message = message[4:]  # Remove "[W] " prefix
+    # Handle debug/skip messages
+    elif message.startswith("[-] "):
         level = logging.DEBUG
+        message = f"{ACTION_PREFIX['skip']} {message[4:]}"
+    elif message.startswith("[I] ") and DEBUG:
+        level = logging.DEBUG
+        message = message[4:]  # Remove "[I] " prefix
+    elif message.startswith("[I] "):
+        message = message[4:]  # Remove "[I] " prefix
+    # Handle action prefixes - convert to symbols
+    elif message.startswith("[D] "):
+        message = f"{ACTION_PREFIX['download']} {message[4:]}"
+    elif message.startswith("[U] "):
+        message = f"{ACTION_PREFIX['upload']} {message[4:]}"
+    elif message.startswith("[M] "):
+        message = f"{ACTION_PREFIX['move']} {message[4:]}"
+    elif message.startswith("[R] "):
+        message = f"{ACTION_PREFIX['remove']} {message[4:]}"
+    elif message.startswith("[C] "):
+        message = f"{ACTION_PREFIX['create']} {message[4:]}"
+    elif message.startswith("[P] "):
+        message = f"{ACTION_PREFIX['permission']} {message[4:]}"
 
     log_with_data(LOG, level, message, data)
 
@@ -1528,12 +1564,12 @@ def main() -> None:
 
     # Validate local directory exists
     if not exists(args.dir):
-        LOG.error(f"[E] Directory '{args.dir}' does not exist")
+        LOG.error(f"Directory '{args.dir}' does not exist")
         return
 
     # Validate log file path
     if args.logfile and not is_valid_logfile(args.logfile):
-        LOG.error(f"[E] Invalid logfile '{args.logfile}'")
+        LOG.error(f"Invalid logfile '{args.logfile}'")
         return
 
     # =========================================================================
@@ -1594,33 +1630,31 @@ def main() -> None:
     DEBUG = args.debug
 
     # Log configuration in debug mode
-    LOG.debug("[I] Local configuration:", extra={'json_data': CONFIG})
+    LOG.debug("Local configuration:", extra={'json_data': CONFIG})
 
     # =========================================================================
     # Display Legend (if requested)
     # =========================================================================
     if args.legend:
-        LOG.info("[I] Log legend")
-        log_levels = {
-            "-": "File not changed (no action required)",
-            "D": "Download file",
-            "E": "Error",
-            "I": "Info",
-            "M": "Move/Rename file/dir",
-            "P": "Set permission",
-            "R": "Remove file/dir",
-            "U": "Upload file",
-            "W": "Warning",
+        LOG.info("Log legend:")
+        log_symbols = {
+            ACTION_PREFIX['skip']: "File not changed (no action required)",
+            ACTION_PREFIX['download']: "Download file",
+            ACTION_PREFIX['upload']: "Upload file",
+            ACTION_PREFIX['move']: "Move/Rename file/dir",
+            ACTION_PREFIX['remove']: "Remove file/dir",
+            ACTION_PREFIX['create']: "Create directory",
+            ACTION_PREFIX['permission']: "Set permission",
         }
-        for key, description in log_levels.items():
-            LOG.info(f"    {key}: {description}")
+        for symbol, description in log_symbols.items():
+            LOG.info(f"    {symbol} {description}")
 
     # =========================================================================
     # Execute Sync
     # =========================================================================
     if CONFIG["DRYRUN"] and args.continuous:
         # Dry-run is incompatible with continuous mode
-        LOG.warning("[W] Continuous sync is disabled due to dryrun option set")
+        LOG.warning("Continuous sync is disabled due to dryrun option set")
     elif not CONFIG["DRYRUN"] and args.continuous:
         # Start continuous synchronization with WebSocket events
         run(remote_connect())
