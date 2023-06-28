@@ -101,15 +101,15 @@ poetry run hsync -u http://localhost:8765 -b mybucket -c -l /var/log/hsync.log
 
 | Symbol | Meaning |
 |--------|---------|
-| `-` | File unchanged |
-| `D` | Download file |
-| `U` | Upload file |
-| `M` | Move/Rename file/dir |
-| `R` | Remove file/dir |
-| `P` | Set permissions |
-| `I` | Info |
-| `W` | Warning |
-| `E` | Error |
+| `·` | File unchanged (skipped) |
+| `↓` | Download file |
+| `↑` | Upload file |
+| `→` | Move/Rename file/dir |
+| `✕` | Remove file/dir |
+| `+` | Create directory |
+| `⚙` | Set permissions |
+
+Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 
 ## Build Standalone Binary
 
@@ -140,6 +140,7 @@ hsync-client/
 │   ├── __init__.py
 │   ├── __main__.py         # Entry point: python -m hsync_client
 │   ├── cli.py              # CLI logic
+│   ├── logging.py          # Logging configuration
 │   └── models/             # Data models
 │       ├── __init__.py
 │       ├── dir.py
