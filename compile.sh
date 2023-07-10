@@ -45,7 +45,7 @@ main() {
     source .venv/bin/activate
 
     log_step "Building standalone binary..."
-    pyinstaller --clean --onefile hsync_client/cli.py --name hsync
+    pyinstaller --clean --onefile hsync_client/main.py --name hsync
 
     echo
     if [[ -f "dist/hsync" ]]; then
