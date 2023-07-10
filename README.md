@@ -35,7 +35,7 @@ The client uses environment variables:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `HSYNC_ENDPOINT_URL` | HSYNC server URL | No (use `-u`) |
+| `HSYNC_SERVER_URL` | Server URL | No (use `-s`) |
 | `HSYNC_API_KEY` | API key for authentication | Yes |
 
 ## Usage
@@ -44,57 +44,58 @@ The client uses environment variables:
 
 ```bash
 # Using poetry run
-poetry run hsync -u <server_url> -b <bucket_name> [options]
+poetry run hsync -s <server_url> -b <bucket_name> [options]
 
 # Or run as a module
-poetry run python -m hsync_client -u <server_url> -b <bucket_name> [options]
+poetry run python -m hsync_client -s <server_url> -b <bucket_name> [options]
 ```
 
 ### CLI Options
 
 | Option | Description |
 |--------|-------------|
-| `-u, --endpoint-url` | HSYNC server URL |
+| `-s, --server` | Server URL |
 | `-b, --bucket` | Bucket name (required) |
-| `-d, --dir` | Local directory to sync (default: cwd) |
-| `-c, --continuous` | Continuous synchronization mode |
-| `--sync-order` | Sync order: `mtime` or `ctime` (default: mtime) |
-| `--resync` | Interval (sec) for automatic re-synchronization |
-| `--reconnect-delay` | Reconnection delay (default: 5 sec) |
-| `--dryrun` | Show operations without executing them |
-| `--debug` | Enable debug messages |
-| `-q, --quiet` | Suppress output |
-| `-l, --logfile` | Log to file |
-| `--no-verify-ssl` | Disable SSL verification |
-| `--legend` | Show log legend |
-| `-v, --version` | Show version |
+| `-p, --path` | Local directory path (default: cwd) |
+| `-w, --watch` | Watch for changes and sync continuously |
+| `--order-by` | Compare files by: `mtime` or `ctime` (default: mtime) |
+| `-i, --interval` | Force full sync every N seconds (requires `-w`) |
+| `--retry-delay` | Retry connection after N seconds (default: 5) |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Enable verbose output |
+| `-q, --quiet` | Suppress all output |
+| `-o, --output` | Write output to file |
+| `--insecure` | Skip SSL certificate verification |
+| `--no-color` | Disable colored output |
+| `--help-symbols` | Show output symbols legend |
+| `-V, --version` | Show version |
 
 ### Examples
 
 **Single synchronization:**
 ```bash
 export HSYNC_API_KEY="your-api-key"
-poetry run hsync -u http://localhost:8765 -b mybucket -d /path/to/local/dir
+poetry run hsync -s http://localhost:8765 -b mybucket -p /path/to/local/dir
 ```
 
-**Continuous synchronization:**
+**Continuous synchronization (watch mode):**
 ```bash
-poetry run hsync -u http://localhost:8765 -b mybucket -d /path/to/dir -c
+poetry run hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
 ```
 
 **With automatic re-sync every 5 minutes:**
 ```bash
-poetry run hsync -u http://localhost:8765 -b mybucket -c --resync 300
+poetry run hsync -s http://localhost:8765 -b mybucket -w -i 300
 ```
 
 **Dry-run (preview operations):**
 ```bash
-poetry run hsync -u http://localhost:8765 -b mybucket --dryrun
+poetry run hsync -s http://localhost:8765 -b mybucket -n
 ```
 
 **With file logging:**
 ```bash
-poetry run hsync -u http://localhost:8765 -b mybucket -c -l /var/log/hsync.log
+poetry run hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
 ```
 
 ## Log Legend
@@ -115,10 +116,10 @@ Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 
 ```bash
 # Build with PyInstaller
-poetry run pyinstaller --onefile hsync_client/cli.py --name hsync
+./compile.sh
 
 # The binary will be in dist/hsync
-./dist/hsync -u http://localhost:8765 -b mybucket
+./dist/hsync -s http://localhost:8765 -b mybucket
 ```
 
 ## Synchronization Modes
@@ -126,7 +127,7 @@ poetry run pyinstaller --onefile hsync_client/cli.py --name hsync
 ### Single (default)
 Performs a synchronization and exits.
 
-### Continuous (`-c`)
+### Watch (`-w`)
 - Maintains WebSocket connection with the server
 - Receives remote events (add/modify/delete/rename)
 - Monitors local directory with watchdog
