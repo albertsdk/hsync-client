@@ -112,8 +112,9 @@ class ColoredFormatter(logging.Formatter):
                     message = f"{Colors.DIM}{parts[0]}{Colors.RESET} - {parts[1]}"
 
         # Append JSON data if present
-        if hasattr(record, 'json_data') and record.json_data is not None:
-            json_str = dumps(record.json_data, indent=4, sort_keys=True, default=str)
+        json_data = getattr(record, 'json_data', None)
+        if json_data is not None:
+            json_str = dumps(json_data, indent=4, sort_keys=True, default=str)
             if self.use_colors:
                 json_str = f"{Colors.DIM}{json_str}{Colors.RESET}"
             message = f"{message}\n{json_str}"
@@ -133,8 +134,9 @@ class JsonFormatter(logging.Formatter):
         message = super().format(record)
 
         # Check if record has extra data to format as JSON
-        if hasattr(record, 'json_data') and record.json_data is not None:
-            json_str = dumps(record.json_data, indent=4, sort_keys=True, default=str)
+        json_data = getattr(record, 'json_data', None)
+        if json_data is not None:
+            json_str = dumps(json_data, indent=4, sort_keys=True, default=str)
             message = f"{message}\n{json_str}"
 
         return message
