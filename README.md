@@ -140,8 +140,8 @@ hsync-client/
 ├── hsync_client/           # Main Python package
 │   ├── __init__.py
 │   ├── __main__.py         # Entry point: python -m hsync_client
-│   ├── cli.py              # CLI logic
-│   ├── logging.py          # Logging configuration
+│   ├── main.py             # Main CLI logic
+│   ├── logger.py           # Logging configuration
 │   └── models/             # Data models
 │       ├── __init__.py
 │       ├── dir.py
