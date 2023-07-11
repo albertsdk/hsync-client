@@ -12,6 +12,7 @@ from typing import Optional, Union
 
 from .dir import Dir
 from .file import File
+from .symlink import Symlink
 
 
 class EventName(str, Enum):
@@ -32,6 +33,7 @@ class EventName(str, Enum):
     modified = "modified"
     renamed = "renamed"
     deleted = "deleted"
+    symlink = "symlink"
 
 
 class Event:
@@ -56,8 +58,8 @@ class Event:
         localpath: str,
         bucket: str,
         name: EventName,
-        src: Union[File, Dir],
-        dst: Optional[Union[File, Dir]] = None,
+        src: Union[File, Dir, Symlink],
+        dst: Optional[Union[File, Dir, Symlink]] = None,
         strip_localpath: bool = True,
     ):
         """
@@ -71,7 +73,7 @@ class Event:
             localpath: Local base path for path normalization.
             bucket: Name of the bucket where the event occurred.
             name: Type of event from EventName enum.
-            src: Source file or directory affected by the event.
+            src: Source file, directory, or symlink affected by the event.
             dst: Destination for rename events (optional).
             strip_localpath: If True, remove localpath prefix from paths.
         """
@@ -80,17 +82,17 @@ class Event:
         self.name = name.value
 
         def correct_path(
-            entity: Union[File, Dir], localpath: str, strip_localpath: bool
+            entity: Union[File, Dir, Symlink], localpath: str, strip_localpath: bool
         ) -> None:
             """
-            Normalize the path of a File or Dir entity.
+            Normalize the path of a File, Dir, or Symlink entity.
 
             Strips or prepends the localpath based on the strip_localpath flag.
             This allows the same Event class to be used for both sending
             (relative paths) and receiving (absolute paths) events.
 
             Args:
-                entity: File or Dir object to modify.
+                entity: File, Dir, or Symlink object to modify.
                 localpath: Base path for normalization.
                 strip_localpath: If True, remove localpath prefix.
             """

@@ -8,9 +8,12 @@ CLI client for HTTP-based file synchronization with WebSocket support for real-t
 - 👁️ Real-time file system monitoring (watchdog)
 - 📡 WebSocket connection for remote events
 - ✅ MD5-based file integrity verification
-- 🔐 API Key authentication
+- 🔐 API Key authentication (secure first-message auth)
 - 🔒 SSL/TLS support
 - 📦 Compilable to standalone binary (PyInstaller)
+- 💓 WebSocket heartbeat for reliable connections
+- 🔗 Symbolic link synchronization support
+- 📦 Event queue with exponential backoff retry
 
 ## Requirements
 
@@ -109,6 +112,7 @@ poetry run hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
 | `✕` | Remove file/dir |
 | `+` | Create directory |
 | `⚙` | Set permissions |
+| `L` | Create/update symlink |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 
@@ -133,6 +137,11 @@ Performs a synchronization and exits.
 - Monitors local directory with watchdog
 - Propagates changes in real-time
 
+## Documentation
+
+- [Architecture](docs/architecture.md) - Client architecture and component overview
+- [Usage Guide](docs/usage.md) - Detailed usage instructions with examples
+
 ## Project Structure
 
 ```
@@ -142,12 +151,17 @@ hsync-client/
 │   ├── __main__.py         # Entry point: python -m hsync_client
 │   ├── main.py             # Main CLI logic
 │   ├── logger.py           # Logging configuration
+│   ├── event_queue.py      # Event queue with retry logic
 │   └── models/             # Data models
 │       ├── __init__.py
 │       ├── dir.py
 │       ├── event.py
 │       ├── file.py
+│       ├── symlink.py      # Symbolic link model
 │       └── sync_action.py
+├── docs/                   # Documentation with Mermaid diagrams
+│   ├── architecture.md
+│   └── usage.md
 ├── tests/                  # Test files
 ├── pyproject.toml
 ├── poetry.lock
