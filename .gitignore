@@ -12,6 +12,12 @@ __pycache__/
 .env
 .venv
 
+# Unit test / coverage
+.coverage
+coverage
+htmlcov
+.pytest_cache
+
 /build
 /dist
 /tmp
