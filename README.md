@@ -38,6 +38,13 @@ flowchart LR
     style CC fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
 ```
 
+<details>
+<summary>📷 View as image (if Mermaid is not rendered)</summary>
+
+![Synchronization Overview](docs/images/README-1.png)
+
+</details>
+
 **Scenarios:**
 - **Local → Remote**: File changes detected → Upload to server → Other clients notified
 - **Remote → Local**: Other client uploads → Server sends event → Download and apply locally
