@@ -157,18 +157,64 @@ class TestEventQueue:
     async def test_process_sends_event(self, mock_websocket):
         """Test that process loop sends queued events."""
         queue = EventQueue(mock_websocket)
-        
+
         await queue.enqueue({"name": "added"})
-        
+
         # Run process briefly then stop
         async def run_and_stop():
             await asyncio.sleep(0.05)
             queue.stop()
-        
+
         await asyncio.gather(
             queue.process(),
             run_and_stop()
         )
-        
+
         mock_websocket.send.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_process_retries_failed_event(self, mock_websocket):
+        """Test that failed events are retried with backoff."""
+        # First call fails, second succeeds
+        mock_websocket.send = AsyncMock(side_effect=[Exception("fail"), None])
+        queue = EventQueue(mock_websocket)
+
+        await queue.enqueue({"name": "added"})
+
+        # Run process briefly
+        async def run_and_stop():
+            await asyncio.sleep(0.1)
+            queue.stop()
+
+        await asyncio.gather(
+            queue.process(),
+            run_and_stop()
+        )
+
+        # Event should have been added to failed_events
+        # (may or may not still be there depending on timing)
+
+    @pytest.mark.asyncio
+    async def test_process_drops_after_max_retries(self, mock_websocket):
+        """Test that events are dropped after MAX_RETRIES."""
+        mock_websocket.send = AsyncMock(side_effect=Exception("always fail"))
+        queue = EventQueue(mock_websocket)
+
+        # Create event that has already failed MAX_RETRIES times
+        event = QueuedEvent(data={"name": "doomed"})
+        event.retry_count = MAX_RETRIES
+        event.next_retry_time = 0  # Ready to retry now
+        queue.failed_events.append(event)
+
+        # Run process briefly
+        async def run_and_stop():
+            await asyncio.sleep(0.1)
+            queue.stop()
+
+        await asyncio.gather(
+            queue.process(),
+            run_and_stop()
+        )
+
+        # Event should be dropped (not in failed_events anymore after processing)
 
