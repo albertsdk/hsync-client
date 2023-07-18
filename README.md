@@ -17,19 +17,35 @@ CLI client for HTTP-based file synchronization with WebSocket support for real-t
 
 ## Requirements
 
+For building:
 - Python ≥3.12, <3.14
 - Poetry (for dependency management)
 
-## Installation
+For running:
+- The compiled binary (no Python required)
+
+## Build
+
+The client must be compiled before use. The resulting binary is standalone and doesn't require Python.
 
 ```bash
 cd hsync-client
 
-# Install dependencies with Poetry
+# Install dependencies (first time only)
 poetry install
 
-# Activate the virtual environment
-poetry shell
+# Compile the binary
+./compile.sh
+
+# The binary will be in dist/hsync
+```
+
+### Build Options
+
+```bash
+./compile.sh           # Build the binary
+./compile.sh --clean   # Clean artifacts and rebuild
+./compile.sh --help    # Show help
 ```
 
 ## Configuration
@@ -46,12 +62,10 @@ The client uses environment variables:
 ### Basic Syntax
 
 ```bash
-# Using poetry run
-poetry run hsync -s <server_url> -b <bucket_name> [options]
-
-# Or run as a module
-poetry run python -m hsync_client -s <server_url> -b <bucket_name> [options]
+./dist/hsync -s <server_url> -b <bucket_name> [options]
 ```
+
+> ⚠️ **Note**: Do not run the client directly with Python. Always use the compiled binary.
 
 ### CLI Options
 
@@ -78,27 +92,27 @@ poetry run python -m hsync_client -s <server_url> -b <bucket_name> [options]
 **Single synchronization:**
 ```bash
 export HSYNC_API_KEY="your-api-key"
-poetry run hsync -s http://localhost:8765 -b mybucket -p /path/to/local/dir
+./dist/hsync -s http://localhost:8765 -b mybucket -p /path/to/local/dir
 ```
 
 **Continuous synchronization (watch mode):**
 ```bash
-poetry run hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
+./dist/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
 ```
 
 **With automatic re-sync every 5 minutes:**
 ```bash
-poetry run hsync -s http://localhost:8765 -b mybucket -w -i 300
+./dist/hsync -s http://localhost:8765 -b mybucket -w -i 300
 ```
 
 **Dry-run (preview operations):**
 ```bash
-poetry run hsync -s http://localhost:8765 -b mybucket -n
+./dist/hsync -s http://localhost:8765 -b mybucket -n
 ```
 
 **With file logging:**
 ```bash
-poetry run hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
+./dist/hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
 ```
 
 ## Log Legend
@@ -115,16 +129,6 @@ poetry run hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
 | `L` | Create/update symlink |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
-
-## Build Standalone Binary
-
-```bash
-# Build with PyInstaller
-./compile.sh
-
-# The binary will be in dist/hsync
-./dist/hsync -s http://localhost:8765 -b mybucket
-```
 
 ## Synchronization Modes
 
@@ -146,9 +150,9 @@ Performs a synchronization and exits.
 
 ```
 hsync-client/
-├── hsync_client/           # Main Python package
+├── hsync_client/           # Main Python package (source code)
 │   ├── __init__.py
-│   ├── __main__.py         # Entry point: python -m hsync_client
+│   ├── __main__.py         # Module entry point
 │   ├── main.py             # Main CLI logic
 │   ├── logger.py           # Logging configuration
 │   ├── event_queue.py      # Event queue with retry logic
@@ -159,10 +163,15 @@ hsync-client/
 │       ├── file.py
 │       ├── symlink.py      # Symbolic link model
 │       └── sync_action.py
-├── docs/                   # Documentation with Mermaid diagrams
+├── docs/                   # Documentation
 │   ├── architecture.md
 │   └── usage.md
 ├── tests/                  # Test files
+├── dist/                   # Compiled binary (created by compile.sh)
+│   └── hsync               # Standalone executable
+├── build/                  # Build artifacts (created by compile.sh)
+├── compile.sh              # Build script
+├── hsync.spec              # PyInstaller spec file (auto-generated)
 ├── pyproject.toml
 ├── poetry.lock
 └── README.md
