@@ -6,36 +6,37 @@ CLI client for HTTP-based file synchronization with WebSocket support for real-t
 
 ```mermaid
 flowchart LR
-    subgraph Local["🖥️ Local Machine"]
-        FS["📂 File System<br/><small>Watched Directory</small>"]
-        CLIENT["⚙️ HSYNC Client<br/><small>Sync Engine</small>"]
+    subgraph LocalA["🖥️ Client A"]
+        FSA["📂 File System"]
+        CA["⚙️ HSYNC Client"]
     end
 
     subgraph Remote["☁️ Remote"]
         SERVER["🗄️ HSYNC Server"]
     end
 
-    subgraph OtherClients["👥 Other Clients"]
-        CB["💻 Client B"]
-        CC["📱 Client C"]
+    subgraph LocalB["💻 Client B"]
+        FSB["📂 File System"]
+        CB["⚙️ HSYNC Client"]
     end
 
-    %% Local changes flow
-    FS -->|"1️⃣ File changed"| CLIENT
-    CLIENT -->|"2️⃣ Upload"| SERVER
+    %% Client A changes flow
+    FSA -->|"1️⃣ File changed"| CA
+    CA -->|"2️⃣ Upload"| SERVER
     SERVER -.->|"3️⃣ Notify"| CB
-    SERVER -.->|"3️⃣ Notify"| CC
+    CB -->|"4️⃣ Download"| FSB
 
-    %% Remote changes flow
-    CB -->|"1️⃣ Upload"| SERVER
-    SERVER -.->|"2️⃣ Event"| CLIENT
-    CLIENT -->|"3️⃣ Download"| FS
+    %% Client B changes flow
+    FSB -->|"1️⃣ File changed"| CB
+    CB -->|"2️⃣ Upload"| SERVER
+    SERVER -.->|"3️⃣ Notify"| CA
+    CA -->|"4️⃣ Download"| FSA
 
-    style FS fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style CLIENT fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style FSA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style CA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style SERVER fill:#fff3e0,stroke:#e65100,color:#e65100
+    style FSB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
-    style CC fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
 ```
 
 <details>
@@ -45,9 +46,9 @@ flowchart LR
 
 </details>
 
-**Scenarios:**
-- **Local → Remote**: File changes detected → Upload to server → Other clients notified
-- **Remote → Local**: Other client uploads → Server sends event → Download and apply locally
+**Bidirectional Sync:**
+- **Client A → Client B**: A detects change → uploads → server notifies B → B downloads
+- **Client B → Client A**: B detects change → uploads → server notifies A → A downloads
 
 ## Features
 
