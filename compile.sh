@@ -36,7 +36,8 @@ readonly APP_NAME="hsync"
 readonly ENTRY_POINT="hsync_client/main.py"
 readonly OUTPUT_DIR="dist"
 readonly BUILD_DIR="build"
-readonly SPEC_FILE="${APP_NAME}.spec"
+readonly VENV_DIR=".venv"
+readonly PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
 
 # -----------------------------------------------------------------------------
 # Colors (disabled if not a terminal)
@@ -174,16 +175,40 @@ build_binary() {
 
     log_step "Building ${APP_NAME} v${version}..."
 
-    # Activate virtual environment
-    # shellcheck source=/dev/null
-    source .venv/bin/activate
+    # Verify PyInstaller is available
+    if [[ ! -x "${PYINSTALLER}" ]]; then
+        log_error "PyInstaller not found at ${PYINSTALLER}"
+        log_error "Run 'poetry install' first to install dependencies"
+        exit 1
+    fi
 
     # Run PyInstaller with optimized settings
-    pyinstaller \
+    # --strip: Remove debug symbols to reduce binary size
+    # --hidden-import: Include modules not detected by static analysis
+    # --exclude-module: Exclude unnecessary modules to reduce size
+    "${PYINSTALLER}" \
         --clean \
         --onefile \
+        --strip \
         --name "${APP_NAME}" \
         --log-level WARN \
+        --hidden-import "websockets.legacy" \
+        --hidden-import "websockets.legacy.client" \
+        --hidden-import "websockets.client" \
+        --hidden-import "websockets.exceptions" \
+        --hidden-import "watchdog.observers" \
+        --hidden-import "watchdog.events" \
+        --exclude-module "pytest" \
+        --exclude-module "pytest_asyncio" \
+        --exclude-module "pytest_cov" \
+        --exclude-module "tkinter" \
+        --exclude-module "unittest" \
+        --exclude-module "pdb" \
+        --exclude-module "doctest" \
+        --exclude-module "pip" \
+        --exclude-module "setuptools" \
+        --exclude-module "wheel" \
+        --exclude-module "pkg_resources" \
         "${ENTRY_POINT}"
 
     # Verify output
