@@ -8,6 +8,8 @@
 # Usage:
 #   ./generate-diagrams.sh
 #
+# Author: Alberto Basso <alberto.sdk [at] gmail [dot] com>
+# =============================================================================
 
 set -euo pipefail
 

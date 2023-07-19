@@ -19,7 +19,7 @@
 # Output:
 #   - dist/hsync   Standalone executable binary
 #
-# Author: HSYNC Project
+# Author: Alberto Basso <alberto.sdk [at] gmail [dot] com>
 # =============================================================================
 
 set -euo pipefail
