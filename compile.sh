@@ -216,6 +216,9 @@ build_binary() {
         local size
         size="$(du -h "${OUTPUT_DIR}/${APP_NAME}" | cut -f1)"
 
+        # Clean up temporary build files
+        cleanup_temp_files
+
         echo
         log_ok "Build successful!"
         echo
@@ -227,6 +230,29 @@ build_binary() {
     else
         log_error "Build failed: output binary not found"
         exit 1
+    fi
+}
+
+# Clean up temporary files after successful build
+cleanup_temp_files() {
+    log_step "Cleaning up temporary files..."
+
+    local cleaned=0
+
+    # Remove build directory (PyInstaller intermediate files)
+    if [[ -d "${BUILD_DIR}" ]]; then
+        rm -rf "${BUILD_DIR}"
+        ((cleaned++)) || true
+    fi
+
+    # Remove auto-generated spec file
+    if [[ -f "${APP_NAME}.spec" ]]; then
+        rm -f "${APP_NAME}.spec"
+        ((cleaned++)) || true
+    fi
+
+    if [[ ${cleaned} -gt 0 ]]; then
+        log_ok "Removed ${cleaned} temporary file(s)"
     fi
 }
 
