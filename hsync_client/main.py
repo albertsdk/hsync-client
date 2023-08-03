@@ -39,6 +39,18 @@ import logging
 import stat
 
 from hsync_client.event_queue import EventQueue
+from hsync_client.exceptions import (
+    AuthenticationError,
+    ChecksumError,
+    ConnectionError as HSyncConnectionError,
+    DownloadError,
+    FileReadError,
+    FileWriteError,
+    NetworkError,
+    ServerError,
+    UploadError,
+    WebSocketError,
+)
 from hsync_client.logger import setup_logging, log_with_data
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.dir import Dir, is_hidden_dir
@@ -386,7 +398,9 @@ def get_files_remote() -> list[dict]:
         List of file metadata dictionaries from server.
 
     Raises:
-        Exception: If the request fails or returns non-200 status.
+        NetworkError: If the request fails.
+        AuthenticationError: If authentication fails (401/403).
+        ServerError: If server returns an error response.
     """
     try:
         uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files"
@@ -400,12 +414,22 @@ def get_files_remote() -> list[dict]:
             verify=CONFIG["NO_VERIFY_SSL"],
         )
 
+        if response.status_code == 401:
+            raise AuthenticationError(message="Invalid API key")
+        if response.status_code == 403:
+            raise AuthenticationError(message="API key required")
         if response.status_code != 200:
-            raise Exception(response.text)
+            raise ServerError(
+                message=f"Server returned status {response.status_code}",
+                details={"status_code": response.status_code, "response": response.text},
+            )
 
         return response.json()
-    except Exception as e:
-        raise Exception(f"Error downloading files list: {e}")
+    except RequestException as e:
+        raise NetworkError(
+            message=f"Error downloading files list: {e}",
+            details={"url": uri},
+        )
 
 
 def download_file(file: File) -> None:
@@ -418,6 +442,11 @@ def download_file(file: File) -> None:
 
     Args:
         file: File object with remote metadata (filepath, md5sum, etc.).
+
+    Raises:
+        DownloadError: If download fails.
+        ChecksumError: If MD5 checksum doesn't match.
+        FileWriteError: If file cannot be saved locally.
     """
     # Validate required file attributes
     if not file.filepath or not file.name:
@@ -425,77 +454,90 @@ def download_file(file: File) -> None:
         return
 
     uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files/download"
-    response = get(
-        uri,
-        headers=CONFIG["REQUEST_HEADERS"],
-        params={"filename": file.filepath},
-        stream=True,
-        verify=CONFIG["NO_VERIFY_SSL"],
-    )
+    try:
+        response = get(
+            uri,
+            headers=CONFIG["REQUEST_HEADERS"],
+            params={"filename": file.filepath},
+            stream=True,
+            verify=CONFIG["NO_VERIFY_SSL"],
+        )
+    except RequestException as e:
+        log(f'[E] Network error downloading "{file.filepath}": {e}')
+        return
 
     if DEBUG:
         log(f"[I] Request URI: {uri}")
         log(f"[I] Request Header:", CONFIG["REQUEST_HEADERS"])
 
-    if response.status_code == 200:
-        # Create temporary file for download
-        with NamedTemporaryFile(delete=False) as temp_file:
-            temp_file_path = temp_file.name
+    if response.status_code == 401:
+        log(f'[E] Authentication failed downloading "{file.filepath}"')
+        return
+    if response.status_code == 404:
+        log(f'[E] File not found on server: "{file.filepath}"')
+        return
+    if response.status_code != 200:
+        log(f'[E] Server error downloading "{file.filepath}": {response.status_code}')
+        return
 
-        try:
-            # Calculate optimal chunk size based on file size
-            chunk_size = get_chunk_size(file.size)
+    # Create temporary file for download
+    with NamedTemporaryFile(delete=False) as temp_file:
+        temp_file_path = temp_file.name
 
-            # Stream file content to temporary file
-            with open(temp_file_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if not chunk:
-                        break
-                    f.write(chunk)
+    try:
+        # Calculate optimal chunk size based on file size
+        chunk_size = get_chunk_size(file.size)
 
-            # Verify MD5 checksum
-            md5sum = compute_md5(temp_file_path)
-            if md5sum != file.md5sum:
-                log(
-                    f'[E] "{file.filepath}" '
-                    f"(Invalid checksum: expected {file.md5sum}, "
-                    f"{md5sum} given)"
-                )
+        # Stream file content to temporary file
+        with open(temp_file_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    break
+                f.write(chunk)
+
+        # Verify MD5 checksum
+        md5sum = compute_md5(temp_file_path)
+        if md5sum != file.md5sum:
+            log(
+                f'[E] "{file.filepath}" '
+                f"(Invalid checksum: expected {file.md5sum}, "
+                f"{md5sum} given)"
+            )
+            return
+
+        # Prepare destination directory
+        relative_dir = dirname(file.filepath)
+        dest_dir = join(CONFIG["LOCAL_BUCKET"], relative_dir.lstrip("/"))
+        makedirs(dest_dir, exist_ok=True)
+
+        # Check if local file is already up-to-date
+        full_save_path = join(dest_dir, file.name.lstrip("/"))
+        if exists(full_save_path):
+            local_mtime = getmtime(full_save_path)
+            if file.mtime is not None and local_mtime >= file.mtime:
+                nothing_to_do(file)
                 return
 
-            # Prepare destination directory
-            relative_dir = dirname(file.filepath)
-            dest_dir = join(CONFIG["LOCAL_BUCKET"], relative_dir.lstrip("/"))
-            makedirs(dest_dir, exist_ok=True)
+        # Move temporary file to final destination
+        move(temp_file_path, full_save_path)
+        log(f'[D] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
-            # Check if local file is already up-to-date
-            full_save_path = join(dest_dir, file.name.lstrip("/"))
-            if exists(full_save_path):
-                local_mtime = getmtime(full_save_path)
-                if file.mtime is not None and local_mtime >= file.mtime:
-                    nothing_to_do(file)
-                    return
+        # Preserve timestamps from remote file
+        if file.ctime is not None and file.mtime is not None:
+            utime(full_save_path, (file.ctime, file.mtime))
 
-            # Move temporary file to final destination
-            move(temp_file_path, full_save_path)
-            log(f'[D] "{full_save_path}" {bytes_to_human_readable(file.size)}')
+        # Apply permissions
+        if file.permissions:
+            set_permissions(full_save_path, file.permissions)
 
-            # Preserve timestamps from remote file
-            if file.ctime is not None and file.mtime is not None:
-                utime(full_save_path, (file.ctime, file.mtime))
-
-            # Apply permissions
-            if file.permissions:
-                set_permissions(full_save_path, file.permissions)
-
-        except Exception as e:
-            log(f"[E] Error saving file: {e}")
-        finally:
-            # Clean up temporary file
-            if exists(temp_file_path):
-                remove(temp_file_path)
-    else:
-        log(f"[E] Error downloading file: {response.status_code}")
+    except PermissionError as e:
+        log(f'[E] Permission denied saving "{file.filepath}": {e}')
+    except OSError as e:
+        log(f'[E] Error saving file "{file.filepath}": {e}')
+    finally:
+        # Clean up temporary file
+        if exists(temp_file_path):
+            remove(temp_file_path)
 
 
 def is_file_stable(file: File, interval: int = 2) -> bool:
@@ -542,6 +584,11 @@ def upload_file(file: File, check_size: bool = True) -> None:
     Args:
         file: File object to upload.
         check_size: If True, wait for file writes to complete first.
+
+    Raises:
+        FileReadError: If file cannot be read.
+        NetworkError: If upload request fails.
+        AuthenticationError: If authentication fails.
     """
     # Validate required file attributes
     if not file.filepath:
@@ -601,15 +648,23 @@ def upload_file(file: File, check_size: bool = True) -> None:
             )
             if response.status_code == 201:
                 log(f'[U] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+            elif response.status_code == 401:
+                log(f'[E] Authentication failed uploading "{file.filepath}"')
+            elif response.status_code == 403:
+                log(f'[E] Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
                 if DEBUG:
                     log(f'[I] "{file.filepath}" (already present)')
+            elif response.status_code >= 500:
+                log(f'[E] Server error uploading "{file.filepath}": {response.status_code}')
             else:
                 response.raise_for_status()
+    except FileNotFoundError:
+        log(f'[E] File not found: "{file.filepath}"')
+    except PermissionError:
+        log(f'[E] Permission denied reading: "{file.filepath}"')
     except RequestException as e:
-        log(f'[E] Error uploading: "{file.filepath}" {e}')
-    except Exception as e:
-        log(f"[E] Exception: {e}")
+        log(f'[E] Network error uploading "{file.filepath}": {e}')
 
 
 def nothing_to_do(file: File) -> None:
