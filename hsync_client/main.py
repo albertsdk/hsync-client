@@ -225,6 +225,26 @@ def is_same_paths(path1: str, path2: str) -> bool:
     return normpath(abspath(path1)) == normpath(abspath(path2))
 
 
+def ensure_str_path(path: str | bytes | None) -> str:
+    """
+    Convert a path to string if it's bytes.
+
+    Watchdog events can return paths as bytes or str depending on the platform.
+    This function ensures we always work with strings.
+
+    Args:
+        path: Path as string, bytes, or None.
+
+    Returns:
+        Path as string (empty string if None).
+    """
+    if path is None:
+        return ""
+    if isinstance(path, bytes):
+        return path.decode('utf-8')
+    return str(path)
+
+
 def get_cid(length: int = 10) -> str:
     """
     Generate a random client ID.
@@ -1333,7 +1353,9 @@ class FileEventHandler(FileSystemEventHandler):
         """
         if DEBUG:
             hidden_prefix = "dir" if event.is_directory else "file"
-            paths = {"src": event.src_path, "dest": event.dest_path}
+            src_path = ensure_str_path(event.src_path)
+            dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+            paths = {"src": src_path, "dest": dest_path}
 
             for kind, path in paths.items():
                 if path and (
@@ -1352,10 +1374,12 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event: File system creation event from watchdog.
         """
-        if event.is_directory and not is_hidden_dir(event.src_path):
+        src_path = ensure_str_path(event.src_path)
+
+        if event.is_directory and not is_hidden_dir(src_path):
             # Directory created - broadcast event
-            log(f'[C] "{event.src_path}"')
-            dir = Dir.get(event.src_path)
+            log(f'[C] "{src_path}"')
+            dir = Dir.get(src_path)
             if dir:
                 message = Event(
                     CONFIG["CID"],
@@ -1365,10 +1389,10 @@ class FileEventHandler(FileSystemEventHandler):
                     dir,
                 )
                 self._send_message(message)
-        elif not is_hidden_file(event.src_path) and islink(event.src_path):
+        elif not is_hidden_file(src_path) and islink(src_path):
             # Symlink created - broadcast symlink event
-            log(f'[L] "{event.src_path}"')
-            symlink = Symlink.get(event.src_path)
+            log(f'[L] "{src_path}"')
+            symlink = Symlink.get(src_path)
             if symlink:
                 message = Event(
                     CONFIG["CID"],
@@ -1389,14 +1413,16 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event: File system modification event from watchdog.
         """
+        src_path = ensure_str_path(event.src_path)
+
         if (
             event.is_directory
-            and not is_hidden_dir(event.src_path)
-            and not is_same_paths(CONFIG["LOCAL_BUCKET"], event.src_path)
+            and not is_hidden_dir(src_path)
+            and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
         ):
             # Directory modified (permissions change) - broadcast event
-            log(f'[M] "{event.src_path}"')
-            dir = Dir.get(event.src_path)
+            log(f'[M] "{src_path}"')
+            dir = Dir.get(src_path)
             if dir:
                 message = Event(
                     CONFIG["CID"],
@@ -1417,22 +1443,24 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event: File close event from watchdog.
         """
+        src_path = ensure_str_path(event.src_path)
+
         # Only process files, not directories or hidden files
-        if not event.is_directory and not is_hidden_file(event.src_path):
+        if not event.is_directory and not is_hidden_file(src_path):
             try:
-                if exists(event.src_path):
+                if exists(src_path):
                     # File exists - upload it
-                    file = File.get(event.src_path)
+                    file = File.get(src_path)
                     if file:
                         upload_file(file)
                 else:
                     # File was deleted before we could upload
                     log(
-                        f'[W] File "{event.src_path}" not found. '
+                        f'[W] File "{src_path}" not found. '
                         f"It might have been altered by an external tool."
                     )
             except Exception as e:
-                log(f'[E] Error handling closed event for "{event.src_path}": {e}')
+                log(f'[E] Error handling closed event for "{src_path}": {e}')
 
     def on_moved(self, event) -> None:
         """
@@ -1444,42 +1472,48 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event: File system move event from watchdog.
         """
+        src_path = ensure_str_path(event.src_path)
+        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+
         if DEBUG:
-            if event.dest_path:
-                log(f'[M] "{event.src_path}" -> "{event.dest_path}"')
+            if dest_path:
+                log(f'[M] "{src_path}" -> "{dest_path}"')
             else:
-                log(f'[M] "{event.src_path}"')
+                log(f'[M] "{src_path}"')
 
         message = None
 
         if event.is_directory:
             # Handle various hidden directory scenarios
-            if is_hidden_dir(event.src_path) and not event.dest_path:
+            if is_hidden_dir(src_path) and not dest_path:
                 # Hidden source, no destination - ignore
                 return
-            if is_hidden_dir(event.src_path) and is_hidden_dir(event.dest_path):
+            if is_hidden_dir(src_path) and is_hidden_dir(dest_path):
                 # Both hidden - ignore
                 return
-            if is_hidden_dir(event.src_path) and not is_hidden_dir(event.dest_path):
+            if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
                 # Hidden to visible - not yet implemented
                 log("[W] TODO ???")
                 return
-            if is_hidden_dir(event.dest_path):
+            if is_hidden_dir(dest_path):
                 # Moving to hidden directory - treat as deletion
-                log(f"[W] Switch event to deleted: {event.dest_path}")
-                self.on_deleted(event.dest_path)
+                log(f"[W] Switch event to deleted: {dest_path}")
+                # Create a mock event for on_deleted
+                from watchdog.events import DirDeletedEvent
+                deleted_event = DirDeletedEvent(dest_path)
+                self.on_deleted(deleted_event)
                 return
 
             # Build event message for directory rename
             # Destination already exists, source is the old path
             # Source object inherits destination permissions since
             # the event object doesn't contain them
-            dst = Dir.get(event.dest_path)
+            dst = Dir.get(dest_path)
             if dst:
                 src = deepcopy(dst)
-                src.path = event.src_path
+                src.path = src_path
 
-                if event.dest_path:
+                if dest_path:
                     # Standard rename with destination
                     message = Event(
                         CONFIG["CID"],
@@ -1500,17 +1534,17 @@ class FileEventHandler(FileSystemEventHandler):
                     )
         else:
             # File move/rename
-            if is_hidden_file(event.src_path):
+            if is_hidden_file(src_path):
                 return
 
             # Build event message for file rename
             # Destination already exists, source is the old file
             # Source object inherits destination data since
             # the event object doesn't contain them
-            dst = File.get(event.dest_path)
+            dst = File.get(dest_path)
             if dst:
                 src = deepcopy(dst)
-                src.filepath = event.src_path
+                src.filepath = src_path
                 message = Event(
                     CONFIG["CID"],
                     CONFIG["LOCAL_BUCKET"],
@@ -1534,18 +1568,20 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event: File system deletion event from watchdog.
         """
+        src_path = ensure_str_path(event.src_path)
+
         # Skip hidden directories
-        if event.is_directory and is_hidden_dir(event.src_path):
+        if event.is_directory and is_hidden_dir(src_path):
             return
 
         # Skip hidden files
-        if not event.is_directory and is_hidden_file(event.src_path):
+        if not event.is_directory and is_hidden_file(src_path):
             return
 
-        log(f'[R] "{event.src_path}"')
+        log(f'[R] "{src_path}"')
 
         # Create appropriate object type for the deleted item
-        obj = Dir(event.src_path) if event.is_directory else File(event.src_path)
+        obj = Dir(src_path) if event.is_directory else File(src_path)
 
         # Build deletion event message
         message = Event(

@@ -32,8 +32,15 @@ from dataclasses import dataclass, field
 from json import dumps
 from logging import getLogger
 from time import time
-from typing import Any, Callable, Optional
-from websockets.legacy.client import WebSocketClientProtocol
+from typing import Any, Callable, Optional, Protocol
+
+
+class WebSocketProtocol(Protocol):
+    """Protocol for WebSocket-like objects that can send messages."""
+
+    async def send(self, message: str) -> None:
+        """Send a message through the WebSocket."""
+        ...
 
 
 # Logger instance for this module
@@ -87,7 +94,7 @@ class EventQueue:
         websocket: WebSocket connection for sending events.
     """
 
-    def __init__(self, websocket: WebSocketClientProtocol):
+    def __init__(self, websocket: WebSocketProtocol):
         """
         Initialize the event queue.
 
