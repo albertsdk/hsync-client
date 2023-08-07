@@ -15,8 +15,11 @@ from hsync_client.logger import (
     SYMBOL_COLORS,
     ColoredFormatter,
     JsonFormatter,
+    ClientIdFilter,
     setup_logging,
     log_with_data,
+    get_client_id,
+    set_client_id,
 )
 
 
@@ -395,3 +398,52 @@ class TestLogWithData:
         logger.log.assert_called_once()
         call_args = logger.log.call_args
         assert call_args[1]["extra"]["json_data"] is None
+
+
+class TestClientIdContext:
+    """Tests for client ID context functions."""
+
+    def test_get_client_id_default_none(self):
+        """Test get_client_id returns None by default."""
+        set_client_id(None)
+        assert get_client_id() is None
+
+    def test_set_and_get_client_id(self):
+        """Test setting and getting client ID."""
+        set_client_id("test-client-123")
+        assert get_client_id() == "test-client-123"
+        set_client_id(None)  # cleanup
+
+    def test_client_id_can_be_cleared(self):
+        """Test client ID can be cleared."""
+        set_client_id("test-id")
+        set_client_id(None)
+        assert get_client_id() is None
+
+
+class TestClientIdFilter:
+    """Tests for ClientIdFilter class."""
+
+    def test_filter_adds_client_id(self):
+        """Test filter adds client_id to log record."""
+        set_client_id("filter-test-id")
+        filter_obj = ClientIdFilter()
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="test message", args=(), exc_info=None
+        )
+        result = filter_obj.filter(record)
+        assert result is True
+        assert record.client_id == "filter-test-id"
+        set_client_id(None)  # cleanup
+
+    def test_filter_uses_dash_when_no_client_id(self):
+        """Test filter uses '-' when no client ID is set."""
+        set_client_id(None)
+        filter_obj = ClientIdFilter()
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="test message", args=(), exc_info=None
+        )
+        filter_obj.filter(record)
+        assert record.client_id == "-"
