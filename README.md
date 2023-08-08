@@ -130,6 +130,7 @@ The client uses environment variables:
 | `-v, --verbose` | Enable verbose output |
 | `-q, --quiet` | Suppress all output |
 | `-o, --output` | Write output to file |
+| `--ca-cert` | Path to CA certificate for self-signed server certs |
 | `--insecure` | Skip SSL certificate verification |
 | `--no-color` | Disable colored output |
 | `--help-symbols` | Show output symbols legend |
@@ -161,6 +162,52 @@ export HSYNC_API_KEY="your-api-key"
 **With file logging:**
 ```bash
 ./dist/hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
+```
+
+## SSL/TLS (HTTPS/WSS)
+
+The client supports encrypted communication via HTTPS and WSS (WebSocket Secure).
+
+### Connecting to a Server with Valid SSL Certificate
+
+```bash
+# Standard HTTPS connection (certificate verified against system CA store)
+./dist/hsync -s https://server.example.com:8765 -b mybucket
+```
+
+### Connecting to a Server with Self-Signed Certificate
+
+When the server uses a self-signed certificate, you have two options:
+
+**Option 1: Trust the server certificate (recommended)**
+
+```bash
+# Copy the server's certificate to the client machine
+scp server:/path/to/certs/server.crt ./server.crt
+
+# Connect using the CA certificate
+./dist/hsync -s https://server:8765 -b mybucket --ca-cert server.crt
+```
+
+**Option 2: Disable SSL verification (not recommended for production)**
+
+```bash
+# Skip certificate verification (insecure!)
+./dist/hsync -s https://server:8765 -b mybucket --insecure
+```
+
+> ⚠️ **Warning**: Using `--insecure` disables all SSL certificate verification, making the connection vulnerable to man-in-the-middle attacks. Only use this for testing.
+
+### SSL Examples
+
+**Watch mode with self-signed certificate:**
+```bash
+./dist/hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
+```
+
+**Dry-run with HTTPS:**
+```bash
+./dist/hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
 ```
 
 ## Log Legend

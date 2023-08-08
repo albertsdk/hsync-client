@@ -165,6 +165,22 @@ def log(message: str = "", data: Optional[object] = None) -> None:
     log_with_data(LOG, level, message, data)
 
 
+def get_ssl_verify() -> bool | str:
+    """
+    Get the SSL verification setting for requests library.
+
+    Returns:
+        - False if SSL verification is disabled (--insecure)
+        - Path to CA certificate if --ca-cert is provided
+        - True for default SSL verification
+    """
+    if CONFIG.get("NO_VERIFY_SSL"):
+        return False
+    if CONFIG.get("CA_CERT"):
+        return CONFIG["CA_CERT"]
+    return True
+
+
 def is_valid_logfile(path_string: str) -> bool:
     """
     Validate a log file path for correctness.
@@ -424,7 +440,7 @@ def get_files_remote() -> list[dict]:
                 # TODO: implement path filtering
                 "sync_order": CONFIG["SYNC_ORDER"]
             },
-            verify=CONFIG["NO_VERIFY_SSL"],
+            verify=get_ssl_verify(),
         )
 
         if response.status_code == 401:
@@ -473,7 +489,7 @@ def download_file(file: File) -> None:
             headers=CONFIG["REQUEST_HEADERS"],
             params={"filename": file.filepath},
             stream=True,
-            verify=CONFIG["NO_VERIFY_SSL"],
+            verify=get_ssl_verify(),
         )
     except RequestException as e:
         log(f'[E] Network error downloading "{file.filepath}": {e}')
@@ -657,7 +673,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 headers=CONFIG["REQUEST_HEADERS"],
                 data=data,
                 files=files,
-                verify=CONFIG["NO_VERIFY_SSL"],
+                verify=get_ssl_verify(),
             )
             if response.status_code == 201:
                 log(f'[U] "{file.filepath}" {bytes_to_human_readable(file.size)}')
@@ -1021,9 +1037,16 @@ async def remote_events() -> None:
     if str(api_base).startswith("wss"):
         ssl_context = create_default_context(Purpose.SERVER_AUTH)
         if CONFIG["NO_VERIFY_SSL"]:
+            # Disable SSL verification (insecure mode)
             ssl_context.check_hostname = False
             ssl_context.verify_mode = CERT_NONE
+        elif CONFIG.get("CA_CERT"):
+            # Load custom CA certificate for self-signed server certs
+            ssl_context.load_verify_locations(cafile=CONFIG["CA_CERT"])
+            ssl_context.check_hostname = True
+            ssl_context.verify_mode = CERT_REQUIRED
         else:
+            # Default SSL verification
             ssl_context.check_hostname = True
             ssl_context.verify_mode = CERT_REQUIRED
 
@@ -1684,6 +1707,17 @@ def main() -> None:
         help="Skip SSL certificate verification.",
     )
 
+    # Custom CA certificate for self-signed server certificates
+    parser.add_argument(
+        "--ca-cert",
+        type=str,
+        required=False,
+        default=None,
+        metavar="FILE",
+        dest="ca_cert",
+        help="Path to CA certificate file for self-signed server certs.",
+    )
+
     # -------------------------------------------------------------------------
     # Sync options
     # -------------------------------------------------------------------------
@@ -1869,6 +1903,8 @@ def main() -> None:
         "LOGFILE": args.logfile,
         # SSL verification flag (inverted: verify_ssl=False means NO_VERIFY_SSL=True)
         "NO_VERIFY_SSL": not args.verify_ssl,
+        # Custom CA certificate for self-signed server certificates
+        "CA_CERT": args.ca_cert,
         # Quiet mode flag
         "QUIET": args.quiet,
         # Remote bucket name
