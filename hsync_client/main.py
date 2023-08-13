@@ -53,6 +53,7 @@ from hsync_client.models.sync_action import SyncAction, SyncActionName
 from argparse import ArgumentParser, ArgumentTypeError, HelpFormatter
 from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe, sleep, Task
 from copy import deepcopy
+from functools import partial
 from hashlib import md5
 from json import dumps, loads
 from os import (
@@ -95,7 +96,11 @@ from typing import Optional
 from websockets import connect
 from websockets.exceptions import ConnectionClosed
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import (
+    DirCreatedEvent,
+    DirDeletedEvent,
+    FileSystemEventHandler,
+)
 
 
 # Application version
@@ -253,20 +258,25 @@ def bytes_to_human_readable(bytes: float) -> str:
     return f"{bytes:.2f}{units[index]}"
 
 
-def compute_md5(filepath: str) -> str:
+def compute_md5(filepath: str, chunk_size: int = 65536) -> str:
     """
     Compute the MD5 checksum of a file.
 
-    Reads the entire file into memory for hashing.
+    Reads the file in chunks to avoid loading large files entirely
+    into memory.
 
     Args:
         filepath: Path to the file.
+        chunk_size: Size of chunks to read (default: 64KB).
 
     Returns:
         MD5 hash as hexadecimal string.
     """
+    hash_md5 = md5()
     with open(filepath, "rb") as f:
-        return md5(f.read()).hexdigest()
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 
 def get_permissions(obj_path: str) -> str:
@@ -827,11 +837,11 @@ async def sync() -> None:
 
     sync_actions: list[SyncAction] = []
 
-    # Action handlers - defined outside try block to ensure it's always bound
+    # Action handlers - use direct function references where possible
     actions: dict[SyncActionName, object] = {
-        SyncActionName.download: lambda file: download_file(file),
-        SyncActionName.upload: lambda file: upload_file(file, False),
-        SyncActionName.nothing: lambda file: nothing_to_do(file),
+        SyncActionName.download: download_file,
+        SyncActionName.upload: partial(upload_file, check_size=False),
+        SyncActionName.nothing: nothing_to_do,
     }
 
     try:
@@ -857,7 +867,7 @@ async def sync() -> None:
             LOG.error(f"Exception: {e}")
 
     # Track number of actions performed
-    todo = 0
+    actions_count = 0
 
     if CONFIG["DRYRUN"]:
         # Dry-run mode: just log what would be done
@@ -867,11 +877,11 @@ async def sync() -> None:
             else:
                 # Map action to log symbol
                 if sync_action.name == SyncActionName.download:
-                    action = "D"
+                    action_label = "D"
                 elif sync_action.name == SyncActionName.upload:
-                    action = "U"
+                    action_label = "U"
                 else:
-                    action = "-"
+                    action_label = "-"
 
                 # Format relative filepath for display
                 filepath = (
@@ -880,7 +890,7 @@ async def sync() -> None:
                     else ""
                 )
                 LOG.info(
-                    f'[{action.upper():10s}] "{filepath}" '
+                    f'[{action_label.upper():10s}] "{filepath}" '
                     f"{bytes_to_human_readable(sync_action.file.size)} "
                     f"({sync_action.timedelta})"
                 )
@@ -891,10 +901,10 @@ async def sync() -> None:
                 action_func = actions.get(sync_action.name)
                 if callable(action_func):
                     action_func(sync_action.file)
-                todo += 1
+                actions_count += 1
 
     if not CONFIG["DRYRUN"]:
-        if todo == 0:
+        if actions_count == 0:
             LOG.info("Nothing to sync")
         LOG.info("Sync completed.")
 
@@ -1473,15 +1483,12 @@ class FileEventHandler(FileSystemEventHandler):
             if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
                 # Hidden to visible - treat as creation of visible directory
                 LOG.debug(f"Switch event to created: {dest_path}")
-                from watchdog.events import DirCreatedEvent
                 created_event = DirCreatedEvent(dest_path)
                 self.on_created(created_event)
                 return
             if is_hidden_dir(dest_path):
                 # Moving to hidden directory - treat as deletion
                 LOG.warning(f"Switch event to deleted: {dest_path}")
-                # Create a mock event for on_deleted
-                from watchdog.events import DirDeletedEvent
                 deleted_event = DirDeletedEvent(dest_path)
                 self.on_deleted(deleted_event)
                 return
@@ -1495,25 +1502,15 @@ class FileEventHandler(FileSystemEventHandler):
                 src = deepcopy(dst)
                 src.path = src_path
 
-                if dest_path:
-                    # Standard rename with destination
-                    message = Event(
-                        CONFIG["CID"],
-                        CONFIG["LOCAL_BUCKET"],
-                        CONFIG["REMOTE_BUCKET"],
-                        EventName.renamed,
-                        src,
-                        dst,
-                    )
-                else:
-                    # No destination - treat as modification
-                    message = Event(
-                        CONFIG["CID"],
-                        CONFIG["LOCAL_BUCKET"],
-                        CONFIG["REMOTE_BUCKET"],
-                        EventName.modified,
-                        src,
-                    )
+                # Send rename event
+                message = Event(
+                    CONFIG["CID"],
+                    CONFIG["LOCAL_BUCKET"],
+                    CONFIG["REMOTE_BUCKET"],
+                    EventName.renamed,
+                    src,
+                    dst,
+                )
         else:
             # File move/rename
             if is_hidden_file(src_path):
