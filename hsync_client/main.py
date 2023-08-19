@@ -120,6 +120,7 @@ ACTION_LABEL = {
     "permission": "[PERMISSION]",
     "symlink": "[SYMLINK   ]",
     "skip": "[SKIP      ]",
+    "nothing": "[IN SYNC   ]",
 }
 
 
@@ -875,13 +876,13 @@ async def sync() -> None:
             if DEBUG:
                 LOG.info(f"Sync action:", sync_action.to_dict())
             else:
-                # Map action to log symbol
+                # Map action to descriptive label
                 if sync_action.name == SyncActionName.download:
-                    action_label = "D"
+                    action_label = ACTION_LABEL["download"]
                 elif sync_action.name == SyncActionName.upload:
-                    action_label = "U"
+                    action_label = ACTION_LABEL["upload"]
                 else:
-                    action_label = "-"
+                    action_label = ACTION_LABEL["nothing"]
 
                 # Format relative filepath for display
                 filepath = (
@@ -890,7 +891,7 @@ async def sync() -> None:
                     else ""
                 )
                 LOG.info(
-                    f'[{action_label.upper():10s}] "{filepath}" '
+                    f'{action_label} "{filepath}" '
                     f"{bytes_to_human_readable(sync_action.file.size)} "
                     f"({sync_action.timedelta})"
                 )
@@ -1904,14 +1905,15 @@ def main() -> None:
     if args.legend:
         LOG.info("Log legend:")
         log_labels = {
-            ACTION_LABEL['skip']: "File not changed (no action required)",
-            ACTION_LABEL['download']: "Download file",
-            ACTION_LABEL['upload']: "Upload file",
-            ACTION_LABEL['move']: "Move/Rename file/dir",
-            ACTION_LABEL['remove']: "Remove file/dir",
+            ACTION_LABEL['nothing']: "File already in sync (no action required)",
+            ACTION_LABEL['skip']: "File skipped",
+            ACTION_LABEL['download']: "Download file from server",
+            ACTION_LABEL['upload']: "Upload file to server",
+            ACTION_LABEL['move']: "Move/Rename file or directory",
+            ACTION_LABEL['remove']: "Remove file or directory",
             ACTION_LABEL['create']: "Create directory",
-            ACTION_LABEL['permission']: "Set permission",
-            ACTION_LABEL['symlink']: "Create symlink",
+            ACTION_LABEL['permission']: "Set file/directory permission",
+            ACTION_LABEL['symlink']: "Create symbolic link",
         }
         for label, description in log_labels.items():
             LOG.info(f"  {label} {description}")
