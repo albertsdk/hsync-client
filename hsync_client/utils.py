@@ -68,7 +68,7 @@ def get_ssl_verify() -> bool | str:
     if CONFIG.get("NO_VERIFY_SSL"):
         return False
     if CONFIG.get("CA_CERT"):
-        return CONFIG["CA_CERT"]
+        return str(CONFIG["CA_CERT"])
     return True
 
 

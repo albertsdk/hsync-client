@@ -321,7 +321,7 @@ async def resync() -> None:
     """
     try:
         while True:
-            await sleep(CONFIG["RESYNC"])
+            await sleep(CONFIG["RESYNC"] or 60)
             LOG.info(f"Force sync ({CONFIG['RESYNC']} sec.)")
             await sync()
     except Exception as e:
