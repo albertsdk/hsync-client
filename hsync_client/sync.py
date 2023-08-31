@@ -21,18 +21,20 @@ This module provides the core synchronization functionality including
 file comparison, action determination, and sync execution.
 """
 
+import asyncio
 import logging
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from os import makedirs, walk
 from os.path import exists, join
 from requests import get, RequestException
 from sys import exc_info
 from traceback import print_tb
-from typing import Mapping, Optional, cast
+from typing import Callable, Mapping, Optional, cast
 
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import ACTION_LABEL
+from hsync_client.constants import ACTION_LABEL, MAX_CONCURRENT_TRANSFERS
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
@@ -54,10 +56,13 @@ async def sync() -> None:
     Perform a full synchronization between local and remote files.
 
     Compares local and remote file lists, determines required actions,
-    and executes them (download, upload, or skip).
+    and executes them in parallel (download, upload, or skip).
+
+    Uses a thread pool executor with semaphore to limit concurrent
+    transfers and avoid overwhelming the server.
     """
     # Import here to avoid circular import
-    from hsync_client.transfer import download_file, upload_file, nothing_to_do
+    from hsync_client.transfer import nothing_to_do
 
     try:
         # Get file lists from both sides
@@ -69,14 +74,18 @@ async def sync() -> None:
 
         LOG.info(f"Sync actions: {len(sync_actions)} files to process")
 
-        # Execute each sync action
-        for action in sync_actions:
-            if action.name == SyncActionName.download:
-                download_file(action.file)
-            elif action.name == SyncActionName.upload:
-                upload_file(action.file)
-            elif action.name == SyncActionName.nothing:
-                nothing_to_do(action.file)
+        # Separate actions by type
+        downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
+        uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload]
+        nothing = [a.file for a in sync_actions if a.name == SyncActionName.nothing]
+
+        # Log files that are already in sync (no I/O needed)
+        for file in nothing:
+            nothing_to_do(file)
+
+        # Execute transfers in parallel using thread pool
+        if downloads or uploads:
+            await _execute_parallel_transfers(downloads, uploads)
 
         LOG.info("Sync completed successfully")
 
@@ -92,6 +101,60 @@ async def sync() -> None:
             exc_type, exc_value, exc_tb = exc_info()
             if exc_tb:
                 print_tb(exc_tb)
+
+
+async def _execute_parallel_transfers(
+    downloads: list[File],
+    uploads: list[File],
+) -> None:
+    """
+    Execute file transfers in parallel using a thread pool.
+
+    Uses asyncio.Semaphore to limit concurrent transfers and
+    run_in_executor to run synchronous transfer functions in threads.
+
+    Args:
+        downloads: List of files to download from remote.
+        uploads: List of files to upload to remote.
+    """
+    from hsync_client.transfer import download_file, upload_file
+
+    # Semaphore to limit concurrent transfers
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSFERS)
+
+    # Get the current event loop
+    loop = asyncio.get_running_loop()
+
+    # Create a thread pool for I/O-bound operations
+    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TRANSFERS) as executor:
+
+        async def transfer_with_semaphore(func: Callable[[File], None], file: File) -> None:
+            """Execute a transfer function with semaphore limiting."""
+            async with semaphore:
+                try:
+                    # Run synchronous function in thread pool
+                    await loop.run_in_executor(executor, func, file)
+                except Exception as e:
+                    LOG.error(f"Transfer error for {file.filepath}: {e}")
+
+        # Create tasks for all transfers
+        tasks = []
+
+        # Add download tasks
+        for file in downloads:
+            tasks.append(transfer_with_semaphore(download_file, file))
+
+        # Add upload tasks
+        for file in uploads:
+            tasks.append(transfer_with_semaphore(upload_file, file))
+
+        # Execute all transfers concurrently
+        if tasks:
+            LOG.info(
+                f"Starting parallel transfers: {len(downloads)} downloads, "
+                f"{len(uploads)} uploads (max {MAX_CONCURRENT_TRANSFERS} concurrent)"
+            )
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # =============================================================================

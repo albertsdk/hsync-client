@@ -63,6 +63,15 @@ FILE_STABILITY_INTERVAL = 2
 
 
 # =============================================================================
+# Parallel Transfer Settings
+# =============================================================================
+
+# Maximum number of concurrent file transfers (downloads/uploads)
+# Higher values increase throughput but also server load
+MAX_CONCURRENT_TRANSFERS = 5
+
+
+# =============================================================================
 # CLI Validation Limits
 # =============================================================================
 

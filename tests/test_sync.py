@@ -569,3 +569,117 @@ class TestGetFilesRemote:
             with pytest.raises(NetworkError):
                 get_files_remote()
 
+
+class TestExecuteParallelTransfers:
+    """Tests for _execute_parallel_transfers function."""
+
+    @pytest.mark.asyncio
+    async def test_executes_downloads_in_parallel(self):
+        """Downloads are executed in parallel."""
+        from hsync_client.sync import _execute_parallel_transfers
+
+        files = [
+            File(filepath="/path/file1.txt"),
+            File(filepath="/path/file2.txt"),
+            File(filepath="/path/file3.txt"),
+        ]
+
+        download_calls = []
+
+        def mock_download(file):
+            download_calls.append(file.filepath)
+
+        # Patch in transfer module (local import in _execute_parallel_transfers)
+        with patch("hsync_client.transfer.download_file", mock_download):
+            await _execute_parallel_transfers(files, [])
+
+        assert len(download_calls) == 3
+        assert "/path/file1.txt" in download_calls
+        assert "/path/file2.txt" in download_calls
+        assert "/path/file3.txt" in download_calls
+
+    @pytest.mark.asyncio
+    async def test_executes_uploads_in_parallel(self):
+        """Uploads are executed in parallel."""
+        from hsync_client.sync import _execute_parallel_transfers
+
+        files = [
+            File(filepath="/path/file1.txt"),
+            File(filepath="/path/file2.txt"),
+        ]
+
+        upload_calls = []
+
+        def mock_upload(file):
+            upload_calls.append(file.filepath)
+
+        # Patch in transfer module (local import in _execute_parallel_transfers)
+        with patch("hsync_client.transfer.upload_file", mock_upload):
+            await _execute_parallel_transfers([], files)
+
+        assert len(upload_calls) == 2
+        assert "/path/file1.txt" in upload_calls
+        assert "/path/file2.txt" in upload_calls
+
+    @pytest.mark.asyncio
+    async def test_executes_mixed_transfers(self):
+        """Downloads and uploads are executed together."""
+        from hsync_client.sync import _execute_parallel_transfers
+
+        downloads = [
+            File(filepath="/path/download.txt"),
+        ]
+        uploads = [
+            File(filepath="/path/upload.txt"),
+        ]
+
+        download_calls = []
+        upload_calls = []
+
+        def mock_download(file):
+            download_calls.append(file.filepath)
+
+        def mock_upload(file):
+            upload_calls.append(file.filepath)
+
+        # Patch in transfer module (local import in _execute_parallel_transfers)
+        with patch("hsync_client.transfer.download_file", mock_download), \
+             patch("hsync_client.transfer.upload_file", mock_upload):
+            await _execute_parallel_transfers(downloads, uploads)
+
+        assert len(download_calls) == 1
+        assert len(upload_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_handles_transfer_errors_gracefully(self):
+        """Transfer errors are logged but don't stop other transfers."""
+        from hsync_client.sync import _execute_parallel_transfers
+
+        files = [
+            File(filepath="/path/file1.txt"),
+            File(filepath="/path/file2.txt"),
+        ]
+
+        call_count = 0
+
+        def mock_download(file):
+            nonlocal call_count
+            call_count += 1
+            if file.filepath == "/path/file1.txt":
+                raise Exception("Download failed")
+
+        # Patch in transfer module (local import in _execute_parallel_transfers)
+        with patch("hsync_client.transfer.download_file", mock_download):
+            # Should not raise exception
+            await _execute_parallel_transfers(files, [])
+
+        # Both files should have been attempted
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_lists_do_nothing(self):
+        """Empty download and upload lists complete without error."""
+        from hsync_client.sync import _execute_parallel_transfers
+
+        # Should complete without error
+        await _execute_parallel_transfers([], [])
