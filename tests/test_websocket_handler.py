@@ -387,3 +387,196 @@ class TestHandleSymlinkEvent:
             _handle_symlink_event(None)
             mock_symlink.assert_not_called()
 
+
+class TestProcessWebsocketEvents:
+    """Tests for _process_websocket_events function."""
+
+    @pytest.mark.asyncio
+    async def test_processes_added_directory_event(self):
+        """Processes added directory event correctly."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_dir') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_called_once_with(message["src"])
+
+    @pytest.mark.asyncio
+    async def test_processes_added_file_event(self):
+        """Processes added file event correctly."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {
+                "filepath": "newfile.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_file') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_called_once_with(message["src"])
+
+    @pytest.mark.asyncio
+    async def test_skips_event_from_same_client(self):
+        """Skips events from the same client (echo prevention)."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "added",
+            "cid": "my_client",  # Same as CONFIG["CID"]
+            "bucket": "testbucket",
+            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_dir') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_event_from_different_bucket(self):
+        """Skips events from different buckets."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "otherbucket",  # Different bucket
+            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_dir') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_invalid_event_type(self):
+        """Skips events with invalid event type."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "invalid_event",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_dir') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_processes_renamed_event(self):
+        """Processes renamed event correctly."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "renamed",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "olddir", "permissions": "drwxr-xr-x"},
+            "dst": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler._handle_rename_event') as mock_rename:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_rename.assert_called_once_with(message["src"], message["dst"])
+
+    @pytest.mark.asyncio
+    async def test_processes_deleted_event(self):
+        """Processes deleted event correctly."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "deleted",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "deleteddir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler._handle_delete_event') as mock_delete:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_delete.assert_called_once_with(message["src"])
