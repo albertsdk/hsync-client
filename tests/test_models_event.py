@@ -45,6 +45,7 @@ class TestEvent:
         assert event.cid == "client-123"
         assert event.bucket == "mybucket"
         assert event.name == "added"
+        assert isinstance(event.src, File)
         assert event.src.filepath == "file.txt"  # localpath stripped
         assert event.dst is None
 
@@ -74,6 +75,7 @@ class TestEvent:
             strip_localpath=False,
         )
         
+        assert isinstance(event.src, File)
         assert event.src.filepath == "/local/bucket/file.txt"
 
     def test_rename_event(self):
@@ -91,6 +93,8 @@ class TestEvent:
             strip_localpath=True,
         )
         
+        assert isinstance(event.src, File)
+        assert isinstance(event.dst, File)
         assert event.src.filepath == "old.txt"
         assert event.dst.filepath == "new.txt"
 
