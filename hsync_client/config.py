@@ -35,6 +35,10 @@ HSYNC_SERVER_URL: Optional[str] = environ.get("HSYNC_SERVER")
 # API key for authentication
 HSYNC_API_KEY: str = environ.get("HSYNC_API_KEY", "")
 
+# File stability delay in seconds (how long to wait between size/mtime checks)
+# Overridable via CLI --stability-delay or this environment variable
+HSYNC_STABILITY_DELAY: Optional[str] = environ.get("HSYNC_STABILITY_DELAY")
+
 
 # =============================================================================
 # Configuration TypedDict
@@ -93,6 +97,8 @@ class HsyncConfig(TypedDict):
     SYNC_ORDER: str
     # Filter path for subdirectory sync (optional)
     FILTER_PATH: Optional[str]
+    # File stability delay in seconds
+    STABILITY_DELAY: int
 
 
 # =============================================================================

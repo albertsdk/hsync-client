@@ -58,8 +58,14 @@ FILE_SIZE_MEDIUM = 100_000_000   # 100MB
 # File Stability Check
 # =============================================================================
 
-# Default interval (seconds) to wait between file size checks
-FILE_STABILITY_INTERVAL = 2
+# Default interval (seconds) to wait between file size/mtime checks
+# before considering a file stable and ready for upload.
+# 5 seconds is a reasonable compromise.
+FILE_STABILITY_INTERVAL_DEFAULT = 5
+
+# Limits for stability delay configuration
+STABILITY_DELAY_MIN = 1
+STABILITY_DELAY_MAX = 60
 
 
 # =============================================================================

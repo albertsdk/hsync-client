@@ -29,6 +29,8 @@ from hsync_client.constants import (
     RECONNECT_DELAY_MIN,
     RESYNC_MAX,
     RESYNC_MIN,
+    STABILITY_DELAY_MAX,
+    STABILITY_DELAY_MIN,
 )
 
 
@@ -139,4 +141,28 @@ def valid_bucket(value: str) -> str:
     if not value.isalnum():
         raise ArgumentTypeError("The bucket name must be alphanumeric.")
     return value
+
+
+def valid_stability_delay(value: str) -> int:
+    """
+    Validate file stability delay argument.
+
+    Used as an argparse type validator. Value must be between
+    STABILITY_DELAY_MIN and STABILITY_DELAY_MAX seconds.
+
+    Args:
+        value: String value from command line.
+
+    Returns:
+        Validated integer value.
+
+    Raises:
+        ArgumentTypeError: If value is not within valid range.
+    """
+    validator = create_int_range_validator(
+        STABILITY_DELAY_MIN - 1,  # -1 because validator uses exclusive bounds
+        STABILITY_DELAY_MAX + 1,
+        "stability delay",
+    )
+    return validator(value)
 

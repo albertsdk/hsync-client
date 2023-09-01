@@ -22,6 +22,7 @@ for real-time synchronization with the server.
 """
 
 import logging
+import sys
 
 from asyncio import create_task, get_running_loop, sleep, Task
 from asyncio import run_coroutine_threadsafe
@@ -31,6 +32,7 @@ from os import makedirs, remove, rename, symlink as os_symlink, unlink
 from os.path import dirname, exists, islink
 from shutil import rmtree
 from ssl import create_default_context, Purpose, CERT_NONE, CERT_REQUIRED
+from time import time
 from typing import Optional
 from watchdog.events import (
     DirCreatedEvent,
@@ -39,6 +41,13 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 from websockets import connect, ConnectionClosed
+
+# Check if on_closed event is supported (Linux with inotify)
+# On macOS (FSEvents) and Windows, on_closed is not triggered
+SUPPORTS_ON_CLOSED = sys.platform == "linux"
+
+# Debounce interval for on_modified fallback (seconds)
+MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
 from hsync_client.config import CONFIG, HSYNC_API_KEY
 from hsync_client.event_queue import EventQueue
@@ -404,6 +413,8 @@ class FileEventHandler(FileSystemEventHandler):
         self.websocket = websocket
         self.loop = loop
         self.event_queue = event_queue
+        # Track last modified time for debouncing on systems without on_closed
+        self._last_modified: dict[str, float] = {}
 
     def _send_message(self, message: Event) -> None:
         """
@@ -496,30 +507,54 @@ class FileEventHandler(FileSystemEventHandler):
         Handle file/directory modification events.
 
         For directories: broadcasts 'modified' event if permissions changed.
-        File modifications are handled by on_closed() instead.
+        For files on Linux: handled by on_closed() instead.
+        For files on macOS/Windows: handles file modifications with debouncing
+        since on_closed is not supported on these platforms.
 
         Args:
             event: File system modification event from watchdog.
         """
         src_path = ensure_str_path(event.src_path)
 
-        if (
-            event.is_directory
-            and not is_hidden_dir(src_path)
-            and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
-        ):
-            # Directory modified (permissions change) - broadcast event
-            LOG.info(f'[MOVE      ] "{src_path}"')
-            dir = Dir.get(src_path)
-            if dir:
-                message = Event(
-                    CONFIG["CID"],
-                    CONFIG["LOCAL_BUCKET"],
-                    CONFIG["REMOTE_BUCKET"],
-                    EventName.modified,
-                    dir,
-                )
-                self._send_message(message)
+        if event.is_directory:
+            if (
+                not is_hidden_dir(src_path)
+                and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
+            ):
+                # Directory modified (permissions change) - broadcast event
+                LOG.info(f'[MOVE      ] "{src_path}"')
+                dir = Dir.get(src_path)
+                if dir:
+                    message = Event(
+                        CONFIG["CID"],
+                        CONFIG["LOCAL_BUCKET"],
+                        CONFIG["REMOTE_BUCKET"],
+                        EventName.modified,
+                        dir,
+                    )
+                    self._send_message(message)
+        elif not SUPPORTS_ON_CLOSED:
+            # Fallback for macOS/Windows where on_closed is not supported
+            # Use debouncing to avoid multiple uploads during file writes
+            if not is_hidden_file(src_path):
+                current_time = time()
+                last_time = self._last_modified.get(src_path, 0)
+
+                if current_time - last_time >= MODIFIED_DEBOUNCE_INTERVAL:
+                    self._last_modified[src_path] = current_time
+                    try:
+                        if exists(src_path):
+                            file = File.get(src_path)
+                            if file:
+                                LOG.debug(
+                                    f'[MODIFIED  ] "{src_path}" '
+                                    f"(fallback for non-Linux system)"
+                                )
+                                upload_file(file)
+                    except Exception as e:
+                        LOG.error(
+                            f'Error handling modified event for "{src_path}": {e}'
+                        )
 
     def on_closed(self, event) -> None:
         """

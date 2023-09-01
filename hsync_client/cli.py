@@ -25,7 +25,12 @@ from argparse import ArgumentParser, HelpFormatter
 
 from hsync_client.config import HSYNC_SERVER_URL
 from hsync_client.constants import HSYNC_VERSION
-from hsync_client.validators import valid_bucket, valid_reconnect_delay, valid_resync
+from hsync_client.validators import (
+    valid_bucket,
+    valid_reconnect_delay,
+    valid_resync,
+    valid_stability_delay,
+)
 
 
 class SortedHelpFormatter(HelpFormatter):
@@ -151,6 +156,17 @@ def create_argument_parser() -> ArgumentParser:
         metavar="SEC",
         dest="reconnect_delay",
         help="Retry connection after SEC seconds (default: 5).",
+    )
+
+    parser.add_argument(
+        "--stability-delay",
+        type=valid_stability_delay,
+        required=False,
+        default=None,
+        metavar="SEC",
+        dest="stability_delay",
+        help="Seconds to wait before uploading modified files (default: 5). "
+             "Can also be set via HSYNC_STABILITY_DELAY env var.",
     )
 
     parser.add_argument(
