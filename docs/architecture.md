@@ -78,9 +78,15 @@ graph TB
 graph LR
     subgraph "hsync_client"
         main[main.py]
+        cli[cli.py]
+        config[config.py]
+        constants[constants.py]
+        sync[sync.py]
+        transfer[transfer.py]
+        websocket[websocket_handler.py]
         logger[logger.py]
         event_queue[event_queue.py]
-        
+
         subgraph "models/"
             file[file.py]
             dir[dir.py]
@@ -90,9 +96,14 @@ graph LR
         end
     end
 
-    main --> logger
-    main --> event_queue
-    main --> models/
+    main --> cli
+    main --> config
+    main --> sync
+    main --> websocket
+    sync --> transfer
+    sync --> constants
+    websocket --> transfer
+    cli --> logger
 ```
 
 ![Module Structure](images/architecture-2.png)
@@ -219,3 +230,53 @@ flowchart LR
 ```
 
 ![Configuration Flow](images/architecture-6.png)
+
+## Parallel File Transfers
+
+The sync engine uses a thread pool with semaphore-based concurrency control:
+
+```mermaid
+flowchart TB
+    subgraph "Sync Engine"
+        SYNC[sync]
+        ACTIONS[Separate Actions]
+        PARALLEL[_execute_parallel_transfers]
+    end
+
+    subgraph "Thread Pool"
+        SEM[Semaphore<br/>max=5]
+        T1[Thread 1]
+        T2[Thread 2]
+        T3[Thread 3]
+        T4[Thread ...]
+        T5[Thread N]
+    end
+
+    subgraph "Transfers"
+        D1[Download 1]
+        D2[Download 2]
+        U1[Upload 1]
+        U2[Upload 2]
+    end
+
+    subgraph "Server"
+        API[REST API]
+    end
+
+    SYNC --> ACTIONS
+    ACTIONS -->|downloads + uploads| PARALLEL
+    PARALLEL --> SEM
+    SEM --> T1 & T2 & T3 & T4 & T5
+    T1 --> D1
+    T2 --> D2
+    T3 --> U1
+    T4 --> U2
+    D1 & D2 & U1 & U2 --> API
+```
+
+![Parallel Transfers](images/architecture-7.png)
+
+**Configuration:**
+- `HSYNC_MAX_CONCURRENT_TRANSFERS`: Controls maximum parallel transfers (default: 5)
+- Uses `asyncio.Semaphore` to limit concurrent operations
+- Uses `ThreadPoolExecutor` for I/O-bound operations

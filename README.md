@@ -53,6 +53,7 @@ flowchart LR
 ## Features
 
 - 🔄 Bidirectional file synchronization
+- ⚡ Parallel file transfers (configurable concurrency)
 - 👁️ Real-time file system monitoring (watchdog)
 - 📡 WebSocket connection for remote events
 - ✅ MD5-based file integrity verification
@@ -98,12 +99,27 @@ poetry install
 
 ## Configuration
 
-The client uses environment variables:
+### Environment Files
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `HSYNC_SERVER_URL` | Server URL | No (use `-s`) |
-| `HSYNC_API_KEY` | API key for authentication | Yes |
+The client provides environment file templates for easy configuration:
+
+```bash
+# Development (HTTP, localhost)
+source dev.env
+./dist/hsync -b mybucket -w
+
+# Production (HTTPS, remote server)
+source prod.env
+./dist/hsync -b mybucket -w
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HSYNC_SERVER` | Server URL | (required or use `-s`) |
+| `HSYNC_API_KEY` | API key for authentication | (required) |
+| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
 
 ## Usage
 
@@ -249,6 +265,12 @@ hsync-client/
 │   ├── __init__.py
 │   ├── __main__.py         # Module entry point
 │   ├── main.py             # Main CLI logic
+│   ├── cli.py              # CLI argument parsing
+│   ├── config.py           # Configuration management
+│   ├── constants.py        # Application constants
+│   ├── sync.py             # Sync engine with parallel transfers
+│   ├── transfer.py         # File upload/download operations
+│   ├── websocket_handler.py # WebSocket event handling
 │   ├── logger.py           # Logging configuration
 │   ├── event_queue.py      # Event queue with retry logic
 │   └── models/             # Data models
@@ -265,6 +287,8 @@ hsync-client/
 ├── dist/                   # Compiled binary (created by compile.sh)
 │   └── hsync               # Standalone executable
 ├── build/                  # Build artifacts (created by compile.sh)
+├── dev.env                 # Development environment template
+├── prod.env                # Production environment template
 ├── compile.sh              # Build script (PyInstaller with optimizations)
 ├── pyproject.toml
 ├── poetry.lock
