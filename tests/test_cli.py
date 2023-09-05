@@ -86,180 +86,166 @@ class TestCreateArgumentParser:
 
     def test_parser_created_successfully(self):
         """Parser is created without errors."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            assert parser is not None
-            assert parser.prog == "hsync"
+        parser = create_argument_parser()
+        assert parser is not None
+        assert parser.prog == "hsync"
 
     def test_parser_has_required_bucket_argument(self):
         """Parser requires -b/--bucket argument."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            
-            # Should fail without bucket
-            with pytest.raises(SystemExit):
-                parser.parse_args([])
+        parser = create_argument_parser()
+
+        # Should fail without bucket
+        with pytest.raises(SystemExit):
+            parser.parse_args([])
 
     def test_parser_accepts_bucket_short_option(self):
         """Parser accepts -b bucket option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'testbucket'])
-            assert args.bucket == 'testbucket'
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'testbucket'])
+        assert args.bucket == 'testbucket'
 
     def test_parser_accepts_bucket_long_option(self):
         """Parser accepts --bucket option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['--bucket', 'mybucket123'])
-            assert args.bucket == 'mybucket123'
+        parser = create_argument_parser()
+        args = parser.parse_args(['--bucket', 'mybucket123'])
+        assert args.bucket == 'mybucket123'
 
     def test_parser_rejects_invalid_bucket_name(self):
         """Parser rejects bucket names with non-alphanumeric chars."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            # Bucket names with hyphens are not allowed
-            with pytest.raises(SystemExit):
-                parser.parse_args(['-b', 'test-bucket'])
+        parser = create_argument_parser()
+        # Bucket names with hyphens are not allowed
+        with pytest.raises(SystemExit):
+            parser.parse_args(['-b', 'test-bucket'])
 
-    def test_server_required_when_no_env(self):
-        """Server argument required when HSYNC_SERVER_URL not set."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', None):
-            parser = create_argument_parser()
-            
-            # Should fail without server
-            with pytest.raises(SystemExit):
-                parser.parse_args(['-b', 'test'])
+    def test_server_not_required_at_parse_time(self):
+        """Server argument is not required at parse time (validated later in main)."""
+        parser = create_argument_parser()
+        # Should NOT fail without server - validation happens in main()
+        args = parser.parse_args(['-b', 'test'])
+        assert args.bucket == 'test'
+        assert args.server_url is None
 
-    def test_server_optional_when_env_set(self):
-        """Server argument optional when HSYNC_SERVER_URL is set."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test'])
-            assert args.bucket == 'test'
+    def test_server_can_be_provided(self):
+        """Server argument can be provided via CLI."""
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-s', 'http://test:8000'])
+        assert args.bucket == 'test'
+        assert args.server_url == 'http://test:8000'
 
     def test_watch_flag(self):
         """Parser accepts -w/--watch flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '-w'])
-            assert args.continuous is True
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-w'])
+        assert args.continuous is True
 
     def test_verbose_flag(self):
         """Parser accepts -v/--verbose flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '-v'])
-            assert args.debug is True
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-v'])
+        assert args.debug is True
 
     def test_quiet_flag(self):
         """Parser accepts -q/--quiet flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '-q'])
-            assert args.quiet is True
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-q'])
+        assert args.quiet is True
 
     def test_dry_run_flag(self):
         """Parser accepts -n/--dry-run flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '-n'])
-            assert args.dryrun is True
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-n'])
+        assert args.dryrun is True
 
     def test_insecure_flag(self):
         """Parser accepts --insecure flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '--insecure'])
-            assert args.verify_ssl is False
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--insecure'])
+        assert args.verify_ssl is False
 
     def test_no_color_flag(self):
         """Parser accepts --no-color flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '--no-color'])
-            assert args.no_color is True
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--no-color'])
+        assert args.no_color is True
 
     def test_help_symbols_flag(self):
         """Parser accepts --help-symbols flag."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '--help-symbols'])
-            assert args.legend is True
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--help-symbols'])
+        assert args.legend is True
 
     def test_order_by_choices(self):
         """Parser accepts only valid order-by choices."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
+        parser = create_argument_parser()
 
-            # Valid choice: mtime
-            args = parser.parse_args(['-b', 'test', '--order-by', 'mtime'])
-            assert args.sync_order == 'mtime'
+        # Valid choice: mtime
+        args = parser.parse_args(['-b', 'test', '--order-by', 'mtime'])
+        assert args.sync_order == 'mtime'
 
-            # Valid choice: ctime
-            args = parser.parse_args(['-b', 'test', '--order-by', 'ctime'])
-            assert args.sync_order == 'ctime'
+        # Valid choice: ctime
+        args = parser.parse_args(['-b', 'test', '--order-by', 'ctime'])
+        assert args.sync_order == 'ctime'
 
-            # Invalid choice should fail
-            with pytest.raises(SystemExit):
-                parser.parse_args(['-b', 'test', '--order-by', 'invalid'])
+        # Invalid choice should fail
+        with pytest.raises(SystemExit):
+            parser.parse_args(['-b', 'test', '--order-by', 'invalid'])
 
     def test_path_option(self):
         """Parser accepts -p/--path option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '-p', '/tmp/sync'])
-            assert args.local_path == '/tmp/sync'
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-p', '/tmp/sync'])
+        assert args.local_path == '/tmp/sync'
 
     def test_ca_cert_option(self):
         """Parser accepts --ca-cert option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '--ca-cert', '/path/to/ca.crt'])
-            assert args.ca_cert == '/path/to/ca.crt'
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--ca-cert', '/path/to/ca.crt'])
+        assert args.ca_cert == '/path/to/ca.crt'
 
     def test_output_option(self):
         """Parser accepts -o/--output option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '-o', '/tmp/log.txt'])
-            assert args.logfile == '/tmp/log.txt'
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '-o', '/tmp/log.txt'])
+        assert args.logfile == '/tmp/log.txt'
 
     def test_filter_path_option(self):
         """Parser accepts --filter-path option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '--filter-path', 'subdir'])
-            assert args.filter_path == 'subdir'
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--filter-path', 'subdir'])
+        assert args.filter_path == 'subdir'
 
     def test_retry_delay_option(self):
         """Parser accepts --retry-delay option."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test', '--retry-delay', '10'])
-            assert args.reconnect_delay == 10
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--retry-delay', '10'])
+        assert args.reconnect_delay == 10
 
     def test_default_values(self):
         """Parser sets correct default values."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            args = parser.parse_args(['-b', 'test'])
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test'])
 
-            assert args.continuous is False
-            assert args.debug is False
-            assert args.quiet is False
-            assert args.dryrun is False
-            assert args.verify_ssl is True  # Default is True
-            assert args.sync_order == 'mtime'
-            assert args.reconnect_delay == 5
-            assert args.ca_cert is None
-            assert args.filter_path is None
-            assert args.logfile is None
-            assert args.resync is None
+        assert args.continuous is False
+        assert args.debug is False
+        assert args.quiet is False
+        assert args.dryrun is False
+        assert args.verify_ssl is True  # Default is True
+        assert args.sync_order == 'mtime'
+        assert args.reconnect_delay == 5
+        assert args.ca_cert is None
+        assert args.filter_path is None
+        assert args.logfile is None
+        assert args.resync is None
+        assert args.env_file is None  # New --env-file parameter
 
     def test_uses_sorted_help_formatter(self):
         """Parser uses SortedHelpFormatter."""
-        with patch('hsync_client.cli.HSYNC_SERVER_URL', 'http://test:8000'):
-            parser = create_argument_parser()
-            assert parser.formatter_class == SortedHelpFormatter
+        parser = create_argument_parser()
+        assert parser.formatter_class == SortedHelpFormatter
+
+    def test_env_file_option(self):
+        """Parser accepts --env-file option."""
+        parser = create_argument_parser()
+        args = parser.parse_args(['-b', 'test', '--env-file', '/path/to/env'])
+        assert args.env_file == '/path/to/env'
 

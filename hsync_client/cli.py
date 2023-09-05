@@ -23,7 +23,6 @@ the HSYNC command-line interface.
 
 from argparse import ArgumentParser, HelpFormatter
 
-from hsync_client.config import HSYNC_SERVER_URL
 from hsync_client.constants import HSYNC_VERSION
 from hsync_client.validators import (
     valid_bucket,
@@ -64,6 +63,18 @@ def create_argument_parser() -> ArgumentParser:
     )
 
     # -------------------------------------------------------------------------
+    # Environment file (processed early, before other args)
+    # -------------------------------------------------------------------------
+    parser.add_argument(
+        "--env-file",
+        type=str,
+        required=False,
+        metavar="PATH",
+        dest="env_file",
+        help="Load environment variables from file before processing other options.",
+    )
+
+    # -------------------------------------------------------------------------
     # Required arguments
     # -------------------------------------------------------------------------
     parser.add_argument(
@@ -82,10 +93,10 @@ def create_argument_parser() -> ArgumentParser:
         "-s",
         "--server",
         type=str,
-        required=False if HSYNC_SERVER_URL else True,
+        required=False,  # Validated later after env file is loaded
         metavar="URL",
         dest="server_url",
-        help="Server URL (or set HSYNC_SERVER_URL).",
+        help="Server URL (or set HSYNC_SERVER).",
     )
 
     parser.add_argument(
