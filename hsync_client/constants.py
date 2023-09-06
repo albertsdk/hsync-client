@@ -67,6 +67,12 @@ FILE_STABILITY_INTERVAL_DEFAULT = 5
 STABILITY_DELAY_MIN = 1
 STABILITY_DELAY_MAX = 60
 
+# Max wait timeout for file stability (seconds)
+# Maximum time to wait for a file to stop being written before giving up
+MAX_WAIT_TIMEOUT_MIN = 10
+MAX_WAIT_TIMEOUT_MAX = 3600
+MAX_WAIT_TIMEOUT_DEFAULT = 120  # 2 minutes
+
 
 # =============================================================================
 # Parallel Transfer Settings

@@ -27,6 +27,7 @@ from hsync_client.constants import HSYNC_VERSION
 from hsync_client.validators import (
     valid_bucket,
     valid_http_timeout,
+    valid_max_wait_timeout,
     valid_reconnect_delay,
     valid_resync,
     valid_stability_delay,
@@ -189,6 +190,17 @@ def create_argument_parser() -> ArgumentParser:
         dest="stability_delay",
         help="Seconds to wait before uploading modified files (default: 5). "
              "Can also be set via HSYNC_STABILITY_DELAY env var.",
+    )
+
+    parser.add_argument(
+        "--max-wait-timeout",
+        type=valid_max_wait_timeout,
+        required=False,
+        default=120,
+        metavar="SEC",
+        dest="max_wait_timeout",
+        help="Maximum time to wait for file stabilization (default: 120s). "
+             "Prevents indefinite blocking when files are continuously modified.",
     )
 
     parser.add_argument(

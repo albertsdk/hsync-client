@@ -149,6 +149,8 @@ class HsyncConfig(TypedDict):
     STABILITY_DELAY: int
     # HTTP request timeout in seconds
     HTTP_TIMEOUT: int
+    # Maximum wait timeout for file stability in seconds
+    MAX_WAIT_TIMEOUT: int
 
 
 # =============================================================================

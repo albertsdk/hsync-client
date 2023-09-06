@@ -242,9 +242,18 @@ def upload_file(file: File, check_size: bool = True) -> None:
         return
 
     if check_size:
-        # Wait for file to stop being written
+        # Wait for file to stop being written, with timeout
+        max_wait = CONFIG.get("MAX_WAIT_TIMEOUT", 120)
+        elapsed = 0
         while not is_file_stable(file):
+            if elapsed >= max_wait:
+                LOG.warning(
+                    f'File "{file.filepath}" did not stabilize within {max_wait}s, '
+                    f"uploading anyway"
+                )
+                break
             time_sleep(1)
+            elapsed += 1
 
         # Refresh file metadata after write is complete
         file.size = getsize(file.filepath)

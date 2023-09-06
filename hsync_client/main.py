@@ -191,6 +191,8 @@ def main() -> None:
         "STABILITY_DELAY": _get_stability_delay(args.stability_delay),
         # HTTP request timeout in seconds
         "HTTP_TIMEOUT": args.http_timeout,
+        # Maximum wait timeout for file stability in seconds
+        "MAX_WAIT_TIMEOUT": args.max_wait_timeout,
     }
 
     # Set global configuration and debug flag
