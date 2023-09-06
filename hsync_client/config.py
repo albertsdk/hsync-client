@@ -81,6 +81,55 @@ def get_stability_delay() -> Optional[str]:
     return environ.get("HSYNC_STABILITY_DELAY")
 
 
+def get_lan_key() -> Optional[str]:
+    """Get LAN shared secret key from environment."""
+    return environ.get("HSYNC_LAN_KEY")
+
+
+def get_lan_port() -> Optional[int]:
+    """Get LAN port from environment."""
+    value = environ.get("HSYNC_LAN_PORT")
+    if value is not None:
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def get_discovery_timeout() -> Optional[int]:
+    """Get discovery timeout from environment."""
+    value = environ.get("HSYNC_DISCOVERY_TIMEOUT")
+    if value is not None:
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def get_heartbeat_interval() -> Optional[int]:
+    """Get heartbeat interval from environment."""
+    value = environ.get("HSYNC_HEARTBEAT_INTERVAL")
+    if value is not None:
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def get_peer_timeout() -> Optional[int]:
+    """Get peer timeout from environment."""
+    value = environ.get("HSYNC_PEER_TIMEOUT")
+    if value is not None:
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
 # Legacy exports for backward compatibility (read at import time)
 # These are used where early binding is acceptable
 HSYNC_SERVER_URL: Optional[str] = environ.get("HSYNC_SERVER")
@@ -151,6 +200,18 @@ class HsyncConfig(TypedDict):
     HTTP_TIMEOUT: int
     # Maximum wait timeout for file stability in seconds
     MAX_WAIT_TIMEOUT: int
+    # LAN P2P mode flag
+    LAN_MODE: bool
+    # LAN port for master server
+    LAN_PORT: int
+    # Discovery timeout in seconds for LAN mode
+    DISCOVERY_TIMEOUT: int
+    # Heartbeat interval in seconds for LAN mode
+    HEARTBEAT_INTERVAL: int
+    # Peer timeout in seconds for LAN mode
+    PEER_TIMEOUT: int
+    # LAN shared secret key for authentication (None = no auth)
+    LAN_KEY: Optional[str]
 
 
 # =============================================================================

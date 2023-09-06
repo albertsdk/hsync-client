@@ -41,6 +41,11 @@ from requests import get as http_get, RequestException
 from hsync_client.cli import create_argument_parser
 from hsync_client.config import (
     get_api_key,
+    get_discovery_timeout,
+    get_heartbeat_interval,
+    get_lan_key,
+    get_lan_port,
+    get_peer_timeout,
     get_server_url,
     get_stability_delay,
     load_env_file,
@@ -49,6 +54,8 @@ from hsync_client.config import (
     set_debug,
 )
 from hsync_client.constants import ACTION_LABEL, FILE_STABILITY_INTERVAL_DEFAULT, HSYNC_VERSION
+from hsync_client.lan import LANSync
+from hsync_client.lan_server import LANServer
 from hsync_client.logger import setup_logging, set_client_id
 from hsync_client.sync import sync
 from hsync_client.utils import get_cid, is_valid_logfile
@@ -131,13 +138,24 @@ def main() -> None:
     # Build Configuration
     # =========================================================================
 
+    # Check if LAN mode is enabled
+    lan_mode = getattr(args, 'lan_mode', False)
+
     # Determine server URL (CLI argument takes precedence over env var)
     server_url = args.server_url or get_server_url()
 
-    # Validate server URL is provided
-    if not server_url:
-        LOG.error("Server URL is required (use -s or set HSYNC_SERVER)")
+    # Validate server URL is provided (not required in LAN mode)
+    if not server_url and not lan_mode:
+        LOG.error("Server URL is required (use -s or set HSYNC_SERVER, or use --lan-mode)")
         return
+
+    # In LAN mode without server URL, we'll set a placeholder that will be
+    # replaced once we discover the master peer
+    if lan_mode and not server_url:
+        server_url = "http://localhost:8765"  # Placeholder for LAN mode
+
+    # At this point server_url is guaranteed to be set
+    assert server_url is not None
 
     # Convert HTTP URL to WebSocket URL for events endpoint
     ws_url = sub(r"^http:", "ws:", server_url)
@@ -193,6 +211,13 @@ def main() -> None:
         "HTTP_TIMEOUT": args.http_timeout,
         # Maximum wait timeout for file stability in seconds
         "MAX_WAIT_TIMEOUT": args.max_wait_timeout,
+        # LAN P2P mode settings (CLI > env var > default)
+        "LAN_MODE": lan_mode,
+        "LAN_PORT": getattr(args, 'lan_port', None) or get_lan_port() or 0,
+        "DISCOVERY_TIMEOUT": getattr(args, 'discovery_timeout', None) or get_discovery_timeout() or 5,
+        "HEARTBEAT_INTERVAL": get_heartbeat_interval() or 5,
+        "PEER_TIMEOUT": get_peer_timeout() or 15,
+        "LAN_KEY": getattr(args, 'lan_key', None) or get_lan_key(),
     }
 
     # Set global configuration and debug flag
@@ -222,7 +247,81 @@ def main() -> None:
             LOG.info(f"  {label} {description}")
 
     # =========================================================================
-    # Server Connectivity Check
+    # LAN Mode: Peer Discovery and Master Election
+    # =========================================================================
+    lan_sync = None
+    if config["LAN_MODE"]:
+        LOG.info("LAN P2P mode enabled")
+
+        # Start LAN discovery
+        lan_sync = LANSync(
+            cid=config["CID"],
+            bucket=config["REMOTE_BUCKET"],
+            port=config["LAN_PORT"],
+        )
+        peer_manager = lan_sync.start()
+
+        # Wait for peer discovery
+        lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
+
+        # Check if we are the master
+        lan_server = None
+        if peer_manager.is_master():
+            LOG.info("This client is the MASTER - acting as sync coordinator")
+
+            # Start embedded HTTP server
+            lan_server = LANServer(port=lan_sync.port)
+            lan_server.start()
+
+            LOG.info(f"Master server listening on port {lan_sync.port}")
+            if config["LAN_KEY"]:
+                LOG.info("Authentication enabled (--lan-key)")
+            else:
+                LOG.info("No authentication (trust LAN mode)")
+
+            # Wait for peers and handle sync requests
+            # The server runs in background, we keep the main thread alive
+            LOG.info("Press Ctrl+C to stop...")
+            try:
+                import time
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                LOG.info("Shutting down master server...")
+        else:
+            # We are a client - connect to the master
+            master = peer_manager.get_master()
+            if master:
+                # Update config with master's URL
+                master_url = master.get_server_url()
+                LOG.info(f"Connecting to master: {master.cid} at {master_url}")
+
+                # Update API endpoints to point to master
+                config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
+                ws_master_url = sub(r"^http:", "ws:", master_url)
+                config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
+
+                # Update request headers for LAN authentication
+                if config["LAN_KEY"]:
+                    config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+
+                # Update global config
+                set_config(config)
+
+                # Perform sync with master
+                run(sync())
+            else:
+                LOG.warning("No master elected - this client is alone")
+                run(sync())
+
+        # Cleanup
+        if lan_server:
+            lan_server.stop()
+        lan_sync.stop()
+        return
+
+    # =========================================================================
+    # Server Connectivity Check (skip in LAN mode)
     # =========================================================================
     LOG.debug(f"Checking server connectivity: {server_url}")
     try:

@@ -221,6 +221,49 @@ def create_argument_parser() -> ArgumentParser:
     )
 
     # -------------------------------------------------------------------------
+    # LAN P2P options
+    # -------------------------------------------------------------------------
+    parser.add_argument(
+        "--lan-mode",
+        action="store_true",
+        dest="lan_mode",
+        help="Enable LAN peer-to-peer mode without central server. "
+             "Peers discover each other via mDNS and elect a master.",
+    )
+
+    parser.add_argument(
+        "--lan-port",
+        type=int,
+        required=False,
+        default=0,
+        metavar="PORT",
+        dest="lan_port",
+        help="Port to use when acting as LAN master (default: random).",
+    )
+
+    parser.add_argument(
+        "--discovery-timeout",
+        type=int,
+        required=False,
+        default=5,
+        metavar="SEC",
+        dest="discovery_timeout",
+        help="Time to wait for peer discovery in LAN mode (default: 5s).",
+    )
+
+    parser.add_argument(
+        "--lan-key",
+        type=str,
+        required=False,
+        default=None,
+        metavar="KEY",
+        dest="lan_key",
+        help="Shared secret key for LAN mode authentication. "
+             "If not set, no authentication is required (trust LAN). "
+             "Can also be set via HSYNC_LAN_KEY environment variable.",
+    )
+
+    # -------------------------------------------------------------------------
     # Output options
     # -------------------------------------------------------------------------
     parser.add_argument(
