@@ -81,6 +81,7 @@ def download_file(file: File) -> None:
             params={"filename": file.filepath},
             stream=True,
             verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
         )
     except RequestException as e:
         LOG.error(f'Network error downloading "{file.filepath}": {e}')
@@ -288,6 +289,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 data=data,
                 files=files,
                 verify=get_ssl_verify(),
+                timeout=CONFIG.get("HTTP_TIMEOUT", 30),
             )
             if response.status_code == 201:
                 LOG.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')

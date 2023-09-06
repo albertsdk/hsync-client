@@ -25,6 +25,8 @@ from argparse import ArgumentTypeError
 from typing import Callable
 
 from hsync_client.constants import (
+    HTTP_TIMEOUT_MAX,
+    HTTP_TIMEOUT_MIN,
     RECONNECT_DELAY_MAX,
     RECONNECT_DELAY_MIN,
     RESYNC_MAX,
@@ -163,6 +165,30 @@ def valid_stability_delay(value: str) -> int:
         STABILITY_DELAY_MIN - 1,  # -1 because validator uses exclusive bounds
         STABILITY_DELAY_MAX + 1,
         "stability delay",
+    )
+    return validator(value)
+
+
+def valid_http_timeout(value: str) -> int:
+    """
+    Validate HTTP timeout argument.
+
+    Used as an argparse type validator. Value must be between
+    HTTP_TIMEOUT_MIN and HTTP_TIMEOUT_MAX seconds.
+
+    Args:
+        value: String value from command line.
+
+    Returns:
+        Validated integer value.
+
+    Raises:
+        ArgumentTypeError: If value is not within valid range.
+    """
+    validator = create_int_range_validator(
+        HTTP_TIMEOUT_MIN - 1,  # -1 because validator uses exclusive bounds
+        HTTP_TIMEOUT_MAX + 1,
+        "HTTP timeout",
     )
     return validator(value)
 

@@ -26,6 +26,7 @@ from argparse import ArgumentParser, HelpFormatter
 from hsync_client.constants import HSYNC_VERSION
 from hsync_client.validators import (
     valid_bucket,
+    valid_http_timeout,
     valid_reconnect_delay,
     valid_resync,
     valid_stability_delay,
@@ -114,6 +115,16 @@ def create_argument_parser() -> ArgumentParser:
         metavar="FILE",
         dest="ca_cert",
         help="Path to CA certificate file for self-signed server certs.",
+    )
+
+    parser.add_argument(
+        "--timeout",
+        type=valid_http_timeout,
+        required=False,
+        default=30,
+        metavar="SEC",
+        dest="http_timeout",
+        help="HTTP request timeout in seconds (default: 30).",
     )
 
     # -------------------------------------------------------------------------

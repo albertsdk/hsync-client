@@ -93,6 +93,11 @@ RECONNECT_DELAY_DEFAULT = 5
 RESYNC_MIN = 20
 RESYNC_MAX = 3600
 
+# HTTP timeout limits (seconds)
+HTTP_TIMEOUT_MIN = 1
+HTTP_TIMEOUT_MAX = 300
+HTTP_TIMEOUT_DEFAULT = 30
+
 
 # =============================================================================
 # Action Labels for Logging

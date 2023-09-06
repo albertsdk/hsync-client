@@ -147,6 +147,8 @@ class HsyncConfig(TypedDict):
     FILTER_PATH: Optional[str]
     # File stability delay in seconds
     STABILITY_DELAY: int
+    # HTTP request timeout in seconds
+    HTTP_TIMEOUT: int
 
 
 # =============================================================================
