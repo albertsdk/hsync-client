@@ -176,6 +176,7 @@ export HSYNC_LAN_KEY="mySecretKey123"
 | `--lan-mode` | Enable LAN P2P mode | `false` |
 | `--lan-port` | Port for HTTP server (0 = random) | `0` |
 | `--lan-key` | Shared secret for authentication | `None` |
+| `--lan-group` | Group name for peer filtering | `None` |
 | `--discovery-timeout` | Peer discovery timeout (seconds) | `5` |
 
 ## Environment Variables
@@ -189,6 +190,7 @@ All LAN options can also be configured via environment variables:
 | `HSYNC_HEARTBEAT_INTERVAL` | Heartbeat interval for peer health (seconds) | `5` |
 | `HSYNC_PEER_TIMEOUT` | Timeout before marking peer as offline (seconds) | `15` |
 | `HSYNC_LAN_KEY` | Shared secret for authentication | `None` |
+| `HSYNC_LAN_GROUP` | Group name for peer filtering | `None` |
 
 ### Configuration Priority
 
@@ -220,6 +222,41 @@ The key is transmitted as a Bearer token in HTTP headers:
 ```
 Authorization: Bearer mySecretKey123
 ```
+
+## Group Filtering
+
+Group filtering allows multiple hsync instances on the same LAN to be isolated. Peers with different groups will ignore each other.
+
+### Filtering Logic (Option B - Backward Compatible)
+
+| Local Group | Peer Group | Result |
+|-------------|------------|--------|
+| `None` | `None` | ✅ Compatible |
+| `None` | `team-a` | ✅ Compatible |
+| `team-a` | `None` | ✅ Compatible |
+| `team-a` | `team-a` | ✅ Compatible |
+| `team-a` | `team-b` | ❌ Ignored |
+
+**Rule**: If **both** peers have a group defined, they must match. If **at least one** has no group, they are compatible (no filtering).
+
+### Usage Examples
+
+```bash
+# Team A - only sees other Team A peers
+./dist/hsync -b project -p ~/Projects --lan-mode --lan-group "team-a"
+
+# Team B - only sees other Team B peers
+./dist/hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
+
+# No group - sees ALL peers (including team-a and team-b)
+./dist/hsync -b project -p ~/Projects --lan-mode
+```
+
+### Use Cases
+
+- **Separate teams**: Different teams on the same network sync independently
+- **Dev vs Prod**: Isolate development and production environments
+- **Multiple projects**: Same bucket name but different groups for different projects
 
 ## Master Election
 

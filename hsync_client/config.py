@@ -86,6 +86,11 @@ def get_lan_key() -> Optional[str]:
     return environ.get("HSYNC_LAN_KEY")
 
 
+def get_lan_group() -> Optional[str]:
+    """Get LAN group name from environment."""
+    return environ.get("HSYNC_LAN_GROUP")
+
+
 def get_lan_port() -> Optional[int]:
     """Get LAN port from environment."""
     value = environ.get("HSYNC_LAN_PORT")
@@ -212,6 +217,8 @@ class HsyncConfig(TypedDict):
     PEER_TIMEOUT: int
     # LAN shared secret key for authentication (None = no auth)
     LAN_KEY: Optional[str]
+    # LAN group name for peer filtering (None = no filtering)
+    LAN_GROUP: Optional[str]
 
 
 # =============================================================================

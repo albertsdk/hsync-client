@@ -101,6 +101,48 @@ class TestPeerManager:
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is None
 
+    def test_add_peer_both_no_group_compatible(self):
+        """Test that peers with no group (Option B) see each other."""
+        pm = PeerManager(local_cid="local123", bucket="photos", group=None)
+        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None)
+        pm.add_peer(peer)
+        assert pm.get_peer("remote456") is not None
+
+    def test_add_peer_local_no_group_remote_has_group_compatible(self):
+        """Test that peer with group is visible to local without group (Option B)."""
+        pm = PeerManager(local_cid="local123", bucket="photos", group=None)
+        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a")
+        pm.add_peer(peer)
+        assert pm.get_peer("remote456") is not None
+
+    def test_add_peer_local_has_group_remote_no_group_compatible(self):
+        """Test that peer without group is visible to local with group (Option B)."""
+        pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
+        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None)
+        pm.add_peer(peer)
+        assert pm.get_peer("remote456") is not None
+
+    def test_add_peer_same_group_compatible(self):
+        """Test that peers with the same group see each other."""
+        pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
+        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a")
+        pm.add_peer(peer)
+        assert pm.get_peer("remote456") is not None
+
+    def test_add_peer_different_group_ignored(self):
+        """Test that peers with different groups are ignored (both have group)."""
+        pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
+        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-b")
+        pm.add_peer(peer)
+        assert pm.get_peer("remote456") is None
+
+    def test_peer_manager_group_property(self):
+        """Test the group property of PeerManager."""
+        pm = PeerManager(local_cid="local123", bucket="photos", group="mygroup")
+        assert pm.group == "mygroup"
+        pm_no_group = PeerManager(local_cid="local123", bucket="photos")
+        assert pm_no_group.group is None
+
     def test_add_self_ignored(self):
         """Test that adding self is ignored."""
         pm = PeerManager(local_cid="local123", bucket="photos")

@@ -263,6 +263,19 @@ def create_argument_parser() -> ArgumentParser:
              "Can also be set via HSYNC_LAN_KEY environment variable.",
     )
 
+    parser.add_argument(
+        "--lan-group",
+        type=str,
+        required=False,
+        default=None,
+        metavar="GROUP",
+        dest="lan_group",
+        help="Group name for LAN peer filtering. "
+             "Peers with different groups will ignore each other. "
+             "If not set, peers see all others regardless of group. "
+             "Can also be set via HSYNC_LAN_GROUP environment variable.",
+    )
+
     # -------------------------------------------------------------------------
     # Output options
     # -------------------------------------------------------------------------
