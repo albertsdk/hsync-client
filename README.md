@@ -63,6 +63,7 @@ flowchart LR
 - 💓 WebSocket heartbeat for reliable connections
 - 🔗 Symbolic link synchronization support
 - 📦 Event queue with exponential backoff retry
+- 🌐 **LAN Mode**: P2P sync without server (mDNS discovery)
 
 ## Requirements
 
@@ -151,6 +152,10 @@ source prod.env
 | `--no-color` | Disable colored output |
 | `--help-symbols` | Show output symbols legend |
 | `-V, --version` | Show version |
+| `--lan-mode` | Enable LAN P2P mode (no server required) |
+| `--lan-port` | Port for LAN HTTP server (0 = random) |
+| `--lan-key` | Shared secret for LAN authentication |
+| `--discovery-timeout` | Peer discovery timeout in seconds |
 
 ### Examples
 
@@ -252,10 +257,30 @@ Performs a synchronization and exits.
 - Monitors local directory with watchdog
 - Propagates changes in real-time
 
+### LAN Mode (`--lan-mode`)
+
+Peer-to-peer synchronization without a centralized server:
+
+```bash
+# On all devices (they discover each other automatically)
+./dist/hsync -b photos -p ~/Pictures --lan-mode
+
+# With authentication (recommended)
+./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecretKey"
+```
+
+**How it works:**
+1. Peers discover each other via mDNS (Bonjour/Avahi)
+2. The peer with the lowest Client ID becomes the master
+3. Other peers sync files with the master via HTTP
+
+See [LAN Mode documentation](docs/lan-mode.md) for details.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) - Client architecture and component overview
 - [Usage Guide](docs/usage.md) - Detailed usage instructions with examples
+- [LAN Mode](docs/lan-mode.md) - P2P synchronization without server
 
 ## Project Structure
 
