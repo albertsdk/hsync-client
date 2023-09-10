@@ -91,6 +91,12 @@ def get_lan_group() -> Optional[str]:
     return environ.get("HSYNC_LAN_GROUP")
 
 
+def get_lan_https() -> bool:
+    """Get LAN HTTPS setting from environment."""
+    value = environ.get("HSYNC_LAN_HTTPS", "").lower()
+    return value in ("true", "1", "yes")
+
+
 def get_lan_port() -> Optional[int]:
     """Get LAN port from environment."""
     value = environ.get("HSYNC_LAN_PORT")
@@ -219,6 +225,10 @@ class HsyncConfig(TypedDict):
     LAN_KEY: Optional[str]
     # LAN group name for peer filtering (None = no filtering)
     LAN_GROUP: Optional[str]
+    # LAN HTTPS mode (self-signed certificate per session)
+    LAN_HTTPS: bool
+    # Master certificate fingerprint for HTTPS verification (set at runtime)
+    MASTER_CERT_FINGERPRINT: Optional[str]
 
 
 # =============================================================================

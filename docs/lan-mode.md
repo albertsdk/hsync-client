@@ -177,6 +177,7 @@ export HSYNC_LAN_KEY="mySecretKey123"
 | `--lan-port` | Port for HTTP server (0 = random) | `0` |
 | `--lan-key` | Shared secret for authentication | `None` |
 | `--lan-group` | Group name for peer filtering | `None` |
+| `--lan-https` | Enable HTTPS with self-signed certificate | `false` |
 | `--discovery-timeout` | Peer discovery timeout (seconds) | `5` |
 
 ## Environment Variables
@@ -191,6 +192,7 @@ All LAN options can also be configured via environment variables:
 | `HSYNC_PEER_TIMEOUT` | Timeout before marking peer as offline (seconds) | `15` |
 | `HSYNC_LAN_KEY` | Shared secret for authentication | `None` |
 | `HSYNC_LAN_GROUP` | Group name for peer filtering | `None` |
+| `HSYNC_LAN_HTTPS` | Enable HTTPS with self-signed certificate | `false` |
 
 ### Configuration Priority
 
@@ -257,6 +259,82 @@ Group filtering allows multiple hsync instances on the same LAN to be isolated. 
 - **Separate teams**: Different teams on the same network sync independently
 - **Dev vs Prod**: Isolate development and production environments
 - **Multiple projects**: Same bucket name but different groups for different projects
+
+## HTTPS Support
+
+LAN mode supports encrypted communication using HTTPS with self-signed certificates.
+
+### How It Works
+
+1. **Certificate Generation**: When HTTPS is enabled, a self-signed certificate is generated per session
+2. **Fingerprint Sharing**: The certificate fingerprint (SHA-256) is shared via mDNS TXT records
+3. **Automatic Verification**: Clients can verify the master's certificate using the fingerprint
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    HTTPS Certificate Flow                        │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   Master                              Client                     │
+│   ══════                              ══════                     │
+│   ┌────────────────┐                                            │
+│   │ Generate RSA   │                                            │
+│   │ 2048-bit key   │                                            │
+│   └───────┬────────┘                                            │
+│           │                                                      │
+│   ┌───────▼────────┐                                            │
+│   │ Create X.509   │                                            │
+│   │ certificate    │                                            │
+│   └───────┬────────┘                                            │
+│           │                                                      │
+│   ┌───────▼────────┐        mDNS TXT record                     │
+│   │ Calculate      │ ─────────────────────────>  ┌──────────────┐│
+│   │ SHA-256        │     cert_fp=abc123...       │ Receive      ││
+│   │ fingerprint    │                             │ fingerprint  ││
+│   └───────┬────────┘                             └──────┬───────┘│
+│           │                                             │        │
+│   ┌───────▼────────┐        HTTPS request               │        │
+│   │ Start HTTPS    │ <───────────────────────  ┌────────▼───────┐│
+│   │ server         │                           │ Verify cert    ││
+│   └────────────────┘                           │ fingerprint    ││
+│                                                └────────────────┘│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Enabling HTTPS
+
+```bash
+# Enable HTTPS with self-signed certificate
+./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https
+
+# Combine with authentication for maximum security
+./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https --lan-key "mySecret"
+
+# Via environment variable
+export HSYNC_LAN_HTTPS=true
+./dist/hsync -b photos -p ~/Pictures --lan-mode
+```
+
+### Security Considerations
+
+| Aspect | Description |
+|--------|-------------|
+| **Certificate Validity** | 1 day (session-based) |
+| **Key Size** | RSA 2048-bit |
+| **Fingerprint** | SHA-256 (64 hex characters) |
+| **Trust Model** | Trust-on-first-use (TOFU) via mDNS |
+
+### When to Use HTTPS
+
+- **Shared networks**: Office or shared home networks where traffic sniffing is a concern
+- **Sensitive data**: When syncing confidential files
+- **Combined with `--lan-key`**: For both encryption and authentication
+
+### Limitations
+
+- **Self-signed certificates**: Browsers and strict clients may show warnings
+- **No CA verification**: Trust is established via mDNS fingerprint sharing
+- **Session-based**: New certificate generated on each restart
 
 ## Master Election
 

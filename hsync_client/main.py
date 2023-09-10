@@ -44,6 +44,7 @@ from hsync_client.config import (
     get_discovery_timeout,
     get_heartbeat_interval,
     get_lan_group,
+    get_lan_https,
     get_lan_key,
     get_lan_port,
     get_peer_timeout,
@@ -220,6 +221,8 @@ def main() -> None:
         "PEER_TIMEOUT": get_peer_timeout() or 15,
         "LAN_KEY": getattr(args, 'lan_key', None) or get_lan_key(),
         "LAN_GROUP": getattr(args, 'lan_group', None) or get_lan_group(),
+        "LAN_HTTPS": getattr(args, 'lan_https', False) or get_lan_https(),
+        "MASTER_CERT_FINGERPRINT": None,  # Set at runtime when connecting to HTTPS master
     }
 
     # Set global configuration and debug flag
@@ -252,8 +255,17 @@ def main() -> None:
     # LAN Mode: Peer Discovery and Master Election
     # =========================================================================
     lan_sync = None
+    cert_info = None
     if config["LAN_MODE"]:
         LOG.info("LAN P2P mode enabled")
+
+        # Generate certificate if HTTPS is enabled
+        if config["LAN_HTTPS"]:
+            from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
+            LOG.info("Generating self-signed certificate for HTTPS...")
+            cert_info = generate_self_signed_cert()
+            cert_info = save_cert_to_temp_files(cert_info)
+            LOG.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
 
         # Start LAN discovery
         lan_sync = LANSync(
@@ -261,6 +273,8 @@ def main() -> None:
             bucket=config["REMOTE_BUCKET"],
             port=config["LAN_PORT"],
             group=config["LAN_GROUP"],
+            use_https=config["LAN_HTTPS"],
+            cert_fingerprint=cert_info.fingerprint if cert_info else None,
         )
         peer_manager = lan_sync.start()
 
@@ -272,11 +286,20 @@ def main() -> None:
         if peer_manager.is_master():
             LOG.info("This client is the MASTER - acting as sync coordinator")
 
-            # Start embedded HTTP server
-            lan_server = LANServer(port=lan_sync.port)
+            # Start embedded HTTP/HTTPS server
+            if config["LAN_HTTPS"] and cert_info:
+                lan_server = LANServer(
+                    port=lan_sync.port,
+                    use_https=True,
+                    cert_file=cert_info.cert_file,
+                    key_file=cert_info.key_file,
+                )
+            else:
+                lan_server = LANServer(port=lan_sync.port)
             lan_server.start()
 
-            LOG.info(f"Master server listening on port {lan_sync.port}")
+            protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
+            LOG.info(f"Master server listening on port {lan_sync.port} ({protocol})")
             if config["LAN_KEY"]:
                 LOG.info("Authentication enabled (--lan-key)")
             else:
@@ -299,9 +322,17 @@ def main() -> None:
                 master_url = master.get_server_url()
                 LOG.info(f"Connecting to master: {master.cid} at {master_url}")
 
+                # Handle HTTPS certificate verification
+                if master.use_https and master.cert_fingerprint:
+                    LOG.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
+                    # Store fingerprint for verification in requests
+                    config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
+
                 # Update API endpoints to point to master
                 config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
                 ws_master_url = sub(r"^http:", "ws:", master_url)
+                if master.use_https:
+                    ws_master_url = sub(r"^http:", "wss:", master_url)
                 config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
 
                 # Update request headers for LAN authentication
