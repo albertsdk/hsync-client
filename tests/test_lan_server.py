@@ -172,3 +172,140 @@ class TestLANRequestHandler:
             assert response.status == 404
             conn.close()
 
+    def test_upload_file_endpoint(self, server, tmp_path):
+        """Test file upload endpoint using requests (like transfer.py)."""
+        import requests
+        srv, port = server
+
+        with patch("hsync_client.lan_server.CONFIG", {
+            "LOCAL_BUCKET": str(tmp_path),
+            "LAN_KEY": None,
+        }):
+            # Simulate upload like transfer.py does
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            data = {
+                "cid": "test-client-id",
+                "path": "subdir",
+                "ctime": "1700000000.0",
+                "mtime": "1700000001.0",
+                "size": "12",
+                "md5sum": "abc123",
+                "permissions": "-rw-r--r--",
+            }
+            files = {"file": ("uploaded.txt", b"test content")}
+
+            response = requests.post(url, data=data, files=files, timeout=5)
+
+            assert response.status_code == 201
+            assert "File uploaded successfully" in response.json()["info"]
+
+            # Verify file was created
+            uploaded_file = tmp_path / "subdir" / "uploaded.txt"
+            assert uploaded_file.exists()
+            assert uploaded_file.read_text() == "test content"
+
+    def test_upload_file_with_auth(self, server, tmp_path):
+        """Test file upload with authentication."""
+        import requests
+        srv, port = server
+
+        with patch("hsync_client.lan_server.CONFIG", {
+            "LOCAL_BUCKET": str(tmp_path),
+            "LAN_KEY": "secret123",
+        }):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            data = {"cid": "test", "path": "", "mtime": "", "ctime": ""}
+            files = {"file": ("test.txt", b"content")}
+
+            # Without auth - should fail
+            response = requests.post(url, data=data, files=files, timeout=5)
+            assert response.status_code == 401
+
+            # With auth - should succeed
+            headers = {"Authorization": "Bearer secret123"}
+            response = requests.post(url, data=data, files=files, headers=headers, timeout=5)
+            assert response.status_code == 201
+
+
+class TestLANSyncIntegration:
+    """Integration tests for LAN sync flow."""
+
+    @pytest.fixture
+    def master_server(self, tmp_path):
+        """Create a LAN server acting as master with test files."""
+        from hsync_client.lan_server import LANServer
+        from hsync_client.lan import get_free_port
+
+        # Create master bucket with files
+        master_bucket = tmp_path / "master"
+        master_bucket.mkdir()
+        (master_bucket / "file1.txt").write_text("master content 1")
+        (master_bucket / "file2.txt").write_text("master content 2")
+        (master_bucket / "subdir").mkdir()
+        (master_bucket / "subdir" / "file3.txt").write_text("master content 3")
+
+        port = get_free_port()
+        server = LANServer(port=port)
+        server.start()
+        time.sleep(0.1)
+
+        yield server, port, master_bucket
+
+        server.stop()
+
+    def test_client_download_from_master(self, master_server, tmp_path):
+        """Test client downloading files from master via sync."""
+        import requests
+        srv, port, master_bucket = master_server
+
+        # Create client bucket (empty)
+        client_bucket = tmp_path / "client"
+        client_bucket.mkdir()
+
+        with patch("hsync_client.lan_server.CONFIG", {
+            "LOCAL_BUCKET": str(master_bucket),
+            "LAN_KEY": None,
+        }):
+            # Simulate what sync.get_files_remote() does
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.get(url, params={"sync_order": "mtime"}, timeout=5)
+            assert response.status_code == 200
+            files = response.json()
+            assert len(files) == 3
+
+            # Simulate download for each file
+            for file_info in files:
+                filepath = file_info["filepath"]
+                download_url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
+                response = requests.get(
+                    download_url,
+                    params={"filename": filepath},
+                    timeout=5
+                )
+                assert response.status_code == 200
+
+    def test_client_upload_to_master(self, master_server, tmp_path):
+        """Test client uploading files to master."""
+        import requests
+        srv, port, master_bucket = master_server
+
+        with patch("hsync_client.lan_server.CONFIG", {
+            "LOCAL_BUCKET": str(master_bucket),
+            "LAN_KEY": None,
+        }):
+            # Simulate upload like transfer.py does
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            data = {
+                "cid": "test-client",
+                "path": "",
+                "mtime": str(time.time()),
+                "ctime": str(time.time()),
+            }
+            files = {"file": ("new_from_client.txt", b"client content")}
+
+            response = requests.post(url, data=data, files=files, timeout=5)
+            assert response.status_code == 201
+
+            # Verify file exists on master
+            assert (master_bucket / "new_from_client.txt").exists()
+            assert (master_bucket / "new_from_client.txt").read_text() == "client content"
