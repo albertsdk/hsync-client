@@ -39,6 +39,8 @@ from typing import Callable, Optional
 
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
+from hsync_client.constants import HSYNC_VERSION
+
 
 # =============================================================================
 # Constants
@@ -89,6 +91,49 @@ def get_free_port() -> int:
     return port
 
 
+def check_version_compatibility(
+    local_version: str, peer_version: str
+) -> tuple[bool, str]:
+    """
+    Check if peer version is compatible with local version using Semver.
+
+    Compatibility rules:
+    - Different major version → incompatible (False, "major_mismatch")
+    - Different minor version → warning but allowed (True, "minor_mismatch")
+    - Different patch version → compatible (True, "compatible")
+    - Same version → compatible (True, "compatible")
+
+    Args:
+        local_version: Local HSYNC version (e.g., "0.1.0").
+        peer_version: Peer's HSYNC version.
+
+    Returns:
+        Tuple of (is_compatible, reason).
+    """
+    try:
+        local_parts = local_version.split(".")
+        peer_parts = peer_version.split(".")
+
+        # Ensure we have at least major.minor.patch
+        while len(local_parts) < 3:
+            local_parts.append("0")
+        while len(peer_parts) < 3:
+            peer_parts.append("0")
+
+        # Compare major version
+        if local_parts[0] != peer_parts[0]:
+            return (False, "major_mismatch")
+
+        # Compare minor version
+        if local_parts[1] != peer_parts[1]:
+            return (True, "minor_mismatch")
+
+        return (True, "compatible")
+    except Exception:
+        # If we can't parse versions, assume compatible with warning
+        return (True, "parse_error")
+
+
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -102,6 +147,7 @@ class Peer:
     bucket: str
     address: str
     port: int
+    version: str = "0.0.0"
     group: Optional[str] = None
     use_https: bool = False
     cert_fingerprint: Optional[str] = None
@@ -357,6 +403,9 @@ class HsyncServiceListener(ServiceListener):
             properties = info.properties
             cid = properties.get(b"cid", b"").decode("utf-8")
             bucket = properties.get(b"bucket", b"").decode("utf-8")
+            # Version is optional - default to "0.0.0" for old clients
+            version_bytes = properties.get(b"version", b"")
+            version = version_bytes.decode("utf-8") if version_bytes else "0.0.0"
             # Group is optional - empty string means no group
             group_bytes = properties.get(b"group", b"")
             group = group_bytes.decode("utf-8") if group_bytes else None
@@ -369,6 +418,26 @@ class HsyncServiceListener(ServiceListener):
             if not cid or not bucket:
                 LOG.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
                 return
+
+            # Check version compatibility
+            is_compatible, reason = check_version_compatibility(HSYNC_VERSION, version)
+            if not is_compatible:
+                LOG.warning(
+                    f"Ignoring peer {cid} with incompatible version {version} "
+                    f"(local: {HSYNC_VERSION}, reason: {reason})"
+                )
+                return
+
+            if reason == "minor_mismatch":
+                LOG.warning(
+                    f"Peer {cid} has different minor version {version} "
+                    f"(local: {HSYNC_VERSION}). Sync may have issues."
+                )
+            elif reason == "parse_error":
+                LOG.warning(
+                    f"Could not parse version for peer {cid}: {version}. "
+                    "Proceeding with caution."
+                )
 
             # Get address and port
             addresses = info.parsed_addresses()
@@ -384,6 +453,7 @@ class HsyncServiceListener(ServiceListener):
                 bucket=bucket,
                 address=address,
                 port=port,
+                version=version,
                 group=group,
                 use_https=use_https,
                 cert_fingerprint=cert_fingerprint,
@@ -536,7 +606,7 @@ class LANSync:
         properties: dict[str, str] = {
             "cid": self._cid,
             "bucket": self._bucket,
-            "version": "0.1.0",
+            "version": HSYNC_VERSION,
         }
         # Add group if specified
         if self._group:

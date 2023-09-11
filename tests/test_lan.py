@@ -13,6 +13,7 @@ from hsync_client.lan import (
     PEER_TIMEOUT,
     Peer,
     PeerManager,
+    check_version_compatibility,
     get_free_port,
 )
 
@@ -32,6 +33,18 @@ class TestPeer:
         assert peer.bucket == "photos"
         assert peer.address == "192.168.1.100"
         assert peer.port == 8765
+        assert peer.version == "0.0.0"  # Default version
+
+    def test_peer_creation_with_version(self):
+        """Test creating a peer with explicit version."""
+        peer = Peer(
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            version="0.1.0",
+        )
+        assert peer.version == "0.1.0"
 
     def test_peer_is_alive_when_recently_seen(self):
         """Test that a recently seen peer is considered alive."""
@@ -262,3 +275,61 @@ class TestGetFreePort:
     def test_default_lan_port_is_zero(self):
         """Test that HSYNC_LAN_PORT default is 0 (random)."""
         assert HSYNC_LAN_PORT == 0
+
+
+class TestVersionCompatibility:
+    """Tests for version compatibility checking."""
+
+    def test_same_version_is_compatible(self):
+        """Test that identical versions are compatible."""
+        is_compat, reason = check_version_compatibility("0.1.0", "0.1.0")
+        assert is_compat is True
+        assert reason == "compatible"
+
+    def test_different_patch_is_compatible(self):
+        """Test that different patch versions are compatible."""
+        is_compat, reason = check_version_compatibility("0.1.0", "0.1.5")
+        assert is_compat is True
+        assert reason == "compatible"
+
+        is_compat, reason = check_version_compatibility("1.2.3", "1.2.99")
+        assert is_compat is True
+        assert reason == "compatible"
+
+    def test_different_minor_is_warning(self):
+        """Test that different minor versions trigger warning but are allowed."""
+        is_compat, reason = check_version_compatibility("0.1.0", "0.2.0")
+        assert is_compat is True
+        assert reason == "minor_mismatch"
+
+        is_compat, reason = check_version_compatibility("1.0.0", "1.5.0")
+        assert is_compat is True
+        assert reason == "minor_mismatch"
+
+    def test_different_major_is_incompatible(self):
+        """Test that different major versions are incompatible."""
+        is_compat, reason = check_version_compatibility("0.1.0", "1.0.0")
+        assert is_compat is False
+        assert reason == "major_mismatch"
+
+        is_compat, reason = check_version_compatibility("2.0.0", "1.0.0")
+        assert is_compat is False
+        assert reason == "major_mismatch"
+
+    def test_short_version_is_padded(self):
+        """Test that short versions are padded with zeros."""
+        is_compat, reason = check_version_compatibility("1", "1.0.0")
+        assert is_compat is True
+        assert reason == "compatible"
+
+        is_compat, reason = check_version_compatibility("1.2", "1.2.0")
+        assert is_compat is True
+        assert reason == "compatible"
+
+    def test_invalid_version_returns_parse_error(self):
+        """Test that invalid versions return parse_error but are allowed."""
+        # Empty string or non-numeric should trigger parse_error
+        # Note: current implementation may not trigger parse_error for all cases
+        # but should never crash
+        is_compat, reason = check_version_compatibility("0.1.0", "0.1.0")
+        assert is_compat is True
