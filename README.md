@@ -1,6 +1,8 @@
 # HSYNC Client
 
-CLI client for HTTP-based file synchronization with WebSocket support for real-time events.
+CLI application for HTTP-based file synchronization with WebSocket support for real-time events.
+
+In **Server Mode**, it acts as a client connecting to a centralized HSYNC server. In **LAN Mode**, it operates in peer-to-peer fashion where one instance automatically becomes the master (acting as server) while others sync with it—no external server required.
 
 ## Synchronization Overview
 
@@ -52,18 +54,27 @@ flowchart LR
 
 ## Features
 
+### Core
 - 🔄 Bidirectional file synchronization
 - ⚡ Parallel file transfers (configurable concurrency)
 - 👁️ Real-time file system monitoring (watchdog)
-- 📡 WebSocket connection for remote events
 - ✅ MD5-based file integrity verification
+- 🔗 Symbolic link synchronization support
+- 📦 Compilable to standalone binary (PyInstaller)
+
+### Server Mode
+- 📡 WebSocket connection for remote events
 - 🔐 API Key authentication (secure first-message auth)
 - 🔒 SSL/TLS support
-- 📦 Compilable to standalone binary (PyInstaller)
 - 💓 WebSocket heartbeat for reliable connections
-- 🔗 Symbolic link synchronization support
-- 📦 Event queue with exponential backoff retry
-- 🌐 **LAN Mode**: P2P sync without server (mDNS discovery)
+- � Event queue with exponential backoff retry
+
+### LAN Mode (P2P)
+- 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
+- 👑 **Automatic master election** - one peer becomes the server, others sync with it
+- � **HTTPS by default** - self-signed certificate per session with fingerprint verification
+- 🔑 **Shared secret authentication** - optional `--lan-key` for trusted networks
+- �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
 
 ## Requirements
 
