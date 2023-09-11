@@ -156,7 +156,7 @@ source prod.env
 | `--lan-port` | Port for LAN HTTP server (0 = random) |
 | `--lan-key` | Shared secret for LAN authentication |
 | `--lan-group` | Group name for peer filtering |
-| `--lan-https` | Enable HTTPS with self-signed certificate |
+| `--no-lan-https` | Disable HTTPS (enabled by default) |
 | `--discovery-timeout` | Peer discovery timeout in seconds |
 
 ### Examples
@@ -264,23 +264,20 @@ Performs a synchronization and exits.
 Peer-to-peer synchronization without a centralized server:
 
 ```bash
-# On all devices (they discover each other automatically)
+# On all devices (HTTPS enabled by default)
 ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
-# With authentication (recommended)
+# With authentication (recommended for maximum security)
 ./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecretKey"
 
-# With HTTPS encryption
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https
-
-# Maximum security (HTTPS + authentication)
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https --lan-key "mySecretKey"
+# Disable HTTPS (use plain HTTP)
+./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
 ```
 
 **How it works:**
 1. Peers discover each other via mDNS (Bonjour/Avahi)
 2. The peer with the lowest Client ID becomes the master
-3. Other peers sync files with the master via HTTP/HTTPS
+3. Other peers sync files with the master via HTTPS (default) or HTTP
 
 See [LAN Mode documentation](docs/lan-mode.md) for details.
 

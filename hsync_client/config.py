@@ -92,9 +92,14 @@ def get_lan_group() -> Optional[str]:
 
 
 def get_lan_https() -> bool:
-    """Get LAN HTTPS setting from environment."""
+    """Get LAN HTTPS setting from environment.
+
+    Default is True (HTTPS enabled). Set to 'false', '0', or 'no' to disable.
+    """
     value = environ.get("HSYNC_LAN_HTTPS", "").lower()
-    return value in ("true", "1", "yes")
+    if value == "":
+        return True  # Default: HTTPS enabled
+    return value not in ("false", "0", "no")
 
 
 def get_lan_port() -> Optional[int]:
