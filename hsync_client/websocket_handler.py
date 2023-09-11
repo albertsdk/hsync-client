@@ -50,7 +50,9 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
 from hsync_client.config import CONFIG, HSYNC_API_KEY
+from hsync_client.constants import HSYNC_VERSION
 from hsync_client.event_queue import EventQueue
+from hsync_client.lan import check_version_compatibility
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File, is_hidden_file
@@ -120,7 +122,12 @@ async def remote_events() -> None:
         LOG.info(f"WebSocket connected to {uri}")
 
         # Authenticate via first message (more secure than URL token)
-        auth_message = {"type": "auth", "token": HSYNC_API_KEY}
+        # Include client version for compatibility checking
+        auth_message = {
+            "type": "auth",
+            "token": HSYNC_API_KEY,
+            "version": HSYNC_VERSION,
+        }
         await websocket.send(dumps(auth_message))
 
         # Wait for authentication confirmation
@@ -128,9 +135,33 @@ async def remote_events() -> None:
         auth_result = loads(auth_response)
         if auth_result.get("type") != "auth" or auth_result.get("status") != "ok":
             LOG.error(f"WebSocket authentication failed: {auth_result}")
+            # Check if it's a version incompatibility error
+            if auth_result.get("error") == "version_incompatible":
+                LOG.error(
+                    f"Server version {auth_result.get('server_version')} is "
+                    f"incompatible with client version {HSYNC_VERSION}"
+                )
             return
 
-        LOG.info("WebSocket authenticated successfully")
+        # Check server version compatibility
+        server_version = auth_result.get("version", "")
+        if server_version:
+            is_compatible, reason = check_version_compatibility(
+                HSYNC_VERSION, server_version
+            )
+            if not is_compatible:
+                LOG.error(
+                    f"Server version {server_version} is incompatible with "
+                    f"client version {HSYNC_VERSION} (reason: {reason})"
+                )
+                return
+            if reason == "minor_mismatch":
+                LOG.warning(
+                    f"Server version {server_version} differs from client "
+                    f"version {HSYNC_VERSION}. Sync may have issues."
+                )
+
+        LOG.info(f"WebSocket authenticated successfully (server: {server_version or 'unknown'})")
 
         LOG.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")
         LOG.debug(f"Force resync: {CONFIG['RESYNC']} sec.")
