@@ -345,8 +345,7 @@ def main() -> None:
                 # Perform sync with master
                 run(sync())
             else:
-                LOG.warning("No master elected - this client is alone")
-                run(sync())
+                LOG.warning("No master elected - this client is alone, nothing to sync")
 
         # Cleanup
         if lan_server:
