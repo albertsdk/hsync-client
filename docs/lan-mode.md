@@ -178,7 +178,7 @@ export HSYNC_LAN_KEY="mySecretKey123"
 | `--lan-key` | Shared secret for authentication | `None` |
 | `--lan-group` | Group name for peer filtering | `None` |
 | `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled by default |
-| `--discovery-timeout` | Peer discovery timeout (seconds) | `5` |
+| `--discovery-timeout` | Peer discovery timeout (seconds) | `10` |
 
 ## Environment Variables
 
@@ -187,7 +187,7 @@ All LAN options can also be configured via environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HSYNC_LAN_PORT` | Port for HTTP server (0 = random) | `0` |
-| `HSYNC_DISCOVERY_TIMEOUT` | Peer discovery timeout (seconds) | `5` |
+| `HSYNC_DISCOVERY_TIMEOUT` | Peer discovery timeout (seconds) | `10` |
 | `HSYNC_HEARTBEAT_INTERVAL` | Heartbeat interval for peer health (seconds) | `5` |
 | `HSYNC_PEER_TIMEOUT` | Timeout before marking peer as offline (seconds) | `15` |
 | `HSYNC_LAN_KEY` | Shared secret for authentication | `None` |
@@ -471,7 +471,7 @@ Sync files to a NAS device on the local network:
 
 1. **Check firewall**: Ensure mDNS (UDP port 5353) is allowed
 2. **Check network**: All devices must be on the same subnet
-3. **Increase timeout**: Use `--discovery-timeout 10` for slower networks
+3. **Increase timeout**: Use `--discovery-timeout 15` for slower networks
 
 ### Authentication Failures
 

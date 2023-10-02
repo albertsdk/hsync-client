@@ -245,10 +245,10 @@ def create_argument_parser() -> ArgumentParser:
         "--discovery-timeout",
         type=int,
         required=False,
-        default=5,
+        default=10,
         metavar="SEC",
         dest="discovery_timeout",
-        help="Time to wait for peer discovery in LAN mode (default: 5s).",
+        help="Time to wait for peer discovery in LAN mode (default: 10s).",
     )
 
     parser.add_argument(

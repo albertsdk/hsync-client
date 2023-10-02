@@ -54,7 +54,7 @@ HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
 HSYNC_LAN_PORT = 0
 
 # Discovery timeout in seconds
-DISCOVERY_TIMEOUT = 5
+DISCOVERY_TIMEOUT = 10
 
 # Heartbeat interval in seconds
 HEARTBEAT_INTERVAL = 5
