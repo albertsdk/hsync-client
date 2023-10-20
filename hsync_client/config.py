@@ -17,15 +17,17 @@
 """
 Configuration management for HSYNC Client.
 
-This module provides typed configuration structures and global
-configuration access for the application.
+This module uses pydantic-settings for type-safe environment variable handling
+and provides typed configuration structures for the application.
 """
 
-from os import environ
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional, TypedDict, cast
 
 from dotenv import load_dotenv
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # =============================================================================
@@ -59,98 +61,119 @@ def load_env_file(file_path: str) -> None:
 
     # override=False ensures CLI/shell variables take precedence
     load_dotenv(dotenv_path=path, override=False)
+    # Clear cached settings to reload from new env
+    get_env_settings.cache_clear()
 
 
 # =============================================================================
-# Environment Variables (read via getters for late binding)
+# Pydantic Settings for Environment Variables
+# =============================================================================
+
+
+class EnvSettings(BaseSettings):
+    """
+    Environment-based settings using pydantic-settings.
+
+    All settings are loaded from environment variables with HSYNC_ prefix.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="HSYNC_",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Server Connection
+    server: Optional[str] = Field(default=None, description="Server URL")
+    api_key: SecretStr = Field(default=SecretStr(""), description="API key for authentication")
+
+    # Sync Settings
+    stability_delay: Optional[int] = Field(default=None, description="File stability delay in seconds")
+
+    # LAN Mode Settings
+    lan_key: Optional[SecretStr] = Field(default=None, description="LAN shared secret key")
+    lan_group: Optional[str] = Field(default=None, description="LAN group name for peer filtering")
+    lan_https: bool = Field(default=True, description="Use HTTPS for LAN communication")
+    lan_port: Optional[int] = Field(default=None, ge=1, le=65535, description="LAN port")
+
+    # LAN Discovery Settings
+    discovery_timeout: Optional[int] = Field(default=None, ge=1, description="Discovery timeout in seconds")
+    heartbeat_interval: Optional[int] = Field(default=None, ge=1, description="Heartbeat interval in seconds")
+    peer_timeout: Optional[int] = Field(default=None, ge=1, description="Peer timeout in seconds")
+
+
+@lru_cache
+def get_env_settings() -> EnvSettings:
+    """Get cached environment settings instance."""
+    return EnvSettings()
+
+
+# =============================================================================
+# Environment Variables Getters (for late binding after env file loading)
 # =============================================================================
 
 
 def get_server_url() -> Optional[str]:
     """Get server URL from environment."""
-    return environ.get("HSYNC_SERVER")
+    return get_env_settings().server
 
 
 def get_api_key() -> str:
     """Get API key from environment."""
-    return environ.get("HSYNC_API_KEY", "")
+    return get_env_settings().api_key.get_secret_value()
 
 
 def get_stability_delay() -> Optional[str]:
     """Get stability delay from environment."""
-    return environ.get("HSYNC_STABILITY_DELAY")
+    delay = get_env_settings().stability_delay
+    return str(delay) if delay is not None else None
 
 
 def get_lan_key() -> Optional[str]:
     """Get LAN shared secret key from environment."""
-    return environ.get("HSYNC_LAN_KEY")
+    key = get_env_settings().lan_key
+    return key.get_secret_value() if key is not None else None
 
 
 def get_lan_group() -> Optional[str]:
     """Get LAN group name from environment."""
-    return environ.get("HSYNC_LAN_GROUP")
+    return get_env_settings().lan_group
 
 
 def get_lan_https() -> bool:
-    """Get LAN HTTPS setting from environment.
-
-    Default is True (HTTPS enabled). Set to 'false', '0', or 'no' to disable.
-    """
-    value = environ.get("HSYNC_LAN_HTTPS", "").lower()
-    if value == "":
-        return True  # Default: HTTPS enabled
-    return value not in ("false", "0", "no")
+    """Get LAN HTTPS setting from environment."""
+    return get_env_settings().lan_https
 
 
 def get_lan_port() -> Optional[int]:
     """Get LAN port from environment."""
-    value = environ.get("HSYNC_LAN_PORT")
-    if value is not None:
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
+    return get_env_settings().lan_port
 
 
 def get_discovery_timeout() -> Optional[int]:
     """Get discovery timeout from environment."""
-    value = environ.get("HSYNC_DISCOVERY_TIMEOUT")
-    if value is not None:
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
+    return get_env_settings().discovery_timeout
 
 
 def get_heartbeat_interval() -> Optional[int]:
     """Get heartbeat interval from environment."""
-    value = environ.get("HSYNC_HEARTBEAT_INTERVAL")
-    if value is not None:
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
+    return get_env_settings().heartbeat_interval
 
 
 def get_peer_timeout() -> Optional[int]:
     """Get peer timeout from environment."""
-    value = environ.get("HSYNC_PEER_TIMEOUT")
-    if value is not None:
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
+    return get_env_settings().peer_timeout
 
 
 # Legacy exports for backward compatibility (read at import time)
-# These are used where early binding is acceptable
-HSYNC_SERVER_URL: Optional[str] = environ.get("HSYNC_SERVER")
-HSYNC_API_KEY: str = environ.get("HSYNC_API_KEY", "")
-HSYNC_STABILITY_DELAY: Optional[str] = environ.get("HSYNC_STABILITY_DELAY")
+def _get_env() -> EnvSettings:
+    """Get current settings (uncached, for backward compatibility)."""
+    return EnvSettings()
+
+
+HSYNC_SERVER_URL: Optional[str] = _get_env().server
+HSYNC_API_KEY: str = _get_env().api_key.get_secret_value()
+HSYNC_STABILITY_DELAY: Optional[str] = str(_get_env().stability_delay) if _get_env().stability_delay else None
 
 
 # =============================================================================

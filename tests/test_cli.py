@@ -17,68 +17,10 @@
 """Tests for the CLI module."""
 
 import pytest
-from argparse import Action
 from io import StringIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from hsync_client.cli import SortedHelpFormatter, create_argument_parser
-
-
-class TestSortedHelpFormatter:
-    """Tests for SortedHelpFormatter class."""
-
-    def test_sorts_actions_alphabetically(self):
-        """Actions are sorted by their option strings."""
-        formatter = SortedHelpFormatter(prog="test")
-        
-        # Create mock actions with different option strings
-        action_z = MagicMock(spec=Action)
-        action_z.option_strings = ["-z", "--zebra"]
-        
-        action_a = MagicMock(spec=Action)
-        action_a.option_strings = ["-a", "--apple"]
-        
-        action_m = MagicMock(spec=Action)
-        action_m.option_strings = ["-m", "--mango"]
-        
-        # Mock the parent add_arguments to capture the sorted order
-        sorted_actions = []
-        original_add_arguments = super(SortedHelpFormatter, formatter).add_arguments
-        
-        with patch.object(
-            SortedHelpFormatter.__bases__[0],
-            'add_arguments',
-            side_effect=lambda actions: sorted_actions.extend(actions)
-        ):
-            formatter.add_arguments([action_z, action_a, action_m])
-        
-        # Verify actions are sorted alphabetically
-        assert sorted_actions[0].option_strings == ["-a", "--apple"]
-        assert sorted_actions[1].option_strings == ["-m", "--mango"]
-        assert sorted_actions[2].option_strings == ["-z", "--zebra"]
-
-    def test_positional_arguments_sorted_first(self):
-        """Actions without option strings (positional) come first."""
-        formatter = SortedHelpFormatter(prog="test")
-        
-        # Create positional action (no option strings)
-        action_positional = MagicMock(spec=Action)
-        action_positional.option_strings = []
-        
-        action_opt = MagicMock(spec=Action)
-        action_opt.option_strings = ["-a", "--arg"]
-        
-        sorted_actions = []
-        with patch.object(
-            SortedHelpFormatter.__bases__[0],
-            'add_arguments',
-            side_effect=lambda actions: sorted_actions.extend(actions)
-        ):
-            formatter.add_arguments([action_opt, action_positional])
-        
-        # Positional (empty tuple) sorts before any option strings
-        assert sorted_actions[0].option_strings == []
-        assert sorted_actions[1].option_strings == ["-a", "--arg"]
+from hsync_client.cli import create_argument_parser
 
 
 class TestCreateArgumentParser:
@@ -238,10 +180,12 @@ class TestCreateArgumentParser:
         assert args.resync is None
         assert args.env_file is None  # New --env-file parameter
 
-    def test_uses_sorted_help_formatter(self):
-        """Parser uses SortedHelpFormatter."""
+    def test_uses_custom_help_formatter(self):
+        """Parser uses a custom help formatter."""
         parser = create_argument_parser()
-        assert parser.formatter_class == SortedHelpFormatter
+        # The formatter is a custom class that inherits from RawDescriptionHelpFormatter
+        formatter_name = getattr(parser.formatter_class, "__name__", "")
+        assert "CustomHelpFormatter" in formatter_name
 
     def test_env_file_option(self):
         """Parser accepts --env-file option."""
