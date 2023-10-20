@@ -73,7 +73,7 @@ flowchart LR
 - 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
 - 👑 **Automatic master election** - one peer becomes the server, others sync with it
 - � **HTTPS by default** - self-signed certificate per session with fingerprint verification
-- 🔑 **Shared secret authentication** - optional `--lan-key` for trusted networks
+- 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
 - �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
 
 ## Requirements
@@ -165,7 +165,7 @@ source prod.env
 | `-V, --version` | Show version |
 | `--lan-mode` | Enable LAN P2P mode (no server required) |
 | `--lan-port` | Port for LAN HTTP server (0 = random) |
-| `--lan-key` | Shared secret for LAN authentication |
+| `HSYNC_LAN_KEY` | Shared secret for LAN authentication (env var only) |
 | `--lan-group` | Group name for peer filtering |
 | `--no-lan-https` | Disable HTTPS (enabled by default) |
 | `--discovery-timeout` | Peer discovery timeout in seconds |
@@ -279,7 +279,7 @@ Peer-to-peer synchronization without a centralized server:
 ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 # With authentication (recommended for maximum security)
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecretKey"
+HSYNC_LAN_KEY="mySecretKey" ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 # Disable HTTPS (use plain HTTP)
 ./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
