@@ -15,23 +15,23 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Logging configuration for HSYNC Client.
+Logging configuration for HSYNC Client using Loguru.
 
 This module provides a standardized logging setup with enterprise-grade features:
 - ISO 8601 timestamps with milliseconds
 - Client ID (CID) for session correlation and distributed tracing
-- Optional colored console output
+- Colored console output with action symbol highlighting
 - File output support
 - Quiet mode
 
 Log format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
 """
 
-import logging
 import sys
 from contextvars import ContextVar
-from json import dumps
 from typing import Optional
+
+from loguru import logger
 
 
 # Context variable for client ID - thread-safe storage for per-session data
@@ -46,20 +46,6 @@ def get_client_id() -> Optional[str]:
 def set_client_id(client_id: Optional[str]) -> None:
     """Set the client ID in context for the current session."""
     client_id_var.set(client_id)
-
-
-class ClientIdFilter(logging.Filter):
-    """
-    Logging filter that adds client_id to log records.
-
-    This filter retrieves the client ID from the context variable
-    and adds it to each log record, enabling session correlation.
-    """
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Add client_id to the log record."""
-        record.client_id = get_client_id() or "-"
-        return True
 
 
 # ANSI color codes for terminal output
@@ -92,16 +78,16 @@ class Colors:
 
 
 # Mapping of log levels to colors
-LEVEL_COLORS = {
-    logging.DEBUG: Colors.GRAY,
-    logging.INFO: Colors.RESET,
-    logging.WARNING: Colors.YELLOW,
-    logging.ERROR: Colors.RED,
-    logging.CRITICAL: Colors.BOLD_RED,
+LEVEL_COLORS: dict[str, str] = {
+    "DEBUG": Colors.GRAY,
+    "INFO": Colors.RESET,
+    "WARNING": Colors.YELLOW,
+    "ERROR": Colors.RED,
+    "CRITICAL": Colors.BOLD_RED,
 }
 
 # Mapping of action symbols to colors
-SYMBOL_COLORS = {
+SYMBOL_COLORS: dict[str, str] = {
     "↓": Colors.CYAN,      # Download
     "↑": Colors.GREEN,     # Upload
     "→": Colors.BLUE,      # Move
@@ -112,83 +98,55 @@ SYMBOL_COLORS = {
 }
 
 
-class ColoredFormatter(logging.Formatter):
+def _colorize_symbols(message: str) -> str:
+    """Add color codes to action symbols in message."""
+    for symbol, color in SYMBOL_COLORS.items():
+        if symbol in message:
+            message = message.replace(
+                f"{symbol} ",
+                f"{color}{symbol}{Colors.RESET} "
+            )
+    return message
+
+
+def _format_record_colored(record: dict) -> str:
     """
-    Custom formatter that adds colors to log messages.
+    Custom format function for loguru with colors.
 
-    Extends the standard formatter to:
-    - Color log levels (ERROR=red, WARNING=yellow, etc.)
-    - Color action symbols (↓=cyan, ↑=green, etc.)
-    - Support optional JSON data appended to messages
+    Produces: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
     """
+    client_id = record["extra"].get("client_id", "-")
+    timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    level = record["level"].name
+    message = record["message"]
 
-    def __init__(
-        self,
-        fmt: Optional[str] = None,
-        datefmt: Optional[str] = None,
-        use_colors: bool = True,
-    ):
-        """Initialize the formatter with optional color support."""
-        super().__init__(fmt, datefmt)
-        self.use_colors = use_colors and sys.stdout.isatty()
+    # Get level color
+    level_color = LEVEL_COLORS.get(level, Colors.RESET)
 
-    def format(self, record: logging.LogRecord) -> str:
-        """Format the log record with colors and optional JSON data."""
-        # Get the base formatted message
-        message = super().format(record)
+    # Colorize action symbols in message
+    message = _colorize_symbols(message)
 
-        if self.use_colors:
-            # Color the log level
-            level_color = LEVEL_COLORS.get(record.levelno, Colors.RESET)
-
-            # Color action symbols in the message
-            for symbol, color in SYMBOL_COLORS.items():
-                if symbol in message:
-                    message = message.replace(
-                        f": {symbol} ",
-                        f": {color}{symbol}{Colors.RESET} "
-                    )
-
-            # Color the level name in the message
-            levelname = record.levelname
-            colored_level = f"{level_color}{levelname}{Colors.RESET}"
-            message = message.replace(f" {levelname}:", f" {colored_level}:")
-
-            # Dim the timestamp
-            if message.startswith("20"):  # ISO timestamp starts with year
-                parts = message.split(" - ", 1)
-                if len(parts) == 2:
-                    message = f"{Colors.DIM}{parts[0]}{Colors.RESET} - {parts[1]}"
-
-        # Append JSON data if present
-        json_data = getattr(record, 'json_data', None)
-        if json_data is not None:
-            json_str = dumps(json_data, indent=4, sort_keys=True, default=str)
-            if self.use_colors:
-                json_str = f"{Colors.DIM}{json_str}{Colors.RESET}"
-            message = f"{message}\n{json_str}"
-
-        return message
+    return (
+        f"{Colors.DIM}{timestamp}{Colors.RESET} - [{record['process'].id}] [{client_id}] "
+        f"{level_color}{level}{Colors.RESET}: {message}\n"
+    )
 
 
-class JsonFormatter(logging.Formatter):
+def _format_record_plain(record: dict) -> str:
     """
-    Custom formatter that supports JSON data in log messages (no colors).
+    Custom format function for loguru without colors.
 
-    Used for file output where ANSI codes should not be written.
+    Produces: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
     """
+    client_id = record["extra"].get("client_id", "-")
+    timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    level = record["level"].name
+    message = record["message"]
 
-    def format(self, record: logging.LogRecord) -> str:
-        """Format the log record, appending JSON data if present."""
-        message = super().format(record)
-
-        # Check if record has extra data to format as JSON
-        json_data = getattr(record, 'json_data', None)
-        if json_data is not None:
-            json_str = dumps(json_data, indent=4, sort_keys=True, default=str)
-            message = f"{message}\n{json_str}"
-
-        return message
+    return (
+        f"{timestamp} - [{record['process'].id}] [{client_id}] "
+        f"{level}: {message}\n"
+    )
 
 
 def setup_logging(
@@ -196,7 +154,7 @@ def setup_logging(
     quiet: bool = False,
     logfile: Optional[str] = None,
     no_color: bool = False,
-) -> logging.Logger:
+) -> "logger":  # type: ignore[valid-type]
     """
     Configure and return the HSYNC client logger.
 
@@ -210,45 +168,37 @@ def setup_logging(
         no_color: Disable colored output.
 
     Returns:
-        Configured logger instance.
+        Configured loguru logger instance.
     """
-    logger = logging.getLogger("hsync")
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-
-    # Clear any existing handlers
-    logger.handlers.clear()
+    # Remove default loguru handler
+    logger.remove()
 
     if quiet:
-        # Add null handler for quiet mode
-        logger.addHandler(logging.NullHandler())
+        # No handlers for quiet mode
         return logger
 
-    # Log format with client ID for session correlation
-    # Format: 2024-01-15T10:30:45.123 - [12345] [cid-abc123] INFO: message
-    log_format = '%(asctime)s.%(msecs)03d - [%(process)d] [%(client_id)s] %(levelname)s: %(message)s'
-    date_format = '%Y-%m-%dT%H:%M:%SZ'
+    level = "DEBUG" if debug else "INFO"
 
     if logfile:
         # File handler - no colors
-        file_formatter = JsonFormatter(fmt=log_format, datefmt=date_format)
-        file_handler = logging.FileHandler(logfile, mode='a', encoding='utf-8')
-        file_handler.addFilter(ClientIdFilter())
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
+        logger.add(
+            logfile,
+            level=level,
+            format=_format_record_plain,
+            colorize=False,
+            encoding="utf-8",
+        )
     else:
         # Console handler - with colors (unless disabled)
-        console_formatter = ColoredFormatter(
-            fmt=log_format,
-            datefmt=date_format,
-            use_colors=not no_color,
-        )
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.addFilter(ClientIdFilter())
-        console_handler.setFormatter(console_formatter)
-        logger.addHandler(console_handler)
+        use_colors = not no_color and sys.stdout.isatty()
+        format_func = _format_record_colored if use_colors else _format_record_plain
 
-    # Prevent propagation to root logger
-    logger.propagate = False
+        logger.add(
+            sys.stdout,
+            level=level,
+            format=format_func,
+            colorize=False,  # We handle colors manually
+        )
 
     return logger
 
