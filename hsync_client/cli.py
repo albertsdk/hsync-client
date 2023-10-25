@@ -45,37 +45,9 @@ from hsync_client.constants import (
 # Typer Application
 # =============================================================================
 
-EPILOG = """
-\b
-Examples:
-  # Basic sync with a remote server
-  hsync -b photos -s https://server.example.com
-
-  # Sync a specific local directory
-  hsync -b documents -s https://server.example.com -p ~/Documents
-
-  # Continuous sync (watch for changes)
-  hsync -b projects -s https://server.example.com -w
-
-  # Dry run to see what would be synced
-  hsync -b backup -s https://server.example.com -n
-
-  # LAN mode (no central server, peer-to-peer)
-  hsync -b shared --lan-mode
-
-  # LAN mode with authentication (set HSYNC_LAN_KEY env var)
-  HSYNC_LAN_KEY=mysecret hsync -b shared --lan-mode
-
-Environment variables:
-  HSYNC_SERVER      Server URL (alternative to -s)
-  HSYNC_API_KEY     API key for authentication
-  HSYNC_LAN_KEY     Shared secret for LAN mode authentication
-"""
-
 app = typer.Typer(
     name="hsync",
     help="HSYNC - HTTP-based file synchronization client",
-    epilog=EPILOG,
     add_completion=False,
     rich_markup_mode="rich",  # Enable rich formatting for grouped options
 )
@@ -276,6 +248,32 @@ def main(
     HSYNC - HTTP-based file synchronization client.
 
     Synchronize files between local directory and remote bucket.
+
+    [bold]Examples:[/bold]
+
+        [dim]# Basic sync with a remote server[/dim]
+        $ hsync -b photos -s https://server.example.com
+
+        [dim]# Sync a specific local directory[/dim]
+        $ hsync -b documents -s https://server.example.com -p ~/Documents
+
+        [dim]# Continuous sync (watch for changes)[/dim]
+        $ hsync -b projects -s https://server.example.com -w
+
+        [dim]# Dry run to see what would be synced[/dim]
+        $ hsync -b backup -s https://server.example.com -n
+
+        [dim]# LAN mode (no central server, peer-to-peer)[/dim]
+        $ hsync -b shared --lan-mode
+
+        [dim]# LAN mode with authentication[/dim]
+        $ HSYNC_LAN_KEY=mysecret hsync -b shared --lan-mode
+
+    [bold]Environment variables:[/bold]
+
+        HSYNC_SERVER    Server URL (alternative to -s)
+        HSYNC_API_KEY   API key for authentication
+        HSYNC_LAN_KEY   Shared secret for LAN mode authentication
     """
     # Validate sync_order
     if sync_order not in ("mtime", "ctime"):
