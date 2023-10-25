@@ -27,7 +27,7 @@ from os.path import basename, exists
 from re import sub
 from typing import Optional
 
-from requests import get as http_get, RequestException
+
 
 from hsync_client.config import (
     get_api_key,
@@ -49,6 +49,7 @@ from hsync_client.constants import ACTION_LABEL, FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.logger import setup_logging, set_client_id
+from hsync_client.retry import retry_on_connection_error
 from hsync_client.sync import sync
 from hsync_client.utils import get_cid, is_valid_logfile
 from hsync_client.websocket_handler import remote_connect
@@ -147,6 +148,10 @@ def run_sync(
     if lan_mode and not effective_server_url:
         effective_server_url = "http://localhost:8765"
 
+    # At this point, effective_server_url is guaranteed to be set
+    # (either from args, env, or LAN mode placeholder)
+    assert effective_server_url is not None
+
     # Convert HTTP URL to WebSocket URL for events endpoint
     ws_url = sub(r"^http:", "ws:", effective_server_url)
     ws_url = sub(r"^https:", "wss:", ws_url)
@@ -220,21 +225,13 @@ def run_sync(
         _run_lan_mode(config, LOG)
         return
 
-    # Server Connectivity Check
-    LOG.debug(f"Checking server connectivity: {effective_server_url}")
-    try:
-        check_timeout = min(config["HTTP_TIMEOUT"], 10)
-        response = http_get(
-            f"{effective_server_url}/api/v1/health",
-            timeout=check_timeout,
-            verify=not config["NO_VERIFY_SSL"],
-        )
-        if response.status_code >= 500:
-            LOG.error(f"Server error: {effective_server_url} returned status {response.status_code}")
-            return
-        LOG.debug(f"Server is reachable (status: {response.status_code})")
-    except RequestException as e:
-        LOG.error(f"Cannot connect to server: {effective_server_url} ({e})")
+    # Server Connectivity Check with retry
+    if not _check_server_connectivity(
+        server_url=effective_server_url,
+        timeout=min(config["HTTP_TIMEOUT"], 10),
+        verify_ssl=not config["NO_VERIFY_SSL"],
+        logger=LOG,
+    ):
         return
 
     # Execute Sync
@@ -244,6 +241,51 @@ def run_sync(
         run(remote_connect())
     else:
         run(sync())
+
+
+def _check_server_connectivity(
+    server_url: str,
+    timeout: float,
+    verify_ssl: bool,
+    logger,
+) -> bool:
+    """
+    Check server connectivity with automatic retry on transient failures.
+
+    Uses tenacity for exponential backoff retry (3 attempts, 1-10s wait).
+
+    Args:
+        server_url: Base URL of the server.
+        timeout: Request timeout in seconds.
+        verify_ssl: Whether to verify SSL certificates.
+        logger: Logger instance for messages.
+
+    Returns:
+        True if server is reachable, False otherwise.
+    """
+    from requests import get as http_get, RequestException
+
+    @retry_on_connection_error(max_attempts=3, min_wait=1, max_wait=10)
+    def _do_health_check() -> int:
+        """Perform health check request (decorated with retry)."""
+        response = http_get(
+            f"{server_url}/api/v1/health",
+            timeout=timeout,
+            verify=verify_ssl,
+        )
+        return response.status_code
+
+    logger.debug(f"Checking server connectivity: {server_url}")
+    try:
+        status_code = _do_health_check()
+        if status_code >= 500:
+            logger.error(f"Server error: {server_url} returned status {status_code}")
+            return False
+        logger.debug(f"Server is reachable (status: {status_code})")
+        return True
+    except RequestException as e:
+        logger.error(f"Cannot connect to server after retries: {server_url} ({e})")
+        return False
 
 
 def _run_lan_mode(config: HsyncConfig, LOG) -> None:

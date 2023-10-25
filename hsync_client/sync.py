@@ -39,6 +39,7 @@ from hsync_client.exceptions import AuthenticationError, NetworkError, ServerErr
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
 from hsync_client.models.sync_action import SyncAction, SyncActionName
+from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import bytes_to_human_readable, get_ssl_verify, set_permissions
 
 
@@ -193,18 +194,20 @@ def get_files_local() -> list[dict]:
     return file_list
 
 
+@retry_on_network_error(max_attempts=3, min_wait=1, max_wait=10)
 def get_files_remote() -> list[dict]:
     """
     Get list of all remote files from the server.
 
     Makes an HTTP GET request to retrieve file metadata from the
-    remote bucket, sorted by the configured sync order.
+    remote bucket, sorted by the configured sync order. Retries
+    automatically on network errors with exponential backoff.
 
     Returns:
         List of file metadata dictionaries from server.
 
     Raises:
-        NetworkError: If the request fails.
+        NetworkError: If the request fails after retries.
         AuthenticationError: If authentication fails (401/403).
         ServerError: If server returns an error response.
     """
