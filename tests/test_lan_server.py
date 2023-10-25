@@ -414,5 +414,7 @@ class TestLANServerHTTPS:
             assert server.is_running() is True
             server.stop()
         finally:
-            os.unlink(saved_info.cert_file)
-            os.unlink(saved_info.key_file)
+            if saved_info.cert_file:
+                os.unlink(saved_info.cert_file)
+            if saved_info.key_file:
+                os.unlink(saved_info.key_file)

@@ -61,6 +61,7 @@ class TestEvent:
             strip_localpath=True,
         )
         
+        assert isinstance(event.src, Dir)
         assert event.src.path == "subdir"
 
     def test_init_without_strip(self):

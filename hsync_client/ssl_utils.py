@@ -24,6 +24,7 @@ for secure communication in LAN P2P mode.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
 import tempfile
 from dataclasses import dataclass
@@ -97,7 +98,7 @@ def generate_self_signed_cert(
             x509.SubjectAlternativeName([
                 x509.DNSName("localhost"),
                 x509.DNSName("*"),
-                x509.IPAddress(x509.general_name.ipaddress.IPv4Address("127.0.0.1")),
+                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
             ]),
             critical=False,
         )
