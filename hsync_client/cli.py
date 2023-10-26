@@ -247,7 +247,19 @@ def main(
     """
     HSYNC - HTTP-based file synchronization client.
 
-    Synchronize files between local directory and remote bucket.
+    Synchronize files between a local directory and a remote bucket. A bucket
+    is a shared directory hosted on a central HSYNC server or on another peer
+    in LAN Mode. In [bold]Server Mode[/bold], clients connect to a centralized server.
+    In [bold]LAN Mode[/bold] (P2P), clients discover each other via mDNS and one
+    automatically becomes the master—no central server required.
+
+    [bold]Option Groups:[/bold]
+
+        [cyan]Required[/cyan]     Mandatory options to start synchronization
+        [cyan]Connection[/cyan]   Server URL and SSL/TLS settings
+        [cyan]Sync[/cyan]         Synchronization behavior and timing
+        [cyan]LAN Mode[/cyan]     Peer-to-peer sync without central server
+        [cyan]Output[/cyan]       Logging verbosity and output destination
 
     [bold]Examples:[/bold]
 
@@ -269,11 +281,15 @@ def main(
         [dim]# LAN mode with authentication[/dim]
         $ HSYNC_LAN_KEY=mysecret hsync -b shared --lan-mode
 
-    [bold]Environment variables:[/bold]
+    [bold]Environment Variables:[/bold]
 
         HSYNC_SERVER    Server URL (alternative to -s)
         HSYNC_API_KEY   API key for authentication
         HSYNC_LAN_KEY   Shared secret for LAN mode authentication
+
+    [bold]Authors:[/bold]
+
+        Alberto Basso <alberto.basso@proton.me>
     """
     # Validate sync_order
     if sync_order not in ("mtime", "ctime"):
