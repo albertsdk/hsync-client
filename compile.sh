@@ -185,6 +185,7 @@ build_binary() {
     # Run PyInstaller with optimized settings
     # --strip: Remove debug symbols to reduce binary size
     # --hidden-import: Include modules not detected by static analysis
+    # --collect-data: Include data files from packages (e.g., Rich unicode data)
     # --exclude-module: Exclude unnecessary modules to reduce size
     #
     # LC_ALL=C: Force English locale to avoid ldconfig localization warnings
@@ -201,6 +202,16 @@ build_binary() {
         --hidden-import "websockets.exceptions" \
         --hidden-import "watchdog.observers" \
         --hidden-import "watchdog.events" \
+        --hidden-import "rich._unicode_data" \
+        --hidden-import "rich._unicode_data.unicode17-0-0" \
+        --hidden-import "rich._unicode_data.unicode16-0-0" \
+        --hidden-import "rich._unicode_data.unicode15-1-0" \
+        --hidden-import "rich._unicode_data.unicode15-0-0" \
+        --hidden-import "rich._unicode_data.unicode14-0-0" \
+        --hidden-import "rich._unicode_data.unicode13-0-0" \
+        --hidden-import "rich._unicode_data.unicode12-1-0" \
+        --hidden-import "rich._unicode_data.unicode12-0-0" \
+        --hidden-import "rich._unicode_data._versions" \
         --exclude-module "pytest" \
         --exclude-module "pytest_asyncio" \
         --exclude-module "pytest_cov" \
