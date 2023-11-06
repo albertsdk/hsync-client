@@ -13,19 +13,19 @@ graph TB
             CLI[Argument Parser]
             CFG[Configuration]
         end
-        
+
         subgraph "Core Services"
             SYNC[Sync Engine]
             WD[Watchdog Observer]
             EQ[Event Queue]
             WS[WebSocket Client]
         end
-        
+
         subgraph "API Layer"
             HTTP[HTTP Client]
             AUTH[Authentication]
         end
-        
+
         subgraph "Models"
             FILE[File]
             DIR[Dir]
@@ -33,29 +33,30 @@ graph TB
             SYMLINK[Symlink]
         end
     end
-    
+
     subgraph "Local"
         FS[(File System)]
     end
-    
+
     subgraph "Remote"
         SERVER[HSYNC Server]
     end
 
-    CLI --> CFG
-    CFG --> SYNC
-    
-    SYNC --> HTTP
-    SYNC --> WS
-    
-    WD -->|File Events| EQ
-    EQ -->|Queued Events| WS
-    
-    WS <-->|Events| SERVER
-    HTTP <-->|REST API| SERVER
-    
-    SYNC <--> FS
-    WD --> FS
+    CLI -->|"① Parse args"| CFG
+    CFG -->|"② Configure"| SYNC
+
+    SYNC -->|"③ HTTP requests"| HTTP
+    SYNC -->|"④ WS messages"| WS
+
+    WD -->|"⑤ File events"| EQ
+    EQ -->|"⑥ Queued events"| WS
+
+    WS -->|"⑦ Send events"| SERVER
+    SERVER -.->|"⑧ Receive events"| WS
+    HTTP -->|"⑨ Upload/Download"| SERVER
+
+    FS -->|"⑩ Monitor"| WD
+    SYNC -->|"⑪ Read/Write"| FS
 ```
 
 ![System Overview](images/architecture-1.png)
@@ -114,12 +115,12 @@ graph LR
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Initialize
-    Initialize --> FetchRemote: Get remote file list
-    FetchRemote --> ScanLocal: Scan local directory
-    ScanLocal --> Compare: Compare files
-    Compare --> Execute: Execute sync actions
-    Execute --> [*]: Complete
+    [*] --> Initialize: ① Start
+    Initialize --> FetchRemote: ② Get remote file list
+    FetchRemote --> ScanLocal: ③ Scan local directory
+    ScanLocal --> Compare: ④ Compare files
+    Compare --> Execute: ⑤ Execute sync actions
+    Execute --> [*]: ⑥ Complete
 ```
 
 ![Single Sync Mode](images/architecture-3.png)
@@ -128,25 +129,25 @@ stateDiagram-v2
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Initialize
-    Initialize --> InitialSync: Perform initial sync
-    InitialSync --> Connected: Connect WebSocket
-    
+    [*] --> Initialize: ① Start
+    Initialize --> InitialSync: ② Perform initial sync
+    InitialSync --> Connected: ③ Connect WebSocket
+
     state Connected {
         [*] --> Watching
-        Watching --> LocalEvent: File changed locally
-        Watching --> RemoteEvent: Event from server
-        
-        LocalEvent --> Upload: Upload file
+        Watching --> LocalEvent: ④a File changed locally
+        Watching --> RemoteEvent: ④b Event from server
+
+        LocalEvent --> Upload: ⑤a Upload file
         Upload --> Watching
-        
-        RemoteEvent --> Download: Download file
+
+        RemoteEvent --> Download: ⑤b Download file
         Download --> Watching
     }
-    
-    Connected --> Reconnecting: Connection lost
-    Reconnecting --> Connected: Reconnected
-    Reconnecting --> [*]: Max retries exceeded
+
+    Connected --> Reconnecting: ⑥ Connection lost
+    Reconnecting --> Connected: ⑦ Reconnected
+    Reconnecting --> [*]: ⑧ Max retries exceeded
 ```
 
 ![Watch Mode](images/architecture-4.png)
@@ -155,34 +156,34 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    subgraph "Local Events (Watchdog)"
+    subgraph "① Local Events (Watchdog)"
         L1[on_created]
         L2[on_closed / on_modified]
         L3[on_deleted]
         L4[on_moved]
     end
 
-    subgraph "Processing"
+    subgraph "② Processing"
         STABLE[File Stability Check]
         UPLOAD[Upload to Server]
     end
 
-    subgraph "Event Queue"
+    subgraph "③ Event Queue"
         Q[Queue with Retry]
     end
 
-    subgraph "WebSocket"
+    subgraph "④ WebSocket"
         WS[Send to Server]
     end
 
-    L1 --> Q
-    L2 --> STABLE
-    STABLE --> UPLOAD
-    L3 --> Q
-    L4 --> Q
-    Q --> WS
+    L1 -->|"①→③"| Q
+    L2 -->|"①→②"| STABLE
+    STABLE -->|"②"| UPLOAD
+    L3 -->|"①→③"| Q
+    L4 -->|"①→③"| Q
+    Q -->|"③→④"| WS
 
-    subgraph "Remote Events"
+    subgraph "⑤ Remote Events"
         R1[added]
         R2[modified]
         R3[deleted]
@@ -190,18 +191,18 @@ flowchart TD
         R5[symlink]
     end
 
-    subgraph "Local Actions"
+    subgraph "⑥ Local Actions"
         A1[Download File]
         A2[Delete File]
         A3[Rename File]
         A4[Create Symlink]
     end
 
-    R1 --> A1
-    R2 --> A1
-    R3 --> A2
-    R4 --> A3
-    R5 --> A4
+    R1 -->|"⑤→⑥"| A1
+    R2 -->|"⑤→⑥"| A1
+    R3 -->|"⑤→⑥"| A2
+    R4 -->|"⑤→⑥"| A3
+    R5 -->|"⑤→⑥"| A4
 ```
 
 ![Event Processing](images/architecture-5.png)
@@ -212,27 +213,27 @@ The client uses the **watchdog** library to monitor the local file system. The d
 
 ```mermaid
 flowchart TD
-    subgraph "File Modified"
+    subgraph "① File Modified"
         FM[File Write Detected]
     end
 
-    FM --> P{Platform?}
+    FM -->|"②"| P{Platform?}
 
-    subgraph "Linux (inotify)"
-        P -->|Linux| OC[on_closed event]
-        OC --> STABLE[Check file stability]
+    subgraph "③a Linux (inotify)"
+        P -->|"Linux"| OC[on_closed event]
+        OC -->|"④a"| STABLE[Check file stability]
     end
 
-    subgraph "macOS / Windows"
-        P -->|macOS/Windows| OM[on_modified event]
-        OM --> DEBOUNCE[Debounce 1 second]
+    subgraph "③b macOS / Windows"
+        P -->|"macOS/Windows"| OM[on_modified event]
+        OM -->|"④b"| DEBOUNCE[Debounce 1 second]
         DEBOUNCE --> STABLE
     end
 
-    STABLE --> CHECK{Size & mtime stable?}
-    CHECK -->|No| WAIT[Wait stability delay]
+    STABLE -->|"⑤"| CHECK{Size & mtime stable?}
+    CHECK -->|"No"| WAIT[Wait stability delay]
     WAIT --> CHECK
-    CHECK -->|Yes| UPLOAD[Upload file]
+    CHECK -->|"⑥ Yes"| UPLOAD[Upload file]
 ```
 
 ![File Change Detection](images/architecture-8.png)
@@ -266,17 +267,17 @@ This prevents uploading incomplete files during long write operations.
 
 ```mermaid
 flowchart LR
-    ENV[Environment Variables] --> CFG[Configuration]
-    CLI[CLI Arguments] --> CFG
-    CFG --> VALIDATE[Validation]
-    VALIDATE --> RUN[Run Client]
-
-    subgraph "Config Sources"
-        ENV
-        CLI
+    subgraph "① Config Sources"
+        ENV[Environment Variables]
+        CLI[CLI Arguments]
     end
 
-    subgraph "Config Values"
+    ENV -->|"②"| CFG[Configuration]
+    CLI -->|"②"| CFG
+    CFG -->|"③"| VALIDATE[Validation]
+    VALIDATE -->|"④"| RUN[Run Client]
+
+    subgraph "⑤ Config Values"
         S[Server URL]
         B[Bucket Name]
         P[Local Path]
@@ -299,13 +300,13 @@ The sync engine uses a thread pool with semaphore-based concurrency control:
 
 ```mermaid
 flowchart TB
-    subgraph "Sync Engine"
+    subgraph "① Sync Engine"
         SYNC[sync]
         ACTIONS[Separate Actions]
         PARALLEL[_execute_parallel_transfers]
     end
 
-    subgraph "Thread Pool"
+    subgraph "② Thread Pool"
         SEM[Semaphore<br/>max=5]
         T1[Thread 1]
         T2[Thread 2]
@@ -314,26 +315,26 @@ flowchart TB
         T5[Thread N]
     end
 
-    subgraph "Transfers"
+    subgraph "③ Transfers"
         D1[Download 1]
         D2[Download 2]
         U1[Upload 1]
         U2[Upload 2]
     end
 
-    subgraph "Server"
+    subgraph "④ Server"
         API[REST API]
     end
 
-    SYNC --> ACTIONS
-    ACTIONS -->|downloads + uploads| PARALLEL
-    PARALLEL --> SEM
-    SEM --> T1 & T2 & T3 & T4 & T5
-    T1 --> D1
-    T2 --> D2
-    T3 --> U1
-    T4 --> U2
-    D1 & D2 & U1 & U2 --> API
+    SYNC -->|"①"| ACTIONS
+    ACTIONS -->|"② downloads + uploads"| PARALLEL
+    PARALLEL -->|"③"| SEM
+    SEM -->|"④"| T1 & T2 & T3 & T4 & T5
+    T1 -->|"⑤"| D1
+    T2 -->|"⑤"| D2
+    T3 -->|"⑤"| U1
+    T4 -->|"⑤"| U2
+    D1 & D2 & U1 & U2 -->|"⑥"| API
 ```
 
 ![Parallel Transfers](images/architecture-7.png)

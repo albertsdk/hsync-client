@@ -10,18 +10,17 @@ LAN Mode enables direct peer-to-peer file synchronization between devices on the
 
 ```mermaid
 flowchart TB
-    subgraph "Traditional Mode"
-        C1A[Client A] --> S[Server]
-        C1B[Client B] --> S
-        C1C[Client C] --> S
+    subgraph "① Traditional Mode"
+        C1A[Client A] -->|"sync"| S[Server]
+        C1B[Client B] -->|"sync"| S
+        C1C[Client C] -->|"sync"| S
     end
-    
-    subgraph "LAN Mode (P2P)"
-        C2A[Client A] <--> C2B[Client B]
-        C2B <--> C2C[Client C]
-        C2A <--> C2C
+
+    subgraph "② LAN Mode (P2P)"
+        C2A[Client A<br/>Master] <-->|"sync"| C2B[Client B]
+        C2A <-->|"sync"| C2C[Client C]
     end
-    
+
     style S fill:#fff3e0,stroke:#e65100
     style C2A fill:#e8f5e9,stroke:#2e7d32
     style C2B fill:#e3f2fd,stroke:#1565c0
@@ -52,29 +51,30 @@ flowchart TB
             M_HTTP[HTTP Server]
             M_FILES[(Local Files)]
         end
-        
+
         subgraph "Client A"
             A_DISC[mDNS Discovery]
             A_SYNC[Sync Engine]
             A_FILES[(Local Files)]
         end
-        
+
         subgraph "Client B"
             B_DISC[mDNS Discovery]
             B_SYNC[Sync Engine]
             B_FILES[(Local Files)]
         end
     end
-    
-    M_DISC -.->|Announce| A_DISC
-    M_DISC -.->|Announce| B_DISC
-    
-    A_SYNC -->|HTTP API| M_HTTP
-    B_SYNC -->|HTTP API| M_HTTP
-    
-    M_HTTP <--> M_FILES
-    A_SYNC <--> A_FILES
-    B_SYNC <--> B_FILES
+
+    M_DISC -.->|"① Announce"| A_DISC
+    M_DISC -.->|"① Announce"| B_DISC
+
+    A_SYNC -->|"② HTTP API"| M_HTTP
+    B_SYNC -->|"② HTTP API"| M_HTTP
+
+    M_HTTP -->|"③ Read"| M_FILES
+    M_FILES -->|"④ Write"| M_HTTP
+    A_SYNC -->|"⑤ Write"| A_FILES
+    B_SYNC -->|"⑤ Write"| B_FILES
 ```
 
 ![LAN Architecture](images/lan-mode-2.png)
@@ -349,13 +349,13 @@ The master is elected using **lexicographic comparison** of Client IDs (CIDs):
 
 ```mermaid
 flowchart LR
-    subgraph "CID Comparison"
-        A["abc123"] --> COMP{Compare}
-        B["def456"] --> COMP
-        C["xyz789"] --> COMP
+    subgraph "① CID Comparison"
+        A["abc123"] -->|"②"| COMP{Compare}
+        B["def456"] -->|"②"| COMP
+        C["xyz789"] -->|"②"| COMP
     end
 
-    COMP --> RESULT["abc123 wins<br/>(lowest CID)"]
+    COMP -->|"③"| RESULT["abc123 wins<br/>(lowest CID)"]
 
     style A fill:#e8f5e9,stroke:#2e7d32
     style RESULT fill:#e8f5e9,stroke:#2e7d32
@@ -514,23 +514,23 @@ LAN mode uses mDNS (Multicast DNS) for peer discovery:
 
 ```mermaid
 flowchart TB
-    subgraph "Main Thread"
+    subgraph "① Main Thread"
         MAIN[Main Loop]
     end
 
-    subgraph "Background Threads"
+    subgraph "② Background Threads"
         MDNS[mDNS Listener]
         HTTP[HTTP Server]
         HB[Heartbeat Timer]
     end
 
-    MAIN --> MDNS
-    MAIN --> HTTP
-    MAIN --> HB
+    MAIN -->|"① Start"| MDNS
+    MAIN -->|"② Start"| HTTP
+    MAIN -->|"③ Start"| HB
 
-    MDNS -->|Peer Events| MAIN
-    HTTP -->|Requests| MAIN
-    HB -->|Peer Timeout| MAIN
+    MDNS -.->|"④ Peer Events"| MAIN
+    HTTP -.->|"⑤ Requests"| MAIN
+    HB -.->|"⑥ Peer Timeout"| MAIN
 ```
 
 ![Thread Model](images/lan-mode-6.png)
