@@ -173,6 +173,11 @@ def main(
         help="Do not propagate file deletions (useful for backup scenarios).",
         rich_help_panel="Sync",
     )] = False,
+    no_compression: Annotated[bool, typer.Option(
+        "--no-compression",
+        help="Disable zstd compression for file transfers.",
+        rich_help_panel="Sync",
+    )] = False,
     # -------------------------------------------------------------------------
     # LAN Mode
     # -------------------------------------------------------------------------
@@ -352,6 +357,7 @@ def main(
         filter_path=filter_path,
         dryrun=dryrun,
         ignore_delete=ignore_delete,
+        compression_enabled=not no_compression,
         lan_mode=lan_mode,
         lan_port=lan_port,
         discovery_timeout=discovery_timeout,
