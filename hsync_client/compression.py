@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Alberto Basso <alberto.basso.dev@gmail.com>
+# SPDX-FileCopyrightText: 2024 Alberto Basso
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -33,8 +33,36 @@ COMPRESSION_LEVEL = 3
 # Content-Encoding header value for zstd compression
 CONTENT_ENCODING_ZSTD = "zstd"
 
-# Minimum file size to consider compression (1KB)
-MIN_SIZE_FOR_COMPRESSION = 1024
+# =============================================================================
+# Compression Thresholds
+# =============================================================================
+# Different thresholds based on transfer direction and network type.
+# These are based on the trade-off between compression CPU overhead and
+# network transfer time savings.
+#
+# Download (Server→Client): Lower threshold, server CPU is acceptable
+# Upload (Client→Server): Higher threshold, client CPU is more precious
+# LAN mode: Much higher threshold, local network is fast
+# =============================================================================
+
+# Download threshold: 10KB
+# - Below 10KB, compression overhead often exceeds transfer time savings
+# - Above 10KB, compression benefits clearly outweigh overhead
+MIN_SIZE_FOR_DOWNLOAD = 10 * 1024  # 10 KB
+
+# Upload threshold: 32KB (typical production threshold)
+# - Client CPU is more precious than server CPU
+# - Only compress medium-large files where benefit is clear
+MIN_SIZE_FOR_UPLOAD = 32 * 1024  # 32 KB
+
+# LAN mode threshold: 100KB
+# - Local network is very fast (1Gbps+), compression rarely helps
+# - Only compress large files where transfer time is significant
+# - Below 100KB, compression time > transfer time on fast LAN
+MIN_SIZE_FOR_LAN = 100 * 1024  # 100 KB
+
+# Legacy constant for backward compatibility
+MIN_SIZE_FOR_COMPRESSION = MIN_SIZE_FOR_DOWNLOAD
 
 # File extensions that are already compressed (compression won't help)
 PRECOMPRESSED_EXTENSIONS = frozenset({
@@ -60,20 +88,46 @@ _compressor = zstd.ZstdCompressor(level=COMPRESSION_LEVEL)
 _decompressor = zstd.ZstdDecompressor()
 
 
-def should_compress(filepath: str, size: int) -> bool:
+def should_compress(
+    filepath: str,
+    size: int,
+    transfer_type: str = "download",
+    is_lan: bool = False,
+) -> bool:
     """
     Determine if a file should be compressed before transfer.
+
+    Uses different thresholds based on transfer direction and network type:
+    - Download (server→client): 10KB threshold
+    - Upload (client→server): 32KB threshold
+    - LAN mode: 100KB threshold (local network is fast)
 
     Args:
         filepath: Path to the file.
         size: Size of the file in bytes.
+        transfer_type: "download" or "upload" (default: "download").
+        is_lan: True if operating in LAN mode (default: False).
 
     Returns:
         True if file should be compressed, False otherwise.
     """
+    # Determine threshold based on context
+    if is_lan:
+        threshold = MIN_SIZE_FOR_LAN
+        context = "LAN"
+    elif transfer_type == "upload":
+        threshold = MIN_SIZE_FOR_UPLOAD
+        context = "upload"
+    else:
+        threshold = MIN_SIZE_FOR_DOWNLOAD
+        context = "download"
+
     # Too small to benefit from compression
-    if size < MIN_SIZE_FOR_COMPRESSION:
-        LOG.debug(f"Skip compression: {filepath} too small ({size} bytes)")
+    if size < threshold:
+        LOG.debug(
+            f"Skip compression ({context}): {filepath} "
+            f"below threshold ({size} < {threshold} bytes)"
+        )
         return False
 
     # Check if file extension indicates pre-compressed format
