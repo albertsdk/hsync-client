@@ -168,6 +168,11 @@ def main(
         help="Show what would be done without making changes.",
         rich_help_panel="Sync",
     )] = False,
+    ignore_delete: Annotated[bool, typer.Option(
+        "--ignore-delete",
+        help="Do not propagate file deletions (useful for backup scenarios).",
+        rich_help_panel="Sync",
+    )] = False,
     # -------------------------------------------------------------------------
     # LAN Mode
     # -------------------------------------------------------------------------
@@ -197,6 +202,12 @@ def main(
     lan_https: Annotated[bool, typer.Option(
         "--no-lan-https/",
         help="Disable HTTPS for LAN mode (use plain HTTP).",
+        show_default=False,
+        rich_help_panel="LAN Mode",
+    )] = True,
+    lan_persistent: Annotated[bool, typer.Option(
+        "--no-lan-persistent/",
+        help="Disable persistent mode (exit when no peers found).",
         show_default=False,
         rich_help_panel="LAN Mode",
     )] = True,
@@ -340,11 +351,13 @@ def main(
         max_wait_timeout=max_wait_timeout,
         filter_path=filter_path,
         dryrun=dryrun,
+        ignore_delete=ignore_delete,
         lan_mode=lan_mode,
         lan_port=lan_port,
         discovery_timeout=discovery_timeout,
         lan_group=lan_group,
         lan_https=lan_https,
+        lan_persistent=lan_persistent,
         debug=debug,
         quiet=quiet,
         logfile=logfile,

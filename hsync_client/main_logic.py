@@ -33,9 +33,11 @@ from hsync_client.config import (
     get_api_key,
     get_discovery_timeout,
     get_heartbeat_interval,
+    get_ignore_delete,
     get_lan_group,
     get_lan_https,
     get_lan_key,
+    get_lan_persistent,
     get_lan_port,
     get_peer_timeout,
     get_server_url,
@@ -88,11 +90,13 @@ def run_sync(
     max_wait_timeout: int,
     filter_path: Optional[str],
     dryrun: bool,
+    ignore_delete: bool,
     lan_mode: bool,
     lan_port: int,
     discovery_timeout: int,
     lan_group: Optional[str],
     lan_https: bool,
+    lan_persistent: bool,
     debug: bool,
     quiet: bool,
     logfile: Optional[str],
@@ -195,7 +199,9 @@ def run_sync(
         "LAN_KEY": get_lan_key(),
         "LAN_GROUP": lan_group or get_lan_group(),
         "LAN_HTTPS": lan_https or get_lan_https(),
+        "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),
         "MASTER_CERT_FINGERPRINT": None,
+        "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
     }
 
     set_config(config)
@@ -290,7 +296,12 @@ def _check_server_connectivity(
 
 def _run_lan_mode(config: HsyncConfig, LOG) -> None:
     """Handle LAN P2P mode synchronization."""
+    import time
+
     LOG.info("LAN P2P mode enabled")
+    persistent = config.get("LAN_PERSISTENT", False)
+    if persistent:
+        LOG.info("Persistent mode enabled - will wait indefinitely for peers")
 
     cert_info = None
     if config["LAN_HTTPS"]:
@@ -310,62 +321,101 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
     )
     peer_manager = lan_sync.start()
 
-    lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
-
+    # Track if we ever had peers (for different messages)
+    ever_had_peers = False
     lan_server = None
-    if peer_manager.is_master():
-        LOG.info("This client is the MASTER - acting as sync coordinator")
 
-        if config["LAN_HTTPS"] and cert_info:
-            lan_server = LANServer(
-                port=lan_sync.port,
-                use_https=True,
-                cert_file=cert_info.cert_file,
-                key_file=cert_info.key_file,
-            )
-        else:
-            lan_server = LANServer(port=lan_sync.port)
-        lan_server.start()
+    try:
+        while True:
+            # Wait for peer discovery
+            lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
 
-        protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
-        LOG.info(f"Master server listening on port {lan_sync.port} ({protocol})")
-        if config["LAN_KEY"]:
-            LOG.info("Authentication enabled (HSYNC_LAN_KEY)")
-        else:
-            LOG.info("No authentication (trust LAN mode)")
+            peers = peer_manager.get_alive_peers()
+            if peers:
+                ever_had_peers = True
 
-        LOG.info("Press Ctrl+C to stop...")
-        try:
-            import time
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            LOG.info("Shutting down master server...")
-    else:
-        master = peer_manager.get_master()
-        if master:
-            master_url = master.get_server_url()
-            LOG.info(f"Connecting to master: {master.cid} at {master_url}")
+            if peer_manager.is_master():
+                LOG.info("This client is the MASTER - acting as sync coordinator")
 
-            if master.use_https and master.cert_fingerprint:
-                LOG.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
-                config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
+                # Start server if not already running
+                if lan_server is None:
+                    if config["LAN_HTTPS"] and cert_info:
+                        lan_server = LANServer(
+                            port=lan_sync.port,
+                            use_https=True,
+                            cert_file=cert_info.cert_file,
+                            key_file=cert_info.key_file,
+                        )
+                    else:
+                        lan_server = LANServer(port=lan_sync.port)
+                    lan_server.start()
 
-            config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
-            ws_master_url = sub(r"^http:", "ws:", master_url)
-            if master.use_https:
-                ws_master_url = sub(r"^http:", "wss:", master_url)
-            config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
+                    protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
+                    LOG.info(f"Master server listening on port {lan_sync.port} ({protocol})")
+                    if config["LAN_KEY"]:
+                        LOG.info("Authentication enabled (HSYNC_LAN_KEY)")
+                    else:
+                        LOG.info("No authentication (trust LAN mode)")
 
-            if config["LAN_KEY"]:
-                config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+                if persistent:
+                    LOG.info("Press Ctrl+C to stop...")
+                    # In persistent mode, keep running as master
+                    while True:
+                        time.sleep(1)
+                        # Check if we're still master (peers may have joined/left)
+                        if not peer_manager.is_master():
+                            LOG.info("No longer master, switching to client mode...")
+                            if lan_server:
+                                lan_server.stop()
+                                lan_server = None
+                            break
+                else:
+                    # Non-persistent: just wait for Ctrl+C
+                    LOG.info("Press Ctrl+C to stop...")
+                    while True:
+                        time.sleep(1)
+            else:
+                master = peer_manager.get_master()
+                if master:
+                    master_url = master.get_server_url()
+                    LOG.info(f"Connecting to master: {master.cid} at {master_url}")
 
-            set_config(config)
-            run(sync())
-        else:
-            LOG.warning("No master elected - this client is alone, nothing to sync")
+                    if master.use_https and master.cert_fingerprint:
+                        LOG.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
+                        config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
-    if lan_server:
-        lan_server.stop()
-    lan_sync.stop()
+                    config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
+                    ws_master_url = sub(r"^http:", "ws:", master_url)
+                    if master.use_https:
+                        ws_master_url = sub(r"^http:", "wss:", master_url)
+                    config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
+
+                    if config["LAN_KEY"]:
+                        config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+
+                    set_config(config)
+                    run(sync())
+
+                    if not persistent:
+                        break
+                    # In persistent mode, continue discovery loop after sync
+                    LOG.info("Sync complete, continuing peer discovery...")
+                else:
+                    # No master and no peers
+                    if persistent:
+                        if ever_had_peers:
+                            LOG.info("All peers disconnected, waiting for new peers...")
+                        else:
+                            LOG.info("Waiting for peers to join...")
+                        # Continue the discovery loop
+                    else:
+                        LOG.warning("No master elected - this client is alone, nothing to sync")
+                        break
+
+    except KeyboardInterrupt:
+        LOG.info("Shutting down LAN mode...")
+    finally:
+        if lan_server:
+            lan_server.stop()
+        lan_sync.stop()
 

@@ -22,4 +22,6 @@ with the HSYNC server, featuring WebSocket event handling,
 bidirectional sync, and file system monitoring.
 """
 
-__version__ = "0.1.0"
+from hsync_client.constants import HSYNC_VERSION
+
+__version__ = HSYNC_VERSION
