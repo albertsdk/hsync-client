@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hsync-client"
-version = "0.1.0"
+version = "1.0.0"
 description = "HSYNC Client"
 authors = ["Alberto Basso <alberto.sdk@gmail.com>"]
 readme = "README.md"

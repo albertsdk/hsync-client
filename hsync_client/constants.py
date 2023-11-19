@@ -26,7 +26,7 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 
 # Application version
-HSYNC_VERSION = "0.1.0"
+HSYNC_VERSION = "1.0.0"
 
 
 # =============================================================================
