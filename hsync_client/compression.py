@@ -69,18 +69,25 @@ PRECOMPRESSED_EXTENSIONS = frozenset({
     # Archives
     ".zip", ".gz", ".gzip", ".bz2", ".xz", ".7z", ".rar", ".tar.gz", ".tgz",
     ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".zst", ".zstd", ".lz4", ".lzma",
+    ".cab", ".dmg", ".pkg", ".msi", ".deb", ".rpm", ".apk", ".ipa",
+    ".jar", ".war", ".ear", ".nupkg",
     # Images
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif",
     ".jp2", ".j2k", ".jpf", ".jpm", ".jpx",
+    ".tiff", ".tif", ".psd", ".ico", ".icns",
+    ".raw", ".cr2", ".nef", ".arw", ".dng", ".orf", ".rw2",
     # Audio
-    ".mp3", ".aac", ".ogg", ".opus", ".flac", ".m4a", ".wma",
+    ".mp3", ".aac", ".ogg", ".opus", ".flac", ".m4a", ".wma", ".alac",
     # Video
     ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
-    ".mpeg", ".mpg", ".3gp",
+    ".mpeg", ".mpg", ".3gp", ".m2ts", ".mts", ".vob", ".ogv",
     # Documents (already compressed internally)
     ".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".epub",
+    ".pages", ".numbers", ".keynote", ".xps", ".cbz", ".cbr",
+    # Fonts
+    ".woff", ".woff2", ".eot", ".ttc",
     # Other
-    ".woff", ".woff2", ".eot",  # Fonts
+    ".sqlite", ".db",
 })
 
 # Create reusable compressor/decompressor for efficiency
