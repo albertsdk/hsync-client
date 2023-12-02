@@ -3,6 +3,7 @@ name = "hsync-client"
 version = "1.0.0"
 description = "HSYNC Client"
 authors = ["Alberto Basso"]
+license = "MPL-2.0"
 readme = "README.md"
 packages = [{include = "hsync_client"}]
 
