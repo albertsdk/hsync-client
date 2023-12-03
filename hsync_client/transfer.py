@@ -31,6 +31,7 @@ from hsync_client.utils import (
     get_chunk_size,
     get_ssl_verify,
     set_permissions,
+    verify_master_fingerprint,
 )
 
 
@@ -109,6 +110,11 @@ def download_file(file: File) -> None:
     headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
     if resume_offset > 0:
         headers["Range"] = f"bytes={resume_offset}-"
+
+    # Verify master certificate fingerprint for LAN HTTPS mode
+    if not verify_master_fingerprint(uri):
+        LOG.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
+        return
 
     try:
         response = get(
@@ -284,6 +290,11 @@ def _get_upload_status(filename: str, md5sum: str, size: int) -> tuple[str, int]
     """
     try:
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/upload-status"
+
+        # Verify master certificate fingerprint for LAN HTTPS mode
+        if not verify_master_fingerprint(uri):
+            return "new", 0
+
         response = get(
             uri,
             headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
@@ -356,6 +367,11 @@ def upload_file(file: File, check_size: bool = True) -> None:
         prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
         path = dirname(file.filepath).rstrip("/").removeprefix(prefix).lstrip("/")
         filename = f"{path}/{basename(file.filepath)}" if path else basename(file.filepath)
+
+        # Verify master certificate fingerprint for LAN HTTPS mode
+        if not verify_master_fingerprint(uri):
+            LOG.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
+            return
 
         # Check for resumable upload
         if file.md5sum is None:
