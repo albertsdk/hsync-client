@@ -29,6 +29,7 @@ from typing import Callable, Optional
 
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
+from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNC_VERSION
 
 
