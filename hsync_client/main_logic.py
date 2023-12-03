@@ -313,14 +313,12 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
         use_https=config["LAN_HTTPS"],
         cert_fingerprint=cert_info.fingerprint if cert_info else None,
     )
-    # Start discovery without registering service yet
-    # We'll register after we know if we're master (and server is started)
-    peer_manager = lan_sync.start(register_service=False)
+    # Start discovery and register service for peer discovery
+    peer_manager = lan_sync.start(register_service=True)
 
     # Track if we ever had peers (for different messages)
     ever_had_peers = False
     lan_server = None
-    service_registered = False
 
     try:
         while True:
@@ -354,9 +352,8 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
                     else:
                         LOG.info("No authentication (trust LAN mode)")
 
-                    # Now register mDNS service (server is ready)
-                    lan_sync.register_service()
-                    service_registered = True
+                    # Update mDNS service to indicate server is ready
+                    lan_sync.update_server_ready()
 
                 if persistent:
                     LOG.info("Press Ctrl+C to stop...")
@@ -376,13 +373,13 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
                     while True:
                         time.sleep(1)
             else:
-                # Register service if not already done (as slave)
-                if not service_registered:
-                    lan_sync.register_service()
-                    service_registered = True
-
                 master = peer_manager.get_master()
                 if master:
+                    # Wait for master to be ready (server_ready=true in mDNS)
+                    if not master.server_ready:
+                        LOG.info(f"Waiting for master {master.cid} to start server...")
+                        continue  # Re-enter discovery loop
+
                     master_url = master.get_server_url()
                     LOG.info(f"Connecting to master: {master.cid} at {master_url}")
 

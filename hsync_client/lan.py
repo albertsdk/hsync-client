@@ -143,6 +143,7 @@ class Peer:
     use_https: bool = False
     cert_fingerprint: Optional[str] = None
     compression_enabled: bool = False
+    server_ready: bool = False  # True when HTTP server is listening
     last_seen: float = field(default_factory=time.time)
 
     def is_alive(self) -> bool:
@@ -413,6 +414,13 @@ class HsyncServiceListener(ServiceListener):
                 if compression_bytes
                 else False
             )
+            # Server ready flag (indicates HTTP server is listening)
+            server_ready_bytes = properties.get(b"server_ready", b"")
+            server_ready = (
+                server_ready_bytes.decode("utf-8").lower() == "true"
+                if server_ready_bytes
+                else False
+            )
 
             if not cid or not bucket:
                 LOG.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -457,6 +465,7 @@ class HsyncServiceListener(ServiceListener):
                 use_https=use_https,
                 cert_fingerprint=cert_fingerprint,
                 compression_enabled=compression_enabled,
+                server_ready=server_ready,
             )
             self._peer_manager.add_peer(peer)
 
@@ -578,17 +587,38 @@ class LANSync:
 
         return self._peer_manager
 
-    def register_service(self) -> None:
+    def register_service(self, server_ready: bool = False) -> None:
         """
         Register this client's mDNS service.
 
-        Call this after starting the HTTP server when becoming master,
-        or immediately for non-master peers.
+        Args:
+            server_ready: If True, indicates the HTTP server is listening.
+                Call with server_ready=True after starting the HTTP server
+                when becoming master.
         """
         if self._service_info is not None:
             LOG.debug("Service already registered")
             return
-        self._register_service()
+        self._register_service(server_ready=server_ready)
+
+    def update_server_ready(self) -> None:
+        """
+        Update the mDNS service to indicate the server is ready.
+
+        Call this after starting the HTTP server when becoming master.
+        This re-registers the service with server_ready=true.
+        """
+        if not self._zeroconf or not self._service_info:
+            LOG.warning("Cannot update service: not registered")
+            return
+
+        # Unregister old service
+        self._zeroconf.unregister_service(self._service_info)
+        self._service_info = None
+
+        # Re-register with server_ready=true
+        self._register_service(server_ready=True)
+        LOG.info("Updated mDNS service: server_ready=true")
 
     def stop(self) -> None:
         """Stop LAN discovery and unregister service."""
@@ -609,8 +639,12 @@ class LANSync:
         self._running = False
         LOG.info("LAN mode stopped")
 
-    def _register_service(self) -> None:
-        """Register this client as an mDNS service."""
+    def _register_service(self, server_ready: bool = False) -> None:
+        """Register this client as an mDNS service.
+
+        Args:
+            server_ready: If True, indicates the HTTP server is listening.
+        """
         if not self._zeroconf:
             return
 
@@ -637,6 +671,9 @@ class LANSync:
         # Add compression capability
         if CONFIG.get("COMPRESSION_ENABLED", False):
             properties["compression"] = "true"
+        # Add server ready flag
+        if server_ready:
+            properties["server_ready"] = "true"
 
         # Create service info
         self._service_info = ServiceInfo(
