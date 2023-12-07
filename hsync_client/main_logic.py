@@ -41,6 +41,7 @@ from hsync_client.config import (
 from hsync_client.constants import ACTION_LABEL, FILE_STABILITY_INTERVAL_DEFAULT, HSYNC_VERSION
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
+from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
 from hsync_client.logger import setup_logging, set_client_id
 from hsync_client.retry import retry_on_connection_error
 from hsync_client.sync import sync
@@ -319,6 +320,7 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
     # Track if we ever had peers (for different messages)
     ever_had_peers = False
     lan_server = None
+    lan_ws_server = None
 
     try:
         while True:
@@ -332,7 +334,7 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
             if peer_manager.is_master():
                 LOG.info("This client is the MASTER - acting as sync coordinator")
 
-                # Start server if not already running
+                # Start HTTP server if not already running
                 if lan_server is None:
                     if config["LAN_HTTPS"] and cert_info:
                         lan_server = LANServer(
@@ -346,7 +348,24 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
                     lan_server.start()
 
                     protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
-                    LOG.info(f"Master server listening on port {lan_sync.port} ({protocol})")
+                    LOG.info(f"Master HTTP server on port {lan_sync.port} ({protocol})")
+
+                # Start WebSocket server if not already running
+                if lan_ws_server is None:
+                    ws_port = lan_sync.port + 1  # Use next port for WebSocket
+                    if config["LAN_HTTPS"] and cert_info:
+                        lan_ws_server = LANWebSocketServer(
+                            port=ws_port,
+                            use_https=True,
+                            cert_file=cert_info.cert_file,
+                            key_file=cert_info.key_file,
+                        )
+                    else:
+                        lan_ws_server = LANWebSocketServer(port=ws_port)
+                    lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
+                    ws_protocol = "WSS" if config["LAN_HTTPS"] else "WS"
+                    LOG.info(f"Master WebSocket server on port {ws_port} ({ws_protocol})")
+
                     if config["LAN_KEY"]:
                         LOG.info("Authentication enabled (HSYNC_LAN_KEY)")
                     else:
@@ -366,6 +385,9 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
                             if lan_server:
                                 lan_server.stop()
                                 lan_server = None
+                            if lan_ws_server:
+                                lan_ws_server.stop()
+                                lan_ws_server = None
                             break
                 else:
                     # Non-persistent: just wait for Ctrl+C
@@ -400,12 +422,27 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
                     config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
 
                     set_config(config)
+
+                    # Perform initial sync
                     run(sync())
 
                     if not persistent:
                         break
-                    # In persistent mode, continue discovery loop after sync
-                    LOG.info("Sync complete, continuing peer discovery...")
+
+                    # In persistent mode, connect via WebSocket for real-time events
+                    LOG.info("Initial sync complete, connecting to WebSocket for real-time events...")
+                    ws_port = master.port + 1  # WebSocket is on next port
+                    try:
+                        run(lan_websocket_client(
+                            host=master.address,
+                            port=ws_port,
+                            use_https=master.use_https,
+                            cert_fingerprint=master.cert_fingerprint,
+                        ))
+                    except Exception as e:
+                        LOG.warning(f"WebSocket connection ended: {e}")
+                    # If WebSocket disconnects, re-enter discovery loop
+                    LOG.info("WebSocket disconnected, re-entering discovery loop...")
                 else:
                     # No master and no peers
                     if persistent:
@@ -423,5 +460,7 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
     finally:
         if lan_server:
             lan_server.stop()
+        if lan_ws_server:
+            lan_ws_server.stop()
         lan_sync.stop()
 
