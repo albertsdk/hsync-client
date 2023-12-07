@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
-import logging
 import ssl
 import tempfile
 from dataclasses import dataclass
@@ -28,8 +27,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-
-LOG = logging.getLogger(__name__)
+from loguru import logger as LOG
 
 # Certificate validity period (1 day for session-based certificates)
 CERT_VALIDITY_DAYS = 1

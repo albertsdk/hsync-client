@@ -11,7 +11,6 @@ This module provides WebSocket connection management and event handling
 for real-time synchronization with the server.
 """
 
-import logging
 import sys
 
 from asyncio import create_task, get_running_loop, sleep, Task
@@ -32,6 +31,8 @@ from watchdog.events import (
 from watchdog.observers import Observer
 from websockets import connect, ConnectionClosed
 
+from loguru import logger as LOG
+
 # Check if on_closed event is supported (Linux with inotify)
 # On macOS (FSEvents) and Windows, on_closed is not triggered
 SUPPORTS_ON_CLOSED = sys.platform == "linux"
@@ -50,10 +51,6 @@ from hsync_client.models.symlink import Symlink
 from hsync_client.sync import sync, update_dir, update_file
 from hsync_client.transfer import download_file, upload_file
 from hsync_client.utils import ensure_str_path, is_same_paths
-
-
-# Logger instance for this module
-LOG = logging.getLogger(__name__)
 
 # Global resync task reference for cancellation on reconnect
 _resync_task: Optional[Task[None]] = None

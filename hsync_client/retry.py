@@ -14,6 +14,7 @@ handling transient network failures gracefully.
 import logging
 from typing import Any, Callable
 
+from loguru import logger as LOG
 from requests import RequestException
 from tenacity import (
     before_sleep_log,
@@ -24,9 +25,6 @@ from tenacity import (
 )
 
 from hsync_client.exceptions import NetworkError
-
-
-LOG = logging.getLogger(__name__)
 
 
 # =============================================================================

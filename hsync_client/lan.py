@@ -20,13 +20,13 @@ The approach uses a leader election model where:
 
 from __future__ import annotations
 
-import logging
 import socket
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from loguru import logger as LOG
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
@@ -52,13 +52,6 @@ HEARTBEAT_INTERVAL = 5
 
 # Peer timeout (no heartbeat) in seconds
 PEER_TIMEOUT = 15
-
-
-# =============================================================================
-# Logger
-# =============================================================================
-
-LOG = logging.getLogger("hsync.lan")
 
 
 # =============================================================================

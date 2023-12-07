@@ -21,13 +21,14 @@ Endpoints:
 from __future__ import annotations
 
 import json
-import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from os import walk
 from os.path import join, exists, dirname
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
+
+from loguru import logger as LOG
 
 from hsync_client.compression import (
     compress_data,
@@ -43,8 +44,6 @@ from hsync_client.models.file import File, is_hidden_file
 # =============================================================================
 # Constants
 # =============================================================================
-
-LOG = logging.getLogger("hsync.lan_server")
 
 # API Configuration
 API_VERSION = "v1"
