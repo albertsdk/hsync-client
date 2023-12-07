@@ -437,7 +437,6 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
                             host=master.address,
                             port=ws_port,
                             use_https=master.use_https,
-                            cert_fingerprint=master.cert_fingerprint,
                         ))
                     except Exception as e:
                         LOG.warning(f"WebSocket connection ended: {e}")

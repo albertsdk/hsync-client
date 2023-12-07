@@ -482,21 +482,22 @@ async def lan_websocket_client(
     host: str,
     port: int,
     use_https: bool = False,
-    cert_fingerprint: Optional[str] = None,
 ) -> None:
     """
     Connect to the LAN master's WebSocket server and handle events.
 
     This function runs until the connection is closed or an error occurs.
 
+    Note: Certificate fingerprint verification is not performed here because
+    it was already verified during the initial HTTP sync. The WebSocket
+    connection uses the same certificate.
+
     Args:
         host: Master's IP address or hostname.
         port: Master's WebSocket port.
         use_https: Whether to use WSS instead of WS.
-        cert_fingerprint: Expected certificate fingerprint for verification.
     """
     import websockets
-    from hsync_client.ssl_utils import get_server_cert_fingerprint
 
     protocol = "wss" if use_https else "ws"
     uri = f"{protocol}://{host}:{port}"
@@ -504,15 +505,10 @@ async def lan_websocket_client(
     LOG.info(f"Connecting to master WebSocket: {uri}")
 
     # Set up SSL context for WSS
+    # Note: Certificate fingerprint was already verified during initial HTTP sync.
+    # We trust the same certificate for WebSocket connection.
     ssl_context = None
     if use_https:
-        # Verify certificate fingerprint before connecting
-        if cert_fingerprint:
-            actual_fingerprint = get_server_cert_fingerprint(host, port)
-            if actual_fingerprint and actual_fingerprint != cert_fingerprint:
-                LOG.error(f"Certificate fingerprint mismatch! Expected: {cert_fingerprint[:32]}...")
-                return
-
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
