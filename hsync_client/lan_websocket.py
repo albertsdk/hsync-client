@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import ssl
 import sys
 import threading
@@ -32,6 +31,8 @@ from time import time
 from typing import Optional, Set
 from watchdog.events import FileSystemEventHandler, DirCreatedEvent, DirDeletedEvent
 from watchdog.observers import Observer
+
+from loguru import logger as LOG
 
 from hsync_client.config import CONFIG
 from hsync_client.models.dir import Dir, is_hidden_dir
@@ -44,8 +45,6 @@ from hsync_client.utils import ensure_str_path, is_same_paths
 # Check if on_closed event is supported (Linux with inotify)
 SUPPORTS_ON_CLOSED = sys.platform == "linux"
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
-
-LOG = logging.getLogger("hsync.lan_websocket")
 
 
 # =============================================================================
