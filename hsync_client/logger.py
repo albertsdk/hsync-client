@@ -143,6 +143,8 @@ def _format_record_colored(record: dict) -> str:
 
     Format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
     """
+    import json
+
     client_id = record["extra"].get("client_id", "-")
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
@@ -153,6 +155,12 @@ def _format_record_colored(record: dict) -> str:
 
     # Colorize action symbols in message
     message = _colorize_symbols(message, use_colors=True)
+
+    # Check for json_data in extra
+    json_data = record["extra"].get("json_data")
+    if json_data:
+        json_str = json.dumps(json_data, indent=2, default=str)
+        message = f"{message}\n{json_str}"
 
     return (
         f"<dim>{timestamp}</dim> - [{record['process'].id}] [{client_id}] "
@@ -166,10 +174,18 @@ def _format_record_plain(record: dict) -> str:
 
     Format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
     """
+    import json
+
     client_id = record["extra"].get("client_id", "-")
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
     message = record["message"]
+
+    # Check for json_data in extra
+    json_data = record["extra"].get("json_data")
+    if json_data:
+        json_str = json.dumps(json_data, indent=2, default=str)
+        message = f"{message}\n{json_str}"
 
     return (
         f"{timestamp} - [{record['process'].id}] [{client_id}] "
