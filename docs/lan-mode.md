@@ -36,6 +36,8 @@ flowchart TB
 | **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
 | **Automatic Master Election** | Lowest CID becomes the master |
+| **Real-Time Sync** | WebSocket-based instant event propagation |
+| **Bidirectional Sync** | Any peer can create/modify/delete files |
 | **Optional Authentication** | Shared secret key for security |
 | **Random Port Allocation** | Avoids port conflicts |
 
@@ -49,18 +51,22 @@ flowchart TB
         subgraph "Master (lowest CID)"
             M_DISC[mDNS Service]
             M_HTTP[HTTP Server]
+            M_WS[WebSocket Server]
+            M_WATCH[File Watcher]
             M_FILES[(Local Files)]
         end
 
-        subgraph "Client A"
+        subgraph "Slave A"
             A_DISC[mDNS Discovery]
             A_SYNC[Sync Engine]
+            A_WATCH[File Watcher]
             A_FILES[(Local Files)]
         end
 
-        subgraph "Client B"
+        subgraph "Slave B"
             B_DISC[mDNS Discovery]
             B_SYNC[Sync Engine]
+            B_WATCH[File Watcher]
             B_FILES[(Local Files)]
         end
     end
@@ -68,13 +74,15 @@ flowchart TB
     M_DISC -.->|"① Announce"| A_DISC
     M_DISC -.->|"① Announce"| B_DISC
 
-    A_SYNC -->|"② HTTP API"| M_HTTP
-    B_SYNC -->|"② HTTP API"| M_HTTP
+    A_SYNC <-->|"② HTTP API"| M_HTTP
+    B_SYNC <-->|"② HTTP API"| M_HTTP
 
-    M_HTTP -->|"③ Read"| M_FILES
-    M_FILES -->|"④ Write"| M_HTTP
-    A_SYNC -->|"⑤ Write"| A_FILES
-    B_SYNC -->|"⑤ Write"| B_FILES
+    M_WS -.->|"③ Events"| A_SYNC
+    M_WS -.->|"③ Events"| B_SYNC
+
+    M_WATCH -->|"④ Monitor"| M_FILES
+    A_WATCH -->|"④ Monitor"| A_FILES
+    B_WATCH -->|"④ Monitor"| B_FILES
 ```
 
 ![LAN Architecture](images/lan-mode-2.png)
@@ -122,18 +130,18 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant M as Master
-    
+
     Note over C,M: List Remote Files
     C->>M: GET /api/v1/buckets/{bucket}/files
     M->>C: [{filepath: "doc.txt", mtime: ...}, ...]
-    
+
     Note over C,M: Compare with Local
     C->>C: Determine sync actions
-    
+
     Note over C,M: Download Newer Files
     C->>M: GET /api/v1/buckets/{bucket}/files/download?filename=doc.txt
     M->>C: [file content]
-    
+
     Note over C,M: Upload Newer Files
     C->>M: POST /api/v1/buckets/{bucket}/files
     Note right of C: multipart/form-data<br/>with file content
@@ -141,6 +149,50 @@ sequenceDiagram
 ```
 
 ![Sync Flow](images/lan-mode-4.png)
+
+### Real-Time Bidirectional Sync
+
+After initial sync, all peers maintain a **WebSocket connection** to the master for real-time updates. Changes are propagated **bidirectionally**:
+
+```mermaid
+sequenceDiagram
+    participant A as Slave A
+    participant M as Master
+    participant B as Slave B
+
+    Note over A,B: ① Master changes a file
+    M->>M: File modified (watchdog)
+    M-->>A: WebSocket: modified event
+    M-->>B: WebSocket: modified event
+    A->>M: GET file (download)
+    B->>M: GET file (download)
+
+    Note over A,B: ② Slave A changes a file
+    A->>A: File modified (watchdog)
+    A->>M: POST file (upload)
+    M->>M: Master sees new file
+    M-->>B: WebSocket: modified event
+    B->>M: GET file (download)
+
+    Note over A,B: ③ Slave B deletes a file
+    B->>B: File deleted (watchdog)
+    B->>M: DELETE file
+    M->>M: Master deletes file
+    M-->>A: WebSocket: removed event
+    A->>A: Delete local file
+```
+
+**Supported Operations (Bidirectional):**
+
+| Operation | Master→Slaves | Slaves→Master | HTTP Method |
+|-----------|---------------|---------------|-------------|
+| Create file | ✅ WebSocket | ✅ | POST |
+| Modify file | ✅ WebSocket | ✅ | POST |
+| Delete file | ✅ WebSocket | ✅ | DELETE |
+| Rename file/dir | ✅ WebSocket | ✅ | PATCH |
+| Create directory | ✅ WebSocket | ✅ | Implicit |
+| Delete directory | ✅ WebSocket | ✅ | DELETE |
+| Symlink | ✅ WebSocket | ✅ | POST |
 
 ## Quick Start
 
@@ -418,7 +470,9 @@ flowchart LR
 
 ## API Endpoints
 
-The master exposes these HTTP endpoints:
+The master exposes HTTP and WebSocket endpoints:
+
+### HTTP API
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -426,6 +480,23 @@ The master exposes these HTTP endpoints:
 | `/api/v1/buckets/{bucket}/files` | GET | List files with metadata |
 | `/api/v1/buckets/{bucket}/files/download` | GET | Download a file |
 | `/api/v1/buckets/{bucket}/files` | POST | Upload a file |
+| `/api/v1/buckets/{bucket}/files` | DELETE | Delete a file/directory |
+| `/api/v1/buckets/{bucket}/files` | PATCH | Rename a file/directory |
+
+### WebSocket API
+
+The master also runs a WebSocket server (on port+1) for real-time event propagation:
+
+| Endpoint | Description |
+|----------|-------------|
+| `ws[s]://master:port+1/` | Real-time file system events |
+
+**Event Types:**
+- `added` - File/directory created
+- `modified` - File modified
+- `renamed` - File/directory renamed
+- `removed` - File/directory deleted
+- `symlink` - Symbolic link created
 
 ### List Files
 
@@ -543,7 +614,8 @@ HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
 | **Automatic Discovery** | ❌ No | ✅ Yes (mDNS) |
 | **Central Storage** | ✅ Yes | ❌ No (distributed) |
 | **Authentication** | API Key | Shared Secret |
-| **Watch Mode** | ✅ Yes | ❌ Not yet |
+| **Real-time Sync** | ✅ Yes (WebSocket) | ✅ Yes (WebSocket) |
+| **Bidirectional Sync** | ✅ Yes | ✅ Yes |
 
 ## Technical Details
 

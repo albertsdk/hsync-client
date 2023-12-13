@@ -12,19 +12,22 @@ becomes the master in LAN P2P mode. It exposes the essential hsync API
 endpoints so that other peers can sync with the master.
 
 Endpoints:
-- GET  /api/v1/health              - Health check
-- GET  /api/v1/buckets/{bucket}/files - List files
-- GET  /api/v1/buckets/{bucket}/files/download - Download file
-- POST /api/v1/buckets/{bucket}/files - Upload file
+- GET    /api/v1/health                          - Health check
+- GET    /api/v1/buckets/{bucket}/files          - List files
+- GET    /api/v1/buckets/{bucket}/files/download - Download file
+- POST   /api/v1/buckets/{bucket}/files          - Upload file
+- DELETE /api/v1/buckets/{bucket}/files          - Delete file (bidirectional sync)
+- PATCH  /api/v1/buckets/{bucket}/files          - Rename file/dir (bidirectional sync)
 """
 
 from __future__ import annotations
 
 import json
+import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from os import walk
-from os.path import join, exists, dirname
+from os.path import join, exists
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
@@ -236,6 +239,140 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def do_DELETE(self) -> None:
+        """Handle DELETE requests for bidirectional sync."""
+        if not self._check_auth():
+            return
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # Delete file: /api/v1/buckets/{bucket}/files?path=...
+        if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_delete(query)
+            return
+
+        self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def do_PATCH(self) -> None:
+        """Handle PATCH requests for rename operations."""
+        if not self._check_auth():
+            return
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # Rename file/dir: /api/v1/buckets/{bucket}/files?src=...&dst=...
+        if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_rename(query)
+            return
+
+        self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def _handle_rename(self, query: dict) -> None:
+        """Handle file/directory rename from slave."""
+        from os import rename, makedirs
+        from os.path import dirname
+
+        src_rel = query.get("src", [None])[0]
+        dst_rel = query.get("dst", [None])[0]
+
+        if not src_rel or not dst_rel:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'src' or 'dst' parameter")
+            return
+
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+
+        # Build full paths
+        src_path = join(local_bucket, src_rel)
+        dst_path = join(local_bucket, dst_rel)
+
+        # Security check: ensure paths are within bucket
+        try:
+            real_bucket = os.path.realpath(local_bucket)
+            real_src = os.path.realpath(src_path)
+            # For dst, check parent since it doesn't exist yet
+            real_dst_parent = os.path.realpath(dirname(dst_path) or local_bucket)
+            if not real_src.startswith(real_bucket) or not real_dst_parent.startswith(real_bucket):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+                return
+        except Exception:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return
+
+        if not exists(src_path):
+            self._send_error_response(HTTP_NOT_FOUND, "Source not found")
+            return
+
+        try:
+            # Create parent directory if needed
+            dst_parent = dirname(dst_path)
+            if dst_parent and not exists(dst_parent):
+                makedirs(dst_parent, exist_ok=True)
+
+            LOG.info(f"Renaming from slave request: {src_path} -> {dst_path}")
+            rename(src_path, dst_path)
+
+            self._send_json_response(HTTP_OK, {"info": "Renamed successfully"})
+
+        except Exception as e:
+            LOG.error(f"Error renaming {src_path} -> {dst_path}: {e}")
+            self._send_error_response(HTTP_INTERNAL_ERROR, f"Rename error: {e}")
+
+    def _handle_delete(self, query: dict) -> None:
+        """Handle file/directory deletion from slave."""
+        from shutil import rmtree
+
+        rel_path = query.get("path", [None])[0]
+        is_dir = query.get("is_dir", ["false"])[0].lower() == "true"
+
+        if not rel_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
+            return
+
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+
+        # Build full path
+        full_path = join(local_bucket, rel_path)
+
+        # Security check: ensure path is within bucket
+        try:
+            real_bucket = os.path.realpath(local_bucket)
+            real_path = os.path.realpath(full_path)
+            if not real_path.startswith(real_bucket):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+                return
+        except Exception:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return
+
+        if not exists(full_path):
+            # Already deleted, return success
+            self._send_json_response(HTTP_OK, {"info": "File already deleted"})
+            return
+
+        try:
+            if is_dir:
+                LOG.info(f"Deleting directory from slave request: {full_path}")
+                rmtree(full_path, ignore_errors=False)
+            else:
+                LOG.info(f"Deleting file from slave request: {full_path}")
+                os.remove(full_path)
+
+            self._send_json_response(HTTP_OK, {"info": "Deleted successfully"})
+
+        except Exception as e:
+            LOG.error(f"Error deleting {full_path}: {e}")
+            self._send_error_response(HTTP_INTERNAL_ERROR, f"Delete error: {e}")
 
     def _handle_health(self) -> None:
         """Handle health check endpoint."""
