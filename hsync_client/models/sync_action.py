@@ -23,11 +23,13 @@ class SyncActionName(str, Enum):
     Values:
         download: File should be downloaded from server (remote is newer).
         upload: File should be uploaded to server (local is newer).
+        delete: File should be deleted locally (not present on server in LAN mode).
         nothing: No action needed (files are in sync).
     """
 
     download = "download"
     upload = "upload"
+    delete = "delete"
     nothing = "nothing"
 
 
