@@ -195,3 +195,104 @@ class TestGetSyncActions:
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
+
+class TestGetSyncActionsLanMode:
+    """Tests for get_sync_actions function in LAN mode."""
+
+    def test_delete_action_for_local_only_file_in_lan_mode(self, tmp_path):
+        """Local-only file triggers delete action in LAN mode (master is source of truth)."""
+        local_file = tmp_path / "local_only.txt"
+        local_file.write_text("local content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+            result = get_sync_actions([], local_files, lan_mode=True)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.delete
+
+    def test_upload_action_for_local_only_file_in_server_mode(self, tmp_path):
+        """Local-only file triggers upload action in server mode (default)."""
+        local_file = tmp_path / "local_only.txt"
+        local_file.write_text("local content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+            result = get_sync_actions([], local_files, lan_mode=False)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.upload
+
+    def test_download_action_for_remote_only_file_in_lan_mode(self, tmp_path):
+        """Remote-only file triggers download action in LAN mode."""
+        remote_files = [{
+            "filepath": "remote_only.txt",
+            "name": "remote_only.txt",
+            "mtime": 1000000,
+            "ctime": 1000000,
+            "size": 10,
+            "md5sum": "abc123",
+            "permissions": "-rw-r--r--",
+        }]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+            result = get_sync_actions(remote_files, [], lan_mode=True)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.download
+
+    def test_lan_mode_does_not_affect_existing_files(self, tmp_path):
+        """LAN mode doesn't change behavior for files that exist on both sides."""
+        local_file = tmp_path / "both_sides.txt"
+        local_file.write_text("content")
+        mtime = int(os.path.getmtime(str(local_file)))
+
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
+
+        # Remote file with same mtime
+        remote_files = [{
+            "filepath": "both_sides.txt",
+            "name": "both_sides.txt",
+            "mtime": mtime,
+            "ctime": mtime,
+            "size": 7,
+            "md5sum": local_file_dict["md5sum"],
+            "permissions": "-rw-r--r--",
+        }]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+            result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.nothing
+
+    def test_lan_mode_download_newer_remote(self, tmp_path):
+        """LAN mode downloads newer remote files."""
+        local_file = tmp_path / "file.txt"
+        local_file.write_text("old content")
+        local_mtime = int(os.path.getmtime(str(local_file)))
+
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
+
+        # Remote file is newer
+        remote_files = [{
+            "filepath": "file.txt",
+            "name": "file.txt",
+            "mtime": local_mtime + 100,
+            "ctime": local_mtime + 100,
+            "size": 11,
+            "md5sum": "different",
+            "permissions": "-rw-r--r--",
+        }]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+            result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.download
+
