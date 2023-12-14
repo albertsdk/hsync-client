@@ -768,6 +768,11 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         with self._receiving_lock:
             return filepath in self._receiving_files
 
+    def _is_temp_file(self, filepath: str) -> bool:
+        """Check if a file is a temporary file that should be ignored."""
+        # .part files are used during downloads
+        return filepath.endswith(".part")
+
     def _upload_to_master(self, file_obj: File) -> None:
         """Upload a file to the master server."""
         from hsync_client.transfer import upload_file
@@ -858,6 +863,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         """Handle file/directory creation events."""
         src_path = ensure_str_path(event.src_path)
 
+        # Skip temp files (.part files used during downloads)
+        if self._is_temp_file(src_path):
+            return
+
         # Skip if we're receiving this file from master
         if self.is_receiving(src_path):
             return
@@ -875,6 +884,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
     def on_modified(self, event) -> None:
         """Handle file/directory modification events."""
         src_path = ensure_str_path(event.src_path)
+
+        # Skip temp files (.part files used during downloads)
+        if self._is_temp_file(src_path):
+            return
 
         # Skip if we're receiving this file from master
         if self.is_receiving(src_path):
@@ -904,6 +917,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
         src_path = ensure_str_path(event.src_path)
 
+        # Skip temp files (.part files used during downloads)
+        if self._is_temp_file(src_path):
+            return
+
         # Skip if we're receiving this file from master
         if self.is_receiving(src_path):
             return
@@ -932,6 +949,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         """Handle file/directory deletion events."""
         src_path = ensure_str_path(event.src_path)
 
+        # Skip temp files (.part files used during downloads)
+        if self._is_temp_file(src_path):
+            return
+
         # Skip hidden files/dirs
         if event.is_directory and is_hidden_dir(src_path):
             return
@@ -957,6 +978,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         dest_path = ensure_str_path(getattr(event, 'dest_path', None))
 
         if not dest_path:
+            return
+
+        # Skip temp files (.part files used during downloads)
+        if self._is_temp_file(src_path) or self._is_temp_file(dest_path):
             return
 
         # Skip if we're receiving these files from master
