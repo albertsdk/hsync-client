@@ -17,14 +17,14 @@ from hashlib import md5
 from os import chmod, stat as os_stat
 from os.path import abspath, exists, normpath
 from pathlib import Path
-from random import choices
-from string import ascii_letters, digits
+import secrets
 from typing import Optional
 
 from loguru import logger as LOG
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
+    CID_ALPHABET,
     CID_LENGTH,
     CHUNK_SIZE_LARGE,
     CHUNK_SIZE_MEDIUM,
@@ -297,20 +297,23 @@ def ensure_str_path(path: str | bytes | None) -> str:
 
 def get_cid(length: int = CID_LENGTH) -> str:
     """
-    Generate a random client ID.
+    Generate a cryptographically secure client ID (NanoID-style).
 
     Creates a unique identifier for this client session used to
-    identify the source of events and prevent echo.
+    identify the source of events and prevent echo. Uses the secrets
+    module for cryptographic security.
+
+    The default configuration provides 126 bits of entropy:
+    - 21 characters from a 64-character alphabet (URL-safe)
+    - Probability of collision: ~1 in 2^126
 
     Args:
-        length: Length of the ID string (default: CID_LENGTH).
+        length: Length of the ID string (default: CID_LENGTH = 21).
 
     Returns:
-        Random alphanumeric string.
+        Cryptographically secure random string (URL-safe).
     """
-    characters = ascii_letters + digits
-    random_string = "".join(choices(characters, k=length))
-    return random_string
+    return "".join(secrets.choice(CID_ALPHABET) for _ in range(length))
 
 
 # =============================================================================
