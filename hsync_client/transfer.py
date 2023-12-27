@@ -11,8 +11,13 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
-from json import dumps as json_dumps
+from json import dumps as _json_dumps
 from os import makedirs, remove, utime
+
+
+def _safe_json(obj: object) -> str:
+    """Serialize object to JSON and escape braces for loguru."""
+    return _json_dumps(obj).replace("{", "{{").replace("}", "}}")
 from typing import cast
 from os.path import basename, dirname, exists, getmtime, getsize, join
 from requests import get, post, RequestException
@@ -127,7 +132,7 @@ def download_file(file: File) -> None:
         return
 
     LOG.debug(f"Request URI: {uri}")
-    LOG.debug(f"Request Header: {json_dumps(headers)}")
+    LOG.debug(f"Request Header: {_safe_json(headers)}")
     LOG.debug(f"Response status: {response.status_code}")
 
     if response.status_code == 401:
@@ -400,8 +405,8 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
         LOG.debug(f"Upload file: {file.filepath}")
         LOG.debug(f"        URI: {uri}")
-        LOG.debug(f"     Header: {json_dumps(CONFIG['REQUEST_HEADERS'])}")
-        LOG.debug(f"       data: {json_dumps(data)}")
+        LOG.debug(f"     Header: {_safe_json(CONFIG['REQUEST_HEADERS'])}")
+        LOG.debug(f"       data: {_safe_json(data)}")
 
         # Determine if compression should be used
         # Don't compress if: resuming, client disabled, server disabled, or file not compressible
