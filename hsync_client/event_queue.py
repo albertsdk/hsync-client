@@ -34,7 +34,7 @@ class WebSocketProtocol(Protocol):
 
 
 # Logger instance for this module
-LOG = getLogger("hsync")
+log = getLogger("hsync")
 
 # Configuration constants
 MAX_RETRIES = 5
@@ -105,7 +105,7 @@ class EventQueue:
         """
         event = QueuedEvent(data=event_data)
         await self.queue.put(event)
-        LOG.debug(f"Event queued: {event_data.get('name', 'unknown')}")
+        log.debug(f"Event queued: {event_data.get('name', 'unknown')}")
 
     async def _send_event(self, event: QueuedEvent) -> bool:
         """
@@ -119,10 +119,10 @@ class EventQueue:
         """
         try:
             await self.websocket.send(dumps(event.data))
-            LOG.debug(f"Event sent: {event.data.get('name', 'unknown')}")
+            log.debug(f"Event sent: {event.data.get('name', 'unknown')}")
             return True
         except Exception as e:
-            LOG.warning(f"Failed to send event: {e}")
+            log.warning(f"Failed to send event: {e}")
             return False
 
     async def _retry_failed_events(self) -> None:
@@ -145,7 +145,7 @@ class EventQueue:
         self.failed_events = still_waiting
 
         for event in ready_events:
-            LOG.debug(f"Retrying event (attempt {event.retry_count + 1})")
+            log.debug(f"Retrying event (attempt {event.retry_count + 1})")
             await self.queue.put(event)
 
     async def process(self) -> None:
@@ -173,12 +173,12 @@ class EventQueue:
                         backoff = event.get_backoff_delay()
                         event.next_retry_time = time() + backoff
                         self.failed_events.append(event)
-                        LOG.warning(
+                        log.warning(
                             f"Event failed, will retry in {backoff:.1f}s "
                             f"(attempt {event.retry_count}/{MAX_RETRIES})"
                         )
                     else:
-                        LOG.error(
+                        log.error(
                             f"Event dropped after {MAX_RETRIES} retries: "
                             f"{event.data.get('name', 'unknown')}"
                         )
@@ -190,5 +190,5 @@ class EventQueue:
     def stop(self) -> None:
         """Stop the event processing loop."""
         self._running = False
-        LOG.debug("Event queue stopped")
+        log.debug("Event queue stopped")
 

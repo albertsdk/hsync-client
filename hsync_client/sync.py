@@ -22,7 +22,7 @@ from sys import exc_info
 from traceback import print_tb
 from typing import Callable, Mapping, Optional, cast
 
-from loguru import logger as LOG
+from loguru import logger as log
 
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import ACTION_LABEL, MAX_CONCURRENT_TRANSFERS
@@ -69,7 +69,7 @@ async def sync(lan_mode: bool = False) -> None:
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
 
-        LOG.info(f"Sync actions: {len(sync_actions)} files to process")
+        log.info(f"Sync actions: {len(sync_actions)} files to process")
 
         # Separate actions by type
         downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
@@ -86,24 +86,24 @@ async def sync(lan_mode: bool = False) -> None:
             if file.filepath and exists(file.filepath):
                 try:
                     remove(file.filepath)
-                    LOG.info(f'[DELETE    ] "{file.filepath}" (not on master)')
+                    log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
                 except OSError as e:
-                    LOG.error(f'Error deleting "{file.filepath}": {e}')
+                    log.error(f'Error deleting "{file.filepath}": {e}')
 
         # Execute transfers in parallel using thread pool
         if downloads or uploads:
             await _execute_parallel_transfers(downloads, uploads)
 
-        LOG.info("Sync completed successfully")
+        log.info("Sync completed successfully")
 
     except (AuthenticationError, NetworkError, ServerError) as e:
-        LOG.error(f"Sync failed: {e}")
+        log.error(f"Sync failed: {e}")
         if is_debug():
             exc_type, exc_value, exc_tb = exc_info()
             if exc_tb:
                 print_tb(exc_tb)
     except Exception as e:
-        LOG.error(f"Unexpected error during sync: {e}")
+        log.error(f"Unexpected error during sync: {e}")
         if is_debug():
             exc_type, exc_value, exc_tb = exc_info()
             if exc_tb:
@@ -142,7 +142,7 @@ async def _execute_parallel_transfers(
                     # Run synchronous function in thread pool
                     await loop.run_in_executor(executor, func, file)
                 except Exception as e:
-                    LOG.error(f"Transfer error for {file.filepath}: {e}")
+                    log.error(f"Transfer error for {file.filepath}: {e}")
 
         # Create tasks for all transfers
         tasks = []
@@ -157,7 +157,7 @@ async def _execute_parallel_transfers(
 
         # Execute all transfers concurrently
         if tasks:
-            LOG.info(
+            log.info(
                 f"Starting parallel transfers: {len(downloads)} downloads, "
                 f"{len(uploads)} uploads (max {MAX_CONCURRENT_TRANSFERS} concurrent)"
             )
@@ -401,7 +401,7 @@ def update_file(data: dict) -> None:
     file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"], False)
 
     if not file_data.filepath:
-        LOG.error("Invalid file data: missing filepath")
+        log.error("Invalid file data: missing filepath")
         return
 
     if exists(file_data.filepath):
@@ -417,7 +417,7 @@ def update_file(data: dict) -> None:
             if file_data.permissions:
                 set_permissions(file_data.filepath, file_data.permissions)
         else:
-            LOG.debug(f'File not changed: "{file_data.filepath}"')
+            log.debug(f'File not changed: "{file_data.filepath}"')
     else:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])

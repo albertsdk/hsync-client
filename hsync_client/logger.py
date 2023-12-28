@@ -201,9 +201,9 @@ def _get_json_data(record: dict) -> dict | None:
     Extract json_data from record extra, handling different loguru API patterns.
 
     Loguru handles extra data differently depending on how it's passed:
-    - LOG.bind(json_data=...).debug(...) -> record["extra"]["json_data"]
-    - LOG.debug(..., json_data=...) via opt() -> record["extra"]["json_data"]
-    - LOG.debug(..., extra={...}) -> record["extra"]["extra"]["json_data"]
+    - log.bind(json_data=...).debug(...) -> record["extra"]["json_data"]
+    - log.debug(..., json_data=...) via opt() -> record["extra"]["json_data"]
+    - log.debug(..., extra={...}) -> record["extra"]["extra"]["json_data"]
 
     This function normalizes access to json_data regardless of how it was passed.
     """

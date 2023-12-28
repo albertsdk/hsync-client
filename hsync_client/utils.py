@@ -20,7 +20,7 @@ from pathlib import Path
 import secrets
 from typing import Optional
 
-from loguru import logger as LOG
+from loguru import logger as log
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
@@ -111,23 +111,23 @@ def verify_master_fingerprint(url: str) -> bool:
     port = parsed.port or 443
 
     if not host:
-        LOG.warning("Cannot verify fingerprint: no host in URL")
+        log.warning("Cannot verify fingerprint: no host in URL")
         return False
 
     actual_fingerprint = get_server_cert_fingerprint(host, port)
     if not actual_fingerprint:
-        LOG.warning(f"Cannot get certificate from {host}:{port}")
+        log.warning(f"Cannot get certificate from {host}:{port}")
         return False
 
     if actual_fingerprint.lower() != expected_fingerprint.lower():
-        LOG.error(
+        log.error(
             f"Certificate fingerprint mismatch!\n"
             f"  Expected: {expected_fingerprint}\n"
             f"  Actual:   {actual_fingerprint}"
         )
         return False
 
-    LOG.debug(f"Certificate fingerprint verified: {actual_fingerprint[:16]}...")
+    log.debug(f"Certificate fingerprint verified: {actual_fingerprint[:16]}...")
     return True
 
 
@@ -432,6 +432,6 @@ def set_permissions(file_path: str, permissions: str) -> None:
             if char in permission_types:
                 mode |= permission_types[char] << (6 - (i * 3))
 
-    LOG.debug(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
+    log.debug(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
     chmod(file_path, mode)
 
