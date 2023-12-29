@@ -268,7 +268,7 @@ class TestLANSyncIntegration:
         }):
             # Simulate what sync.get_files_remote() does
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            response = requests.get(url, params={"sync_order": "mtime"}, timeout=5)
+            response = requests.get(url, timeout=5)
             assert response.status_code == 200
             files = response.json()
             assert len(files) == 3

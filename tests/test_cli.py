@@ -55,9 +55,22 @@ class TestTyperCli:
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["bucket"] == "mybucket123"
 
+    @patch("hsync_client.main_logic.run_sync")
+    def test_accepts_bucket_with_hyphens_and_underscores(self, mock_run_sync):
+        """CLI accepts bucket names with hyphens and underscores."""
+        result = runner.invoke(app, ["-b", "test-bucket", "-s", "http://test:8000"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["bucket"] == "test-bucket"
+        result = runner.invoke(app, ["-b", "test_bucket", "-s", "http://test:8000"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["bucket"] == "test_bucket"
+
     def test_rejects_invalid_bucket_name(self):
-        """CLI rejects bucket names with non-alphanumeric chars."""
-        result = runner.invoke(app, ["-b", "test-bucket"])
+        """CLI rejects bucket names with invalid characters or format."""
+        result = runner.invoke(app, ["-b", "bucket.name"])
+        assert result.exit_code != 0
+        assert "alphanumeric" in result.output.lower()
+        result = runner.invoke(app, ["-b", "bucket_"])
         assert result.exit_code != 0
         assert "alphanumeric" in result.output.lower()
 
@@ -127,22 +140,6 @@ class TestTyperCli:
         assert call_kwargs["legend"] is True
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_compare_by_mtime(self, mock_run_sync):
-        """CLI accepts --compare-by mtime."""
-        result = runner.invoke(app, ["-b", "test", "--compare-by", "mtime", "-s", "http://test:8000"])
-        assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["sync_order"] == "mtime"
-
-    @patch("hsync_client.main_logic.run_sync")
-    def test_compare_by_ctime(self, mock_run_sync):
-        """CLI accepts --compare-by ctime."""
-        result = runner.invoke(app, ["-b", "test", "--compare-by", "ctime", "-s", "http://test:8000"])
-        assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["sync_order"] == "ctime"
-
-    @patch("hsync_client.main_logic.run_sync")
     def test_path_option(self, mock_run_sync):
         """CLI accepts -p/--path option."""
         result = runner.invoke(app, ["-b", "test", "-p", "/tmp/sync", "-s", "http://test:8000"])
@@ -193,7 +190,6 @@ class TestTyperCli:
         assert call_kwargs["quiet"] is False
         assert call_kwargs["dryrun"] is False
         assert call_kwargs["verify_ssl"] is True
-        assert call_kwargs["sync_order"] == "mtime"
         assert call_kwargs["reconnect_delay"] == 5
         assert call_kwargs["ca_cert"] is None
         assert call_kwargs["filter_path"] is None

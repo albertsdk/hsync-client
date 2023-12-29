@@ -51,9 +51,13 @@ def version_callback(value: bool) -> None:
 
 
 def _validate_bucket(value: str) -> str:
-    """Validate bucket name is alphanumeric."""
-    if not value.isalnum():
-        raise typer.BadParameter("The bucket name must be alphanumeric.")
+    """Validate bucket name (alphanumeric, hyphens and underscores allowed)."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
+        raise typer.BadParameter(
+            "The bucket name must be alphanumeric (hyphens and underscores allowed, "
+            "but not at the beginning or end)."
+        )
     return value
 
 
@@ -117,12 +121,6 @@ def main(
         help="Watch for changes and sync continuously.",
         rich_help_panel="Sync",
     )] = False,
-    sync_order: Annotated[str, typer.Option(
-        "--compare-by",
-        help="Compare files by: mtime, ctime.",
-        metavar="FIELD",
-        rich_help_panel="Sync",
-    )] = "mtime",
     resync: Annotated[Optional[int], typer.Option(
         "-i", "--interval",
         help="Force full sync every SEC seconds (requires -w).",
@@ -297,12 +295,6 @@ def main(
 
         Alberto Basso
     """
-    # Validate sync_order
-    if sync_order not in ("mtime", "ctime"):
-        raise typer.BadParameter(
-            "Invalid value for '--compare-by': must be 'mtime' or 'ctime'."
-        )
-
     # Validate numeric ranges
     if http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX:
         raise typer.BadParameter(
@@ -339,7 +331,6 @@ def main(
         http_timeout=http_timeout,
         local_path=local_path,
         continuous=continuous,
-        sync_order=sync_order,
         resync=resync,
         reconnect_delay=reconnect_delay,
         stability_delay=stability_delay,

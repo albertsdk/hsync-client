@@ -27,7 +27,6 @@ class TestGetFilesRemote:
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "testbucket",
-            "SYNC_ORDER": "mtime",
             "REQUEST_HEADERS": {"X-API-Key": "test"},
             "NO_VERIFY_SSL": True,
         }
@@ -49,7 +48,6 @@ class TestGetFilesRemote:
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "testbucket",
-            "SYNC_ORDER": "mtime",
             "FILTER_PATH": "subdir",
             "REQUEST_HEADERS": {"X-API-Key": "test"},
             "NO_VERIFY_SSL": True,
@@ -74,7 +72,6 @@ class TestGetFilesRemote:
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "testbucket",
-            "SYNC_ORDER": "mtime",
             "REQUEST_HEADERS": {"X-API-Key": "test"},
             "NO_VERIFY_SSL": True,
         }
@@ -96,7 +93,6 @@ class TestGetFilesRemote:
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "testbucket",
-            "SYNC_ORDER": "mtime",
             "REQUEST_HEADERS": {"X-API-Key": "test"},
             "NO_VERIFY_SSL": True,
         }
@@ -119,7 +115,6 @@ class TestGetFilesRemote:
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "testbucket",
-            "SYNC_ORDER": "mtime",
             "REQUEST_HEADERS": {"X-API-Key": "test"},
             "NO_VERIFY_SSL": True,
         }
@@ -139,7 +134,6 @@ class TestGetFilesRemote:
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "testbucket",
-            "SYNC_ORDER": "mtime",
             "REQUEST_HEADERS": {"X-API-Key": "test"},
             "NO_VERIFY_SSL": True,
         }

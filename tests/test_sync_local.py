@@ -21,7 +21,7 @@ class TestGetFilesLocal:
 
     def test_returns_empty_list_for_empty_directory(self, tmp_path):
         """Empty directory returns empty list."""
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
             assert result == []
 
@@ -31,7 +31,7 @@ class TestGetFilesLocal:
         (tmp_path / "file1.txt").write_text("content1")
         (tmp_path / "file2.txt").write_text("content2")
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
             assert len(result) == 2
             filepaths = [f["filepath"] for f in result]
@@ -43,7 +43,7 @@ class TestGetFilesLocal:
         (tmp_path / "visible.txt").write_text("visible")
         (tmp_path / ".hidden").write_text("hidden")
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
             assert len(result) == 1
             assert "visible.txt" in result[0]["filepath"]
@@ -58,7 +58,7 @@ class TestGetFilesLocal:
         hidden_dir.mkdir()
         (hidden_dir / "file.txt").write_text("hidden")
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
             assert len(result) == 1
             assert "visible" in result[0]["filepath"]
@@ -69,7 +69,7 @@ class TestGetFilesLocal:
         nested.mkdir(parents=True)
         (nested / "deep_file.txt").write_text("deep content")
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
             assert len(result) == 1
             assert "deep_file.txt" in result[0]["filepath"]
@@ -80,13 +80,13 @@ class TestGetSyncActions:
 
     def test_returns_empty_list_for_no_files(self):
         """No files returns empty list."""
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": "/tmp", "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": "/tmp"}):
             result = get_sync_actions([], [])
             assert result == []
 
     def test_returns_empty_list_for_none_inputs(self):
         """None inputs returns empty list."""
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": "/tmp", "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": "/tmp"}):
             result = get_sync_actions(None, None)
             assert result == []
 
@@ -102,7 +102,7 @@ class TestGetSyncActions:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [])
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
@@ -117,7 +117,7 @@ class TestGetSyncActions:
         assert file is not None
         local_files = [file.to_dict()]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions([], local_files)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
@@ -142,7 +142,7 @@ class TestGetSyncActions:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict])
             assert len(result) == 1
             assert result[0].name == SyncActionName.nothing
@@ -166,7 +166,7 @@ class TestGetSyncActions:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict])
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
@@ -190,7 +190,7 @@ class TestGetSyncActions:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict])
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
@@ -208,7 +208,7 @@ class TestGetSyncActionsLanMode:
         assert file is not None
         local_files = [file.to_dict()]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions([], local_files, lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.delete
@@ -222,7 +222,7 @@ class TestGetSyncActionsLanMode:
         assert file is not None
         local_files = [file.to_dict()]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions([], local_files, lan_mode=False)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
@@ -239,7 +239,7 @@ class TestGetSyncActionsLanMode:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [], lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
@@ -265,7 +265,7 @@ class TestGetSyncActionsLanMode:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.nothing
@@ -291,7 +291,7 @@ class TestGetSyncActionsLanMode:
             "permissions": "-rw-r--r--",
         }]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.download

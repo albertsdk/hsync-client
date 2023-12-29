@@ -175,7 +175,6 @@ class TestSync:
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
-            "SYNC_ORDER": "mtime",
         }
 
         with patch("hsync_client.sync.CONFIG", config), \
@@ -197,7 +196,6 @@ class TestSync:
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
-            "SYNC_ORDER": "mtime",
         }
 
         with patch("hsync_client.sync.CONFIG", config), \
@@ -216,7 +214,6 @@ class TestSync:
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
-            "SYNC_ORDER": "mtime",
         }
 
         with patch("hsync_client.sync.CONFIG", config), \
@@ -233,7 +230,6 @@ class TestSync:
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
-            "SYNC_ORDER": "mtime",
         }
 
         with patch("hsync_client.sync.CONFIG", config), \
@@ -249,7 +245,6 @@ class TestSync:
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
-            "SYNC_ORDER": "mtime",
         }
 
         with patch("hsync_client.sync.CONFIG", config), \

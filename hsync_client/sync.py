@@ -174,8 +174,8 @@ def get_files_local() -> list[dict]:
     Get list of all local files with their metadata.
 
     Walks the local bucket directory recursively, skipping hidden
-    files and directories. Returns file metadata sorted by the
-    configured sync order (mtime or ctime).
+    files and directories. Returns file metadata sorted by mtime
+    ascending (oldest first) to prioritize updating older files.
 
     Returns:
         List of file metadata dictionaries.
@@ -194,8 +194,8 @@ def get_files_local() -> list[dict]:
             if file_obj:
                 file_list.append(file_obj.to_dict())
 
-    # Sort by configured order (mtime or ctime)
-    file_list.sort(key=lambda x: x.get(CONFIG["SYNC_ORDER"]))
+    # Sort by mtime ascending (oldest first) to prioritize updating older files
+    file_list.sort(key=lambda x: x.get("mtime", 0))
 
     return file_list
 
@@ -227,7 +227,7 @@ def get_files_remote() -> list[dict]:
             )
 
         # Build query parameters
-        params = {"sync_order": CONFIG["SYNC_ORDER"]}
+        params: dict[str, str] = {}
         # Add path filter if specified
         if (filter_path := CONFIG.get("FILTER_PATH")) is not None:
             params["path"] = filter_path
@@ -262,6 +262,10 @@ def get_files_remote() -> list[dict]:
 # Sync Action Determination
 # =============================================================================
 
+# Tolerance threshold in seconds for mtime comparison.
+# Handles FAT32 filesystem precision (2s) and minor clock skew.
+MTIME_TOLERANCE = 2
+
 
 def get_sync_actions(
     remote_files: Optional[list[dict]] = None,
@@ -271,9 +275,14 @@ def get_sync_actions(
     """
     Determine sync actions by comparing local and remote file lists.
 
-    Compares modification times to decide whether each file should
-    be uploaded, downloaded, or left alone. Also identifies files
-    that exist only on one side.
+    Uses an intelligent comparison strategy:
+    1. If mtime difference > MTIME_TOLERANCE (2s): use mtime to decide direction.
+    2. If mtime difference <= MTIME_TOLERANCE: fall back to MD5 checksum.
+       - If MD5 differs: use mtime as tiebreaker; if equal, prefer remote.
+       - If MD5 matches: no action needed (files are identical).
+
+    This handles clock skew, FAT32 timestamp precision (2s), and cases
+    where mtime is equal but content differs (copy/restore scenarios).
 
     Args:
         remote_files: List of file metadata from server.
@@ -306,19 +315,9 @@ def get_sync_actions(
         local_mtime = local_file.mtime if local_file and local_file.mtime else 0
 
         if local_file:
-            # Both exist - compare modification times
-            if remote_mtime > local_mtime:
-                # Remote is newer - download
-                action = SyncActionName.download
-                timedelta = remote_mtime - local_mtime
-            elif remote_mtime < local_mtime:
-                # Local is newer - upload
-                action = SyncActionName.upload
-                timedelta = local_mtime - remote_mtime
-            else:
-                # Same mtime - no action needed
-                action = SyncActionName.nothing
-                timedelta = 0
+            action, timedelta = _compare_files(
+                remote_file, local_file, remote_mtime, local_mtime, lan_mode,
+            )
 
             sync_actions.append(
                 SyncAction(
@@ -345,6 +344,59 @@ def get_sync_actions(
                     sync_actions.append(SyncAction(file, SyncActionName.upload))
 
     return sync_actions
+
+
+def _compare_files(
+    remote_file: File,
+    local_file: File,
+    remote_mtime: int,
+    local_mtime: int,
+    lan_mode: bool,
+) -> tuple[SyncActionName, int]:
+    """
+    Compare two files using intelligent mtime + MD5 strategy.
+
+    Args:
+        remote_file: File metadata from remote/server.
+        local_file: File metadata from local filesystem.
+        remote_mtime: Remote file modification time.
+        local_mtime: Local file modification time.
+        lan_mode: Whether running in LAN mode.
+
+    Returns:
+        Tuple of (action, timedelta).
+    """
+    mtime_diff = abs(remote_mtime - local_mtime)
+
+    if mtime_diff > MTIME_TOLERANCE:
+        # Clear mtime difference - trust timestamps
+        if remote_mtime > local_mtime:
+            return SyncActionName.download, remote_mtime - local_mtime
+        else:
+            return SyncActionName.upload, local_mtime - remote_mtime
+
+    # mtime within tolerance - fall back to MD5 checksum
+    remote_md5 = remote_file.md5sum or ""
+    local_md5 = local_file.md5sum or ""
+
+    if remote_md5 == local_md5:
+        # Content is identical - no action needed
+        return SyncActionName.nothing, 0
+
+    # Content differs despite similar mtime - need to pick a direction
+    log.debug(
+        f'MD5 mismatch within mtime tolerance for "{remote_file.filepath}": '
+        f"remote_md5={remote_md5[:8]}... local_md5={local_md5[:8]}... "
+        f"mtime_diff={mtime_diff}s"
+    )
+    if remote_mtime > local_mtime:
+        return SyncActionName.download, remote_mtime - local_mtime
+    elif remote_mtime < local_mtime:
+        return SyncActionName.upload, local_mtime - remote_mtime
+    else:
+        # Exact same mtime but different content - prefer remote
+        # (server/master is authoritative for conflict resolution)
+        return SyncActionName.download, 0
 
 
 # =============================================================================

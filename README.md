@@ -157,7 +157,6 @@ source prod.env
 | `-b, --bucket` | Bucket name (required) |
 | `-p, --path` | Local directory path (default: cwd) |
 | `-w, --watch` | Watch for changes and sync continuously |
-| `--compare-by` | Compare files by: `mtime` or `ctime` (default: mtime) |
 | `-i, --interval` | Force full sync every N seconds (requires `-w`) |
 | `--retry-delay` | Retry connection after N seconds (default: 5) |
 | `-n, --dry-run` | Show what would be done without making changes |

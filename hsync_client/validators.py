@@ -121,7 +121,8 @@ def valid_bucket(value: str) -> str:
     """
     Validate bucket name argument.
 
-    Bucket names must be alphanumeric only.
+    Bucket names must contain only alphanumeric characters, hyphens
+    and underscores. They cannot start or end with a hyphen or underscore.
 
     Args:
         value: Bucket name from command line.
@@ -130,10 +131,14 @@ def valid_bucket(value: str) -> str:
         Validated bucket name.
 
     Raises:
-        ArgumentTypeError: If name contains non-alphanumeric characters.
+        ArgumentTypeError: If name contains invalid characters.
     """
-    if not value.isalnum():
-        raise ArgumentTypeError("The bucket name must be alphanumeric.")
+    from re import match as re_match
+    if not re_match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
+        raise ArgumentTypeError(
+            "The bucket name must be alphanumeric (hyphens and underscores "
+            "allowed, but not at the beginning or end)."
+        )
     return value
 
 

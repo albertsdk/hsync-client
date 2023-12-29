@@ -515,7 +515,7 @@ The master also runs a WebSocket server (on port+1) for real-time event propagat
 ### List Files
 
 ```http
-GET /api/v1/buckets/photos/files?sync_order=mtime HTTP/1.1
+GET /api/v1/buckets/photos/files HTTP/1.1
 Authorization: Bearer mySecretKey123
 ```
 
