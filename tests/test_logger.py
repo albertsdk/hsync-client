@@ -4,19 +4,28 @@ Tests for hsync_client.logger module.
 Tests the loguru-based logging configuration.
 """
 
+import logging
 import tempfile
 import os
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
 from hsync_client.logger import (
+    DEFAULT_LOG_ROTATION,
+    DEFAULT_LOG_RETENTION,
+    DEFAULT_LOG_COMPRESSION,
+    InterceptHandler,
     LEVEL_STYLES,
     SYMBOL_STYLES,
     setup_logging,
     get_client_id,
     set_client_id,
     _colorize_symbols,
+    _get_json_data,
+    _format_record_colored,
+    _format_record_plain,
+    _get_rotation_config,
 )
 
 
@@ -180,3 +189,148 @@ class TestClientIdContext:
         set_client_id("test-id")
         set_client_id(None)
         assert get_client_id() is None
+
+
+class TestInterceptHandler:
+    """Tests for InterceptHandler class."""
+
+    def test_is_logging_handler(self):
+        """InterceptHandler is a logging.Handler subclass."""
+        handler = InterceptHandler()
+        assert isinstance(handler, logging.Handler)
+
+    def test_emit_redirects_to_loguru(self):
+        """emit() redirects standard log records to loguru."""
+        handler = InterceptHandler()
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="test.py",
+            lineno=1, msg="test message", args=(), exc_info=None,
+        )
+        # Should not raise
+        handler.emit(record)
+
+
+class TestGetJsonData:
+    """Tests for _get_json_data function."""
+
+    def test_returns_none_without_extra(self):
+        """Returns None when no extra data."""
+        record = {"extra": {}}
+        assert _get_json_data(record) is None
+
+    def test_returns_json_data_from_direct_extra(self):
+        """Returns json_data from record extra (bind/opt pattern)."""
+        record = {"extra": {"json_data": {"key": "value"}}}
+        assert _get_json_data(record) == {"key": "value"}
+
+    def test_returns_json_data_from_nested_extra(self):
+        """Returns json_data from nested extra dict."""
+        record = {"extra": {"extra": {"json_data": {"nested": True}}}}
+        assert _get_json_data(record) == {"nested": True}
+
+    def test_returns_none_for_missing_json_data(self):
+        """Returns None when extra exists but no json_data."""
+        record = {"extra": {"other_key": 123}}
+        assert _get_json_data(record) is None
+
+    def test_returns_none_for_empty_record(self):
+        """Returns None for record with no extra at all."""
+        record = {}
+        assert _get_json_data(record) is None
+
+
+class TestFormatRecordColored:
+    """Tests for _format_record_colored function."""
+
+    def _make_record(self, message="test", level="INFO", extra=None):
+        """Create a mock loguru record."""
+        from datetime import datetime, timezone
+        record = {
+            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc),
+            "level": MagicMock(name=level),
+            "message": message,
+            "process": MagicMock(id=12345),
+            "extra": extra or {},
+        }
+        record["level"].name = level
+        return record
+
+    def test_basic_format(self):
+        """Formatted output contains timestamp, PID, level, and message."""
+        record = self._make_record("hello world")
+        result = _format_record_colored(record)
+        assert "2024-01-15T10:30:45.123Z" in result
+        assert "12345" in result
+        assert "INFO" in result
+        assert "hello world" in result
+
+    def test_includes_json_data(self):
+        """JSON data from extra is appended to message."""
+        record = self._make_record("msg", extra={"json_data": {"k": "v"}})
+        result = _format_record_colored(record)
+        assert '"k"' in result
+        assert '"v"' in result
+
+
+class TestFormatRecordPlain:
+    """Tests for _format_record_plain function."""
+
+    def _make_record(self, message="test", level="INFO", extra=None):
+        """Create a mock loguru record."""
+        from datetime import datetime, timezone
+        record = {
+            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc),
+            "level": MagicMock(name=level),
+            "message": message,
+            "process": MagicMock(id=12345),
+            "extra": extra or {},
+        }
+        record["level"].name = level
+        return record
+
+    def test_no_color_tags(self):
+        """Plain format has no loguru color tags."""
+        record = self._make_record("↓ file.txt")
+        result = _format_record_plain(record)
+        assert "<dim>" not in result
+        assert "<cyan>" not in result
+
+    def test_basic_format(self):
+        """Plain format contains timestamp, PID, level, message."""
+        record = self._make_record("plain message")
+        result = _format_record_plain(record)
+        assert "2024-01-15T10:30:45.123Z" in result
+        assert "12345" in result
+        assert "INFO" in result
+        assert "plain message" in result
+
+
+class TestGetRotationConfig:
+    """Tests for _get_rotation_config function."""
+
+    def test_default_values(self):
+        """Returns defaults when env vars are not set."""
+        # Remove any existing env vars
+        for key in ("HSYNC_LOG_ROTATION", "HSYNC_LOG_RETENTION", "HSYNC_LOG_COMPRESSION"):
+            os.environ.pop(key, None)
+
+        config = _get_rotation_config()
+        assert config["rotation"] == DEFAULT_LOG_ROTATION
+        assert config["retention"] == DEFAULT_LOG_RETENTION
+        assert config["compression"] == DEFAULT_LOG_COMPRESSION
+
+    def test_env_overrides(self):
+        """Environment variables override defaults."""
+        os.environ["HSYNC_LOG_ROTATION"] = "1 day"
+        os.environ["HSYNC_LOG_RETENTION"] = "30 days"
+        os.environ["HSYNC_LOG_COMPRESSION"] = "zip"
+
+        try:
+            config = _get_rotation_config()
+            assert config["rotation"] == "1 day"
+            assert config["retention"] == "30 days"
+            assert config["compression"] == "zip"
+        finally:
+            del os.environ["HSYNC_LOG_ROTATION"]
+            del os.environ["HSYNC_LOG_RETENTION"]
+            del os.environ["HSYNC_LOG_COMPRESSION"]
