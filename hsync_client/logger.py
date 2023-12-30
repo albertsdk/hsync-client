@@ -26,16 +26,19 @@ Log rotation configuration (via environment variables):
 - HSYNC_LOG_RETENTION: How long to keep old logs (e.g., "7 days", "5")
 - HSYNC_LOG_COMPRESSION: Compression format (e.g., "gz", "zip", "bz2")
 
-Log format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
+Log format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
 """
 
 import logging
 import os
 import sys
 from contextvars import ContextVar
-from typing import Final, Optional
+from typing import TYPE_CHECKING, Final, Optional
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 
 # =============================================================================
@@ -70,10 +73,7 @@ class InterceptHandler(logging.Handler):
         message = record.getMessage()
         message = message.replace("{", "{{").replace("}", "}}")
 
-        # Bind client_id to the log context
-        client_id = get_client_id()
-        log = logger.bind(client_id=client_id or "-")
-        log.opt(depth=depth, exception=record.exc_info).log(level, message)
+        logger.opt(depth=depth, exception=record.exc_info).log(level, message)
 
 
 # =============================================================================
@@ -196,7 +196,7 @@ def _colorize_symbols(message: str, use_colors: bool = True) -> str:
     return message
 
 
-def _get_json_data(record: dict) -> dict | None:
+def _get_json_data(record: "Record") -> dict | None:
     """
     Extract json_data from record extra, handling different loguru API patterns.
 
@@ -220,19 +220,17 @@ def _get_json_data(record: dict) -> dict | None:
     return None
 
 
-def _format_record_colored(record: dict) -> str:
+def _format_record_colored(record: "Record") -> str:
     """
     Custom format function for loguru with colors.
 
     Uses loguru's built-in color tags for proper terminal compatibility
     and automatic color stripping when output is not a TTY.
 
-    Format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
+    Format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
     """
     import json
 
-    # Get client_id from record extra (if bound) or from context variable
-    client_id = record["extra"].get("client_id") or get_client_id() or "-"
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
     message = record["message"]
@@ -252,21 +250,19 @@ def _format_record_colored(record: dict) -> str:
         message = f"{message}\n{json_str}"
 
     return (
-        f"<dim>{timestamp}</dim> - [{record['process'].id}] [{client_id}] "
+        f"<dim>{timestamp}</dim> - [{record['process'].id}] "
         f"{level_start}{level}{level_end}: {message}\n"
     )
 
 
-def _format_record_plain(record: dict) -> str:
+def _format_record_plain(record: "Record") -> str:
     """
     Custom format function for loguru without colors.
 
-    Format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
+    Format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
     """
     import json
 
-    # Get client_id from record extra (if bound) or from context variable
-    client_id = record["extra"].get("client_id") or get_client_id() or "-"
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
     message = record["message"]
@@ -280,7 +276,7 @@ def _format_record_plain(record: dict) -> str:
         message = f"{message}\n{json_str}"
 
     return (
-        f"{timestamp} - [{record['process'].id}] [{client_id}] "
+        f"{timestamp} - [{record['process'].id}] "
         f"{level}: {message}\n"
     )
 

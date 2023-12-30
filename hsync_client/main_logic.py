@@ -11,7 +11,6 @@ HSYNC Client - Main synchronization logic.
 This module contains the core synchronization logic extracted from main.py.
 """
 
-import signal
 import sys
 import time
 from asyncio import run
@@ -22,6 +21,7 @@ from typing import Optional
 
 
 from hsync_client.config import (
+    CONFIG,
     get_api_key,
     get_compression_enabled,
     get_discovery_timeout,
@@ -40,33 +40,36 @@ from hsync_client.config import (
     set_config,
     set_debug,
 )
-from hsync_client.constants import ACTION_LABEL, FILE_STABILITY_INTERVAL_DEFAULT, HSYNC_VERSION
-from hsync_client.lan import LANSync
+from hsync_client.constants import (
+    ACTION_LABEL,
+    FILE_STABILITY_INTERVAL_DEFAULT,
+    HSYNCKEEP_FILENAME,
+    HSYNC_VERSION,
+)
+from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
 from hsync_client.logger import setup_logging, set_client_id
 from hsync_client.models.sync_action import SyncActionName
 from hsync_client.retry import retry_on_connection_error
-from hsync_client.sync import get_files_local, get_files_remote, get_sync_actions, sync
+from hsync_client.sync import (
+    ensure_hsynckeep_files,
+    get_files_local,
+    get_files_remote,
+    get_sync_actions,
+    sync,
+)
+from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.utils import bytes_to_human_readable, get_cid, is_valid_logfile
 from hsync_client.websocket_handler import remote_connect
-
-# Global flag to trigger preview on SIGUSR1
-_preview_requested = False
-
-
-def _sigusr1_handler(signum, frame) -> None:
-    """Handle SIGUSR1 signal to trigger a preview (dry-run)."""
-    global _preview_requested
-    _preview_requested = True
 
 
 def _run_preview(log) -> None:
     """
     Run a preview (dry-run) showing pending sync actions.
 
-    This is triggered by SIGUSR1 signal and shows what would be
-    synced without actually performing any transfers.
+    This is triggered by a ``PREVIEW`` command on stdin and shows what
+    would be synced without actually performing any transfers.
 
     Emits structured log messages for each file with prefixes:
     - [SYNCED      ] - file is in sync (no action needed)
@@ -74,19 +77,25 @@ def _run_preview(log) -> None:
     - [TO_UPLOAD   ] - file needs to be uploaded
     - [TO_DELETE   ] - file will be deleted
     """
-    global _preview_requested
-    _preview_requested = False
-
     log.info("--- Preview (dry-run) ---")
     try:
+        # Ensure empty directories have sentinel files
+        ensure_hsynckeep_files()
+
         local_files = get_files_local()
         remote_files = get_files_remote()
-        sync_actions = get_sync_actions(remote_files, local_files)
+        lan_mode = CONFIG.get("LAN_MODE", False)
+        sync_actions = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
 
-        downloads = [a for a in sync_actions if a.name == SyncActionName.download]
-        uploads = [a for a in sync_actions if a.name == SyncActionName.upload]
-        deletes = [a for a in sync_actions if a.name == SyncActionName.delete]
-        synced = [a for a in sync_actions if a.name == SyncActionName.nothing]
+        def _is_sentinel(action) -> bool:
+            """Return True if the action concerns a .hsynckeep sentinel."""
+            fp = action.file.filepath or ""
+            return fp.endswith(HSYNCKEEP_FILENAME)
+
+        downloads = [a for a in sync_actions if a.name == SyncActionName.download and not _is_sentinel(a)]
+        uploads = [a for a in sync_actions if a.name == SyncActionName.upload and not _is_sentinel(a)]
+        deletes = [a for a in sync_actions if a.name == SyncActionName.delete and not _is_sentinel(a)]
+        synced = [a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)]
 
         # Emit structured messages for each file status
         for action in synced:
@@ -157,6 +166,8 @@ def run_sync(
     logfile: Optional[str],
     no_color: bool,
     legend: bool,
+    api_key_fd: Optional[int] = None,
+    lan_key_fd: Optional[int] = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -167,6 +178,30 @@ def run_sync(
     - Validating configuration
     - Running sync (single or continuous)
     """
+    # Read API key from file descriptor if provided (secure passing from parent)
+    api_key_from_fd: Optional[str] = None
+    if api_key_fd is not None:
+        import os
+        try:
+            with os.fdopen(api_key_fd, "r") as f:
+                api_key_from_fd = f.read().strip()
+            if not api_key_from_fd:
+                api_key_from_fd = None
+        except Exception:
+            pass  # Fall back to environment variable
+
+    # Read LAN key from file descriptor if provided (secure passing from parent)
+    lan_key_from_fd: Optional[str] = None
+    if lan_key_fd is not None:
+        import os
+        try:
+            with os.fdopen(lan_key_fd, "r") as f:
+                lan_key_from_fd = f.read().strip()
+            if not lan_key_from_fd:
+                lan_key_from_fd = None
+        except Exception:
+            pass  # Fall back to environment variable
+
     # Load environment file if specified
     if env_file:
         try:
@@ -183,9 +218,25 @@ def run_sync(
         no_color=no_color,
     )
 
-    # Register SIGUSR1 handler for preview (Unix only)
-    if hasattr(signal, "SIGUSR1"):
-        signal.signal(signal.SIGUSR1, _sigusr1_handler)
+    # ── PyInstaller workaround: prevent corrupt netrc module crash ──────
+    # The ``requests`` library calls ``get_netrc_auth()`` on every HTTP
+    # request, which does ``from netrc import …``.  In some PyInstaller
+    # bundles the ``netrc`` module is corrupted (zlib decompression error)
+    # and the resulting ``zlib.error`` is *not* caught by requests'
+    # ``except (ImportError, AttributeError)`` handler.
+    # Pre-registering a lightweight stub in ``sys.modules`` avoids the
+    # decompression entirely while keeping the ``requests`` code-path
+    # happy (it will simply find no credentials and return ``None``).
+    try:
+        import netrc as _netrc_test  # noqa: F401 – probe only
+    except Exception:
+        from types import ModuleType
+
+        _netrc_stub = ModuleType("netrc")
+        _netrc_stub.netrc = lambda *a, **kw: None  # type: ignore[attr-defined]
+        _netrc_stub.NetrcParseError = Exception  # type: ignore[attr-defined]
+        sys.modules["netrc"] = _netrc_stub
+        log.debug("Registered netrc stub module (PyInstaller workaround)")
 
     log.info(f"HSYNC Client v{HSYNC_VERSION}")
 
@@ -222,6 +273,7 @@ def run_sync(
     # Generate unique client ID for this session
     cid = get_cid()
     set_client_id(cid)
+    log.info(f"Session CID: {cid}")
 
     # Populate global configuration dictionary
     config: HsyncConfig = {
@@ -239,7 +291,7 @@ def run_sync(
         "REMOTE_BUCKET": bucket,
         "REQUEST_HEADERS": {
             "accept": "application/json",
-            "Authorization": f"Bearer {get_api_key()}",
+            "Authorization": f"Bearer {api_key_from_fd or get_api_key()}",
             "X-Client-Name": basename(__file__),
             "X-Client-Version": HSYNC_VERSION,
         },
@@ -254,7 +306,7 @@ def run_sync(
         "DISCOVERY_TIMEOUT": discovery_timeout or get_discovery_timeout() or 5,
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or 5,
         "PEER_TIMEOUT": get_peer_timeout() or 15,
-        "LAN_KEY": get_lan_key(),
+        "LAN_KEY": lan_key_from_fd or get_lan_key(),
         "LAN_GROUP": lan_group or get_lan_group(),
         "LAN_HTTPS": lan_https or get_lan_https(),
         "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),
@@ -268,7 +320,15 @@ def run_sync(
     set_config(config)
     set_debug(debug)
 
-    log.debug("Local configuration:", extra={'json_data': config})
+    # Mask sensitive values before logging
+    _safe_config = {**config}
+    _safe_headers = {**config["REQUEST_HEADERS"]}
+    auth = _safe_headers.get("Authorization", "")
+    _safe_headers["Authorization"] = "Bearer ****" if auth else ""
+    _safe_config["REQUEST_HEADERS"] = _safe_headers
+    if _safe_config.get("LAN_KEY"):
+        _safe_config["LAN_KEY"] = "****"
+    log.debug("Local configuration:", extra={'json_data': _safe_config})
 
     # Display legend if requested
     if legend:
@@ -305,38 +365,51 @@ def run_sync(
     if config["DRYRUN"] and continuous:
         log.warning("Continuous sync is disabled due to dryrun option set")
     elif not config["DRYRUN"] and continuous:
-        run(_run_with_preview_handler(log))
+        run(_run_with_stdin_commands(log))
     else:
         run(sync())
 
 
-async def _run_with_preview_handler(log) -> None:
-    """
-    Run remote_connect with a background task that handles preview requests.
+async def _with_stdin_commands(log, coro) -> None:
+    """Run *coro* with a background stdin command reader.
 
-    This allows SIGUSR1 to trigger a preview while the sync is running.
+    The reader listens for JSON commands on stdin (one per line) and
+    dispatches them to the appropriate handler.  Currently only the
+    ``PREVIEW`` command is registered.
+
+    When *coro* finishes (or raises), the reader is cancelled.
     """
     import asyncio
 
-    async def _preview_checker():
-        """Background task that checks for preview requests."""
-        global _preview_requested
-        while True:
-            await asyncio.sleep(0.5)  # Check every 500ms
-            if _preview_requested:
-                _run_preview(log)
+    handler = StdinCommandHandler(log)
+    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
 
-    # Start preview checker as background task
-    preview_task = asyncio.create_task(_preview_checker())
+    stdin_task = asyncio.create_task(handler.run())
 
     try:
-        await remote_connect()
+        await coro
     finally:
-        preview_task.cancel()
+        stdin_task.cancel()
         try:
-            await preview_task
+            await stdin_task
         except asyncio.CancelledError:
             pass
+
+
+async def _run_with_stdin_commands(log) -> None:
+    """Run remote_connect with a background stdin command reader."""
+    await _with_stdin_commands(log, remote_connect())
+
+
+async def _run_stdin_wait(log) -> None:
+    """Block reading stdin commands until EOF or cancellation.
+
+    Used in LAN persistent dry-run mode where there is no WebSocket
+    connection to keep the event loop alive.
+    """
+    handler = StdinCommandHandler(log)
+    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+    await handler.run()
 
 
 def _check_server_connectivity(
@@ -382,6 +455,71 @@ def _check_server_connectivity(
     except RequestException as e:
         logger.error(f"Cannot connect to server after retries: {server_url} ({e})")
         return False
+
+
+def _measure_clock_offset(master, config: HsyncConfig, log) -> None:
+    """
+    Measure clock offset between this client and the master using round-trip HTTP.
+
+    Uses an NTP-like round-trip measurement:
+        T1 = local time before request
+        T2 = master time (from /api/v1/time response)
+        T3 = local time after response
+        offset = T2 - (T1 + RTT/2), where RTT = T3 - T1
+
+    Updates master.clock_offset with the measured value and logs a warning
+    if the offset exceeds CLOCK_SKEW_THRESHOLD.
+
+    Args:
+        master: The master Peer object.
+        config: Current hsync configuration.
+    """
+    from requests import get as http_get, RequestException
+    from hsync_client.utils import get_ssl_verify
+
+    master_url = master.get_server_url()
+    time_url = f"{master_url}/api/v1/time"
+
+    try:
+        t1 = time.time()
+        response = http_get(
+            time_url,
+            headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
+            verify=get_ssl_verify(),
+            timeout=config.get("HTTP_TIMEOUT", 30),
+        )
+        t3 = time.time()
+
+        if response.status_code != 200:
+            log.debug(f"Clock sync: /api/v1/time returned {response.status_code}, skipping")
+            return
+
+        t2 = response.json().get("timestamp")
+        if t2 is None:
+            log.debug("Clock sync: no timestamp in response, skipping")
+            return
+
+        rtt = t3 - t1
+        offset = t2 - (t1 + rtt / 2)
+        master.clock_offset = offset
+
+        if abs(offset) > CLOCK_SKEW_THRESHOLD:
+            log.warning(
+                f"Clock skew detected with master {master.cid}: "
+                f"offset={offset:.1f}s, RTT={rtt * 1000:.1f}ms. "
+                f"File comparison will use MD5 fallback for "
+                f"mtime differences within tolerance."
+            )
+        else:
+            log.debug(
+                f"Clock sync with master {master.cid}: "
+                f"offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms"
+            )
+
+    except RequestException as e:
+        log.debug(f"Clock sync failed: {e}")
+    except (ValueError, KeyError) as e:
+        log.debug(f"Clock sync: invalid response: {e}")
 
 
 def _run_lan_mode(config: HsyncConfig, log) -> None:
@@ -519,19 +657,18 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
 
                     set_config(config)
 
+                    # Measure clock offset vs master using round-trip HTTP
+                    _measure_clock_offset(master, config, log)
+
                     # Check if dry-run mode is enabled
                     if config["DRYRUN"]:
                         # In dry-run mode, only show preview without syncing
                         _run_preview(log)
                         if not persistent:
                             break
-                        # In persistent mode with dry-run, wait for SIGUSR1 or Ctrl+C
-                        log.info("Dry-run mode: waiting for preview requests (SIGUSR1) or Ctrl+C to exit...")
-                        while True:
-                            time.sleep(1)
-                            if _preview_requested:
-                                _run_preview(log)
-                        # Note: This loop only exits via KeyboardInterrupt
+                        # In persistent mode with dry-run, wait for stdin commands or Ctrl+C
+                        log.info("Dry-run mode: waiting for preview requests (stdin) or Ctrl+C to exit...")
+                        run(_run_stdin_wait(log))
                     else:
                         # Perform initial sync (master is source of truth in LAN mode)
                         run(sync(lan_mode=True))
@@ -540,13 +677,18 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
                         break
 
                     # In persistent mode, connect via WebSocket for real-time events
+                    # with a stdin command reader running alongside so the
+                    # desktop GUI can send PREVIEW (and future) commands.
                     log.info("Initial sync complete, connecting to WebSocket for real-time events...")
                     ws_port = master.port + 1  # WebSocket is on next port
                     try:
-                        run(lan_websocket_client(
-                            host=master.address,
-                            port=ws_port,
-                            use_https=master.use_https,
+                        run(_with_stdin_commands(
+                            log,
+                            lan_websocket_client(
+                                host=master.address,
+                                port=ws_port,
+                                use_https=master.use_https,
+                            ),
                         ))
                     except Exception as e:
                         log.warning(f"WebSocket connection ended: {e}")

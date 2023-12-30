@@ -448,6 +448,18 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 verify=get_ssl_verify(),
                 timeout=CONFIG.get("HTTP_TIMEOUT", 30),
             )
+            if response.status_code == 201:
+                log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+            elif response.status_code == 401:
+                log.error(f'Authentication failed uploading "{file.filepath}"')
+            elif response.status_code == 403:
+                log.error(f'Access denied uploading "{file.filepath}"')
+            elif response.status_code == 409:
+                log.debug(f'"{file.filepath}" (already present)')
+            elif response.status_code >= 500:
+                log.error(f'Server error uploading "{file.filepath}": {response.status_code}')
+            else:
+                response.raise_for_status()
         else:
             # Standard upload (streaming, supports resume)
             with open(file.filepath, "rb") as upload:

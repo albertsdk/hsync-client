@@ -40,6 +40,7 @@ from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
 )
 from hsync_client.config import CONFIG
+from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.models.dir import is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
 
@@ -54,6 +55,7 @@ API_PREFIX = f"/api/{API_VERSION}"
 
 # API endpoint paths
 ENDPOINT_HEALTH = f"{API_PREFIX}/health"
+ENDPOINT_TIME = f"{API_PREFIX}/time"
 ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
 ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
@@ -213,6 +215,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._handle_health()
             return
 
+        # Time endpoint for clock synchronization
+        if path == ENDPOINT_TIME:
+            self._handle_time()
+            return
+
         # List files: /api/v1/buckets/{bucket}/files
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_list_files(query)
@@ -367,6 +374,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             else:
                 log.info(f"Deleting file from slave request: {full_path}")
                 os.remove(full_path)
+                parent = os.path.dirname(full_path)
+                if os.path.basename(full_path) == HSYNCKEEP_FILENAME:
+                    # Sentinel removed — clean up the now-empty directory
+                    self._cleanup_empty_dir(parent)
+                else:
+                    # Regular file removed — preserve directory with sentinel
+                    self._ensure_sentinel_after_delete(full_path)
 
             self._send_json_response(HTTP_OK, {"info": "Deleted successfully"})
 
@@ -374,9 +388,64 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             log.error(f"Error deleting {full_path}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Delete error: {e}")
 
+    @staticmethod
+    def _ensure_sentinel_after_delete(deleted_file: str) -> None:
+        """Create a .hsynckeep sentinel if the parent directory is now empty.
+
+        After a file is deleted the parent directory may become empty.
+        Placing a sentinel preserves the directory structure during sync.
+        """
+        parent = os.path.dirname(deleted_file)
+        if not parent or not exists(parent) or not os.path.isdir(parent):
+            return
+        try:
+            entries = os.listdir(parent)
+        except OSError:
+            return
+        has_syncable = any(not is_hidden_file(e) for e in entries)
+        if has_syncable:
+            return
+        sentinel = join(parent, HSYNCKEEP_FILENAME)
+        if not exists(sentinel):
+            try:
+                open(sentinel, "w").close()  # noqa: SIM115
+                log.debug(f'Created sentinel "{sentinel}"')
+            except OSError as exc:
+                log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
+
+    @staticmethod
+    def _cleanup_empty_dir(dir_path: str) -> None:
+        """Remove *dir_path* if it is completely empty.
+
+        Called after deleting a sentinel file so that the directory
+        does not linger on disk once it has no real content.
+        """
+        if not dir_path or not exists(dir_path) or not os.path.isdir(dir_path):
+            return
+        try:
+            entries = os.listdir(dir_path)
+        except OSError:
+            return
+        if entries:
+            return
+        try:
+            os.rmdir(dir_path)
+            log.debug(f'Removed empty directory "{dir_path}"')
+        except OSError as exc:
+            log.warning(f'Cannot remove directory "{dir_path}": {exc}')
+
     def _handle_health(self) -> None:
         """Handle health check endpoint."""
         self._send_json_response(HTTP_OK, {"status": "ok", "mode": "lan_master"})
+
+    def _handle_time(self) -> None:
+        """Handle time endpoint for clock synchronization.
+
+        Returns the master's current timestamp so slaves can calculate
+        clock offset using round-trip measurement (NTP-like).
+        """
+        import time
+        self._send_json_response(HTTP_OK, {"timestamp": time.time()})
 
     def _handle_list_files(self, query: dict) -> None:
         """Handle list files endpoint."""

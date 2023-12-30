@@ -15,8 +15,8 @@ import asyncio
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from os import makedirs, remove, walk
-from os.path import exists, join
+from os import listdir, makedirs, remove, rmdir, walk
+from os.path import basename, dirname, exists, join
 from requests import get, RequestException
 from sys import exc_info
 from traceback import print_tb
@@ -25,7 +25,11 @@ from typing import Callable, Mapping, Optional, cast
 from loguru import logger as log
 
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import ACTION_LABEL, MAX_CONCURRENT_TRANSFERS
+from hsync_client.constants import (
+    ACTION_LABEL,
+    HSYNCKEEP_FILENAME,
+    MAX_CONCURRENT_TRANSFERS,
+)
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
@@ -62,6 +66,9 @@ async def sync(lan_mode: bool = False) -> None:
     from hsync_client.transfer import nothing_to_do
 
     try:
+        # Ensure empty directories have sentinel files
+        ensure_hsynckeep_files()
+
         # Get file lists from both sides
         local_files = get_files_local()
         remote_files = get_files_remote()
@@ -87,6 +94,16 @@ async def sync(lan_mode: bool = False) -> None:
                 try:
                     remove(file.filepath)
                     log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
+                    # If the deleted file was a sentinel, clean up the
+                    # now-empty parent directory instead of recreating it.
+                    if basename(file.filepath) == HSYNCKEEP_FILENAME:
+                        parent = dirname(file.filepath)
+                        try:
+                            if exists(parent) and not listdir(parent):
+                                rmdir(parent)
+                                log.debug(f'Removed empty directory "{parent}"')
+                        except OSError:
+                            pass
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
 
@@ -162,6 +179,38 @@ async def _execute_parallel_transfers(
                 f"{len(uploads)} uploads (max {MAX_CONCURRENT_TRANSFERS} concurrent)"
             )
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# =============================================================================
+# Sentinel File for Empty Directories
+# =============================================================================
+
+
+def ensure_hsynckeep_files() -> None:
+    """
+    Ensure every empty directory under LOCAL_BUCKET contains a sentinel
+    `.hsynckeep` file so that the directory structure is preserved during sync.
+
+    A directory is considered "empty" when it contains no syncable files
+    (after filtering out hidden files).  Already-existing `.hsynckeep`
+    files count as syncable, so they prevent a second creation.
+    """
+    local_bucket = CONFIG["LOCAL_BUCKET"]
+    for root, dirs, files in walk(local_bucket):
+        # Skip hidden directories (same filter as get_files_local)
+        dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
+
+        # Check if there are any syncable (non-hidden) files
+        has_syncable = any(not is_hidden_file(f) for f in files)
+
+        if not has_syncable:
+            sentinel = join(root, HSYNCKEEP_FILENAME)
+            if not exists(sentinel):
+                try:
+                    open(sentinel, "w").close()  # noqa: SIM115
+                    log.debug(f'Created sentinel "{sentinel}"')
+                except OSError as e:
+                    log.warning(f'Cannot create sentinel "{sentinel}": {e}')
 
 
 # =============================================================================

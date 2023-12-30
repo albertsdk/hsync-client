@@ -30,7 +30,8 @@ import ssl
 import sys
 import threading
 from copy import deepcopy
-from os.path import exists, islink
+from os import listdir
+from os.path import exists, islink, join as path_join
 from time import time
 from typing import Any, Optional, Set
 from watchdog.events import FileSystemEventHandler, DirCreatedEvent, DirDeletedEvent
@@ -39,6 +40,7 @@ from watchdog.observers import Observer
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
+from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File, is_hidden_file
@@ -92,7 +94,7 @@ class LANWebSocketServer:
         self._clients: Set[Any] = set()  # WebSocket connections
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
-        self._server: Optional[asyncio.Future] = None
+        self._server: Optional[Any] = None
         self._running = False
         self._observer: Optional[Observer] = None
         self._event_handler: Optional[LANFileEventHandler] = None
@@ -106,15 +108,16 @@ class LANWebSocketServer:
         """Handle a single WebSocket client connection."""
         client_addr = websocket.remote_address
         log.info(f"WebSocket client connected: {client_addr}")
-        
-        # Check for authentication if LAN_KEY is set
+
+        # Send greeting: tell the client whether authentication is required
         lan_key = CONFIG.get("LAN_KEY")
         if lan_key:
+            await websocket.send(json.dumps({"type": "auth_required"}))
             try:
                 # Wait for auth message
                 auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_data = json.loads(auth_msg)
-                if auth_data.get("type") != "auth" or auth_data.get("key") != lan_key:
+                if auth_data.get("type") != "auth" or auth_data.get("token") != lan_key:
                     log.warning(f"WebSocket auth failed from {client_addr}")
                     await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                     await websocket.close()
@@ -123,12 +126,15 @@ class LANWebSocketServer:
                 log.info(f"WebSocket client authenticated: {client_addr}")
             except asyncio.TimeoutError:
                 log.warning(f"WebSocket auth timeout from {client_addr}")
+                await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                 await websocket.close()
                 return
             except Exception as e:
                 log.warning(f"WebSocket auth error from {client_addr}: {e}")
                 await websocket.close()
                 return
+        else:
+            await websocket.send(json.dumps({"type": "connected"}))
         
         # Add client to set
         self._clients.add(websocket)
@@ -545,10 +551,16 @@ async def lan_websocket_client(
         ) as websocket:
             log.info("WebSocket connected to master")
 
-            # Authenticate if LAN_KEY is set
-            lan_key = CONFIG.get("LAN_KEY")
-            if lan_key:
-                auth_msg = json.dumps({"type": "auth", "key": lan_key})
+            # Read server greeting to determine if auth is required
+            greeting = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+            greeting_data = json.loads(greeting)
+
+            if greeting_data.get("type") == "auth_required":
+                lan_key = CONFIG.get("LAN_KEY")
+                if not lan_key:
+                    log.error("WebSocket authentication failed – server requires LAN key")
+                    return
+                auth_msg = json.dumps({"type": "auth", "token": lan_key})
                 await websocket.send(auth_msg)
 
                 response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
@@ -557,6 +569,8 @@ async def lan_websocket_client(
                     log.error("WebSocket authentication failed")
                     return
                 log.info("WebSocket authenticated with master")
+            else:
+                log.info("No WebSocket authentication required")
 
             log.info("Listening for events from master...")
 
@@ -576,6 +590,12 @@ async def lan_websocket_client(
     except Exception as e:
         log.error(f"WebSocket connection error: {e}")
     finally:
+        # Wait for pending slave→master operations to complete before
+        # returning to the discovery loop (which triggers a full sync).
+        # This prevents race conditions where a rename/upload/delete is
+        # still in-flight while the full sync runs and reverts it.
+        if _slave_event_handler is not None:
+            _slave_event_handler.wait_pending(timeout=30.0)
         # Stop the file watcher
         observer.stop()
         observer.join(timeout=2.0)
@@ -598,8 +618,8 @@ async def _handle_lan_event(
     from hsync_client.models.dir import Dir
     from hsync_client.models.file import File
     from shutil import rmtree
-    from os import remove, rename, makedirs
-    from os.path import exists, dirname
+    from os import listdir, remove, rename, makedirs, rmdir
+    from os.path import basename, exists, dirname
 
     event_name = event_data.get("name")
     src = event_data.get("src")
@@ -707,6 +727,15 @@ async def _handle_lan_event(
                 try:
                     log.info(f'[LAN DELETE] "{file_obj.filepath}"')
                     remove(file_obj.filepath)
+                    parent = dirname(file_obj.filepath)
+                    if basename(file_obj.filepath) == HSYNCKEEP_FILENAME:
+                        # Sentinel removed — clean up the now-empty directory
+                        try:
+                            if exists(parent) and not listdir(parent):
+                                rmdir(parent)
+                                log.debug(f'Removed empty directory "{parent}"')
+                        except OSError:
+                            pass
                 finally:
                     unmark_receiving(file_obj.filepath)
 
@@ -757,6 +786,9 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         # Track files we're currently receiving from master to avoid echo
         self._receiving_files: set[str] = set()
         self._receiving_lock = threading.Lock()
+        # Track pending operations (rename, upload, delete) for graceful shutdown
+        self._pending_ops: list[threading.Thread] = []
+        self._pending_ops_lock = threading.Lock()
 
     def mark_receiving(self, filepath: str) -> None:
         """Mark a file as being received from master (to avoid upload echo)."""
@@ -772,6 +804,64 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         """Check if a file is currently being received from master."""
         with self._receiving_lock:
             return filepath in self._receiving_files
+
+    def _start_operation(
+        self, target, args: tuple = (), name: Optional[str] = None,
+    ) -> threading.Thread:
+        """Start a background operation and track it for graceful shutdown.
+
+        Args:
+            target: Callable to run in the thread.
+            args: Arguments to pass to target.
+            name: Optional thread name for debugging.
+
+        Returns:
+            The started thread.
+        """
+        thread = threading.Thread(target=target, args=args, daemon=True, name=name)
+        with self._pending_ops_lock:
+            # Clean up completed threads
+            self._pending_ops = [t for t in self._pending_ops if t.is_alive()]
+            self._pending_ops.append(thread)
+        thread.start()
+        return thread
+
+    def wait_pending(self, timeout: float = 30.0) -> int:
+        """Wait for all pending operations to complete.
+
+        Called before reconnect sync to avoid race conditions between
+        pending slave→master operations and the full sync.
+
+        Args:
+            timeout: Maximum seconds to wait for all operations.
+
+        Returns:
+            Number of operations that timed out (0 = all completed).
+        """
+        with self._pending_ops_lock:
+            threads = [t for t in self._pending_ops if t.is_alive()]
+
+        if not threads:
+            return 0
+
+        log.info(f"Waiting for {len(threads)} pending operation(s) to complete...")
+        timed_out = 0
+        deadline = time() + timeout
+        for thread in threads:
+            remaining = max(deadline - time(), 0)
+            if remaining <= 0:
+                timed_out += 1
+                continue
+            thread.join(timeout=remaining)
+            if thread.is_alive():
+                timed_out += 1
+
+        if timed_out:
+            log.warning(f"{timed_out} pending operation(s) timed out")
+        else:
+            log.info("All pending operations completed")
+
+        return timed_out
 
     def _is_temp_file(self, filepath: str) -> bool:
         """Check if a file is a temporary file that should be ignored."""
@@ -877,8 +967,11 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             return
 
         if event.is_directory and not is_hidden_dir(src_path):
-            # Directory creation - master will see it when files are added
+            # Create a .hsynckeep sentinel so the empty directory is
+            # synced to the master.  The watchdog will pick up the new
+            # file and trigger an upload via on_closed / on_modified.
             log.debug(f'[SLAVE DIR ] "{src_path}"')
+            self._ensure_sentinel(src_path)
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
             if islink(src_path):
@@ -943,12 +1036,36 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         file_obj = File.get(src_path)
         if file_obj:
             # Run upload in a separate thread to not block the watcher
-            thread = threading.Thread(
+            self._start_operation(
                 target=self._upload_to_master,
                 args=(file_obj,),
-                daemon=True,
+                name=f"upload-{src_path}",
             )
-            thread.start()
+
+    def _ensure_sentinel(self, dir_path: str) -> None:
+        """Create a .hsynckeep sentinel in *dir_path* if it is empty.
+
+        The sentinel guarantees that the directory is picked up by the
+        sync engine and propagated to the master.  The watchdog will
+        detect the new file and trigger an upload automatically.
+        """
+        try:
+            entries = listdir(dir_path)
+        except OSError:
+            return
+        # Consider the directory empty if it has no visible (syncable) files
+        has_syncable = any(
+            not is_hidden_file(e) for e in entries
+        )
+        if has_syncable:
+            return
+        sentinel = path_join(dir_path, HSYNCKEEP_FILENAME)
+        if not exists(sentinel):
+            try:
+                open(sentinel, "w").close()  # noqa: SIM115
+                log.debug(f'[SLAVE KEEP] Created sentinel "{sentinel}"')
+            except OSError as exc:
+                log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
 
     def on_deleted(self, event) -> None:
         """Handle file/directory deletion events."""
@@ -970,12 +1087,11 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             return
 
         # Notify master about deletion
-        thread = threading.Thread(
+        self._start_operation(
             target=self._delete_on_master,
             args=(src_path, event.is_directory),
-            daemon=True,
+            name=f"delete-{src_path}",
         )
-        thread.start()
 
     def on_moved(self, event) -> None:
         """Handle file/directory move/rename events."""
@@ -1010,32 +1126,29 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             if not event.is_directory and exists(dest_path):
                 file_obj = File.get(dest_path)
                 if file_obj:
-                    thread = threading.Thread(
+                    self._start_operation(
                         target=self._upload_to_master,
                         args=(file_obj,),
-                        daemon=True,
+                        name=f"upload-{dest_path}",
                     )
-                    thread.start()
             return
 
         # Visible to hidden - treat as deletion
         if not src_hidden and dest_hidden:
             if not CONFIG.get("IGNORE_DELETE", False):
-                thread = threading.Thread(
+                self._start_operation(
                     target=self._delete_on_master,
                     args=(src_path, event.is_directory),
-                    daemon=True,
+                    name=f"delete-{src_path}",
                 )
-                thread.start()
             return
 
         # Normal rename - use PATCH endpoint
-        thread = threading.Thread(
+        self._start_operation(
             target=self._rename_on_master,
             args=(src_path, dest_path),
-            daemon=True,
+            name=f"rename-{src_path}",
         )
-        thread.start()
 
 
 # Global slave event handler for marking files as receiving

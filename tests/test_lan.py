@@ -217,16 +217,16 @@ class TestPeerManager:
         assert len(peers) == 2
 
     def test_master_election_local_wins(self):
-        """Test that local client is elected master when it has lowest CID."""
-        pm = PeerManager(local_cid="aaa111", bucket="photos")
-        pm.add_peer(Peer(cid="zzz999", bucket="photos", address="192.168.1.100", port=8765))
+        """Test that local client is elected master when it started earliest."""
+        pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)
+        pm.add_peer(Peer(cid="zzz999", bucket="photos", address="192.168.1.100", port=8765, startup_time=200.0))
         assert pm.is_master() is True
         assert pm.get_master_cid() == "aaa111"
 
     def test_master_election_remote_wins(self):
-        """Test that remote peer is elected master when it has lowest CID."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos")
-        pm.add_peer(Peer(cid="aaa111", bucket="photos", address="192.168.1.100", port=8765))
+        """Test that remote peer is elected master when it started earliest."""
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(Peer(cid="aaa111", bucket="photos", address="192.168.1.100", port=8765, startup_time=100.0))
         assert pm.is_master() is False
         assert pm.get_master_cid() == "aaa111"
         master = pm.get_master()
@@ -235,13 +235,13 @@ class TestPeerManager:
 
     def test_master_election_callback(self):
         """Test that master change callback is called."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos")
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
         callback = MagicMock()
         pm.set_master_change_callback(callback)
 
         # Initially local is master (only peer)
-        # Add a peer with lower CID - should trigger callback
-        pm.add_peer(Peer(cid="aaa111", bucket="photos", address="192.168.1.100", port=8765))
+        # Add a peer with earlier startup_time - should trigger callback
+        pm.add_peer(Peer(cid="aaa111", bucket="photos", address="192.168.1.100", port=8765, startup_time=100.0))
 
         callback.assert_called_once()
         # Callback should receive the new master peer
