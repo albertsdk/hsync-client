@@ -204,6 +204,11 @@ def main(
         show_default=False,
         rich_help_panel="LAN Mode",
     )] = True,
+    force_master: Annotated[bool, typer.Option(
+        "--force-master",
+        help="Force this client to always be master in LAN mode.",
+        rich_help_panel="LAN Mode",
+    )] = False,
     # -------------------------------------------------------------------------
     # Output
     # -------------------------------------------------------------------------
@@ -345,6 +350,7 @@ def main(
         lan_group=lan_group,
         lan_https=lan_https,
         lan_persistent=lan_persistent,
+        force_master=force_master,
         debug=debug,
         quiet=quiet,
         logfile=logfile,

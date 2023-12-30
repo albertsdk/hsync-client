@@ -67,6 +67,12 @@ def _run_preview(log) -> None:
 
     This is triggered by SIGUSR1 signal and shows what would be
     synced without actually performing any transfers.
+
+    Emits structured log messages for each file with prefixes:
+    - [SYNCED      ] - file is in sync (no action needed)
+    - [TO_DOWNLOAD ] - file needs to be downloaded
+    - [TO_UPLOAD   ] - file needs to be uploaded
+    - [TO_DELETE   ] - file will be deleted
     """
     global _preview_requested
     _preview_requested = False
@@ -80,23 +86,26 @@ def _run_preview(log) -> None:
         downloads = [a for a in sync_actions if a.name == SyncActionName.download]
         uploads = [a for a in sync_actions if a.name == SyncActionName.upload]
         deletes = [a for a in sync_actions if a.name == SyncActionName.delete]
+        synced = [a for a in sync_actions if a.name == SyncActionName.nothing]
 
-        if not downloads and not uploads and not deletes:
-            log.info("Nothing to sync - all files are up to date")
-        else:
-            for action in downloads:
-                size_str = bytes_to_human_readable(action.file.size or 0)
-                log.info(f'[↓ DOWNLOAD] "{action.file.filepath}" ({size_str})')
-            for action in uploads:
-                size_str = bytes_to_human_readable(action.file.size or 0)
-                log.info(f'[↑ UPLOAD  ] "{action.file.filepath}" ({size_str})')
-            for action in deletes:
-                log.info(f'[✕ DELETE  ] "{action.file.filepath}"')
+        # Emit structured messages for each file status
+        for action in synced:
+            size_str = bytes_to_human_readable(action.file.size or 0)
+            log.info(f'[SYNCED      ] "{action.file.filepath}" ({size_str})')
+        for action in downloads:
+            size_str = bytes_to_human_readable(action.file.size or 0)
+            log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({size_str})')
+        for action in uploads:
+            size_str = bytes_to_human_readable(action.file.size or 0)
+            log.info(f'[TO_UPLOAD   ] "{action.file.filepath}" ({size_str})')
+        for action in deletes:
+            size_str = bytes_to_human_readable(action.file.size or 0)
+            log.info(f'[TO_DELETE   ] "{action.file.filepath}" ({size_str})')
 
-            log.info(
-                f"Preview: {len(downloads)} downloads, "
-                f"{len(uploads)} uploads, {len(deletes)} deletes"
-            )
+        log.info(
+            f"Preview: {len(synced)} synced, {len(downloads)} downloads, "
+            f"{len(uploads)} uploads, {len(deletes)} deletes"
+        )
     except Exception as e:
         log.error(f"Preview failed: {e}")
     log.info("--- End Preview ---")
@@ -142,6 +151,7 @@ def run_sync(
     lan_group: Optional[str],
     lan_https: bool,
     lan_persistent: bool,
+    force_master: bool,
     debug: bool,
     quiet: bool,
     logfile: Optional[str],
@@ -248,6 +258,7 @@ def run_sync(
         "LAN_GROUP": lan_group or get_lan_group(),
         "LAN_HTTPS": lan_https or get_lan_https(),
         "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),
+        "LAN_FORCE_MASTER": force_master,
         "MASTER_CERT_FINGERPRINT": None,
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
@@ -397,6 +408,7 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
         group=config["LAN_GROUP"],
         use_https=config["LAN_HTTPS"],
         cert_fingerprint=cert_info.fingerprint if cert_info else None,
+        force_master=config["LAN_FORCE_MASTER"],
     )
     # Start discovery and register service for peer discovery
     peer_manager = lan_sync.start(register_service=True)
@@ -507,8 +519,22 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
 
                     set_config(config)
 
-                    # Perform initial sync (master is source of truth in LAN mode)
-                    run(sync(lan_mode=True))
+                    # Check if dry-run mode is enabled
+                    if config["DRYRUN"]:
+                        # In dry-run mode, only show preview without syncing
+                        _run_preview(log)
+                        if not persistent:
+                            break
+                        # In persistent mode with dry-run, wait for SIGUSR1 or Ctrl+C
+                        log.info("Dry-run mode: waiting for preview requests (SIGUSR1) or Ctrl+C to exit...")
+                        while True:
+                            time.sleep(1)
+                            if _preview_requested:
+                                _run_preview(log)
+                        # Note: This loop only exits via KeyboardInterrupt
+                    else:
+                        # Perform initial sync (master is source of truth in LAN mode)
+                        run(sync(lan_mode=True))
 
                     if not persistent:
                         break

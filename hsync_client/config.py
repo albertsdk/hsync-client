@@ -265,6 +265,8 @@ class HsyncConfig(TypedDict):
     LAN_HTTPS: bool
     # LAN persistent mode (stay active indefinitely waiting for peers)
     LAN_PERSISTENT: bool
+    # Force this client to be master in LAN mode
+    LAN_FORCE_MASTER: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: Optional[str]
     # Ignore file deletion events (backup mode)
