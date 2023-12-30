@@ -11,7 +11,9 @@ HSYNC Client - Main synchronization logic.
 This module contains the core synchronization logic extracted from main.py.
 """
 
+import signal
 import sys
+import time
 from asyncio import run
 from os.path import basename, exists
 from re import sub
@@ -43,10 +45,61 @@ from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
 from hsync_client.logger import setup_logging, set_client_id
+from hsync_client.models.sync_action import SyncActionName
 from hsync_client.retry import retry_on_connection_error
-from hsync_client.sync import sync
-from hsync_client.utils import get_cid, is_valid_logfile
+from hsync_client.sync import get_files_local, get_files_remote, get_sync_actions, sync
+from hsync_client.utils import bytes_to_human_readable, get_cid, is_valid_logfile
 from hsync_client.websocket_handler import remote_connect
+
+# Global flag to trigger preview on SIGUSR1
+_preview_requested = False
+
+
+def _sigusr1_handler(signum, frame) -> None:
+    """Handle SIGUSR1 signal to trigger a preview (dry-run)."""
+    global _preview_requested
+    _preview_requested = True
+
+
+def _run_preview(log) -> None:
+    """
+    Run a preview (dry-run) showing pending sync actions.
+
+    This is triggered by SIGUSR1 signal and shows what would be
+    synced without actually performing any transfers.
+    """
+    global _preview_requested
+    _preview_requested = False
+
+    log.info("--- Preview (dry-run) ---")
+    try:
+        local_files = get_files_local()
+        remote_files = get_files_remote()
+        sync_actions = get_sync_actions(remote_files, local_files)
+
+        downloads = [a for a in sync_actions if a.name == SyncActionName.download]
+        uploads = [a for a in sync_actions if a.name == SyncActionName.upload]
+        deletes = [a for a in sync_actions if a.name == SyncActionName.delete]
+
+        if not downloads and not uploads and not deletes:
+            log.info("Nothing to sync - all files are up to date")
+        else:
+            for action in downloads:
+                size_str = bytes_to_human_readable(action.file.size or 0)
+                log.info(f'[↓ DOWNLOAD] "{action.file.filepath}" ({size_str})')
+            for action in uploads:
+                size_str = bytes_to_human_readable(action.file.size or 0)
+                log.info(f'[↑ UPLOAD  ] "{action.file.filepath}" ({size_str})')
+            for action in deletes:
+                log.info(f'[✕ DELETE  ] "{action.file.filepath}"')
+
+            log.info(
+                f"Preview: {len(downloads)} downloads, "
+                f"{len(uploads)} uploads, {len(deletes)} deletes"
+            )
+    except Exception as e:
+        log.error(f"Preview failed: {e}")
+    log.info("--- End Preview ---")
 
 
 def _get_stability_delay_value(cli_value: Optional[int]) -> int:
@@ -119,6 +172,10 @@ def run_sync(
         logfile=logfile if logfile and is_valid_logfile(logfile) else None,
         no_color=no_color,
     )
+
+    # Register SIGUSR1 handler for preview (Unix only)
+    if hasattr(signal, "SIGUSR1"):
+        signal.signal(signal.SIGUSR1, _sigusr1_handler)
 
     log.info(f"HSYNC Client v{HSYNC_VERSION}")
 
@@ -237,9 +294,38 @@ def run_sync(
     if config["DRYRUN"] and continuous:
         log.warning("Continuous sync is disabled due to dryrun option set")
     elif not config["DRYRUN"] and continuous:
-        run(remote_connect())
+        run(_run_with_preview_handler(log))
     else:
         run(sync())
+
+
+async def _run_with_preview_handler(log) -> None:
+    """
+    Run remote_connect with a background task that handles preview requests.
+
+    This allows SIGUSR1 to trigger a preview while the sync is running.
+    """
+    import asyncio
+
+    async def _preview_checker():
+        """Background task that checks for preview requests."""
+        global _preview_requested
+        while True:
+            await asyncio.sleep(0.5)  # Check every 500ms
+            if _preview_requested:
+                _run_preview(log)
+
+    # Start preview checker as background task
+    preview_task = asyncio.create_task(_preview_checker())
+
+    try:
+        await remote_connect()
+    finally:
+        preview_task.cancel()
+        try:
+            await preview_task
+        except asyncio.CancelledError:
+            pass
 
 
 def _check_server_connectivity(
