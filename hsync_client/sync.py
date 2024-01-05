@@ -65,6 +65,11 @@ async def sync(lan_mode: bool = False) -> None:
     # Import here to avoid circular import
     from hsync_client.transfer import nothing_to_do
 
+    # Check if local directory exists before starting sync
+    if not exists(CONFIG["LOCAL_BUCKET"]):
+        log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
+        return
+
     try:
         # Ensure empty directories have sentinel files
         ensure_hsynckeep_files()
@@ -229,6 +234,11 @@ def get_files_local() -> list[dict]:
     Returns:
         List of file metadata dictionaries.
     """
+    # Check if local directory exists before walking
+    if not exists(CONFIG["LOCAL_BUCKET"]):
+        log.warning(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist during synchronization")
+        return []
+
     file_list = []
     for root, dirs, files in walk(CONFIG["LOCAL_BUCKET"]):
         # Skip hidden directories

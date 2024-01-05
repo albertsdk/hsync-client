@@ -354,6 +354,11 @@ def run_sync(
     set_config(config)
     set_debug(debug)
 
+    # Check if local directory exists at startup
+    if not exists(local_path):
+        log.error(f"Local directory '{local_path}' does not exist")
+        return
+
     # Mask sensitive values before logging
     _safe_config = {**config}
     _safe_headers = {**config["REQUEST_HEADERS"]}
