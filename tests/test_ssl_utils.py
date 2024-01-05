@@ -73,14 +73,14 @@ class TestGenerateSelfSignedCert:
         """Custom common name is set in the certificate."""
         info = generate_self_signed_cert(common_name="test-node")
         cert = x509.load_pem_x509_certificate(info.cert_pem)
-        cn = cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0]
+        cn = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0]
         assert cn.value == "test-node"
 
     def test_default_common_name(self):
         """Default common name is 'hsync-lan'."""
         info = generate_self_signed_cert()
         cert = x509.load_pem_x509_certificate(info.cert_pem)
-        cn = cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0]
+        cn = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0]
         assert cn.value == "hsync-lan"
 
     def test_cert_has_san_extension(self):
