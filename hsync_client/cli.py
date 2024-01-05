@@ -175,6 +175,11 @@ def main(
         help="Do not propagate file deletions (useful for backup scenarios).",
         rich_help_panel="Sync",
     )] = False,
+    sync_direction: Annotated[str, typer.Option(
+        "--sync-direction",
+        help="Sync direction: bidirectional, upload-only, or download-only.",
+        rich_help_panel="Sync",
+    )] = "bidirectional",
     no_compression: Annotated[bool, typer.Option(
         "--no-compression",
         help="Disable zstd compression for file transfers.",
@@ -337,6 +342,18 @@ def main(
         raise typer.BadParameter(
             f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}."
         )
+    _VALID_SYNC_DIRECTIONS = ("bidirectional", "upload-only", "download-only")
+    if sync_direction not in _VALID_SYNC_DIRECTIONS:
+        raise typer.BadParameter(
+            f"sync-direction must be one of: {', '.join(_VALID_SYNC_DIRECTIONS)}."
+        )
+
+    # --force-master is incompatible with directional sync (upload/download-only)
+    if force_master and sync_direction != "bidirectional":
+        raise typer.BadParameter(
+            f"--force-master is incompatible with --sync-direction={sync_direction}. "
+            f"The LAN master always operates in bidirectional mode."
+        )
 
     # Import and call the actual main logic
     from hsync_client.main_logic import run_sync
@@ -359,6 +376,7 @@ def main(
         filter_path=filter_path,
         dryrun=dryrun,
         ignore_delete=ignore_delete,
+        sync_direction=sync_direction,
         compression_enabled=not no_compression,
         lan_mode=lan_mode,
         lan_port=lan_port,

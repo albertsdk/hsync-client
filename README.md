@@ -61,6 +61,7 @@ The same flow applies in reverse (B → A) for bidirectional sync.
 
 ### Core
 - 🔄 Bidirectional file synchronization
+- ⬆️ Upload-only and ⬇️ download-only sync directions
 - ⚡ Parallel file transfers (configurable concurrency)
 - 👁️ Real-time file system monitoring (watchdog)
 - ✅ MD5-based file integrity verification
@@ -76,7 +77,7 @@ The same flow applies in reverse (B → A) for bidirectional sync.
 
 ### LAN Mode (P2P)
 - 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
-- 👑 **Automatic master election** - one peer becomes the server, others sync with it
+- 👑 **Automatic master election** - peers with bidirectional sync are preferred as master
 - � **HTTPS by default** - self-signed certificate per session with fingerprint verification
 - 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
 - �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
@@ -161,6 +162,7 @@ source prod.env
 | `--retry-delay` | Retry connection after N seconds (default: 5) |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `--ignore-delete` | Do not propagate file deletions (useful for backup scenarios) |
+| `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` (default: `bidirectional`) |
 | `-v, --verbose` | Enable verbose output |
 | `-q, --quiet` | Suppress all output |
 | `-o, --output` | Write output to file |
@@ -208,6 +210,18 @@ export HSYNC_API_KEY="your-api-key"
 ```bash
 # File deletions are not propagated - useful for backup scenarios
 ./dist/hsync -s http://localhost:8765 -b mybucket -w --ignore-delete
+```
+
+**Upload-only (local → remote):**
+```bash
+# Only upload local changes to the server, ignore remote changes
+./dist/hsync -s http://localhost:8765 -b mybucket -w --sync-direction upload-only
+```
+
+**Download-only (remote → local):**
+```bash
+# Only download from server, never upload local changes (read-only client)
+./dist/hsync -s http://localhost:8765 -b mybucket -w --sync-direction download-only
 ```
 
 ## SSL/TLS (HTTPS/WSS)
@@ -316,6 +330,36 @@ Performs a synchronization and exits.
 - Monitors local directory with watchdog
 - Propagates changes in real-time
 
+### Sync Direction (`--sync-direction`)
+
+Controls the direction of file synchronization. Three modes are available:
+
+| Direction | Uploads | Downloads | Use Case |
+|-----------|---------|-----------|----------|
+| `bidirectional` (default) | ✅ | ✅ | Full two-way sync between peers |
+| `upload-only` | ✅ | ❌ | Push local files to remote, ignore remote changes |
+| `download-only` | ❌ | ✅ | Pull remote files to local, never upload local changes |
+
+**How it works:**
+- In **single sync mode**, `get_sync_actions()` filters out actions that don't match the direction
+- In **watch mode**, local and remote events are filtered inline at runtime — no restart needed
+- The direction is a **client-side decision** — the server doesn't need to know about it
+
+**Examples:**
+
+```bash
+# Upload-only: push local files to server (e.g., backup source)
+./dist/hsync -s http://server:8765 -b backup -w --sync-direction upload-only
+
+# Download-only: mirror remote content locally (e.g., read-only client)
+./dist/hsync -s http://server:8765 -b shared -w --sync-direction download-only
+
+# LAN mode: slave only downloads from master, never uploads
+./dist/hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
+```
+
+> ⚠️ **Note**: In LAN mode, `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start with an error. During automatic master election, peers with bidirectional sync are preferred. If a non-bidirectional peer is elected as master (because no bidirectional peer is available), a WARNING is logged.
+
 ### LAN Mode (`--lan-mode`)
 
 Peer-to-peer synchronization without a centralized server:
@@ -333,7 +377,7 @@ HSYNC_LAN_KEY="mySecretKey" ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 **How it works:**
 1. Peers discover each other via mDNS (Bonjour/Avahi)
-2. The peer with the lowest Client ID becomes the master
+2. A master is elected (priority: `force_master` > bidirectional preference > earliest startup > lowest CID)
 3. Other peers sync files with the master via HTTPS (default) or HTTP
 
 See [LAN Mode documentation](docs/lan-mode.md) for details.

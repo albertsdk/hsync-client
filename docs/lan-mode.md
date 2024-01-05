@@ -35,9 +35,10 @@ flowchart TB
 |---------|-------------|
 | **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
-| **Automatic Master Election** | Lowest CID becomes the master |
+| **Automatic Master Election** | Priority: `force_master` > bidirectional preference > earliest startup > lowest CID |
 | **Real-Time Sync** | WebSocket-based instant event propagation |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
+| **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
 | **Optional Authentication** | Shared secret key for security |
 | **Random Port Allocation** | Avoids port conflicts |
 
@@ -48,7 +49,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph "LAN Network"
-        subgraph "Master (lowest CID)"
+        subgraph "Master (elected)"
             M_DISC[mDNS Service]
             M_HTTP[HTTP Server]
             M_WS[WebSocket Server]
@@ -108,13 +109,13 @@ sequenceDiagram
     C-->>B: mDNS announcement
     
     Note over A,C: Phase 2: Election
-    A->>A: Compare CIDs
-    B->>B: Compare CIDs
-    C->>C: Compare CIDs
-    
-    Note over A: abc123 < def456 < xyz789<br/>I am MASTER!
-    Note over B: abc123 < def456 < xyz789<br/>A is MASTER
-    Note over C: abc123 < def456 < xyz789<br/>A is MASTER
+    A->>A: Evaluate candidates
+    B->>B: Evaluate candidates
+    C->>C: Evaluate candidates
+
+    Note over A: All bidirectional, same startup<br/>abc123 < def456 < xyz789<br/>I am MASTER!
+    Note over B: All bidirectional, same startup<br/>abc123 < def456 < xyz789<br/>A is MASTER
+    Note over C: All bidirectional, same startup<br/>abc123 < def456 < xyz789<br/>A is MASTER
     
     Note over A,C: Phase 3: Sync
     A->>A: Start HTTP Server
@@ -291,8 +292,14 @@ $ ./dist/hsync -b photos -p ~/Pictures --lan-mode
 | `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled |
 | `--discovery-timeout` | Peer discovery timeout (seconds) | `10` |
 | `--no-lan-persistent` | Disable persistent mode (exit when no peers) | Persistent enabled |
+| `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
+| `--force-master` | Force this peer to be the LAN master | `false` |
 
 > **Note**: For security, the LAN authentication key is only available via the `HSYNC_LAN_KEY` environment variable (not as a CLI option).
+
+> ⚠️ **Error**: `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only`. The client will refuse to start with an error message. The LAN master must always operate in bidirectional mode.
+
+> ⚠️ **Warning**: During automatic master election, peers with **bidirectional** sync are preferred. If no bidirectional peer is available and a non-bidirectional peer becomes master, a WARNING is logged indicating that synchronization capabilities may be limited for other peers.
 
 ## Environment Variables
 
@@ -459,28 +466,66 @@ export HSYNC_LAN_HTTPS=false
 
 ## Master Election
 
-The master is elected using **lexicographic comparison** of Client IDs (CIDs):
+The master is elected using a **multi-criteria priority system**. Each peer independently runs the same algorithm, ensuring all peers agree on the same master.
+
+### Election Priority (highest to lowest)
+
+| Priority | Criterion | Description |
+|----------|-----------|-------------|
+| 1 | `force_master` | If a peer has `--force-master`, it always wins |
+| 2 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
+| 3 | **Earliest startup** | Among equal peers, the one that started first wins |
+| 4 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
 
 ```mermaid
-flowchart LR
-    subgraph "① CID Comparison"
-        A["abc123"] -->|"②"| COMP{Compare}
-        B["def456"] -->|"②"| COMP
-        C["xyz789"] -->|"②"| COMP
-    end
+flowchart TD
+    START["All candidates"] --> FM{"Any peer with<br/>force_master?"}
+    FM -->|"Yes"| FM_WIN["force_master peer wins"]
+    FM -->|"No"| BIDIR{"Any peer with<br/>bidirectional sync?"}
+    BIDIR -->|"Yes"| BIDIR_POOL["Filter: bidirectional peers only"]
+    BIDIR -->|"No"| ALL_POOL["All peers remain candidates"]
+    BIDIR_POOL --> STARTUP{"Compare<br/>startup_time"}
+    ALL_POOL --> STARTUP
+    STARTUP -->|"Different"| EARLIEST["Earliest startup wins"]
+    STARTUP -->|"Same"| CID["Lowest CID wins"]
 
-    COMP -->|"③"| RESULT["abc123 wins<br/>(lowest CID)"]
-
-    style A fill:#e8f5e9,stroke:#2e7d32
-    style RESULT fill:#e8f5e9,stroke:#2e7d32
+    style FM_WIN fill:#e8f5e9,stroke:#2e7d32
+    style EARLIEST fill:#e8f5e9,stroke:#2e7d32
+    style CID fill:#e8f5e9,stroke:#2e7d32
 ```
 
 ![Master Election](images/lan-mode-5.png)
 
 **Rules:**
-- The peer with the **lowest CID** becomes the master
-- CIDs are random alphanumeric strings generated at startup
-- If the master goes offline, a new election occurs
+- The `sync_direction` of each peer is shared via mDNS TXT records during discovery
+- `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
+- If a non-bidirectional peer is elected as master (no bidirectional peers available), a **WARNING** is logged
+- If the master goes offline, a new election occurs among remaining peers
+
+### Examples
+
+**Scenario 1**: Three peers, all bidirectional (classic behavior)
+```
+Peer A: CID=abc123, bidirectional, startup=10:00
+Peer B: CID=def456, bidirectional, startup=10:01
+Peer C: CID=xyz789, bidirectional, startup=10:00
+→ Winner: Peer A (same startup as C, but lower CID)
+```
+
+**Scenario 2**: Mixed sync directions
+```
+Peer A: CID=abc123, upload-only,    startup=10:00
+Peer B: CID=xyz789, bidirectional,  startup=10:05
+→ Winner: Peer B (bidirectional preferred, even though A started earlier)
+```
+
+**Scenario 3**: No bidirectional peers
+```
+Peer A: CID=abc123, upload-only,    startup=10:00
+Peer B: CID=def456, download-only,  startup=10:01
+→ Winner: Peer A (both non-bidirectional, A started earlier)
+⚠️ WARNING: Master has sync_direction=upload-only
+```
 
 ## API Endpoints
 
@@ -600,6 +645,20 @@ HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p ~/Documents --lan-mode
 HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
 ```
 
+### Directional Sync in LAN Mode
+
+Use `--sync-direction` on slave nodes to control the direction of synchronization:
+
+```bash
+# Slave that only downloads from master (read-only mirror)
+./dist/hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
+
+# Slave that only uploads to master (push-only source)
+./dist/hsync -b logs -p ~/Logs --lan-mode --sync-direction upload-only
+```
+
+> **Note**: During automatic master election, peers with bidirectional sync are preferred. If `--force-master` is used, the peer must have bidirectional sync direction (the client will refuse to start otherwise).
+
 ## Troubleshooting
 
 ### Peers Not Discovering Each Other
@@ -630,7 +689,8 @@ HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
 | **Authentication** | API Key | Shared Secret |
 | **Real-time Sync** | ✅ Yes (WebSocket) | ✅ Yes (WebSocket) |
 | **Bidirectional Sync** | ✅ Yes | ✅ Yes |
-| **Source of Truth** | Server | Master (lowest CID) |
+| **Directional Sync** | ✅ Yes (any client) | ✅ Slaves only |
+| **Source of Truth** | Server | Master (elected via priority) |
 | **Reconnection Behavior** | Upload local changes | Sync to master state |
 
 ## Technical Details

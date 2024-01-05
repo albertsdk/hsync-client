@@ -392,6 +392,21 @@ def get_sync_actions(
                     # In server mode, upload local files not on server
                     sync_actions.append(SyncAction(file, SyncActionName.upload))
 
+    # ── Filter actions based on sync direction ──────────────────────
+    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    if direction == "upload-only":
+        # Remove downloads and remote-triggered deletes; keep uploads and nothing
+        sync_actions = [
+            a for a in sync_actions
+            if a.name not in (SyncActionName.download, SyncActionName.delete)
+        ]
+    elif direction == "download-only":
+        # Remove uploads; keep downloads, deletes and nothing
+        sync_actions = [
+            a for a in sync_actions
+            if a.name != SyncActionName.upload
+        ]
+
     return sync_actions
 
 

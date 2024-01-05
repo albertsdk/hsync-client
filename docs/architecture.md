@@ -152,6 +152,31 @@ stateDiagram-v2
 
 ![Watch Mode](images/architecture-4.png)
 
+### Sync Direction Filtering
+
+The `--sync-direction` option controls which operations are executed. Filtering is applied at two levels:
+
+1. **Initial sync** — `get_sync_actions()` removes actions that don't match the direction before execution
+2. **Watch mode** — Inline runtime checks skip events that don't match the direction
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  Sync Direction Filter                    │
+├─────────────────┬───────────────┬───────────────────────┤
+│  Direction      │  Allowed      │  Blocked              │
+├─────────────────┼───────────────┼───────────────────────┤
+│  bidirectional  │  all actions  │  (none)               │
+│  upload-only    │  upload       │  download, delete(*)  │
+│  download-only  │  download,    │  upload               │
+│                 │  delete       │                       │
+└─────────────────┴───────────────┴───────────────────────┘
+(*) Remote-triggered deletes are blocked in upload-only mode
+```
+
+The Observer (watchdog) continues running in all modes — events are filtered inline rather than stopping the Observer. This allows the sync direction to be changed dynamically at runtime via stdin command without restarting the process.
+
+> **LAN Mode note**: In LAN mode, the `sync_direction` is also published via mDNS TXT records and used during master election — peers with **bidirectional** sync are preferred as master. Using `--force-master` with a non-bidirectional direction is an error. See [LAN Mode > Master Election](lan-mode.md#master-election) for details.
+
 ## Event Processing
 
 ```mermaid
@@ -206,6 +231,12 @@ flowchart TD
 ```
 
 ![Event Processing](images/architecture-5.png)
+
+**Sync direction filtering in watch mode:**
+
+- When `upload-only`: remote events (⑤) are **skipped** — only local events (①) are processed and uploaded
+- When `download-only`: local events (①) are **skipped** — only remote events (⑤) are processed and downloaded
+- When `bidirectional` (default): all events are processed normally
 
 ## File Change Detection
 

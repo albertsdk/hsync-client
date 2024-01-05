@@ -36,6 +36,7 @@ from time import time
 from typing import Any, Optional, Set
 from watchdog.events import FileSystemEventHandler, DirCreatedEvent, DirDeletedEvent
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 
 from loguru import logger as log
 
@@ -96,7 +97,7 @@ class LANWebSocketServer:
         self._thread: Optional[threading.Thread] = None
         self._server: Optional[Any] = None
         self._running = False
-        self._observer: Optional[Observer] = None
+        self._observer: Optional[BaseObserver] = None
         self._event_handler: Optional[LANFileEventHandler] = None
     
     @property
@@ -304,7 +305,14 @@ class LANFileEventHandler(FileSystemEventHandler):
         self._last_modified: dict[str, float] = {}
 
     def _send_event(self, event: Event) -> None:
-        """Send an event to all connected clients."""
+        """Send an event to all connected clients.
+
+        Skipped when SYNC_DIRECTION is 'download-only' (master should not
+        broadcast local changes to slaves).
+        """
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            log.debug("Download-only mode: master event not broadcast.")
+            return
         event_dict = event.to_dict()
         self._ws_server.broadcast_sync(event_dict)
 
@@ -626,6 +634,11 @@ async def _handle_lan_event(
     dst = event_data.get("dst")
 
     log.debug(f"Received event: {event_name}")
+
+    # Skip events from master when in upload-only mode (no downloads)
+    if CONFIG.get("SYNC_DIRECTION") == "upload-only":
+        log.debug("Upload-only mode: LAN event from master ignored.")
+        return
 
     if not src:
         log.warning("Event missing 'src' field")
@@ -1030,6 +1043,9 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
     def _handle_file_upload(self, src_path: str) -> None:
         """Handle a file modification - upload to master."""
+        # Skip uploads in download-only mode
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            return
         if not exists(src_path):
             return
 
@@ -1075,6 +1091,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         if self._is_temp_file(src_path):
             return
 
+        # Skip in download-only mode (don't propagate local deletions)
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            return
+
         # Skip hidden files/dirs
         if event.is_directory and is_hidden_dir(src_path):
             return
@@ -1099,6 +1119,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         dest_path = ensure_str_path(getattr(event, 'dest_path', None))
 
         if not dest_path:
+            return
+
+        # Skip in download-only mode (don't propagate local renames)
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
 
         # Skip temp files (.part files used during downloads)
