@@ -80,62 +80,284 @@ class TestStop:
         assert handler._should_stop is True
 
 
+def _make_reader(*lines: bytes) -> AsyncMock:
+    """Return a mock StreamReader that yields *lines* then EOF (b"")."""
+    items = list(lines) + [b""]
+    reader = AsyncMock()
+    reader.readline = AsyncMock(side_effect=items)
+    return reader
+
+
+def _patch_pipe_setup(reader: AsyncMock):
+    """Return a combined context-manager that patches os.dup, os.fdopen,
+    asyncio.StreamReader (to return *reader*), and connect_read_pipe
+    via a mock event loop."""
+    mock_loop = MagicMock()
+    mock_loop.connect_read_pipe = AsyncMock()
+    return (
+        patch("os.dup", return_value=99),
+        patch("os.fdopen", return_value=MagicMock()),
+        patch("asyncio.StreamReader", return_value=reader),
+        patch("asyncio.StreamReaderProtocol"),
+        patch("asyncio.get_event_loop", return_value=mock_loop),
+    )
+
+
 class TestRunDispatch:
-    """Tests for the run() async method dispatch logic."""
+    """Tests for the run() async method - full dispatch loop."""
 
     @pytest.mark.asyncio
     async def test_dispatches_sync_handler(self):
-        """Sync handler is called with correct arguments."""
+        """Sync handler is called when a matching command arrives."""
         log = MagicMock()
         handler = StdinCommandHandler(log)
         callback = MagicMock()
         handler.register("PREVIEW", callback)
 
-        # Simulate stdin with a single command then EOF
-        cmd_line = json.dumps({"cmd": "PREVIEW"}).encode() + b"\n"
+        reader = _make_reader(b'{"cmd": "PREVIEW"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
 
-        with patch.object(handler, "run") as mock_run:
-            # Test the dispatch logic directly instead of full run()
-            # which requires pipe setup
-            pass
-
-        # Instead, test the parsing logic by calling the internal logic
-        # We can test that registering and calling works
-        callback()
-        callback.assert_called_once()
+        callback.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_dispatches_async_handler(self):
-        """Async handler is awaited."""
+        """Async handler is awaited when a matching command arrives."""
         log = MagicMock()
         handler = StdinCommandHandler(log)
         callback = AsyncMock()
         handler.register("SYNC", callback)
 
-        # Verify async handler is registered correctly
-        assert asyncio.iscoroutinefunction(handler._handlers["SYNC"])
+        reader = _make_reader(b'{"cmd": "SYNC"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
 
-    def test_json_parsing_valid(self):
-        """Valid JSON is parsed correctly."""
-        text = '{"cmd": "PREVIEW"}'
-        data = json.loads(text)
-        assert data["cmd"] == "PREVIEW"
+        callback.assert_awaited_once_with()
 
-    def test_json_parsing_with_extra_fields(self):
-        """Extra fields are preserved after cmd is extracted."""
-        text = '{"cmd": "RESYNC", "filter": "docs/"}'
-        data = json.loads(text)
-        cmd = data.pop("cmd")
-        assert cmd == "RESYNC"
-        assert data == {"filter": "docs/"}
+    @pytest.mark.asyncio
+    async def test_dispatches_with_extra_kwargs(self):
+        """Extra JSON fields are passed as keyword arguments."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = MagicMock()
+        handler.register("RESYNC", callback)
 
-    def test_json_parsing_invalid(self):
-        """Invalid JSON raises JSONDecodeError."""
-        with pytest.raises(json.JSONDecodeError):
-            json.loads("not json")
+        reader = _make_reader(b'{"cmd": "RESYNC", "filter": "docs/"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
 
-    def test_json_parsing_missing_cmd(self):
-        """JSON without cmd field has no cmd key."""
-        data = json.loads('{"action": "test"}')
-        assert data.get("cmd") is None
+        callback.assert_called_once_with(filter="docs/")
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_logs_warning(self):
+        """Invalid JSON line logs a warning and continues."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = MagicMock()
+        handler.register("OK", callback)
+
+        reader = _make_reader(b"not json\n", b'{"cmd": "OK"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("Invalid JSON" in str(c) for c in log.warning.call_args_list)
+        callback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_cmd_field_logs_warning(self):
+        """JSON without 'cmd' field logs a warning and continues."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = MagicMock()
+        handler.register("OK", callback)
+
+        reader = _make_reader(b'{"action": "test"}\n', b'{"cmd": "OK"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("missing 'cmd'" in str(c) for c in log.warning.call_args_list)
+        callback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_unknown_command_logs_warning(self):
+        """Unregistered command logs a warning and continues."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = MagicMock()
+        handler.register("KNOWN", callback)
+
+        reader = _make_reader(b'{"cmd": "UNKNOWN"}\n', b'{"cmd": "KNOWN"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("Unknown stdin command" in str(c) for c in log.warning.call_args_list)
+        callback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handler_exception_logs_error(self):
+        """Exception in handler is caught and logged."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = MagicMock(side_effect=RuntimeError("boom"))
+        handler.register("FAIL", callback)
+
+        reader = _make_reader(b'{"cmd": "FAIL"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("'FAIL' failed" in str(c) for c in log.error.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_async_handler_exception_logs_error(self):
+        """Exception in async handler is caught and logged."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = AsyncMock(side_effect=ValueError("async boom"))
+        handler.register("AFAIL", callback)
+
+        reader = _make_reader(b'{"cmd": "AFAIL"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("'AFAIL' failed" in str(c) for c in log.error.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_stop_flag_breaks_loop(self):
+        """Setting stop() before dispatch causes loop to exit after handler."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        def stop_callback():
+            handler.stop()
+
+        handler.register("STOP", stop_callback)
+        # Second command should NOT be dispatched
+        second = MagicMock()
+        handler.register("AFTER", second)
+
+        reader = _make_reader(
+            b'{"cmd": "STOP"}\n',
+            b'{"cmd": "AFTER"}\n',
+        )
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        second.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_lines_are_skipped(self):
+        """Blank lines are silently skipped."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        callback = MagicMock()
+        handler.register("CMD", callback)
+
+        reader = _make_reader(b"\n", b"   \n", b'{"cmd": "CMD"}\n')
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        callback.assert_called_once()
+        log.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_eof_stops_loop(self):
+        """Empty read (EOF) stops the loop gracefully."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        reader = _make_reader()  # immediate EOF
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("stopped" in str(c) for c in log.debug.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_stops_loop(self):
+        """CancelledError breaks the loop cleanly."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        reader = AsyncMock()
+        reader.readline = AsyncMock(side_effect=asyncio.CancelledError)
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("stopped" in str(c) for c in log.debug.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_os_dup_failure_returns_early(self):
+        """OSError on os.dup logs debug and returns."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        with patch("os.dup", side_effect=OSError("no fd")):
+            await handler.run()
+
+        assert any("unavailable" in str(c) for c in log.debug.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_connect_read_pipe_failure_returns_early(self):
+        """OSError on connect_read_pipe logs debug and returns."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        mock_pipe = MagicMock()
+        mock_loop = MagicMock()
+        mock_loop.connect_read_pipe = AsyncMock(side_effect=OSError("pipe error"))
+        with patch("os.dup", return_value=99), \
+             patch("os.fdopen", return_value=mock_pipe), \
+             patch("asyncio.StreamReader"), \
+             patch("asyncio.StreamReaderProtocol"), \
+             patch("asyncio.get_event_loop", return_value=mock_loop):
+            await handler.run()
+
+        assert any("unavailable" in str(c) for c in log.debug.call_args_list)
+        mock_pipe.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_multiple_commands_dispatched_in_order(self):
+        """Multiple commands are dispatched in the order received."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+        order = []
+        handler.register("A", lambda: order.append("A"))
+        handler.register("B", lambda: order.append("B"))
+        handler.register("C", lambda: order.append("C"))
+
+        reader = _make_reader(
+            b'{"cmd": "A"}\n',
+            b'{"cmd": "B"}\n',
+            b'{"cmd": "C"}\n',
+        )
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert order == ["A", "B", "C"]
+
+    @pytest.mark.asyncio
+    async def test_reader_generic_exception_logs_error_and_stops(self):
+        """Unexpected exception in the read loop logs error and breaks."""
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        reader = AsyncMock()
+        reader.readline = AsyncMock(side_effect=RuntimeError("unexpected"))
+        p = _patch_pipe_setup(reader)
+        with p[0], p[1], p[2], p[3], p[4]:
+            await handler.run()
+
+        assert any("stdin reader error" in str(c) for c in log.error.call_args_list)
 
