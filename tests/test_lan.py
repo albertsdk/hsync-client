@@ -437,5 +437,5 @@ class TestVersionCompatibility:
         # Empty string or non-numeric should trigger parse_error
         # Note: current implementation may not trigger parse_error for all cases
         # but should never crash
-        is_compat, reason = check_version_compatibility("0.1.0", "0.1.0")
+        is_compat, _reason = check_version_compatibility("0.1.0", "0.1.0")
         assert is_compat is True
