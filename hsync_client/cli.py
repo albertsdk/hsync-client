@@ -61,13 +61,6 @@ def _validate_bucket(value: str) -> str:
     return value
 
 
-def _validate_int_range(value: int, min_val: int, max_val: int, name: str) -> int:
-    """Validate integer is within range."""
-    if value < min_val or value > max_val:
-        raise typer.BadParameter(f"The {name} must be between {min_val} and {max_val}.")
-    return value
-
-
 @app.command()
 def main(
     # -------------------------------------------------------------------------
