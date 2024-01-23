@@ -58,6 +58,8 @@ mindmap
       -q, --quiet
       -o, --output
       --no-color
+    Safety
+      -y, --yes
     Other
       -n, --dry-run
       -V, --version
@@ -334,6 +336,15 @@ hsync -s http://localhost:8765 -b shared -w --sync-direction download-only
 ```bash
 # Slave only receives files from master, never uploads local changes
 hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
+```
+
+### Skip deletion risk confirmation (scripting)
+```bash
+# Automatically confirm the deletion risk warning (still shows the warning)
+hsync -b photos -p ~/Pictures --lan-mode -y
+
+# Long form
+hsync -b shared -w --sync-direction download-only --yes
 ```
 
 > **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. See [LAN Mode > Master Election](docs/lan-mode.md#master-election) for the full election algorithm.

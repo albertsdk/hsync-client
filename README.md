@@ -170,6 +170,7 @@ source prod.env
 | `--insecure` | Skip SSL certificate verification |
 | `--no-color` | Disable colored output |
 | `--help-symbols` | Show output symbols legend |
+| `-y, --yes` | Skip interactive confirmation prompts (still shows warnings) |
 | `-V, --version` | Show version |
 | `--lan-mode` | Enable LAN P2P mode (no server required) |
 | `--lan-port` | Port for LAN HTTP server (0 = random) |
@@ -223,6 +224,23 @@ export HSYNC_API_KEY="your-api-key"
 # Only download from server, never upload local changes (read-only client)
 ./dist/hsync -s http://localhost:8765 -b mybucket -w --sync-direction download-only
 ```
+
+**Skip deletion risk confirmation (e.g. in scripts):**
+```bash
+# Automatically confirm deletion risk warning (still shows the warning)
+./dist/hsync -b photos --lan-mode -y
+```
+
+## File Deletion Risk Warning
+
+When sync settings could cause local files to be deleted, the client warns the user before starting:
+
+- **LAN mode without `--force-master`**: the master peer is the source of truth — local-only files will be deleted during sync
+- **`--sync-direction download-only`**: remote deletions are applied locally and local-only files may be removed
+
+If the shared directory is **non-empty**, the client shows a warning and asks for confirmation (`[y/N]`). Use `-y` / `--yes` to skip the interactive prompt (the warning is still logged).
+
+> **Note**: `--sync-direction upload-only` and LAN mode with `--force-master` are considered safe — no warning is shown. Bidirectional server mode is also considered normal behavior and does not trigger a warning.
 
 ## SSL/TLS (HTTPS/WSS)
 
