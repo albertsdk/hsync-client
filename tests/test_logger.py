@@ -17,12 +17,12 @@ from hsync_client.logger import (
     DEFAULT_LOG_RETENTION,
     DEFAULT_LOG_COMPRESSION,
     InterceptHandler,
+    LABEL_STYLES,
     LEVEL_STYLES,
-    SYMBOL_STYLES,
     setup_logging,
     get_client_id,
     set_client_id,
-    _colorize_symbols,
+    _colorize_labels,
     _get_json_data,
     _format_record_colored,
     _format_record_plain,
@@ -58,71 +58,121 @@ class TestLevelStyles:
         assert LEVEL_STYLES["CRITICAL"] == ("<bold><red>", "</red></bold>")
 
 
-class TestSymbolStyles:
-    """Tests for SYMBOL_STYLES mapping with loguru color tags."""
+class TestLabelStyles:
+    """Tests for LABEL_STYLES mapping with loguru color tags."""
 
-    def test_download_symbol(self):
-        """Test download symbol uses cyan tag."""
-        assert SYMBOL_STYLES["↓"] == ("<cyan>", "</cyan>")
+    def test_download_label(self):
+        """Test download label uses cyan tag."""
+        assert LABEL_STYLES["[DOWNLOAD  ]"] == ("<cyan>", "</cyan>")
 
-    def test_upload_symbol(self):
-        """Test upload symbol uses green tag."""
-        assert SYMBOL_STYLES["↑"] == ("<green>", "</green>")
+    def test_upload_label(self):
+        """Test upload label uses green tag."""
+        assert LABEL_STYLES["[UPLOAD    ]"] == ("<green>", "</green>")
 
-    def test_move_symbol(self):
-        """Test move symbol uses blue tag."""
-        assert SYMBOL_STYLES["→"] == ("<blue>", "</blue>")
+    def test_resume_label(self):
+        """Test resume label uses cyan tag."""
+        assert LABEL_STYLES["[RESUME    ]"] == ("<cyan>", "</cyan>")
 
-    def test_remove_symbol(self):
-        """Test remove symbol uses red tag."""
-        assert SYMBOL_STYLES["✕"] == ("<red>", "</red>")
+    def test_move_label(self):
+        """Test move label uses blue tag."""
+        assert LABEL_STYLES["[MOVE      ]"] == ("<blue>", "</blue>")
 
-    def test_create_symbol(self):
-        """Test create symbol uses green tag."""
-        assert SYMBOL_STYLES["+"] == ("<green>", "</green>")
+    def test_remove_label(self):
+        """Test remove label uses red tag."""
+        assert LABEL_STYLES["[REMOVE    ]"] == ("<red>", "</red>")
 
-    def test_permission_symbol(self):
-        """Test permission symbol uses magenta tag."""
-        assert SYMBOL_STYLES["⚙"] == ("<magenta>", "</magenta>")
+    def test_delete_label(self):
+        """Test delete label uses red tag."""
+        assert LABEL_STYLES["[DELETE    ]"] == ("<red>", "</red>")
 
-    def test_skip_symbol(self):
-        """Test skip symbol uses dim tag."""
-        assert SYMBOL_STYLES["·"] == ("<dim>", "</dim>")
+    def test_create_label(self):
+        """Test create label uses green tag."""
+        assert LABEL_STYLES["[CREATE    ]"] == ("<green>", "</green>")
+
+    def test_permission_label(self):
+        """Test permission label uses magenta tag."""
+        assert LABEL_STYLES["[PERMISSION]"] == ("<magenta>", "</magenta>")
+
+    def test_symlink_label(self):
+        """Test symlink label uses blue tag."""
+        assert LABEL_STYLES["[SYMLINK   ]"] == ("<blue>", "</blue>")
+
+    def test_in_sync_label(self):
+        """Test in-sync label uses dim tag."""
+        assert LABEL_STYLES["[IN SYNC   ]"] == ("<dim>", "</dim>")
+
+    def test_skip_label(self):
+        """Test skip label uses dim tag."""
+        assert LABEL_STYLES["[SKIP      ]"] == ("<dim>", "</dim>")
+
+    def test_ignore_del_label(self):
+        """Test ignore-del label uses yellow tag."""
+        assert LABEL_STYLES["[IGNORE DEL]"] == ("<yellow>", "</yellow>")
+
+    def test_slave_up_label(self):
+        """Test slave upload label uses green tag."""
+        assert LABEL_STYLES["[SLAVE UP  ]"] == ("<green>", "</green>")
+
+    def test_slave_del_label(self):
+        """Test slave delete label uses red tag."""
+        assert LABEL_STYLES["[SLAVE DEL ]"] == ("<red>", "</red>")
+
+    def test_slave_ren_label(self):
+        """Test slave rename label uses blue tag."""
+        assert LABEL_STYLES["[SLAVE REN ]"] == ("<blue>", "</blue>")
+
+    def test_slave_dir_label(self):
+        """Test slave dir label uses green tag."""
+        assert LABEL_STYLES["[SLAVE DIR ]"] == ("<green>", "</green>")
+
+    def test_slave_keep_label(self):
+        """Test slave keep label uses dim tag."""
+        assert LABEL_STYLES["[SLAVE KEEP]"] == ("<dim>", "</dim>")
+
+    def test_slave_ign_label(self):
+        """Test slave ignore label uses yellow tag."""
+        assert LABEL_STYLES["[SLAVE IGN ]"] == ("<yellow>", "</yellow>")
 
 
-class TestColorizeSymbols:
-    """Tests for _colorize_symbols function."""
+class TestColorizeLabels:
+    """Tests for _colorize_labels function."""
 
-    def test_colorize_download_symbol(self):
-        """Test download symbol gets colored with loguru tags."""
-        result = _colorize_symbols("↓ file.txt")
+    def test_colorize_download_label(self):
+        """Test download label gets colored with loguru tags."""
+        result = _colorize_labels('[DOWNLOAD  ] "file.txt" 1.2MB')
+        assert "<cyan>[DOWNLOAD  ]</cyan>" in result
+
+    def test_colorize_upload_label(self):
+        """Test upload label gets colored with loguru tags."""
+        result = _colorize_labels('[UPLOAD    ] "file.txt" 1.2MB')
+        assert "<green>[UPLOAD    ]</green>" in result
+
+    def test_colorize_remove_label(self):
+        """Test remove label gets colored red."""
+        result = _colorize_labels('[REMOVE    ] "/path/to/file"')
+        assert "<red>[REMOVE    ]</red>" in result
+
+    def test_colorize_multiple_labels(self):
+        """Test message is unchanged when it has no labels."""
+        result = _colorize_labels('[DOWNLOAD  ] then [UPLOAD    ]')
         assert "<cyan>" in result
-        assert "</cyan>" in result
-        assert "↓" in result
-
-    def test_colorize_upload_symbol(self):
-        """Test upload symbol gets colored with loguru tags."""
-        result = _colorize_symbols("↑ file.txt")
-        assert "<green>" in result
-        assert "</green>" in result
-        assert "↑" in result
-
-    def test_colorize_multiple_symbols(self):
-        """Test multiple symbols get colored."""
-        result = _colorize_symbols("↓ download and ↑ upload")
-        assert "<cyan>" in result
         assert "<green>" in result
 
-    def test_no_symbols_unchanged(self):
-        """Test message without symbols is unchanged."""
-        result = _colorize_symbols("Test message")
+    def test_no_labels_unchanged(self):
+        """Test message without labels is unchanged."""
+        result = _colorize_labels("Test message")
         assert result == "Test message"
 
     def test_colorize_disabled(self):
         """Test colorization can be disabled."""
-        result = _colorize_symbols("↓ file.txt", use_colors=False)
+        result = _colorize_labels('[DOWNLOAD  ] "file.txt"', use_colors=False)
         assert "<cyan>" not in result
-        assert result == "↓ file.txt"
+        assert result == '[DOWNLOAD  ] "file.txt"'
+
+    def test_colorize_slave_label(self):
+        """Test LAN slave label gets colored."""
+        result = _colorize_labels('[SLAVE DEL ] "/path/to/file"')
+        assert "<red>[SLAVE DEL ]</red>" in result
 
 
 class TestSetupLogging:
