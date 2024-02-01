@@ -292,6 +292,32 @@ class TestProcessWebsocketEvents:
             # Symlink events are filtered out as invalid
             mock_symlink.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_skips_event_in_upload_only_mode(self):
+        """Skips remote events when SYNC_DIRECTION is upload-only."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client", "SYNC_DIRECTION": "upload-only"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_dir') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_not_called()
+
 
 class TestResync:
     """Tests for resync function."""
@@ -419,3 +445,46 @@ class TestRemoteConnect:
             except (asyncio.TimeoutError, KeyboardInterrupt, Exception):
                 pass
             assert call_count >= 2  # Should have reconnected
+
+    @pytest.mark.asyncio
+    async def test_remote_connect_cancels_previous_resync_task(self):
+        """remote_connect cancels previous resync task on reconnect."""
+        from hsync_client.websocket_handler import remote_connect
+        import hsync_client.websocket_handler as ws_module
+        from websockets.exceptions import ConnectionClosed
+
+        config = {"RESYNC": 60, "RECONNECT_DELAY": 0.01}
+
+        iteration = 0
+        first_task = None
+
+        async def mock_sync():
+            pass
+
+        async def mock_remote_events():
+            nonlocal iteration, first_task
+            iteration += 1
+            if iteration == 1:
+                # Save the first resync task reference
+                first_task = ws_module._resync_task
+                raise ConnectionClosed(None, None)
+            raise KeyboardInterrupt("Stop after reconnect")
+
+        async def mock_resync():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                raise  # let cancellation propagate cleanly
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.sync', mock_sync), \
+             patch('hsync_client.websocket_handler.remote_events', mock_remote_events), \
+             patch('hsync_client.websocket_handler.resync', mock_resync):
+            ws_module._resync_task = None
+            try:
+                await asyncio.wait_for(remote_connect(), timeout=2.0)
+            except (asyncio.TimeoutError, KeyboardInterrupt, asyncio.CancelledError, Exception):
+                pass
+            # First task should have been cancelled
+            assert first_task is not None
+            assert first_task.cancelled()

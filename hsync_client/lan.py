@@ -516,7 +516,7 @@ class HsyncServiceListener(ServiceListener):
         if info:
             self._register_peer_from_info(info)
 
-    def remove_service(self, _zc: Zeroconf, _type: str, name: str) -> None:
+    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Called when a service is removed."""
         # Extract CID from service name (format: bucket-cid._hsync._tcp.local.)
         try:
@@ -535,8 +535,8 @@ class HsyncServiceListener(ServiceListener):
         try:
             # Get properties from TXT record
             properties = info.properties
-            cid = properties.get(b"cid", b"").decode("utf-8")
-            bucket = properties.get(b"bucket", b"").decode("utf-8")
+            cid = (properties.get(b"cid") or b"").decode("utf-8")
+            bucket = (properties.get(b"bucket") or b"").decode("utf-8")
             # Version is optional - default to "0.0.0" for old clients
             version_bytes = properties.get(b"version", b"")
             version = version_bytes.decode("utf-8") if version_bytes else "0.0.0"
@@ -616,6 +616,9 @@ class HsyncServiceListener(ServiceListener):
 
             address = addresses[0]  # Use first available address
             port = info.port
+            if port is None:
+                log.debug(f"No port for service: {info.name}")
+                return
 
             peer = Peer(
                 cid=cid,
