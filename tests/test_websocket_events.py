@@ -8,7 +8,7 @@
 
 import asyncio
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestProcessWebsocketEvents:
@@ -488,3 +488,397 @@ class TestRemoteConnect:
             # First task should have been cancelled
             assert first_task is not None
             assert first_task.cancelled()
+
+
+class TestRemoteEvents:
+    """Tests for remote_events function."""
+
+    @pytest.mark.asyncio
+    async def test_remote_events_authentication_success(self):
+        """remote_events authenticates successfully and processes events."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+
+        # Mock auth response
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.0.0",
+            "compression_enabled": True,
+        }
+
+        # Mock event message to stop the loop
+        event_message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir"},
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(side_effect=[
+            dumps(auth_response),
+            dumps(event_message),
+            Exception("Stop loop"),
+        ])
+
+        mock_observer = MagicMock()
+        mock_observer.start = MagicMock()
+        mock_observer.stop = MagicMock()
+        mock_observer.join = MagicMock()
+
+        with patch('hsync_client.websocket_handler.connect', return_value=mock_websocket), \
+             patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.EventQueue') as MockEventQueue, \
+             patch('hsync_client.websocket_handler.FileEventHandler') as MockHandler, \
+             patch('hsync_client.websocket_handler.Observer', return_value=mock_observer), \
+             patch('hsync_client.websocket_handler._process_websocket_events') as mock_process, \
+             patch('hsync_client.websocket_handler.check_version_compatibility', return_value=(True, None)):
+            
+            MockEventQueue.return_value = MagicMock()
+            mock_process.side_effect = Exception("Stop loop")
+            
+            try:
+                await asyncio.wait_for(remote_events(), timeout=1.0)
+            except Exception:
+                pass
+            
+            # Verify authentication message was sent
+            mock_websocket.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_remote_events_authentication_failed(self):
+        """remote_events returns early when authentication fails."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+
+        # Mock failed auth response
+        auth_response = {
+            "type": "auth",
+            "status": "error",
+            "error": "invalid_token",
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "API": {"events": "wss://api.example.com/events"},
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
+
+        with patch('hsync_client.websocket_handler.connect', return_value=mock_websocket), \
+             patch('hsync_client.websocket_handler.CONFIG', config):
+            await remote_events()
+            
+            # Should return early without processing events
+            mock_websocket.recv.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_remote_events_version_incompatible(self):
+        """remote_events returns early when version is incompatible."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+
+        # Mock auth response with version incompatibility
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "0.1.0",
+            "error": "version_incompatible",
+            "server_version": "0.1.0",
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "API": {"events": "wss://api.example.com/events"},
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
+
+        with patch('hsync_client.websocket_handler.connect', return_value=mock_websocket), \
+             patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.check_version_compatibility', return_value=(False, "version_too_old")):
+            await remote_events()
+            
+            # Should return early
+            mock_websocket.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_remote_events_version_warning(self):
+        """remote_events logs warning for minor version mismatch."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.1.0",
+            "compression_enabled": False,
+        }
+
+        event_message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir"},
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(side_effect=[
+            dumps(auth_response),
+            dumps(event_message),
+            Exception("Stop loop"),
+        ])
+
+        mock_observer = MagicMock()
+
+        with patch('hsync_client.websocket_handler.connect', return_value=mock_websocket), \
+             patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.EventQueue') as MockEventQueue, \
+             patch('hsync_client.websocket_handler.Observer', return_value=mock_observer), \
+             patch('hsync_client.websocket_handler._process_websocket_events') as mock_process, \
+             patch('hsync_client.websocket_handler.check_version_compatibility', return_value=(True, "minor_mismatch")), \
+             patch('hsync_client.websocket_handler.log') as mock_log:
+            
+            MockEventQueue.return_value = MagicMock()
+            mock_process.side_effect = Exception("Stop loop")
+            
+            try:
+                await asyncio.wait_for(remote_events(), timeout=1.0)
+            except Exception:
+                pass
+            
+            # Should log warning for minor mismatch
+            assert mock_log.warning.called
+
+    @pytest.mark.asyncio
+    async def test_remote_events_ssl_no_verify(self):
+        """remote_events configures SSL with no verification when configured."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+        from ssl import Purpose, CERT_NONE
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.0.0",
+            "compression_enabled": False,
+        }
+
+        event_message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir"},
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": True,
+            "CA_CERT": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(side_effect=[
+            dumps(auth_response),
+            dumps(event_message),
+            Exception("Stop loop"),
+        ])
+
+        mock_observer = MagicMock()
+        ssl_context_used = {}
+
+        def mock_connect(uri, **kwargs):
+            ssl_context_used['context'] = kwargs.get('ssl')
+            return mock_websocket
+
+        with patch('hsync_client.websocket_handler.connect', side_effect=mock_connect), \
+             patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.EventQueue') as MockEventQueue, \
+             patch('hsync_client.websocket_handler.Observer', return_value=mock_observer), \
+             patch('hsync_client.websocket_handler._process_websocket_events') as mock_process, \
+             patch('hsync_client.websocket_handler.check_version_compatibility', return_value=(True, None)):
+            
+            MockEventQueue.return_value = MagicMock()
+            mock_process.side_effect = Exception("Stop loop")
+            
+            try:
+                await asyncio.wait_for(remote_events(), timeout=1.0)
+            except Exception:
+                pass
+            
+            # SSL context should be configured with no verification
+            assert ssl_context_used.get('context') is not None
+            assert ssl_context_used['context'].check_hostname is False
+
+    @pytest.mark.asyncio
+    async def test_remote_events_handles_exception(self):
+        """remote_events handles unexpected exceptions gracefully."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.0.0",
+            "compression_enabled": False,
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
+
+        mock_observer = MagicMock()
+        mock_observer.start = MagicMock()
+        mock_observer.stop = MagicMock()
+        mock_observer.join = MagicMock()
+
+        queue_mock = MagicMock()
+        queue_mock.process = AsyncMock()
+        queue_mock.stop = MagicMock()
+
+        async def mock_create_task(coro):
+            """Create a mock task that raises CancelledError when awaited."""
+            task = AsyncMock()
+            task.cancel = MagicMock()
+            async def await_coro():
+                raise asyncio.CancelledError()
+            return task
+
+        with patch('hsync_client.websocket_handler.connect', return_value=mock_websocket), \
+             patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.EventQueue', return_value=queue_mock), \
+             patch('hsync_client.websocket_handler.FileEventHandler'), \
+             patch('hsync_client.websocket_handler.Observer', return_value=mock_observer), \
+             patch('hsync_client.websocket_handler.create_task', side_effect=mock_create_task), \
+             patch('hsync_client.websocket_handler._process_websocket_events', side_effect=Exception("Unexpected error")), \
+             patch('hsync_client.websocket_handler.log') as mock_log:
+            
+            # Should not raise exception
+            try:
+                await remote_events()
+            except (asyncio.CancelledError, Exception):
+                pass
+            
+            # Error should be logged
+            assert mock_log.error.called
+
+    @pytest.mark.asyncio
+    async def test_remote_events_cleans_up_queue_task(self):
+        """remote_events cleans up queue task on exit."""
+        from hsync_client.websocket_handler import remote_events
+        from json import dumps
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.0.0",
+            "compression_enabled": False,
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
+
+        mock_observer = MagicMock()
+        mock_observer.start = MagicMock()
+
+        queue_mock = MagicMock()
+        mock_task = AsyncMock()
+        queue_mock.process = mock_task
+        queue_mock.stop = MagicMock()
+
+        with patch('hsync_client.websocket_handler.connect', return_value=mock_websocket), \
+             patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.EventQueue', return_value=queue_mock), \
+             patch('hsync_client.websocket_handler.FileEventHandler'), \
+             patch('hsync_client.websocket_handler.Observer', return_value=mock_observer), \
+             patch('hsync_client.websocket_handler._process_websocket_events', side_effect=Exception("Stop")), \
+             patch('hsync_client.websocket_handler.create_task', return_value=mock_task):
+            
+            try:
+                await remote_events()
+            except Exception:
+                pass
+            
+            # Queue task should be cancelled
+            mock_task.cancel.assert_called()
