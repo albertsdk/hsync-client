@@ -439,3 +439,330 @@ class TestVersionCompatibility:
         # but should never crash
         is_compat, _reason = check_version_compatibility("0.1.0", "0.1.0")
         assert is_compat is True
+
+
+class TestLANSync:
+    """Tests for LANSync class."""
+
+    def test_lan_sync_creation(self):
+        """Test creating a LANSync instance."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        assert lan.port > 0  # Random port assigned
+        assert lan.group is None
+        assert lan.use_https is False
+
+    def test_lan_sync_with_group(self):
+        """Test LANSync with group parameter."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos", group="team-a")
+        assert lan.group == "team-a"
+
+    def test_lan_sync_with_https(self):
+        """Test LANSync with HTTPS enabled."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(
+            cid="test123",
+            bucket="photos",
+            use_https=True,
+            cert_fingerprint="abc123def456"
+        )
+        assert lan.use_https is True
+        assert lan.cert_fingerprint == "abc123def456"
+
+    def test_lan_sync_with_force_master(self):
+        """Test LANSync with force_master."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(
+            cid="test123",
+            bucket="photos",
+            force_master=True,
+            sync_direction="bidirectional",
+        )
+        assert lan.peer_manager is None  # Not started yet
+
+    def test_lan_sync_start_stop(self):
+        """Test starting and stopping LANSync."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        pm = lan.start(register_service=False)
+        assert lan.is_running() is True
+        assert pm is not None
+        assert lan.peer_manager is not None
+        lan.stop()
+        assert lan.is_running() is False
+
+    def test_lan_sync_start_with_service(self):
+        """Test starting LANSync with service registration."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        pm = lan.start(register_service=True)
+        assert lan.is_running() is True
+        lan.stop()
+        assert lan.is_running() is False
+
+    def test_lan_sync_register_service(self):
+        """Test registering mDNS service."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan.start(register_service=False)
+        lan.register_service(server_ready=False)
+        lan.stop()
+
+    def test_lan_sync_update_server_ready(self):
+        """Test updating server ready status."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan.start(register_service=False)
+        lan.register_service(server_ready=False)
+        lan.update_server_ready()
+        lan.stop()
+
+    def test_lan_sync_multiple_stops(self):
+        """Test that stopping multiple times is safe."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan.start(register_service=False)
+        lan.stop()
+        lan.stop()  # Should not raise
+
+    def test_lan_sync_stop_without_start(self):
+        """Test stopping without starting is safe."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan.stop()  # Should not raise
+
+
+class TestPeerManagerAdvanced:
+    """Advanced tests for PeerManager class."""
+
+    def test_get_alive_peers(self):
+        """Test getting only alive peers."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        # Add alive peer
+        pm.add_peer(Peer(
+            cid="alive1",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+        ))
+        # Add dead peer
+        pm.add_peer(Peer(
+            cid="dead1",
+            bucket="photos",
+            address="192.168.1.101",
+            port=8765,
+            last_seen=time.time() - PEER_TIMEOUT - 10,
+        ))
+
+        alive = pm.get_alive_peers()
+        assert len(alive) == 1
+        assert alive[0].cid == "alive1"
+
+    def test_peer_update_triggers_election(self):
+        """Test that updating a peer triggers master election."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=100.0)
+        # Add a peer that should win initially
+        pm.add_peer(Peer(
+            cid="aaa111",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            startup_time=50.0,
+        ))
+        assert pm.get_master_cid() == "aaa111"
+
+        # Update the peer - should still be master
+        peer = pm.get_peer("aaa111")
+        peer.update_last_seen()
+        assert pm.get_master_cid() == "aaa111"
+
+    def test_force_master_conflict_detection(self):
+        """Test detection of force_master conflicts."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(
+            local_cid="local",
+            bucket="photos",
+            force_master=True,
+            startup_time=100.0,
+        )
+        # Add another force_master peer that started later
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(Peer(
+                cid="remote",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                force_master=True,
+                startup_time=50.0,
+            ))
+            # Remote started earlier, so local should become slave
+            assert pm.get_master_cid() == "remote"
+            # Should have logged a conflict warning
+            warning_calls = [
+                call for call in mock_log.warning.call_args_list
+                if "MASTER_CONFLICT" in str(call)
+            ]
+            assert len(warning_calls) > 0
+
+    def test_force_master_takeover_detection(self):
+        """Test detection of force_master takeover."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(
+            local_cid="local",
+            bucket="photos",
+            force_master=False,
+            startup_time=100.0,
+        )
+        # First become master
+        pm.add_peer(Peer(
+            cid="old_master",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            force_master=False,
+            startup_time=200.0,
+        ))
+        assert pm.get_master_cid() == "local"
+
+        # Now a force_master peer joins
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(Peer(
+                cid="new_force",
+                bucket="photos",
+                address="192.168.1.101",
+                port=8765,
+                force_master=True,
+                startup_time=50.0,
+            ))
+            # New force_master should take over
+            assert pm.get_master_cid() == "new_force"
+            # Should have logged takeover warning
+            warning_calls = [
+                call for call in mock_log.warning.call_args_list
+                if "MASTER_TAKEOVER" in str(call)
+            ]
+            assert len(warning_calls) > 0
+
+    def test_master_callback_with_local_master(self):
+        """Test master change callback when local becomes master."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(local_cid="local", bucket="photos", startup_time=100.0)
+        callback = MagicMock()
+        pm.set_master_change_callback(callback)
+
+        # Add a peer with later startup - local should become master
+        pm.add_peer(Peer(
+            cid="peer1",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            startup_time=200.0,
+        ))
+
+        # Callback should be called with None (local is master)
+        callback.assert_called()
+        args, _ = callback.call_args
+        assert args[0] is None
+
+    def test_master_callback_on_peer_remove(self):
+        """Test master change callback when peer is removed."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(local_cid="local", bucket="photos", startup_time=200.0)
+        callback = MagicMock()
+        pm.set_master_change_callback(callback)
+
+        # Add a peer that becomes master
+        pm.add_peer(Peer(
+            cid="master_peer",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            startup_time=100.0,
+        ))
+        callback.reset_mock()
+
+        # Remove the master
+        pm.remove_peer("master_peer")
+
+        # Local should become master
+        assert pm.is_master() is True
+        # Callback should be called with None
+        callback.assert_called()
+        args, _ = callback.call_args
+        assert args[0] is None
+
+
+class TestPeerManagerForceMasterLogging:
+    """Tests for PeerManager force_master logging scenarios."""
+
+    def test_local_is_master_logs_reason_force_master(self):
+        """Test that local becoming master logs correct reason for force_master."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(
+            local_cid="local",
+            bucket="photos",
+            force_master=True,
+            startup_time=100.0,
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=200.0,
+            ))
+            # Local should win due to force_master
+            assert pm.is_master() is True
+            # Should log the reason
+            info_calls = [
+                call for call in mock_log.info.call_args_list
+                if "MASTER" in str(call) and "force_master" in str(call)
+            ]
+            assert len(info_calls) > 0
+
+    def test_remote_is_master_logs_reason(self):
+        """Test that remote becoming master logs correct reason."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(
+            local_cid="local",
+            bucket="photos",
+            startup_time=200.0,
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+            ))
+            # Remote should win
+            assert pm.is_master() is False
+            # Should log master change
+            info_calls = [
+                call for call in mock_log.info.call_args_list
+                if "Master changed" in str(call)
+            ]
+            assert len(info_calls) > 0
