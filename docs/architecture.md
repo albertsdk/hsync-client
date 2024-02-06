@@ -390,3 +390,52 @@ flowchart TB
 - `HSYNC_MAX_CONCURRENT_TRANSFERS`: Controls maximum parallel transfers (default: 5)
 - Uses `asyncio.Semaphore` to limit concurrent operations
 - Uses `ThreadPoolExecutor` for I/O-bound operations
+
+## Project Structure
+
+```
+hsync-client/
+├── hsync_client/           # Main Python package (source code)
+│   ├── __init__.py
+│   ├── __main__.py         # Module entry point
+│   ├── main.py             # Main entry point
+│   ├── main_logic.py       # Core sync orchestration
+│   ├── cli.py              # CLI argument parsing (Typer)
+│   ├── config.py           # Configuration management (pydantic-settings)
+│   ├── constants.py        # Application constants
+│   ├── sync.py             # Sync engine with parallel transfers
+│   ├── transfer.py         # File upload/download operations
+│   ├── websocket_handler.py # WebSocket event handling
+│   ├── event_queue.py      # Event queue with retry logic
+│   ├── lan.py              # LAN mode discovery (mDNS/Zeroconf)
+│   ├── lan_server.py       # LAN mode HTTP server (master node)
+│   ├── logger.py           # Logging configuration (loguru)
+│   ├── retry.py            # Retry logic (tenacity)
+│   ├── ssl_utils.py        # SSL/TLS utilities
+│   ├── exceptions.py       # Custom exceptions
+│   ├── utils.py            # Utility functions
+│   ├── validators.py       # Input validators
+│   └── models/             # Data models
+│       ├── __init__.py
+│       ├── dir.py          # Directory model
+│       ├── event.py        # Event model
+│       ├── file.py         # File model
+│       ├── symlink.py      # Symbolic link model
+│       └── sync_action.py  # Sync action model
+├── docs/                   # Documentation
+│   ├── architecture.md     # Architecture overview
+│   ├── configuration.md    # Configuration guide
+│   ├── getting-started.md  # Getting started guide
+│   ├── lan-mode.md         # LAN mode (P2P) documentation
+│   ├── sync-modes.md       # Synchronization modes
+│   └── usage.md            # Usage guide
+├── tests/                  # Test files
+├── dist/                   # Compiled binary (created by compile.sh)
+│   └── hsync               # Standalone executable
+├── dev.env                 # Development environment template
+├── prod.env                # Production environment template
+├── compile.sh              # Build script (PyInstaller)
+├── pyproject.toml          # Poetry configuration
+├── poetry.lock             # Locked dependencies
+└── README.md
+```

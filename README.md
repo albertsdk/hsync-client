@@ -54,6 +54,55 @@ flowchart LR
 5. **⑤ Send** — Server sends file content to Client B
 6. **⑥ Write** — Client B writes file to local disk
 
+The same flow applies in reverse (B → A) for bidirectional sync.
+
+## LAN Mode (P2P) Overview
+
+In LAN Mode, clients synchronize directly with each other without a central server:
+
+```mermaid
+flowchart LR
+    subgraph LAN["🌐 Local Network"]
+        subgraph DeviceA["💻 Device A (Master)"]
+            FSAA["📂 File System"]
+            CAA["⚙️ HSYNC Client"]
+        end
+
+        subgraph DeviceB["🖥️ Device B (Slave)"]
+            CAB["⚙️ HSYNC Client"]
+            FSAB["📂 File System"]
+        end
+
+        mDNS["📡 mDNS Discovery"]
+    end
+
+    mDNS -.->|"① Discover"| CAA
+    mDNS -.->|"② Discover"| CAB
+    CAA -->|"③ Sync Files"| CAB
+    CAB -->|"④ Sync Files"| CAA
+
+    style FSAA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style CAA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style CAB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
+    style FSAB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style mDNS fill:#fff3e0,stroke:#e65100,color:#e65100
+```
+
+<details>
+<summary>📷 View as image</summary>
+
+![LAN Mode Overview](docs/images/README-2.png)
+
+</details>
+
+**LAN Mode Flow:**
+1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
+2. **② Elect Master** — One device becomes the master (source of truth)
+3. **③ Sync Files** — Slave downloads from master via HTTPS
+4. **④ Sync Files** — Master uploads changes to slave
+
+In LAN mode, the master is the source of truth and slaves sync from it. Both directions are supported for bidirectional sync peers.
+
 ## Why HSYNC?
 
 HSYNC is designed to synchronize files using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
