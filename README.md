@@ -56,33 +56,54 @@ flowchart LR
 
 ## Why HSYNC?
 
-HSYNC uses **only HTTP/HTTPS** — ideal for corporate networks where only ports 80/443 are allowed through firewalls.
+HSYNC is designed to synchronize files using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
 
-| Tool | Protocol | Works over HTTP? |
-|------|----------|-----------------|
-| **HSYNC** | HTTP/HTTPS | ✅ Yes |
-| rsync | SSH | ❌ No |
-| scp/sftp | SSH | ❌ No |
-| Syncthing | BEP (custom) | ❌ No |
+Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
+
+| Tool | Required Protocol | Default Port(s) | Works over HTTP only? |
+|------|-------------------|------------------|-----------------------|
+| **HSYNC** | HTTP / HTTPS | 80 / 443 | ✅ **Yes** |
+| **rsync** | SSH or rsync daemon | 22 / 873 | ❌ No |
+| **scp / sftp** | SSH | 22 | ❌ No |
+| **Unison** | SSH or direct socket | 22 / custom | ❌ No |
+| **Syncthing** | BEP (custom protocol) | 22000 | ❌ No |
+| **FTP / FTPS** | FTP | 20–21 / 990 | ❌ No |
+| **Rclone** | Varies (S3, SFTP, etc.) | Varies | ⚠️ Partial (backend-dependent) |
+
+**When to choose HSYNC:**
+
+- 🏢 **Corporate networks** — only ports 80/443 are open through the firewall
+- ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
+- 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
+- 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
+
+Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate proxies, reverse proxies, load balancers, and CDNs without any special configuration.
 
 ## Features
 
+### Core
 - 🔄 Bidirectional file synchronization
-- ⬆️ Upload-only / ⬇️ Download-only modes
-- ⚡ Parallel file transfers
-- 👁️ Real-time file watching
-- 🔒 SSL/TLS support
-- 📦 Standalone binary (PyInstaller)
+- ⬆️ Upload-only and ⬇️ download-only sync directions
+- ⚡ Parallel file transfers (configurable concurrency)
+- 👁️ Real-time file system monitoring (watchdog)
+- ✅ MD5-based file integrity verification
+- 🔗 Symbolic link synchronization support
+- 📦 Compilable to standalone binary (PyInstaller)
 
 ### Server Mode
-- WebSocket for real-time events
-- API Key authentication
-- Event queue with retry
+- 📡 WebSocket connection for remote events
+- 🔐 API Key authentication (secure first-message auth)
+- 🔒 SSL/TLS support
+- 💓 WebSocket heartbeat for reliable connections
+- � Event queue with exponential backoff retry
 
 ### LAN Mode (P2P)
-- No server required (mDNS discovery)
-- Automatic master election
-- HTTPS by default
+- 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
+- 👑 **Automatic master election** - peers with bidirectional sync are preferred as master
+- � **HTTPS by default** - self-signed certificate per session with fingerprint verification
+- 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
+- �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
+  
 
 ## Quick Start
 

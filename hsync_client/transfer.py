@@ -22,7 +22,6 @@ from typing import cast
 from os.path import basename, dirname, exists, getmtime, getsize, join
 from requests import get, post, RequestException
 from shutil import move
-from tempfile import NamedTemporaryFile
 from time import sleep as time_sleep
 
 from loguru import logger as log
