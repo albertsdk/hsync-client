@@ -8,8 +8,8 @@
 Stdin command handler for hsync-client.
 
 Reads JSON commands from stdin line-by-line and dispatches them to
-registered handlers.  This provides a cross-platform, extensible 
-command channel between the desktop GUI (or any parent process) 
+registered handlers.  This provides a cross-platform, extensible
+command channel between the desktop GUI (or any parent process)
 and the running hsync-client.
 
 Protocol
@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Callable, Dict
+from collections.abc import Callable
+from typing import Any
 
 
 class StdinCommandHandler:
@@ -35,7 +36,7 @@ class StdinCommandHandler:
 
     def __init__(self, log: Any) -> None:
         self._log = log
-        self._handlers: Dict[str, Callable[..., Any]] = {}
+        self._handlers: dict[str, Callable[..., Any]] = {}
         self._should_stop = False
 
     # ── public API ────────────────────────────────────────────────────
@@ -125,4 +126,3 @@ class StdinCommandHandler:
                 break
 
         self._log.debug("stdin command reader stopped")
-

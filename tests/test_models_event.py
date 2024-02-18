@@ -2,11 +2,9 @@
 Tests for Event model.
 """
 
-import pytest
-
+from hsync_client.models.dir import Dir
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File
-from hsync_client.models.dir import Dir
 from hsync_client.models.symlink import Symlink
 
 
@@ -41,7 +39,7 @@ class TestEvent:
             src=file,
             strip_localpath=True,
         )
-        
+
         assert event.cid == "client-123"
         assert event.bucket == "mybucket"
         assert event.name == "added"
@@ -60,7 +58,7 @@ class TestEvent:
             src=d,
             strip_localpath=True,
         )
-        
+
         assert isinstance(event.src, Dir)
         assert event.src.path == "subdir"
 
@@ -75,7 +73,7 @@ class TestEvent:
             src=file,
             strip_localpath=False,
         )
-        
+
         assert isinstance(event.src, File)
         assert event.src.filepath == "/local/bucket/file.txt"
 
@@ -83,7 +81,7 @@ class TestEvent:
         """Test rename event with source and destination."""
         src_file = File(filepath="/local/bucket/old.txt", size=1024)
         dst_file = File(filepath="/local/bucket/new.txt", size=1024)
-        
+
         event = Event(
             cid="client-123",
             localpath="/local/bucket",
@@ -93,7 +91,7 @@ class TestEvent:
             dst=dst_file,
             strip_localpath=True,
         )
-        
+
         assert isinstance(event.src, File)
         assert isinstance(event.dst, File)
         assert event.src.filepath == "old.txt"
@@ -110,7 +108,7 @@ class TestEvent:
             src=file,
             strip_localpath=True,
         )
-        
+
         d = event.to_dict()
         assert d["cid"] == "client-123"
         assert d["name"] == "modified"
@@ -122,7 +120,7 @@ class TestEvent:
         """Test serialization with destination."""
         src = Dir(path="/local/bucket/old_dir", permissions="drwxr-xr-x")
         dst = Dir(path="/local/bucket/new_dir", permissions="drwxr-xr-x")
-        
+
         event = Event(
             cid="client-123",
             localpath="/local/bucket",
@@ -132,7 +130,7 @@ class TestEvent:
             dst=dst,
             strip_localpath=True,
         )
-        
+
         d = event.to_dict()
         assert d["src"]["path"] == "old_dir"
         assert d["dst"]["path"] == "new_dir"
@@ -148,7 +146,7 @@ class TestEvent:
             src=symlink,
             strip_localpath=True,
         )
-        
+
         assert event.name == "symlink"
         d = event.to_dict()
         assert d["src"]["type"] == "symlink"
@@ -164,9 +162,8 @@ class TestEvent:
             name=EventName.added,
             src=file,
         )
-        
+
         repr_str = repr(event)
         assert "Event" in repr_str
         assert "c1" in repr_str
         assert "added" in repr_str
-

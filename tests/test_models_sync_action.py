@@ -3,8 +3,9 @@ Tests for SyncAction model.
 """
 
 import pytest
-from hsync_client.models.sync_action import SyncAction, SyncActionName
+
 from hsync_client.models.file import File
+from hsync_client.models.sync_action import SyncAction, SyncActionName
 
 
 class TestSyncActionName:
@@ -48,18 +49,14 @@ class TestSyncAction:
         action = SyncAction(
             file=sample_file,
             name=SyncActionName.download,
-            timedelta=3661  # 1h 1m 1s
+            timedelta=3661,  # 1h 1m 1s
         )
         assert action.name == SyncActionName.download
         assert action.timedelta == "1h 1m 1s"
 
     def test_to_dict(self, sample_file):
         """Convert SyncAction to dictionary."""
-        action = SyncAction(
-            file=sample_file,
-            name=SyncActionName.upload,
-            timedelta=60
-        )
+        action = SyncAction(file=sample_file, name=SyncActionName.upload, timedelta=60)
         result = action.to_dict()
         assert result["name"] == SyncActionName.upload
         assert result["timedelta"] == "1m"
@@ -123,4 +120,3 @@ class TestFormatTimedelta:
         """Days and minutes (no hours or seconds)."""
         action = SyncAction(file=sample_file, timedelta=86400 + 300)  # 1d 5m
         assert action.timedelta == "1d 5m"
-

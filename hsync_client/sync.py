@@ -12,16 +12,16 @@ file comparison, action determination, and sync execution.
 """
 
 import asyncio
-
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from os import listdir, makedirs, remove, rmdir, walk
 from os.path import basename, dirname, exists, join
-from requests import get, RequestException
 from sys import exc_info
 from traceback import print_tb
-from typing import Callable, Mapping, Optional, cast
+from typing import cast
 
 from loguru import logger as log
+from requests import RequestException, get
 
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import (
@@ -38,7 +38,6 @@ from hsync_client.utils import (
     set_permissions,
     verify_master_fingerprint,
 )
-
 
 # =============================================================================
 # Main Sync Function
@@ -233,7 +232,9 @@ def get_files_local() -> list[dict]:
     """
     # Check if local directory exists before walking
     if not exists(CONFIG["LOCAL_BUCKET"]):
-        log.warning(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist during synchronization")
+        log.warning(
+            f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist during synchronization"
+        )
         return []
 
     file_list = []
@@ -324,8 +325,8 @@ MTIME_TOLERANCE = 2
 
 
 def get_sync_actions(
-    remote_files: Optional[list[dict]] = None,
-    local_files: Optional[list[dict]] = None,
+    remote_files: list[dict] | None = None,
+    local_files: list[dict] | None = None,
     lan_mode: bool = False,
 ) -> list[SyncAction]:
     """
@@ -372,7 +373,11 @@ def get_sync_actions(
 
         if local_file:
             action, timedelta = _compare_files(
-                remote_file, local_file, remote_mtime, local_mtime, lan_mode,
+                remote_file,
+                local_file,
+                remote_mtime,
+                local_mtime,
+                lan_mode,
             )
 
             sync_actions.append(
@@ -404,15 +409,13 @@ def get_sync_actions(
     if direction == "upload-only":
         # Remove downloads and remote-triggered deletes; keep uploads and nothing
         sync_actions = [
-            a for a in sync_actions
+            a
+            for a in sync_actions
             if a.name not in (SyncActionName.download, SyncActionName.delete)
         ]
     elif direction == "download-only":
         # Remove uploads; keep downloads, deletes and nothing
-        sync_actions = [
-            a for a in sync_actions
-            if a.name != SyncActionName.upload
-        ]
+        sync_actions = [a for a in sync_actions if a.name != SyncActionName.upload]
 
     return sync_actions
 
@@ -475,7 +478,7 @@ def _compare_files(
 # =============================================================================
 
 
-def update_dir(data: dict) -> Optional[Dir]:
+def update_dir(data: dict) -> Dir | None:
     """
     Update a local directory based on remote event data.
 
@@ -545,4 +548,3 @@ def update_file(data: dict) -> None:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
         download_file(file)
-

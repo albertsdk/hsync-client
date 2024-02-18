@@ -12,7 +12,7 @@ used with argparse's 'type' parameter.
 """
 
 from argparse import ArgumentTypeError
-from typing import Callable
+from collections.abc import Callable
 
 from hsync_client.constants import (
     HTTP_TIMEOUT_MAX,
@@ -55,9 +55,7 @@ def create_int_range_validator(
             raise ArgumentTypeError(f"The {name} '{value}' must be an integer.")
 
         if ivalue <= min_value or ivalue >= max_value:
-            raise ArgumentTypeError(
-                f"The {name} must be between {min_value} and {max_value}."
-            )
+            raise ArgumentTypeError(f"The {name} must be between {min_value} and {max_value}.")
 
         return ivalue
 
@@ -134,6 +132,7 @@ def valid_bucket(value: str) -> str:
         ArgumentTypeError: If name contains invalid characters.
     """
     from re import match as re_match
+
     if not re_match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
         raise ArgumentTypeError(
             "The bucket name must be alphanumeric (hyphens and underscores "
@@ -212,4 +211,3 @@ def valid_max_wait_timeout(value: str) -> int:
         "max wait timeout",
     )
     return validator(value)
-

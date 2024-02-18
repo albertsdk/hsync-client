@@ -6,7 +6,7 @@
 
 """Tests for remote file operations in sync module."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -31,9 +31,11 @@ class TestGetFilesRemote:
             "NO_VERIFY_SSL": True,
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get", return_value=mock_response), \
-             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
             result = get_files_remote()
             assert result == [{"filepath": "file.txt"}]
 
@@ -53,9 +55,11 @@ class TestGetFilesRemote:
             "NO_VERIFY_SSL": True,
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get", return_value=mock_response) as mock_get, \
-             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response) as mock_get,
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
             get_files_remote()
             # Check that path parameter was included
             call_kwargs = mock_get.call_args[1]
@@ -63,8 +67,8 @@ class TestGetFilesRemote:
 
     def test_get_files_remote_401_raises_auth_error(self):
         """get_files_remote raises AuthenticationError on 401."""
-        from hsync_client.sync import get_files_remote
         from hsync_client.exceptions import AuthenticationError
+        from hsync_client.sync import get_files_remote
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -76,16 +80,18 @@ class TestGetFilesRemote:
             "NO_VERIFY_SSL": True,
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get", return_value=mock_response), \
-             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
             with pytest.raises(AuthenticationError):
                 get_files_remote()
 
     def test_get_files_remote_403_raises_auth_error(self):
         """get_files_remote raises AuthenticationError on 403."""
-        from hsync_client.sync import get_files_remote
         from hsync_client.exceptions import AuthenticationError
+        from hsync_client.sync import get_files_remote
 
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -97,16 +103,18 @@ class TestGetFilesRemote:
             "NO_VERIFY_SSL": True,
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get", return_value=mock_response), \
-             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
             with pytest.raises(AuthenticationError):
                 get_files_remote()
 
     def test_get_files_remote_500_raises_server_error(self):
         """get_files_remote raises ServerError on 500."""
-        from hsync_client.sync import get_files_remote
         from hsync_client.exceptions import ServerError
+        from hsync_client.sync import get_files_remote
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -119,17 +127,20 @@ class TestGetFilesRemote:
             "NO_VERIFY_SSL": True,
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get", return_value=mock_response), \
-             patch("hsync_client.sync.get_ssl_verify", return_value=False):
-            with pytest.raises(ServerError):
-                get_files_remote()
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+            pytest.raises(ServerError),
+        ):
+            get_files_remote()
 
     def test_get_files_remote_network_error(self):
         """get_files_remote raises NetworkError on connection failure."""
-        from hsync_client.sync import get_files_remote
-        from hsync_client.exceptions import NetworkError
         from requests.exceptions import RequestException
+
+        from hsync_client.exceptions import NetworkError
+        from hsync_client.sync import get_files_remote
 
         config = {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
@@ -138,9 +149,11 @@ class TestGetFilesRemote:
             "NO_VERIFY_SSL": True,
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get", side_effect=RequestException("Connection failed")), \
-             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", side_effect=RequestException("Connection failed")),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
             with pytest.raises(NetworkError):
                 get_files_remote()
 
@@ -218,8 +231,10 @@ class TestExecuteParallelTransfers:
             upload_calls.append(file.filepath)
 
         # Patch in transfer module (local import in _execute_parallel_transfers)
-        with patch("hsync_client.transfer.download_file", mock_download), \
-             patch("hsync_client.transfer.upload_file", mock_upload):
+        with (
+            patch("hsync_client.transfer.download_file", mock_download),
+            patch("hsync_client.transfer.upload_file", mock_upload),
+        ):
             await _execute_parallel_transfers(downloads, uploads)
 
         assert len(download_calls) == 1
@@ -258,4 +273,3 @@ class TestExecuteParallelTransfers:
 
         # Should complete without error
         await _execute_parallel_transfers([], [])
-

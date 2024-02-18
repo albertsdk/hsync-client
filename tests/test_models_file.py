@@ -4,7 +4,7 @@ Tests for File model.
 
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -63,7 +63,7 @@ class TestFileParseTime:
 
     def test_parse_datetime(self):
         """Parse datetime object to timestamp."""
-        dt = datetime(2024, 1, 15, 12, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 12, 30, 0, tzinfo=UTC)
         file = File()
         result = file._parse_time(dt)
         assert result == int(dt.timestamp())
@@ -189,7 +189,7 @@ class TestFileModel:
             "mtime": 2000.0,
             "size": 500,
             "md5sum": "abc123",
-            "permissions": "-rw-r--r--"
+            "permissions": "-rw-r--r--",
         }
         # Need to provide dir_prefix or set strip_dir_prefix=False
         f = File.from_dict(data, dir_prefix="/bucket", strip_dir_prefix=False)
@@ -197,4 +197,3 @@ class TestFileModel:
         assert f.mtime is not None
         assert f.md5sum == "abc123"
         assert f.permissions == "-rw-r--r--"
-

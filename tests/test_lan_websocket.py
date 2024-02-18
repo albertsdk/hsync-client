@@ -5,32 +5,26 @@ Tests for LAN WebSocket server and client functionality.
 import asyncio
 import json
 import time
-import threading
-from copy import deepcopy
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from watchdog.events import (
-    FileCreatedEvent,
-    FileModifiedEvent,
-    FileDeletedEvent,
-    FileMovedEvent,
     DirCreatedEvent,
     DirDeletedEvent,
     DirModifiedEvent,
     DirMovedEvent,
-    FileClosedEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileMovedEvent,
 )
 
-import pytest
-
 from hsync_client.lan_websocket import (
-    LANWebSocketServer,
     LANFileEventHandler,
+    LANWebSocketServer,
     SlaveFileEventHandler,
     _escape_braces,
     _handle_lan_event,
-    SUPPORTS_ON_CLOSED,
-    MODIFIED_DEBOUNCE_INTERVAL,
 )
 
 
@@ -103,15 +97,15 @@ class TestLANWebSocketServer:
     async def test_broadcast_to_clients(self):
         """Test broadcasting to connected clients."""
         server = LANWebSocketServer(port=9999)
-        
+
         # Create mock clients
         client1 = AsyncMock()
         client2 = AsyncMock()
         server._clients = {client1, client2}
-        
+
         event_dict = {"name": "added", "src": {"filepath": "test.txt"}}
         await server.broadcast(event_dict)
-        
+
         # Both clients should receive the message
         expected_message = json.dumps(event_dict)
         client1.send.assert_called_once_with(expected_message)
@@ -121,17 +115,17 @@ class TestLANWebSocketServer:
     async def test_broadcast_removes_disconnected_clients(self):
         """Test that broadcast removes disconnected clients."""
         server = LANWebSocketServer(port=9999)
-        
+
         # Create mock clients - one working, one failing
         client1 = AsyncMock()
         client2 = AsyncMock()
         client2.send.side_effect = Exception("Connection lost")
-        
+
         server._clients = {client1, client2}
-        
+
         event_dict = {"name": "test"}
         await server.broadcast(event_dict)
-        
+
         # client2 should be removed from the set
         assert client1 in server._clients
         assert client2 not in server._clients
@@ -146,7 +140,7 @@ class TestLANWebSocketServer:
         event_dict = {"name": "test"}
 
         try:
-            with patch.object(asyncio, 'run_coroutine_threadsafe') as mock_run:
+            with patch.object(asyncio, "run_coroutine_threadsafe") as mock_run:
                 server.broadcast_sync(event_dict)
                 mock_run.assert_called_once()
                 # Close the unawaited coroutine passed as first arg
@@ -160,7 +154,7 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         server._loop = None
         server._running = False
-        
+
         # Should not raise an error
         server.broadcast_sync({"name": "test"})
 
@@ -168,10 +162,10 @@ class TestLANWebSocketServer:
         """Test starting server when already running."""
         server = LANWebSocketServer(port=9999)
         server._running = True
-        
-        with patch('hsync_client.lan_websocket.CONFIG', {"LOCAL_BUCKET": str(tmp_path)}):
+
+        with patch("hsync_client.lan_websocket.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             server.start()
-        
+
         # Should not start a new thread
         assert server._thread is None
 
@@ -199,7 +193,7 @@ class TestLANWebSocketServer:
         ws.__aiter__ = _empty_aiter
 
         config = {"LAN_KEY": "secret"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
         # Should have sent auth_required and then auth ok
@@ -218,7 +212,7 @@ class TestLANWebSocketServer:
         ws.recv.return_value = json.dumps({"type": "auth", "token": "wrong"})
 
         config = {"LAN_KEY": "secret"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
         calls = [c.args[0] for c in ws.send.call_args_list]
@@ -232,10 +226,10 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.side_effect = asyncio.TimeoutError()
+        ws.recv.side_effect = TimeoutError()
 
         config = {"LAN_KEY": "secret"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
         ws.close.assert_called_once()
@@ -250,7 +244,7 @@ class TestLANWebSocketServer:
         ws.recv.side_effect = RuntimeError("bad")
 
         config = {"LAN_KEY": "secret"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
         ws.close.assert_called_once()
@@ -270,7 +264,7 @@ class TestLANWebSocketServer:
         ws.__aiter__ = _empty_aiter
 
         config = {}  # no LAN_KEY
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
         calls = [c.args[0] for c in ws.send.call_args_list]
@@ -293,7 +287,7 @@ class TestLANWebSocketServer:
         ws.__aiter__ = lambda self: async_iter_raise()
 
         config = {}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
         # Client should have been discarded in finally
@@ -317,8 +311,10 @@ class TestLANWebSocketServer:
         # like `broadcast`, creating unawaited coroutine warnings)
         server._run_loop = fake_run_loop
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Observer') as MockObserver:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Observer") as MockObserver,
+        ):
             MockObserver.return_value = mock_obs
             server.start(watch_path=str(tmp_path))
 
@@ -393,8 +389,10 @@ class TestLANFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as mock_dir:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as mock_dir,
+        ):
             mock_dir_obj = MagicMock()
             mock_dir.get.return_value = mock_dir_obj
 
@@ -419,8 +417,10 @@ class TestLANFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Symlink') as mock_symlink:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Symlink") as mock_symlink,
+        ):
             mock_symlink_obj = MagicMock()
             mock_symlink.get.return_value = mock_symlink_obj
 
@@ -442,7 +442,7 @@ class TestLANFileEventHandler:
             "REMOTE_BUCKET": "remote",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_created(event)
 
             # Should not broadcast
@@ -463,8 +463,10 @@ class TestLANFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as mock_dir:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as mock_dir,
+        ):
             mock_dir_obj = MagicMock()
             mock_dir.get.return_value = mock_dir_obj
 
@@ -487,8 +489,10 @@ class TestLANFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as mock_file:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as mock_file,
+        ):
             mock_file_obj = MagicMock()
             mock_file_obj.filepath = str(test_file)
             mock_file.get.return_value = mock_file_obj
@@ -512,7 +516,7 @@ class TestLANFileEventHandler:
             "IGNORE_DELETE": False,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
 
             # Should broadcast the event
@@ -531,7 +535,7 @@ class TestLANFileEventHandler:
             "IGNORE_DELETE": True,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
 
             # Should not broadcast
@@ -552,7 +556,7 @@ class TestLANFileEventHandler:
         file_obj = File("/test/file.txt")
         event = Event("test-client", "/test", "remote", EventName.added, file_obj)
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler._send_event(event)
 
             # Should not broadcast in download-only mode
@@ -573,7 +577,7 @@ class TestLANFileEventHandler:
         file_obj = File("/test/file.txt")
         event = Event("test-client", "/test", "remote", EventName.added, file_obj)
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler._send_event(event)
             ws_server.broadcast_sync.assert_called_once()
 
@@ -604,10 +608,16 @@ class TestLANFileEventHandler:
         test_dir = tmp_path / "gone"
         test_dir.mkdir()
         event = DirCreatedEvent(str(test_dir))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as D:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as D,
+        ):
             D.get.return_value = None
             handler.on_created(event)
             ws_server.broadcast_sync.assert_not_called()
@@ -619,10 +629,16 @@ class TestLANFileEventHandler:
         link = tmp_path / "lnk"
         link.symlink_to(target)
         event = FileCreatedEvent(str(link))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Symlink') as S:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Symlink") as S,
+        ):
             S.get.return_value = None
             handler.on_created(event)
             ws_server.broadcast_sync.assert_not_called()
@@ -633,7 +649,7 @@ class TestLANFileEventHandler:
         f.write_text("x")
         event = FileCreatedEvent(str(f))
         config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_created(event)
             ws_server.broadcast_sync.assert_not_called()
 
@@ -641,9 +657,13 @@ class TestLANFileEventHandler:
         """Test on_modified skips root LOCAL_BUCKET directory."""
         event = DirModifiedEvent(str(tmp_path))
         event.is_directory = True
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_modified(event)
             ws_server.broadcast_sync.assert_not_called()
 
@@ -653,10 +673,16 @@ class TestLANFileEventHandler:
         sub.mkdir()
         event = DirModifiedEvent(str(sub))
         event.is_directory = True
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as D:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as D,
+        ):
             D.get.return_value = None
             handler.on_modified(event)
             ws_server.broadcast_sync.assert_not_called()
@@ -667,11 +693,17 @@ class TestLANFileEventHandler:
         f.write_text("x")
         event = FileModifiedEvent(str(f))
 
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', False), \
-             patch('hsync_client.lan_websocket.File') as F:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", False),
+            patch("hsync_client.lan_websocket.File") as F,
+        ):
             F.get.return_value = MagicMock()
             handler.on_modified(event)
             ws_server.broadcast_sync.assert_called_once()
@@ -686,8 +718,10 @@ class TestLANFileEventHandler:
         handler._last_modified[str(f)] = time.time()
 
         config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', False):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", False),
+        ):
             handler.on_modified(event)
             ws_server.broadcast_sync.assert_not_called()
 
@@ -707,9 +741,13 @@ class TestLANFileEventHandler:
 
     def test_handle_file_modified_not_exists(self, handler, ws_server, tmp_path):
         """Test _handle_file_modified returns early when file not exists."""
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler._handle_file_modified(str(tmp_path / "gone.txt"))
             ws_server.broadcast_sync.assert_not_called()
 
@@ -717,10 +755,16 @@ class TestLANFileEventHandler:
         """Test _handle_file_modified when File.get returns None."""
         f = tmp_path / "file.txt"
         f.write_text("x")
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+        ):
             F.get.return_value = None
             handler._handle_file_modified(str(f))
             ws_server.broadcast_sync.assert_not_called()
@@ -737,9 +781,14 @@ class TestLANFileEventHandler:
     def test_on_moved_hidden_to_hidden_dir(self, handler, ws_server, tmp_path):
         """Test on_moved returns for hidden-to-hidden directory."""
         event = DirMovedEvent(str(tmp_path / ".a"), str(tmp_path / ".b"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional", "IGNORE_DELETE": False}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_not_called()
 
@@ -748,10 +797,16 @@ class TestLANFileEventHandler:
         visible = tmp_path / "visible"
         visible.mkdir()
         event = DirMovedEvent(str(tmp_path / ".hidden"), str(visible))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as D:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as D,
+        ):
             D.get.return_value = MagicMock()
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_called_once()
@@ -759,19 +814,30 @@ class TestLANFileEventHandler:
     def test_on_moved_visible_to_hidden_dir(self, handler, ws_server, tmp_path):
         """Test on_moved visible->hidden dir triggers on_deleted."""
         event = DirMovedEvent(str(tmp_path / "visible"), str(tmp_path / ".hidden"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional", "IGNORE_DELETE": False}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_called_once()
 
     def test_on_moved_dir_rename_dir_get_none(self, handler, ws_server, tmp_path):
         """Test on_moved dir rename when Dir.get returns None."""
         event = DirMovedEvent(str(tmp_path / "old"), str(tmp_path / "new"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as D:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as D,
+        ):
             D.get.return_value = None
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_not_called()
@@ -779,10 +845,16 @@ class TestLANFileEventHandler:
     def test_on_moved_dir_rename_success(self, handler, ws_server, tmp_path):
         """Test on_moved dir rename broadcasts event."""
         event = DirMovedEvent(str(tmp_path / "old"), str(tmp_path / "new"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.Dir') as D:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Dir") as D,
+        ):
             mock_dir = MagicMock()
             D.get.return_value = mock_dir
             handler.on_moved(event)
@@ -792,17 +864,23 @@ class TestLANFileEventHandler:
         """Test on_moved returns when file source is hidden."""
         event = FileMovedEvent(str(tmp_path / ".hidden"), str(tmp_path / "visible"))
         config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_not_called()
 
     def test_on_moved_file_rename_success(self, handler, ws_server, tmp_path):
         """Test on_moved file rename broadcasts event."""
         event = FileMovedEvent(str(tmp_path / "old.txt"), str(tmp_path / "new.txt"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+        ):
             mock_file = MagicMock()
             F.get.return_value = mock_file
             handler.on_moved(event)
@@ -811,10 +889,16 @@ class TestLANFileEventHandler:
     def test_on_moved_file_rename_file_get_none(self, handler, ws_server, tmp_path):
         """Test on_moved file rename when File.get returns None."""
         event = FileMovedEvent(str(tmp_path / "old.txt"), str(tmp_path / "new.txt"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F:
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+        ):
             F.get.return_value = None
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_not_called()
@@ -822,27 +906,40 @@ class TestLANFileEventHandler:
     def test_on_deleted_hidden_directory_skipped(self, handler, ws_server, tmp_path):
         """Test on_deleted skips hidden directories."""
         event = DirDeletedEvent(str(tmp_path / ".hidden"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
             ws_server.broadcast_sync.assert_not_called()
 
     def test_on_deleted_hidden_file_skipped(self, handler, ws_server, tmp_path):
         """Test on_deleted skips hidden files."""
         event = FileDeletedEvent(str(tmp_path / ".secret"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
             ws_server.broadcast_sync.assert_not_called()
 
     def test_on_deleted_visible_directory(self, handler, ws_server, tmp_path):
         """Test on_deleted broadcasts visible directory deletion."""
         event = DirDeletedEvent(str(tmp_path / "mydir"))
-        config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r",
-                  "SYNC_DIRECTION": "bidirectional", "IGNORE_DELETE": False}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
             ws_server.broadcast_sync.assert_called_once()
 
@@ -898,6 +995,7 @@ class TestSlaveFileEventHandler:
 
     def test_wait_pending_completed_operations(self, handler):
         """Test waiting for operations that complete quickly."""
+
         def quick_operation():
             time.sleep(0.1)
 
@@ -945,7 +1043,7 @@ class TestSlaveFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_created(event)
 
         # Should create sentinel file
@@ -963,7 +1061,7 @@ class TestSlaveFileEventHandler:
             "SYNC_DIRECTION": "download-only",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
 
         # Should not start any operation
@@ -981,7 +1079,7 @@ class TestSlaveFileEventHandler:
             "IGNORE_DELETE": True,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
 
         # Should not start any operation
@@ -1002,7 +1100,7 @@ class TestSlaveFileEventHandler:
             "SYNC_DIRECTION": "download-only",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
 
         # Should not start any operation
@@ -1036,24 +1134,31 @@ class TestSlaveFileEventHandler:
     def test_upload_to_master_success(self, handler):
         """Test _upload_to_master calls upload_file."""
         from hsync_client.models.file import File
+
         file_obj = File("/test/file.txt")
-        with patch('hsync_client.transfer.upload_file') as mock_up:
+        with patch("hsync_client.transfer.upload_file") as mock_up:
             handler._upload_to_master(file_obj)
             mock_up.assert_called_once_with(file_obj, check_size=True)
 
     def test_upload_to_master_exception(self, handler):
         """Test _upload_to_master logs error on exception."""
         from hsync_client.models.file import File
+
         file_obj = File("/test/file.txt")
-        with patch('hsync_client.transfer.upload_file', side_effect=Exception("fail")):
+        with patch("hsync_client.transfer.upload_file", side_effect=Exception("fail")):
             handler._upload_to_master(file_obj)  # should not raise
 
     def test_delete_on_master_success(self, handler):
         """Test _delete_on_master sends DELETE request."""
-        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote",
-                  "REQUEST_HEADERS": {"X-Key": "val"}}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('requests.delete') as mock_del:
+        config = {
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "remote",
+            "REQUEST_HEADERS": {"X-Key": "val"},
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.delete") as mock_del,
+        ):
             mock_del.return_value = MagicMock(status_code=200)
             handler._delete_on_master("/bucket/file.txt", is_dir=False)
             mock_del.assert_called_once()
@@ -1061,24 +1166,33 @@ class TestSlaveFileEventHandler:
     def test_delete_on_master_failure_status(self, handler):
         """Test _delete_on_master logs warning on bad status."""
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('requests.delete') as mock_del:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.delete") as mock_del,
+        ):
             mock_del.return_value = MagicMock(status_code=500)
             handler._delete_on_master("/bucket/file.txt")  # no raise
 
     def test_delete_on_master_exception(self, handler):
         """Test _delete_on_master logs error on exception."""
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('requests.delete', side_effect=Exception("net err")):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.delete", side_effect=Exception("net err")),
+        ):
             handler._delete_on_master("/bucket/file.txt")  # no raise
 
     def test_rename_on_master_success(self, handler):
         """Test _rename_on_master sends PATCH request."""
-        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote",
-                  "REQUEST_HEADERS": {"X-Key": "val"}}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('requests.patch') as mock_patch:
+        config = {
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "remote",
+            "REQUEST_HEADERS": {"X-Key": "val"},
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.patch") as mock_patch,
+        ):
             mock_patch.return_value = MagicMock(status_code=200)
             handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
             mock_patch.assert_called_once()
@@ -1086,16 +1200,20 @@ class TestSlaveFileEventHandler:
     def test_rename_on_master_failure_status(self, handler):
         """Test _rename_on_master logs warning on bad status."""
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('requests.patch') as mock_patch:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.patch") as mock_patch,
+        ):
             mock_patch.return_value = MagicMock(status_code=500)
             handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
 
     def test_rename_on_master_exception(self, handler):
         """Test _rename_on_master logs error on exception."""
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('requests.patch', side_effect=Exception("fail")):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.patch", side_effect=Exception("fail")),
+        ):
             handler._rename_on_master("/bucket/a", "/bucket/b")  # no raise
 
     def test_on_created_hidden_dir_ignored(self, handler, tmp_path):
@@ -1104,7 +1222,7 @@ class TestSlaveFileEventHandler:
         hidden.mkdir()
         event = DirCreatedEvent(str(hidden))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_created(event)
         # No sentinel should be created in hidden dir
         assert not (hidden / ".hsynckeep").exists()
@@ -1117,9 +1235,11 @@ class TestSlaveFileEventHandler:
         link.symlink_to(target)
         event = FileCreatedEvent(str(link))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F, \
-             patch.object(handler, '_upload_to_master'):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master"),
+        ):
             F.get.return_value = MagicMock()
             handler.on_created(event)
             # _handle_file_upload should have been called (starts operation)
@@ -1166,24 +1286,26 @@ class TestSlaveFileEventHandler:
         f.write_text("x")
         event = FileModifiedEvent(str(f))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', False), \
-             patch('hsync_client.lan_websocket.File') as F, \
-             patch.object(handler, '_upload_to_master'):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", False),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master"),
+        ):
             F.get.return_value = MagicMock()
             handler.on_modified(event)
 
     def test_on_closed_not_supported(self, handler, tmp_path):
         """Test on_closed returns immediately when not supported."""
         event = FileModifiedEvent(str(tmp_path / "f.txt"))
-        with patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', False):
+        with patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", False):
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
 
     def test_on_closed_temp_file_ignored(self, handler, tmp_path):
         """Test on_closed ignores temp files."""
         event = FileModifiedEvent(str(tmp_path / "f.part"))
-        with patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', True):
+        with patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", True):
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
 
@@ -1192,7 +1314,7 @@ class TestSlaveFileEventHandler:
         p = str(tmp_path / "f.txt")
         handler.mark_receiving(p)
         event = FileModifiedEvent(p)
-        with patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', True):
+        with patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", True):
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
 
@@ -1201,14 +1323,14 @@ class TestSlaveFileEventHandler:
         event = MagicMock()
         event.is_directory = True
         event.src_path = str(tmp_path / "dir")
-        with patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', True):
+        with patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", True):
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
 
     def test_on_closed_hidden_file_ignored(self, handler, tmp_path):
         """Test on_closed ignores hidden files."""
         event = FileModifiedEvent(str(tmp_path / ".hidden"))
-        with patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', True):
+        with patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", True):
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
 
@@ -1218,10 +1340,12 @@ class TestSlaveFileEventHandler:
         f.write_text("x")
         event = FileModifiedEvent(str(f))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.SUPPORTS_ON_CLOSED', True), \
-             patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F, \
-             patch.object(handler, '_upload_to_master'):
+        with (
+            patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", True),
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master"),
+        ):
             F.get.return_value = MagicMock()
             handler.on_closed(event)
             assert len(handler._pending_ops) >= 1
@@ -1229,14 +1353,14 @@ class TestSlaveFileEventHandler:
     def test_handle_file_upload_download_only(self, handler, tmp_path):
         """Test _handle_file_upload skips in download-only mode."""
         config = {"SYNC_DIRECTION": "download-only"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler._handle_file_upload(str(tmp_path / "f.txt"))
         assert len(handler._pending_ops) == 0
 
     def test_handle_file_upload_not_exists(self, handler, tmp_path):
         """Test _handle_file_upload skips non-existent file."""
         config = {"SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler._handle_file_upload(str(tmp_path / "gone.txt"))
         assert len(handler._pending_ops) == 0
 
@@ -1245,8 +1369,10 @@ class TestSlaveFileEventHandler:
         f = tmp_path / "f.txt"
         f.write_text("x")
         config = {"SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+        ):
             F.get.return_value = None
             handler._handle_file_upload(str(f))
         assert len(handler._pending_ops) == 0
@@ -1256,9 +1382,11 @@ class TestSlaveFileEventHandler:
         f = tmp_path / "f.txt"
         f.write_text("x")
         config = {"SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F, \
-             patch.object(handler, '_upload_to_master'):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master"),
+        ):
             F.get.return_value = MagicMock()
             handler._handle_file_upload(str(f))
         assert len(handler._pending_ops) >= 1
@@ -1266,10 +1394,15 @@ class TestSlaveFileEventHandler:
     def test_on_deleted_visible_file(self, handler, tmp_path):
         """Test on_deleted starts delete operation for visible file."""
         event = FileDeletedEvent(str(tmp_path / "file.txt"))
-        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional",
-                  "IGNORE_DELETE": False}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch.object(handler, '_delete_on_master'):
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master"),
+        ):
             handler.on_deleted(event)
         assert len(handler._pending_ops) >= 1
 
@@ -1277,7 +1410,7 @@ class TestSlaveFileEventHandler:
         """Test on_deleted ignores temp files."""
         event = FileDeletedEvent(str(tmp_path / "file.part"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
         assert len(handler._pending_ops) == 0
 
@@ -1285,7 +1418,7 @@ class TestSlaveFileEventHandler:
         """Test on_deleted ignores hidden directories."""
         event = DirDeletedEvent(str(tmp_path / ".hidden"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
         assert len(handler._pending_ops) == 0
 
@@ -1293,7 +1426,7 @@ class TestSlaveFileEventHandler:
         """Test on_deleted ignores hidden files."""
         event = FileDeletedEvent(str(tmp_path / ".hidden"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
         assert len(handler._pending_ops) == 0
 
@@ -1310,7 +1443,7 @@ class TestSlaveFileEventHandler:
         """Test on_moved ignores temp source files."""
         event = FileMovedEvent(str(tmp_path / "f.part"), str(tmp_path / "f.txt"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
@@ -1318,7 +1451,7 @@ class TestSlaveFileEventHandler:
         """Test on_moved ignores temp destination files."""
         event = FileMovedEvent(str(tmp_path / "f.txt"), str(tmp_path / "f.part"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
@@ -1328,7 +1461,7 @@ class TestSlaveFileEventHandler:
         handler.mark_receiving(src)
         event = FileMovedEvent(src, str(tmp_path / "b.txt"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
@@ -1336,7 +1469,7 @@ class TestSlaveFileEventHandler:
         """Test on_moved both hidden skipped."""
         event = FileMovedEvent(str(tmp_path / ".a"), str(tmp_path / ".b"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
@@ -1346,9 +1479,11 @@ class TestSlaveFileEventHandler:
         f.write_text("x")
         event = FileMovedEvent(str(tmp_path / ".hidden"), str(f))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.lan_websocket.File') as F, \
-             patch.object(handler, '_upload_to_master'):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master"),
+        ):
             F.get.return_value = MagicMock()
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
@@ -1356,19 +1491,27 @@ class TestSlaveFileEventHandler:
     def test_on_moved_visible_to_hidden_deletes(self, handler, tmp_path):
         """Test on_moved visible->hidden triggers deletion."""
         event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / ".hid"))
-        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional",
-                  "IGNORE_DELETE": False}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch.object(handler, '_delete_on_master'):
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master"),
+        ):
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
 
     def test_on_moved_visible_to_hidden_ignore_delete(self, handler, tmp_path):
         """Test on_moved visible->hidden skips when ignore-delete."""
         event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / ".hid"))
-        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional",
-                  "IGNORE_DELETE": True}
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": True,
+        }
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
@@ -1376,13 +1519,16 @@ class TestSlaveFileEventHandler:
         """Test on_moved normal rename calls _rename_on_master."""
         event = FileMovedEvent(str(tmp_path / "a.txt"), str(tmp_path / "b.txt"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch.object(handler, '_rename_on_master'):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_rename_on_master"),
+        ):
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
 
     def test_wait_pending_timeout(self, handler):
         """Test wait_pending returns count of timed-out operations."""
+
         def slow_op():
             time.sleep(5)
 
@@ -1414,8 +1560,10 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_file') as mock_update:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
             await _handle_lan_event(event_data)
 
             mock_update.assert_called_once()
@@ -1436,8 +1584,10 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_dir') as mock_update:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_dir") as mock_update,
+        ):
             await _handle_lan_event(event_data)
 
             mock_update.assert_called_once()
@@ -1462,8 +1612,10 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_file') as mock_update:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
             await _handle_lan_event(event_data)
 
             mock_update.assert_called_once()
@@ -1500,7 +1652,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # File should be renamed
@@ -1532,7 +1684,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # File should be deleted
@@ -1563,7 +1715,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": True,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # File should still exist
@@ -1589,8 +1741,10 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "upload-only",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_file') as mock_update:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
             await _handle_lan_event(event_data)
 
             # Should not update in upload-only mode
@@ -1609,8 +1763,10 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_file') as mock_update:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
             await _handle_lan_event(event_data)
 
             # Should not process event
@@ -1636,8 +1792,10 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_file') as mock_update:
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
             await _handle_lan_event(event_data)
 
             mock_update.assert_called_once()
@@ -1659,7 +1817,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         assert not src_dir.exists()
@@ -1670,8 +1828,14 @@ class TestHandleLanEvent:
         """Test rename event with missing dst field returns early."""
         event_data = {
             "name": "renamed",
-            "src": {"filepath": "old.txt", "md5sum": "x", "mtime": 1, "ctime": 1,
-                     "size": 1, "permissions": "-rw-r--r--"},
+            "src": {
+                "filepath": "old.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
             # no "dst"
         }
 
@@ -1680,7 +1844,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash – just logs a warning
 
@@ -1689,10 +1853,22 @@ class TestHandleLanEvent:
         """Test rename event when source file doesn't exist (no rename)."""
         event_data = {
             "name": "renamed",
-            "src": {"filepath": "gone.txt", "md5sum": "x", "mtime": 1, "ctime": 1,
-                     "size": 1, "permissions": "-rw-r--r--"},
-            "dst": {"filepath": "new.txt", "md5sum": "x", "mtime": 1, "ctime": 1,
-                     "size": 1, "permissions": "-rw-r--r--"},
+            "src": {
+                "filepath": "gone.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
+            "dst": {
+                "filepath": "new.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
         }
 
         config = {
@@ -1700,7 +1876,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # Neither file exists – no crash
@@ -1724,7 +1900,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         assert not target.exists()
@@ -1739,9 +1915,14 @@ class TestHandleLanEvent:
 
         event_data = {
             "name": "deleted",
-            "src": {"filepath": "emptydir/.hsynckeep", "md5sum": "x",
-                     "mtime": 1, "ctime": 1, "size": 0,
-                     "permissions": "-rw-r--r--"},
+            "src": {
+                "filepath": "emptydir/.hsynckeep",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 0,
+                "permissions": "-rw-r--r--",
+            },
         }
 
         config = {
@@ -1750,7 +1931,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
 
         assert not sentinel.exists()
@@ -1778,8 +1959,10 @@ class TestHandleLanEvent:
 
         handler = SlaveFileEventHandler("host", 8765, use_https=False)
 
-        with patch('hsync_client.lan_websocket.CONFIG', config), \
-             patch('hsync_client.sync.update_file'):
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file"),
+        ):
             await _handle_lan_event(event_data, slave_handler=handler)
 
         # File should have been unmarked after processing
@@ -1799,7 +1982,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash
 
@@ -1808,8 +1991,14 @@ class TestHandleLanEvent:
         """Test deleted file event when file doesn't exist (no crash)."""
         event_data = {
             "name": "deleted",
-            "src": {"filepath": "gone.txt", "md5sum": "x", "mtime": 1,
-                     "ctime": 1, "size": 1, "permissions": "-rw-r--r--"},
+            "src": {
+                "filepath": "gone.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
         }
 
         config = {
@@ -1818,7 +2007,6 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch('hsync_client.lan_websocket.CONFIG', config):
+        with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash
-

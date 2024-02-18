@@ -23,15 +23,14 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNC_VERSION
-
 
 # =============================================================================
 # Constants
@@ -78,9 +77,7 @@ def get_free_port() -> int:
     return port
 
 
-def check_version_compatibility(
-    local_version: str, peer_version: str
-) -> tuple[bool, str]:
+def check_version_compatibility(local_version: str, peer_version: str) -> tuple[bool, str]:
     """
     Check if peer version is compatible with local version using Semver.
 
@@ -135,9 +132,9 @@ class Peer:
     address: str
     port: int
     version: str = "0.0.0"
-    group: Optional[str] = None
+    group: str | None = None
     use_https: bool = False
-    cert_fingerprint: Optional[str] = None
+    cert_fingerprint: str | None = None
     compression_enabled: bool = False
     server_ready: bool = False  # True when HTTP server is listening
     clock_offset: float = 0.0  # Estimated clock offset vs local (seconds)
@@ -182,7 +179,7 @@ class PeerManager:
         self,
         local_cid: str,
         bucket: str,
-        group: Optional[str] = None,
+        group: str | None = None,
         force_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
@@ -207,8 +204,8 @@ class PeerManager:
         self._sync_direction = sync_direction
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
-        self._master_cid: Optional[str] = None
-        self._on_master_change: Optional[Callable[[Optional[Peer]], None]] = None
+        self._master_cid: str | None = None
+        self._on_master_change: Callable[[Peer | None], None] | None = None
 
     @property
     def local_cid(self) -> str:
@@ -221,7 +218,7 @@ class PeerManager:
         return self._bucket
 
     @property
-    def group(self) -> Optional[str]:
+    def group(self) -> str | None:
         """Get the group name."""
         return self._group
 
@@ -235,13 +232,11 @@ class PeerManager:
         """Get the startup timestamp."""
         return self._startup_time
 
-    def set_master_change_callback(
-        self, callback: Callable[[Optional[Peer]], None]
-    ) -> None:
+    def set_master_change_callback(self, callback: Callable[[Peer | None], None]) -> None:
         """Set callback to be called when master changes."""
         self._on_master_change = callback
 
-    def _is_group_compatible(self, peer_group: Optional[str]) -> bool:
+    def _is_group_compatible(self, peer_group: str | None) -> bool:
         """
         Check if a peer's group is compatible with this client's group.
 
@@ -269,8 +264,7 @@ class PeerManager:
 
         if not self._is_group_compatible(peer.group):
             log.debug(
-                f"Ignoring peer {peer.cid} - different group: "
-                f"{peer.group} (local: {self._group})"
+                f"Ignoring peer {peer.cid} - different group: {peer.group} (local: {self._group})"
             )
             return
 
@@ -312,7 +306,7 @@ class PeerManager:
                 log.info(f"Peer disconnected: {cid}")
                 self._elect_master()
 
-    def get_peer(self, cid: str) -> Optional[Peer]:
+    def get_peer(self, cid: str) -> Peer | None:
         """Get a peer by CID."""
         with self._lock:
             return self._peers.get(cid)
@@ -342,15 +336,13 @@ class PeerManager:
         # Build list of candidates with their election criteria
         # Each candidate: (cid, force_master, startup_time, sync_direction)
         candidates: list[tuple[str, bool, float, str]] = [
-            (self._local_cid, self._force_master, self._startup_time,
-             self._sync_direction)
+            (self._local_cid, self._force_master, self._startup_time, self._sync_direction)
         ]
 
         for peer in self._peers.values():
             if peer.is_alive():
                 candidates.append(
-                    (peer.cid, peer.force_master, peer.startup_time,
-                     peer.sync_direction)
+                    (peer.cid, peer.force_master, peer.startup_time, peer.sync_direction)
                 )
 
         if not candidates:
@@ -361,8 +353,7 @@ class PeerManager:
             # not force_master: False=0 < True=1, so force_master=True first
             # sync_direction != "bidirectional": False=0 < True=1,
             #   so bidirectional peers come first
-            candidates.sort(key=lambda c: (not c[1], c[3] != "bidirectional",
-                                           c[2], c[0]))
+            candidates.sort(key=lambda c: (not c[1], c[3] != "bidirectional", c[2], c[0]))
             new_master_cid = candidates[0][0]
 
         # Detect force_master conflicts
@@ -420,8 +411,7 @@ class PeerManager:
                 else:
                     reason = "earliest startup"
                 log.info(
-                    f"This client elected as MASTER (CID: {self._local_cid}, "
-                    f"reason: {reason})"
+                    f"This client elected as MASTER (CID: {self._local_cid}, reason: {reason})"
                 )
                 if self._sync_direction != "bidirectional":
                     log.warning(
@@ -466,18 +456,17 @@ class PeerManager:
         with self._lock:
             return self._master_cid == self._local_cid
 
-    def get_master(self) -> Optional[Peer]:
+    def get_master(self) -> Peer | None:
         """Get the current master peer (None if local is master)."""
         with self._lock:
             if self._master_cid == self._local_cid or self._master_cid is None:
                 return None
             return self._peers.get(self._master_cid)
 
-    def get_master_cid(self) -> Optional[str]:
+    def get_master_cid(self) -> str | None:
         """Get the current master's CID."""
         with self._lock:
             return self._master_cid
-
 
 
 # =============================================================================
@@ -551,9 +540,7 @@ class HsyncServiceListener(ServiceListener):
             # Compression capability is optional
             compression_bytes = properties.get(b"compression", b"")
             compression_enabled = (
-                compression_bytes.decode("utf-8").lower() == "true"
-                if compression_bytes
-                else False
+                compression_bytes.decode("utf-8").lower() == "true" if compression_bytes else False
             )
             # Server ready flag (indicates HTTP server is listening)
             server_ready_bytes = properties.get(b"server_ready", b"")
@@ -571,17 +558,11 @@ class HsyncServiceListener(ServiceListener):
             )
             # Startup time for master election (earlier startup wins)
             startup_time_bytes = properties.get(b"startup_time", b"")
-            startup_time = (
-                float(startup_time_bytes.decode("utf-8"))
-                if startup_time_bytes
-                else 0.0
-            )
+            startup_time = float(startup_time_bytes.decode("utf-8")) if startup_time_bytes else 0.0
             # Sync direction for master election (bidirectional preferred)
             sync_direction_bytes = properties.get(b"sync_direction", b"")
             sync_direction = (
-                sync_direction_bytes.decode("utf-8")
-                if sync_direction_bytes
-                else "bidirectional"
+                sync_direction_bytes.decode("utf-8") if sync_direction_bytes else "bidirectional"
             )
 
             if not cid or not bucket:
@@ -604,8 +585,7 @@ class HsyncServiceListener(ServiceListener):
                 )
             elif reason == "parse_error":
                 log.warning(
-                    f"Could not parse version for peer {cid}: {version}. "
-                    "Proceeding with caution."
+                    f"Could not parse version for peer {cid}: {version}. Proceeding with caution."
                 )
 
             # Get address and port
@@ -662,9 +642,9 @@ class LANSync:
         cid: str,
         bucket: str,
         port: int = HSYNC_LAN_PORT,
-        group: Optional[str] = None,
+        group: str | None = None,
         use_https: bool = False,
-        cert_fingerprint: Optional[str] = None,
+        cert_fingerprint: str | None = None,
         force_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
@@ -695,10 +675,10 @@ class LANSync:
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
 
-        self._zeroconf: Optional[Zeroconf] = None
-        self._browser: Optional[ServiceBrowser] = None
-        self._service_info: Optional[ServiceInfo] = None
-        self._peer_manager: Optional[PeerManager] = None
+        self._zeroconf: Zeroconf | None = None
+        self._browser: ServiceBrowser | None = None
+        self._service_info: ServiceInfo | None = None
+        self._peer_manager: PeerManager | None = None
         self._running = False
 
     @property
@@ -707,7 +687,7 @@ class LANSync:
         return self._port
 
     @property
-    def group(self) -> Optional[str]:
+    def group(self) -> str | None:
         """Get the group name."""
         return self._group
 
@@ -717,12 +697,12 @@ class LANSync:
         return self._use_https
 
     @property
-    def cert_fingerprint(self) -> Optional[str]:
+    def cert_fingerprint(self) -> str | None:
         """Get the SSL certificate fingerprint."""
         return self._cert_fingerprint
 
     @property
-    def peer_manager(self) -> Optional[PeerManager]:
+    def peer_manager(self) -> PeerManager | None:
         """Get the peer manager."""
         return self._peer_manager
 
@@ -739,10 +719,7 @@ class LANSync:
             PeerManager for monitoring discovered peers and master election.
         """
         group_info = f", group='{self._group}'" if self._group else ""
-        log.info(
-            f"Starting LAN mode for bucket '{self._bucket}' "
-            f"(CID: {self._cid}{group_info})"
-        )
+        log.info(f"Starting LAN mode for bucket '{self._bucket}' (CID: {self._cid}{group_info})")
 
         # Initialize Zeroconf
         self._zeroconf = Zeroconf()
@@ -763,9 +740,7 @@ class LANSync:
 
         # Start listening for other services
         listener = HsyncServiceListener(self._peer_manager, self._zeroconf)
-        self._browser = ServiceBrowser(
-            self._zeroconf, HSYNC_SERVICE_TYPE, listener
-        )
+        self._browser = ServiceBrowser(self._zeroconf, HSYNC_SERVICE_TYPE, listener)
 
         self._running = True
         log.info("LAN discovery started")

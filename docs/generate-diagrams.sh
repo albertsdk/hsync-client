@@ -150,4 +150,3 @@ rm -f "${CONFIG_FILE}"
 
 printf '%s\n' ""
 printf '%s\n' "${GREEN}Done! Images saved to: ${IMAGES_DIR}${NC}"
-

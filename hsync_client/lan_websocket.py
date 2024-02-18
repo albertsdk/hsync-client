@@ -25,20 +25,22 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import ssl
 import sys
 import threading
 from copy import deepcopy
 from os import listdir
-from os.path import exists, islink, join as path_join
+from os.path import exists, islink
+from os.path import join as path_join
 from time import time
-from typing import Any, Optional, Set
-from watchdog.events import FileSystemEventHandler, DirCreatedEvent, DirDeletedEvent
-from watchdog.observers import Observer
-from watchdog.observers.api import BaseObserver
+from typing import Any
 
 from loguru import logger as log
+from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHandler
+from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
@@ -47,7 +49,6 @@ from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File, is_hidden_file
 from hsync_client.models.symlink import Symlink
 from hsync_client.utils import ensure_str_path, is_same_paths
-
 
 # Check if on_closed event is supported (Linux with inotify)
 SUPPORTS_ON_CLOSED = sys.platform == "linux"
@@ -67,21 +68,21 @@ def _escape_braces(s: str) -> str:
 class LANWebSocketServer:
     """
     WebSocket server for LAN master mode.
-    
+
     Runs in a background thread and broadcasts file system events
     to all connected slave clients.
     """
-    
+
     def __init__(
         self,
         port: int,
         use_https: bool = False,
-        cert_file: Optional[str] = None,
-        key_file: Optional[str] = None,
+        cert_file: str | None = None,
+        key_file: str | None = None,
     ) -> None:
         """
         Initialize the WebSocket server.
-        
+
         Args:
             port: Port to listen on (different from HTTP port).
             use_https: Whether to use WSS instead of WS.
@@ -92,19 +93,19 @@ class LANWebSocketServer:
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
-        self._clients: Set[Any] = set()  # WebSocket connections
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
-        self._server: Optional[Any] = None
+        self._clients: set[Any] = set()  # WebSocket connections
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._server: Any | None = None
         self._running = False
-        self._observer: Optional[BaseObserver] = None
-        self._event_handler: Optional[LANFileEventHandler] = None
-    
+        self._observer: BaseObserver | None = None
+        self._event_handler: LANFileEventHandler | None = None
+
     @property
     def port(self) -> int:
         """Get the WebSocket server port."""
         return self._port
-    
+
     async def _handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection."""
         client_addr = websocket.remote_address
@@ -125,7 +126,7 @@ class LANWebSocketServer:
                     return
                 await websocket.send(json.dumps({"type": "auth", "status": "ok"}))
                 log.info(f"WebSocket client authenticated: {client_addr}")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.warning(f"WebSocket auth timeout from {client_addr}")
                 await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                 await websocket.close()
@@ -136,10 +137,10 @@ class LANWebSocketServer:
                 return
         else:
             await websocket.send(json.dumps({"type": "connected"}))
-        
+
         # Add client to set
         self._clients.add(websocket)
-        
+
         try:
             # Keep connection alive and handle incoming messages
             async for message in websocket:
@@ -151,7 +152,7 @@ class LANWebSocketServer:
         finally:
             self._clients.discard(websocket)
             log.info(f"WebSocket client disconnected: {client_addr}")
-    
+
     async def broadcast(self, event_dict: dict) -> None:
         """Broadcast an event to all connected clients."""
         if not self._clients:
@@ -212,7 +213,7 @@ class LANWebSocketServer:
         finally:
             self._loop.close()
 
-    def start(self, watch_path: Optional[str] = None) -> None:
+    def start(self, watch_path: str | None = None) -> None:
         """
         Start the WebSocket server and file watcher.
 
@@ -261,12 +262,12 @@ class LANWebSocketServer:
 
         # Close all client connections
         if self._loop and self._clients:
+
             async def close_all():
                 for client in self._clients.copy():
-                    try:
+                    with contextlib.suppress(Exception):
                         await client.close()
-                    except Exception:
-                        pass
+
             asyncio.run_coroutine_threadsafe(close_all(), self._loop)
 
         # Wait for thread to finish
@@ -410,7 +411,7 @@ class LANFileEventHandler(FileSystemEventHandler):
     def on_moved(self, event) -> None:
         """Handle file/directory move/rename events."""
         src_path = ensure_str_path(event.src_path)
-        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+        dest_path = ensure_str_path(getattr(event, "dest_path", None))
 
         if not dest_path:
             return
@@ -613,7 +614,7 @@ async def lan_websocket_client(
 
 async def _handle_lan_event(
     event_data: dict,
-    slave_handler: Optional[SlaveFileEventHandler] = None,
+    slave_handler: SlaveFileEventHandler | None = None,
 ) -> None:
     """
     Handle an event received from the LAN master.
@@ -622,12 +623,13 @@ async def _handle_lan_event(
         event_data: Event dictionary from the master.
         slave_handler: Optional slave event handler for marking files as receiving.
     """
-    from hsync_client.sync import update_file, update_dir
+    from os import listdir, makedirs, remove, rename, rmdir
+    from os.path import basename, dirname, exists
+    from shutil import rmtree
+
     from hsync_client.models.dir import Dir
     from hsync_client.models.file import File
-    from shutil import rmtree
-    from os import listdir, remove, rename, makedirs, rmdir
-    from os.path import basename, exists, dirname
+    from hsync_client.sync import update_dir, update_file
 
     event_name = event_data.get("name")
     src = event_data.get("src")
@@ -719,7 +721,7 @@ async def _handle_lan_event(
     elif event_name == "deleted":
         # Check ignore_delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f"[LAN IGNORE] Deletion ignored (ignore-delete mode)")
+            log.debug("[LAN IGNORE] Deletion ignored (ignore-delete mode)")
             return
 
         if "path" in src:
@@ -753,16 +755,15 @@ async def _handle_lan_event(
                     unmark_receiving(file_obj.filepath)
 
     # Handle Symlink events
-    elif event_name == "symlink":
-        if "filepath" in src:
-            # Symlink creation - download the file
-            file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
-            if file_obj.filepath:
-                mark_receiving(file_obj.filepath)
-                try:
-                    update_file(src)
-                finally:
-                    unmark_receiving(file_obj.filepath)
+    elif event_name == "symlink" and "filepath" in src:
+        # Symlink creation - download the file
+        file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
+        if file_obj.filepath:
+            mark_receiving(file_obj.filepath)
+            try:
+                update_file(src)
+            finally:
+                unmark_receiving(file_obj.filepath)
 
 
 # =============================================================================
@@ -819,7 +820,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             return filepath in self._receiving_files
 
     def _start_operation(
-        self, target, args: tuple = (), name: Optional[str] = None,
+        self,
+        target,
+        args: tuple = (),
+        name: str | None = None,
     ) -> threading.Thread:
         """Start a background operation and track it for graceful shutdown.
 
@@ -1070,9 +1074,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         except OSError:
             return
         # Consider the directory empty if it has no visible (syncable) files
-        has_syncable = any(
-            not is_hidden_file(e) for e in entries
-        )
+        has_syncable = any(not is_hidden_file(e) for e in entries)
         if has_syncable:
             return
         sentinel = path_join(dir_path, HSYNCKEEP_FILENAME)
@@ -1103,7 +1105,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip if in ignore-delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f"[SLAVE IGN ] Deletion ignored (ignore-delete mode)")
+            log.debug("[SLAVE IGN ] Deletion ignored (ignore-delete mode)")
             return
 
         # Notify master about deletion
@@ -1116,7 +1118,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
     def on_moved(self, event) -> None:
         """Handle file/directory move/rename events."""
         src_path = ensure_str_path(event.src_path)
-        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+        dest_path = ensure_str_path(getattr(event, "dest_path", None))
 
         if not dest_path:
             return
@@ -1176,10 +1178,9 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
 
 # Global slave event handler for marking files as receiving
-_slave_event_handler: Optional[SlaveFileEventHandler] = None
+_slave_event_handler: SlaveFileEventHandler | None = None
 
 
-def get_slave_event_handler() -> Optional[SlaveFileEventHandler]:
+def get_slave_event_handler() -> SlaveFileEventHandler | None:
     """Get the global slave event handler."""
     return _slave_event_handler
-

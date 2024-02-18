@@ -12,28 +12,16 @@ import pytest
 
 from hsync_client.config import (
     CONFIG,
-    DEBUG,
     EnvSettings,
     HsyncConfig,
+    get_api_key,
     get_config,
     get_env_settings,
+    get_server_url,
     is_debug,
     load_env_file,
     set_config,
     set_debug,
-    get_server_url,
-    get_api_key,
-    get_stability_delay,
-    get_lan_key,
-    get_lan_group,
-    get_lan_https,
-    get_lan_port,
-    get_discovery_timeout,
-    get_heartbeat_interval,
-    get_peer_timeout,
-    get_lan_persistent,
-    get_ignore_delete,
-    get_compression_enabled,
 )
 
 
@@ -102,9 +90,7 @@ class TestLoadEnvFile:
 
     def test_loads_env_vars(self):
         """Environment variables are loaded from file."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".env", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
             f.write("HSYNC_TEST_VAR_12345=hello\n")
             f.flush()
             temp_path = f.name
@@ -180,4 +166,3 @@ class TestEnvGetters:
             if old is not None:
                 os.environ["HSYNC_API_KEY"] = old
             get_env_settings.cache_clear()
-

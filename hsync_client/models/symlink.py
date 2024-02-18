@@ -5,7 +5,8 @@ This module defines the Symlink class for representing symbolic links
 that need to be synchronized between client and server.
 """
 
-from os import readlink, stat as os_stat
+from os import readlink
+from os import stat as os_stat
 from os.path import basename, exists, islink
 from typing import Optional
 
@@ -28,10 +29,10 @@ class Symlink:
     def __init__(
         self,
         filepath: str,
-        target: Optional[str] = None,
-        name: Optional[str] = None,
-        ctime: Optional[float] = None,
-        mtime: Optional[float] = None,
+        target: str | None = None,
+        name: str | None = None,
+        ctime: float | None = None,
+        mtime: float | None = None,
     ):
         """
         Initialize a Symlink instance.
@@ -90,7 +91,7 @@ class Symlink:
                 ctime=stat.st_ctime,
                 mtime=stat.st_mtime,
             )
-        except (OSError, IOError):
+        except OSError:
             return None
 
     def to_dict(self) -> dict:
@@ -129,4 +130,3 @@ class Symlink:
             ctime=data.get("ctime"),
             mtime=data.get("mtime"),
         )
-

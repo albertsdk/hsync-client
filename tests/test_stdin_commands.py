@@ -6,8 +6,7 @@ JSON parsing, and error handling.
 """
 
 import asyncio
-import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -316,11 +315,13 @@ class TestRunDispatch:
         mock_pipe = MagicMock()
         mock_loop = MagicMock()
         mock_loop.connect_read_pipe = AsyncMock(side_effect=OSError("pipe error"))
-        with patch("os.dup", return_value=99), \
-             patch("os.fdopen", return_value=mock_pipe), \
-             patch("asyncio.StreamReader"), \
-             patch("asyncio.StreamReaderProtocol"), \
-             patch("asyncio.get_event_loop", return_value=mock_loop):
+        with (
+            patch("os.dup", return_value=99),
+            patch("os.fdopen", return_value=mock_pipe),
+            patch("asyncio.StreamReader"),
+            patch("asyncio.StreamReaderProtocol"),
+            patch("asyncio.get_event_loop", return_value=mock_loop),
+        ):
             await handler.run()
 
         assert any("unavailable" in str(c) for c in log.debug.call_args_list)
@@ -360,4 +361,3 @@ class TestRunDispatch:
             await handler.run()
 
         assert any("stdin reader error" in str(c) for c in log.error.call_args_list)
-

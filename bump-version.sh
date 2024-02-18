@@ -46,19 +46,19 @@ update_version() {
     local file="$1"
     local pattern="$2"
     local replacement="$3"
-    
+
     if [ ! -f "$file" ]; then
         echo -e "${RED}Error: File not found: $file${NC}"
         exit 1
     fi
-    
+
     # Use sed to replace the version
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sed -i '' "s|$pattern|$replacement|g" "$file"
     else
         sed -i "s|$pattern|$replacement|g" "$file"
     fi
-    
+
     echo -e "${GREEN}✓${NC} Updated: $file"
 }
 
@@ -84,4 +84,3 @@ echo "Next steps:"
 echo "  1. Review changes: git diff"
 echo "  2. Commit: git commit -am \"Bump version to ${NEW_VERSION}\""
 echo "  3. Tag: git tag v${NEW_VERSION}"
-

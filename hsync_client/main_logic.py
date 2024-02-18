@@ -11,17 +11,17 @@ HSYNC Client - Main synchronization logic.
 This module contains the core synchronization logic extracted from main.py.
 """
 
+import contextlib
 import sys
 import time
 from asyncio import run
 from os.path import basename, exists
 from re import sub
-from typing import Any, Optional
-
-
+from typing import Any
 
 from hsync_client.config import (
     CONFIG,
+    HsyncConfig,
     get_api_key,
     get_compression_enabled,
     get_discovery_timeout,
@@ -36,22 +36,22 @@ from hsync_client.config import (
     get_server_url,
     get_stability_delay,
     load_env_file,
-    HsyncConfig,
     set_config,
     set_debug,
 )
 from hsync_client.constants import (
     ACTION_LABEL,
     FILE_STABILITY_INTERVAL_DEFAULT,
-    HSYNCKEEP_FILENAME,
     HSYNC_VERSION,
+    HSYNCKEEP_FILENAME,
 )
 from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
-from hsync_client.logger import setup_logging, set_client_id
+from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.models.sync_action import SyncActionName
 from hsync_client.retry import retry_on_connection_error
+from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
     ensure_hsynckeep_files,
     get_files_local,
@@ -59,7 +59,6 @@ from hsync_client.sync import (
     get_sync_actions,
     sync,
 )
-from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.utils import bytes_to_human_readable, get_cid, is_valid_logfile
 from hsync_client.websocket_handler import remote_connect
 
@@ -92,10 +91,18 @@ def _run_preview(log) -> None:
             fp = action.file.filepath or ""
             return fp.endswith(HSYNCKEEP_FILENAME)
 
-        downloads = [a for a in sync_actions if a.name == SyncActionName.download and not _is_sentinel(a)]
-        uploads = [a for a in sync_actions if a.name == SyncActionName.upload and not _is_sentinel(a)]
-        deletes = [a for a in sync_actions if a.name == SyncActionName.delete and not _is_sentinel(a)]
-        synced = [a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)]
+        downloads = [
+            a for a in sync_actions if a.name == SyncActionName.download and not _is_sentinel(a)
+        ]
+        uploads = [
+            a for a in sync_actions if a.name == SyncActionName.upload and not _is_sentinel(a)
+        ]
+        deletes = [
+            a for a in sync_actions if a.name == SyncActionName.delete and not _is_sentinel(a)
+        ]
+        synced = [
+            a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)
+        ]
 
         # Detect renames: DELETE + DOWNLOAD pairs with same md5sum and size.
         # When a file is renamed on the master, the client sees a delete of
@@ -131,7 +138,9 @@ def _run_preview(log) -> None:
             log.info(f'[SYNCED      ] "{action.file.filepath}" ({size_str})')
         for del_action, dl_action in renames:
             size_str = bytes_to_human_readable(dl_action.file.size or 0)
-            log.info(f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({size_str})')
+            log.info(
+                f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({size_str})'
+            )
         for action in downloads:
             size_str = bytes_to_human_readable(action.file.size or 0)
             log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({size_str})')
@@ -152,7 +161,7 @@ def _run_preview(log) -> None:
     log.info("--- End Preview ---")
 
 
-def _get_stability_delay_value(cli_value: Optional[int]) -> int:
+def _get_stability_delay_value(cli_value: int | None) -> int:
     """
     Determine the stability delay value.
 
@@ -242,18 +251,18 @@ def _check_deletion_risk(
 
 def run_sync(
     bucket: str,
-    env_file: Optional[str],
-    server_url: Optional[str],
+    env_file: str | None,
+    server_url: str | None,
     verify_ssl: bool,
-    ca_cert: Optional[str],
+    ca_cert: str | None,
     http_timeout: int,
     local_path: str,
     continuous: bool,
-    resync: Optional[int],
+    resync: int | None,
     reconnect_delay: int,
-    stability_delay: Optional[int],
+    stability_delay: int | None,
     max_wait_timeout: int,
-    filter_path: Optional[str],
+    filter_path: str | None,
     dryrun: bool,
     ignore_delete: bool,
     sync_direction: str,
@@ -261,17 +270,17 @@ def run_sync(
     lan_mode: bool,
     lan_port: int,
     discovery_timeout: int,
-    lan_group: Optional[str],
+    lan_group: str | None,
     lan_https: bool,
     lan_persistent: bool,
     force_master: bool,
     debug: bool,
     quiet: bool,
-    logfile: Optional[str],
+    logfile: str | None,
     no_color: bool,
     legend: bool,
-    api_key_fd: Optional[int] = None,
-    lan_key_fd: Optional[int] = None,
+    api_key_fd: int | None = None,
+    lan_key_fd: int | None = None,
     auto_confirm: bool = False,
 ) -> None:
     """
@@ -284,9 +293,10 @@ def run_sync(
     - Running sync (single or continuous)
     """
     # Read API key from file descriptor if provided (secure passing from parent)
-    api_key_from_fd: Optional[str] = None
+    api_key_from_fd: str | None = None
     if api_key_fd is not None:
         import os
+
         try:
             with os.fdopen(api_key_fd, "r") as f:
                 api_key_from_fd = f.read().strip()
@@ -296,9 +306,10 @@ def run_sync(
             pass  # Fall back to environment variable
 
     # Read LAN key from file descriptor if provided (secure passing from parent)
-    lan_key_from_fd: Optional[str] = None
+    lan_key_from_fd: str | None = None
     if lan_key_fd is not None:
         import os
+
         try:
             with os.fdopen(lan_key_fd, "r") as f:
                 lan_key_from_fd = f.read().strip()
@@ -450,21 +461,21 @@ def run_sync(
     _safe_config["REQUEST_HEADERS"] = _safe_headers
     if _safe_config.get("LAN_KEY"):
         _safe_config["LAN_KEY"] = "****"
-    log.debug("Local configuration:", extra={'json_data': _safe_config})
+    log.debug("Local configuration:", extra={"json_data": _safe_config})
 
     # Display legend if requested
     if legend:
         log.info("Log legend:")
         log_labels = {
-            ACTION_LABEL['nothing']: "File already in sync (no action required)",
-            ACTION_LABEL['skip']: "File skipped",
-            ACTION_LABEL['download']: "Download file from server",
-            ACTION_LABEL['upload']: "Upload file to server",
-            ACTION_LABEL['move']: "Move/Rename file or directory",
-            ACTION_LABEL['remove']: "Remove file or directory",
-            ACTION_LABEL['create']: "Create directory",
-            ACTION_LABEL['permission']: "Set file/directory permission",
-            ACTION_LABEL['symlink']: "Create symbolic link",
+            ACTION_LABEL["nothing"]: "File already in sync (no action required)",
+            ACTION_LABEL["skip"]: "File skipped",
+            ACTION_LABEL["download"]: "Download file from server",
+            ACTION_LABEL["upload"]: "Upload file to server",
+            ACTION_LABEL["move"]: "Move/Rename file or directory",
+            ACTION_LABEL["remove"]: "Remove file or directory",
+            ACTION_LABEL["create"]: "Create directory",
+            ACTION_LABEL["permission"]: "Set file/directory permission",
+            ACTION_LABEL["symlink"]: "Create symbolic link",
         }
         for label, description in log_labels.items():
             log.info(f"  {label} {description}")
@@ -541,10 +552,8 @@ async def _with_stdin_commands(log, coro) -> None:
         await coro
     finally:
         stdin_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await stdin_task
-        except asyncio.CancelledError:
-            pass
 
 
 async def _run_with_stdin_commands(log) -> None:
@@ -593,7 +602,8 @@ def _check_server_connectivity(
     Returns:
         True if server is reachable, False otherwise.
     """
-    from requests import get as http_get, RequestException
+    from requests import RequestException
+    from requests import get as http_get
 
     @retry_on_connection_error(max_attempts=3, min_wait=1, max_wait=10)
     def _do_health_check() -> int:
@@ -635,7 +645,9 @@ def _measure_clock_offset(master, config: HsyncConfig, log) -> None:
         master: The master Peer object.
         config: Current hsync configuration.
     """
-    from requests import get as http_get, RequestException
+    from requests import RequestException
+    from requests import get as http_get
+
     from hsync_client.utils import get_ssl_verify
 
     master_url = master.get_server_url()
@@ -673,8 +685,7 @@ def _measure_clock_offset(master, config: HsyncConfig, log) -> None:
             )
         else:
             log.debug(
-                f"Clock sync with master {master.cid}: "
-                f"offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms"
+                f"Clock sync with master {master.cid}: offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms"
             )
 
     except RequestException as e:
@@ -695,6 +706,7 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
     cert_info = None
     if config["LAN_HTTPS"]:
         from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
+
         log.info("Generating self-signed certificate for HTTPS...")
         cert_info = generate_self_signed_cert()
         cert_info = save_cert_to_temp_files(cert_info)
@@ -802,7 +814,9 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
                     log.info(f"Connecting to master: {master.cid} at {master_url}")
 
                     if master.use_https and master.cert_fingerprint:
-                        log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
+                        log.info(
+                            f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}..."
+                        )
                         config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
                     config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
@@ -841,17 +855,21 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
                     # In persistent mode, connect via WebSocket for real-time events
                     # with a stdin command reader running alongside so the
                     # desktop GUI can send PREVIEW (and future) commands.
-                    log.info("Initial sync complete, connecting to WebSocket for real-time events...")
+                    log.info(
+                        "Initial sync complete, connecting to WebSocket for real-time events..."
+                    )
                     ws_port = master.port + 1  # WebSocket is on next port
                     try:
-                        run(_with_stdin_commands(
-                            log,
-                            lan_websocket_client(
-                                host=master.address,
-                                port=ws_port,
-                                use_https=master.use_https,
-                            ),
-                        ))
+                        run(
+                            _with_stdin_commands(
+                                log,
+                                lan_websocket_client(
+                                    host=master.address,
+                                    port=ws_port,
+                                    use_https=master.use_https,
+                                ),
+                            )
+                        )
                     except Exception as e:
                         log.warning(f"WebSocket connection ended: {e}")
                     # If WebSocket disconnects, re-enter discovery loop
@@ -876,4 +894,3 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
         if lan_ws_server:
             lan_ws_server.stop()
         lan_sync.stop()
-

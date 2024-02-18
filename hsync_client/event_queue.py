@@ -54,6 +54,7 @@ class QueuedEvent:
         next_retry_time: Unix timestamp when retry is allowed.
         created_at: Unix timestamp when event was first queued.
     """
+
     data: dict[str, Any]
     retry_count: int = 0
     next_retry_time: float = 0.0
@@ -66,7 +67,7 @@ class QueuedEvent:
         Returns:
             Delay in seconds before next retry attempt.
         """
-        delay = INITIAL_BACKOFF * (BACKOFF_MULTIPLIER ** self.retry_count)
+        delay = INITIAL_BACKOFF * (BACKOFF_MULTIPLIER**self.retry_count)
         return min(delay, MAX_BACKOFF)
 
 
@@ -191,4 +192,3 @@ class EventQueue:
         """Stop the event processing loop."""
         self._running = False
         log.debug("Event queue stopped")
-

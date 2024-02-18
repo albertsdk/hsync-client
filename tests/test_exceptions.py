@@ -5,24 +5,24 @@ Tests for hsync_client.exceptions module.
 import pytest
 
 from hsync_client.exceptions import (
-    HSyncClientError,
-    ConfigurationError,
-    InvalidLocalPathError,
-    InvalidServerUrlError,
-    InvalidBucketNameError,
-    NetworkError,
-    ConnectionError,
     AuthenticationError,
-    WebSocketError,
-    ServerError,
-    SyncError,
-    UploadError,
-    DownloadError,
     ChecksumError,
+    ConfigurationError,
+    ConnectionError,
+    DownloadError,
     FileOperationError,
     FileReadError,
     FileWriteError,
+    HSyncClientError,
+    InvalidBucketNameError,
+    InvalidLocalPathError,
+    InvalidServerUrlError,
+    NetworkError,
     PermissionError,
+    ServerError,
+    SyncError,
+    UploadError,
+    WebSocketError,
 )
 
 
@@ -236,4 +236,3 @@ class TestExceptionHierarchy:
         # Catch all by base class
         with pytest.raises(HSyncClientError):
             raise InvalidBucketNameError()
-

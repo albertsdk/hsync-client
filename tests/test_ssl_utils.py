@@ -7,19 +7,15 @@ Tests SSL certificate generation, saving, fingerprint verification.
 import hashlib
 import os
 import ssl
-import tempfile
 
-import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
 from hsync_client.ssl_utils import (
-    CERT_VALIDITY_DAYS,
-    RSA_KEY_SIZE,
     CertificateInfo,
+    create_fingerprint_ssl_context,
     generate_self_signed_cert,
     save_cert_to_temp_files,
-    create_fingerprint_ssl_context,
     verify_cert_fingerprint,
 )
 
@@ -36,8 +32,11 @@ class TestCertificateInfo:
     def test_all_fields(self):
         """All fields can be set."""
         info = CertificateInfo(
-            cert_pem=b"cert", key_pem=b"key", fingerprint="abc",
-            cert_file="/tmp/cert.pem", key_file="/tmp/key.pem",
+            cert_pem=b"cert",
+            key_pem=b"key",
+            fingerprint="abc",
+            cert_file="/tmp/cert.pem",
+            key_file="/tmp/key.pem",
         )
         assert info.cert_file == "/tmp/cert.pem"
         assert info.key_file == "/tmp/key.pem"
@@ -192,4 +191,3 @@ class TestGetServerCertFingerprint:
 
         result = get_server_cert_fingerprint("invalid.hostname.that.does.not.exist", 443)
         assert result is None
-

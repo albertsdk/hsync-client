@@ -5,11 +5,8 @@ Tests for LAN peer-to-peer synchronization module.
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from hsync_client.lan import (
     HSYNC_LAN_PORT,
-    HSYNC_SERVICE_TYPE,
     PEER_TIMEOUT,
     Peer,
     PeerManager,
@@ -153,35 +150,45 @@ class TestPeerManager:
     def test_add_peer_both_no_group_compatible(self):
         """Test that peers with no group (Option B) see each other."""
         pm = PeerManager(local_cid="local123", bucket="photos", group=None)
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None)
+        peer = Peer(
+            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None
+        )
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is not None
 
     def test_add_peer_local_no_group_remote_has_group_compatible(self):
         """Test that peer with group is visible to local without group (Option B)."""
         pm = PeerManager(local_cid="local123", bucket="photos", group=None)
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a")
+        peer = Peer(
+            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a"
+        )
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is not None
 
     def test_add_peer_local_has_group_remote_no_group_compatible(self):
         """Test that peer without group is visible to local with group (Option B)."""
         pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None)
+        peer = Peer(
+            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None
+        )
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is not None
 
     def test_add_peer_same_group_compatible(self):
         """Test that peers with the same group see each other."""
         pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a")
+        peer = Peer(
+            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a"
+        )
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is not None
 
     def test_add_peer_different_group_ignored(self):
         """Test that peers with different groups are ignored (both have group)."""
         pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-b")
+        peer = Peer(
+            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-b"
+        )
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is None
 
@@ -219,14 +226,30 @@ class TestPeerManager:
     def test_master_election_local_wins(self):
         """Test that local client is elected master when it started earliest."""
         pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)
-        pm.add_peer(Peer(cid="zzz999", bucket="photos", address="192.168.1.100", port=8765, startup_time=200.0))
+        pm.add_peer(
+            Peer(
+                cid="zzz999",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=200.0,
+            )
+        )
         assert pm.is_master() is True
         assert pm.get_master_cid() == "aaa111"
 
     def test_master_election_remote_wins(self):
         """Test that remote peer is elected master when it started earliest."""
         pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
-        pm.add_peer(Peer(cid="aaa111", bucket="photos", address="192.168.1.100", port=8765, startup_time=100.0))
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+            )
+        )
         assert pm.is_master() is False
         assert pm.get_master_cid() == "aaa111"
         master = pm.get_master()
@@ -241,7 +264,15 @@ class TestPeerManager:
 
         # Initially local is master (only peer)
         # Add a peer with earlier startup_time - should trigger callback
-        pm.add_peer(Peer(cid="aaa111", bucket="photos", address="192.168.1.100", port=8765, startup_time=100.0))
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+            )
+        )
 
         callback.assert_called_once()
         # Callback should receive the new master peer
@@ -260,26 +291,42 @@ class TestPeerManager:
         """Test that bidirectional peer wins over upload-only with same startup_time."""
         # Local is upload-only, remote is bidirectional — remote should win
         pm = PeerManager(
-            local_cid="aaa111", bucket="photos",
-            startup_time=100.0, sync_direction="upload-only",
+            local_cid="aaa111",
+            bucket="photos",
+            startup_time=100.0,
+            sync_direction="upload-only",
         )
-        pm.add_peer(Peer(
-            cid="zzz999", bucket="photos", address="192.168.1.100", port=8765,
-            startup_time=100.0, sync_direction="bidirectional",
-        ))
+        pm.add_peer(
+            Peer(
+                cid="zzz999",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+                sync_direction="bidirectional",
+            )
+        )
         assert pm.is_master() is False
         assert pm.get_master_cid() == "zzz999"
 
     def test_bidirectional_preferred_over_download_only(self):
         """Test that bidirectional peer wins over download-only with same startup_time."""
         pm = PeerManager(
-            local_cid="aaa111", bucket="photos",
-            startup_time=100.0, sync_direction="download-only",
+            local_cid="aaa111",
+            bucket="photos",
+            startup_time=100.0,
+            sync_direction="download-only",
         )
-        pm.add_peer(Peer(
-            cid="zzz999", bucket="photos", address="192.168.1.100", port=8765,
-            startup_time=100.0, sync_direction="bidirectional",
-        ))
+        pm.add_peer(
+            Peer(
+                cid="zzz999",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+                sync_direction="bidirectional",
+            )
+        )
         assert pm.is_master() is False
         assert pm.get_master_cid() == "zzz999"
 
@@ -287,26 +334,43 @@ class TestPeerManager:
         """Test that force_master takes priority over sync_direction preference."""
         # Local is upload-only but has force_master — should still win
         pm = PeerManager(
-            local_cid="zzz999", bucket="photos",
-            startup_time=200.0, force_master=True, sync_direction="upload-only",
+            local_cid="zzz999",
+            bucket="photos",
+            startup_time=200.0,
+            force_master=True,
+            sync_direction="upload-only",
         )
-        pm.add_peer(Peer(
-            cid="aaa111", bucket="photos", address="192.168.1.100", port=8765,
-            startup_time=100.0, sync_direction="bidirectional",
-        ))
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+                sync_direction="bidirectional",
+            )
+        )
         assert pm.is_master() is True
         assert pm.get_master_cid() == "zzz999"
 
     def test_both_non_bidirectional_falls_back_to_startup_time(self):
         """Test election between two non-bidirectional peers uses startup_time."""
         pm = PeerManager(
-            local_cid="zzz999", bucket="photos",
-            startup_time=100.0, sync_direction="upload-only",
+            local_cid="zzz999",
+            bucket="photos",
+            startup_time=100.0,
+            sync_direction="upload-only",
         )
-        pm.add_peer(Peer(
-            cid="aaa111", bucket="photos", address="192.168.1.100", port=8765,
-            startup_time=200.0, sync_direction="download-only",
-        ))
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=200.0,
+                sync_direction="download-only",
+            )
+        )
         # Local started earlier, so local wins
         assert pm.is_master() is True
         assert pm.get_master_cid() == "zzz999"
@@ -314,33 +378,48 @@ class TestPeerManager:
     def test_non_bidirectional_master_logs_warning(self):
         """Test that a warning is logged when non-bidirectional master is elected."""
         pm = PeerManager(
-            local_cid="aaa111", bucket="photos",
-            startup_time=100.0, sync_direction="upload-only",
+            local_cid="aaa111",
+            bucket="photos",
+            startup_time=100.0,
+            sync_direction="upload-only",
         )
         with patch("hsync_client.lan.log") as mock_log:
-            pm.add_peer(Peer(
-                cid="zzz999", bucket="photos", address="192.168.1.100", port=8765,
-                startup_time=200.0, sync_direction="download-only",
-            ))
+            pm.add_peer(
+                Peer(
+                    cid="zzz999",
+                    bucket="photos",
+                    address="192.168.1.100",
+                    port=8765,
+                    startup_time=200.0,
+                    sync_direction="download-only",
+                )
+            )
             # Local is master (earlier startup, both non-bidirectional)
             assert pm.is_master() is True
             # Should have logged a warning about non-bidirectional master
             warning_calls = [
-                call for call in mock_log.warning.call_args_list
-                if "sync_direction=" in str(call)
+                call for call in mock_log.warning.call_args_list if "sync_direction=" in str(call)
             ]
             assert len(warning_calls) > 0
 
     def test_bidirectional_local_wins_over_earlier_non_bidirectional(self):
         """Test that bidirectional local wins even if remote started earlier."""
         pm = PeerManager(
-            local_cid="zzz999", bucket="photos",
-            startup_time=200.0, sync_direction="bidirectional",
+            local_cid="zzz999",
+            bucket="photos",
+            startup_time=200.0,
+            sync_direction="bidirectional",
         )
-        pm.add_peer(Peer(
-            cid="aaa111", bucket="photos", address="192.168.1.100", port=8765,
-            startup_time=100.0, sync_direction="upload-only",
-        ))
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+                sync_direction="upload-only",
+            )
+        )
         # Local is bidirectional and should win despite later startup
         assert pm.is_master() is True
         assert pm.get_master_cid() == "zzz999"
@@ -348,16 +427,20 @@ class TestPeerManager:
     def test_peer_sync_direction_default(self):
         """Test that peer sync_direction defaults to bidirectional."""
         peer = Peer(
-            cid="abc123", bucket="photos",
-            address="192.168.1.100", port=8765,
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
         )
         assert peer.sync_direction == "bidirectional"
 
     def test_peer_sync_direction_custom(self):
         """Test creating a peer with custom sync_direction."""
         peer = Peer(
-            cid="abc123", bucket="photos",
-            address="192.168.1.100", port=8765,
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
             sync_direction="upload-only",
         )
         assert peer.sync_direction == "upload-only"
@@ -465,10 +548,7 @@ class TestLANSync:
         from hsync_client.lan import LANSync
 
         lan = LANSync(
-            cid="test123",
-            bucket="photos",
-            use_https=True,
-            cert_fingerprint="abc123def456"
+            cid="test123", bucket="photos", use_https=True, cert_fingerprint="abc123def456"
         )
         assert lan.use_https is True
         assert lan.cert_fingerprint == "abc123def456"
@@ -502,7 +582,7 @@ class TestLANSync:
         from hsync_client.lan import LANSync
 
         lan = LANSync(cid="test123", bucket="photos")
-        pm = lan.start(register_service=True)
+        lan.start(register_service=True)
         assert lan.is_running() is True
         lan.stop()
         assert lan.is_running() is False
@@ -552,20 +632,24 @@ class TestPeerManagerAdvanced:
 
         pm = PeerManager(local_cid="local123", bucket="photos")
         # Add alive peer
-        pm.add_peer(Peer(
-            cid="alive1",
-            bucket="photos",
-            address="192.168.1.100",
-            port=8765,
-        ))
+        pm.add_peer(
+            Peer(
+                cid="alive1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+            )
+        )
         # Add dead peer
-        pm.add_peer(Peer(
-            cid="dead1",
-            bucket="photos",
-            address="192.168.1.101",
-            port=8765,
-            last_seen=time.time() - PEER_TIMEOUT - 10,
-        ))
+        pm.add_peer(
+            Peer(
+                cid="dead1",
+                bucket="photos",
+                address="192.168.1.101",
+                port=8765,
+                last_seen=time.time() - PEER_TIMEOUT - 10,
+            )
+        )
 
         alive = pm.get_alive_peers()
         assert len(alive) == 1
@@ -577,13 +661,15 @@ class TestPeerManagerAdvanced:
 
         pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=100.0)
         # Add a peer that should win initially
-        pm.add_peer(Peer(
-            cid="aaa111",
-            bucket="photos",
-            address="192.168.1.100",
-            port=8765,
-            startup_time=50.0,
-        ))
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=50.0,
+            )
+        )
         assert pm.get_master_cid() == "aaa111"
 
         # Update the peer - should still be master
@@ -604,20 +690,21 @@ class TestPeerManagerAdvanced:
         )
         # Add another force_master peer that started later
         with patch("hsync_client.lan.log") as mock_log:
-            pm.add_peer(Peer(
-                cid="remote",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                force_master=True,
-                startup_time=50.0,
-            ))
+            pm.add_peer(
+                Peer(
+                    cid="remote",
+                    bucket="photos",
+                    address="192.168.1.100",
+                    port=8765,
+                    force_master=True,
+                    startup_time=50.0,
+                )
+            )
             # Remote started earlier, so local should become slave
             assert pm.get_master_cid() == "remote"
             # Should have logged a conflict warning
             warning_calls = [
-                call for call in mock_log.warning.call_args_list
-                if "MASTER_CONFLICT" in str(call)
+                call for call in mock_log.warning.call_args_list if "MASTER_CONFLICT" in str(call)
             ]
             assert len(warning_calls) > 0
 
@@ -632,32 +719,35 @@ class TestPeerManagerAdvanced:
             startup_time=100.0,
         )
         # First become master
-        pm.add_peer(Peer(
-            cid="old_master",
-            bucket="photos",
-            address="192.168.1.100",
-            port=8765,
-            force_master=False,
-            startup_time=200.0,
-        ))
+        pm.add_peer(
+            Peer(
+                cid="old_master",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                force_master=False,
+                startup_time=200.0,
+            )
+        )
         assert pm.get_master_cid() == "local"
 
         # Now a force_master peer joins
         with patch("hsync_client.lan.log") as mock_log:
-            pm.add_peer(Peer(
-                cid="new_force",
-                bucket="photos",
-                address="192.168.1.101",
-                port=8765,
-                force_master=True,
-                startup_time=50.0,
-            ))
+            pm.add_peer(
+                Peer(
+                    cid="new_force",
+                    bucket="photos",
+                    address="192.168.1.101",
+                    port=8765,
+                    force_master=True,
+                    startup_time=50.0,
+                )
+            )
             # New force_master should take over
             assert pm.get_master_cid() == "new_force"
             # Should have logged takeover warning
             warning_calls = [
-                call for call in mock_log.warning.call_args_list
-                if "MASTER_TAKEOVER" in str(call)
+                call for call in mock_log.warning.call_args_list if "MASTER_TAKEOVER" in str(call)
             ]
             assert len(warning_calls) > 0
 
@@ -670,13 +760,15 @@ class TestPeerManagerAdvanced:
         pm.set_master_change_callback(callback)
 
         # Add a peer with later startup - local should become master
-        pm.add_peer(Peer(
-            cid="peer1",
-            bucket="photos",
-            address="192.168.1.100",
-            port=8765,
-            startup_time=200.0,
-        ))
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=200.0,
+            )
+        )
 
         # Callback should be called with None (local is master)
         callback.assert_called()
@@ -692,13 +784,15 @@ class TestPeerManagerAdvanced:
         pm.set_master_change_callback(callback)
 
         # Add a peer that becomes master
-        pm.add_peer(Peer(
-            cid="master_peer",
-            bucket="photos",
-            address="192.168.1.100",
-            port=8765,
-            startup_time=100.0,
-        ))
+        pm.add_peer(
+            Peer(
+                cid="master_peer",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+            )
+        )
         callback.reset_mock()
 
         # Remove the master
@@ -726,18 +820,21 @@ class TestPeerManagerForceMasterLogging:
             startup_time=100.0,
         )
         with patch("hsync_client.lan.log") as mock_log:
-            pm.add_peer(Peer(
-                cid="peer1",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                startup_time=200.0,
-            ))
+            pm.add_peer(
+                Peer(
+                    cid="peer1",
+                    bucket="photos",
+                    address="192.168.1.100",
+                    port=8765,
+                    startup_time=200.0,
+                )
+            )
             # Local should win due to force_master
             assert pm.is_master() is True
             # Should log the reason
             info_calls = [
-                call for call in mock_log.info.call_args_list
+                call
+                for call in mock_log.info.call_args_list
                 if "MASTER" in str(call) and "force_master" in str(call)
             ]
             assert len(info_calls) > 0
@@ -752,18 +849,19 @@ class TestPeerManagerForceMasterLogging:
             startup_time=200.0,
         )
         with patch("hsync_client.lan.log") as mock_log:
-            pm.add_peer(Peer(
-                cid="peer1",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                startup_time=100.0,
-            ))
+            pm.add_peer(
+                Peer(
+                    cid="peer1",
+                    bucket="photos",
+                    address="192.168.1.100",
+                    port=8765,
+                    startup_time=100.0,
+                )
+            )
             # Remote should win
             assert pm.is_master() is False
             # Should log master change
             info_calls = [
-                call for call in mock_log.info.call_args_list
-                if "Master changed" in str(call)
+                call for call in mock_log.info.call_args_list if "Master changed" in str(call)
             ]
             assert len(info_calls) > 0

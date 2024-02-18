@@ -4,13 +4,12 @@ Tests for LAN embedded HTTP server.
 
 import json
 import time
-import threading
 from http.client import HTTPConnection
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
-from hsync_client.lan_server import LANServer, LANRequestHandler
+from hsync_client.lan_server import LANServer
 
 
 class TestLANServer:
@@ -39,6 +38,7 @@ class TestLANRequestHandler:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -50,10 +50,13 @@ class TestLANRequestHandler:
         """Test health check endpoint."""
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/health")
             response = conn.getresponse()
@@ -68,10 +71,13 @@ class TestLANRequestHandler:
         """Test health check with authentication."""
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": "secret123",
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": "secret123",
+            },
+        ):
             # Without auth - should fail
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/health")
@@ -81,18 +87,14 @@ class TestLANRequestHandler:
 
             # With correct auth - should succeed
             conn = HTTPConnection("localhost", port, timeout=5)
-            conn.request("GET", "/api/v1/health", headers={
-                "Authorization": "Bearer secret123"
-            })
+            conn.request("GET", "/api/v1/health", headers={"Authorization": "Bearer secret123"})
             response = conn.getresponse()
             assert response.status == 200
             conn.close()
 
             # With wrong auth - should fail
             conn = HTTPConnection("localhost", port, timeout=5)
-            conn.request("GET", "/api/v1/health", headers={
-                "Authorization": "Bearer wrongkey"
-            })
+            conn.request("GET", "/api/v1/health", headers={"Authorization": "Bearer wrongkey"})
             response = conn.getresponse()
             assert response.status == 401
             conn.close()
@@ -107,10 +109,13 @@ class TestLANRequestHandler:
         (tmp_path / "subdir").mkdir()
         (tmp_path / "subdir" / "file3.txt").write_text("content3")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/files")
             response = conn.getresponse()
@@ -129,10 +134,13 @@ class TestLANRequestHandler:
         test_file = tmp_path / "download_test.txt"
         test_file.write_text("download content")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/files/download?filename=download_test.txt")
             response = conn.getresponse()
@@ -146,10 +154,13 @@ class TestLANRequestHandler:
         """Test download of non-existent file."""
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/files/download?filename=nonexistent.txt")
             response = conn.getresponse()
@@ -161,10 +172,13 @@ class TestLANRequestHandler:
         """Test 404 for unknown endpoints."""
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/unknown/path")
             response = conn.getresponse()
@@ -175,12 +189,16 @@ class TestLANRequestHandler:
     def test_upload_file_endpoint(self, server, tmp_path):
         """Test file upload endpoint using requests (like transfer.py)."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             # Simulate upload like transfer.py does
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -207,12 +225,16 @@ class TestLANRequestHandler:
     def test_upload_file_with_auth(self, server, tmp_path):
         """Test file upload with authentication."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": "secret123",
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": "secret123",
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "test", "path": "", "mtime": "", "ctime": ""}
             files = {"file": ("test.txt", b"content")}
@@ -233,8 +255,8 @@ class TestLANSyncIntegration:
     @pytest.fixture
     def master_server(self, tmp_path):
         """Create a LAN server acting as master with test files."""
-        from hsync_client.lan_server import LANServer
         from hsync_client.lan import get_free_port
+        from hsync_client.lan_server import LANServer
 
         # Create master bucket with files
         master_bucket = tmp_path / "master"
@@ -256,16 +278,20 @@ class TestLANSyncIntegration:
     def test_client_download_from_master(self, master_server, tmp_path):
         """Test client downloading files from master via sync."""
         import requests
+
         srv, port, master_bucket = master_server
 
         # Create client bucket (empty)
         client_bucket = tmp_path / "client"
         client_bucket.mkdir()
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(master_bucket),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(master_bucket),
+                "LAN_KEY": None,
+            },
+        ):
             # Simulate what sync.get_files_remote() does
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.get(url, timeout=5)
@@ -277,22 +303,22 @@ class TestLANSyncIntegration:
             for file_info in files:
                 filepath = file_info["filepath"]
                 download_url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
-                response = requests.get(
-                    download_url,
-                    params={"filename": filepath},
-                    timeout=5
-                )
+                response = requests.get(download_url, params={"filename": filepath}, timeout=5)
                 assert response.status_code == 200
 
     def test_client_upload_to_master(self, master_server, tmp_path):
         """Test client uploading files to master."""
         import requests
+
         srv, port, master_bucket = master_server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(master_bucket),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(master_bucket),
+                "LAN_KEY": None,
+            },
+        ):
             # Simulate upload like transfer.py does
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -324,7 +350,7 @@ Content-Disposition: form-data; name="field1"\r
 value1\r
 --boundary--\r
 """
-        form_data, file_data = _parse_multipart(body, 'multipart/form-data; boundary=boundary')
+        form_data, file_data = _parse_multipart(body, "multipart/form-data; boundary=boundary")
         assert form_data["field1"] == "value1"
         assert file_data == {}
 
@@ -338,7 +364,7 @@ Content-Disposition: form-data; name="file"; filename="test.txt"\r
 file content\r
 --boundary--\r
 """
-        form_data, file_data = _parse_multipart(body, 'multipart/form-data; boundary=boundary')
+        form_data, file_data = _parse_multipart(body, "multipart/form-data; boundary=boundary")
         assert form_data == {}
         assert "file" in file_data
         filename, content = file_data["file"]
@@ -359,7 +385,7 @@ Content-Disposition: form-data; name="field2"\r
 value2\r
 --boundary--\r
 """
-        form_data, file_data = _parse_multipart(body, 'multipart/form-data; boundary=boundary')
+        form_data, file_data = _parse_multipart(body, "multipart/form-data; boundary=boundary")
         assert form_data["field1"] == "value1"
         assert form_data["field2"] == "value2"
 
@@ -386,6 +412,7 @@ class TestLANRequestHandlerDELETE:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -396,16 +423,20 @@ class TestLANRequestHandlerDELETE:
     def test_delete_file(self, server, tmp_path):
         """Test deleting a file via DELETE endpoint."""
         import requests
+
         srv, port = server
 
         # Create test file
         test_file = tmp_path / "to_delete.txt"
         test_file.write_text("content to delete")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "to_delete.txt"}, timeout=5)
 
@@ -415,6 +446,7 @@ class TestLANRequestHandlerDELETE:
     def test_delete_directory(self, server, tmp_path):
         """Test deleting a directory via DELETE endpoint."""
         import requests
+
         srv, port = server
 
         # Create test directory with file
@@ -422,12 +454,17 @@ class TestLANRequestHandlerDELETE:
         test_dir.mkdir()
         (test_dir / "file.txt").write_text("content")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            response = requests.delete(url, params={"path": "to_delete_dir", "is_dir": "true"}, timeout=5)
+            response = requests.delete(
+                url, params={"path": "to_delete_dir", "is_dir": "true"}, timeout=5
+            )
 
             assert response.status_code == 200
             assert not test_dir.exists()
@@ -435,12 +472,16 @@ class TestLANRequestHandlerDELETE:
     def test_delete_nonexistent_file(self, server, tmp_path):
         """Test deleting a non-existent file returns success."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "nonexistent.txt"}, timeout=5)
 
@@ -449,12 +490,16 @@ class TestLANRequestHandlerDELETE:
     def test_delete_without_path_param(self, server, tmp_path):
         """Test DELETE without path parameter returns error."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, timeout=5)
 
@@ -468,6 +513,7 @@ class TestLANRequestHandlerPATCH:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -478,18 +524,24 @@ class TestLANRequestHandlerPATCH:
     def test_rename_file(self, server, tmp_path):
         """Test renaming a file via PATCH endpoint."""
         import requests
+
         srv, port = server
 
         # Create test file
         test_file = tmp_path / "old_name.txt"
         test_file.write_text("content")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            response = requests.patch(url, params={"src": "old_name.txt", "dst": "new_name.txt"}, timeout=5)
+            response = requests.patch(
+                url, params={"src": "old_name.txt", "dst": "new_name.txt"}, timeout=5
+            )
 
             assert response.status_code == 200
             assert not test_file.exists()
@@ -498,6 +550,7 @@ class TestLANRequestHandlerPATCH:
     def test_rename_directory(self, server, tmp_path):
         """Test renaming a directory via PATCH endpoint."""
         import requests
+
         srv, port = server
 
         # Create test directory
@@ -505,10 +558,13 @@ class TestLANRequestHandlerPATCH:
         test_dir.mkdir()
         (test_dir / "file.txt").write_text("content")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(url, params={"src": "old_dir", "dst": "new_dir"}, timeout=5)
 
@@ -519,26 +575,36 @@ class TestLANRequestHandlerPATCH:
     def test_rename_nonexistent_file(self, server, tmp_path):
         """Test renaming a non-existent file returns error."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            response = requests.patch(url, params={"src": "nonexistent.txt", "dst": "new.txt"}, timeout=5)
+            response = requests.patch(
+                url, params={"src": "nonexistent.txt", "dst": "new.txt"}, timeout=5
+            )
 
             assert response.status_code == 404
 
     def test_rename_without_params(self, server, tmp_path):
         """Test rename without src/dst params returns error."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(url, timeout=5)
 
@@ -552,6 +618,7 @@ class TestLANRequestHandlerDownloadSecurity:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -561,28 +628,28 @@ class TestLANRequestHandlerDownloadSecurity:
 
     def test_download_path_traversal_blocked(self, server, tmp_path):
         """Test that path traversal attempts are blocked."""
+
         import requests
-        from urllib.parse import quote
+
         srv, port = server
 
         # Create test file in bucket
         test_file = tmp_path / "safe.txt"
         test_file.write_text("safe content")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             # Try path traversal with a file that exists outside bucket
             # Use a relative path that gets resolved outside bucket
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             # Try to access a file outside bucket via traversal
             # The path normalization will result in path outside bucket
-            response = requests.get(
-                url,
-                params={"filename": "../../etc/hostname"},
-                timeout=5
-            )
+            response = requests.get(url, params={"filename": "../../etc/hostname"}, timeout=5)
 
             # Should be forbidden (403) or not found (404) depending on path resolution
             assert response.status_code in (403, 404)
@@ -595,6 +662,7 @@ class TestLANRequestHandlerUploadSecurity:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -605,12 +673,16 @@ class TestLANRequestHandlerUploadSecurity:
     def test_upload_path_traversal_blocked(self, server, tmp_path):
         """Test that path traversal in uploads is blocked."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             # Try path traversal
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -633,6 +705,7 @@ class TestLANRequestHandlerDeleteSecurity:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -643,18 +716,18 @@ class TestLANRequestHandlerDeleteSecurity:
     def test_delete_path_traversal_blocked(self, server, tmp_path):
         """Test that path traversal in deletes is blocked."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            response = requests.delete(
-                url,
-                params={"path": "../somefile.txt"},
-                timeout=5
-            )
+            response = requests.delete(url, params={"path": "../somefile.txt"}, timeout=5)
 
             # Should be bad request
             assert response.status_code == 400
@@ -667,6 +740,7 @@ class TestLANRequestHandlerRenameSecurity:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -677,17 +751,19 @@ class TestLANRequestHandlerRenameSecurity:
     def test_rename_path_traversal_blocked(self, server, tmp_path):
         """Test that path traversal in renames is blocked."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
-                url,
-                params={"src": "safe.txt", "dst": "../malicious.txt"},
-                timeout=5
+                url, params={"src": "safe.txt", "dst": "../malicious.txt"}, timeout=5
             )
 
             # Should be bad request
@@ -701,6 +777,7 @@ class TestLANRequestHandlerBucketNotConfigured:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -711,12 +788,16 @@ class TestLANRequestHandlerBucketNotConfigured:
     def test_list_files_no_bucket_configured(self, server):
         """Test list files when bucket is not configured."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": "",
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": "",
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.get(url, timeout=5)
 
@@ -725,18 +806,18 @@ class TestLANRequestHandlerBucketNotConfigured:
     def test_download_no_bucket_configured(self, server):
         """Test download when bucket is not configured."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": "",
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": "",
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
-            response = requests.get(
-                url,
-                params={"filename": "test.txt"},
-                timeout=5
-            )
+            response = requests.get(url, params={"filename": "test.txt"}, timeout=5)
 
             assert response.status_code == 404
 
@@ -748,6 +829,7 @@ class TestLANRequestHandlerRange:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -758,22 +840,26 @@ class TestLANRequestHandlerRange:
     def test_download_with_range(self, server, tmp_path):
         """Test downloading file with Range header."""
         import requests
+
         srv, port = server
 
         # Create test file
         test_file = tmp_path / "range_test.txt"
         test_file.write_text("0123456789")  # 10 bytes
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(
                 url,
                 params={"filename": "range_test.txt"},
                 headers={"Range": "bytes=0-4"},
-                timeout=5
+                timeout=5,
             )
 
             assert response.status_code == 206
@@ -783,22 +869,26 @@ class TestLANRequestHandlerRange:
     def test_download_with_suffix_range(self, server, tmp_path):
         """Test downloading file with suffix Range (last N bytes)."""
         import requests
+
         srv, port = server
 
         # Create test file
         test_file = tmp_path / "suffix_test.txt"
         test_file.write_text("0123456789")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(
                 url,
                 params={"filename": "suffix_test.txt"},
                 headers={"Range": "bytes=-3"},
-                timeout=5
+                timeout=5,
             )
 
             assert response.status_code == 206
@@ -807,22 +897,26 @@ class TestLANRequestHandlerRange:
     def test_download_with_invalid_range(self, server, tmp_path):
         """Test downloading with invalid Range returns 416."""
         import requests
+
         srv, port = server
 
         # Create test file
         test_file = tmp_path / "invalid_range.txt"
         test_file.write_text("0123456789")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(
                 url,
                 params={"filename": "invalid_range.txt"},
                 headers={"Range": "bytes=100-200"},
-                timeout=5
+                timeout=5,
             )
 
             assert response.status_code == 416
@@ -835,6 +929,7 @@ class TestLANRequestHandlerTime:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -845,12 +940,16 @@ class TestLANRequestHandlerTime:
     def test_time_endpoint(self, server, tmp_path):
         """Test time endpoint returns timestamp."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/time"
             response = requests.get(url, timeout=5)
 
@@ -867,6 +966,7 @@ class TestLANRequestHandlerListFilesFilter:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -877,6 +977,7 @@ class TestLANRequestHandlerListFilesFilter:
     def test_list_files_with_path_filter(self, server, tmp_path):
         """Test listing files with path filter."""
         import requests
+
         srv, port = server
 
         # Create test files
@@ -884,10 +985,13 @@ class TestLANRequestHandlerListFilesFilter:
         (tmp_path / "subdir").mkdir()
         (tmp_path / "subdir" / "file2.txt").write_text("content2")
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.get(url, params={"path": "subdir/"}, timeout=5)
 
@@ -905,6 +1009,7 @@ class TestLANRequestHandlerUpload:
     def server(self):
         """Create and start a test server."""
         from hsync_client.lan import get_free_port
+
         port = get_free_port()
         server = LANServer(port=port)
         server.start()
@@ -924,10 +1029,13 @@ class TestLANRequestHandlerUpload:
         compressor = zstd.ZstdCompressor()
         compressed_content = compressor.compress(original_content)
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "test",
@@ -948,12 +1056,16 @@ class TestLANRequestHandlerUpload:
     def test_upload_without_file(self, server, tmp_path):
         """Test uploading without file returns error."""
         import requests
+
         srv, port = server
 
-        with patch("hsync_client.lan_server.CONFIG", {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-        }):
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "test", "path": "", "mtime": ""}
             files = {}
@@ -977,7 +1089,8 @@ class TestLANServerEdgeCases:
         with patch("hsync_client.lan_server.log") as mock_log:
             server.start()
             warning_calls = [
-                call for call in mock_log.warning.call_args_list
+                call
+                for call in mock_log.warning.call_args_list
                 if "already running" in str(call).lower()
             ]
             assert len(warning_calls) > 0
@@ -995,7 +1108,7 @@ class TestSSLUtils:
 
     def test_generate_self_signed_cert(self):
         """Test generating a self-signed certificate."""
-        from hsync_client.ssl_utils import generate_self_signed_cert, CertificateInfo
+        from hsync_client.ssl_utils import CertificateInfo, generate_self_signed_cert
 
         cert_info = generate_self_signed_cert()
 
@@ -1018,8 +1131,9 @@ class TestSSLUtils:
 
     def test_save_cert_to_temp_files(self):
         """Test saving certificate to temporary files."""
-        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
         import os
+
+        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
 
         cert_info = generate_self_signed_cert()
         saved_info = save_cert_to_temp_files(cert_info)
@@ -1041,20 +1155,20 @@ class TestSSLUtils:
 
     def test_fingerprint_is_deterministic(self):
         """Test that same cert produces same fingerprint."""
-        from hsync_client.ssl_utils import CertificateInfo
         import hashlib
+
         from cryptography import x509
 
         # Generate a cert and verify fingerprint calculation
         from hsync_client.ssl_utils import generate_self_signed_cert
+
         cert_info = generate_self_signed_cert()
 
         # Parse the cert and recalculate fingerprint
         cert = x509.load_pem_x509_certificate(cert_info.cert_pem)
         from cryptography.hazmat.primitives import serialization
-        expected_fp = hashlib.sha256(
-            cert.public_bytes(serialization.Encoding.DER)
-        ).hexdigest()
+
+        expected_fp = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
 
         assert cert_info.fingerprint == expected_fp
 
@@ -1074,8 +1188,9 @@ class TestLANServerHTTPS:
 
     def test_server_https_with_cert(self):
         """Test creating HTTPS server with certificate."""
-        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
         import os
+
+        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
 
         cert_info = generate_self_signed_cert()
         saved_info = save_cert_to_temp_files(cert_info)

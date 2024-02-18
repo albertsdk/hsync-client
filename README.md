@@ -152,7 +152,7 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 - � **HTTPS by default** - self-signed certificate per session with fingerprint verification
 - 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
 - �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
-  
+
 
 ## Quick Start
 

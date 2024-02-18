@@ -7,13 +7,12 @@ local and remote file states.
 """
 
 from datetime import timedelta as td
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from .file import File
 
 
-class SyncActionName(str, Enum):
+class SyncActionName(StrEnum):
     """
     Enumeration of possible synchronization actions.
 
@@ -50,7 +49,7 @@ class SyncAction:
     def __init__(
         self,
         file: File,
-        name: Optional[SyncActionName] = None,
+        name: SyncActionName | None = None,
         timedelta: int = 0,
     ):
         """

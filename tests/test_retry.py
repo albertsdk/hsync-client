@@ -10,10 +10,10 @@ from requests import RequestException
 from hsync_client.exceptions import NetworkError
 from hsync_client.retry import (
     DEFAULT_MAX_ATTEMPTS,
-    DEFAULT_MIN_WAIT,
     DEFAULT_MAX_WAIT,
-    retry_on_network_error,
+    DEFAULT_MIN_WAIT,
     retry_on_connection_error,
+    retry_on_network_error,
 )
 
 
@@ -158,4 +158,3 @@ class TestRetryDefaults:
     def test_default_max_wait(self):
         """Default max wait is 10 seconds."""
         assert DEFAULT_MAX_WAIT == 10
-

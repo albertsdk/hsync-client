@@ -5,8 +5,6 @@ Tests for Dir model.
 import os
 import tempfile
 
-import pytest
-
 from hsync_client.models.dir import Dir, is_hidden_dir
 
 
@@ -71,7 +69,7 @@ class TestDirModel:
         with tempfile.TemporaryDirectory() as temp_dir:
             subdir = os.path.join(temp_dir, "subdir")
             os.makedirs(subdir)
-            
+
             # When bucket_dir is provided, path is relative
             d = Dir.get("subdir", buckets_dir=temp_dir)
             assert d is not None
@@ -96,4 +94,3 @@ class TestDirModel:
             perms = Dir._get_permissions(temp_dir)
             assert perms.startswith("d")
             assert len(perms) == 10
-

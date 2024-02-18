@@ -7,12 +7,12 @@
 """Tests for update operations in sync module."""
 
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hsync_client.sync import update_dir, update_file
 from hsync_client.models.file import File
+from hsync_client.sync import update_dir, update_file
 
 
 class TestUpdateDir:
@@ -78,8 +78,10 @@ class TestUpdateFile:
         }
 
         mock_download = MagicMock()
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}), \
-             patch("hsync_client.transfer.download_file", mock_download):
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.download_file", mock_download),
+        ):
             update_file(data)
             mock_download.assert_called_once()
 
@@ -100,8 +102,10 @@ class TestUpdateFile:
         }
 
         mock_download = MagicMock()
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}), \
-             patch("hsync_client.transfer.download_file", mock_download):
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.download_file", mock_download),
+        ):
             update_file(data)
             mock_download.assert_called_once()
 
@@ -124,8 +128,10 @@ class TestUpdateFile:
         }
 
         mock_set_perms = MagicMock()
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}), \
-             patch("hsync_client.sync.set_permissions", mock_set_perms):
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync.set_permissions", mock_set_perms),
+        ):
             update_file(data)
             mock_set_perms.assert_called_once()
 
@@ -177,11 +183,13 @@ class TestSync:
             "LOCAL_BUCKET": str(tmp_path),
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get_files_remote", return_value=remote_files), \
-             patch("hsync_client.sync.ensure_hsynckeep_files"), \
-             patch("hsync_client.transfer.download_file") as mock_download, \
-             patch("hsync_client.transfer.upload_file") as mock_upload:
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get_files_remote", return_value=remote_files),
+            patch("hsync_client.sync.ensure_hsynckeep_files"),
+            patch("hsync_client.transfer.download_file") as mock_download,
+            patch("hsync_client.transfer.upload_file") as mock_upload,
+        ):
             await sync()
             mock_download.assert_called_once()
             mock_upload.assert_not_called()
@@ -199,10 +207,12 @@ class TestSync:
             "LOCAL_BUCKET": str(tmp_path),
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get_files_remote", return_value=[]), \
-             patch("hsync_client.transfer.download_file") as mock_download, \
-             patch("hsync_client.transfer.upload_file") as mock_upload:
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get_files_remote", return_value=[]),
+            patch("hsync_client.transfer.download_file") as mock_download,
+            patch("hsync_client.transfer.upload_file") as mock_upload,
+        ):
             await sync()
             mock_download.assert_not_called()
             mock_upload.assert_called_once()
@@ -210,32 +220,41 @@ class TestSync:
     @pytest.mark.asyncio
     async def test_sync_handles_auth_error(self, tmp_path):
         """sync handles authentication errors gracefully."""
-        from hsync_client.sync import sync
         from hsync_client.exceptions import AuthenticationError
+        from hsync_client.sync import sync
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get_files_remote", side_effect=AuthenticationError("Invalid API key")), \
-             patch("hsync_client.sync.is_debug", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch(
+                "hsync_client.sync.get_files_remote",
+                side_effect=AuthenticationError("Invalid API key"),
+            ),
+            patch("hsync_client.sync.is_debug", return_value=False),
+        ):
             # Should not raise exception
             await sync()
 
     @pytest.mark.asyncio
     async def test_sync_handles_network_error(self, tmp_path):
         """sync handles network errors gracefully."""
-        from hsync_client.sync import sync
         from hsync_client.exceptions import NetworkError
+        from hsync_client.sync import sync
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get_files_remote", side_effect=NetworkError("Connection failed")), \
-             patch("hsync_client.sync.is_debug", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch(
+                "hsync_client.sync.get_files_remote", side_effect=NetworkError("Connection failed")
+            ),
+            patch("hsync_client.sync.is_debug", return_value=False),
+        ):
             # Should not raise exception
             await sync()
 
@@ -248,9 +267,10 @@ class TestSync:
             "LOCAL_BUCKET": str(tmp_path),
         }
 
-        with patch("hsync_client.sync.CONFIG", config), \
-             patch("hsync_client.sync.get_files_remote", side_effect=Exception("Unexpected")), \
-             patch("hsync_client.sync.is_debug", return_value=False):
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get_files_remote", side_effect=Exception("Unexpected")),
+            patch("hsync_client.sync.is_debug", return_value=False),
+        ):
             # Should not raise exception
             await sync()
-

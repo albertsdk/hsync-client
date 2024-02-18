@@ -25,25 +25,23 @@ from __future__ import annotations
 import json
 import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from os import walk
-from os.path import join, exists
-from typing import Optional
-from urllib.parse import urlparse, parse_qs
+from os.path import exists, join
+from urllib.parse import parse_qs, urlparse
 
 from loguru import logger as log
 
 from hsync_client.compression import (
+    CONTENT_ENCODING_ZSTD,
     compress_data,
     decompress_data,
     should_compress,
-    CONTENT_ENCODING_ZSTD,
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.models.dir import is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
-
 
 # =============================================================================
 # Constants
@@ -167,7 +165,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for LAN master server."""
 
     # Reference to the server instance for accessing config
-    server: "LANServer"  # type: ignore[assignment]
+    server: LANServer  # type: ignore[assignment]
 
     def log_message(self, format: str, *args) -> None:
         """Override to use our logger instead of stderr."""
@@ -281,7 +279,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from slave."""
-        from os import rename, makedirs
+        from os import makedirs, rename
         from os.path import dirname
 
         src_rel = query.get("src", [None])[0]
@@ -445,6 +443,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         clock offset using round-trip measurement (NTP-like).
         """
         import time
+
         self._send_json_response(HTTP_OK, {"timestamp": time.time()})
 
     def _handle_list_files(self, query: dict) -> None:
@@ -484,7 +483,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json_response(HTTP_OK, file_list)
 
-    def _parse_range_header(self, range_header: str, file_size: int) -> Optional[tuple[int, int]]:
+    def _parse_range_header(self, range_header: str, file_size: int) -> tuple[int, int] | None:
         """
         Parse HTTP Range header.
 
@@ -551,6 +550,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         # Security check: ensure file is within bucket
         import os.path
+
         real_bucket = os.path.realpath(local_bucket)
         real_file = os.path.realpath(filepath)
         if not real_file.startswith(real_bucket):
@@ -568,7 +568,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             # Check for Range header
             range_header = self.headers.get("Range")
-            range_tuple = self._parse_range_header(range_header, file_size) if range_header else None
+            range_tuple = (
+                self._parse_range_header(range_header, file_size) if range_header else None
+            )
 
             if range_header and range_tuple is None:
                 # Invalid range requested
@@ -599,9 +601,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
                     # Use compression if enabled and beneficial
                     # In LAN mode, use higher threshold (100KB) since local network is fast
-                    use_compression = (
-                        CONFIG.get("COMPRESSION_ENABLED", False)
-                        and should_compress(filepath, file_size, is_lan=True)
+                    use_compression = CONFIG.get("COMPRESSION_ENABLED", False) and should_compress(
+                        filepath, file_size, is_lan=True
                     )
 
                     if use_compression:
@@ -628,7 +629,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(content)
 
-        except IOError as e:
+        except OSError as e:
             log.error(f"Error reading file {filepath}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 
@@ -643,6 +644,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # Parse multipart form data using our custom parser
         try:
             import os
+
             from hsync_client.utils import set_permissions
 
             # Read request body
@@ -678,10 +680,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             # Build destination path
             local_bucket = CONFIG.get("LOCAL_BUCKET", "")
-            if path:
-                dest_dir = join(local_bucket, path)
-            else:
-                dest_dir = local_bucket
+            dest_dir = join(local_bucket, path) if path else local_bucket
 
             # Create directory if needed
             os.makedirs(dest_dir, exist_ok=True)
@@ -714,10 +713,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 set_permissions(dest_path, permissions)
 
             log.info(f"Received file from {cid}: {dest_path}")
-            self._send_json_response(HTTP_CREATED, {
-                "info": "File uploaded successfully",
-                "file": dest_path,
-            })
+            self._send_json_response(
+                HTTP_CREATED,
+                {
+                    "info": "File uploaded successfully",
+                    "file": dest_path,
+                },
+            )
 
         except Exception as e:
             log.error(f"Error handling upload: {e}")
@@ -741,8 +743,8 @@ class LANServer:
         self,
         port: int,
         use_https: bool = False,
-        cert_file: Optional[str] = None,
-        key_file: Optional[str] = None,
+        cert_file: str | None = None,
+        key_file: str | None = None,
     ) -> None:
         """
         Initialize the LAN server.
@@ -757,8 +759,8 @@ class LANServer:
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
-        self._server: Optional[HTTPServer] = None
-        self._thread: Optional[threading.Thread] = None
+        self._server: HTTPServer | None = None
+        self._thread: threading.Thread | None = None
         self._running = False
 
         # Validate HTTPS configuration
@@ -822,4 +824,3 @@ class LANServer:
     def is_running(self) -> bool:
         """Check if server is running."""
         return self._running
-

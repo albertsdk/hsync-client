@@ -19,15 +19,14 @@ import ipaddress
 import ssl
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from urllib3.util.ssl_ import create_urllib3_context
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from loguru import logger as log
+from urllib3.util.ssl_ import create_urllib3_context
 
 # Certificate validity period (1 day for session-based certificates)
 CERT_VALIDITY_DAYS = 1
@@ -43,8 +42,8 @@ class CertificateInfo:
     cert_pem: bytes
     key_pem: bytes
     fingerprint: str
-    cert_file: Optional[str] = None
-    key_file: Optional[str] = None
+    cert_file: str | None = None
+    key_file: str | None = None
 
 
 def generate_self_signed_cert(
@@ -70,13 +69,15 @@ def generate_self_signed_cert(
     )
 
     # Build certificate subject and issuer
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "HSYNC LAN Mode"),
-    ])
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "HSYNC LAN Mode"),
+        ]
+    )
 
     # Build certificate
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -86,11 +87,13 @@ def generate_self_signed_cert(
         .not_valid_before(now)
         .not_valid_after(now + timedelta(days=validity_days))
         .add_extension(
-            x509.SubjectAlternativeName([
-                x509.DNSName("localhost"),
-                x509.DNSName("*"),
-                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-            ]),
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName("localhost"),
+                    x509.DNSName("*"),
+                    x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+                ]
+            ),
             critical=False,
         )
         .sign(private_key, hashes.SHA256())
@@ -190,7 +193,7 @@ def verify_cert_fingerprint(cert_der: bytes, expected_fingerprint: str) -> bool:
     return actual_fingerprint.lower() == expected_fingerprint.lower()
 
 
-def get_server_cert_fingerprint(host: str, port: int) -> Optional[str]:
+def get_server_cert_fingerprint(host: str, port: int) -> str | None:
     """
     Get the SHA-256 fingerprint of a server's SSL certificate.
 

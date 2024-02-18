@@ -12,7 +12,8 @@ handling transient network failures gracefully.
 """
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from loguru import logger as log
 from requests import RequestException
@@ -25,7 +26,6 @@ from tenacity import (
 )
 
 from hsync_client.exceptions import NetworkError
-
 
 # =============================================================================
 # Retry Configuration
@@ -95,4 +95,3 @@ def retry_on_connection_error(
         before_sleep=before_sleep_log(log, logging.WARNING),
         reraise=True,
     )
-

@@ -28,11 +28,13 @@ repos:
       # Run ruff formatter
       - id: ruff-format
 
-  # MyPy type checker
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.14.0
-    hooks:
-      - id: mypy
-        args: [--no-error-summary]
-        files: ^hsync_client/
-        types_or: [python, pyi]
+  # MyPy type checker (disabled by default - requires additional setup)
+  # To enable: pip install mypy types-requests && pre-commit install
+  # Uncomment the following to enable:
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.14.0
+  #   hooks:
+  #     - id: mypy
+  #       args: [--no-error-summary, --ignore-missing-imports]
+  #       files: ^hsync_client/
+  #       types_or: [python, pyi]

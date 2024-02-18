@@ -6,7 +6,6 @@ path and permissions, used for directory synchronization events.
 """
 
 import stat
-
 from os import stat as os_stat
 from os.path import basename, dirname, exists, join
 from typing import Optional
@@ -51,9 +50,7 @@ class Dir:
         permissions: Symbolic permission string (e.g., 'drwxr-xr-x').
     """
 
-    def __init__(
-        self, path: Optional[str] = None, permissions: Optional[str] = None
-    ):
+    def __init__(self, path: str | None = None, permissions: str | None = None):
         """
         Initialize a Dir instance.
 
@@ -66,11 +63,7 @@ class Dir:
 
     def __repr__(self) -> str:
         """Return string representation of the Dir instance."""
-        return (
-            f"{self.__class__.__name__}("
-            f"path={self.path}, "
-            f"permissions={self.permissions})"
-        )
+        return f"{self.__class__.__name__}(path={self.path}, permissions={self.permissions})"
 
     @staticmethod
     def _get_permissions(obj_path: str) -> str:
@@ -100,9 +93,7 @@ class Dir:
         }
 
     @classmethod
-    def from_dict(
-        cls, data: dict, localpath: str, strip_localpath: bool = False
-    ) -> "Dir":
+    def from_dict(cls, data: dict, localpath: str, strip_localpath: bool = False) -> "Dir":
         """
         Create a Dir instance from a dictionary.
 
@@ -126,7 +117,7 @@ class Dir:
         )
 
     @classmethod
-    def get(cls, path: str, buckets_dir: Optional[str] = None) -> Optional["Dir"]:
+    def get(cls, path: str, buckets_dir: str | None = None) -> Optional["Dir"]:
         """
         Get a Dir instance for an existing directory.
 
