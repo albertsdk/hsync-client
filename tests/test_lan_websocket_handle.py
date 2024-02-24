@@ -1,0 +1,504 @@
+"""
+Tests for LAN event handling and brace escaping functionality.
+"""
+
+from unittest.mock import patch
+
+import pytest
+
+from hsync_client.lan_websocket import SlaveFileEventHandler, _escape_braces, _handle_lan_event
+
+
+class TestEscapeBraces:
+    """Tests for _escape_braces helper function."""
+
+    def test_escape_single_braces(self):
+        """Test escaping single curly braces."""
+        assert _escape_braces("test {value}") == "test {{value}}"
+
+    def test_escape_multiple_braces(self):
+        """Test escaping multiple curly braces."""
+        assert _escape_braces("{a} and {b}") == "{{a}} and {{b}}"
+
+    def test_no_braces(self):
+        """Test string without braces."""
+        assert _escape_braces("no braces here") == "no braces here"
+
+    def test_empty_string(self):
+        """Test empty string."""
+        assert _escape_braces("") == ""
+
+
+class TestHandleLanEvent:
+    """Tests for _handle_lan_event function."""
+
+    @pytest.mark.asyncio
+    async def test_handle_added_file_event(self, tmp_path):
+        """Test handling added file event."""
+        event_data = {
+            "name": "added",
+            "src": {
+                "filepath": "test.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+
+            mock_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_added_directory_event(self, tmp_path):
+        """Test handling added directory event."""
+        event_data = {
+            "name": "added",
+            "src": {
+                "path": "newdir",
+                "permissions": "drwxr-xr-x",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_dir") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+
+            mock_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_modified_file_event(self, tmp_path):
+        """Test handling modified file event."""
+        event_data = {
+            "name": "modified",
+            "src": {
+                "filepath": "modified.txt",
+                "md5sum": "def456",
+                "mtime": 2000,
+                "ctime": 1000,
+                "size": 20,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+
+            mock_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_renamed_file_event(self, tmp_path):
+        """Test handling renamed file event."""
+        # Create source file
+        src_file = tmp_path / "old.txt"
+        src_file.write_text("content")
+
+        event_data = {
+            "name": "renamed",
+            "src": {
+                "filepath": "old.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 7,
+                "permissions": "-rw-r--r--",
+            },
+            "dst": {
+                "filepath": "new.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 7,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        # File should be renamed
+        assert not src_file.exists()
+        assert (tmp_path / "new.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_deleted_file_event(self, tmp_path):
+        """Test handling deleted file event."""
+        # Create file to delete
+        test_file = tmp_path / "todelete.txt"
+        test_file.write_text("content")
+
+        event_data = {
+            "name": "deleted",
+            "src": {
+                "filepath": "todelete.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 7,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        # File should be deleted
+        assert not test_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_deleted_ignore_delete_mode(self, tmp_path):
+        """Test that deletions are ignored in ignore-delete mode."""
+        # Create file
+        test_file = tmp_path / "keepme.txt"
+        test_file.write_text("content")
+
+        event_data = {
+            "name": "deleted",
+            "src": {
+                "filepath": "keepme.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 7,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": True,
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        # File should still exist
+        assert test_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_event_upload_only_mode(self, tmp_path):
+        """Test that events are ignored in upload-only mode."""
+        event_data = {
+            "name": "added",
+            "src": {
+                "filepath": "test.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "upload-only",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+
+            # Should not update in upload-only mode
+            mock_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_event_missing_src(self):
+        """Test handling event with missing src field."""
+        event_data = {
+            "name": "added",
+            # Missing src field
+        }
+
+        config = {
+            "LOCAL_BUCKET": "/tmp",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+
+            # Should not process event
+            mock_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_symlink_event(self, tmp_path):
+        """Test handling symlink event."""
+        event_data = {
+            "name": "symlink",
+            "src": {
+                "filepath": "link.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "permissions": "lrwxrwxrwx",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+
+            mock_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_renamed_dir_event(self, tmp_path):
+        """Test handling renamed directory event."""
+        src_dir = tmp_path / "olddir"
+        src_dir.mkdir()
+
+        event_data = {
+            "name": "renamed",
+            "src": {"path": "olddir", "permissions": "drwxr-xr-x"},
+            "dst": {"path": "newdir", "permissions": "drwxr-xr-x"},
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        assert not src_dir.exists()
+        assert (tmp_path / "newdir").exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_renamed_missing_dst(self, tmp_path):
+        """Test rename event with missing dst field returns early."""
+        event_data = {
+            "name": "renamed",
+            "src": {
+                "filepath": "old.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
+            # no "dst"
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+        # Should not crash – just logs a warning
+
+    @pytest.mark.asyncio
+    async def test_handle_renamed_file_src_not_exists(self, tmp_path):
+        """Test rename event when source file doesn't exist (no rename)."""
+        event_data = {
+            "name": "renamed",
+            "src": {
+                "filepath": "gone.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
+            "dst": {
+                "filepath": "new.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        # Neither file exists – no crash
+        assert not (tmp_path / "new.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_deleted_dir_event(self, tmp_path):
+        """Test handling deleted directory event."""
+        target = tmp_path / "deldir"
+        target.mkdir()
+        (target / "file.txt").write_text("x")
+
+        event_data = {
+            "name": "deleted",
+            "src": {"path": "deldir", "permissions": "drwxr-xr-x"},
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        assert not target.exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_deleted_hsynckeep_cleans_dir(self, tmp_path):
+        """Test deleting .hsynckeep sentinel removes empty parent dir."""
+        parent = tmp_path / "emptydir"
+        parent.mkdir()
+        sentinel = parent / ".hsynckeep"
+        sentinel.write_text("")
+
+        event_data = {
+            "name": "deleted",
+            "src": {
+                "filepath": "emptydir/.hsynckeep",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 0,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+
+        assert not sentinel.exists()
+        assert not parent.exists()  # empty dir cleaned up
+
+    @pytest.mark.asyncio
+    async def test_handle_added_file_with_slave_handler(self, tmp_path):
+        """Test mark_receiving/unmark_receiving called with slave_handler."""
+        event_data = {
+            "name": "added",
+            "src": {
+                "filepath": "test.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        handler = SlaveFileEventHandler("host", 8765, use_https=False)
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file"),
+        ):
+            await _handle_lan_event(event_data, slave_handler=handler)
+
+        # File should have been unmarked after processing
+        assert not handler.is_receiving(str(tmp_path / "test.txt"))
+
+    @pytest.mark.asyncio
+    async def test_handle_deleted_dir_not_exists(self, tmp_path):
+        """Test deleted dir event when dir doesn't exist (no crash)."""
+        event_data = {
+            "name": "deleted",
+            "src": {"path": "nonexistent", "permissions": "drwxr-xr-x"},
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+        # Should not crash
+
+    @pytest.mark.asyncio
+    async def test_handle_deleted_file_not_exists(self, tmp_path):
+        """Test deleted file event when file doesn't exist (no crash)."""
+        event_data = {
+            "name": "deleted",
+            "src": {
+                "filepath": "gone.txt",
+                "md5sum": "x",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 1,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await _handle_lan_event(event_data)
+        # Should not crash
