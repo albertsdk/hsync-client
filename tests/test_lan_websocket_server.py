@@ -246,7 +246,7 @@ class TestLANWebSocketServer:
         # Simulate client disconnect exception during message loop
         async def async_iter_raise():
             raise ConnectionError("gone")
-            yield  # noqa: unreachable  – make it an async generator
+            yield  # unreachable – make it an async generator
 
         ws.__aiter__ = lambda self: async_iter_raise()
 
