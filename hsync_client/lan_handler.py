@@ -1,0 +1,408 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Copyright (C) 2025 Alberto Basso
+
+"""
+LAN Mode Handler for HSYNC Client.
+
+This module handles LAN P2P synchronization including peer discovery,
+master election, and WebSocket communication.
+"""
+
+import time
+from re import sub
+from typing import TYPE_CHECKING
+
+from hsync_client.config import set_config
+from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
+from hsync_client.lan_server import LANServer
+from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
+from hsync_client.sync import sync
+
+if TYPE_CHECKING:
+    from hsync_client.config import HsyncConfig
+
+
+def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
+    """
+    Measure clock offset between this client and the master using round-trip HTTP.
+
+    Uses an NTP-like round-trip measurement:
+        T1 = local time before request
+        T2 = master time (from /api/v1/time response)
+        T3 = local time after response
+        offset = T2 - (T1 + RTT/2), where RTT = T3 - T1
+
+    Args:
+        master: The master Peer object.
+        config: Current hsync configuration.
+    """
+    from requests import RequestException
+    from requests import get as http_get
+
+    from hsync_client.utils import get_ssl_verify
+
+    master_url = master.get_server_url()
+    time_url = f"{master_url}/api/v1/time"
+
+    try:
+        t1 = time.time()
+        response = http_get(
+            time_url,
+            headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
+            verify=get_ssl_verify(),
+            timeout=config.get("HTTP_TIMEOUT", 30),
+        )
+        t3 = time.time()
+
+        if response.status_code != 200:
+            log.debug(f"Clock sync: /api/v1/time returned {response.status_code}, skipping")
+            return
+
+        t2 = response.json().get("timestamp")
+        if t2 is None:
+            log.debug("Clock sync: no timestamp in response, skipping")
+            return
+
+        rtt = t3 - t1
+        offset = t2 - (t1 + rtt / 2)
+        master.clock_offset = offset
+
+        if abs(offset) > CLOCK_SKEW_THRESHOLD:
+            log.warning(
+                f"Clock skew detected with master {master.cid}: "
+                f"offset={offset:.1f}s, RTT={rtt * 1000:.1f}ms. "
+                f"File comparison will use MD5 fallback for "
+                f"mtime differences within tolerance."
+            )
+        else:
+            log.debug(
+                f"Clock sync with master {master.cid}: offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms"
+            )
+
+    except RequestException as e:
+        log.debug(f"Clock sync failed: {e}")
+    except (ValueError, KeyError) as e:
+        log.debug(f"Clock sync: invalid response: {e}")
+
+
+def _run_preview(log) -> None:
+    """Run a preview (dry-run) showing pending sync actions."""
+    from hsync_client.main_logic import _run_preview as run_preview_impl
+
+    run_preview_impl(log)
+
+
+if TYPE_CHECKING:
+    from hsync_client.config import HsyncConfig
+
+
+def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
+    """
+    Handle LAN P2P mode synchronization.
+
+    This function orchestrates peer discovery, master election,
+    and either runs as master or connects to a master peer.
+
+    Args:
+        config: The hsync configuration dictionary.
+        log: Logger instance for messages.
+    """
+    log.info("LAN P2P mode enabled")
+    persistent = config.get("LAN_PERSISTENT", False)
+    if persistent:
+        log.info("Persistent mode enabled - will wait indefinitely for peers")
+
+    cert_info = None
+    if config["LAN_HTTPS"]:
+        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
+
+        log.info("Generating self-signed certificate for HTTPS...")
+        cert_info = generate_self_signed_cert()
+        cert_info = save_cert_to_temp_files(cert_info)
+        log.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
+
+    lan_sync = LANSync(
+        cid=config["CID"],
+        bucket=config["REMOTE_BUCKET"],
+        port=config["LAN_PORT"],
+        group=config["LAN_GROUP"],
+        use_https=config["LAN_HTTPS"],
+        cert_fingerprint=cert_info.fingerprint if cert_info else None,
+        force_master=config["LAN_FORCE_MASTER"],
+        sync_direction=config["SYNC_DIRECTION"],
+    )
+    # Start discovery and register service for peer discovery
+    peer_manager = lan_sync.start(register_service=True)
+
+    lan_server = None
+    lan_ws_server = None
+
+    try:
+        while True:
+            # Wait for peer discovery
+            lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
+
+            if peer_manager.is_master():
+                _run_as_master(
+                    config=config,
+                    log=log,
+                    lan_sync=lan_sync,
+                    cert_info=cert_info,
+                    persistent=persistent,
+                    lan_server=lan_server,
+                    lan_ws_server=lan_ws_server,
+                )
+                # Check if we're still master after _run_as_master returns
+                if not peer_manager.is_master():
+                    if lan_server:
+                        lan_server.stop()
+                        lan_server = None
+                    if lan_ws_server:
+                        lan_ws_server.stop()
+                        lan_ws_server = None
+                if not persistent:
+                    break
+            else:
+                should_continue = _run_as_slave(
+                    config=config,
+                    log=log,
+                    lan_sync=lan_sync,
+                    cert_info=cert_info,
+                    persistent=persistent,
+                    peer_manager=peer_manager,
+                )
+                if not should_continue:
+                    break
+
+    except KeyboardInterrupt:
+        log.info("Shutting down LAN mode...")
+    finally:
+        if lan_server:
+            lan_server.stop()
+        if lan_ws_server:
+            lan_ws_server.stop()
+        lan_sync.stop()
+
+
+def _run_as_master(
+    config: "HsyncConfig",
+    log,
+    lan_sync: LANSync,
+    cert_info,
+    persistent: bool,
+    lan_server,
+    lan_ws_server,
+) -> None:
+    """Run as master (sync coordinator)."""
+
+    log.info("This client is the MASTER - acting as sync coordinator")
+
+    # Start HTTP server if not already running
+    if lan_server is None:
+        if config["LAN_HTTPS"] and cert_info:
+            lan_server = LANServer(
+                port=lan_sync.port,
+                use_https=True,
+                cert_file=cert_info.cert_file,
+                key_file=cert_info.key_file,
+            )
+        else:
+            lan_server = LANServer(port=lan_sync.port)
+        lan_server.start()
+
+        protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
+        log.info(f"Master HTTP server on port {lan_sync.port} ({protocol})")
+
+    # Start WebSocket server if not already running
+    if lan_ws_server is None:
+        ws_port = lan_sync.port + 1  # Use next port for WebSocket
+        if config["LAN_HTTPS"] and cert_info:
+            lan_ws_server = LANWebSocketServer(
+                port=ws_port,
+                use_https=True,
+                cert_file=cert_info.cert_file,
+                key_file=cert_info.key_file,
+            )
+        else:
+            lan_ws_server = LANWebSocketServer(port=ws_port)
+        lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
+        ws_protocol = "WSS" if config["LAN_HTTPS"] else "WS"
+        log.info(f"Master WebSocket server on port {ws_port} ({ws_protocol})")
+
+        if config["LAN_KEY"]:
+            log.info("Authentication enabled (HSYNC_LAN_KEY)")
+        else:
+            log.info("No authentication (trust LAN mode)")
+
+        # Update mDNS service to indicate server is ready
+        lan_sync.update_server_ready()
+
+    if persistent:
+        log.info("Press Ctrl+C to stop...")
+        # In persistent mode, keep running as master
+        while True:
+            time.sleep(1)
+            # Check if we're still master (peers may have joined/left)
+            # This will be checked by the outer loop
+            break
+    else:
+        # Non-persistent: just wait for Ctrl+C
+        log.info("Press Ctrl+C to stop...")
+        while True:
+            time.sleep(1)
+
+
+def _run_as_slave(
+    config: "HsyncConfig",
+    log,
+    lan_sync: LANSync,
+    cert_info,
+    persistent: bool,
+    peer_manager,
+) -> bool:
+    """Run as slave (connect to master). Returns True to continue loop, False to break."""
+    from asyncio import run
+
+    master = peer_manager.get_master()
+    if master:
+        # Wait for master to be ready (server_ready=true in mDNS)
+        if not master.server_ready:
+            log.info(f"Waiting for master {master.cid} to start server...")
+            return True  # Continue discovery loop
+
+        master_url = master.get_server_url()
+        log.info(f"Connecting to master: {master.cid} at {master_url}")
+
+        if master.use_https and master.cert_fingerprint:
+            log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
+            config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
+
+        config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
+        ws_master_url = sub(r"^http:", "ws:", master_url)
+        if master.use_https:
+            ws_master_url = sub(r"^http:", "wss:", ws_master_url)
+        config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
+
+        if config["LAN_KEY"]:
+            config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+
+        # Set compression capability based on master peer
+        config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
+
+        set_config(config)
+
+        # Measure clock offset vs master using round-trip HTTP
+        _measure_clock_offset(master, config, log)
+
+        # Check if dry-run mode is enabled
+        if config["DRYRUN"]:
+            # In dry-run mode, only show preview without syncing
+            _run_preview(log)
+            if not persistent:
+                return False
+            # In persistent mode with dry-run, wait for SYNC/PREVIEW commands
+            log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
+            run(_run_stdin_wait(log))
+        else:
+            # Perform initial sync (master is source of truth in LAN mode)
+            run(sync(lan_mode=True))
+
+        if not persistent:
+            return False
+
+        # In persistent mode, connect via WebSocket for real-time events
+        log.info("Initial sync complete, connecting to WebSocket for real-time events...")
+        ws_port = master.port + 1  # WebSocket is on next port
+        try:
+            run(
+                _with_stdin_commands(
+                    log,
+                    lan_websocket_client(
+                        host=master.address,
+                        port=ws_port,
+                        use_https=master.use_https,
+                    ),
+                )
+            )
+        except Exception as e:
+            log.warning(f"WebSocket connection ended: {e}")
+        # If WebSocket disconnects, re-enter discovery loop
+        log.info("WebSocket disconnected, re-entering discovery loop...")
+        return True
+    else:
+        # No master and no peers
+        if persistent:
+            log.info("Waiting for peers to join...")
+            return True  # Continue the discovery loop
+        else:
+            log.warning("No master elected - this client is alone, nothing to sync")
+            return False
+
+
+async def _with_stdin_commands(log, coro) -> None:
+    """Run coro with a background stdin command reader."""
+    import asyncio
+    from asyncio import create_task
+
+    from hsync_client.config import CONFIG
+    from hsync_client.stdin_commands import StdinCommandHandler
+
+    handler = StdinCommandHandler(log)
+    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+
+    async def _handle_sync(**_kw: object) -> None:
+        lan = CONFIG.get("LAN_MODE", False)
+        await sync(lan_mode=lan)
+
+    handler.register("SYNC", _handle_sync)
+
+    async def _handle_set_sync_direction(**kw: object) -> None:
+        direction = str(kw.get("direction", "bidirectional"))
+        valid = ("bidirectional", "upload-only", "download-only")
+        if direction not in valid:
+            log.warning(f"Invalid sync direction: {direction!r}. Must be one of {valid}.")
+            return
+        old = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+        if direction == old:
+            log.debug(f"Sync direction already set to {direction!r}, no change.")
+            return
+        CONFIG["SYNC_DIRECTION"] = direction
+        log.info(f"Sync direction changed: {old!r} → {direction!r}")
+        # Trigger an immediate resync with the new direction
+        lan = CONFIG.get("LAN_MODE", False)
+        await sync(lan_mode=lan)
+
+    handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
+
+    stdin_task = create_task(handler.run())
+
+    try:
+        await coro
+    finally:
+        stdin_task.cancel()
+        try:
+            await stdin_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _run_stdin_wait(log) -> None:
+    """Block reading stdin commands until EOF or SYNC."""
+
+    from hsync_client.config import CONFIG
+    from hsync_client.stdin_commands import StdinCommandHandler
+
+    handler = StdinCommandHandler(log)
+    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+
+    async def _handle_sync(**_kw: object) -> None:
+        CONFIG["DRYRUN"] = False
+        lan = CONFIG.get("LAN_MODE", False)
+        await sync(lan_mode=lan)
+        handler.stop()
+
+    handler.register("SYNC", _handle_sync)
+    await handler.run()
