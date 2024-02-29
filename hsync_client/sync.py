@@ -24,20 +24,13 @@ from loguru import logger as log
 from requests import RequestException, get
 
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import (
-    HSYNCKEEP_FILENAME,
-    MAX_CONCURRENT_TRANSFERS,
-)
+from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, clear_md5_cache, invalidate_md5_cache, is_hidden_file
 from hsync_client.models.sync_action import SyncAction, SyncActionName
 from hsync_client.retry import retry_on_network_error
-from hsync_client.utils import (
-    get_ssl_verify,
-    set_permissions,
-    verify_master_fingerprint,
-)
+from hsync_client.utils import get_ssl_verify, set_permissions, verify_master_fingerprint
 
 # =============================================================================
 # Main Sync Function
