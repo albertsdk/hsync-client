@@ -291,6 +291,10 @@ class HsyncConfig(TypedDict):
     SERVER_COMPRESSION_ENABLED: bool
     # Sync direction: "bidirectional", "upload-only", or "download-only"
     SYNC_DIRECTION: str
+    # Maximum upload bandwidth in bytes per second (None = unlimited)
+    MAX_BANDWIDTH_UPLOAD: int | None
+    # Maximum download bandwidth in bytes per second (None = unlimited)
+    MAX_BANDWIDTH_DOWNLOAD: int | None
 
 
 # =============================================================================

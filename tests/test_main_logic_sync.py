@@ -356,6 +356,8 @@ class _RunSyncKwargs(TypedDict, total=False):
     ignore_delete: bool
     sync_direction: str
     compression_enabled: bool
+    max_bandwidth_upload: int | None
+    max_bandwidth_download: int | None
     lan_mode: bool
     lan_port: int
     discovery_timeout: int
@@ -394,6 +396,8 @@ def _default_run_sync_kwargs(
         "ignore_delete": False,
         "sync_direction": "bidirectional",
         "compression_enabled": True,
+        "max_bandwidth_upload": None,
+        "max_bandwidth_download": None,
         "lan_mode": False,
         "lan_port": 0,
         "discovery_timeout": 5,

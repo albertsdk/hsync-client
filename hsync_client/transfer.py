@@ -37,12 +37,39 @@ from hsync_client.utils import (
     compute_md5,
     get_chunk_size,
     get_ssl_verify,
+    get_throttle_delay,
     set_permissions,
     verify_master_fingerprint,
 )
 
 # Content-Encoding header value for zstd compression
 CONTENT_ENCODING_ZSTD = "zstd"
+
+
+class _ThrottledFileReader:
+    """Wraps a file object and applies bandwidth throttling on read().
+
+    The ``requests`` library calls ``read()`` internally when streaming
+    a multipart upload, so wrapping the file handle lets us inject a
+    delay after each chunk without modifying the upload flow.
+    """
+
+    def __init__(self, fp, bandwidth_limit: int | None, transfer_key: str = "upload"):
+        self._fp = fp
+        self._bw_limit = bandwidth_limit
+        self._key = transfer_key
+
+    # Proxy every attribute to the inner file …
+    def __getattr__(self, name: str):
+        return getattr(self._fp, name)
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._fp.read(size)
+        if data and self._bw_limit:
+            delay = get_throttle_delay(len(data), self._bw_limit, self._key)
+            if delay > 0:
+                time_sleep(delay)
+        return data
 
 
 # =============================================================================
@@ -181,11 +208,16 @@ def download_file(file: File) -> None:
         else:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
+            dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
             with open(partial_file_path, write_mode) as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if not chunk:
                         break
                     f.write(chunk)
+                    # Throttle download if bandwidth limit is set
+                    delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")
+                    if delay > 0:
+                        time_sleep(delay)
 
         # Verify MD5 checksum of complete file
         md5sum = compute_md5(partial_file_path)
@@ -433,7 +465,13 @@ def upload_file(file: File, check_size: bool = True) -> None:
             from io import BytesIO
 
             compressed_file = BytesIO(compressed_data)
-            files = {"file": (basename(file.filepath), compressed_file)}
+            ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
+            fh = (
+                _ThrottledFileReader(compressed_file, ul_bw_limit)
+                if ul_bw_limit
+                else compressed_file
+            )
+            files = {"file": (basename(file.filepath), fh)}
             response = post(
                 uri,
                 headers=headers,
@@ -456,12 +494,15 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 response.raise_for_status()
         else:
             # Standard upload (streaming, supports resume)
+            ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
             with open(file.filepath, "rb") as upload:
                 # Seek to offset if resuming
                 if offset > 0:
                     upload.seek(offset)
 
-                files = {"file": (basename(file.filepath), upload)}
+                # Wrap file handle for bandwidth throttling
+                fh = _ThrottledFileReader(upload, ul_bw_limit) if ul_bw_limit else upload
+                files = {"file": (basename(file.filepath), fh)}
                 response = post(
                     uri,
                     headers=headers,

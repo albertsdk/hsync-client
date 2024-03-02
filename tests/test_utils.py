@@ -553,3 +553,155 @@ class TestGetSslVerifyWithFingerprint:
         finally:
             set_config(original)
             utils_mod._insecure_warning_suppressed = old_flag
+
+
+# =========================================================================
+# Bandwidth Utility Tests
+# =========================================================================
+
+from hsync_client.utils import (
+    get_throttle_delay,
+    parse_bandwidth,
+    reset_bandwidth_throttle,
+)
+
+
+class TestParseBandwidth:
+    """Tests for parse_bandwidth function."""
+
+    def test_none_returns_none(self):
+        assert parse_bandwidth(None) is None
+
+    def test_zero_int_returns_none(self):
+        assert parse_bandwidth(0) is None
+
+    def test_zero_str_returns_none(self):
+        assert parse_bandwidth("0") is None
+
+    def test_empty_str_returns_none(self):
+        assert parse_bandwidth("") is None
+
+    def test_positive_int_passthrough(self):
+        assert parse_bandwidth(1024) == 1024
+
+    def test_negative_int_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="positive"):
+            parse_bandwidth(-1)
+
+    def test_kb_suffix(self):
+        assert parse_bandwidth("1KB") == 1024
+
+    def test_mb_suffix(self):
+        assert parse_bandwidth("1MB") == 1024**2
+
+    def test_gb_suffix(self):
+        assert parse_bandwidth("1GB") == 1024**3
+
+    def test_kb_per_s_suffix(self):
+        assert parse_bandwidth("500KB/s") == 500 * 1024
+
+    def test_mb_per_s_suffix(self):
+        assert parse_bandwidth("2MB/s") == 2 * 1024**2
+
+    def test_b_suffix(self):
+        assert parse_bandwidth("8192B") == 8192
+
+    def test_fractional_value(self):
+        assert parse_bandwidth("1.5MB") == int(1.5 * 1024**2)
+
+    def test_plain_number_string(self):
+        assert parse_bandwidth("65536") == 65536
+
+    def test_case_insensitive(self):
+        assert parse_bandwidth("1mb") == 1024**2
+
+    def test_whitespace_trimmed(self):
+        assert parse_bandwidth("  1KB  ") == 1024
+
+    def test_invalid_suffix_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid bandwidth"):
+            parse_bandwidth("1XB")
+
+    def test_invalid_type_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid bandwidth"):
+            parse_bandwidth(3.14)  # type: ignore[arg-type]
+
+
+class TestGetThrottleDelay:
+    """Tests for get_throttle_delay function."""
+
+    def setup_method(self):
+        reset_bandwidth_throttle()
+
+    def teardown_method(self):
+        reset_bandwidth_throttle()
+
+    def test_unlimited_returns_zero(self):
+        assert get_throttle_delay(1024, None, "test") == 0.0
+
+    def test_zero_limit_returns_zero(self):
+        assert get_throttle_delay(1024, 0, "test") == 0.0
+
+    def test_negative_limit_returns_zero(self):
+        assert get_throttle_delay(1024, -1, "test") == 0.0
+
+    def test_first_call_no_delay_within_budget(self):
+        """First call initialises bucket with bandwidth_limit tokens."""
+        # 1024 bytes with 2048 B/s limit → bucket starts at 2048, no delay
+        delay = get_throttle_delay(1024, 2048, "test")
+        assert delay == 0.0
+
+    def test_first_call_delay_when_exceeding_budget(self):
+        """First call should delay when bytes exceed initial tokens."""
+        # 4096 bytes with 1024 B/s limit → bucket starts at 1024, needs 3072 more
+        delay = get_throttle_delay(4096, 1024, "test")
+        assert delay > 0.0
+        # Expected: (4096 - 1024) / 1024 = 3.0 seconds
+        assert abs(delay - 3.0) < 0.1
+
+    def test_separate_keys_independent(self):
+        """Different transfer keys have independent token buckets."""
+        delay_a = get_throttle_delay(512, 1024, "key_a")
+        delay_b = get_throttle_delay(512, 1024, "key_b")
+        assert delay_a == 0.0
+        assert delay_b == 0.0
+
+    def test_token_bucket_caps_at_2x(self):
+        """Tokens are capped at 2x bandwidth_limit even after long idle."""
+        limit = 1024
+        _now = [100.0]
+
+        def _monotonic():
+            return _now[0]
+
+        with patch("time.monotonic", side_effect=_monotonic):
+            # First call: consume a small amount (bucket starts at 1024)
+            get_throttle_delay(100, limit, "cap_test")
+            # Advance time by 10s → would add 10240 tokens
+            # But cap is 2*1024 = 2048 so it should be capped
+            _now[0] += 10.0
+            # Sending exactly 2*limit should succeed (capped at 2048)
+            delay = get_throttle_delay(limit * 2, limit, "cap_test")
+            assert delay == 0.0
+            # Immediately sending more should require a delay
+            delay2 = get_throttle_delay(100, limit, "cap_test")
+            assert delay2 > 0.0
+
+
+class TestResetBandwidthThrottle:
+    """Tests for reset_bandwidth_throttle function."""
+
+    def test_reset_clears_state(self):
+        """After reset, the next call initialises fresh."""
+        # Prime the bucket
+        get_throttle_delay(512, 1024, "reset_test")
+        reset_bandwidth_throttle()
+        # After reset, bucket starts fresh with full tokens
+        delay = get_throttle_delay(512, 1024, "reset_test")
+        assert delay == 0.0
