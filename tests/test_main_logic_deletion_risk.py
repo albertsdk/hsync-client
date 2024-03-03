@@ -291,7 +291,9 @@ class TestWithStdinCommands:
 
             # Handler was instantiated and commands registered
             MockHandler.assert_called_once_with(mock_log)
-            assert handler_inst.register.call_count == 3  # PREVIEW, SYNC, SET_SYNC_DIRECTION
+            assert (
+                handler_inst.register.call_count == 4
+            )  # PREVIEW, SYNC, SET_SYNC_DIRECTION, SET_BANDWIDTH
 
     @pytest.mark.asyncio
     async def test_cancels_stdin_task_when_coro_raises(self):

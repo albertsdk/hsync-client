@@ -513,14 +513,10 @@ def run_sync(
     reset_bandwidth_throttle()
 
     # Log bandwidth limits if configured
-    if config.get("MAX_BANDWIDTH_UPLOAD"):
-        log.info(
-            f"Upload bandwidth limit: {bytes_to_human_readable(config['MAX_BANDWIDTH_UPLOAD'])}/s"
-        )
-    if config.get("MAX_BANDWIDTH_DOWNLOAD"):
-        log.info(
-            f"Download bandwidth limit: {bytes_to_human_readable(config['MAX_BANDWIDTH_DOWNLOAD'])}/s"
-        )
+    if (upload_limit := config.get("MAX_BANDWIDTH_UPLOAD")) is not None:
+        log.info(f"Upload bandwidth limit: {bytes_to_human_readable(float(upload_limit))}/s")
+    if (download_limit := config.get("MAX_BANDWIDTH_DOWNLOAD")) is not None:
+        log.info(f"Download bandwidth limit: {bytes_to_human_readable(float(download_limit))}/s")
 
     # Execute Sync
     if config["DRYRUN"] and continuous:
@@ -573,6 +569,52 @@ async def _with_stdin_commands(log, coro) -> None:
         await sync(lan_mode=lan)
 
     handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
+
+    async def _handle_set_bandwidth(**kw: object) -> None:
+        upload = kw.get("upload")
+        download = kw.get("download")
+
+        if upload is not None:
+            if upload == 0 or upload == "0":
+                CONFIG["MAX_BANDWIDTH_UPLOAD"] = None
+            elif isinstance(upload, int | str):
+                try:
+                    CONFIG["MAX_BANDWIDTH_UPLOAD"] = int(upload)
+                except (ValueError, TypeError):
+                    log.warning(f"Invalid upload bandwidth value: {upload!r}")
+                    return
+            else:
+                log.warning(f"Invalid upload bandwidth value: {upload!r}")
+                return
+
+        if download is not None:
+            if download == 0 or download == "0":
+                CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = None
+            elif isinstance(download, int | str):
+                try:
+                    CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = int(download)
+                except (ValueError, TypeError):
+                    log.warning(f"Invalid download bandwidth value: {download!r}")
+                    return
+            else:
+                log.warning(f"Invalid download bandwidth value: {download!r}")
+                return
+
+        upload_str = (
+            bytes_to_human_readable(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"
+            if CONFIG["MAX_BANDWIDTH_UPLOAD"]
+            else "unlimited"
+        )
+        download_str = (
+            bytes_to_human_readable(CONFIG["MAX_BANDWIDTH_DOWNLOAD"]) + "/s"
+            if CONFIG["MAX_BANDWIDTH_DOWNLOAD"]
+            else "unlimited"
+        )
+        log.info(f"Bandwidth limits updated: upload={upload_str}, download={download_str}")
+        # Reset throttle state to apply new limits
+        reset_bandwidth_throttle()
+
+    handler.register("SET_BANDWIDTH", _handle_set_bandwidth)
 
     stdin_task = asyncio.create_task(handler.run())
 
