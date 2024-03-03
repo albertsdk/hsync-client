@@ -10,6 +10,7 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_API_KEY` | API key for authentication | (required) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
 | `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
+| `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 
 ## Environment Files
 
@@ -36,6 +37,8 @@ source prod.env
 | `-n, --dry-run` | Show what would be done without making changes |
 | `--ignore-delete` | Do not propagate file deletions |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` |
+| `--max-bandwidth-upload` | Maximum upload bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited |
+| `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited |
 | `-v, --verbose` | Enable verbose output |
 | `-q, --quiet` | Suppress all output |
 | `-o, --output` | Write output to file |
@@ -136,3 +139,37 @@ Compression is automatically skipped for:
 |--------|-------------|
 | `--no-compression` | Disable compression for this session |
 | `HSYNC_COMPRESSION_ENABLED` | Environment variable to disable compression (default: `true`) |
+
+## Bandwidth Limiting
+
+HSYNC supports upload and download bandwidth limiting using a **token bucket** algorithm for smooth rate control.
+
+### Usage
+
+```bash
+# Limit upload to 1 MB/s
+./dist/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 1MB
+
+# Limit download to 500 KB/s
+./dist/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-download 500KB
+
+# Limit both directions
+./dist/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
+```
+
+### Supported Formats
+
+Bandwidth values accept human-readable suffixes:
+
+| Format | Example | Bytes/s |
+|--------|---------|---------|
+| `KB` or `KB/s` | `500KB` | 512,000 |
+| `MB` or `MB/s` | `1MB` | 1,048,576 |
+| `GB` or `GB/s` | `1GB` | 1,073,741,824 |
+| Integer | `1048576` | 1,048,576 |
+| `0` | `0` | Unlimited |
+
+### Limits
+
+- Minimum: 1 KB/s (1,024 bytes/s)
+- Maximum: 100 MB/s (104,857,600 bytes/s)

@@ -391,6 +391,48 @@ flowchart TB
 - Uses `asyncio.Semaphore` to limit concurrent operations
 - Uses `ThreadPoolExecutor` for I/O-bound operations
 
+## Performance Optimizations
+
+### MD5 Cache with mtime Validation
+
+To avoid redundant MD5 computations during a single sync operation, the client maintains an in-memory cache that maps file paths to `(md5sum, mtime)` tuples. On each `File.get()` call, the cached MD5 is returned only if the file's modification time hasn't changed — otherwise the entry is automatically invalidated and recomputed.
+
+- Cache is cleared at the start of each sync cycle (`sync()`, `_run_preview()`)
+- Individual entries are invalidated after downloads/uploads and before watchdog `File.get()` calls
+- mtime validation provides automatic staleness detection even if manual invalidation is missed
+
+### Adaptive Chunk Size for MD5 Computation
+
+MD5 hashing uses different I/O chunk sizes based on file size for optimal throughput:
+
+| File Size | Chunk Size |
+|-----------|------------|
+| < 1 MB | 8 KB |
+| < 100 MB | 64 KB |
+| ≥ 100 MB | 256 KB |
+
+### Configurable Parallelization for File Scanning
+
+Local file scanning uses `ThreadPoolExecutor` with an adaptive worker count:
+
+| File Count | Workers |
+|------------|---------|
+| < 10 | min(2, files) |
+| < 100 | min(4, files, CPU cores) |
+| ≥ 100 | min(8, files, CPU cores) |
+
+Override with `HSYNC_MAX_FILE_WORKERS` environment variable.
+
+### Bandwidth Limiting
+
+Upload and download bandwidth can be limited via `--max-bandwidth-upload` and `--max-bandwidth-download` CLI options. The implementation uses a **token bucket** algorithm for smooth rate control:
+
+- **Uploads**: `_ThrottledFileReader` wraps file handles and injects delays after each `read()` call
+- **Downloads**: Throttle delay is applied after each downloaded chunk in the streaming loop
+- Throttle state is reset between sync sessions via `reset_bandwidth_throttle()`
+
+See [Configuration > Bandwidth Limiting](configuration.md#bandwidth-limiting) for usage details.
+
 ## Project Structure
 
 ```
