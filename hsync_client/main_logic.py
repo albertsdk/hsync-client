@@ -575,7 +575,9 @@ async def _with_stdin_commands(log, coro) -> None:
         if upload is not None:
             if upload == 0 or upload == "0":
                 CONFIG["MAX_BANDWIDTH_UPLOAD"] = None
-            elif isinstance(upload, int | str):
+            elif isinstance(upload, int):
+                CONFIG["MAX_BANDWIDTH_UPLOAD"] = upload
+            elif isinstance(upload, str):
                 try:
                     CONFIG["MAX_BANDWIDTH_UPLOAD"] = int(upload)
                 except (ValueError, TypeError):
@@ -588,7 +590,9 @@ async def _with_stdin_commands(log, coro) -> None:
         if download is not None:
             if download == 0 or download == "0":
                 CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = None
-            elif isinstance(download, int | str):
+            elif isinstance(download, int):
+                CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = download
+            elif isinstance(download, str):
                 try:
                     CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = int(download)
                 except (ValueError, TypeError):
