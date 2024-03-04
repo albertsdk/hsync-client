@@ -258,6 +258,39 @@ def _check_deletion_risk(
         raise SystemExit(0)
 
 
+def _check_disk_space(local_path: str, min_free_mb: int, logger: Any) -> None:
+    """Check if sufficient disk space is available before sync.
+
+    Args:
+        local_path: Path to the local sync directory.
+        min_free_mb: Minimum free disk space required in MB. 0 = disabled.
+        logger: Logger instance for output.
+
+    Raises:
+        InsufficientDiskSpaceError: If free space is below the threshold.
+    """
+    if min_free_mb <= 0:
+        return
+
+    from shutil import disk_usage
+
+    from hsync_client.exceptions import InsufficientDiskSpaceError
+
+    try:
+        usage = disk_usage(local_path)
+        free_mb = usage.free / (1024 * 1024)
+        if free_mb < min_free_mb:
+            raise InsufficientDiskSpaceError(
+                message=(
+                    f"Insufficient disk space: {free_mb:.0f} MB available, "
+                    f"{min_free_mb} MB required"
+                ),
+                details={"available_mb": int(free_mb), "required_mb": min_free_mb},
+            )
+    except OSError as e:
+        logger.warning(f"Could not check disk space: {e}")
+
+
 def run_sync(
     bucket: str,
     env_file: str | None,
@@ -293,6 +326,7 @@ def run_sync(
     api_key_fd: int | None = None,
     lan_key_fd: int | None = None,
     auto_confirm: bool = False,
+    min_free_disk_space: int = 500,
 ) -> None:
     """
     Main synchronization logic.
@@ -445,6 +479,7 @@ def run_sync(
         "SYNC_DIRECTION": sync_direction,
         "MAX_BANDWIDTH_UPLOAD": max_bandwidth_upload,
         "MAX_BANDWIDTH_DOWNLOAD": max_bandwidth_download,
+        "MIN_FREE_DISK_SPACE": min_free_disk_space,
     }
 
     set_config(config)
@@ -465,6 +500,10 @@ def run_sync(
             auto_confirm=auto_confirm,
             logger=log,
         )
+
+    # Check disk space before syncing
+    if not dryrun:
+        _check_disk_space(local_path, min_free_disk_space, log)
 
     # Mask sensitive values before logging
     _safe_config = {**config}

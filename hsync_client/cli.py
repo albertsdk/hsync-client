@@ -23,6 +23,9 @@ from hsync_client.constants import (
     HTTP_TIMEOUT_MIN,
     MAX_WAIT_TIMEOUT_MAX,
     MAX_WAIT_TIMEOUT_MIN,
+    MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    MIN_FREE_DISK_SPACE_MB_MAX,
+    MIN_FREE_DISK_SPACE_MB_MIN,
     RECONNECT_DELAY_MAX,
     RECONNECT_DELAY_MIN,
     RESYNC_MAX,
@@ -257,6 +260,15 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = False,
+    min_free_disk_space: Annotated[
+        int,
+        typer.Option(
+            "--min-free-disk-space",
+            help="Minimum free disk space in MB before sync. 0 = disabled.",
+            metavar="MB",
+            rich_help_panel="Sync",
+        ),
+    ] = MIN_FREE_DISK_SPACE_MB_DEFAULT,
     # -------------------------------------------------------------------------
     # LAN Mode
     # -------------------------------------------------------------------------
@@ -478,6 +490,14 @@ def main(
             f"--force-master is incompatible with --sync-direction={sync_direction}. "
             f"The LAN master always operates in bidirectional mode."
         )
+    if (
+        min_free_disk_space < MIN_FREE_DISK_SPACE_MB_MIN
+        or min_free_disk_space > MIN_FREE_DISK_SPACE_MB_MAX
+    ):
+        raise typer.BadParameter(
+            f"Minimum free disk space must be between "
+            f"{MIN_FREE_DISK_SPACE_MB_MIN} and {MIN_FREE_DISK_SPACE_MB_MAX} MB."
+        )
 
     # Parse and validate bandwidth limits
     from hsync_client.utils import parse_bandwidth
@@ -547,6 +567,7 @@ def main(
         no_color=no_color,
         legend=legend,
         auto_confirm=yes,
+        min_free_disk_space=min_free_disk_space,
     )
 
 
