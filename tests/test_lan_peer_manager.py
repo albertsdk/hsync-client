@@ -386,7 +386,7 @@ class TestPeerManager:
                     startup_time=50.0,
                 )
             )
-            # Remote started earlier, so local should become slave
+            # Remote started earlier, so local should become client
             assert pm.get_master_cid() == "remote"
             # Should have logged a conflict warning
             warning_calls = [

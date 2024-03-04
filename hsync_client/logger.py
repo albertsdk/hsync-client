@@ -176,13 +176,13 @@ LABEL_STYLES: dict[str, tuple[str, str]] = {
     "[IN SYNC   ]": ("<dim>", "</dim>"),
     "[SKIP      ]": ("<dim>", "</dim>"),
     "[IGNORE DEL]": ("<yellow>", "</yellow>"),
-    # LAN slave operations
-    "[SLAVE UP  ]": ("<green>", "</green>"),
-    "[SLAVE DEL ]": ("<red>", "</red>"),
-    "[SLAVE REN ]": ("<blue>", "</blue>"),
-    "[SLAVE DIR ]": ("<green>", "</green>"),
-    "[SLAVE KEEP]": ("<dim>", "</dim>"),
-    "[SLAVE IGN ]": ("<yellow>", "</yellow>"),
+    # LAN client operations
+    "[CLIENT UP  ]": ("<green>", "</green>"),
+    "[CLIENT DEL ]": ("<red>", "</red>"),
+    "[CLIENT REN ]": ("<blue>", "</blue>"),
+    "[CLIENT DIR ]": ("<green>", "</green>"),
+    "[CLIENT KEEP]": ("<dim>", "</dim>"),
+    "[CLIENT IGN ]": ("<yellow>", "</yellow>"),
 }
 
 

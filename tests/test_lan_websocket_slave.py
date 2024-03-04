@@ -1,5 +1,5 @@
 """
-Tests for slave file event handler functionality.
+Tests for client file event handler functionality.
 """
 
 import time
@@ -31,7 +31,7 @@ class TestSlaveFileEventHandler:
         )
 
     def test_handler_creation(self):
-        """Test creating a slave file event handler."""
+        """Test creating a client file event handler."""
         handler = SlaveFileEventHandler("192.168.1.100", 8765, use_https=True)
         assert handler._master_host == "192.168.1.100"
         assert handler._master_port == 8765

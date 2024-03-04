@@ -262,16 +262,16 @@ Use `--help-symbols` to display this legend in the terminal.
 | `[SYMLINK   ]` | Symlink | Creating symbolic link |
 | `[IGNORE DEL]` | Ignore delete | Deletion ignored (backup / ignore-delete mode) |
 
-### LAN Slave Operations
+### LAN Client Operations
 
 | Label | Meaning | Description |
 |-------|---------|-------------|
-| `[SLAVE UP  ]` | Slave upload | Slave uploads file to master |
-| `[SLAVE DEL ]` | Slave delete | Slave deletes file on master |
-| `[SLAVE REN ]` | Slave rename | Slave renames file on master |
-| `[SLAVE DIR ]` | Slave dir | Slave creates directory on master |
-| `[SLAVE KEEP]` | Slave sentinel | Slave creates sentinel file (`.hsynckeep`) |
-| `[SLAVE IGN ]` | Slave ignore | Slave ignores deletion (ignore-delete mode) |
+| `[CLIENT UP  ]` | Client upload | Client uploads file to master |
+| `[CLIENT DEL ]` | Client delete | Client deletes file on master |
+| `[CLIENT REN ]` | Client rename | Client renames file on master |
+| `[CLIENT DIR ]` | Client dir | Client creates directory on master |
+| `[CLIENT KEEP]` | Client sentinel | Client creates sentinel file (`.hsynckeep`) |
+| `[CLIENT IGN ]` | Client ignore | Client ignores deletion (ignore-delete mode) |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 
@@ -356,9 +356,9 @@ hsync -s http://localhost:8765 -b backup -w --sync-direction upload-only
 hsync -s http://localhost:8765 -b shared -w --sync-direction download-only
 ```
 
-### LAN mode with download-only slave
+### LAN mode with download-only client
 ```bash
-# Slave only receives files from master, never uploads local changes
+# Client only receives files from master, never uploads local changes
 hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
 ```
 

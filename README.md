@@ -68,7 +68,7 @@ flowchart LR
             CAA["⚙️ HSYNC Client"]
         end
 
-        subgraph DeviceB["🖥️ Device B (Slave)"]
+        subgraph DeviceB["🖥️ Device B (Client)"]
             CAB["⚙️ HSYNC Client"]
             FSAB["📂 File System"]
         end
@@ -98,8 +98,8 @@ flowchart LR
 **LAN Mode Flow:**
 1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
 2. **② Elect Master** — One device becomes the master (source of truth)
-3. **③ Sync Files** — Slave downloads from master via HTTPS
-4. **④ Sync Files** — Master uploads changes to slave
+3. **③ Sync Files** — Client downloads from master via HTTPS
+4. **④ Sync Files** — Master uploads changes to client
 
 In LAN mode, the master is the source of truth and slaves sync from it. Both directions are supported for bidirectional sync peers.
 

@@ -109,28 +109,28 @@ class TestLabelStyles:
         assert LABEL_STYLES["[IGNORE DEL]"] == ("<yellow>", "</yellow>")
 
     def test_slave_up_label(self):
-        """Test slave upload label uses green tag."""
-        assert LABEL_STYLES["[SLAVE UP  ]"] == ("<green>", "</green>")
+        """Test client upload label uses green tag."""
+        assert LABEL_STYLES["[CLIENT UP  ]"] == ("<green>", "</green>")
 
     def test_slave_del_label(self):
-        """Test slave delete label uses red tag."""
-        assert LABEL_STYLES["[SLAVE DEL ]"] == ("<red>", "</red>")
+        """Test client delete label uses red tag."""
+        assert LABEL_STYLES["[CLIENT DEL ]"] == ("<red>", "</red>")
 
     def test_slave_ren_label(self):
-        """Test slave rename label uses blue tag."""
-        assert LABEL_STYLES["[SLAVE REN ]"] == ("<blue>", "</blue>")
+        """Test client rename label uses blue tag."""
+        assert LABEL_STYLES["[CLIENT REN ]"] == ("<blue>", "</blue>")
 
     def test_slave_dir_label(self):
-        """Test slave dir label uses green tag."""
-        assert LABEL_STYLES["[SLAVE DIR ]"] == ("<green>", "</green>")
+        """Test client dir label uses green tag."""
+        assert LABEL_STYLES["[CLIENT DIR ]"] == ("<green>", "</green>")
 
     def test_slave_keep_label(self):
-        """Test slave keep label uses dim tag."""
-        assert LABEL_STYLES["[SLAVE KEEP]"] == ("<dim>", "</dim>")
+        """Test client keep label uses dim tag."""
+        assert LABEL_STYLES["[CLIENT KEEP]"] == ("<dim>", "</dim>")
 
     def test_slave_ign_label(self):
-        """Test slave ignore label uses yellow tag."""
-        assert LABEL_STYLES["[SLAVE IGN ]"] == ("<yellow>", "</yellow>")
+        """Test client ignore label uses yellow tag."""
+        assert LABEL_STYLES["[CLIENT IGN ]"] == ("<yellow>", "</yellow>")
 
 
 class TestColorizeLabels:
@@ -169,9 +169,9 @@ class TestColorizeLabels:
         assert result == '[DOWNLOAD  ] "file.txt"'
 
     def test_colorize_slave_label(self):
-        """Test LAN slave label gets colored."""
-        result = _colorize_labels('[SLAVE DEL ] "/path/to/file"')
-        assert "<red>[SLAVE DEL ]</red>" in result
+        """Test LAN client label gets colored."""
+        result = _colorize_labels('[CLIENT DEL ] "/path/to/file"')
+        assert "<red>[CLIENT DEL ]</red>" in result
 
 
 class TestSetupLogging:

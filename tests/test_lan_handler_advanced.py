@@ -254,18 +254,18 @@ class TestMasterElection:
     """Tests for master election and peer management."""
 
     def test_master_transition_from_slave(self, tmp_path):
-        """Test scenario where client transitions from slave to master."""
+        """Test scenario where client transitions from client to master."""
         from hsync_client.lan_handler import run_lan_mode
 
         config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
         mock_log = MagicMock()
 
-        # First iteration: is_master = False (slave)
+        # First iteration: is_master = False (client)
         # Second iteration: is_master = True (master)
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.is_master.side_effect = [False, True]
 
-        # First: get_master returns a peer (slave mode)
+        # First: get_master returns a peer (client mode)
         master_peer = MagicMock()
         master_peer.server_ready = True
         master_peer.get_server_url.return_value = "http://192.168.1.1:9000"
