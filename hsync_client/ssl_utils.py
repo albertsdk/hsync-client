@@ -14,17 +14,23 @@ certificate verification.
 
 from __future__ import annotations
 
-import hashlib
 import ipaddress
 import ssl
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+from hsync_common.ssl_utils import (
+    DEFAULT_KEY_SIZE,
+    build_self_signed_certificate,
+    compute_cert_fingerprint,
+    generate_rsa_private_key,
+    get_server_cert_fingerprint,
+    serialize_cert_pem,
+    serialize_key_pem,
+    verify_cert_fingerprint,
+)
 from loguru import logger as log
 from urllib3.util.ssl_ import create_urllib3_context
 
@@ -32,7 +38,18 @@ from urllib3.util.ssl_ import create_urllib3_context
 CERT_VALIDITY_DAYS = 1
 
 # RSA key size
-RSA_KEY_SIZE = 2048
+RSA_KEY_SIZE = DEFAULT_KEY_SIZE
+
+__all__ = [
+    "CERT_VALIDITY_DAYS",
+    "RSA_KEY_SIZE",
+    "CertificateInfo",
+    "create_fingerprint_ssl_context",
+    "generate_self_signed_cert",
+    "get_server_cert_fingerprint",
+    "save_cert_to_temp_files",
+    "verify_cert_fingerprint",
+]
 
 
 @dataclass
@@ -62,53 +79,24 @@ def generate_self_signed_cert(
     """
     log.debug(f"Generating self-signed certificate with CN={common_name}")
 
-    # Generate RSA private key
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=RSA_KEY_SIZE,
-    )
-
-    # Build certificate subject and issuer
-    subject = issuer = x509.Name(
-        [
+    private_key = generate_rsa_private_key(RSA_KEY_SIZE)
+    cert = build_self_signed_certificate(
+        private_key,
+        subject_attrs=[
             x509.NameAttribute(NameOID.COMMON_NAME, common_name),
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "HSYNC LAN Mode"),
-        ]
+        ],
+        san_list=[
+            x509.DNSName("localhost"),
+            x509.DNSName("*"),
+            x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+        ],
+        validity_days=validity_days,
     )
 
-    # Build certificate
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(private_key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now)
-        .not_valid_after(now + timedelta(days=validity_days))
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [
-                    x509.DNSName("localhost"),
-                    x509.DNSName("*"),
-                    x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-                ]
-            ),
-            critical=False,
-        )
-        .sign(private_key, hashes.SHA256())
-    )
-
-    # Serialize to PEM format
-    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
-    key_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-    # Calculate SHA-256 fingerprint
-    fingerprint = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
+    cert_pem = serialize_cert_pem(cert)
+    key_pem = serialize_key_pem(private_key)
+    fingerprint = compute_cert_fingerprint(cert)
 
     log.info(f"Generated self-signed certificate with fingerprint: {fingerprint[:16]}...")
 
@@ -176,47 +164,3 @@ def create_fingerprint_ssl_context(expected_fingerprint: str) -> ssl.SSLContext:
     ctx.verify_mode = ssl.CERT_NONE
 
     return ctx
-
-
-def verify_cert_fingerprint(cert_der: bytes, expected_fingerprint: str) -> bool:
-    """
-    Verify a certificate's fingerprint.
-
-    Args:
-        cert_der: The certificate in DER format.
-        expected_fingerprint: The expected SHA-256 fingerprint (hex string).
-
-    Returns:
-        True if the fingerprint matches, False otherwise.
-    """
-    actual_fingerprint = hashlib.sha256(cert_der).hexdigest()
-    return actual_fingerprint.lower() == expected_fingerprint.lower()
-
-
-def get_server_cert_fingerprint(host: str, port: int) -> str | None:
-    """
-    Get the SHA-256 fingerprint of a server's SSL certificate.
-
-    Args:
-        host: The server hostname or IP address.
-        port: The server port.
-
-    Returns:
-        The certificate fingerprint as a hex string, or None on error.
-    """
-    import socket
-
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=5) as sock:
-            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                cert_der = ssock.getpeercert(binary_form=True)
-                if cert_der:
-                    return hashlib.sha256(cert_der).hexdigest()
-    except Exception as e:
-        log.debug(f"Error getting server certificate: {e}")
-
-    return None
