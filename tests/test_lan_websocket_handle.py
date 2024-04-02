@@ -502,3 +502,103 @@ class TestHandleLanEvent:
         with patch("hsync_client.lan_websocket.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash
+
+    @pytest.mark.asyncio
+    async def test_handle_own_echo_ignored(self, tmp_path):
+        """Events whose CID matches our own must be dropped (echo suppression)."""
+        event_data = {
+            "cid": "slave-A",
+            "name": "added",
+            "src": {
+                "filepath": "echoed.txt",
+                "md5sum": "abc",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "CID": "slave-A",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+            mock_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_foreign_cid_processed(self, tmp_path):
+        """Events whose CID differs from ours must be processed normally."""
+        event_data = {
+            "cid": "slave-B",
+            "name": "added",
+            "src": {
+                "filepath": "from_other.txt",
+                "md5sum": "abc",
+                "mtime": 1,
+                "ctime": 1,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "CID": "slave-A",
+        }
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file") as mock_update,
+        ):
+            await _handle_lan_event(event_data)
+            mock_update.assert_called_once()
+
+
+class TestInboundOriginTracker:
+    """Tests for the inbound origin tracking helpers used for echo suppression."""
+
+    def setup_method(self):
+        from hsync_client.lan_websocket import _clear_inbound_origin
+
+        _clear_inbound_origin()
+
+    def test_mark_and_consume_returns_cid(self):
+        from hsync_client.lan_websocket import consume_inbound_origin, mark_inbound_origin
+
+        mark_inbound_origin("/bucket/a.txt", "slave-1")
+        assert consume_inbound_origin("/bucket/a.txt") == "slave-1"
+
+    def test_consume_is_one_shot(self):
+        from hsync_client.lan_websocket import consume_inbound_origin, mark_inbound_origin
+
+        mark_inbound_origin("/bucket/a.txt", "slave-1")
+        assert consume_inbound_origin("/bucket/a.txt") == "slave-1"
+        # Second consume returns None: the entry has been removed.
+        assert consume_inbound_origin("/bucket/a.txt") is None
+
+    def test_consume_unknown_path_returns_none(self):
+        from hsync_client.lan_websocket import consume_inbound_origin
+
+        assert consume_inbound_origin("/bucket/never_marked.txt") is None
+
+    def test_mark_empty_inputs_noop(self):
+        from hsync_client.lan_websocket import consume_inbound_origin, mark_inbound_origin
+
+        mark_inbound_origin("", "slave-1")
+        mark_inbound_origin("/bucket/x", "")
+        assert consume_inbound_origin("") is None
+        assert consume_inbound_origin("/bucket/x") is None
+
+    def test_expired_entry_returns_none(self):
+        from hsync_client.lan_websocket import consume_inbound_origin, mark_inbound_origin
+
+        mark_inbound_origin("/bucket/a.txt", "slave-1", ttl=-1.0)
+        assert consume_inbound_origin("/bucket/a.txt") is None

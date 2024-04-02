@@ -201,6 +201,43 @@ class TestGetSyncActions:
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
+    def test_hsynckeep_never_in_sync_actions(self, tmp_path):
+        """.hsynckeep is a per-peer local sentinel and must never appear in sync actions.
+
+        Regression test for the bug where deleting a remote .hsynckeep also wiped
+        the local bucket parent directory (cascading into the watchdog crash).
+        """
+        from hsync_client.constants import HSYNCKEEP_FILENAME
+
+        # Create a local .hsynckeep so File.get returns a real object
+        local_keep = tmp_path / HSYNCKEEP_FILENAME
+        local_keep.write_text("")
+        local_file_obj = File.get(str(local_keep))
+        assert local_file_obj is not None
+        local_files = [local_file_obj.to_dict()]
+
+        # Remote also reports a .hsynckeep (different peer, same sentinel name)
+        remote_files = [
+            {
+                "filepath": HSYNCKEEP_FILENAME,
+                "name": HSYNCKEEP_FILENAME,
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 0,
+                "md5sum": "d41d8cd98f00b204e9800998ecf8427e",
+                "permissions": "-rw-r--r--",
+            }
+        ]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            # Server mode and LAN mode must both ignore the sentinel completely
+            for lan_mode in (False, True):
+                result = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
+                assert result == [], (
+                    f"sync_actions must be empty for .hsynckeep "
+                    f"(lan_mode={lan_mode}), got: {result}"
+                )
+
 
 class TestGetSyncActionsLanMode:
     """Tests for get_sync_actions function in LAN mode."""

@@ -321,6 +321,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if dst_parent and not exists(dst_parent):
                 makedirs(dst_parent, exist_ok=True)
 
+            # Mark both paths as inbound so the master's filesystem watcher
+            # broadcasts the resulting `renamed` event with the originator
+            # CID, allowing the sender to discard its own echo.
+            origin_cid = query.get("cid", [None])[0]
+            if origin_cid:
+                from hsync_client.lan_websocket import mark_inbound_origin
+
+                mark_inbound_origin(src_path, origin_cid)
+                mark_inbound_origin(dst_path, origin_cid)
+
             log.info(f"Renaming from client request: {src_path} -> {dst_path}")
             rename(src_path, dst_path)
 
@@ -364,6 +374,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # Already deleted, return success
             self._send_json_response(HTTP_OK, {"info": "File already deleted"})
             return
+
+        # Mark the path as inbound so the resulting `deleted` event from the
+        # filesystem watcher is broadcast with the originator's CID.
+        origin_cid = query.get("cid", [None])[0]
+        if origin_cid:
+            from hsync_client.lan_websocket import mark_inbound_origin
+
+            mark_inbound_origin(full_path, origin_cid)
 
         try:
             if is_dir:
@@ -416,21 +434,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         """Remove *dir_path* if it is completely empty.
 
         Called after deleting a sentinel file so that the directory
-        does not linger on disk once it has no real content.
+        does not linger on disk once it has no real content. Never
+        removes the LOCAL_BUCKET root itself.
         """
+        from hsync_client.utils import safe_rmdir_if_empty
+
         if not dir_path or not exists(dir_path) or not os.path.isdir(dir_path):
             return
-        try:
-            entries = os.listdir(dir_path)
-        except OSError:
-            return
-        if entries:
-            return
-        try:
-            os.rmdir(dir_path)
+        if safe_rmdir_if_empty(dir_path):
             log.debug(f'Removed empty directory "{dir_path}"')
-        except OSError as exc:
-            log.warning(f'Cannot remove directory "{dir_path}": {exc}')
 
     def _handle_health(self) -> None:
         """Handle health check endpoint."""
@@ -693,6 +705,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if not real_dest.startswith(real_bucket):
                 self._send_error_response(HTTP_FORBIDDEN, "Access denied")
                 return
+
+            # Mark the destination as inbound so the resulting filesystem
+            # event broadcast carries the originator's CID and the sender
+            # discards its own echo instead of re-downloading the file.
+            if cid:
+                from hsync_client.lan_websocket import mark_inbound_origin
+
+                mark_inbound_origin(dest_path, cid)
 
             # Write file
             with open(dest_path, "wb") as f:

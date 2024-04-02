@@ -233,6 +233,102 @@ class TestRunAsMaster:
         mock_server_class.assert_not_called()
         mock_ws_class.assert_not_called()
 
+    def test_run_as_master_returns_server_tuple(self, tmp_path):
+        """_run_as_master returns the (lan_server, lan_ws_server) tuple.
+
+        Regression test: previously the function returned None, so the caller
+        lost the references and the next discovery-loop iteration tried to
+        re-bind the same port, raising OSError(98) 'Address already in use'.
+        """
+        from hsync_client.lan_handler import _run_as_master
+
+        config = _make_lan_config(tmp_path)
+        mock_log = MagicMock()
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.port = 9000
+
+        mock_server_instance = MagicMock()
+        mock_ws_instance = MagicMock()
+
+        # In persistent=True mode the inner loop is `while True: sleep; break`,
+        # so the function returns after a single sleep call.
+        with (
+            patch(
+                "hsync_client.lan_handler.LANServer",
+                return_value=mock_server_instance,
+            ),
+            patch(
+                "hsync_client.lan_handler.LANWebSocketServer",
+                return_value=mock_ws_instance,
+            ),
+            patch("time.sleep"),
+        ):
+            result = _run_as_master(
+                config=config,
+                log=mock_log,
+                lan_sync=mock_lan_sync,
+                cert_info=None,
+                persistent=True,
+                lan_server=None,
+                lan_ws_server=None,
+            )
+
+        assert result == (mock_server_instance, mock_ws_instance), (
+            "_run_as_master must return the (lan_server, lan_ws_server) tuple "
+            "so the outer discovery loop can persist references and avoid "
+            "re-binding the same port on the next iteration"
+        )
+
+    def test_run_as_master_idempotent_across_iterations(self, tmp_path):
+        """Two consecutive calls in persistent mode must not re-create servers.
+
+        Simulates the discovery-loop behaviour: the tuple returned by the first
+        call is fed back into the second call; no new server instance must be
+        instantiated and therefore no second bind() on the same port.
+        """
+        from hsync_client.lan_handler import _run_as_master
+
+        config = _make_lan_config(tmp_path)
+        mock_log = MagicMock()
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.port = 9000
+
+        mock_server_instance = MagicMock()
+        mock_ws_instance = MagicMock()
+        server_factory = MagicMock(return_value=mock_server_instance)
+        ws_factory = MagicMock(return_value=mock_ws_instance)
+
+        with (
+            patch("hsync_client.lan_handler.LANServer", server_factory),
+            patch("hsync_client.lan_handler.LANWebSocketServer", ws_factory),
+            patch("time.sleep"),
+        ):
+            first = _run_as_master(
+                config=config,
+                log=mock_log,
+                lan_sync=mock_lan_sync,
+                cert_info=None,
+                persistent=True,
+                lan_server=None,
+                lan_ws_server=None,
+            )
+            # Feed the returned tuple back, as the discovery loop now does.
+            second = _run_as_master(
+                config=config,
+                log=mock_log,
+                lan_sync=mock_lan_sync,
+                cert_info=None,
+                persistent=True,
+                lan_server=first[0],
+                lan_ws_server=first[1],
+            )
+
+        # Factories were called exactly once (the first iteration).
+        assert server_factory.call_count == 1
+        assert ws_factory.call_count == 1
+        # The tuple identity is preserved across iterations.
+        assert second == first
+
 
 class TestRunAsSlave:
     """Tests for _run_as_slave function - covered by test_main_logic_lan.py"""

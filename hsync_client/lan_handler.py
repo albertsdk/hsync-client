@@ -146,7 +146,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
             lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
 
             if peer_manager.is_master():
-                _run_as_master(
+                lan_server, lan_ws_server = _run_as_master(
                     config=config,
                     log=log,
                     lan_sync=lan_sync,
@@ -195,8 +195,13 @@ def _run_as_master(
     persistent: bool,
     lan_server,
     lan_ws_server,
-) -> None:
-    """Run as master (sync coordinator)."""
+) -> tuple[LANServer | None, LANWebSocketServer | None]:
+    """Run as master (sync coordinator).
+
+    Returns the (lan_server, lan_ws_server) tuple so the caller can persist
+    the running server instances across discovery loop iterations and avoid
+    re-binding the same port on subsequent iterations.
+    """
 
     log.info("This client is the MASTER - acting as sync coordinator")
 
@@ -253,6 +258,8 @@ def _run_as_master(
         log.info("Press Ctrl+C to stop...")
         while True:
             time.sleep(1)
+
+    return lan_server, lan_ws_server
 
 
 def _run_as_slave(
@@ -328,7 +335,7 @@ def _run_as_slave(
                 )
             )
         except Exception as e:
-            log.warning(f"WebSocket connection ended: {e}")
+            log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
         # If WebSocket disconnects, re-enter discovery loop
         log.info("WebSocket disconnected, re-entering discovery loop...")
         return True

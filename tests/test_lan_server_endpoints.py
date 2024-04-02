@@ -612,6 +612,95 @@ class TestLANRequestHandlerPATCH:
             assert response.status_code == 400
 
 
+class TestLANRequestHandlerInboundOriginMarking:
+    """Tests that POST/DELETE/PATCH record the originator CID so the master's
+    filesystem watcher rebroadcasts the resulting event with that CID,
+    letting the sender suppress its own echo."""
+
+    @pytest.fixture
+    def server(self):
+        from hsync_client.lan import get_free_port
+
+        port = get_free_port()
+        server = LANServer(port=port)
+        server.start()
+        time.sleep(0.1)
+        yield server, port
+        server.stop()
+
+    def test_upload_marks_inbound_origin(self, server, tmp_path):
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _clear_inbound_origin,
+            consume_inbound_origin,
+        )
+
+        srv, port = server
+        _clear_inbound_origin()
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            data = {"cid": "peer-1", "path": "", "mtime": "", "ctime": ""}
+            files = {"file": ("inbound.txt", b"hello")}
+            response = requests.post(url, data=data, files=files, timeout=5)
+            assert response.status_code == 201
+            assert consume_inbound_origin(str(tmp_path / "inbound.txt")) == "peer-1"
+
+    def test_delete_marks_inbound_origin(self, server, tmp_path):
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _clear_inbound_origin,
+            consume_inbound_origin,
+        )
+
+        srv, port = server
+        _clear_inbound_origin()
+        target = tmp_path / "gone.txt"
+        target.write_text("bye")
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.delete(url, params={"path": "gone.txt", "cid": "peer-2"}, timeout=5)
+            assert response.status_code == 200
+            assert consume_inbound_origin(str(target)) == "peer-2"
+
+    def test_rename_marks_inbound_origin_for_both_paths(self, server, tmp_path):
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _clear_inbound_origin,
+            consume_inbound_origin,
+        )
+
+        srv, port = server
+        _clear_inbound_origin()
+        src = tmp_path / "src.txt"
+        src.write_text("x")
+        dst = tmp_path / "dst.txt"
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.patch(
+                url,
+                params={"src": "src.txt", "dst": "dst.txt", "cid": "peer-3"},
+                timeout=5,
+            )
+            assert response.status_code == 200
+            assert consume_inbound_origin(str(src)) == "peer-3"
+            assert consume_inbound_origin(str(dst)) == "peer-3"
+
+
 class TestLANRequestHandlerRange:
     """Tests for Range request handling."""
 

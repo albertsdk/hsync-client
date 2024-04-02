@@ -14,8 +14,8 @@ file comparison, action determination, and sync execution.
 import asyncio
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from os import cpu_count, listdir, makedirs, remove, rmdir, walk
-from os.path import basename, dirname, exists, join
+from os import cpu_count, makedirs, remove, walk
+from os.path import basename, exists, join
 from sys import exc_info
 from traceback import print_tb
 from typing import cast
@@ -126,16 +126,6 @@ async def sync(lan_mode: bool = False) -> None:
                 try:
                     remove(file.filepath)
                     log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
-                    # If the deleted file was a sentinel, clean up the
-                    # now-empty parent directory instead of recreating it.
-                    if basename(file.filepath) == HSYNCKEEP_FILENAME:
-                        parent = dirname(file.filepath)
-                        try:
-                            if exists(parent) and not listdir(parent):
-                                rmdir(parent)
-                                log.debug(f'Removed empty directory "{parent}"')
-                        except OSError:
-                            pass
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
 
@@ -509,6 +499,9 @@ def get_sync_actions(
 
     # Process remote files
     for remote_file_info in remote_files:
+        # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
+        if basename(str(remote_file_info.get("filepath", ""))) == HSYNCKEEP_FILENAME:
+            continue
         remote_file = File.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
         local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
 
@@ -542,6 +535,9 @@ def get_sync_actions(
 
     # Find local files not present on remote
     for local_file_dict in local_files:
+        # .hsynckeep is a per-peer local sentinel: never propagate to remote.
+        if basename(str(local_file_dict.get("filepath", ""))) == HSYNCKEEP_FILENAME:
+            continue
         local_file_info = File.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
             file = File.get(local_file_dict["filepath"])
