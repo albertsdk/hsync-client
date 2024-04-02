@@ -87,6 +87,15 @@ graph LR
         websocket[websocket_handler.py]
         logger[logger.py]
         event_queue[event_queue.py]
+        compression[compression.py]
+        stdin[stdin_commands.py]
+
+        subgraph "LAN/"
+            lan[lan.py]
+            lan_server[lan_server.py]
+            lan_websocket[lan_websocket.py]
+            lan_handler[lan_handler.py]
+        end
 
         subgraph "models/"
             file[file.py]
@@ -105,6 +114,11 @@ graph LR
     sync --> constants
     websocket --> transfer
     cli --> logger
+    main --> lan
+    lan --> lan_server
+    lan --> lan_websocket
+    lan_websocket --> lan_handler
+    transfer --> compression
 ```
 
 ![Module Structure](images/architecture-2.png)
@@ -449,8 +463,12 @@ hsync-client/
 │   ├── transfer.py         # File upload/download operations
 │   ├── websocket_handler.py # WebSocket event handling
 │   ├── event_queue.py      # Event queue with retry logic
+│   ├── compression.py      # Zstd compression/decompression helpers
+│   ├── stdin_commands.py   # Runtime stdin command handler (e.g. direction change)
 │   ├── lan.py              # LAN mode discovery (mDNS/Zeroconf)
 │   ├── lan_server.py       # LAN mode HTTP server (master node)
+│   ├── lan_websocket.py    # LAN WebSocket client + InboundOriginTracker + echo suppression
+│   ├── lan_handler.py      # LAN slave-side file event handler (upload/delete/rename to master)
 │   ├── logger.py           # Logging configuration (loguru)
 │   ├── retry.py            # Retry logic (tenacity)
 │   ├── ssl_utils.py        # SSL/TLS utilities

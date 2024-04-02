@@ -589,6 +589,8 @@ Authorization: Bearer mySecretKey123
 
 ### Upload File
 
+The `cid` form field identifies the originating peer. The master uses it to tag the resulting filesystem event so that the sender can discard the echo.
+
 ```http
 POST /api/v1/buckets/photos/files HTTP/1.1
 Authorization: Bearer mySecretKey123
@@ -603,11 +605,95 @@ Content-Disposition: form-data; name="path"
 
 vacation
 --boundary
+Content-Disposition: form-data; name="mtime"
+
+1706000000.0
+--boundary
 Content-Disposition: form-data; name="file"; filename="photo2.jpg"
 Content-Type: application/octet-stream
 
 [binary content]
 --boundary--
+```
+
+### Delete File
+
+The `cid` query parameter identifies the originating peer.
+
+```http
+DELETE /api/v1/buckets/photos/files?path=vacation/photo2.jpg&cid=client123 HTTP/1.1
+Authorization: Bearer mySecretKey123
+```
+
+To delete a directory, add `is_dir=true`:
+
+```http
+DELETE /api/v1/buckets/photos/files?path=vacation&is_dir=true&cid=client123 HTTP/1.1
+Authorization: Bearer mySecretKey123
+```
+
+### Rename File or Directory
+
+The `cid` query parameter identifies the originating peer.
+
+```http
+PATCH /api/v1/buckets/photos/files?src=vacation/old.jpg&dst=vacation/new.jpg&cid=client123 HTTP/1.1
+Authorization: Bearer mySecretKey123
+```
+
+### WebSocket Event Payload
+
+Each event broadcast by the master includes the originating peer's `cid`:
+
+```json
+{
+  "event": "modified",
+  "filepath": "vacation/photo2.jpg",
+  "cid": "client123"
+}
+```
+
+Slaves compare `cid` against their own local CID and **discard events where they match** — this is the echo-suppression mechanism.
+
+## CID Handling & Echo Suppression
+
+### Overview
+
+In bidirectional LAN mode, every peer has a unique **Client ID (CID)** generated at startup. CIDs are used to:
+
+1. **Tag HTTP operations** — Upload, delete and rename requests include the originator's CID as a parameter.
+2. **Propagate origin through the filesystem** — The master uses `InboundOriginTracker` to remember which CID triggered a write, so the resulting filesystem event is broadcast with the correct originator CID instead of the master's own CID.
+3. **Suppress echoes** — Slaves discard incoming WebSocket events whose `cid` matches their own, preventing them from re-downloading/re-deleting files they just uploaded/deleted.
+
+### InboundOriginTracker
+
+`InboundOriginTracker` (`lan_websocket.py`) is an in-memory map `path → (cid, expiry)` with a **10-second TTL**:
+
+| Function | Description |
+|----------|-------------|
+| `mark_inbound_origin(path, cid)` | Record that `path` was written on behalf of `cid` |
+| `consume_inbound_origin(path)` | Return (and remove) the originator CID for `path` if still fresh |
+
+The master's HTTP handlers call `mark_inbound_origin` after receiving an upload/delete/rename. The master's filesystem watcher calls `consume_inbound_origin` when it sees the resulting event — if a fresh entry exists, the broadcast uses the original peer's CID instead of the master's CID.
+
+### Bidirectional Sync Flow with Echo Suppression
+
+```mermaid
+sequenceDiagram
+    participant A as Client A (cid=A1)
+    participant M as Master
+    participant B as Client B (cid=B2)
+
+    Note over A,B: ① Client A modifies a file
+    A->>A: File changed (watchdog)
+    A->>M: POST /files?... (cid=A1 in form)
+    M->>M: mark_inbound_origin(path, "A1")
+    M->>M: Master filesystem event fires
+    M->>M: consume_inbound_origin(path) → "A1"
+    M-->>A: WebSocket: modified {cid: "A1"}
+    M-->>B: WebSocket: modified {cid: "A1"}
+    Note over A: cid == ownCid → [LAN ECHO] discard
+    B->>M: GET file (download)
 ```
 
 ## Use Cases
