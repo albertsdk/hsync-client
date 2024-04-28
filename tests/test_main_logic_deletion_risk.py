@@ -84,6 +84,60 @@ class TestCheckDeletionRisk:
         )
         mock_logger.warning.assert_not_called()
 
+    def test_hsynckeep_only_no_warning(self, tmp_path):
+        """No warning when directory contains only the .hsynckeep sentinel."""
+        from hsync_client.constants import HSYNCKEEP_FILENAME
+
+        (tmp_path / HSYNCKEEP_FILENAME).write_text("")
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=True,
+            force_master=False,
+            sync_direction="bidirectional",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    def test_hidden_files_only_no_warning(self, tmp_path):
+        """No warning when directory contains only hidden/temp files."""
+        (tmp_path / ".hidden").write_text("x")
+        (tmp_path / "file.tmp").write_text("x")
+        (tmp_path / "backup.bak").write_text("x")
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=True,
+            force_master=False,
+            sync_direction="bidirectional",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    def test_user_file_in_subdir_warns(self, tmp_path):
+        """Warns when a user file exists deeper in the tree, not at top level."""
+        from hsync_client.constants import HSYNCKEEP_FILENAME
+
+        (tmp_path / HSYNCKEEP_FILENAME).write_text("")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "real.txt").write_text("user data")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value="y"):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+        warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "DELETE" in warning_texts
+
     # ── Risky scenarios ──────────────────────────────────────────────
 
     def test_lan_no_force_master_warns(self, tmp_path):

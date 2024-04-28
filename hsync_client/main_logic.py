@@ -204,7 +204,10 @@ def _check_deletion_risk(
 
     Raises SystemExit if the user declines to continue.
     """
-    from os import listdir
+    from os import walk
+
+    from hsync_client.models.dir import is_hidden_dir
+    from hsync_client.models.file import is_hidden_file
 
     # upload-only never deletes local files
     if sync_direction == "upload-only":
@@ -214,12 +217,25 @@ def _check_deletion_risk(
     if lan_mode and force_master:
         return
 
-    # Check if directory has any content
+    # A directory is considered "empty" for deletion-risk purposes when it
+    # contains no user data: hidden/temp/backup files and the .hsynckeep
+    # sentinel are system artefacts and do not represent user content.
+    has_user_content = False
     try:
-        entries = listdir(local_path)
+        for _root, dirs, files in walk(local_path):
+            dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
+            for fname in files:
+                if fname == HSYNCKEEP_FILENAME:
+                    continue
+                if is_hidden_file(fname):
+                    continue
+                has_user_content = True
+                break
+            if has_user_content:
+                break
     except OSError:
         return
-    if not entries:
+    if not has_user_content:
         return
 
     # Determine risk reason
