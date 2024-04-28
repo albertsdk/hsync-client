@@ -42,7 +42,7 @@ source prod.env
 |--------|-------------|---------|
 | `-b, --bucket` | Bucket name | (required) |
 | `-p, --path` | Local directory path | cwd |
-| `-w, --watch` | Watch for changes and sync continuously | `false` |
+| `-w, --watch` | Watch for changes and sync continuously. (Implicit in LAN mode) | `false` |
 | `-i, --interval` | Force full sync every N seconds (requires `-w`) | — |
 | `--retry-delay` | Retry connection after N seconds | `5` |
 | `--stability-delay` | Seconds to wait before uploading modified files | `5` |

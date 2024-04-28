@@ -36,7 +36,7 @@ flowchart TB
 | **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
 | **Automatic Master Election** | Priority: `force_master` > bidirectional preference > earliest startup > lowest CID |
-| **Real-Time Sync** | WebSocket-based instant event propagation |
+| **Real-Time Sync** | WebSocket-based instant event propagation (implicit `--watch`) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
 | **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
 | **Optional Authentication** | Shared secret key for security |
@@ -248,7 +248,9 @@ HSYNC_LAN_PERSISTENT=false ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 ## Persistent Mode (Default)
 
-Persistent mode is **enabled by default** in LAN mode. The client stays active indefinitely, even when no peers are found. This is useful for:
+Persistent mode is **enabled by default** in LAN mode. The client stays active indefinitely, even when no peers are found. In this mode, the `--watch` behavior is **implicit**: the client automatically starts a file system watcher and propagates events in real-time.
+
+This is useful for:
 
 - **Always-on sync services**: Keep a device ready to sync whenever others come online
 - **NAS/Server deployments**: Run as a background service waiting for clients
