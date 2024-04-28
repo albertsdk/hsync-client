@@ -160,9 +160,10 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 # Build
 poetry install
 ./compile.sh
+# Binary output: dist/<os>-<arch>/hsync  (e.g. dist/linux-amd64/hsync)
 
-# Run
-./dist/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
+# Run  (replace <platform> with your os-arch, e.g. linux-amd64)
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
 ```
 
 See [Getting Started](docs/getting-started.md) for detailed instructions.
