@@ -330,6 +330,137 @@ class TestRunAsMaster:
         assert second == first
 
 
+class TestRunAsMasterPersistentSemantics:
+    """Regression tests for the consolidated master loop.
+
+    The master role is intrinsically continuous: it must remain
+    available to serve any peer that joins.  After the refactor that
+    collapsed the duplicated persistent/non-persistent branches in
+    :func:`_run_as_master`, the function must:
+
+    * Always sleep once and return (no infinite ``while True`` inside).
+    * Behave identically regardless of the ``persistent`` argument.
+    * Be re-entered by the outer discovery loop while the role holds,
+      without rebinding servers (verified by other tests above).
+    """
+
+    def test_master_returns_after_single_sleep_when_non_persistent(self, tmp_path):
+        """Non-persistent master must not block forever: it returns after one sleep."""
+        from hsync_client.lan_handler import _run_as_master
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        mock_log = MagicMock()
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.port = 9000
+
+        sleep_calls: list[float] = []
+
+        with (
+            patch("hsync_client.lan_handler.LANServer", return_value=MagicMock()),
+            patch("hsync_client.lan_handler.LANWebSocketServer", return_value=MagicMock()),
+            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+        ):
+            result = _run_as_master(
+                config=config,
+                log=mock_log,
+                lan_sync=mock_lan_sync,
+                cert_info=None,
+                persistent=False,
+                lan_server=None,
+                lan_ws_server=None,
+            )
+
+        # Refactored behaviour: exactly one sleep, then return.
+        assert len(sleep_calls) == 1, (
+            f"Master must sleep exactly once and return; got {len(sleep_calls)} sleeps"
+        )
+        assert result is not None
+        assert result[0] is not None and result[1] is not None
+
+    def test_master_behaviour_is_identical_for_both_persistent_values(self, tmp_path):
+        """Master must yield/return identically regardless of the persistent flag."""
+        from hsync_client.lan_handler import _run_as_master
+
+        def _run_once(persistent_value: bool) -> tuple[int, object]:
+            config = _make_lan_config(tmp_path, LAN_PERSISTENT=persistent_value)
+            sleeps: list[float] = []
+            with (
+                patch("hsync_client.lan_handler.LANServer", return_value=MagicMock()),
+                patch("hsync_client.lan_handler.LANWebSocketServer", return_value=MagicMock()),
+                patch("time.sleep", side_effect=lambda s: sleeps.append(s)),
+            ):
+                result = _run_as_master(
+                    config=config,
+                    log=MagicMock(),
+                    lan_sync=MagicMock(port=9000),
+                    cert_info=None,
+                    persistent=persistent_value,
+                    lan_server=None,
+                    lan_ws_server=None,
+                )
+            return len(sleeps), result
+
+        persistent_sleeps, persistent_result = _run_once(True)
+        non_persistent_sleeps, non_persistent_result = _run_once(False)
+
+        assert persistent_sleeps == non_persistent_sleeps == 1
+        # Both paths return a 2-tuple of (server, ws_server) instances.
+        assert persistent_result is not None and non_persistent_result is not None
+        assert len(persistent_result) == 2 and len(non_persistent_result) == 2
+
+
+class TestRunLanModeOuterLoopMasterPath:
+    """Regression tests for the outer discovery loop on the master path.
+
+    Previously the loop contained ``if not persistent: break`` right
+    after ``_run_as_master`` returned.  Since the master is inherently
+    continuous, that branch was either dead code (when the inner master
+    loop blocked forever) or, after the refactor, would have shut the
+    master down immediately - leaving no time for slaves to sync.  The
+    branch was removed; the loop now only exits via KeyboardInterrupt
+    or by losing the master role.
+    """
+
+    def test_master_loop_does_not_exit_on_non_persistent(self, tmp_path):
+        """Outer loop on master path must keep iterating even with persistent=False."""
+        from hsync_client.lan_handler import run_lan_mode
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        mock_log = MagicMock()
+
+        mock_peer_mgr = MagicMock()
+        # Stay master across iterations until KeyboardInterrupt is raised.
+        mock_peer_mgr.is_master.return_value = True
+
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.start.return_value = mock_peer_mgr
+        mock_lan_sync.port = 9000
+
+        sleep_calls: list[float] = []
+
+        def _sleep_then_interrupt_after_three(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 3:
+                raise KeyboardInterrupt
+
+        with (
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.LANServer", return_value=MagicMock()),
+            patch("hsync_client.lan_handler.LANWebSocketServer", return_value=MagicMock()),
+            patch("time.sleep", side_effect=_sleep_then_interrupt_after_three),
+        ):
+            run_lan_mode(config, mock_log)
+
+        # If the outer loop had broken on the first non-persistent master
+        # iteration, only one sleep would have been recorded.  The fact
+        # that we reached three sleeps proves the loop kept re-entering
+        # _run_as_master.
+        assert len(sleep_calls) >= 3, (
+            "Outer loop must keep calling _run_as_master while the master role "
+            "is held, regardless of LAN_PERSISTENT"
+        )
+
+
 class TestRunAsSlave:
     """Tests for _run_as_slave function - covered by test_main_logic_lan.py"""
 
