@@ -175,7 +175,8 @@ See [Getting Started](docs/getting-started.md) for detailed instructions.
 - [Sync Modes](docs/sync-modes.md) - Single, Watch, LAN modes
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
 - [Architecture](docs/architecture.md) - Internal design
-- [Usage](docs/usage.md) - Advanced examples
+- [Usage](docs/usage.md) - CLI reference, log labels, error handling
+- [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
 
 ## Version
 

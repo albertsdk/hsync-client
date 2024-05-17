@@ -485,6 +485,7 @@ hsync-client/
 ├── docs/                   # Documentation
 │   ├── architecture.md     # Architecture overview
 │   ├── configuration.md    # Configuration guide
+│   ├── examples.md         # Practical scenarios (server + LAN)
 │   ├── getting-started.md  # Getting started guide
 │   ├── lan-mode.md         # LAN mode (P2P) documentation
 │   ├── sync-modes.md       # Synchronization modes
