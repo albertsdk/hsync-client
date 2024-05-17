@@ -163,8 +163,11 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                     if lan_ws_server:
                         lan_ws_server.stop()
                         lan_ws_server = None
-                if not persistent:
-                    break
+                # NOTE: the master role is inherently continuous: it must
+                # stay available to serve peers regardless of the
+                # ``persistent`` flag (which only applies to slaves).  The
+                # loop only exits via KeyboardInterrupt or by losing the
+                # master role and being elected slave on a later iteration.
             else:
                 should_continue = _run_as_slave(
                     config=config,
@@ -198,10 +201,19 @@ def _run_as_master(
 ) -> tuple[LANServer | None, LANWebSocketServer | None]:
     """Run as master (sync coordinator).
 
+    The master role is inherently continuous: the master must stay
+    available to serve any peer that joins.  The ``persistent`` flag
+    only affects slave behaviour (one-shot vs. continuous sync) and is
+    accepted here for API symmetry with :func:`_run_as_slave` but does
+    not change the master loop, which always yields back to the outer
+    discovery loop after a brief idle window so master/peer election
+    can be re-evaluated.
+
     Returns the (lan_server, lan_ws_server) tuple so the caller can persist
     the running server instances across discovery loop iterations and avoid
     re-binding the same port on subsequent iterations.
     """
+    del persistent  # master role is always continuous; flag kept for API symmetry
 
     log.info("This client is the MASTER - acting as sync coordinator")
 
@@ -245,19 +257,12 @@ def _run_as_master(
         # Update mDNS service to indicate server is ready
         lan_sync.update_server_ready()
 
-    if persistent:
-        log.info("Press Ctrl+C to stop...")
-        # In persistent mode, keep running as master
-        while True:
-            time.sleep(1)
-            # Check if we're still master (peers may have joined/left)
-            # This will be checked by the outer loop
-            break
-    else:
-        # Non-persistent: just wait for Ctrl+C
-        log.info("Press Ctrl+C to stop...")
-        while True:
-            time.sleep(1)
+    log.info("Press Ctrl+C to stop...")
+    # Yield back to the outer discovery loop after a short idle window
+    # so master/peer election can be re-evaluated.  If we are still
+    # master on the next iteration, the outer loop will call us again
+    # and reuse the existing server instances.
+    time.sleep(1)
 
     return lan_server, lan_ws_server
 
