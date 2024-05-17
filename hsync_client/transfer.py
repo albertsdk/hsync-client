@@ -72,6 +72,92 @@ class _ThrottledFileReader:
         return data
 
 
+# Upload streaming chunk size
+_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+def _build_multipart_streaming(
+    file_path: str,
+    fields: dict,
+    boundary: str,
+    file_field_name: str = "file",
+    filename: str | None = None,
+    offset: int = 0,
+    bandwidth_limit: int | None = None,
+):
+    """Construct a streaming multipart/form-data body.
+
+    Returns ``(generator, content_length, content_type)`` where ``generator``
+    yields the body in chunks (file part streamed from disk, never loaded
+    into memory) and ``content_length`` is the exact total byte count for
+    the HTTP Content-Length header.
+    """
+    if filename is None:
+        filename = basename(file_path)
+
+    file_size = getsize(file_path) - offset
+    if file_size < 0:
+        file_size = 0
+
+    # Pre-compute body parts so Content-Length is exact
+    field_parts: list[bytes] = []
+    for name, value in fields.items():
+        field_parts.append(
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n".encode()
+        )
+
+    file_header = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{file_field_name}"; '
+        f'filename="{filename}"\r\n'
+        f"Content-Type: application/octet-stream\r\n\r\n"
+    ).encode()
+    file_trailer = b"\r\n"
+    closing = f"--{boundary}--\r\n".encode()
+
+    content_length = (
+        sum(len(p) for p in field_parts)
+        + len(file_header)
+        + file_size
+        + len(file_trailer)
+        + len(closing)
+    )
+    content_type = f"multipart/form-data; boundary={boundary}"
+
+    def _generator():
+        yield from field_parts
+        yield file_header
+        with open(file_path, "rb") as fh:
+            if offset > 0:
+                fh.seek(offset)
+            while True:
+                chunk = fh.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
+                if bandwidth_limit:
+                    delay = get_throttle_delay(len(chunk), bandwidth_limit, "upload")
+                    if delay > 0:
+                        time_sleep(delay)
+        yield file_trailer
+        yield closing
+
+    return _generator(), content_length, content_type
+
+
+def _upload_timeout() -> tuple[float, float | None]:
+    """Return (connect_timeout, read_timeout) for upload requests.
+
+    Read timeout is disabled because large file uploads can legitimately
+    keep the socket busy for many minutes; the connect timeout still
+    catches unreachable servers quickly.
+    """
+    connect = float(CONFIG.get("HTTP_TIMEOUT", 30))
+    return connect, None
+
+
 # =============================================================================
 # Download Operations
 # =============================================================================
@@ -478,7 +564,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 data=data,
                 files=files,
                 verify=get_ssl_verify(),
-                timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+                timeout=_upload_timeout(),
             )
             if response.status_code == 201:
                 log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
@@ -493,24 +579,29 @@ def upload_file(file: File, check_size: bool = True) -> None:
             else:
                 response.raise_for_status()
         else:
-            # Standard upload (streaming, supports resume)
+            # Standard upload: stream the multipart body directly from disk
+            # so files of arbitrary size do not need to be loaded into RAM.
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-            with open(file.filepath, "rb") as upload:
-                # Seek to offset if resuming
-                if offset > 0:
-                    upload.seek(offset)
+            import uuid
 
-                # Wrap file handle for bandwidth throttling
-                fh = _ThrottledFileReader(upload, ul_bw_limit) if ul_bw_limit else upload
-                files = {"file": (basename(file.filepath), fh)}
-                response = post(
-                    uri,
-                    headers=headers,
-                    data=data,
-                    files=files,
-                    verify=get_ssl_verify(),
-                    timeout=CONFIG.get("HTTP_TIMEOUT", 30),
-                )
+            boundary = uuid.uuid4().hex
+            body_iter, content_length, content_type = _build_multipart_streaming(
+                file.filepath,
+                dict(data),
+                boundary=boundary,
+                filename=basename(file.filepath),
+                offset=offset,
+                bandwidth_limit=ul_bw_limit,
+            )
+            headers["Content-Type"] = content_type
+            headers["Content-Length"] = str(content_length)
+            response = post(
+                uri,
+                headers=headers,
+                data=body_iter,
+                verify=get_ssl_verify(),
+                timeout=_upload_timeout(),
+            )
             if response.status_code == 201:
                 log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
             elif response.status_code == 202:

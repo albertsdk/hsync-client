@@ -238,8 +238,8 @@ class LANWebSocketServer:
             "0.0.0.0",
             self._port,
             ssl=ssl_context,
-            ping_interval=30,
-            ping_timeout=10,
+            ping_interval=60,
+            ping_timeout=30,
         ) as server:
             self._server = server
             protocol = "WSS" if self._use_https else "WS"
@@ -639,8 +639,8 @@ async def lan_websocket_client(
         async with websockets.connect(
             uri,
             ssl=ssl_context,
-            ping_interval=30,
-            ping_timeout=10,
+            ping_interval=60,
+            ping_timeout=30,
             close_timeout=5,
         ) as websocket:
             log.info("WebSocket connected to master")
