@@ -602,3 +602,55 @@ class TestInboundOriginTracker:
 
         mark_inbound_origin("/bucket/a.txt", "slave-1", ttl=-1.0)
         assert consume_inbound_origin("/bucket/a.txt") is None
+
+
+class TestEventLoopRemainsResponsive:
+    """Regression test for the cascade where a multi-GB download blocked
+    the asyncio loop and caused WebSocket keep-alive pings to time out.
+
+    ``_handle_lan_event`` must dispatch the blocking ``update_file`` call
+    to a worker thread (via ``asyncio.to_thread``) so the event loop is
+    free to handle other coroutines while the download runs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_blocking_update_file_does_not_freeze_loop(self, tmp_path):
+        import asyncio
+        import time as _time
+
+        event_data = {
+            "name": "modified",
+            "src": {
+                "filepath": "big.bin",
+                "md5sum": "deadbeef",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 9_000_000_000,
+                "permissions": "-rw-r--r--",
+            },
+        }
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+
+        # Simulate a long synchronous download
+        def slow_update(_src):
+            _time.sleep(0.4)
+
+        # Concurrent ticker to assert the loop kept advancing during the
+        # synchronous "download": if ``update_file`` were awaited inline
+        # the ticker would not be able to record any ticks.
+        ticks = []
+
+        async def ticker():
+            for _ in range(8):
+                await asyncio.sleep(0.05)
+                ticks.append(_time.monotonic())
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.sync.update_file", side_effect=slow_update),
+        ):
+            await asyncio.gather(_handle_lan_event(event_data), ticker())
+
+        # The ticker must have produced multiple ticks during the slow
+        # update — proving the event loop was never blocked.
+        assert len(ticks) >= 4

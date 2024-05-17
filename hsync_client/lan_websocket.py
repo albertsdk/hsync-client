@@ -54,6 +54,13 @@ from hsync_client.utils import ensure_str_path, is_same_paths
 SUPPORTS_ON_CLOSED = sys.platform == "linux"
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
+# Conservative minimum effective LAN bandwidth used to derive the dynamic
+# ``wait_pending`` timeout from the total bytes still in flight (10 MB/s).
+MIN_BANDWIDTH_BPS = 10 * 1024 * 1024
+# Hard cap on the dynamic ``wait_pending`` timeout to avoid waiting forever
+# if a transfer stalls (30 minutes).
+MAX_WAIT_PENDING_SECONDS = 30 * 60
+
 
 def _escape_braces(s: str) -> str:
     """Escape curly braces in string for loguru format."""
@@ -752,6 +759,9 @@ async def _handle_lan_event(
             slave_handler.unmark_receiving(filepath)
 
     # Handle Added / Modified events
+    # All blocking I/O (download, rename, rmtree) is dispatched to a worker
+    # thread via ``asyncio.to_thread`` so the WebSocket event loop stays
+    # responsive to keep-alive pings while large transfers are in flight.
     if event_name in {"added", "modified"}:
         if "path" in src:
             # Directory event
@@ -759,7 +769,7 @@ async def _handle_lan_event(
             if dir_obj.path:
                 mark_receiving(dir_obj.path)
                 try:
-                    update_dir(src)
+                    await asyncio.to_thread(update_dir, src)
                 finally:
                     unmark_receiving(dir_obj.path)
         elif "filepath" in src:
@@ -768,7 +778,7 @@ async def _handle_lan_event(
             if file_obj.filepath:
                 mark_receiving(file_obj.filepath)
                 try:
-                    update_file(src)
+                    await asyncio.to_thread(update_file, src)
                 finally:
                     unmark_receiving(file_obj.filepath)
 
@@ -791,7 +801,7 @@ async def _handle_lan_event(
                     parent = dirname(dst_dir.path)
                     if parent and not exists(parent):
                         makedirs(parent, exist_ok=True)
-                    rename(src_dir.path, dst_dir.path)
+                    await asyncio.to_thread(rename, src_dir.path, dst_dir.path)
                 finally:
                     unmark_receiving(src_dir.path)
                     unmark_receiving(dst_dir.path)
@@ -808,7 +818,7 @@ async def _handle_lan_event(
                     parent = dirname(dst_file.filepath)
                     if parent and not exists(parent):
                         makedirs(parent, exist_ok=True)
-                    rename(src_file.filepath, dst_file.filepath)
+                    await asyncio.to_thread(rename, src_file.filepath, dst_file.filepath)
                 finally:
                     unmark_receiving(src_file.filepath)
                     unmark_receiving(dst_file.filepath)
@@ -827,7 +837,7 @@ async def _handle_lan_event(
                 mark_receiving(dir_obj.path)
                 try:
                     log.info(f'[LAN DELETE] "{dir_obj.path}"')
-                    rmtree(dir_obj.path, ignore_errors=False)
+                    await asyncio.to_thread(rmtree, dir_obj.path, False)
                 finally:
                     unmark_receiving(dir_obj.path)
         elif "filepath" in src:
@@ -837,7 +847,7 @@ async def _handle_lan_event(
                 mark_receiving(file_obj.filepath)
                 try:
                     log.info(f'[LAN DELETE] "{file_obj.filepath}"')
-                    remove(file_obj.filepath)
+                    await asyncio.to_thread(remove, file_obj.filepath)
                     parent = dirname(file_obj.filepath)
                     if basename(file_obj.filepath) == HSYNCKEEP_FILENAME:
                         # Sentinel removed — clean up the now-empty directory.
@@ -856,7 +866,7 @@ async def _handle_lan_event(
         if file_obj.filepath:
             mark_receiving(file_obj.filepath)
             try:
-                update_file(src)
+                await asyncio.to_thread(update_file, src)
             finally:
                 unmark_receiving(file_obj.filepath)
 
@@ -895,8 +905,11 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         # Track files we're currently receiving from master to avoid echo
         self._receiving_files: set[str] = set()
         self._receiving_lock = threading.Lock()
-        # Track pending operations (rename, upload, delete) for graceful shutdown
-        self._pending_ops: list[threading.Thread] = []
+        # Track pending operations (rename, upload, delete) for graceful
+        # shutdown.  Each entry is ``(thread, bytes_estimate)`` so that
+        # ``wait_pending`` can derive a timeout proportional to the volume
+        # still in flight (large uploads can legitimately take minutes).
+        self._pending_ops: list[tuple[threading.Thread, int]] = []
         self._pending_ops_lock = threading.Lock()
 
     def mark_receiving(self, filepath: str) -> None:
@@ -919,6 +932,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         target,
         args: tuple = (),
         name: str | None = None,
+        bytes_estimate: int = 0,
     ) -> threading.Thread:
         """Start a background operation and track it for graceful shutdown.
 
@@ -926,6 +940,9 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             target: Callable to run in the thread.
             args: Arguments to pass to target.
             name: Optional thread name for debugging.
+            bytes_estimate: Expected payload size in bytes (used by
+                ``wait_pending`` to derive a proportional timeout).
+                Defaults to 0 for fast metadata operations (delete/rename).
 
         Returns:
             The started thread.
@@ -933,8 +950,8 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         thread = threading.Thread(target=target, args=args, daemon=True, name=name)
         with self._pending_ops_lock:
             # Clean up completed threads
-            self._pending_ops = [t for t in self._pending_ops if t.is_alive()]
-            self._pending_ops.append(thread)
+            self._pending_ops = [(t, b) for t, b in self._pending_ops if t.is_alive()]
+            self._pending_ops.append((thread, max(bytes_estimate, 0)))
         thread.start()
         return thread
 
@@ -942,24 +959,42 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         """Wait for all pending operations to complete.
 
         Called before reconnect sync to avoid race conditions between
-        pending client→master operations and the full sync.
+        pending client→master operations and the full sync.  The effective
+        timeout is scaled by the total bytes still in flight so that
+        multi-gigabyte uploads are not cut short.
 
         Args:
-            timeout: Maximum seconds to wait for all operations.
+            timeout: Base timeout in seconds; the actual deadline is
+                ``max(timeout, total_bytes / MIN_BANDWIDTH_BPS + timeout)``
+                capped at ``MAX_WAIT_PENDING_SECONDS``.
 
         Returns:
             Number of operations that timed out (0 = all completed).
         """
         with self._pending_ops_lock:
-            threads = [t for t in self._pending_ops if t.is_alive()]
+            active = [(t, b) for t, b in self._pending_ops if t.is_alive()]
 
-        if not threads:
+        if not active:
             return 0
 
-        log.info(f"Waiting for {len(threads)} pending operation(s) to complete...")
+        total_bytes = sum(b for _, b in active)
+        if total_bytes > 0:
+            bandwidth_seconds = total_bytes / MIN_BANDWIDTH_BPS
+            effective_timeout = min(
+                max(timeout, bandwidth_seconds + timeout),
+                MAX_WAIT_PENDING_SECONDS,
+            )
+            log.info(
+                f"Waiting up to {effective_timeout:.0f}s for {len(active)} "
+                f"pending operation(s) (~{total_bytes / (1024 * 1024):.1f} MB)..."
+            )
+        else:
+            effective_timeout = timeout
+            log.info(f"Waiting for {len(active)} pending operation(s) to complete...")
+
         timed_out = 0
-        deadline = time() + timeout
-        for thread in threads:
+        deadline = time() + effective_timeout
+        for thread, _ in active:
             remaining = max(deadline - time(), 0)
             if remaining <= 0:
                 timed_out += 1
@@ -1175,11 +1210,18 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         invalidate_md5_cache(src_path)
         file_obj = File.get(src_path)
         if file_obj:
+            # Bytes estimate lets ``wait_pending`` scale its timeout when
+            # large files are still being uploaded at WS disconnect time.
+            try:
+                size_hint = getsize(src_path)
+            except OSError:
+                size_hint = 0
             # Run upload in a separate thread to not block the watcher
             self._start_operation(
                 target=self._upload_to_master,
                 args=(file_obj,),
                 name=f"upload-{src_path}",
+                bytes_estimate=size_hint,
             )
 
     def _ensure_sentinel(self, dir_path: str) -> None:
@@ -1273,10 +1315,15 @@ class SlaveFileEventHandler(FileSystemEventHandler):
                 invalidate_md5_cache(dest_path)
                 file_obj = File.get(dest_path)
                 if file_obj:
+                    try:
+                        size_hint = getsize(dest_path)
+                    except OSError:
+                        size_hint = 0
                     self._start_operation(
                         target=self._upload_to_master,
                         args=(file_obj,),
                         name=f"upload-{dest_path}",
+                        bytes_estimate=size_hint,
                     )
             return
 

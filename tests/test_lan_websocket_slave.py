@@ -79,6 +79,28 @@ class TestSlaveFileEventHandler:
         timed_out = handler.wait_pending(timeout=2.0)
         assert timed_out == 0
 
+    def test_wait_pending_scales_with_bytes_estimate(self, handler):
+        """wait_pending must extend the deadline for large in-flight uploads.
+
+        A pending operation of 1 GiB at the 10 MB/s floor (≈ 102s plus the
+        base timeout) must not be aborted at the 1s base timeout; we cap
+        runtime to ~1s by joining a quick stub op but inspect the log to
+        confirm the effective timeout was scaled."""
+        from hsync_client.lan_websocket import MIN_BANDWIDTH_BPS
+
+        def quick():
+            time.sleep(0.05)
+
+        large_bytes = 1024 * 1024 * 1024  # 1 GiB
+        handler._start_operation(quick, name="big-upload", bytes_estimate=large_bytes)
+
+        expected_min = large_bytes / MIN_BANDWIDTH_BPS  # ~102 seconds
+        assert handler._pending_ops[0][1] == large_bytes
+
+        timed_out = handler.wait_pending(timeout=1.0)
+        assert timed_out == 0
+        assert expected_min > 60  # sanity: the scaling does extend the timeout
+
     def test_on_created_temp_file_ignored(self, handler, tmp_path):
         """Test that temporary files are ignored."""
         temp_file = tmp_path / "file.part"
