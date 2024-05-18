@@ -24,8 +24,6 @@ flowchart LR
     end
 ```
 
-![Quick Start](images/usage-1.png)
-
 ## Command Line Interface
 
 ### Basic Syntax
@@ -67,8 +65,6 @@ mindmap
       -V, --version
       --help-symbols
 ```
-
-![CLI Options](images/usage-2.png)
 
 ## Usage Scenarios
 
@@ -128,8 +124,6 @@ flowchart TD
 
     W -->|"⑥ Retry"| E
 ```
-
-![Error Handling](images/usage-6.png)
 
 ## Environment Variables
 
