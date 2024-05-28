@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HSYNC</title>
+    <link rel="icon" type="image/png" href="hsync.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+    <img src="hsync.png" alt="HSYNC" class="logo">
+    <h1 data-i18n="app.title">HSYNC</h1>
+    <div class="header-right">
+        <span id="status-badge" class="badge badge-unknown" data-i18n="status.unknown">unknown</span>
+        <select id="lang-select" aria-label="Language"></select>
+    </div>
+</header>
+
+<main>
+    <form id="config-form" autocomplete="off">
+
+        <!-- Mode ------------------------------------------------------- -->
+        <fieldset>
+            <legend data-i18n="section.mode">Mode</legend>
+            <label>
+                <span data-i18n="field.mode">Mode</span>
+                <select name="HSYNC_MODE" id="HSYNC_MODE">
+                    <option value="lan" data-i18n="mode.lan">LAN (peer-to-peer)</option>
+                    <option value="server" data-i18n="mode.server">Server (central HSYNC server)</option>
+                </select>
+            </label>
+            <label>
+                <span data-i18n="field.role">Role</span>
+                <select name="HSYNC_ROLE" id="HSYNC_ROLE">
+                    <option value="auto"   data-i18n="role.auto">Auto (bidirectional, automatic election)</option>
+                    <option value="master" data-i18n="role.master">Master (NAS holds the authoritative copy)</option>
+                    <option value="slave"  data-i18n="role.slave">Slave (NAS is a read-only replica)</option>
+                </select>
+            </label>
+        </fieldset>
+
+        <!-- Paths ------------------------------------------------------ -->
+        <fieldset>
+            <legend data-i18n="section.paths">Paths</legend>
+            <label>
+                <span data-i18n="field.path">Local path</span>
+                <input type="text" name="HSYNC_PATH" id="HSYNC_PATH" placeholder="/mnt/HD/HD_a2/hsync/data">
+            </label>
+            <label>
+                <span data-i18n="field.bucket">Bucket</span>
+                <input type="text" name="HSYNC_BUCKET" id="HSYNC_BUCKET" pattern="^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$" placeholder="hsync">
+            </label>
+        </fieldset>
+
+        <!-- LAN -------------------------------------------------------- -->
+        <fieldset id="lan-options">
+            <legend data-i18n="section.lan">LAN options</legend>
+            <label class="check">
+                <input type="checkbox" name="HSYNC_LAN_PERSISTENT" id="HSYNC_LAN_PERSISTENT">
+                <span data-i18n="field.lan_persistent">Persistent (keep retrying when no peer is found)</span>
+            </label>
+            <label class="check">
+                <input type="checkbox" name="HSYNC_LAN_HTTPS" id="HSYNC_LAN_HTTPS">
+                <span data-i18n="field.lan_https">HTTPS between peers</span>
+            </label>
+            <label>
+                <span data-i18n="field.lan_group">LAN group (optional)</span>
+                <input type="text" name="HSYNC_LAN_GROUP" id="HSYNC_LAN_GROUP">
+            </label>
+            <label>
+                <span data-i18n="field.discovery_timeout">Discovery timeout (s)</span>
+                <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="1" max="600">
+            </label>
+        </fieldset>
+
+        <!-- Server ----------------------------------------------------- -->
+        <fieldset id="server-options" hidden>
+            <legend data-i18n="section.server">Server options</legend>
+            <label>
+                <span data-i18n="field.server">Server URL</span>
+                <input type="url" name="HSYNC_SERVER" id="HSYNC_SERVER" placeholder="https://hsync.example.com">
+            </label>
+            <label>
+                <span data-i18n="field.api_key">API key</span>
+                <input type="password" name="HSYNC_API_KEY" id="HSYNC_API_KEY" autocomplete="new-password">
+            </label>
+        </fieldset>
+
+        <!-- Sync behaviour --------------------------------------------- -->
+        <fieldset>
+            <legend data-i18n="section.behaviour">Sync behaviour</legend>
+            <label class="check">
+                <input type="checkbox" name="HSYNC_WATCH" id="HSYNC_WATCH">
+                <span data-i18n="field.watch">Watch for changes continuously</span>
+            </label>
+            <label>
+                <span data-i18n="field.interval">Forced re-sync interval (s, 0 = off)</span>
+                <input type="number" name="HSYNC_INTERVAL" id="HSYNC_INTERVAL" min="0">
+            </label>
+            <label class="check">
+                <input type="checkbox" name="HSYNC_IGNORE_DELETE" id="HSYNC_IGNORE_DELETE">
+                <span data-i18n="field.ignore_delete">Ignore deletions (backup-friendly)</span>
+            </label>
+            <label class="check">
+                <input type="checkbox" name="HSYNC_NO_COMPRESSION" id="HSYNC_NO_COMPRESSION">
+                <span data-i18n="field.no_compression">Disable zstd compression</span>
+            </label>
+            <label>
+                <span data-i18n="field.bw_upload">Max upload bandwidth (e.g. 1MB)</span>
+                <input type="text" name="HSYNC_MAX_BW_UPLOAD" id="HSYNC_MAX_BW_UPLOAD">
+            </label>
+            <label>
+                <span data-i18n="field.bw_download">Max download bandwidth (e.g. 1MB)</span>
+                <input type="text" name="HSYNC_MAX_BW_DOWNLOAD" id="HSYNC_MAX_BW_DOWNLOAD">
+            </label>
+            <label>
+                <span data-i18n="field.min_free_mb">Minimum free disk space (MB, 0 = off)</span>
+                <input type="number" name="HSYNC_MIN_FREE_DISK_MB" id="HSYNC_MIN_FREE_DISK_MB" min="0">
+            </label>
+            <label class="check">
+                <input type="checkbox" name="HSYNC_VERBOSE" id="HSYNC_VERBOSE">
+                <span data-i18n="field.verbose">Verbose log</span>
+            </label>
+        </fieldset>
+
+        <!-- Actions ---------------------------------------------------- -->
+        <div class="actions">
+            <button type="submit" class="primary" data-i18n="action.save">Save</button>
+            <button type="button" id="btn-start" data-i18n="action.start">Start</button>
+            <button type="button" id="btn-stop"  data-i18n="action.stop">Stop</button>
+            <button type="button" id="btn-restart" data-i18n="action.restart">Restart</button>
+        </div>
+        <p id="toast" hidden></p>
+    </form>
+</main>
+
+<footer>
+    <span data-i18n="footer.version">Version</span>: <span id="app-version">—</span>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

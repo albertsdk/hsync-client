@@ -1,0 +1,51 @@
+{
+    "app.title": "HSYNC",
+    "section.mode": "Mode",
+    "section.paths": "Paths",
+    "section.lan": "LAN options",
+    "section.server": "Server options",
+    "section.behaviour": "Sync behaviour",
+
+    "field.mode": "Mode",
+    "field.role": "Role",
+    "field.path": "Local path",
+    "field.bucket": "Bucket",
+    "field.lan_persistent": "Persistent (keep retrying when no peer is found)",
+    "field.lan_https": "HTTPS between peers",
+    "field.lan_group": "LAN group (optional)",
+    "field.discovery_timeout": "Discovery timeout (s)",
+    "field.server": "Server URL",
+    "field.api_key": "API key",
+    "field.watch": "Watch for changes continuously",
+    "field.interval": "Forced re-sync interval (s, 0 = off)",
+    "field.ignore_delete": "Ignore deletions (backup-friendly)",
+    "field.no_compression": "Disable zstd compression",
+    "field.bw_upload": "Max upload bandwidth (e.g. 1MB)",
+    "field.bw_download": "Max download bandwidth (e.g. 1MB)",
+    "field.min_free_mb": "Minimum free disk space (MB, 0 = off)",
+    "field.verbose": "Verbose log",
+
+    "mode.lan": "LAN (peer-to-peer)",
+    "mode.server": "Server (central HSYNC server)",
+    "role.auto":   "Auto (bidirectional, automatic election)",
+    "role.master": "Master (NAS holds the authoritative copy)",
+    "role.slave":  "Slave (NAS is a read-only replica)",
+
+    "action.save":    "Save",
+    "action.start":   "Start",
+    "action.stop":    "Stop",
+    "action.restart": "Restart",
+
+    "status.running": "running",
+    "status.stopped": "stopped",
+    "status.unknown": "unknown",
+
+    "toast.saved":       "Configuration saved",
+    "toast.save_error":  "Failed to save",
+    "toast.load_error":  "Failed to load configuration",
+    "toast.started":     "Service started",
+    "toast.stopped":     "Service stopped",
+    "toast.restarted":   "Service restarted",
+
+    "footer.version": "Version"
+}

@@ -269,6 +269,23 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    sync_hidden: Annotated[
+        bool,
+        typer.Option(
+            "--sync-hidden",
+            help="Include hidden/system files in sync (disables built-in filters).",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
+    ignore_patterns: Annotated[
+        str | None,
+        typer.Option(
+            "--ignore-patterns",
+            help="Comma-separated extra gitignore-style patterns (layered on .hsyncignore).",
+            metavar="PATTERNS",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
     # -------------------------------------------------------------------------
     # LAN Mode
     # -------------------------------------------------------------------------
@@ -568,6 +585,8 @@ def main(
         legend=legend,
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
+        sync_hidden=sync_hidden,
+        ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
     )
 
 

@@ -1,0 +1,51 @@
+{
+    "app.title": "HSYNC",
+    "section.mode": "Modus",
+    "section.paths": "Pfade",
+    "section.lan": "LAN-Optionen",
+    "section.server": "Server-Optionen",
+    "section.behaviour": "Synchronisationsverhalten",
+
+    "field.mode": "Modus",
+    "field.role": "Rolle",
+    "field.path": "Lokaler Pfad",
+    "field.bucket": "Bucket",
+    "field.lan_persistent": "Persistent (bei fehlenden Peers weiter versuchen)",
+    "field.lan_https": "HTTPS zwischen Peers",
+    "field.lan_group": "LAN-Gruppe (optional)",
+    "field.discovery_timeout": "Erkennungs-Zeitlimit (s)",
+    "field.server": "Server-URL",
+    "field.api_key": "API-Schlüssel",
+    "field.watch": "Änderungen kontinuierlich überwachen",
+    "field.interval": "Erzwungenes Re-Sync-Intervall (s, 0 = aus)",
+    "field.ignore_delete": "Löschungen ignorieren (Backup-freundlich)",
+    "field.no_compression": "zstd-Kompression deaktivieren",
+    "field.bw_upload": "Max. Upload-Bandbreite (z. B. 1MB)",
+    "field.bw_download": "Max. Download-Bandbreite (z. B. 1MB)",
+    "field.min_free_mb": "Minimaler freier Speicher (MB, 0 = aus)",
+    "field.verbose": "Ausführliches Log",
+
+    "mode.lan": "LAN (Peer-to-Peer)",
+    "mode.server": "Server (zentraler HSYNC-Server)",
+    "role.auto":   "Auto (bidirektional, automatische Wahl)",
+    "role.master": "Master (NAS hält die autoritative Kopie)",
+    "role.slave":  "Slave (NAS ist eine schreibgeschützte Replik)",
+
+    "action.save":    "Speichern",
+    "action.start":   "Starten",
+    "action.stop":    "Stoppen",
+    "action.restart": "Neu starten",
+
+    "status.running": "läuft",
+    "status.stopped": "gestoppt",
+    "status.unknown": "unbekannt",
+
+    "toast.saved":       "Konfiguration gespeichert",
+    "toast.save_error":  "Speichern fehlgeschlagen",
+    "toast.load_error":  "Konfiguration konnte nicht geladen werden",
+    "toast.started":     "Dienst gestartet",
+    "toast.stopped":     "Dienst gestoppt",
+    "toast.restarted":   "Dienst neu gestartet",
+
+    "footer.version": "Version"
+}

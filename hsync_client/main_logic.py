@@ -18,6 +18,8 @@ from os.path import basename, exists
 from re import sub
 from typing import Any
 
+from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+
 from hsync_client.config import (
     CONFIG,
     HsyncConfig,
@@ -26,6 +28,7 @@ from hsync_client.config import (
     get_discovery_timeout,
     get_heartbeat_interval,
     get_ignore_delete,
+    get_ignore_patterns,
     get_lan_group,
     get_lan_https,
     get_lan_key,
@@ -34,6 +37,7 @@ from hsync_client.config import (
     get_peer_timeout,
     get_server_url,
     get_stability_delay,
+    get_sync_hidden,
     load_env_file,
     set_config,
     set_debug,
@@ -302,6 +306,48 @@ def _check_disk_space(local_path: str, min_free_mb: int, logger: Any) -> None:
         logger.warning(f"Could not check disk space: {e}")
 
 
+def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "Any":
+    """Start a watchdog observer that reloads *matcher* when ``.hsyncignore`` changes.
+
+    Returns the running observer (so the caller can stop it on shutdown), or
+    ``None`` if watchdog is unavailable or the directory does not exist.
+    """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
+    try:
+        from os.path import exists as _exists
+
+        from hsync_common.constants import HSYNCIGNORE_FILENAME
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+
+        class _HsyncignoreHandler(FileSystemEventHandler):
+            def on_modified(self, event) -> None:  # type: ignore[override]
+                from os.path import basename as _basename
+
+                if _basename(event.src_path) == HSYNCIGNORE_FILENAME:
+                    _log.debug(".hsyncignore changed — reloading ignore matcher")
+                    matcher.reload()
+
+            def on_created(self, event) -> None:  # type: ignore[override]
+                self.on_modified(event)
+
+        if not _exists(bucket_root):
+            return None
+
+        observer = Observer()
+        observer.schedule(_HsyncignoreHandler(), path=bucket_root, recursive=False)
+        observer.daemon = True
+        observer.start()
+        _log.debug(f"Hot-reload watcher started for {HSYNCIGNORE_FILENAME} in {bucket_root}")
+        return observer
+    except Exception as exc:  # pragma: no cover
+        _log.warning(f"Could not start .hsyncignore hot-reload watcher: {exc}")
+        return None
+
+
 def run_sync(
     bucket: str,
     env_file: str | None,
@@ -338,6 +384,8 @@ def run_sync(
     lan_key_fd: int | None = None,
     auto_confirm: bool = False,
     min_free_disk_space: int = 500,
+    sync_hidden: bool = False,
+    ignore_patterns: list[str] | None = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -491,10 +539,26 @@ def run_sync(
         "MAX_BANDWIDTH_UPLOAD": max_bandwidth_upload,
         "MAX_BANDWIDTH_DOWNLOAD": max_bandwidth_download,
         "MIN_FREE_DISK_SPACE": min_free_disk_space,
+        "SYNC_HIDDEN": sync_hidden or get_sync_hidden(),
+        "IGNORE_PATTERNS": ignore_patterns
+        if ignore_patterns is not None
+        else get_ignore_patterns(),
     }
 
     set_config(config)
     set_debug(debug)
+
+    # Install the process-wide IgnoreMatcher so that all call sites that use
+    # is_hidden_file / is_hidden_dir automatically benefit from the new filtering.
+    _matcher = IgnoreMatcher(
+        bucket_root=local_path,
+        include_hidden=config["SYNC_HIDDEN"],
+        extra_patterns=config["IGNORE_PATTERNS"],
+    )
+    set_active_matcher(_matcher)
+
+    # Hot-reload watcher: rebuild the matcher when .hsyncignore changes.
+    _hsyncignore_observer = _start_hsyncignore_watcher(local_path, _matcher)
 
     # Check if local directory exists at startup
     if not exists(local_path):

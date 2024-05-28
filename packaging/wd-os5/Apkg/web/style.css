@@ -1,0 +1,161 @@
+/*
+ * HSYNC web UI for WD My Cloud OS5
+ *
+ * Stand-alone stylesheet — no external dependencies, designed to render
+ * cleanly inside the stock OS5 dashboard iframe. Palette mirrors the
+ * Android client (md_primary teal #006A6A).
+ */
+
+:root {
+    --primary:        #006A6A;
+    --primary-dark:   #004f50;
+    --primary-light:  #6FF7F6;
+    --bg:             #f4f7f7;
+    --surface:        #ffffff;
+    --border:         #cfd8d8;
+    --text:           #161D1D;
+    --text-dim:       #4f5757;
+    --danger:         #b3261e;
+    --warning:        #b08000;
+    --ok:             #2e7d32;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    background: var(--primary);
+    color: #fff;
+}
+header .logo { width: 32px; height: 32px; }
+header h1 { font-size: 20px; margin: 0; flex: 1; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.header-right select {
+    background: var(--primary-dark);
+    color: #fff;
+    border: 1px solid var(--primary-dark);
+    border-radius: 4px;
+    padding: 4px 6px;
+}
+
+.badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.badge-running { background: var(--ok);      color: #fff; }
+.badge-stopped { background: var(--danger);  color: #fff; }
+.badge-unknown { background: var(--warning); color: #fff; }
+
+main {
+    max-width: 760px;
+    margin: 20px auto;
+    padding: 0 16px;
+}
+
+fieldset {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 0 0 16px 0;
+    padding: 16px;
+}
+legend {
+    font-weight: 600;
+    color: var(--primary-dark);
+    padding: 0 6px;
+}
+
+label {
+    display: block;
+    margin: 8px 0;
+}
+label > span {
+    display: block;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+label.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+label.check > span {
+    display: inline;
+    color: var(--text);
+    margin: 0;
+    font-size: 14px;
+}
+
+input[type="text"],
+input[type="url"],
+input[type="password"],
+input[type="number"],
+select {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+}
+input:focus, select:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+    border-color: var(--primary);
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+}
+button {
+    padding: 9px 16px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+    color: var(--text);
+    font-size: 14px;
+    cursor: pointer;
+}
+button:hover { background: #f0f4f4; }
+button.primary {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+button.primary:hover { background: var(--primary-dark); }
+
+#toast {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 4px;
+    background: #eef5f5;
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+#toast.error { background: #fdecec; border-color: var(--danger); color: var(--danger); }
+#toast.ok    { background: #ecf6ed; border-color: var(--ok);     color: var(--ok); }
+
+footer {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 16px;
+    font-size: 12px;
+}

@@ -1,0 +1,51 @@
+{
+    "app.title": "HSYNC",
+    "section.mode": "Mode",
+    "section.paths": "Chemins",
+    "section.lan": "Options LAN",
+    "section.server": "Options serveur",
+    "section.behaviour": "Comportement de synchronisation",
+
+    "field.mode": "Mode",
+    "field.role": "Rôle",
+    "field.path": "Chemin local",
+    "field.bucket": "Bucket",
+    "field.lan_persistent": "Persistant (continuer à essayer si aucun pair n'est trouvé)",
+    "field.lan_https": "HTTPS entre les pairs",
+    "field.lan_group": "Groupe LAN (optionnel)",
+    "field.discovery_timeout": "Délai de découverte (s)",
+    "field.server": "URL du serveur",
+    "field.api_key": "Clé API",
+    "field.watch": "Surveiller les modifications en continu",
+    "field.interval": "Intervalle de re-synchronisation forcée (s, 0 = off)",
+    "field.ignore_delete": "Ignorer les suppressions (adapté aux sauvegardes)",
+    "field.no_compression": "Désactiver la compression zstd",
+    "field.bw_upload": "Bande passante max. en émission (ex. 1MB)",
+    "field.bw_download": "Bande passante max. en réception (ex. 1MB)",
+    "field.min_free_mb": "Espace libre minimum (Mo, 0 = off)",
+    "field.verbose": "Journal détaillé",
+
+    "mode.lan": "LAN (pair-à-pair)",
+    "mode.server": "Serveur (serveur HSYNC centralisé)",
+    "role.auto":   "Auto (bidirectionnel, élection automatique)",
+    "role.master": "Maître (le NAS détient la copie de référence)",
+    "role.slave":  "Esclave (le NAS est une réplique en lecture seule)",
+
+    "action.save":    "Enregistrer",
+    "action.start":   "Démarrer",
+    "action.stop":    "Arrêter",
+    "action.restart": "Redémarrer",
+
+    "status.running": "en cours",
+    "status.stopped": "arrêté",
+    "status.unknown": "inconnu",
+
+    "toast.saved":       "Configuration enregistrée",
+    "toast.save_error":  "Échec de l'enregistrement",
+    "toast.load_error":  "Échec du chargement de la configuration",
+    "toast.started":     "Service démarré",
+    "toast.stopped":     "Service arrêté",
+    "toast.restarted":   "Service redémarré",
+
+    "footer.version": "Version"
+}
