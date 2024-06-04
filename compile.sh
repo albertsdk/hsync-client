@@ -373,18 +373,38 @@ build_wd_os5() {
     # ``hsync-client`` subdir so all the script's relative paths still work.
     local repo_root
     repo_root="$(cd .. && pwd)"
-    log_step "Running PyInstaller + icon generation inside the ARMv7 container..."
+    log_step "Running PyInstaller inside the ARMv7 container..."
+    # PIP_DEFAULT_TIMEOUT / PIP_RETRIES make Poetry's PEP-517 chef resilient
+    # to the slow PyPI transfers we see under qemu-user emulation (the
+    # cryptography build pulls maturin, setuptools, cffi from source).
     docker run --rm \
         --platform linux/arm/v7 \
         -v "${repo_root}:/repo" \
         -w /repo/hsync-client \
         -e LC_ALL=C \
         -e PYTHONWARNINGS=ignore \
+        -e PIP_DEFAULT_TIMEOUT=300 \
+        -e PIP_RETRIES=10 \
+        -e POETRY_REQUESTS_TIMEOUT=300 \
         "${WDOS5_BUILDER_IMAGE}" \
         bash -c "
             set -euo pipefail
             poetry config virtualenvs.in-project true
-            poetry install --no-root --only main
+            poetry config installer.max-workers 4
+            # Retry transient PyPI timeouts (common under qemu-user emulation).
+            install_ok=0
+            for attempt in 1 2 3; do
+                if poetry install --no-root --only main; then
+                    install_ok=1
+                    break
+                fi
+                echo \"poetry install failed (attempt \${attempt}/3), retrying in 10s...\" >&2
+                sleep 10
+            done
+            if [ \"\${install_ok}\" -ne 1 ]; then
+                echo 'poetry install failed after 3 attempts' >&2
+                exit 1
+            fi
             poetry run pyinstaller \
                 --clean --onefile --strip \
                 --name ${APP_NAME} \
@@ -407,11 +427,6 @@ build_wd_os5() {
                 --exclude-module setuptools --exclude-module wheel \
                 --exclude-module pkg_resources --exclude-module rapidfuzz \
                 ${ENTRY_POINT}
-            # Generate the app icon inside the container so Pillow doesn't
-            # need to be installed on the host.
-            python3 -m pip install --quiet pillow
-            python3 packaging/wd-os5/scripts/generate_icon.py \
-                --out packaging/wd-os5/Apkg/hsync.png
         "
 
     local built_bin="${WDOS5_BUILD_DIR}/bin/${APP_NAME}"
@@ -432,6 +447,10 @@ build_wd_os5() {
     mkdir -p "${WDOS5_STAGE_DIR}/bin"
     cp -f "${built_bin}" "${WDOS5_STAGE_DIR}/bin/${APP_NAME}"
     chmod 0755 "${WDOS5_STAGE_DIR}/bin/${APP_NAME}"
+    # mksapkg-OS5 tars the staged tree as-is: the lifecycle hooks (preinst,
+    # install, start, stop, remove, init, clean) must be executable or the
+    # install on the NAS fails silently.
+    chmod 0755 "${WDOS5_STAGE_DIR}"/*.sh 2>/dev/null || true
 
     log_step "Injecting version ${version} into staged apkg.rc..."
     sed -i.bak -e "s/__HSYNC_VERSION__/${version}/g" \
@@ -447,19 +466,26 @@ build_wd_os5() {
     fi
 
     log_step "Building OS5 .bin package..."
-    local mksapkg_abs stage_abs out_abs
+    local mksapkg_abs stage_abs stage_parent out_abs
     mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
     stage_abs="$(cd "${WDOS5_STAGE_DIR}" && pwd)"
+    stage_parent="$(dirname "${stage_abs}")"
     out_abs="$(cd "${WDOS5_OUTPUT_DIR}" && pwd)"
 
-    ( cd "${stage_abs}" && "${mksapkg_abs}" -E -s -m "${WDOS5_MODEL}" -o "${out_abs}" )
+    # mksapkg-OS5 has no output-path flag: it runs `cd ..` and drops the
+    # .bin in the parent of its current working directory. Clean any stale
+    # artifact there so the lookup below picks up the fresh one.
+    rm -f "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin
+    ( cd "${stage_abs}" && "${mksapkg_abs}" -E -s -m "${WDOS5_MODEL}" )
 
-    local bin_path
-    bin_path="$(ls -t "${out_abs}/${WDOS5_MODEL}_${APP_NAME}_"*.bin 2>/dev/null | head -1)"
-    if [[ -z "${bin_path}" || ! -f "${bin_path}" ]]; then
-        log_error "mksapkg-OS5 did not produce a .bin under ${out_abs}/"
+    local produced_bin bin_path
+    produced_bin="$(ls -t "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin 2>/dev/null | head -1)"
+    if [[ -z "${produced_bin}" || ! -f "${produced_bin}" ]]; then
+        log_error "mksapkg-OS5 did not produce a .bin in ${stage_parent}/"
         exit 1
     fi
+    mv -f "${produced_bin}" "${out_abs}/"
+    bin_path="${out_abs}/$(basename "${produced_bin}")"
 
     local size bin_abs
     size="$(du -h "${bin_path}" | cut -f1)"
