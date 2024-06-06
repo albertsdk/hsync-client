@@ -1,4 +1,5 @@
 Package:	hsync
+Section:	Addon
 Version:	__HSYNC_VERSION__
 Packager:	Alberto Basso
 Email:
@@ -12,8 +13,8 @@ InstDepend:
 InstConflict:
 StartDepend:
 StartConflict:
-CenterType:
+CenterType:	1
 UserControl:
-MinFWVer:	5.0.0
+MinFWVer:	5.27.100
 MaxFWVer:
 IndividualFlag:	0

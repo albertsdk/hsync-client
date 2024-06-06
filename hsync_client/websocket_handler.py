@@ -47,7 +47,7 @@ from hsync_client.event_queue import EventQueue
 from hsync_client.lan import check_version_compatibility
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.event import Event, EventName
-from hsync_client.models.file import File, invalidate_md5_cache, is_hidden_file
+from hsync_client.models.file import File, invalidate_sha256_cache, is_hidden_file
 from hsync_client.models.symlink import Symlink
 from hsync_client.sync import sync, update_dir, update_file
 from hsync_client.transfer import download_file, upload_file
@@ -598,7 +598,7 @@ class FileEventHandler(FileSystemEventHandler):
                     self._last_modified[src_path] = current_time
                     try:
                         if exists(src_path):
-                            invalidate_md5_cache(src_path)
+                            invalidate_sha256_cache(src_path)
                             file = File.get(src_path)
                             if file:
                                 log.debug(
@@ -628,7 +628,7 @@ class FileEventHandler(FileSystemEventHandler):
             try:
                 if exists(src_path):
                     # File exists - upload it
-                    invalidate_md5_cache(src_path)
+                    invalidate_sha256_cache(src_path)
                     file = File.get(src_path)
                     if file:
                         upload_file(file)
@@ -703,8 +703,8 @@ class FileEventHandler(FileSystemEventHandler):
                 return
 
             # Build event message for file rename
-            invalidate_md5_cache(src_path)
-            invalidate_md5_cache(dest_path)
+            invalidate_sha256_cache(src_path)
+            invalidate_sha256_cache(dest_path)
             dst = File.get(dest_path)
             if dst:
                 src = deepcopy(dst)

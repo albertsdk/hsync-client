@@ -155,15 +155,15 @@ class TestRunPreview:
             "LAN_MODE": False,
         }
 
-        # Create delete and download actions with same md5sum (rename)
+        # Create delete and download actions with same sha256sum (rename)
         old_file = File(str(tmp_path / "old.txt"))
         old_file.size = 1024
-        old_file.md5sum = "abc123"
+        old_file.sha256sum = "abc123"
         delete_action = SyncAction(old_file, SyncActionName.delete)
 
         new_file = File(str(tmp_path / "new.txt"))
         new_file.size = 1024
-        new_file.md5sum = "abc123"
+        new_file.sha256sum = "abc123"
         download_action = SyncAction(new_file, SyncActionName.download)
 
         with (

@@ -13,7 +13,7 @@ file operations, and data formatting.
 
 import secrets
 import stat
-from hashlib import md5
+from hashlib import sha256
 from os import chmod
 from os import stat as os_stat
 from os.path import abspath, exists, normpath
@@ -38,7 +38,7 @@ from hsync_client.constants import (
     CID_LENGTH,
     FILE_SIZE_MEDIUM,
     FILE_SIZE_SMALL,
-    MD5_CHUNK_SIZE,
+    SHA256_CHUNK_SIZE,
 )
 
 # =============================================================================
@@ -353,25 +353,25 @@ def bytes_to_human_readable(size_bytes: float) -> str:
 # =============================================================================
 
 
-def compute_md5(filepath: str, chunk_size: int = MD5_CHUNK_SIZE) -> str:
+def compute_sha256(filepath: str, chunk_size: int = SHA256_CHUNK_SIZE) -> str:
     """
-    Compute the MD5 checksum of a file.
+    Compute the SHA-256 checksum of a file.
 
     Reads the file in chunks to avoid loading large files entirely
     into memory.
 
     Args:
         filepath: Path to the file.
-        chunk_size: Size of chunks to read (default: MD5_CHUNK_SIZE).
+        chunk_size: Size of chunks to read (default: SHA256_CHUNK_SIZE).
 
     Returns:
-        MD5 hash as hexadecimal string.
+        SHA-256 hash as hexadecimal string.
     """
-    hash_md5 = md5()
+    hash_sha256 = sha256()
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(chunk_size), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
+            hash_sha256.update(chunk)
+    return hash_sha256.hexdigest()
 
 
 def get_permissions(obj_path: str) -> str:

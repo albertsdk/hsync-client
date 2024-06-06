@@ -208,7 +208,7 @@ class TestLANRequestHandler:
                 "ctime": "1700000000.0",
                 "mtime": "1700000001.0",
                 "size": "12",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "permissions": "-rw-r--r--",
             }
             files = {"file": ("uploaded.txt", b"test content")}

@@ -3,7 +3,7 @@
 # start.sh — translate hsync.env into CLI flags and launch the daemon.
 #
 # The script is invoked by the OS5 service manager (and re-invoked by the
-# web UI's service.cgi). It reads the user configuration from
+# web UI's service.php). It reads the user configuration from
 # /mnt/HD/HD_a2/hsync/config/hsync.env, builds the appropriate argument
 # vector for the hsync binary, and runs it under nohup with output going to
 # /mnt/HD/HD_a2/hsync/log/hsync.log.
@@ -16,10 +16,10 @@ echo "APKG_DEBUG: $0 $*" >> "$LOG"
 APKG_PATH=$(readlink -f "$1")
 . "${APKG_PATH}/env"
 
-HSYNC_BIN="${APKG_PATH}/bin/${BINARY}"
+HSYNC_BIN="${APKG_PATH}/bin/${BINARY}/${BINARY}"
 
 if [ ! -x "${HSYNC_BIN}" ]; then
-    echo "hsync binary missing or not executable: ${HSYNC_BIN}" >> "$LOG"
+    echo "hsync executable missing or not executable: ${HSYNC_BIN}" >> "$LOG"
     exit 1
 fi
 

@@ -6,10 +6,8 @@
 # without losing the synchronized files; a manual ``rm -rf`` of that
 # directory is required to fully wipe HSYNC from the device.
 
-set -u
-
 LOG=/tmp/debug_apkg
-echo "APKG_DEBUG: $0 $*" >> "$LOG"
+[ -f "$LOG" ] && echo "APKG_DEBUG: $0 $*" >> "$LOG"
 
 APKG_PATH=$(readlink -f "$1")
 . "${APKG_PATH}/env"

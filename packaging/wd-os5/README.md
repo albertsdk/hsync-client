@@ -70,12 +70,11 @@ packaging/wd-os5/
 │   ├── clean.sh             # removes the web UI symlinks
 │   └── web/                 # web UI (served by stock apache)
 │       ├── index.html
-│       ├── style.css
 │       ├── app.js
 │       ├── i18n/{en,it,de,es,fr}.json
-│       ├── config_get.cgi   # reads /mnt/HD/HD_a2/hsync/config/hsync.env
-│       ├── config_set.cgi   # writes the same .env back atomically
-│       └── service.cgi      # start/stop/status of the daemon
+│       ├── config_get.php   # reads /mnt/HD/HD_a2/hsync/config/hsync.env
+│       ├── config_set.php   # writes the same .env back atomically
+│       └── service.php      # start/stop/status of the daemon
 └── scripts/
     └── generate_icon.py     # produces hsync.png from the Android design
 ```

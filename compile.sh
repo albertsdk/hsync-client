@@ -347,6 +347,32 @@ readonly WDOS5_CACHE_DIR="${WDOS5_DIR}/.cache"
 readonly WDOS5_MKSAPKG="${WDOS5_CACHE_DIR}/mksapkg-OS5"
 readonly WDOS5_MODEL="MyCloudEX2Ultra"
 
+# Create a temporary openssl shim that enables the bf-cbc legacy provider on
+# OpenSSL 3.x.  mksapkg-OS5 calls ``openssl bf-cbc`` via system(); on modern
+# distros bf-cbc lives in the "legacy" provider and is not loaded by default,
+# causing openssl to produce only the Salted__ header (16 bytes) with no
+# ciphertext.  The NAS CGI then rejects the malformed apkg.sign and aborts
+# the installation before running any lifecycle script.
+#
+# Prints the wrapper directory path; the caller must prepend it to PATH and
+# remove it when done.
+_wdos5_openssl_wrapper_dir() {
+    local wrap_dir ossl_bin provider_flags
+    wrap_dir="$(mktemp -d)"
+    ossl_bin="$(command -v openssl)"
+    provider_flags=""
+    if "${ossl_bin}" bf-cbc -provider legacy -help >/dev/null 2>&1; then
+        provider_flags="-provider legacy -provider default"
+    fi
+    # Inject provider flags AFTER the openssl sub-command name so that the
+    # resulting invocation is: openssl <cmd> -provider legacy ... [rest]
+    # Putting them before the sub-command is not accepted by OpenSSL 3.x.
+    printf '#!/bin/sh\nfirst="$1"; shift; exec "%s" "$first" %s "$@"\n' \
+        "${ossl_bin}" "${provider_flags}" > "${wrap_dir}/openssl"
+    chmod 0755 "${wrap_dir}/openssl"
+    echo "${wrap_dir}"
+}
+
 # Build the .bin installer for WD My Cloud OS5 (ARMv7).
 build_wd_os5() {
     local version
@@ -409,7 +435,7 @@ build_wd_os5() {
             # Retry transient PyPI timeouts (common under qemu-user emulation).
             install_ok=0
             for attempt in 1 2 3; do
-                if poetry install --no-root --only main; then
+                if poetry install --no-root --without dev; then
                     install_ok=1
                     break
                 fi
@@ -421,7 +447,7 @@ build_wd_os5() {
                 exit 1
             fi
             poetry run pyinstaller \
-                --clean --onefile --strip \
+                --clean --onedir --noconfirm --strip \
                 --name ${APP_NAME} \
                 --distpath ${WDOS5_BUILD_DIR}/bin \
                 --workpath ${WDOS5_BUILD_DIR}/work \
@@ -432,9 +458,13 @@ build_wd_os5() {
                 --hidden-import websockets.client \
                 --hidden-import websockets.exceptions \
                 --hidden-import watchdog.observers \
+                --hidden-import watchdog.observers.inotify \
+                --hidden-import watchdog.observers.inotify_buffer \
                 --hidden-import watchdog.events \
                 --hidden-import rich._unicode_data \
                 --hidden-import rich._unicode_data._versions \
+                --collect-submodules pathspec \
+                --collect-submodules hsync_common \
                 --exclude-module pytest --exclude-module pytest_asyncio \
                 --exclude-module pytest_cov --exclude-module tkinter \
                 --exclude-module unittest --exclude-module pdb \
@@ -444,9 +474,9 @@ build_wd_os5() {
                 ${ENTRY_POINT}
         "
 
-    local built_bin="${WDOS5_BUILD_DIR}/bin/${APP_NAME}"
-    if [[ ! -f "${built_bin}" ]]; then
-        log_error "ARMv7 binary not produced at ${built_bin}"
+    local built_dir="${WDOS5_BUILD_DIR}/bin/${APP_NAME}"
+    if [[ ! -d "${built_dir}" ]]; then
+        log_error "ARMv7 build directory not produced at ${built_dir}"
         exit 1
     fi
 
@@ -460,8 +490,8 @@ build_wd_os5() {
     cp -a "${WDOS5_SRC_APKG}/." "${WDOS5_STAGE_DIR}/"
 
     mkdir -p "${WDOS5_STAGE_DIR}/bin"
-    cp -f "${built_bin}" "${WDOS5_STAGE_DIR}/bin/${APP_NAME}"
-    chmod 0755 "${WDOS5_STAGE_DIR}/bin/${APP_NAME}"
+    cp -a "${built_dir}" "${WDOS5_STAGE_DIR}/bin/"
+    chmod 0755 "${WDOS5_STAGE_DIR}/bin/${APP_NAME}/${APP_NAME}"
     # mksapkg-OS5 tars the staged tree as-is: the lifecycle hooks (preinst,
     # install, start, stop, remove, init, clean) must be executable or the
     # install on the NAS fails silently.
@@ -490,11 +520,14 @@ build_wd_os5() {
     # mksapkg-OS5 has no output-path flag: it runs `cd ..` and drops the
     # .bin in the parent of its current working directory. Clean any stale
     # artifact there so the lookup below picks up the fresh one.
-    rm -f "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin
-    ( cd "${stage_abs}" && "${mksapkg_abs}" -E -s -m "${WDOS5_MODEL}" )
+    rm -f "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin*
+    local _ossl_wrap
+    _ossl_wrap="$(_wdos5_openssl_wrapper_dir)"
+    ( cd "${stage_abs}" && PATH="${_ossl_wrap}:${PATH}" "${mksapkg_abs}" -E -s -m "${WDOS5_MODEL}" )
+    rm -rf "${_ossl_wrap}"
 
     local produced_bin bin_path
-    produced_bin="$(ls -t "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin 2>/dev/null | head -1)"
+    produced_bin="$(ls -t "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
     if [[ -z "${produced_bin}" || ! -f "${produced_bin}" ]]; then
         log_error "mksapkg-OS5 did not produce a .bin in ${stage_parent}/"
         exit 1
@@ -555,8 +588,8 @@ _wdos5_package_model() {
 
     # Place the binary.
     mkdir -p "${stage_dir}/bin"
-    cp -f "${binary_path}" "${stage_dir}/bin/${APP_NAME}"
-    chmod 0755 "${stage_dir}/bin/${APP_NAME}"
+    cp -a "${binary_path}" "${stage_dir}/bin/"
+    chmod 0755 "${stage_dir}/bin/${APP_NAME}/${APP_NAME}"
     # Lifecycle hook scripts must be executable or the install fails silently.
     chmod 0755 "${stage_dir}"/*.sh 2>/dev/null || true
 
@@ -570,11 +603,14 @@ _wdos5_package_model() {
     stage_abs="$(cd "${stage_dir}" && pwd)"
     stage_parent="$(dirname "${stage_abs}")"
 
-    rm -f "${stage_parent}/${model}_${APP_NAME}_"*.bin
-    ( cd "${stage_abs}" && "${mksapkg_abs}" -E -s -m "${model}" )
+    rm -f "${stage_parent}/${model}_${APP_NAME}_"*.bin*
+    local _ossl_wrap
+    _ossl_wrap="$(_wdos5_openssl_wrapper_dir)"
+    ( cd "${stage_abs}" && PATH="${_ossl_wrap}:${PATH}" "${mksapkg_abs}" -E -s -m "${model}" )
+    rm -rf "${_ossl_wrap}"
 
     local produced
-    produced="$(ls -t "${stage_parent}/${model}_${APP_NAME}_"*.bin 2>/dev/null | head -1)"
+    produced="$(ls -t "${stage_parent}/${model}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
     if [[ -z "${produced}" || ! -f "${produced}" ]]; then
         log_error "mksapkg-OS5 did not produce a .bin for ${model}"
         return 1
@@ -635,7 +671,7 @@ build_wd_os5_all() {
 
     # Common PyInstaller flags — used for both arch builds.
     local pyinstaller_flags="
-        --clean --onefile --strip
+        --clean --onedir --noconfirm --strip
         --name ${APP_NAME}
         --log-level ERROR
         --hidden-import websockets.legacy
@@ -643,9 +679,13 @@ build_wd_os5_all() {
         --hidden-import websockets.client
         --hidden-import websockets.exceptions
         --hidden-import watchdog.observers
+        --hidden-import watchdog.observers.inotify
+        --hidden-import watchdog.observers.inotify_buffer
         --hidden-import watchdog.events
         --hidden-import rich._unicode_data
         --hidden-import rich._unicode_data._versions
+        --collect-submodules pathspec
+        --collect-submodules hsync_common
         --exclude-module pytest --exclude-module pytest_asyncio
         --exclude-module pytest_cov --exclude-module tkinter
         --exclude-module unittest --exclude-module pdb
@@ -672,7 +712,7 @@ build_wd_os5_all() {
                 poetry config installer.max-workers 4
                 install_ok=0
                 for attempt in 1 2 3; do
-                    if poetry install --no-root --only main; then install_ok=1; break; fi
+                    if poetry install --no-root --without dev; then install_ok=1; break; fi
                     echo \"poetry install attempt \${attempt}/3 failed, retrying in 10s...\" >&2
                     sleep 10
                 done
@@ -706,11 +746,11 @@ build_wd_os5_all() {
     _run_pyinstaller_in_docker linux/arm/v7 "${armv7_bin_dir}" "${armv7_work_dir}" "${armv7_tag}"
 
     local armv7_binary="${armv7_bin_dir}/${APP_NAME}"
-    if [[ ! -f "${armv7_binary}" ]]; then
-        log_error "ARMv7 binary not produced at ${armv7_binary}"
+    if [[ ! -d "${armv7_binary}" ]]; then
+        log_error "ARMv7 build directory not produced at ${armv7_binary}"
         exit 1
     fi
-    log_ok "ARMv7 binary ready ($(du -h "${armv7_binary}" | cut -f1))"
+    log_ok "ARMv7 binary ready ($(du -sh "${armv7_binary}" | cut -f1))"
 
     # ── amd64 binary ──────────────────────────────────────────────────────────
     echo
@@ -733,11 +773,11 @@ build_wd_os5_all() {
     _run_pyinstaller_in_docker linux/amd64 "${amd64_bin_dir}" "${amd64_work_dir}" "${amd64_tag}"
 
     local amd64_binary="${amd64_bin_dir}/${APP_NAME}"
-    if [[ ! -f "${amd64_binary}" ]]; then
-        log_error "amd64 binary not produced at ${amd64_binary}"
+    if [[ ! -d "${amd64_binary}" ]]; then
+        log_error "amd64 build directory not produced at ${amd64_binary}"
         exit 1
     fi
-    log_ok "amd64 binary ready ($(du -h "${amd64_binary}" | cut -f1))"
+    log_ok "amd64 binary ready ($(du -sh "${amd64_binary}" | cut -f1))"
 
     # ── Package all 10 models ─────────────────────────────────────────────────
     local stage_base="${all_build}/stage"

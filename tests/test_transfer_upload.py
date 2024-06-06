@@ -19,7 +19,7 @@ class TestUploadFile:
 
     def test_missing_filepath_returns_early(self):
         """File with no filepath returns without uploading."""
-        file = File(filepath="", md5sum="abc123", size=100)
+        file = File(filepath="", sha256sum="abc123", size=100)
 
         with patch("hsync_client.transfer.post") as mock_post:
             upload_file(file, check_size=False)
@@ -32,7 +32,7 @@ class TestUploadFile:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=12,
             mtime=1000,
             ctime=1000,
@@ -63,7 +63,7 @@ class TestUploadFile:
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
-        file = File(filepath=str(test_file), md5sum="abc123", size=12)
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -89,7 +89,7 @@ class TestUploadFile:
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
-        file = File(filepath=str(test_file), md5sum="abc123", size=12)
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
 
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -115,7 +115,7 @@ class TestUploadFile:
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
-        file = File(filepath=str(test_file), md5sum="abc123", size=12)
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
 
         mock_response = MagicMock()
         mock_response.status_code = 409
@@ -141,7 +141,7 @@ class TestUploadFile:
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
-        file = File(filepath=str(test_file), md5sum="abc123", size=12)
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -164,7 +164,7 @@ class TestUploadFile:
 
     def test_file_not_found(self, tmp_path):
         """FileNotFoundError is caught and logged."""
-        file = File(filepath="/nonexistent/file.txt", md5sum="abc123", size=12)
+        file = File(filepath="/nonexistent/file.txt", sha256sum="abc123", size=12)
 
         with (
             patch(
@@ -186,7 +186,7 @@ class TestUploadFile:
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
-        file = File(filepath=str(test_file), md5sum="abc123", size=12)
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
 
         with (
             patch(
@@ -216,7 +216,7 @@ class TestUploadFileMaxWaitTimeout:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=12,
             mtime=1000,
             ctime=1000,
@@ -251,7 +251,7 @@ class TestUploadFileMaxWaitTimeout:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=12,
             mtime=1000,
             ctime=1000,
@@ -299,7 +299,7 @@ class TestUploadFileMaxWaitTimeout:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=12,
             mtime=1000,
             ctime=1000,
@@ -336,7 +336,7 @@ class TestNothingToDo:
         """Logs the filepath for debugging."""
         from hsync_client.transfer import nothing_to_do
 
-        file = File(filepath="/path/to/file.txt", md5sum="abc123", size=100)
+        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
         # Just verify it doesn't raise
         nothing_to_do(file)
 
@@ -352,7 +352,7 @@ class TestUploadCompressed:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=30,
             mtime=1000,
             ctime=1000,
@@ -378,7 +378,7 @@ class TestUploadCompressed:
             patch("hsync_client.transfer.post", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
 
@@ -389,7 +389,7 @@ class TestUploadCompressed:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=12,
             mtime=1000,
             ctime=1000,
@@ -417,7 +417,7 @@ class TestUploadCompressed:
             patch("hsync_client.transfer.post", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
 
@@ -432,7 +432,7 @@ class TestUploadResumable:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=12,
             mtime=1000,
             ctime=1000,
@@ -457,7 +457,7 @@ class TestUploadResumable:
             patch("hsync_client.transfer.post", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
 
@@ -468,7 +468,7 @@ class TestUploadResumable:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=17,
             mtime=1000,
             ctime=1000,
@@ -493,7 +493,7 @@ class TestUploadResumable:
             patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
             # The upload body is now streamed; the offset form field is
@@ -515,7 +515,7 @@ class TestUploadEdgeCases:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=7,
             mtime=1000,
             ctime=1000,
@@ -535,7 +535,7 @@ class TestUploadEdgeCases:
             patch("hsync_client.transfer.post", side_effect=PermissionError("Access denied")),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             # Should not raise
             upload_file(file, check_size=False)
@@ -547,7 +547,7 @@ class TestUploadEdgeCases:
 
         file = File(
             filepath=str(test_file),
-            md5sum="abc123",
+            sha256sum="abc123",
             size=7,
             mtime=1000,
             ctime=1000,
@@ -568,7 +568,7 @@ class TestUploadEdgeCases:
             patch("hsync_client.transfer.post") as mock_post,
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
             # Should not call post

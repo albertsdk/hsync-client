@@ -73,7 +73,7 @@ class TestUpdateFile:
             "mtime": 1000,
             "ctime": 1000,
             "size": 100,
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "permissions": "-rw-r--r--",
         }
 
@@ -85,8 +85,8 @@ class TestUpdateFile:
             update_file(data)
             mock_download.assert_called_once()
 
-    def test_downloads_file_with_different_md5(self, tmp_path):
-        """File with different MD5 triggers download."""
+    def test_downloads_file_with_different_sha256(self, tmp_path):
+        """File with different SHA-256 triggers download."""
         local_file = tmp_path / "file.txt"
         local_file.write_text("old content")
 
@@ -97,7 +97,7 @@ class TestUpdateFile:
             "mtime": 2000,
             "ctime": 2000,
             "size": 11,
-            "md5sum": "different_md5_hash",
+            "sha256sum": "different_sha256_hash",
             "permissions": "-rw-r--r--",
         }
 
@@ -123,7 +123,7 @@ class TestUpdateFile:
             "mtime": file_obj.mtime,
             "ctime": file_obj.ctime,
             "size": file_obj.size,
-            "md5sum": file_obj.md5sum,
+            "sha256sum": file_obj.sha256sum,
             "permissions": "-rwxrwxrwx",  # Different permissions
         }
 
@@ -149,7 +149,7 @@ class TestUpdateFile:
             "mtime": file_obj.mtime,
             "ctime": file_obj.ctime,
             "size": file_obj.size,
-            "md5sum": file_obj.md5sum,
+            "sha256sum": file_obj.sha256sum,
             "permissions": file_obj.permissions,
         }
 
@@ -174,7 +174,7 @@ class TestSync:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "permissions": "-rw-r--r--",
             }
         ]

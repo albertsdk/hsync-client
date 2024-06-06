@@ -39,7 +39,7 @@ class TestHandleLanEvent:
             "name": "added",
             "src": {
                 "filepath": "test.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
@@ -91,7 +91,7 @@ class TestHandleLanEvent:
             "name": "modified",
             "src": {
                 "filepath": "modified.txt",
-                "md5sum": "def456",
+                "sha256sum": "def456",
                 "mtime": 2000,
                 "ctime": 1000,
                 "size": 20,
@@ -123,7 +123,7 @@ class TestHandleLanEvent:
             "name": "renamed",
             "src": {
                 "filepath": "old.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
@@ -131,7 +131,7 @@ class TestHandleLanEvent:
             },
             "dst": {
                 "filepath": "new.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
@@ -162,7 +162,7 @@ class TestHandleLanEvent:
             "name": "deleted",
             "src": {
                 "filepath": "todelete.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
@@ -193,7 +193,7 @@ class TestHandleLanEvent:
             "name": "deleted",
             "src": {
                 "filepath": "keepme.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
@@ -220,7 +220,7 @@ class TestHandleLanEvent:
             "name": "added",
             "src": {
                 "filepath": "test.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
@@ -271,7 +271,7 @@ class TestHandleLanEvent:
             "name": "symlink",
             "src": {
                 "filepath": "link.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
@@ -322,7 +322,7 @@ class TestHandleLanEvent:
             "name": "renamed",
             "src": {
                 "filepath": "old.txt",
-                "md5sum": "x",
+                "sha256sum": "x",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
@@ -347,7 +347,7 @@ class TestHandleLanEvent:
             "name": "renamed",
             "src": {
                 "filepath": "gone.txt",
-                "md5sum": "x",
+                "sha256sum": "x",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
@@ -355,7 +355,7 @@ class TestHandleLanEvent:
             },
             "dst": {
                 "filepath": "new.txt",
-                "md5sum": "x",
+                "sha256sum": "x",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
@@ -409,7 +409,7 @@ class TestHandleLanEvent:
             "name": "deleted",
             "src": {
                 "filepath": "emptydir/.hsynckeep",
-                "md5sum": "x",
+                "sha256sum": "x",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 0,
@@ -436,7 +436,7 @@ class TestHandleLanEvent:
             "name": "added",
             "src": {
                 "filepath": "test.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
@@ -485,7 +485,7 @@ class TestHandleLanEvent:
             "name": "deleted",
             "src": {
                 "filepath": "gone.txt",
-                "md5sum": "x",
+                "sha256sum": "x",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
@@ -511,7 +511,7 @@ class TestHandleLanEvent:
             "name": "added",
             "src": {
                 "filepath": "echoed.txt",
-                "md5sum": "abc",
+                "sha256sum": "abc",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 10,
@@ -540,7 +540,7 @@ class TestHandleLanEvent:
             "name": "added",
             "src": {
                 "filepath": "from_other.txt",
-                "md5sum": "abc",
+                "sha256sum": "abc",
                 "mtime": 1,
                 "ctime": 1,
                 "size": 10,
@@ -622,7 +622,7 @@ class TestEventLoopRemainsResponsive:
             "name": "modified",
             "src": {
                 "filepath": "big.bin",
-                "md5sum": "deadbeef",
+                "sha256sum": "deadbeef",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 9_000_000_000,

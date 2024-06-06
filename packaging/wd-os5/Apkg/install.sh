@@ -10,10 +10,8 @@
 # persistent data directories exist on the data volume, and seeds a default
 # hsync.env if the user does not already have one.
 
-set -u
-
 LOG=/tmp/debug_apkg
-echo "APKG_DEBUG: $0 $*" >> "$LOG"
+[ -f "$LOG" ] && echo "APKG_DEBUG: $0 $*" >> "$LOG"
 
 INSTALL_DIR=$(readlink -f "$1")
 NAS_PROG=$(readlink -f "$2")
@@ -22,11 +20,43 @@ NAS_PROG=$(readlink -f "$2")
 
 APKG_PATH="${NAS_PROG}/${APKG_NAME}"
 
-echo "move package data to ${APKG_PATH}" >> "$LOG"
-mv "${INSTALL_DIR}" "${APKG_PATH}" 2>&1 >> "$LOG"
+echo "merge package data into ${APKG_PATH}" >> "$LOG"
+# The OS5 package manager pre-creates ${APKG_PATH} and drops its own
+# ``apkg.xml`` inside before invoking install.sh, so we cannot simply
+# rename ``${INSTALL_DIR}`` over it (would yield ${APKG_PATH}/${APKG_NAME}/)
+# nor wipe it (would clobber the PM-managed apkg.xml). Merge the staged
+# tree into the destination instead.
+mkdir -p "${APKG_PATH}"
+( cd "${INSTALL_DIR}" && tar cf - . ) | ( cd "${APKG_PATH}" && tar xf - ) >> "$LOG" 2>&1
+rm -rf "${INSTALL_DIR}"
 
-# Ensure the binary is executable.
-chmod 0755 "${APKG_PATH}/bin/${BINARY}" 2>/dev/null || true
+# Normalise owner/mode of the installed tree. mksapkg-OS5 preserves the
+# uid/gid present in the build host's staging directory; on the NAS those
+# numeric ids typically map to "UNKNOWN:share" and the dashboard's nasAdmin
+# proxy returns 403 for /apps/<pkg>/ assets that are not owned by root.
+# Mirror the layout of the stock OS5 apps (see /var/www/apps/Transmission/).
+chown -R 0:0 "${APKG_PATH}" 2>/dev/null || true
+find "${APKG_PATH}" -type d -exec chmod 0755 {} + 2>/dev/null || true
+find "${APKG_PATH}" -type f -exec chmod 0644 {} + 2>/dev/null || true
+
+# Lifecycle hook scripts must be executable or the OS5 package manager
+# silently skips them (install/remove/start/stop all fail without +x).
+chmod 0755 "${APKG_PATH}"/*.sh 2>/dev/null || true
+
+# Ensure the binary is executable (--onedir layout: bin/${BINARY}/${BINARY}).
+chmod 0755 "${APKG_PATH}/bin/${BINARY}/${BINARY}" 2>/dev/null || true
+
+# Expose the web UI under /apps/${APKG_NAME}/ — the path the dashboard uses
+# to fetch the icon and to open the "Configure" page. Mirrors the layout of
+# the stock OS5 apps (see /var/www/apps/Transmission/).
+mkdir -p "${WEB_ROOT}"
+chown 0:0 "${WEB_ROOT}" 2>/dev/null || true
+chmod 0755 "${WEB_ROOT}" 2>/dev/null || true
+rm -f "${WEB_ROOT}"/* 2>/dev/null || true
+for asset in "${APKG_PATH}"/web/*; do
+    [ -e "${asset}" ] && ln -sf "${asset}" "${WEB_ROOT}/$(basename "${asset}")"
+done
+chmod 0755 "${APKG_PATH}"/web/*.php 2>/dev/null || true
 
 # Persistent layout on the data volume.
 mkdir -p "${HSYNC_DATA_DIR}" "${HSYNC_CONFIG_DIR}" "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}"

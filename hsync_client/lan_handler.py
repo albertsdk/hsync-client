@@ -74,7 +74,7 @@ def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
             log.warning(
                 f"Clock skew detected with master {master.cid}: "
                 f"offset={offset:.1f}s, RTT={rtt * 1000:.1f}ms. "
-                f"File comparison will use MD5 fallback for "
+                f"File comparison will use SHA-256 fallback for "
                 f"mtime differences within tolerance."
             )
         else:

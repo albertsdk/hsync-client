@@ -111,14 +111,14 @@ class TestFileModel:
             ctime=1705320600,
             mtime=1705320700,
             size=1024,
-            md5sum="abc123",
+            sha256sum="abc123",
             permissions="-rw-r--r--",
         )
         d = file.to_dict()
         assert d["filepath"] == "/path/to/file.txt"
         assert d["name"] == "file.txt"
         assert d["size"] == 1024
-        assert d["md5sum"] == "abc123"
+        assert d["sha256sum"] == "abc123"
         assert d["permissions"] == "-rw-r--r--"
 
     def test_get_existing_file(self):
@@ -132,7 +132,7 @@ class TestFileModel:
             assert file is not None
             assert file.filepath == temp_path
             assert file.size == 12
-            assert file.md5sum is not None
+            assert file.sha256sum is not None
             assert file.permissions is not None
         finally:
             os.unlink(temp_path)
@@ -149,7 +149,7 @@ class TestFileModel:
             "ctime": 1705320600,
             "mtime": 1705320700,
             "size": 1024,
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "permissions": "-rw-r--r--",
         }
         file = File.from_dict(data, dir_prefix="/bucket")
@@ -162,16 +162,16 @@ class TestFileModel:
         file = File.from_dict(data, dir_prefix="/bucket", strip_dir_prefix=False)
         assert file.filepath == "/bucket/file.txt"
 
-    def test_compute_md5(self):
-        """Test MD5 computation."""
+    def test_compute_sha256(self):
+        """Test SHA-256 computation."""
         with tempfile.NamedTemporaryFile(delete=False) as f:
             f.write(b"test content")
             temp_path = f.name
 
         try:
-            md5 = File._compute_md5(temp_path)
-            # MD5 of "test content"
-            assert md5 == "9473fdd0d880a43c21b7778d34872157"
+            sha256 = File._compute_sha256(temp_path)
+            # SHA-256 of "test content"
+            assert sha256 == "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
         finally:
             os.unlink(temp_path)
 
@@ -188,12 +188,12 @@ class TestFileModel:
             "ctime": 1000.0,
             "mtime": 2000.0,
             "size": 500,
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "permissions": "-rw-r--r--",
         }
         # Need to provide dir_prefix or set strip_dir_prefix=False
         f = File.from_dict(data, dir_prefix="/bucket", strip_dir_prefix=False)
         assert f.ctime is not None
         assert f.mtime is not None
-        assert f.md5sum == "abc123"
+        assert f.sha256sum == "abc123"
         assert f.permissions == "-rw-r--r--"

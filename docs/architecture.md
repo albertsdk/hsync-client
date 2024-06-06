@@ -391,17 +391,17 @@ flowchart TB
 
 ## Performance Optimizations
 
-### MD5 Cache with mtime Validation
+### SHA-256 Cache with mtime Validation
 
-To avoid redundant MD5 computations during a single sync operation, the client maintains an in-memory cache that maps file paths to `(md5sum, mtime)` tuples. On each `File.get()` call, the cached MD5 is returned only if the file's modification time hasn't changed — otherwise the entry is automatically invalidated and recomputed.
+To avoid redundant SHA-256 computations during a single sync operation, the client maintains an in-memory cache that maps file paths to `(sha256sum, mtime)` tuples. On each `File.get()` call, the cached SHA-256 is returned only if the file's modification time hasn't changed — otherwise the entry is automatically invalidated and recomputed.
 
 - Cache is cleared at the start of each sync cycle (`sync()`, `_run_preview()`)
 - Individual entries are invalidated after downloads/uploads and before watchdog `File.get()` calls
 - mtime validation provides automatic staleness detection even if manual invalidation is missed
 
-### Adaptive Chunk Size for MD5 Computation
+### Adaptive Chunk Size for SHA-256 Computation
 
-MD5 hashing uses different I/O chunk sizes based on file size for optimal throughput:
+SHA-256 hashing uses different I/O chunk sizes based on file size for optimal throughput:
 
 | File Size | Chunk Size |
 |-----------|------------|

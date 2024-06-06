@@ -27,7 +27,12 @@ from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.models.dir import Dir, is_hidden_dir
-from hsync_client.models.file import File, clear_md5_cache, invalidate_md5_cache, is_hidden_file
+from hsync_client.models.file import (
+    File,
+    clear_sha256_cache,
+    invalidate_sha256_cache,
+    is_hidden_file,
+)
 from hsync_client.models.sync_action import SyncAction, SyncActionName
 from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import get_ssl_verify, set_permissions, verify_master_fingerprint
@@ -94,8 +99,8 @@ async def sync(lan_mode: bool = False) -> None:
         return
 
     try:
-        # Clear MD5 cache so every file is re-hashed with fresh content
-        clear_md5_cache()
+        # Clear SHA-256 cache so every file is re-hashed with fresh content
+        clear_sha256_cache()
 
         # Clean up any leftover partial downloads from previous sessions
         _cleanup_partial_files()
@@ -344,7 +349,7 @@ def get_files_local() -> list[dict]:
     files and directories. Returns file metadata sorted by mtime
     ascending (oldest first) to prioritize updating older files.
 
-    Uses parallel processing for MD5 computation to improve performance
+    Uses parallel processing for SHA-256 computation to improve performance
     on systems with multiple CPU cores. The number of worker threads
     is automatically determined based on CPU cores and file count.
 
@@ -360,7 +365,7 @@ def get_files_local() -> list[dict]:
         )
         return []
 
-    # First pass: collect all file paths (no MD5 computation)
+    # First pass: collect all file paths (no checksum computation)
     file_paths = []
     for root, dirs, files in walk(CONFIG["LOCAL_BUCKET"]):
         # Skip hidden directories
@@ -475,9 +480,9 @@ def get_sync_actions(
 
     Uses an intelligent comparison strategy:
     1. If mtime difference > MTIME_TOLERANCE (2s): use mtime to decide direction.
-    2. If mtime difference <= MTIME_TOLERANCE: fall back to MD5 checksum.
-       - If MD5 differs: use mtime as tiebreaker; if equal, prefer remote.
-       - If MD5 matches: no action needed (files are identical).
+    2. If mtime difference <= MTIME_TOLERANCE: fall back to SHA-256 checksum.
+       - If SHA-256 differs: use mtime as tiebreaker; if equal, prefer remote.
+       - If SHA-256 matches: no action needed (files are identical).
 
     This handles clock skew, FAT32 timestamp precision (2s), and cases
     where mtime is equal but content differs (copy/restore scenarios).
@@ -577,7 +582,7 @@ def _compare_files(
     lan_mode: bool,
 ) -> tuple[SyncActionName, int]:
     """
-    Compare two files using intelligent mtime + MD5 strategy.
+    Compare two files using intelligent mtime + SHA-256 strategy.
 
     Args:
         remote_file: File metadata from remote/server.
@@ -598,18 +603,18 @@ def _compare_files(
         else:
             return SyncActionName.upload, local_mtime - remote_mtime
 
-    # mtime within tolerance - fall back to MD5 checksum
-    remote_md5 = remote_file.md5sum or ""
-    local_md5 = local_file.md5sum or ""
+    # mtime within tolerance - fall back to SHA-256 checksum
+    remote_sha256 = remote_file.sha256sum or ""
+    local_sha256 = local_file.sha256sum or ""
 
-    if remote_md5 == local_md5:
+    if remote_sha256 == local_sha256:
         # Content is identical - no action needed
         return SyncActionName.nothing, 0
 
     # Content differs despite similar mtime - need to pick a direction
     log.debug(
-        f'MD5 mismatch within mtime tolerance for "{remote_file.filepath}": '
-        f"remote_md5={remote_md5[:8]}... local_md5={local_md5[:8]}... "
+        f'SHA-256 mismatch within mtime tolerance for "{remote_file.filepath}": '
+        f"remote_sha256={remote_sha256[:8]}... local_sha256={local_sha256[:8]}... "
         f"mtime_diff={mtime_diff}s"
     )
     if remote_mtime > local_mtime:
@@ -665,7 +670,7 @@ def update_file(data: dict) -> None:
     Update a local file based on remote event data.
 
     Downloads the file if it doesn't exist locally or if the
-    MD5 checksum differs. Updates permissions if only they differ.
+    SHA-256 checksum differs. Updates permissions if only they differ.
 
     Args:
         data: Dictionary with file metadata from remote event.
@@ -683,13 +688,13 @@ def update_file(data: dict) -> None:
         # File exists locally - check if update needed
         file = File.get(file_data.filepath)
 
-        if file and file.md5sum != file_data.md5sum:
+        if file and file.sha256sum != file_data.sha256sum:
             # Content differs - download new version
             file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
             download_file(file_data)
-            # Invalidate cached MD5 — file content has changed
+            # Invalidate cached SHA-256 — file content has changed
             if file_data.filepath:
-                invalidate_md5_cache(file_data.filepath)
+                invalidate_sha256_cache(file_data.filepath)
         elif file and file.permissions != file_data.permissions:
             # Only permissions differ - update them
             if file_data.permissions:
