@@ -308,11 +308,22 @@ def download_file(file: File) -> None:
 
         # Verify SHA-256 checksum of complete file
         sha256sum = compute_sha256(partial_file_path)
+        server_sha256 = response.headers.get("X-Checksum-SHA256")
+
+        # Check 1: Client-computed hash vs. server-asserted current hash
+        if server_sha256 and sha256sum != server_sha256:
+            log.error(
+                f'"{file.filepath}" '
+                f"(Server checksum mismatch: expected {server_sha256}, computed {sha256sum})"
+            )
+            cleanup_partial = False
+            return
+
+        # Check 2: Client-computed hash vs. listing metadata hash (stale-safe fallback)
         if sha256sum != file.sha256sum:
             log.error(
                 f'"{file.filepath}" (Invalid checksum: expected {file.sha256sum}, {sha256sum} given)'
             )
-            # Keep partial file for potential manual inspection
             cleanup_partial = False
             return
 
