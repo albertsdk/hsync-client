@@ -106,9 +106,10 @@ class TestDownloadFile:
 
     def test_successful_download_with_sha256_verification(self, tmp_path):
         """Successful download verifies SHA-256 and moves file."""
+        expected_sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         file = File(
             filepath="subdir/file.txt",
-            sha256sum="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",  # SHA-256 of empty file
+            sha256sum=expected_sha,  # SHA-256 of empty file
             size=0,
             mtime=1000,
             ctime=1000,
@@ -118,6 +119,8 @@ class TestDownloadFile:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.iter_content = MagicMock(return_value=[b""])
+        # Real dict so headers.get() returns proper defaults instead of MagicMock
+        mock_response.headers = {"X-Checksum-SHA256": expected_sha}
 
         with (
             patch(
@@ -133,7 +136,7 @@ class TestDownloadFile:
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch(
                 "hsync_client.transfer.compute_sha256",
-                return_value="d41d8cd98f00b204e9800998ecf8427e",
+                return_value=expected_sha,
             ),
             patch("hsync_client.transfer.move") as mock_move,
             patch("hsync_client.transfer.utime") as mock_utime,
