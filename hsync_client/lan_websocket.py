@@ -134,6 +134,7 @@ class LANWebSocketServer:
         use_https: bool = False,
         cert_file: str | None = None,
         key_file: str | None = None,
+        key_password: bytes | None = None,
     ) -> None:
         """
         Initialize the WebSocket server.
@@ -143,11 +144,14 @@ class LANWebSocketServer:
             use_https: Whether to use WSS instead of WS.
             cert_file: Path to SSL certificate file.
             key_file: Path to SSL private key file.
+            key_password: Password used to decrypt ``key_file`` (required if
+                ``use_https=True``; the on-disk key is always encrypted).
         """
         self._port = port
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
+        self._key_password = key_password
         self._clients: set[Any] = set()  # WebSocket connections
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -155,6 +159,9 @@ class LANWebSocketServer:
         self._running = False
         self._observer: BaseObserver | None = None
         self._event_handler: LANFileEventHandler | None = None
+
+        if use_https and not key_password:
+            raise ValueError("key_password is required when use_https=True")
 
     @property
     def port(self) -> int:
@@ -238,7 +245,11 @@ class LANWebSocketServer:
         ssl_context = None
         if self._use_https:
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ssl_context.load_cert_chain(self._cert_file, self._key_file)  # type: ignore
+            ssl_context.load_cert_chain(
+                self._cert_file,  # type: ignore[arg-type]
+                self._key_file,  # type: ignore[arg-type]
+                password=self._key_password,
+            )
 
         async with websockets.serve(
             self._handle_client,

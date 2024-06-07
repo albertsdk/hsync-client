@@ -36,28 +36,28 @@ class TestSSLUtils:
         assert b"BEGIN CERTIFICATE" in cert_info.cert_pem
 
     def test_save_cert_to_temp_files(self):
-        """Test saving certificate to temporary files."""
+        """Test saving certificate and encrypted key to a temporary directory."""
         import os
+        import shutil
 
         from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
 
         cert_info = generate_self_signed_cert()
         saved_info = save_cert_to_temp_files(cert_info)
 
-        assert saved_info.cert_file is not None
-        assert saved_info.key_file is not None
-        assert os.path.exists(saved_info.cert_file)
-        assert os.path.exists(saved_info.key_file)
+        try:
+            assert saved_info.cert_file is not None
+            assert saved_info.key_file is not None
+            assert os.path.exists(saved_info.cert_file)
+            assert os.path.exists(saved_info.key_file)
 
-        # Verify file contents
-        with open(saved_info.cert_file, "rb") as f:
-            assert f.read() == cert_info.cert_pem
-        with open(saved_info.key_file, "rb") as f:
-            assert f.read() == cert_info.key_pem
-
-        # Cleanup
-        os.unlink(saved_info.cert_file)
-        os.unlink(saved_info.key_file)
+            # Verify file contents (key is the encrypted PKCS#8 PEM)
+            with open(saved_info.cert_file, "rb") as f:
+                assert f.read() == cert_info.cert_pem
+            with open(saved_info.key_file, "rb") as f:
+                assert f.read() == cert_info.key_pem
+        finally:
+            shutil.rmtree(os.path.dirname(saved_info.cert_file), ignore_errors=True)
 
     def test_fingerprint_is_deterministic(self):
         """Test that same cert produces same fingerprint."""
@@ -95,6 +95,7 @@ class TestLANServerHTTPS:
     def test_server_https_with_cert(self):
         """Test creating HTTPS server with certificate."""
         import os
+        import shutil
 
         from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
 
@@ -107,6 +108,7 @@ class TestLANServerHTTPS:
                 use_https=True,
                 cert_file=saved_info.cert_file,
                 key_file=saved_info.key_file,
+                key_password=saved_info.key_password,
             )
             assert server.use_https is True
             server.start()
@@ -115,6 +117,14 @@ class TestLANServerHTTPS:
             server.stop()
         finally:
             if saved_info.cert_file:
-                os.unlink(saved_info.cert_file)
-            if saved_info.key_file:
-                os.unlink(saved_info.key_file)
+                shutil.rmtree(os.path.dirname(saved_info.cert_file), ignore_errors=True)
+
+    def test_server_https_requires_key_password(self):
+        """HTTPS mode without key_password is rejected."""
+        with pytest.raises(ValueError, match="key_password is required"):
+            LANServer(
+                port=9999,
+                use_https=True,
+                cert_file="/tmp/cert.pem",
+                key_file="/tmp/key.pem",
+            )
