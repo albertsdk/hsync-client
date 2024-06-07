@@ -15,7 +15,7 @@ Usage:
     hsync -b <bucket> -s <server_url> [options]
 
 Environment Variables:
-    HSYNC_SERVER_URL: Server URL
+    HSYNC_SERVER: Server URL
     HSYNC_API_KEY: API key for authentication
 """
 

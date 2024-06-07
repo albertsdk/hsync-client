@@ -185,19 +185,6 @@ def get_ignore_patterns() -> list[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
-# Legacy exports for backward compatibility (read at import time)
-def _get_env() -> EnvSettings:
-    """Get current settings (uncached, for backward compatibility)."""
-    return EnvSettings()
-
-
-HSYNC_SERVER_URL: str | None = _get_env().server
-HSYNC_API_KEY: str = _get_env().api_key.get_secret_value()
-HSYNC_STABILITY_DELAY: str | None = (
-    str(_get_env().stability_delay) if _get_env().stability_delay else None
-)
-
-
 # =============================================================================
 # Configuration TypedDict
 # =============================================================================
@@ -248,6 +235,8 @@ class HsyncConfig(TypedDict):
     QUIET: bool
     # Remote bucket name on server
     REMOTE_BUCKET: str
+    # API key resolved at startup (from --api-key-fd pipe or HSYNC_API_KEY env)
+    API_KEY: str
     # HTTP request headers
     REQUEST_HEADERS: RequestHeaders
     # Reconnection delay in seconds

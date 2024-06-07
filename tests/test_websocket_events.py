@@ -930,3 +930,132 @@ class TestRemoteEvents:
 
             # Queue task should be cancelled
             mock_task.cancel.assert_called()
+
+
+class TestRemoteEventsAuthToken:
+    """Regression tests for WebSocket auth token resolution."""
+
+    @pytest.mark.asyncio
+    async def test_auth_token_uses_config_api_key(self):
+        """The auth message token must come from CONFIG['API_KEY']
+
+        (populated by main_logic from --api-key-fd or HSYNC_API_KEY),
+        not from a stale import-time constant. Regression for FD-pipe
+        path used by hsync-desktop.
+        """
+        from json import dumps, loads
+
+        from hsync_client.websocket_handler import remote_events
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.0.0",
+            "compression_enabled": False,
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+            "API_KEY": "fd-pipe-secret-token",
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), Exception("Stop loop")])
+
+        mock_observer = MagicMock()
+
+        with (
+            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
+            patch("hsync_client.websocket_handler.CONFIG", config),
+            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
+            patch("hsync_client.websocket_handler.FileEventHandler"),
+            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
+            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch(
+                "hsync_client.websocket_handler.check_version_compatibility",
+                return_value=(True, None),
+            ),
+            patch("hsync_client.websocket_handler.get_api_key", return_value="env-fallback"),
+        ):
+            MockEventQueue.return_value = MagicMock()
+            mock_process.side_effect = Exception("Stop loop")
+
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(remote_events(), timeout=1.0)
+
+            sent = mock_websocket.send.call_args.args[0]
+            payload = loads(sent)
+            assert payload["type"] == "auth"
+            assert payload["token"] == "fd-pipe-secret-token"
+
+    @pytest.mark.asyncio
+    async def test_auth_token_falls_back_to_env_getter(self):
+        """When CONFIG['API_KEY'] is absent or empty, get_api_key() is used."""
+        from json import dumps, loads
+
+        from hsync_client.websocket_handler import remote_events
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "version": "1.0.0",
+            "compression_enabled": False,
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+            "API_KEY": "",
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), Exception("Stop loop")])
+
+        mock_observer = MagicMock()
+
+        with (
+            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
+            patch("hsync_client.websocket_handler.CONFIG", config),
+            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
+            patch("hsync_client.websocket_handler.FileEventHandler"),
+            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
+            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch(
+                "hsync_client.websocket_handler.check_version_compatibility",
+                return_value=(True, None),
+            ),
+            patch(
+                "hsync_client.websocket_handler.get_api_key",
+                return_value="env-var-token",
+            ),
+        ):
+            MockEventQueue.return_value = MagicMock()
+            mock_process.side_effect = Exception("Stop loop")
+
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(remote_events(), timeout=1.0)
+
+            sent = mock_websocket.send.call_args.args[0]
+            payload = loads(sent)
+            assert payload["token"] == "env-var-token"
