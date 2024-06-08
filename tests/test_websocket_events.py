@@ -14,14 +14,14 @@ import pytest
 
 
 class TestProcessWebsocketEvents:
-    """Tests for _process_websocket_events function."""
+    """Tests for _process_remote_events function."""
 
     @pytest.mark.asyncio
     async def test_processes_added_directory_event(self):
         """Processes added directory event correctly."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "added",
@@ -36,11 +36,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_dir") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
     @pytest.mark.asyncio
@@ -48,7 +49,7 @@ class TestProcessWebsocketEvents:
         """Processes added file event correctly."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "added",
@@ -70,11 +71,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_file") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
     @pytest.mark.asyncio
@@ -82,7 +84,7 @@ class TestProcessWebsocketEvents:
         """Skips events from the same client (echo prevention)."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "added",
@@ -97,11 +99,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_dir") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
     @pytest.mark.asyncio
@@ -109,7 +112,7 @@ class TestProcessWebsocketEvents:
         """Skips events from different buckets."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "added",
@@ -124,11 +127,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_dir") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
     @pytest.mark.asyncio
@@ -136,7 +140,7 @@ class TestProcessWebsocketEvents:
         """Skips events with invalid event type."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "invalid_event",
@@ -151,11 +155,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_dir") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
     @pytest.mark.asyncio
@@ -163,7 +168,7 @@ class TestProcessWebsocketEvents:
         """Processes renamed event correctly."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "renamed",
@@ -179,19 +184,23 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler._handle_rename_event") as mock_rename,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch._apply_rename", new=AsyncMock()) as mock_rename,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
-            mock_rename.assert_called_once_with(message["src"], message["dst"])
+                await _process_remote_events(websocket, "testbucket")
+            mock_rename.assert_called_once()
+            args = mock_rename.call_args.args
+            assert args[0] == message["src"]
+            assert args[1] == message["dst"]
 
     @pytest.mark.asyncio
     async def test_processes_deleted_event(self):
         """Processes deleted event correctly."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "deleted",
@@ -206,19 +215,21 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler._handle_delete_event") as mock_delete,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch._apply_delete", new=AsyncMock()) as mock_delete,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
-            mock_delete.assert_called_once_with(message["src"])
+                await _process_remote_events(websocket, "testbucket")
+            mock_delete.assert_called_once()
+            assert mock_delete.call_args.args[0] == message["src"]
 
     @pytest.mark.asyncio
     async def test_processes_modified_directory_event(self):
         """Processes modified directory event correctly."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "modified",
@@ -233,11 +244,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_dir") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
     @pytest.mark.asyncio
@@ -245,7 +257,7 @@ class TestProcessWebsocketEvents:
         """Processes modified file event correctly."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "modified",
@@ -267,11 +279,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_file") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
     @pytest.mark.asyncio
@@ -279,7 +292,7 @@ class TestProcessWebsocketEvents:
         """Skips symlink events (not in valid event types)."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         # Note: symlink events are not in the valid event types list
         # They are handled locally but not received via WebSocket
@@ -296,12 +309,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler._handle_symlink_event") as mock_symlink,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch._apply_symlink", new=AsyncMock()) as mock_symlink,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
-            # Symlink events are filtered out as invalid
+                await _process_remote_events(websocket, "testbucket")
             mock_symlink.assert_not_called()
 
     @pytest.mark.asyncio
@@ -309,7 +322,7 @@ class TestProcessWebsocketEvents:
         """Skips remote events when SYNC_DIRECTION is upload-only."""
         from json import dumps
 
-        from hsync_client.websocket_handler import _process_websocket_events
+        from hsync_client.remote_websocket import _process_remote_events
 
         message = {
             "name": "added",
@@ -324,11 +337,12 @@ class TestProcessWebsocketEvents:
         config = {"CID": "my_client", "SYNC_DIRECTION": "upload-only"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.update_dir") as mock_update,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             with contextlib.suppress(Exception):
-                await _process_websocket_events(websocket, "testbucket")
+                await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
 
@@ -338,7 +352,7 @@ class TestResync:
     @pytest.mark.asyncio
     async def test_resync_calls_sync_periodically(self):
         """resync calls sync after configured delay."""
-        from hsync_client.websocket_handler import resync
+        from hsync_client.remote_websocket import resync
 
         config = {"RESYNC": 0.01}  # Very short delay for testing
 
@@ -351,8 +365,9 @@ class TestResync:
                 raise Exception("Stop after 2 calls")
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.sync", mock_sync),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
         ):
             with contextlib.suppress(Exception):
                 await resync()
@@ -365,7 +380,7 @@ class TestRemoteConnect:
     @pytest.mark.asyncio
     async def test_remote_connect_performs_initial_sync(self):
         """remote_connect performs initial sync before entering event loop."""
-        from hsync_client.websocket_handler import remote_connect
+        from hsync_client.remote_websocket import remote_connect
 
         config = {"RESYNC": None, "RECONNECT_DELAY": 0.01}
 
@@ -383,9 +398,10 @@ class TestRemoteConnect:
             raise Exception("Stop after first iteration")
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.sync", mock_sync),
-            patch("hsync_client.websocket_handler.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
         ):
             with contextlib.suppress(TimeoutError, KeyboardInterrupt, Exception):
                 await asyncio.wait_for(remote_connect(), timeout=1.0)
@@ -394,8 +410,8 @@ class TestRemoteConnect:
     @pytest.mark.asyncio
     async def test_remote_connect_starts_resync_task_when_configured(self):
         """remote_connect starts resync task when RESYNC is configured."""
-        import hsync_client.websocket_handler as ws_module
-        from hsync_client.websocket_handler import remote_connect
+        import hsync_client.remote_websocket as ws_module
+        from hsync_client.remote_websocket import remote_connect
 
         config = {"RESYNC": 60, "RECONNECT_DELAY": 0.01}
 
@@ -418,10 +434,11 @@ class TestRemoteConnect:
             await asyncio.sleep(10)  # Long sleep to keep task alive
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.sync", mock_sync),
-            patch("hsync_client.websocket_handler.remote_events", mock_remote_events),
-            patch("hsync_client.websocket_handler.resync", mock_resync),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket.resync", mock_resync),
         ):
             # Reset global task
             ws_module._resync_task = None
@@ -435,7 +452,7 @@ class TestRemoteConnect:
         """remote_connect handles ConnectionClosed and reconnects."""
         from websockets.exceptions import ConnectionClosed
 
-        from hsync_client.websocket_handler import remote_connect
+        from hsync_client.remote_websocket import remote_connect
 
         config = {"RESYNC": None, "RECONNECT_DELAY": 0.01}
 
@@ -452,9 +469,10 @@ class TestRemoteConnect:
             raise KeyboardInterrupt("Stop after reconnect")
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.sync", mock_sync),
-            patch("hsync_client.websocket_handler.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
         ):
             with contextlib.suppress(TimeoutError, KeyboardInterrupt, Exception):
                 await asyncio.wait_for(remote_connect(), timeout=2.0)
@@ -465,8 +483,8 @@ class TestRemoteConnect:
         """remote_connect cancels previous resync task on reconnect."""
         from websockets.exceptions import ConnectionClosed
 
-        import hsync_client.websocket_handler as ws_module
-        from hsync_client.websocket_handler import remote_connect
+        import hsync_client.remote_websocket as ws_module
+        from hsync_client.remote_websocket import remote_connect
 
         config = {"RESYNC": 60, "RECONNECT_DELAY": 0.01}
 
@@ -492,10 +510,11 @@ class TestRemoteConnect:
                 raise  # let cancellation propagate cleanly
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.sync", mock_sync),
-            patch("hsync_client.websocket_handler.remote_events", mock_remote_events),
-            patch("hsync_client.websocket_handler.resync", mock_resync),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket.resync", mock_resync),
         ):
             ws_module._resync_task = None
             with contextlib.suppress(
@@ -515,7 +534,7 @@ class TestRemoteEvents:
         """remote_events authenticates successfully and processes events."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         # Mock auth response
         auth_response = {
@@ -563,14 +582,15 @@ class TestRemoteEvents:
         mock_observer.join = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
-            patch("hsync_client.websocket_handler.FileEventHandler"),
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
-            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch(
-                "hsync_client.websocket_handler.check_version_compatibility",
+                "hsync_client.remote_websocket.check_version_compatibility",
                 return_value=(True, None),
             ),
         ):
@@ -588,7 +608,7 @@ class TestRemoteEvents:
         """remote_events returns early when authentication fails."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         # Mock failed auth response
         auth_response = {
@@ -613,8 +633,9 @@ class TestRemoteEvents:
         mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
         ):
             await remote_events()
 
@@ -626,7 +647,7 @@ class TestRemoteEvents:
         """remote_events returns early when version is incompatible."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         # Mock auth response with version incompatibility
         auth_response = {
@@ -653,10 +674,11 @@ class TestRemoteEvents:
         mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
             patch(
-                "hsync_client.websocket_handler.check_version_compatibility",
+                "hsync_client.remote_websocket.check_version_compatibility",
                 return_value=(False, "version_too_old"),
             ),
         ):
@@ -670,7 +692,7 @@ class TestRemoteEvents:
         """remote_events logs warning for minor version mismatch."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         auth_response = {
             "type": "auth",
@@ -711,16 +733,17 @@ class TestRemoteEvents:
         mock_observer = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
-            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch(
-                "hsync_client.websocket_handler.check_version_compatibility",
+                "hsync_client.remote_websocket.check_version_compatibility",
                 return_value=(True, "minor_mismatch"),
             ),
-            patch("hsync_client.websocket_handler.log") as mock_log,
+            patch("hsync_client.remote_websocket.log") as mock_log,
         ):
             MockEventQueue.return_value = MagicMock()
             mock_process.side_effect = Exception("Stop loop")
@@ -736,7 +759,7 @@ class TestRemoteEvents:
         """remote_events configures SSL with no verification when configured."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         auth_response = {
             "type": "auth",
@@ -782,13 +805,14 @@ class TestRemoteEvents:
             return mock_websocket
 
         with (
-            patch("hsync_client.websocket_handler.connect", side_effect=mock_connect),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
-            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch("hsync_client.remote_websocket.connect", side_effect=mock_connect),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch(
-                "hsync_client.websocket_handler.check_version_compatibility",
+                "hsync_client.remote_websocket.check_version_compatibility",
                 return_value=(True, None),
             ),
         ):
@@ -807,7 +831,7 @@ class TestRemoteEvents:
         """remote_events handles unexpected exceptions gracefully."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         auth_response = {
             "type": "auth",
@@ -854,17 +878,18 @@ class TestRemoteEvents:
             return task
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue", return_value=queue_mock),
-            patch("hsync_client.websocket_handler.FileEventHandler"),
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
-            patch("hsync_client.websocket_handler.create_task", side_effect=mock_create_task),
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.create_task", side_effect=mock_create_task),
             patch(
-                "hsync_client.websocket_handler._process_websocket_events",
+                "hsync_client.remote_websocket._process_remote_events",
                 side_effect=Exception("Unexpected error"),
             ),
-            patch("hsync_client.websocket_handler.log") as mock_log,
+            patch("hsync_client.remote_websocket.log") as mock_log,
         ):
             # Should not raise exception
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -878,7 +903,7 @@ class TestRemoteEvents:
         """remote_events cleans up queue task on exit."""
         from json import dumps
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         auth_response = {
             "type": "auth",
@@ -914,16 +939,17 @@ class TestRemoteEvents:
         queue_mock.stop = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue", return_value=queue_mock),
-            patch("hsync_client.websocket_handler.FileEventHandler"),
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
             patch(
-                "hsync_client.websocket_handler._process_websocket_events",
+                "hsync_client.remote_websocket._process_remote_events",
                 side_effect=Exception("Stop"),
             ),
-            patch("hsync_client.websocket_handler.create_task", return_value=mock_task),
+            patch("hsync_client.remote_websocket.create_task", return_value=mock_task),
         ):
             with contextlib.suppress(Exception):
                 await remote_events()
@@ -945,7 +971,7 @@ class TestRemoteEventsAuthToken:
         """
         from json import dumps, loads
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         auth_response = {
             "type": "auth",
@@ -976,17 +1002,18 @@ class TestRemoteEventsAuthToken:
         mock_observer = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
-            patch("hsync_client.websocket_handler.FileEventHandler"),
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
-            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch(
-                "hsync_client.websocket_handler.check_version_compatibility",
+                "hsync_client.remote_websocket.check_version_compatibility",
                 return_value=(True, None),
             ),
-            patch("hsync_client.websocket_handler.get_api_key", return_value="env-fallback"),
+            patch("hsync_client.remote_websocket.get_api_key", return_value="env-fallback"),
         ):
             MockEventQueue.return_value = MagicMock()
             mock_process.side_effect = Exception("Stop loop")
@@ -1004,7 +1031,7 @@ class TestRemoteEventsAuthToken:
         """When CONFIG['API_KEY'] is absent or empty, get_api_key() is used."""
         from json import dumps, loads
 
-        from hsync_client.websocket_handler import remote_events
+        from hsync_client.remote_websocket import remote_events
 
         auth_response = {
             "type": "auth",
@@ -1035,18 +1062,19 @@ class TestRemoteEventsAuthToken:
         mock_observer = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.connect", return_value=mock_websocket),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.EventQueue") as MockEventQueue,
-            patch("hsync_client.websocket_handler.FileEventHandler"),
-            patch("hsync_client.websocket_handler.Observer", return_value=mock_observer),
-            patch("hsync_client.websocket_handler._process_websocket_events") as mock_process,
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch(
-                "hsync_client.websocket_handler.check_version_compatibility",
+                "hsync_client.remote_websocket.check_version_compatibility",
                 return_value=(True, None),
             ),
             patch(
-                "hsync_client.websocket_handler.get_api_key",
+                "hsync_client.remote_websocket.get_api_key",
                 return_value="env-var-token",
             ),
         ):

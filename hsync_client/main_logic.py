@@ -55,6 +55,7 @@ _run_lan_mode = run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.models.file import clear_sha256_cache
 from hsync_client.models.sync_action import SyncActionName
+from hsync_client.remote_websocket import remote_connect
 from hsync_client.retry import retry_on_connection_error
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
@@ -70,7 +71,6 @@ from hsync_client.utils import (
     is_valid_logfile,
     reset_bandwidth_throttle,
 )
-from hsync_client.websocket_handler import remote_connect
 
 
 def _run_preview(log) -> None:

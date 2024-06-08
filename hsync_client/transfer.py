@@ -11,20 +11,13 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
-from json import dumps as _json_dumps
 from os import makedirs, remove, utime
-
-
-def _safe_json(obj: object) -> str:
-    """Serialize object to JSON and escape braces for loguru."""
-    return _json_dumps(obj).replace("{", "{{").replace("}", "}}")
-
-
 from os.path import basename, dirname, exists, getmtime, getsize, join
 from shutil import move
 from time import sleep as time_sleep
 from typing import cast
 
+from hsync_common.text import safe_json_for_log
 from loguru import logger as log
 from requests import RequestException, get, post
 
@@ -244,7 +237,7 @@ def download_file(file: File) -> None:
         return
 
     log.debug(f"Request URI: {uri}")
-    log.debug(f"Request Header: {_safe_json(headers)}")
+    log.debug(f"Request Header: {safe_json_for_log(headers)}")
     log.debug(f"Response status: {response.status_code}")
 
     if response.status_code == 401:
@@ -534,8 +527,8 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
         log.debug(f"Upload file: {file.filepath}")
         log.debug(f"        URI: {uri}")
-        log.debug(f"     Header: {_safe_json(CONFIG['REQUEST_HEADERS'])}")
-        log.debug(f"       data: {_safe_json(data)}")
+        log.debug(f"     Header: {safe_json_for_log(CONFIG['REQUEST_HEADERS'])}")
+        log.debug(f"       data: {safe_json_for_log(data)}")
 
         # Determine if compression should be used
         # Don't compress if: resuming, client disabled, server disabled, or file not compressible

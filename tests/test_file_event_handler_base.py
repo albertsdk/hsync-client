@@ -4,45 +4,23 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Tests for FileEventHandler and _safe_json helper function."""
+"""Tests for RemoteFileEventHandler."""
 
 from asyncio import new_event_loop
 from unittest.mock import MagicMock, patch
 
-from hsync_client.websocket_handler import FileEventHandler, _safe_json
-
-
-class TestSafeJson:
-    """Tests for _safe_json helper function."""
-
-    def test_escapes_curly_braces(self):
-        """Curly braces are doubled for loguru safety."""
-        result = _safe_json({"key": "value"})
-        assert "{{" in result
-        assert "}}" in result
-
-    def test_plain_string(self):
-        """Plain string without braces is serialized normally."""
-        result = _safe_json("hello")
-        assert result == '"hello"'
-
-    def test_nested_object(self):
-        """Nested objects have all braces escaped."""
-        result = _safe_json({"a": {"b": 1}})
-        # No unescaped single braces
-        assert "{" not in result.replace("{{", "")
-        assert "}" not in result.replace("}}", "")
+from hsync_client.remote_websocket import RemoteFileEventHandler
 
 
 class TestFileEventHandler:
-    """Tests for FileEventHandler class."""
+    """Tests for RemoteFileEventHandler class."""
 
     def setup_method(self):
         """Set up test fixtures."""
         self.websocket = MagicMock()
         self.loop = new_event_loop()
         self.event_queue = MagicMock()
-        self.handler = FileEventHandler(self.websocket, self.loop, self.event_queue)
+        self.handler = RemoteFileEventHandler(self.websocket, self.loop, self.event_queue)
 
     def teardown_method(self):
         """Clean up event loop."""
@@ -59,30 +37,30 @@ class TestFileEventHandler:
         message = MagicMock()
         message.to_dict.return_value = {"test": "data"}
 
-        with patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run:
-            self.handler._send_message(message)
+        with patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run:
+            self.handler._broadcast_event(message)
             mock_run.assert_called_once()
 
     def test_send_message_direct_without_queue(self):
         """Handler sends directly if no event queue."""
-        handler = FileEventHandler(self.websocket, self.loop, None)
+        handler = RemoteFileEventHandler(self.websocket, self.loop, None)
         message = MagicMock()
         message.to_dict.return_value = {"test": "data"}
 
-        with patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run:
-            handler._send_message(message)
+        with patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run:
+            handler._broadcast_event(message)
             mock_run.assert_called_once()
 
     def test_send_message_skips_download_only(self):
-        """_send_message does nothing in download-only mode."""
+        """_broadcast_event does nothing in download-only mode."""
         message = MagicMock()
         config = {"SYNC_DIRECTION": "download-only"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
-            self.handler._send_message(message)
+            self.handler._broadcast_event(message)
             mock_run.assert_not_called()
 
     # -- on_any_event --
@@ -95,8 +73,8 @@ class TestFileEventHandler:
         event.dest_path = None
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=True),
-            patch("hsync_client.websocket_handler.log") as mock_log,
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=True),
+            patch("hsync_client.file_event_handler.log") as mock_log,
         ):
             self.handler.on_any_event(event)
             assert mock_log.debug.called
@@ -109,8 +87,8 @@ class TestFileEventHandler:
         event.dest_path = None
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=True),
-            patch("hsync_client.websocket_handler.log") as mock_log,
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=True),
+            patch("hsync_client.file_event_handler.log") as mock_log,
         ):
             self.handler.on_any_event(event)
             assert mock_log.debug.called
@@ -123,7 +101,7 @@ class TestFileEventHandler:
         event.is_directory = True
         event.src_path = "/bucket/.hidden"
 
-        with patch("hsync_client.websocket_handler.is_hidden_dir", return_value=True):
+        with patch("hsync_client.file_event_handler.is_hidden_dir", return_value=True):
             self.handler.on_created(event)
 
         # Should not send any message
@@ -142,10 +120,10 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.Dir.get") as mock_get,
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe"),
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get") as mock_get,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
             mock_dir = MagicMock()
             mock_get.return_value = mock_dir
@@ -160,7 +138,7 @@ class TestFileEventHandler:
         event.is_directory = True
         event.src_path = "/bucket/.hidden"
 
-        with patch("hsync_client.websocket_handler.is_hidden_dir", return_value=True):
+        with patch("hsync_client.file_event_handler.is_hidden_dir", return_value=True):
             self.handler.on_deleted(event)
 
         # Should not send any message
@@ -172,7 +150,7 @@ class TestFileEventHandler:
         event.is_directory = False
         event.src_path = "/bucket/.hidden_file"
 
-        with patch("hsync_client.websocket_handler.is_hidden_file", return_value=True):
+        with patch("hsync_client.file_event_handler.is_hidden_file", return_value=True):
             self.handler.on_deleted(event)
 
         # Should not send any message
@@ -191,9 +169,9 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe"),
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
             self.handler.on_deleted(event)
             # Message should be sent
@@ -205,7 +183,7 @@ class TestFileEventHandler:
         event.src_path = "/bucket/.hidden1"
         event.dest_path = "/bucket/.hidden2"
 
-        with patch("hsync_client.websocket_handler.is_hidden_dir", return_value=True):
+        with patch("hsync_client.file_event_handler.is_hidden_dir", return_value=True):
             self.handler.on_moved(event)
 
         # Should not send any message
@@ -218,7 +196,7 @@ class TestFileEventHandler:
         event.src_path = "/bucket/.hidden_file"
         event.dest_path = "/bucket/visible_file"
 
-        with patch("hsync_client.websocket_handler.is_hidden_file", return_value=True):
+        with patch("hsync_client.file_event_handler.is_hidden_file", return_value=True):
             self.handler.on_moved(event)
 
         # Should not send any message
@@ -235,7 +213,7 @@ class TestFileEventHandler:
             return path == "/bucket/.hidden"
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_dir", side_effect=side_effect),
+            patch("hsync_client.file_event_handler.is_hidden_dir", side_effect=side_effect),
             patch.object(self.handler, "on_created") as mock_created,
         ):
             self.handler.on_moved(event)
@@ -252,7 +230,7 @@ class TestFileEventHandler:
             return path == "/bucket/.hidden"
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_dir", side_effect=side_effect),
+            patch("hsync_client.file_event_handler.is_hidden_dir", side_effect=side_effect),
             patch.object(self.handler, "on_deleted") as mock_deleted,
         ):
             self.handler.on_moved(event)
@@ -274,10 +252,10 @@ class TestFileEventHandler:
         mock_dir = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.Dir.get", return_value=mock_dir),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=mock_dir),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_moved(event)
             mock_run.assert_called_once()
@@ -296,10 +274,10 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.Dir.get", return_value=None),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=None),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_moved(event)
             mock_run.assert_not_called()
@@ -320,10 +298,10 @@ class TestFileEventHandler:
         mock_file = MagicMock()
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.File.get", return_value=mock_file),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_moved(event)
             mock_run.assert_called_once()
@@ -342,10 +320,10 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.File.get", return_value=None),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=None),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_moved(event)
             mock_run.assert_not_called()
@@ -361,9 +339,9 @@ class TestFileEventHandler:
         config = {"IGNORE_DELETE": True}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_deleted(event)
             mock_run.assert_not_called()
@@ -377,9 +355,9 @@ class TestFileEventHandler:
         config = {"IGNORE_DELETE": True}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_deleted(event)
             mock_run.assert_not_called()
@@ -398,9 +376,9 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_deleted(event)
             mock_run.assert_called_once()
@@ -412,7 +390,7 @@ class TestFileEventHandler:
         event.src_path = "/bucket/dir"
 
         # on_closed should not process directories
-        with patch("hsync_client.websocket_handler.upload_file") as mock_upload:
+        with patch("hsync_client.remote_websocket.upload_file") as mock_upload:
             self.handler.on_closed(event)
             mock_upload.assert_not_called()
 
@@ -423,8 +401,8 @@ class TestFileEventHandler:
         event.src_path = "/bucket/.hidden"
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=True),
-            patch("hsync_client.websocket_handler.upload_file") as mock_upload,
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=True),
+            patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             self.handler.on_closed(event)
             mock_upload.assert_not_called()
@@ -436,10 +414,10 @@ class TestFileEventHandler:
         event.src_path = "/bucket/file.txt"
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.exists", return_value=True),
-            patch("hsync_client.websocket_handler.File.get") as mock_get,
-            patch("hsync_client.websocket_handler.upload_file") as mock_upload,
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.exists", return_value=True),
+            patch("hsync_client.file_event_handler.File.get") as mock_get,
+            patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             mock_file = MagicMock()
             mock_get.return_value = mock_file
@@ -463,12 +441,12 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.islink", return_value=True),
-            patch("hsync_client.websocket_handler.Symlink.get") as mock_get,
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe"),
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.islink", return_value=True),
+            patch("hsync_client.file_event_handler.Symlink.get") as mock_get,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
             mock_symlink = MagicMock()
             mock_get.return_value = mock_symlink
@@ -488,12 +466,12 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.islink", return_value=True),
-            patch("hsync_client.websocket_handler.Symlink.get", return_value=None),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.islink", return_value=True),
+            patch("hsync_client.file_event_handler.Symlink.get", return_value=None),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_created(event)
             mock_run.assert_not_called()
@@ -513,11 +491,11 @@ class TestFileEventHandler:
         }
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.is_same_paths", return_value=False),
-            patch("hsync_client.websocket_handler.Dir.get") as mock_get,
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get") as mock_get,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             mock_dir = MagicMock()
             mock_get.return_value = mock_dir
@@ -534,10 +512,10 @@ class TestFileEventHandler:
         config = {"LOCAL_BUCKET": "/bucket"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_dir", return_value=False),
-            patch("hsync_client.websocket_handler.is_same_paths", return_value=True),
-            patch("hsync_client.websocket_handler.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=True),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_modified(event)
             mock_run.assert_not_called()
@@ -551,13 +529,13 @@ class TestFileEventHandler:
         config = {"SYNC_DIRECTION": "bidirectional"}
 
         with (
-            patch("hsync_client.websocket_handler.SUPPORTS_ON_CLOSED", False),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.time", return_value=100.0),
-            patch("hsync_client.websocket_handler.exists", return_value=True),
-            patch("hsync_client.websocket_handler.File.get") as mock_get,
-            patch("hsync_client.websocket_handler.upload_file") as mock_upload,
+            patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", False),
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.time", return_value=100.0),
+            patch("hsync_client.file_event_handler.exists", return_value=True),
+            patch("hsync_client.file_event_handler.File.get") as mock_get,
+            patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             mock_file = MagicMock()
             mock_get.return_value = mock_file
@@ -576,11 +554,11 @@ class TestFileEventHandler:
         self.handler._last_modified["/bucket/file.txt"] = 100.0
 
         with (
-            patch("hsync_client.websocket_handler.SUPPORTS_ON_CLOSED", False),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.time", return_value=100.5),
-            patch("hsync_client.websocket_handler.upload_file") as mock_upload,
+            patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", False),
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.time", return_value=100.5),
+            patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             self.handler.on_modified(event)
             mock_upload.assert_not_called()
@@ -594,10 +572,10 @@ class TestFileEventHandler:
         config = {"SYNC_DIRECTION": "download-only"}
 
         with (
-            patch("hsync_client.websocket_handler.SUPPORTS_ON_CLOSED", False),
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.upload_file") as mock_upload,
+            patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", False),
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             self.handler.on_modified(event)
             mock_upload.assert_not_called()
@@ -613,9 +591,9 @@ class TestFileEventHandler:
         config = {"SYNC_DIRECTION": "download-only"}
 
         with (
-            patch("hsync_client.websocket_handler.CONFIG", config),
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.upload_file") as mock_upload,
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             self.handler.on_closed(event)
             mock_upload.assert_not_called()
@@ -627,9 +605,9 @@ class TestFileEventHandler:
         event.src_path = "/bucket/gone.txt"
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.exists", return_value=False),
-            patch("hsync_client.websocket_handler.log") as mock_log,
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.exists", return_value=False),
+            patch("hsync_client.file_event_handler.log") as mock_log,
         ):
             self.handler.on_closed(event)
             assert mock_log.warning.called
@@ -641,9 +619,9 @@ class TestFileEventHandler:
         event.src_path = "/bucket/file.txt"
 
         with (
-            patch("hsync_client.websocket_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.websocket_handler.exists", side_effect=OSError("boom")),
-            patch("hsync_client.websocket_handler.log") as mock_log,
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.exists", side_effect=OSError("boom")),
+            patch("hsync_client.file_event_handler.log") as mock_log,
         ):
             self.handler.on_closed(event)
             assert mock_log.error.called
