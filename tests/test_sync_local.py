@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from hsync_client.models.file import File
 from hsync_client.models.sync_action import SyncActionName
-from hsync_client.sync import get_files_local, get_sync_actions
+from hsync_client.sync import _save_conflict_copy, get_files_local, get_sync_actions
 
 
 class TestGetFilesLocal:
@@ -381,3 +381,90 @@ class TestGetSyncActionsLanMode:
             result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
+
+
+class TestConflictResolution:
+    """Tests for same-mtime conflict handling (analisi.md point 2.7)."""
+
+    def test_same_mtime_different_content_flags_conflict(self, tmp_path):
+        """Same mtime but different content downloads remote and flags conflict."""
+        local_file = tmp_path / "conflict.txt"
+        local_file.write_text("local content")
+        mtime = int(os.path.getmtime(str(local_file)))
+
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
+
+        # Remote has the SAME mtime but a DIFFERENT checksum (unresolvable tie)
+        remote_files = [
+            {
+                "filepath": "conflict.txt",
+                "name": "conflict.txt",
+                "mtime": mtime,
+                "ctime": mtime,
+                "size": 99,
+                "sha256sum": "deadbeef" * 8,
+                "permissions": "-rw-r--r--",
+            }
+        ]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions(remote_files, [local_file_dict])
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.download
+            assert result[0].conflict is True
+
+    def test_newer_remote_is_not_flagged_conflict(self, tmp_path):
+        """A clearly newer remote downloads without being flagged as conflict."""
+        local_file = tmp_path / "newer.txt"
+        local_file.write_text("local content")
+        mtime = int(os.path.getmtime(str(local_file)))
+
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
+
+        remote_files = [
+            {
+                "filepath": "newer.txt",
+                "name": "newer.txt",
+                "mtime": mtime + 100,
+                "ctime": mtime + 100,
+                "size": 99,
+                "sha256sum": "deadbeef" * 8,
+                "permissions": "-rw-r--r--",
+            }
+        ]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions(remote_files, [local_file_dict])
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.download
+            assert result[0].conflict is False
+
+    def test_save_conflict_copy_preserves_local_content(self, tmp_path):
+        """_save_conflict_copy copies the local file to a .conflict-* sibling."""
+        local_file = tmp_path / "data.txt"
+        local_file.write_text("precious local data")
+
+        file_obj = File.get(str(local_file))
+        assert file_obj is not None
+
+        conflict_path = _save_conflict_copy(file_obj)
+        assert conflict_path is not None
+        assert ".conflict-" in conflict_path
+        # Original is untouched and the conflict copy holds the same content
+        assert local_file.read_text() == "precious local data"
+        from pathlib import Path
+
+        assert Path(conflict_path).read_text() == "precious local data"
+
+    def test_save_conflict_copy_missing_file_returns_none(self, tmp_path):
+        """_save_conflict_copy is a no-op when the local file is absent."""
+        file_obj = File.from_dict(
+            {"filepath": "ghost.txt", "name": "ghost.txt"},
+            str(tmp_path),
+            False,
+        )
+        assert _save_conflict_copy(file_obj) is None

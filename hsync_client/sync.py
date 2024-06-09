@@ -14,8 +14,11 @@ file comparison, action determination, and sync execution.
 import asyncio
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from os import cpu_count, makedirs, remove, walk
 from pathlib import Path
+from shutil import copy2
+from socket import gethostname
 from sys import exc_info
 from traceback import print_tb
 from typing import cast
@@ -135,6 +138,12 @@ async def sync(lan_mode: bool = False) -> None:
                     log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
+
+        # Preserve locally-modified files before a conflicting download
+        # overwrites them (same mtime, different content - no automatic winner).
+        for action in sync_actions:
+            if action.name == SyncActionName.download and getattr(action, "conflict", False):
+                _save_conflict_copy(action.file)
 
         # Execute transfers in parallel using thread pool
         if downloads or uploads:
@@ -530,11 +539,17 @@ def get_sync_actions(
                 lan_mode,
             )
 
+            # A download with timedelta == 0 in this branch is the unconvincing
+            # tie from _compare_files (same mtime, different content): the remote
+            # wins but the local copy must be preserved before being overwritten.
+            is_conflict = action == SyncActionName.download and timedelta == 0
+
             sync_actions.append(
                 SyncAction(
                     remote_file if action == SyncActionName.download else local_file,
                     action,
                     timedelta,
+                    conflict=is_conflict,
                 )
             )
         else:
@@ -625,6 +640,38 @@ def _compare_files(
         # Exact same mtime but different content - prefer remote
         # (server/master is authoritative for conflict resolution)
         return SyncActionName.download, 0
+
+
+def _save_conflict_copy(file: File) -> str | None:
+    """
+    Preserve a locally-modified file before a conflicting download overwrites it.
+
+    Invoked when local and remote content differ but share an identical mtime,
+    so no winner can be determined automatically and the remote version is taken.
+    The local content is copied to ``<filepath>.conflict-<host>-<timestamp>`` so
+    the user can recover it.
+
+    Args:
+        file: The file whose local content is about to be overwritten.
+
+    Returns:
+        The path of the conflict copy, or None if nothing was saved.
+    """
+    if not (file.filepath and Path(file.filepath).exists()):
+        return None
+    host = gethostname() or "unknown"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    conflict_path = f"{file.filepath}.conflict-{host}-{stamp}"
+    try:
+        copy2(file.filepath, conflict_path)
+        log.warning(
+            f'[CONFLICT  ] "{file.filepath}" differs from remote at identical '
+            f'mtime; local copy saved as "{conflict_path}"'
+        )
+        return conflict_path
+    except OSError as e:
+        log.error(f'Could not save conflict copy for "{file.filepath}": {e}')
+        return None
 
 
 # =============================================================================
