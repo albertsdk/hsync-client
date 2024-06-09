@@ -287,6 +287,24 @@ def _run_as_slave(
             log.info(f"Waiting for master {master.cid} to start server...")
             return True  # Continue discovery loop
 
+        # Protocol gate (symmetric, no-downgrade): only communicate with a
+        # master whose transport matches our own LAN_HTTPS preference. We do
+        # NOT self-promote on mismatch (that would create a second master and
+        # split-brain); we simply stay in the discovery loop and warn.
+        if master.use_https != config["LAN_HTTPS"]:
+            local_proto = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
+            master_proto = "HTTPS" if master.use_https else "HTTP"
+            log.warning(
+                f"[PROTOCOL_MISMATCH] master {master.cid} uses {master_proto} "
+                f"but this client is configured for {local_proto}. "
+                f"Refusing to start communication (no protocol downgrade/upgrade). "
+                f"Set HSYNC_LAN_HTTPS to match the master ({master_proto}) to sync."
+            )
+            # Do not self-promote (that would create a second master and
+            # split-brain). Keep waiting only in persistent mode; otherwise
+            # exit since this node cannot sync with the elected master.
+            return persistent
+
         master_url = master.get_server_url()
         log.info(f"Connecting to master: {master.cid} at {master_url}")
 
@@ -301,7 +319,13 @@ def _run_as_slave(
         config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
 
         if config["LAN_KEY"]:
-            config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+            if master.use_https:
+                config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+            else:
+                log.warning(
+                    "LAN_KEY is set but the master uses plain HTTP; "
+                    "the key will NOT be sent over an unencrypted channel."
+                )
 
         # Set compression capability based on master peer
         config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled

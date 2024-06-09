@@ -723,6 +723,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         """Notify master about a file/directory deletion."""
         import requests
 
+        from hsync_client.utils import get_ssl_verify, verify_master_fingerprint
+
         try:
             protocol = "https" if self._use_https else "http"
             # Use the files endpoint with DELETE method
@@ -747,12 +749,16 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
+            if not verify_master_fingerprint(url):
+                log.error("Master certificate fingerprint mismatch; aborting delete")
+                return
+
             log.info(f'[CLIENT DEL ] "{filepath}"')
             response = requests.delete(
                 url,
                 params=params,
                 headers=headers,
-                verify=False,  # Self-signed cert
+                verify=get_ssl_verify(),
                 timeout=30,
             )
 
@@ -765,6 +771,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
     def _rename_on_master(self, src_path: str, dst_path: str) -> None:
         """Notify master about a file/directory rename."""
         import requests
+
+        from hsync_client.utils import get_ssl_verify, verify_master_fingerprint
 
         try:
             protocol = "https" if self._use_https else "http"
@@ -790,12 +798,16 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
+            if not verify_master_fingerprint(url):
+                log.error("Master certificate fingerprint mismatch; aborting rename")
+                return
+
             log.info(f'[CLIENT REN ] "{src_path}" -> "{dst_path}"')
             response = requests.patch(
                 url,
                 params=params,
                 headers=headers,
-                verify=False,  # Self-signed cert
+                verify=get_ssl_verify(),
                 timeout=30,
             )
 

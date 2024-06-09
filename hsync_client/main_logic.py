@@ -494,6 +494,22 @@ def run_sync(
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
 
+    # Security gate: never transmit the API key over an unencrypted channel.
+    # The rule keys on the URL scheme the client connects to, so an HTTPS
+    # reverse proxy in front of an HTTP backend is fully supported (the
+    # client uses an https:// URL; the backend stays HTTP behind the proxy).
+    if (
+        not lan_mode
+        and resolved_api_key
+        and not effective_server_url.lower().startswith("https://")
+    ):
+        log.error(
+            f"API key provided but server URL is not HTTPS ('{effective_server_url}'). "
+            "Refusing to send credentials over an unencrypted connection. "
+            "Use an https:// URL (a reverse proxy terminating TLS is supported)."
+        )
+        return
+
     # Populate global configuration dictionary
     config: HsyncConfig = {
         "API": {

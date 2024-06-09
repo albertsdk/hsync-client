@@ -124,6 +124,41 @@ class TestRunLanMode:
         mock_run.assert_called_once()
         assert any("master" in str(c).lower() for c in mock_log.info.call_args_list)
 
+    def test_slave_protocol_mismatch_refuses(self, tmp_path):
+        """Client refuses to connect to a master using a different protocol."""
+        # Local client is HTTP, master is HTTPS -> mismatch, no sync.
+        config = _make_lan_config(tmp_path, LAN_HTTPS=False)
+        mock_log = MagicMock()
+
+        master_peer = MagicMock()
+        master_peer.cid = "master-cid"
+        master_peer.address = "192.168.1.1"
+        master_peer.port = 9000
+        master_peer.use_https = True
+        master_peer.server_ready = True
+
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.get_alive_peers.return_value = [master_peer]
+        mock_peer_mgr.is_master.return_value = False
+        mock_peer_mgr.get_master.return_value = master_peer
+
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.start.return_value = mock_peer_mgr
+        mock_lan_sync.port = 9000
+
+        with (
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run") as mock_run,
+        ):
+            _run_lan_mode(config, mock_log)
+
+        # No sync attempted and a protocol-mismatch warning was emitted.
+        mock_run.assert_not_called()
+        assert any("PROTOCOL_MISMATCH" in str(c) for c in mock_log.warning.call_args_list)
+
     def test_slave_dryrun_shows_preview(self, tmp_path):
         """Client in dryrun mode shows preview and exits."""
         config = _make_lan_config(tmp_path, DRYRUN=True)

@@ -437,6 +437,57 @@ class TestPeerManager:
             ]
             assert len(warning_calls) > 0
 
+    def test_server_ready_incumbent_wins_over_force_master(self):
+        """An already-serving (server_ready) peer wins over a force_master newcomer."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(
+            local_cid="local",
+            bucket="photos",
+            force_master=True,
+            startup_time=10.0,
+        )
+        # A remote peer is already serving (incumbent master)
+        pm.add_peer(
+            Peer(
+                cid="incumbent",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                server_ready=True,
+                startup_time=200.0,
+            )
+        )
+        # Despite local force_master and earlier startup, the incumbent wins
+        assert pm.get_master_cid() == "incumbent"
+
+    def test_local_incumbent_not_taken_over(self):
+        """A local incumbent master is not displaced by a force_master newcomer."""
+        from hsync_client.lan import PeerManager
+
+        pm = PeerManager(
+            local_cid="local",
+            bucket="photos",
+            startup_time=100.0,
+        )
+        # Local becomes master and starts serving
+        pm.set_local_server_ready(True)
+        assert pm.get_master_cid() == "local"
+
+        # A force_master peer joins later
+        pm.add_peer(
+            Peer(
+                cid="new_force",
+                bucket="photos",
+                address="192.168.1.101",
+                port=8765,
+                force_master=True,
+                startup_time=50.0,
+            )
+        )
+        # Local incumbent keeps the master role (no takeover, no split-brain)
+        assert pm.get_master_cid() == "local"
+
     def test_master_callback_with_local_master(self):
         """Test master change callback when local becomes master."""
         from hsync_client.lan import PeerManager

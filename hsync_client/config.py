@@ -15,7 +15,8 @@ from functools import lru_cache
 from typing import Any, TypedDict, cast
 
 from hsync_common.env import load_env_file as _load_env_file
-from pydantic import Field, SecretStr
+from loguru import logger as log
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # =============================================================================
@@ -90,6 +91,23 @@ class EnvSettings(BaseSettings):
         default="",
         description="Comma-separated extra gitignore-style patterns (layered on .hsyncignore)",
     )
+
+    @model_validator(mode="after")
+    def _lan_key_requires_https(self) -> "EnvSettings":
+        """Drop ``lan_key`` when HTTPS is disabled.
+
+        ``lan_key`` is a shared secret sent as a Bearer token; transmitting
+        it over plain HTTP offers no protection. A ``model_validator`` is
+        required here (not a ``field_validator``) because ``lan_key`` is
+        declared before ``lan_https`` and would not see it otherwise.
+        """
+        if self.lan_key is not None and not self.lan_https:
+            log.warning(
+                "HSYNC_LAN_KEY is set but HSYNC_LAN_HTTPS is disabled; "
+                "ignoring the key (secrets are never sent over plain HTTP)."
+            )
+            self.lan_key = None
+        return self
 
 
 @lru_cache

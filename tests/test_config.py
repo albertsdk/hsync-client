@@ -138,6 +138,33 @@ class TestEnvSettings:
             del os.environ["HSYNC_SERVER"]
             get_env_settings.cache_clear()
 
+    def test_lan_key_dropped_without_https(self):
+        """lan_key is ignored when HTTPS is disabled (no secrets over HTTP)."""
+        get_env_settings.cache_clear()
+        os.environ["HSYNC_LAN_KEY"] = "shared-secret"
+        os.environ["HSYNC_LAN_HTTPS"] = "false"
+        try:
+            settings = EnvSettings()
+            assert settings.lan_key is None
+        finally:
+            del os.environ["HSYNC_LAN_KEY"]
+            del os.environ["HSYNC_LAN_HTTPS"]
+            get_env_settings.cache_clear()
+
+    def test_lan_key_kept_with_https(self):
+        """lan_key is preserved when HTTPS is enabled."""
+        get_env_settings.cache_clear()
+        os.environ["HSYNC_LAN_KEY"] = "shared-secret"
+        os.environ["HSYNC_LAN_HTTPS"] = "true"
+        try:
+            settings = EnvSettings()
+            assert settings.lan_key is not None
+            assert settings.lan_key.get_secret_value() == "shared-secret"
+        finally:
+            del os.environ["HSYNC_LAN_KEY"]
+            del os.environ["HSYNC_LAN_HTTPS"]
+            get_env_settings.cache_clear()
+
 
 class TestEnvGetters:
     """Tests for individual env getter functions."""
