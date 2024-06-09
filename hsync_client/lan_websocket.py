@@ -30,8 +30,7 @@ import json
 import ssl
 import threading
 from os import listdir
-from os.path import exists, getsize, islink
-from os.path import join as path_join
+from pathlib import Path
 from time import time
 from typing import Any
 
@@ -305,7 +304,7 @@ class LANWebSocketServer:
         # This can happen when the bucket has been emptied or removed externally.
         from os import makedirs
 
-        if not exists(watch_path):
+        if not Path(watch_path).exists():
             log.warning(f"Watch path '{watch_path}' does not exist, creating it")
             makedirs(watch_path, exist_ok=True)
 
@@ -461,7 +460,7 @@ async def lan_websocket_client(
     # This can happen when the bucket has been emptied or removed externally.
     from os import makedirs
 
-    if not exists(watch_path):
+    if not Path(watch_path).exists():
         log.warning(f"Watch path '{watch_path}' does not exist, creating it")
         makedirs(watch_path, exist_ok=True)
 
@@ -826,7 +825,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             self._ensure_sentinel(src_path)
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
-            if islink(src_path):
+            if Path(src_path).is_symlink():
                 # Symlink - upload immediately
                 self._handle_file_upload(src_path)
             else:
@@ -838,7 +837,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                 # Trigger the upload immediately when the file is non-empty
                 # at creation time; otherwise wait for on_closed / on_modified.
                 try:
-                    size = getsize(src_path)
+                    size = Path(src_path).stat().st_size
                 except OSError:
                     size = 0
                 if size > 0:
@@ -899,7 +898,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # Skip uploads in download-only mode
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
-        if not exists(src_path):
+        if not Path(src_path).exists():
             return
 
         invalidate_sha256_cache(src_path)
@@ -908,7 +907,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             # Bytes estimate lets ``wait_pending`` scale its timeout when
             # large files are still being uploaded at WS disconnect time.
             try:
-                size_hint = getsize(src_path)
+                size_hint = Path(src_path).stat().st_size
             except OSError:
                 size_hint = 0
             # Run upload in a separate thread to not block the watcher
@@ -934,8 +933,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         has_syncable = any(not is_hidden_file(e) for e in entries)
         if has_syncable:
             return
-        sentinel = path_join(dir_path, HSYNCKEEP_FILENAME)
-        if not exists(sentinel):
+        sentinel = str(Path(dir_path) / HSYNCKEEP_FILENAME)
+        if not Path(sentinel).exists():
             try:
                 open(sentinel, "w").close()  # noqa: SIM115
                 log.debug(f'[CLIENT KEEP] Created sentinel "{sentinel}"')
@@ -1006,12 +1005,12 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         # Hidden to visible - treat as creation
         if src_hidden and not dest_hidden:
-            if not event.is_directory and exists(dest_path):
+            if not event.is_directory and Path(dest_path).exists():
                 invalidate_sha256_cache(dest_path)
                 file_obj = File.get(dest_path)
                 if file_obj:
                     try:
-                        size_hint = getsize(dest_path)
+                        size_hint = Path(dest_path).stat().st_size
                     except OSError:
                         size_hint = 0
                     self._start_operation(

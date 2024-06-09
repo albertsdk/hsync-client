@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from os import makedirs, remove, rename, unlink
 from os import symlink as os_symlink
-from os.path import basename, dirname, exists, islink
+from pathlib import Path
 from shutil import rmtree
 
 from loguru import logger as log
@@ -188,10 +188,10 @@ async def _rename_path(
     _mark(ctx, src_path)
     _mark(ctx, dst_path)
     try:
-        if exists(src_path):
+        if Path(src_path).exists():
             log.info(f'{_tag(ctx.log_prefix, "RENAME")} "{src_path}" -> "{dst_path}"')
-            parent = dirname(dst_path)
-            if parent and not exists(parent):
+            parent = str(Path(dst_path).parent)
+            if parent and not Path(parent).exists():
                 makedirs(parent, exist_ok=True)
             await asyncio.to_thread(rename, src_path, dst_path)
         elif ctx.recover_on_missing_rename_src:
@@ -215,7 +215,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
             return
         _mark(ctx, dir_obj.path)
         try:
-            if exists(dir_obj.path):
+            if Path(dir_obj.path).exists():
                 log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{dir_obj.path}"')
                 await asyncio.to_thread(rmtree, dir_obj.path, False)
             else:
@@ -229,11 +229,11 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
             return
         _mark(ctx, file_obj.filepath)
         try:
-            if exists(file_obj.filepath):
+            if Path(file_obj.filepath).exists():
                 log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{file_obj.filepath}"')
                 await asyncio.to_thread(remove, file_obj.filepath)
-                if basename(file_obj.filepath) == HSYNCKEEP_FILENAME:
-                    parent = dirname(file_obj.filepath)
+                if Path(file_obj.filepath).name == HSYNCKEEP_FILENAME:
+                    parent = str(Path(file_obj.filepath).parent)
                     if safe_rmdir_if_empty(parent):
                         log.debug(f'Removed empty directory "{parent}"')
             else:
@@ -256,10 +256,10 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
         log.info(
             f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{link.filepath}" -> "{target}"'
         )
-        parent = dirname(link.filepath)
-        if not exists(parent):
+        parent = str(Path(link.filepath).parent)
+        if not Path(parent).exists():
             makedirs(parent, exist_ok=True)
-        if islink(link.filepath) or exists(link.filepath):
+        if Path(link.filepath).is_symlink() or Path(link.filepath).exists():
             unlink(link.filepath)
         await asyncio.to_thread(os_symlink, target, link.filepath)
     elif "filepath" in src:

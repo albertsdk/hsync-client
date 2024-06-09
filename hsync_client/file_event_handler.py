@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import sys
 from copy import deepcopy
-from os.path import exists, islink
+from pathlib import Path
 from time import time
 
 from loguru import logger as log
@@ -102,7 +102,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     ),
                     src_abs_path=src_path,
                 )
-        elif not is_hidden_file(src_path) and islink(src_path):
+        elif not is_hidden_file(src_path) and Path(src_path).is_symlink():
             log.info(f'[{self._LOG_PREFIX}SYMLINK] "{src_path}"')
             symlink = Symlink.get(src_path)
             if symlink:
@@ -159,7 +159,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def _process_file_ready(self, src_path: str) -> None:
         """Invalidate the digest cache, build ``File``, delegate to subclass."""
         try:
-            if not exists(src_path):
+            if not Path(src_path).exists():
                 log.warning(
                     f'File "{src_path}" not found. It might have been altered by an external tool.'
                 )

@@ -12,7 +12,7 @@ synchronizing files with the remote server.
 """
 
 from os import makedirs, remove, utime
-from os.path import basename, dirname, exists, getmtime, getsize, join
+from pathlib import Path
 from shutil import move
 from time import sleep as time_sleep
 from typing import cast
@@ -86,9 +86,9 @@ def _build_multipart_streaming(
     the HTTP Content-Length header.
     """
     if filename is None:
-        filename = basename(file_path)
+        filename = Path(file_path).name
 
-    file_size = getsize(file_path) - offset
+    file_size = Path(file_path).stat().st_size - offset
     if file_size < 0:
         file_size = 0
 
@@ -181,24 +181,24 @@ def download_file(file: File) -> None:
         return
 
     # Prepare destination directory and partial file path
-    relative_dir = dirname(file.filepath)
-    dest_dir = join(CONFIG["LOCAL_BUCKET"], relative_dir.lstrip("/"))
+    relative_dir = str(Path(file.filepath).parent)
+    dest_dir = str(Path(CONFIG["LOCAL_BUCKET"]) / relative_dir.lstrip("/"))
     makedirs(dest_dir, exist_ok=True)
 
-    full_save_path = join(dest_dir, file.name.lstrip("/"))
+    full_save_path = str(Path(dest_dir) / file.name.lstrip("/"))
     partial_file_path = f"{full_save_path}.part"
 
     # Check if local file is already up-to-date
-    if exists(full_save_path):
-        local_mtime = getmtime(full_save_path)
+    if Path(full_save_path).exists():
+        local_mtime = Path(full_save_path).stat().st_mtime
         if file.mtime is not None and local_mtime >= file.mtime:
             nothing_to_do(file)
             return
 
     # Check for existing partial file and determine resume offset
     resume_offset = 0
-    if exists(partial_file_path):
-        resume_offset = getsize(partial_file_path)
+    if Path(partial_file_path).exists():
+        resume_offset = Path(partial_file_path).stat().st_size
         # Don't resume if partial file is larger than expected
         if resume_offset >= file.size:
             log.warning(
@@ -249,7 +249,7 @@ def download_file(file: File) -> None:
     if response.status_code == 416:
         # Range Not Satisfiable - partial file is invalid, restart
         log.warning(f'Range not satisfiable for "{file.filepath}", restarting download')
-        if exists(partial_file_path):
+        if Path(partial_file_path).exists():
             remove(partial_file_path)
         # Retry without Range header
         download_file(file)
@@ -262,7 +262,7 @@ def download_file(file: File) -> None:
     if resume_offset > 0 and response.status_code == 200:
         log.debug("Server does not support Range requests, restarting download")
         resume_offset = 0
-        if exists(partial_file_path):
+        if Path(partial_file_path).exists():
             remove(partial_file_path)
 
     cleanup_partial = True
@@ -338,7 +338,7 @@ def download_file(file: File) -> None:
     except OSError as e:
         log.error(f'Error saving file "{file.filepath}": {e}')
     finally:
-        if cleanup_partial and partial_file_path and exists(partial_file_path):
+        if cleanup_partial and partial_file_path and Path(partial_file_path).exists():
             remove(partial_file_path)
             log.debug(f"Cleaned up partial file: {partial_file_path}")
 
@@ -372,8 +372,9 @@ def is_file_stable(file: File, interval: int | None = None) -> bool:
         return True
 
     try:
-        last_size = getsize(file.filepath)
-        last_mtime = getmtime(file.filepath)
+        last_stat = Path(file.filepath).stat()
+        last_size = last_stat.st_size
+        last_mtime = last_stat.st_mtime
     except OSError:
         # File may have been deleted
         return True
@@ -381,8 +382,9 @@ def is_file_stable(file: File, interval: int | None = None) -> bool:
     time_sleep(interval)
 
     try:
-        current_size = getsize(file.filepath)
-        current_mtime = getmtime(file.filepath)
+        current_stat = Path(file.filepath).stat()
+        current_size = current_stat.st_size
+        current_mtime = current_stat.st_mtime
     except OSError:
         # File may have been deleted
         return True
@@ -476,7 +478,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             elapsed += 1
 
         # Refresh file metadata after write is complete
-        file.size = getsize(file.filepath)
+        file.size = Path(file.filepath).stat().st_size
         file.sha256sum = compute_sha256(file.filepath)
 
         log.debug(f'Written file: "{file.filepath}" ({bytes_to_human_readable(file.size)})')
@@ -489,8 +491,8 @@ def upload_file(file: File, check_size: bool = True) -> None:
         # Prepare upload request
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
         prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
-        path = dirname(file.filepath).rstrip("/").removeprefix(prefix).lstrip("/")
-        filename = f"{path}/{basename(file.filepath)}" if path else basename(file.filepath)
+        path = str(Path(file.filepath).parent).rstrip("/").removeprefix(prefix).lstrip("/")
+        filename = f"{path}/{Path(file.filepath).name}" if path else Path(file.filepath).name
 
         # Verify master certificate fingerprint for LAN HTTPS mode
         if not verify_master_fingerprint(uri):
@@ -568,7 +570,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 if ul_bw_limit
                 else compressed_file
             )
-            files = {"file": (basename(file.filepath), fh)}
+            files = {"file": (Path(file.filepath).name, fh)}
             response = post(
                 uri,
                 headers=headers,
@@ -600,7 +602,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 file.filepath,
                 dict(data),
                 boundary=boundary,
-                filename=basename(file.filepath),
+                filename=Path(file.filepath).name,
                 offset=offset,
                 bandwidth_limit=ul_bw_limit,
             )

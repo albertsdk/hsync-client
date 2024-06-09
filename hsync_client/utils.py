@@ -16,7 +16,7 @@ import stat
 from hashlib import sha256
 from os import chmod
 from os import stat as os_stat
-from os.path import abspath, exists, normpath
+from os.path import abspath, normpath
 from pathlib import Path
 
 from hsync_common.path_validation import (
@@ -261,7 +261,7 @@ def safe_rmdir_if_empty(dir_path: str, bucket_root: str | None = None) -> bool:
     """
     from os import listdir, rmdir
 
-    if not dir_path or not exists(dir_path):
+    if not dir_path or not Path(dir_path).exists():
         return False
     if bucket_root is None:
         bucket_root = CONFIG.get("LOCAL_BUCKET", "")
@@ -425,7 +425,7 @@ def set_permissions(file_path: str, permissions: str) -> None:
         permissions: Symbolic permission string (10 characters).
     """
     # Skip if permissions already match
-    if exists(file_path) and permissions == get_permissions(file_path):
+    if Path(file_path).exists() and permissions == get_permissions(file_path):
         return
 
     # Parse symbolic permissions to octal mode

@@ -415,7 +415,7 @@ class TestFileEventHandler:
 
         with (
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.exists", return_value=True),
+            patch("pathlib.Path.exists", return_value=True),
             patch("hsync_client.file_event_handler.File.get") as mock_get,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
@@ -444,7 +444,7 @@ class TestFileEventHandler:
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.islink", return_value=True),
+            patch("pathlib.Path.is_symlink", return_value=True),
             patch("hsync_client.file_event_handler.Symlink.get") as mock_get,
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
@@ -469,7 +469,7 @@ class TestFileEventHandler:
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.islink", return_value=True),
+            patch("pathlib.Path.is_symlink", return_value=True),
             patch("hsync_client.file_event_handler.Symlink.get", return_value=None),
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
@@ -533,7 +533,7 @@ class TestFileEventHandler:
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
             patch("hsync_client.file_event_handler.time", return_value=100.0),
-            patch("hsync_client.file_event_handler.exists", return_value=True),
+            patch("pathlib.Path.exists", return_value=True),
             patch("hsync_client.file_event_handler.File.get") as mock_get,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
@@ -606,7 +606,7 @@ class TestFileEventHandler:
 
         with (
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.exists", return_value=False),
+            patch("pathlib.Path.exists", return_value=False),
             patch("hsync_client.file_event_handler.log") as mock_log,
         ):
             self.handler.on_closed(event)
@@ -620,7 +620,7 @@ class TestFileEventHandler:
 
         with (
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.exists", side_effect=OSError("boom")),
+            patch("pathlib.Path.exists", side_effect=OSError("boom")),
             patch("hsync_client.file_event_handler.log") as mock_log,
         ):
             self.handler.on_closed(event)

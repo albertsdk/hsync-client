@@ -22,6 +22,7 @@ import shutil
 import ssl
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -164,8 +165,8 @@ def save_cert_to_temp_files(cert_info: CertificateInfo) -> CertificateInfo:
     # Defence-in-depth: enforce 0o700 even if the platform default differs.
     os.chmod(tmpdir, 0o700)
 
-    cert_path = os.path.join(tmpdir, "cert.pem")
-    key_path = os.path.join(tmpdir, "key.pem")
+    cert_path = str(Path(tmpdir) / "cert.pem")
+    key_path = str(Path(tmpdir) / "key.pem")
 
     with open(cert_path, "wb") as f:
         f.write(cert_info.cert_pem)

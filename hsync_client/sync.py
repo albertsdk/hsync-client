@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from os import cpu_count, makedirs, remove, walk
-from os.path import basename, exists, join
+from pathlib import Path
 from sys import exc_info
 from traceback import print_tb
 from typing import cast
@@ -60,7 +60,7 @@ def _cleanup_partial_files() -> int:
     for root, _dirs, files in walk(local_bucket):
         for file in files:
             if file.endswith(".part"):
-                partial_path = join(root, file)
+                partial_path = str(Path(root) / file)
                 try:
                     remove(partial_path)
                     log.debug(f"Removed incomplete download: {partial_path}")
@@ -94,7 +94,7 @@ async def sync(lan_mode: bool = False) -> None:
     from hsync_client.transfer import nothing_to_do
 
     # Check if local directory exists before starting sync
-    if not exists(CONFIG["LOCAL_BUCKET"]):
+    if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
         return
 
@@ -129,7 +129,7 @@ async def sync(lan_mode: bool = False) -> None:
 
         # Handle deletions (files that exist only locally in LAN mode)
         for file in deletes:
-            if file.filepath and exists(file.filepath):
+            if file.filepath and Path(file.filepath).exists():
                 try:
                     remove(file.filepath)
                     log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
@@ -233,8 +233,8 @@ def ensure_hsynckeep_files() -> None:
         has_syncable = any(not is_hidden_file(f) for f in files)
 
         if not has_syncable:
-            sentinel = join(root, HSYNCKEEP_FILENAME)
-            if not exists(sentinel):
+            sentinel = str(Path(root) / HSYNCKEEP_FILENAME)
+            if not Path(sentinel).exists():
                 try:
                     open(sentinel, "w").close()  # noqa: SIM115
                     log.debug(f'Created sentinel "{sentinel}"')
@@ -359,7 +359,7 @@ def get_files_local() -> list[dict]:
     from concurrent.futures import ThreadPoolExecutor
 
     # Check if local directory exists before walking
-    if not exists(CONFIG["LOCAL_BUCKET"]):
+    if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.warning(
             f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist during synchronization"
         )
@@ -375,7 +375,7 @@ def get_files_local() -> list[dict]:
             # Skip hidden files
             if is_hidden_file(file):
                 continue
-            file_paths.append(join(root, file))
+            file_paths.append(str(Path(root) / file))
 
     # Early return if no files
     if not file_paths:
@@ -508,7 +508,7 @@ def get_sync_actions(
     # Process remote files
     for remote_file_info in remote_files:
         # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
-        if basename(str(remote_file_info.get("filepath", ""))) == HSYNCKEEP_FILENAME:
+        if Path(str(remote_file_info.get("filepath", ""))).name == HSYNCKEEP_FILENAME:
             continue
         remote_file = File.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
         local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
@@ -544,7 +544,7 @@ def get_sync_actions(
     # Find local files not present on remote
     for local_file_dict in local_files:
         # .hsynckeep is a per-peer local sentinel: never propagate to remote.
-        if basename(str(local_file_dict.get("filepath", ""))) == HSYNCKEEP_FILENAME:
+        if Path(str(local_file_dict.get("filepath", ""))).name == HSYNCKEEP_FILENAME:
             continue
         local_file_info = File.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
@@ -684,7 +684,7 @@ def update_file(data: dict) -> None:
         log.error("Invalid file data: missing filepath")
         return
 
-    if exists(file_data.filepath):
+    if Path(file_data.filepath).exists():
         # File exists locally - check if update needed
         file = File.get(file_data.filepath)
 
