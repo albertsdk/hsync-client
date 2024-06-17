@@ -14,7 +14,10 @@ Features:
 - Async queue for pending events
 - Automatic retry with exponential backoff (1s, 2s, 4s, ... up to 60s)
 - Maximum retry count per event
-- Priority for failed events on retry
+- Strict FIFO ordering preserved across retries (head-of-line blocking):
+  a failed event blocks newer events until it is re-sent or dropped, so a
+  retried "added" can never overtake a later "deleted" (which would
+  resurrect the file).
 """
 
 from asyncio import Queue, sleep
@@ -79,9 +82,13 @@ class EventQueue:
     Uses exponential backoff to avoid overwhelming the server during
     connectivity issues.
 
+    Events are processed in strict FIFO order. A send failure does not let
+    later events overtake the failed one: the failed event is held in
+    ``_pending_retry`` and re-attempted (after its backoff) before any newer
+    event is pulled from the queue.
+
     Attributes:
         queue: Async queue of pending events.
-        failed_events: List of events that failed and need retry.
         websocket: WebSocket connection for sending events.
     """
 
@@ -93,9 +100,11 @@ class EventQueue:
             websocket: WebSocket connection for sending events.
         """
         self.queue: Queue[QueuedEvent] = Queue()
-        self.failed_events: list[QueuedEvent] = []
         self.websocket = websocket
         self._running = False
+        # A single failed event awaiting retry. While set, it blocks newer
+        # events from being processed, guaranteeing in-order delivery.
+        self._pending_retry: QueuedEvent | None = None
 
     async def enqueue(self, event_data: dict[str, Any]) -> None:
         """
@@ -126,63 +135,68 @@ class EventQueue:
             log.warning(f"Failed to send event: {e}")
             return False
 
-    async def _retry_failed_events(self) -> None:
+    async def _next_event(self) -> QueuedEvent | None:
         """
-        Process failed events that are ready for retry.
+        Return the next event to process, preserving strict FIFO order.
 
-        Moves events back to the main queue when their
-        backoff delay has elapsed.
+        A failed event held in ``_pending_retry`` takes precedence and blocks
+        newer events until its backoff has elapsed and it is re-attempted
+        (head-of-line blocking). This guarantees events are delivered in the
+        order they occurred, so a retried "added" can never overtake a later
+        "deleted" on the same file.
+
+        Returns:
+            The next event to send, or None if nothing is ready yet.
         """
-        current_time = time()
-        ready_events = []
-        still_waiting = []
+        if self._pending_retry is not None:
+            if time() >= self._pending_retry.next_retry_time:
+                event = self._pending_retry
+                self._pending_retry = None
+                return event
+            # Still waiting on the failed event: do not pull newer events.
+            return None
 
-        for event in self.failed_events:
-            if current_time >= event.next_retry_time:
-                ready_events.append(event)
-            else:
-                still_waiting.append(event)
+        if not self.queue.empty():
+            return await self.queue.get()
 
-        self.failed_events = still_waiting
-
-        for event in ready_events:
-            log.debug(f"Retrying event (attempt {event.retry_count + 1})")
-            await self.queue.put(event)
+        return None
 
     async def process(self) -> None:
         """
         Main event processing loop.
 
-        Continuously processes events from the queue, handling
-        failures with exponential backoff retry.
+        Continuously processes events in strict FIFO order, holding a failed
+        event for retry with exponential backoff before any newer event is
+        sent.
         """
         self._running = True
         while self._running:
-            # First check for events ready to retry
-            await self._retry_failed_events()
+            event = await self._next_event()
+            if event is None:
+                # Nothing ready (empty queue or pending retry still waiting).
+                await sleep(0.01)
+                continue
 
-            # Process next event from queue
-            if not self.queue.empty():
-                event = await self.queue.get()
-
-                if await self._send_event(event):
-                    self.queue.task_done()
+            # Each event corresponds to exactly one queue.get(); task_done()
+            # is therefore called once, on the terminal outcome (sent/dropped).
+            if await self._send_event(event):
+                self.queue.task_done()
+            else:
+                event.retry_count += 1
+                if event.retry_count <= MAX_RETRIES:
+                    backoff = event.get_backoff_delay()
+                    event.next_retry_time = time() + backoff
+                    # Hold the event: blocks the queue until it is re-sent.
+                    self._pending_retry = event
+                    log.warning(
+                        f"Event failed, will retry in {backoff:.1f}s "
+                        f"(attempt {event.retry_count}/{MAX_RETRIES})"
+                    )
                 else:
-                    # Handle failure with retry
-                    event.retry_count += 1
-                    if event.retry_count <= MAX_RETRIES:
-                        backoff = event.get_backoff_delay()
-                        event.next_retry_time = time() + backoff
-                        self.failed_events.append(event)
-                        log.warning(
-                            f"Event failed, will retry in {backoff:.1f}s "
-                            f"(attempt {event.retry_count}/{MAX_RETRIES})"
-                        )
-                    else:
-                        log.error(
-                            f"Event dropped after {MAX_RETRIES} retries: "
-                            f"{event.data.get('name', 'unknown')}"
-                        )
+                    log.error(
+                        f"Event dropped after {MAX_RETRIES} retries: "
+                        f"{event.data.get('name', 'unknown')}"
+                    )
                     self.queue.task_done()
 
             # Small delay to prevent busy loop
