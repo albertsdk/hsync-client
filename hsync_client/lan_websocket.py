@@ -401,6 +401,15 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
     def _on_file_ready(self, file: File, src_path: str) -> None:
         """Broadcast a ``modified`` event so slaves can pull the new bytes."""
         log.info(f'[LAN FILE  ] "{src_path}"')
+        # A (re-)created/modified file invalidates any prior deletion marker so
+        # peers do not delete the freshly written file on their next full sync.
+        # Best-effort: tombstone bookkeeping must never break event propagation.
+        try:
+            from hsync_client.tombstones import clear_deletion
+
+            clear_deletion(src_path)
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not clear tombstone for {src_path}: {e}")
         self._broadcast_event(
             Event(
                 CONFIG["CID"],
@@ -411,6 +420,24 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
             ),
             src_abs_path=src_path,
         )
+
+    def _on_deleted(self, src_path: str, is_directory: bool) -> None:
+        """Record a deletion marker so offline peers do not resurrect the path.
+
+        This is the master's single chokepoint for deletions: it fires both for
+        the master's own local removals and for slave-initiated deletes applied
+        via the HTTP API (which trigger the same filesystem event). Directories
+        carry no content hash so only files are recorded. Best-effort: a failure
+        to persist the marker must never break event propagation.
+        """
+        if is_directory:
+            return
+        try:
+            from hsync_client.tombstones import record_deletion
+
+            record_deletion(src_path)
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not record tombstone for {src_path}: {e}")
 
 
 # =============================================================================

@@ -70,6 +70,15 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """Called after a file's bytes are ready to propagate."""
         raise NotImplementedError
 
+    def _on_deleted(self, src_path: str, is_directory: bool) -> None:
+        """Called after a non-hidden deletion has been observed and broadcast.
+
+        Default no-op. The LAN master overrides this to record a deletion
+        marker (tombstone); the Remote handler leaves it unimplemented because
+        the central server records tombstones itself.
+        """
+        return None
+
     # ----- watchdog event handlers -----
 
     def on_any_event(self, event) -> None:
@@ -251,3 +260,4 @@ class BaseFileEventHandler(FileSystemEventHandler):
             ),
             src_abs_path=src_path,
         )
+        self._on_deleted(src_path, event.is_directory)

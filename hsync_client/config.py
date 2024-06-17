@@ -15,6 +15,7 @@ from functools import lru_cache
 from typing import Any, TypedDict, cast
 
 from hsync_common.env import load_env_file as _load_env_file
+from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
 from loguru import logger as log
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -90,6 +91,13 @@ class EnvSettings(BaseSettings):
     ignore_patterns: str = Field(
         default="",
         description="Comma-separated extra gitignore-style patterns (layered on .hsyncignore)",
+    )
+
+    # Tombstone Configuration
+    tombstone_ttl_days: int = Field(
+        default=TOMBSTONE_TTL_DAYS_DEFAULT,
+        ge=0,
+        description="Days to retain deletion markers before garbage collection (0 = forever)",
     )
 
     @model_validator(mode="after")
@@ -171,6 +179,11 @@ def get_heartbeat_interval() -> int | None:
 def get_peer_timeout() -> int | None:
     """Get peer timeout from environment."""
     return get_env_settings().peer_timeout
+
+
+def get_tombstone_ttl_days() -> int:
+    """Get tombstone retention window in days from environment (late binding)."""
+    return get_env_settings().tombstone_ttl_days
 
 
 def get_lan_persistent() -> bool:
