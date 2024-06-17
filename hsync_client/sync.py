@@ -736,7 +736,17 @@ def update_file(data: dict) -> None:
         file = File.get(file_data.filepath)
 
         if file and file.sha256sum != file_data.sha256sum:
-            # Content differs - download new version
+            # Content differs - download new version. Preserve the local copy
+            # first when it is as-new-or-newer than the incoming version: an
+            # inbound event always overwrites, so a concurrent local edit would
+            # be lost silently (same protection get_sync_actions applies to
+            # mtime-tie conflicts during full reconciliation).
+            if (
+                file.mtime is not None
+                and file_data.mtime is not None
+                and file.mtime >= file_data.mtime
+            ):
+                _save_conflict_copy(file)
             file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
             download_file(file_data)
             # Invalidate cached SHA-256 — file content has changed

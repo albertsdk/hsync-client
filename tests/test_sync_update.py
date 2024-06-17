@@ -86,9 +86,11 @@ class TestUpdateFile:
             mock_download.assert_called_once()
 
     def test_downloads_file_with_different_sha256(self, tmp_path):
-        """File with different SHA-256 triggers download."""
+        """File with different SHA-256 (older locally) triggers download, no conflict copy."""
         local_file = tmp_path / "file.txt"
         local_file.write_text("old content")
+        # Local file is clearly older than the incoming event - normal update.
+        os.utime(local_file, (1000, 1000))
 
         data = {
             "filepath": "file.txt",
@@ -108,6 +110,37 @@ class TestUpdateFile:
         ):
             update_file(data)
             mock_download.assert_called_once()
+            # Local copy was older, so no conflict copy should be created.
+            assert list(tmp_path.glob("file.txt.conflict-*")) == []
+
+    def test_saves_conflict_copy_when_local_not_older(self, tmp_path):
+        """A conflicting inbound event preserves the local copy before overwriting."""
+        local_file = tmp_path / "file.txt"
+        local_file.write_text("local change")
+        # Local mtime ties the incoming event mtime but content differs.
+        os.utime(local_file, (2000, 2000))
+
+        data = {
+            "filepath": "file.txt",
+            "name": "file.txt",
+            "path": "",
+            "mtime": 2000,
+            "ctime": 2000,
+            "size": 12,
+            "sha256sum": "different_sha256_hash",
+            "permissions": "-rw-r--r--",
+        }
+
+        mock_download = MagicMock()
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.download_file", mock_download),
+        ):
+            update_file(data)
+            mock_download.assert_called_once()
+            conflict_copies = list(tmp_path.glob("file.txt.conflict-*"))
+            assert len(conflict_copies) == 1
+            assert conflict_copies[0].read_text() == "local change"
 
     def test_updates_permissions_when_only_permissions_differ(self, tmp_path):
         """Only permissions differ - updates without download."""
