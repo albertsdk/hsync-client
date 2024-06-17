@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from os import cpu_count, makedirs, remove, walk
+from os import cpu_count, remove, walk
 from pathlib import Path
 from shutil import copy2
 from socket import gethostname
@@ -705,7 +705,7 @@ def update_dir(data: dict) -> Dir | None:
         # Directory doesn't exist - create it
         dir = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
         if dir.path:
-            makedirs(dir.path, exist_ok=True)
+            Path(dir.path).mkdir(parents=True, exist_ok=True)
             if dir.permissions:
                 set_permissions(dir.path, dir.permissions)
 

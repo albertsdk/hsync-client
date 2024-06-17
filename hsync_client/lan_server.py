@@ -452,7 +452,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from client."""
-        from os import makedirs, rename
+        from os import rename
 
         src_rel = query.get("src", [None])[0]
         dst_rel = query.get("dst", [None])[0]
@@ -491,7 +491,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # Create parent directory if needed
             dst_parent = str(Path(dst_path).parent)
             if dst_parent and not Path(dst_parent).exists():
-                makedirs(dst_parent, exist_ok=True)
+                Path(dst_parent).mkdir(parents=True, exist_ok=True)
 
             # Mark both paths as inbound so the master's filesystem watcher
             # broadcasts the resulting `renamed` event with the originator
