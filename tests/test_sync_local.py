@@ -394,7 +394,7 @@ class TestGetSyncActionsLanMode:
 
 
 class TestConflictResolution:
-    """Tests for same-mtime conflict handling (analisi.md point 2.7)."""
+    """Tests for same-mtime conflict handling."""
 
     def test_same_mtime_different_content_flags_conflict(self, tmp_path):
         """Same mtime but different content downloads remote and flags conflict."""
