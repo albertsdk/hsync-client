@@ -16,6 +16,28 @@ echo "APKG_DEBUG: $0 $*" >> "$LOG"
 APKG_PATH=$(readlink -f "$1")
 . "${APKG_PATH}/env"
 
+# ---------------------------------------------------------------------------
+# Security: a file is only safe to `source` as root when it is owned by root
+# (uid 0) and carries no write bit for group or other. This prevents a local
+# NAS user from injecting shell commands into hsync.env that would otherwise
+# run with root privileges at service start. Fails closed.
+# ---------------------------------------------------------------------------
+env_file_is_root_safe() {
+    _f=$1
+    _owner=$(stat -c '%u' "${_f}" 2>/dev/null) || _owner=""
+    [ "${_owner}" = "0" ] || return 1
+    _mode=$(stat -c '%a' "${_f}" 2>/dev/null) || _mode=""
+    [ -n "${_mode}" ] || return 1
+    while [ "${#_mode}" -gt 3 ]; do _mode=${_mode#?}; done
+    while [ "${#_mode}" -lt 3 ]; do _mode="0${_mode}"; done
+    _grp=$(printf '%s' "${_mode}" | cut -c2)
+    _oth=$(printf '%s' "${_mode}" | cut -c3)
+    case "${_grp}${_oth}" in
+        *[2367]*) return 1 ;;
+    esac
+    return 0
+}
+
 HSYNC_BIN="${APKG_PATH}/bin/${BINARY}/${BINARY}"
 
 if [ ! -x "${HSYNC_BIN}" ]; then
@@ -24,7 +46,15 @@ if [ ! -x "${HSYNC_BIN}" ]; then
 fi
 
 # Load user configuration; fall back to a minimal default profile.
+#
+# hsync.env is sourced into this root shell, so sourcing an attacker-writable
+# file would execute arbitrary commands as root. Only source it when it is
+# root-owned and not writable by group or other; otherwise refuse to start.
 if [ -f "${HSYNC_ENV_FILE}" ]; then
+    if ! env_file_is_root_safe "${HSYNC_ENV_FILE}"; then
+        echo "REFUSING to source unsafe ${HSYNC_ENV_FILE}: must be root-owned and not group/other-writable" >> "$LOG"
+        exit 1
+    fi
     # shellcheck disable=SC1090
     . "${HSYNC_ENV_FILE}"
 fi
