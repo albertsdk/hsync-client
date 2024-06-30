@@ -28,6 +28,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
 from pathlib import Path
+from typing import IO
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger as log
@@ -909,12 +910,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
 
-        # Mutable state shared with the file_open callback
-        state: dict[str, object] = {}
+        # Mutable state shared with the file_open callback (set by _file_open)
+        dest_path: str | None = None
         tmp_path: str | None = None
+        raw_file: IO[bytes] | None = None
+        out_file: IO[bytes] | None = None
         response_sent = False
 
         def _file_open(form_fields, field_name, filename):
+            nonlocal dest_path, tmp_path, raw_file, out_file
             path = form_fields.get("path", "")
             is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
 
@@ -927,40 +931,39 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if not real_dest.startswith(real_bucket):
                 raise PermissionError("Access denied")
 
-            state["dest_path"] = dest_path_local
-            tmp_path_local = dest_path_local + ".part"
-            state["tmp_path"] = tmp_path_local
-            raw = open(tmp_path_local, "wb")  # noqa: SIM115
-            state["raw"] = raw
+            dest_path = dest_path_local
+            tmp_path = dest_path_local + ".part"
+            raw = open(tmp_path, "wb")  # noqa: SIM115
+            raw_file = raw
             if is_compressed_local:
                 import zstandard as zstd
 
                 writer = zstd.ZstdDecompressor().stream_writer(raw)
-                state["f"] = writer
+                out_file = writer
                 return writer.write
-            state["f"] = raw
+            out_file = raw
             return raw.write
 
         try:
             form_fields, file_meta = parser.parse(_file_open)
 
-            if file_meta is None or "f" not in state:
+            if file_meta is None or out_file is None:
                 self._send_error_response(HTTP_BAD_REQUEST, "No file uploaded")
                 return
 
-            # Close the writer (flushes zstd frame if used)
-            writer = state["f"]
-            raw = state["raw"]
-            try:
-                if writer is not raw:
-                    writer.close()  # type: ignore[union-attr]
-            finally:
-                raw.close()  # type: ignore[union-attr]
-            state.pop("f", None)
-            state.pop("raw", None)
+            # _file_open succeeded, so the destination paths are set
+            assert dest_path is not None
+            assert tmp_path is not None
 
-            tmp_path = state.get("tmp_path")  # type: ignore[assignment]
-            dest_path = state["dest_path"]  # type: ignore[assignment]
+            # Close the writer (flushes zstd frame if used)
+            try:
+                if out_file is not raw_file:
+                    out_file.close()
+            finally:
+                if raw_file is not None:
+                    raw_file.close()
+            out_file = None
+            raw_file = None
 
             cid = form_fields.get("cid", "")
             mtime = form_fields.get("mtime", "")
@@ -1011,16 +1014,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             # Close any still-open file handle from a failed stream
-            f_obj = state.get("f")
-            if f_obj is not None:
+            if out_file is not None:
                 try:
-                    f_obj.close()  # type: ignore[union-attr]
+                    out_file.close()
                 except Exception:
                     pass
-            raw_obj = state.get("raw")
-            if raw_obj is not None:
+            if raw_file is not None and raw_file is not out_file:
                 try:
-                    raw_obj.close()  # type: ignore[union-attr]
+                    raw_file.close()
                 except Exception:
                     pass
 

@@ -329,7 +329,7 @@ class HsyncConfig(TypedDict):
 # =============================================================================
 
 # Global configuration dictionary (populated at runtime by main())
-CONFIG: HsyncConfig = {}  # type: ignore[assignment]
+CONFIG: HsyncConfig = cast(HsyncConfig, {})
 
 # Global debug flag
 DEBUG: bool = False
