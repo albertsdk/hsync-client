@@ -4,9 +4,6 @@ Real-world usage examples for the `hsync` binary, grouped by deployment
 model. For an overview of the CLI options and log labels see
 [Usage](usage.md); for a deeper dive into LAN mode see [LAN Mode](lan-mode.md).
 
-> **Note**: Diagrams are written in Mermaid. If they don't render, run
-> `./generate-diagrams.sh` to generate PNG images in the `images/` directory.
-
 ## Conventions
 
 All examples assume the binary has been built (`./compile.sh`) and the

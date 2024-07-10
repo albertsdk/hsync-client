@@ -2,8 +2,6 @@
 
 This document describes the architecture of the HSYNC Client.
 
-> **Note**: Diagrams are written in Mermaid. If they don't render, run `./generate-diagrams.sh` to generate PNG images in the `images/` directory.
-
 ## System Overview
 
 ```mermaid

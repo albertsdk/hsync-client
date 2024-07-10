@@ -2,8 +2,6 @@
 
 This document describes the LAN Mode feature for peer-to-peer file synchronization without a centralized server.
 
-> **Note**: Diagrams are written in Mermaid. If they don't render, run `./generate-diagrams.sh` to generate PNG images in the `images/` directory.
-
 ## Overview
 
 LAN Mode enables direct peer-to-peer file synchronization between devices on the same local network, without requiring a centralized HSYNC server.

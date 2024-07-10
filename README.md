@@ -48,13 +48,6 @@ flowchart LR
     style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
 ```
 
-<details>
-<summary>📷 View as image</summary>
-
-![Synchronization Overview](docs/images/README-1.png)
-
-</details>
-
 **Sync Flow (A → B):**
 1. **① Detect** — Client A detects file change via watchdog
 2. **② Upload** — Client A uploads file to server
@@ -96,13 +89,6 @@ flowchart LR
     style FSAB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     style mDNS fill:#fff3e0,stroke:#e65100,color:#e65100
 ```
-
-<details>
-<summary>📷 View as image</summary>
-
-![LAN Mode Overview](docs/images/README-2.png)
-
-</details>
 
 **LAN Mode Flow:**
 1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
