@@ -15,6 +15,10 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
 
+> `HSYNC_SERVER` and `HSYNC_API_KEY` are required in **Server Mode** only. In
+> **LAN Mode** (`--lan-mode`) they are ignored; use the optional
+> `HSYNC_LAN_KEY` instead (see [LAN Mode Options](#lan-mode-options)).
+
 ## Environment Files
 
 The client provides environment file templates:
@@ -31,9 +35,14 @@ source prod.env
 
 ### Connection
 
+These options apply to **Server Mode**. In **LAN Mode** (`--lan-mode`) no
+server URL is required — peers are discovered automatically via mDNS, so
+`-s/--server` and `HSYNC_SERVER` are ignored. See
+[LAN Mode Options](#lan-mode-options) below.
+
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-s, --server` | Server URL | (required or `HSYNC_SERVER`) |
+| `-s, --server` | Server URL (Server Mode only) | (required or `HSYNC_SERVER`) |
 | `--timeout` | HTTP request timeout in seconds | `30` |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
 | `--insecure` | Skip SSL certificate verification | `false` |

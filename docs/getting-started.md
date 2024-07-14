@@ -32,7 +32,20 @@ poetry install
 > (e.g. `linux-amd64`, `darwin-arm64`, `windows-amd64`).
 > The compile script detects the current platform automatically.
 
-### 2. Basic Usage
+### 2. Choose an Operating Mode
+
+HSYNC can run in two mutually exclusive modes, selected per invocation:
+
+| Mode | Topology | How to enable | Best for |
+|------|----------|---------------|----------|
+| **Server Mode** | Client ↔ central server | `-s/--server` (+ `HSYNC_API_KEY`) | Remote / internet sync, multiple sites |
+| **LAN Mode** | Peer-to-peer (no server) | `--lan-mode` | Devices on the same network, no server |
+
+See [Sync Modes](sync-modes.md#operating-modes-server-vs-lan) for a full comparison.
+
+### 3. Basic Usage
+
+**Server Mode** — connect to a central HSYNC server:
 
 ```bash
 # Single sync
@@ -41,6 +54,15 @@ poetry install
 # Continuous sync (watch mode)
 ./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
 ```
+
+**LAN Mode** — peer-to-peer, no server required (run on each device):
+
+```bash
+# Peers discover each other via mDNS; watch mode is implicit
+./dist/<platform>/hsync -b mybucket -p /path/to/dir --lan-mode
+```
+
+See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
 
 ## Build Options
 
