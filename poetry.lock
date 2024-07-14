@@ -570,10 +570,10 @@ develop = true
 
 [package.dependencies]
 cryptography = ">=48.0.1,<50.0.0"
-loguru = "^0.7.3"
-pathspec = "^1.0"
-python-dotenv = "^1.2.1"
-zstandard = "^0.25.0"
+loguru = ">=0.7.3,<0.8.0"
+pathspec = ">=1.0,<2.0"
+python-dotenv = ">=1.2.1,<2.0.0"
+zstandard = ">=0.25.0,<0.26.0"
 
 [package.source]
 type = "directory"
@@ -1961,4 +1961,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "a056b2f09e2e5bb8253cbf208acf4ec91293fa84191d2239ec4aea568e237418"
+content-hash = "21b3c957b0312e154fe714a5f16bf2e8bf488189096cc47ef6304b8cf329c3e3"
