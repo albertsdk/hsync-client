@@ -10,8 +10,9 @@ Tests for:
 - Error handling and cleanup
 """
 
+import asyncio
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from hsync_client.config import HsyncConfig
 
@@ -461,20 +462,222 @@ class TestRunLanModeOuterLoopMasterPath:
         )
 
 
-class TestRunAsSlave:
-    """Tests for _run_as_slave function - covered by test_main_logic_lan.py"""
+def _make_master(**overrides: Any) -> MagicMock:
+    """Build a master-peer mock with the attributes _run_as_slave reads."""
+    master = MagicMock()
+    master.cid = "master-1"
+    master.server_ready = True
+    master.use_https = False
+    master.cert_fingerprint = None
+    master.port = 9000
+    master.address = "192.168.1.1"
+    master.compression_enabled = False
+    master.get_server_url.return_value = "http://192.168.1.1:9000"
+    for key, value in overrides.items():
+        setattr(master, key, value)
+    return master
 
-    # Note: _run_as_slave is already thoroughly tested in tests/test_main_logic_lan.py
-    # These tests require complex async mocking that is covered there
-    pass
+
+class TestRunAsSlave:
+    """Direct tests for the _run_as_slave branches not exercised elsewhere."""
+
+    def test_https_sets_fingerprint_and_bearer(self, tmp_path):
+        """HTTPS master with LAN_KEY stores fingerprint and sends a Bearer token."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_HTTPS=True, LAN_KEY="secret")
+        master = _make_master(
+            use_https=True,
+            cert_fingerprint="f" * 40,
+            compression_enabled=True,
+            get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
+        )
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = master
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run"),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+
+        assert result is False
+        assert config["MASTER_CERT_FINGERPRINT"] == "f" * 40
+        assert config["REQUEST_HEADERS"]["Authorization"] == "Bearer secret"
+        assert config["SERVER_COMPRESSION_ENABLED"] is True
+        assert config["API"]["events"]
+
+    def test_lan_key_over_http_warns_and_omits_header(self, tmp_path):
+        """LAN_KEY set but master is plain HTTP: warn and never send the key."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_HTTPS=False, LAN_KEY="secret")
+        master = _make_master()
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = master
+        mock_log = MagicMock()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run"),
+        ):
+            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+
+        assert result is False
+        assert "Authorization" not in config["REQUEST_HEADERS"]
+        assert any("plain HTTP" in str(c) for c in mock_log.warning.call_args_list)
+
+    def test_persistent_connects_websocket(self, tmp_path):
+        """Persistent slave connects via WebSocket and returns True to loop again."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
+            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()) as mock_wsc,
+            patch("asyncio.run"),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+
+        assert result is True
+        mock_wsc.assert_called_once()
+
+    def test_persistent_websocket_error_is_swallowed(self, tmp_path):
+        """A WebSocket failure is logged but still re-enters the discovery loop."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+        mock_log = MagicMock()
+
+        # First run() is the initial sync (ok); second is the WebSocket (boom).
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
+            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
+            patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
+        ):
+            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+
+        assert result is True
+        assert any("WebSocket connection ended" in str(c) for c in mock_log.warning.call_args_list)
+
+    def test_dryrun_persistent_runs_preview_and_stdin_wait(self, tmp_path):
+        """Dry-run persistent slave shows a preview then waits on stdin."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True, DRYRUN=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler._run_preview") as mock_preview,
+            patch("hsync_client.lan_handler._run_stdin_wait", new=MagicMock()),
+            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
+            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
+            patch("asyncio.run"),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+
+        assert result is True
+        mock_preview.assert_called_once()
+
+    def test_no_master_persistent_waits(self, tmp_path):
+        """No master and persistent: keep looping, logging a wait message."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = None
+        mock_log = MagicMock()
+
+        result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+
+        assert result is True
+        assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
 
 
 class TestStdinCommands:
-    """Tests for stdin command handlers - These tests verify handler registration."""
+    """Tests for the stdin command handler coroutines."""
 
-    # Note: Full stdin command testing would require integration tests
-    # since these functions use asyncio.create_task and stdin reading
-    pass
+    def _capture_handler(self):
+        """Return a (handler_mock, registered_dict) pair for StdinCommandHandler."""
+        registered: dict[str, Any] = {}
+        handler = MagicMock()
+        handler.register.side_effect = lambda name, fn: registered.__setitem__(name, fn)
+        handler.run = AsyncMock()
+        return handler, registered
+
+    def test_with_stdin_commands_registers_and_dispatches(self, tmp_path):
+        """_with_stdin_commands registers PREVIEW/SYNC/SET_SYNC_DIRECTION and runs them."""
+        from hsync_client.lan_handler import _with_stdin_commands
+
+        handler, registered = self._capture_handler()
+        fake_config = {"LAN_MODE": True, "SYNC_DIRECTION": "bidirectional"}
+
+        async def _coro() -> None:
+            return None
+
+        with (
+            patch("hsync_client.stdin_commands.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.config.CONFIG", fake_config),
+            patch("hsync_client.lan_handler.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.lan_handler._run_preview") as mock_preview,
+        ):
+            asyncio.run(_with_stdin_commands(MagicMock(), _coro()))
+
+            assert set(registered) == {"PREVIEW", "SYNC", "SET_SYNC_DIRECTION"}
+
+            # PREVIEW delegates to _run_preview.
+            registered["PREVIEW"]()
+            mock_preview.assert_called_once()
+
+            # SYNC triggers a sync using the current LAN_MODE.
+            asyncio.run(registered["SYNC"]())
+            mock_sync.assert_awaited_with(lan_mode=True)
+
+            # Valid direction change resyncs; invalid and no-op paths short-circuit.
+            asyncio.run(registered["SET_SYNC_DIRECTION"](direction="upload-only"))
+            assert fake_config["SYNC_DIRECTION"] == "upload-only"
+            asyncio.run(registered["SET_SYNC_DIRECTION"](direction="upload-only"))
+            asyncio.run(registered["SET_SYNC_DIRECTION"](direction="bogus"))
+
+    def test_run_stdin_wait_sync_disables_dryrun_and_stops(self, tmp_path):
+        """_run_stdin_wait's SYNC handler clears dry-run, syncs and stops the handler."""
+        from hsync_client.lan_handler import _run_stdin_wait
+
+        handler, registered = self._capture_handler()
+        fake_config = {"LAN_MODE": False, "DRYRUN": True}
+
+        with (
+            patch("hsync_client.stdin_commands.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.config.CONFIG", fake_config),
+            patch("hsync_client.lan_handler.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.lan_handler._run_preview"),
+        ):
+            asyncio.run(_run_stdin_wait(MagicMock()))
+
+            assert set(registered) == {"PREVIEW", "SYNC"}
+            asyncio.run(registered["SYNC"]())
+
+        assert fake_config["DRYRUN"] is False
+        mock_sync.assert_awaited_once_with(lan_mode=False)
+        handler.stop.assert_called_once()
 
 
 class TestMasterElection:

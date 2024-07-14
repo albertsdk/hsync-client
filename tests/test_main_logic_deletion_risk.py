@@ -400,6 +400,96 @@ class TestWithStdinCommands:
             assert "SET_SYNC_DIRECTION" in registered_cmds
 
 
+class TestStdinCommandHandlers:
+    """Invoke the registered stdin handler closures to cover their bodies."""
+
+    async def _register_and_capture(self):
+        """Run _with_stdin_commands with mocks and return the handler map."""
+        registered: dict = {}
+        handler_inst = MagicMock()
+        handler_inst.register.side_effect = lambda name, fn: registered.__setitem__(name, fn)
+        handler_inst.run = AsyncMock()
+
+        async def noop():
+            pass
+
+        with patch("hsync_client.main_logic.StdinCommandHandler", return_value=handler_inst):
+            await _with_stdin_commands(MagicMock(), noop())
+        return registered
+
+    @pytest.mark.asyncio
+    async def test_sync_handler_uses_lan_mode(self):
+        """The SYNC handler syncs with the configured LAN_MODE flag."""
+        registered = await self._register_and_capture()
+        with (
+            patch("hsync_client.main_logic.CONFIG", {"LAN_MODE": True}),
+            patch("hsync_client.main_logic.sync", new=AsyncMock()) as mock_sync,
+        ):
+            await registered["SYNC"]()
+        mock_sync.assert_awaited_once_with(lan_mode=True)
+
+    @pytest.mark.asyncio
+    async def test_set_sync_direction_valid_invalid_and_noop(self):
+        """SET_SYNC_DIRECTION applies valid changes, rejects invalid, skips no-ops."""
+        registered = await self._register_and_capture()
+        cfg = {"LAN_MODE": False, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.main_logic.CONFIG", cfg),
+            patch("hsync_client.main_logic.sync", new=AsyncMock()) as mock_sync,
+        ):
+            await registered["SET_SYNC_DIRECTION"](direction="upload-only")
+            assert cfg["SYNC_DIRECTION"] == "upload-only"
+            # No-op: same direction does not resync again.
+            await registered["SET_SYNC_DIRECTION"](direction="upload-only")
+            # Invalid direction is rejected.
+            await registered["SET_SYNC_DIRECTION"](direction="sideways")
+        assert cfg["SYNC_DIRECTION"] == "upload-only"
+        mock_sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_set_bandwidth_updates_and_clears_limits(self):
+        """SET_BANDWIDTH parses ints/strings, treats 0 as unlimited, rejects junk."""
+        registered = await self._register_and_capture()
+        cfg = {"MAX_BANDWIDTH_UPLOAD": None, "MAX_BANDWIDTH_DOWNLOAD": None}
+        with (
+            patch("hsync_client.main_logic.CONFIG", cfg),
+            patch("hsync_client.main_logic.reset_bandwidth_throttle") as mock_reset,
+        ):
+            # int upload, string download
+            await registered["SET_BANDWIDTH"](upload=2048, download="4096")
+            assert cfg["MAX_BANDWIDTH_UPLOAD"] == 2048
+            assert cfg["MAX_BANDWIDTH_DOWNLOAD"] == 4096
+            # zero means unlimited (None)
+            await registered["SET_BANDWIDTH"](upload="0", download=0)
+            assert cfg["MAX_BANDWIDTH_UPLOAD"] is None
+            assert cfg["MAX_BANDWIDTH_DOWNLOAD"] is None
+            # invalid values are rejected without raising
+            await registered["SET_BANDWIDTH"](upload="abc")
+            await registered["SET_BANDWIDTH"](download="xyz")
+        assert mock_reset.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_run_stdin_wait_sync_handler(self):
+        """_run_stdin_wait's SYNC handler clears dry-run, syncs and stops the reader."""
+        registered: dict = {}
+        handler_inst = MagicMock()
+        handler_inst.register.side_effect = lambda name, fn: registered.__setitem__(name, fn)
+        handler_inst.run = AsyncMock()
+
+        cfg = {"LAN_MODE": False, "DRYRUN": True}
+        with (
+            patch("hsync_client.main_logic.StdinCommandHandler", return_value=handler_inst),
+            patch("hsync_client.main_logic.CONFIG", cfg),
+            patch("hsync_client.main_logic.sync", new=AsyncMock()) as mock_sync,
+        ):
+            await _run_stdin_wait(MagicMock())
+            await registered["SYNC"]()
+
+        assert cfg["DRYRUN"] is False
+        mock_sync.assert_awaited_once_with(lan_mode=False)
+        handler_inst.stop.assert_called_once()
+
+
 class TestRunStdinWait:
     """Tests for _run_stdin_wait async function."""
 
