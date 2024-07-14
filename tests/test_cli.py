@@ -6,6 +6,7 @@
 
 """Tests for the CLI module using Typer's CliRunner."""
 
+import runpy
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -13,6 +14,26 @@ from typer.testing import CliRunner
 from hsync_client.cli import app
 
 runner = CliRunner()
+
+
+class TestEntryPoints:
+    """Tests for package and console entry points."""
+
+    def test_main_delegates_to_cli_run(self):
+        """hsync_client.main.main delegates to the Typer wrapper."""
+        from hsync_client.main import main
+
+        with patch("hsync_client.main.run") as mock_run:
+            main()
+
+        mock_run.assert_called_once_with()
+
+    def test_module_entrypoint_delegates_to_main(self):
+        """python -m hsync_client invokes hsync_client.main.main."""
+        with patch("hsync_client.main.main") as mock_main:
+            runpy.run_module("hsync_client.__main__", run_name="__main__")
+
+        mock_main.assert_called_once_with()
 
 
 class TestTyperCli:
