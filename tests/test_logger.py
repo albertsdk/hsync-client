@@ -301,14 +301,15 @@ class TestFormatRecordColored:
         """Create a mock loguru record."""
         from datetime import datetime
 
+        level_record = MagicMock()
+        level_record.name = level
         record = {
             "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC),
-            "level": MagicMock(name=level),
+            "level": level_record,
             "message": message,
             "process": MagicMock(id=12345),
             "extra": extra or {},
         }
-        record["level"].name = level
         return record
 
     def test_basic_format(self):
@@ -335,14 +336,15 @@ class TestFormatRecordPlain:
         """Create a mock loguru record."""
         from datetime import datetime
 
+        level_record = MagicMock()
+        level_record.name = level
         record = {
             "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC),
-            "level": MagicMock(name=level),
+            "level": level_record,
             "message": message,
             "process": MagicMock(id=12345),
             "extra": extra or {},
         }
-        record["level"].name = level
         return record
 
     def test_no_color_tags(self):
