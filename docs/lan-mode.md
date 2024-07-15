@@ -345,17 +345,21 @@ Authorization: Bearer mySecretKey123
 
 Group filtering allows multiple hsync instances on the same LAN to be isolated. Peers with different groups will ignore each other.
 
-### Filtering Logic (Option B - Backward Compatible)
+### Filtering Logic
+
+The group is a **strict partition key**: two peers are compatible **only** when
+their groups are exactly equal. "No group" is itself a distinct partition, so a
+peer without a group matches **only** other peers that also run without a group.
 
 | Local Group | Peer Group | Result |
 |-------------|------------|--------|
 | `None` | `None` | ✅ Compatible |
-| `None` | `team-a` | ✅ Compatible |
-| `team-a` | `None` | ✅ Compatible |
+| `None` | `team-a` | ❌ Ignored |
+| `team-a` | `None` | ❌ Ignored |
 | `team-a` | `team-a` | ✅ Compatible |
 | `team-a` | `team-b` | ❌ Ignored |
 
-**Rule**: If **both** peers have a group defined, they must match. If **at least one** has no group, they are compatible (no filtering).
+**Rule**: A peer is visible only if its group is identical to the local group, where "no group" counts as its own group. This guarantees full isolation — a groupless peer can never bridge two named groups.
 
 ### Usage Examples
 
@@ -366,7 +370,7 @@ Group filtering allows multiple hsync instances on the same LAN to be isolated. 
 # Team B - only sees other Team B peers
 ./dist/<platform>/hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
 
-# No group - sees ALL peers (including team-a and team-b)
+# No group - only sees other peers that also run without a group
 ./dist/<platform>/hsync -b project -p ~/Projects --lan-mode
 ```
 
@@ -393,17 +397,17 @@ LAN mode supports encrypted communication using HTTPS with self-signed certifica
 │                                                                  │
 │   Master                              Client                     │
 │   ══════                              ══════                     │
-│   ┌────────────────┐                                            │
-│   │ Generate RSA   │                                            │
-│   │ 2048-bit key   │                                            │
-│   └───────┬────────┘                                            │
+│   ┌────────────────┐                                             │
+│   │ Generate RSA   │                                             │
+│   │ 2048-bit key   │                                             │
+│   └───────┬────────┘                                             │
 │           │                                                      │
-│   ┌───────▼────────┐                                            │
-│   │ Create X.509   │                                            │
-│   │ certificate    │                                            │
-│   └───────┬────────┘                                            │
+│   ┌───────▼────────┐                                             │
+│   │ Create X.509   │                                             │
+│   │ certificate    │                                             │
+│   └───────┬────────┘                                             │
 │           │                                                      │
-│   ┌───────▼────────┐        mDNS TXT record                     │
+│   ┌───────▼────────┐        mDNS TXT record                      │
 │   │ Calculate      │ ─────────────────────────>  ┌──────────────┐│
 │   │ SHA-256        │     cert_fp=abc123...       │ Receive      ││
 │   │ fingerprint    │                             │ fingerprint  ││

@@ -36,7 +36,7 @@ class TestPeerManager:
         assert pm.get_peer("remote456") is None
 
     def test_add_peer_both_no_group_compatible(self):
-        """Test that peers with no group (Option B) see each other."""
+        """Test that peers without a group share the same (default) partition."""
         pm = PeerManager(local_cid="local123", bucket="photos", group=None)
         peer = Peer(
             cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None
@@ -44,23 +44,23 @@ class TestPeerManager:
         pm.add_peer(peer)
         assert pm.get_peer("remote456") is not None
 
-    def test_add_peer_local_no_group_remote_has_group_compatible(self):
-        """Test that peer with group is visible to local without group (Option B)."""
+    def test_add_peer_local_no_group_remote_has_group_ignored(self):
+        """Test that a grouped peer is ignored by a peer without a group."""
         pm = PeerManager(local_cid="local123", bucket="photos", group=None)
         peer = Peer(
             cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a"
         )
         pm.add_peer(peer)
-        assert pm.get_peer("remote456") is not None
+        assert pm.get_peer("remote456") is None
 
-    def test_add_peer_local_has_group_remote_no_group_compatible(self):
-        """Test that peer without group is visible to local with group (Option B)."""
+    def test_add_peer_local_has_group_remote_no_group_ignored(self):
+        """Test that a peer without a group is ignored by a grouped peer."""
         pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
         peer = Peer(
             cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None
         )
         pm.add_peer(peer)
-        assert pm.get_peer("remote456") is not None
+        assert pm.get_peer("remote456") is None
 
     def test_add_peer_same_group_compatible(self):
         """Test that peers with the same group see each other."""
@@ -72,7 +72,7 @@ class TestPeerManager:
         assert pm.get_peer("remote456") is not None
 
     def test_add_peer_different_group_ignored(self):
-        """Test that peers with different groups are ignored (both have group)."""
+        """Test that peers with different groups are ignored."""
         pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
         peer = Peer(
             cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-b"
