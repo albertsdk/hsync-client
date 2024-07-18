@@ -350,6 +350,14 @@ def main(
             rich_help_panel="LAN Mode",
         ),
     ] = False,
+    never_master: Annotated[
+        bool,
+        typer.Option(
+            "--never-master",
+            help="Never become master in LAN mode (always remain a client/slave).",
+            rich_help_panel="LAN Mode",
+        ),
+    ] = False,
     # -------------------------------------------------------------------------
     # Output
     # -------------------------------------------------------------------------
@@ -507,6 +515,13 @@ def main(
             f"--force-master is incompatible with --sync-direction={sync_direction}. "
             f"The LAN master always operates in bidirectional mode."
         )
+
+    # --force-master and --never-master are mutually exclusive (contradictory)
+    if force_master and never_master:
+        raise typer.BadParameter(
+            "--force-master and --never-master are mutually exclusive: a client "
+            "cannot be forced to be master and forbidden from being master at once."
+        )
     if (
         min_free_disk_space < MIN_FREE_DISK_SPACE_MB_MIN
         or min_free_disk_space > MIN_FREE_DISK_SPACE_MB_MAX
@@ -578,6 +593,7 @@ def main(
         lan_https=lan_https,
         lan_persistent=lan_persistent,
         force_master=force_master,
+        never_master=never_master,
         debug=debug,
         quiet=quiet,
         logfile=logfile,

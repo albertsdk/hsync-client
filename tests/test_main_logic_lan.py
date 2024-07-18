@@ -20,6 +20,7 @@ def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
         "LAN_GROUP": None,
         "LAN_HTTPS": False,
         "LAN_FORCE_MASTER": False,
+        "LAN_NEVER_MASTER": False,
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "LAN_KEY": None,

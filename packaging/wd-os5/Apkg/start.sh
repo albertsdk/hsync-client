@@ -96,9 +96,10 @@ case "${HSYNC_MODE}" in
         [ -n "${HSYNC_LAN_GROUP}" ]             && set -- "$@" --lan-group "${HSYNC_LAN_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in
-            master) set -- "$@" --force-master ;;
-            slave)  set -- "$@" --sync-direction download-only ;;
-            *)      : ;;   # auto — no extra flag
+            master)       set -- "$@" --force-master ;;
+            slave)        set -- "$@" --sync-direction download-only ;;
+            never-master) set -- "$@" --never-master ;;
+            *)            : ;;   # auto — no extra flag
         esac
         ;;
     server)

@@ -58,7 +58,7 @@ foreach (KEYS as $key) {
             if (!in_array($val, ['lan', 'server'], true)) $val = 'lan';
             break;
         case 'HSYNC_ROLE':
-            if (!in_array($val, ['auto', 'master', 'slave'], true)) $val = 'auto';
+            if (!in_array($val, ['auto', 'master', 'slave', 'never-master'], true)) $val = 'auto';
             break;
         case 'HSYNC_BUCKET':
             if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/', $val)) $val = 'hsync';

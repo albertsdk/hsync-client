@@ -140,6 +140,7 @@ class Peer:
     clock_offset: float = 0.0  # Estimated clock offset vs local (seconds)
     last_seen: float = field(default_factory=time.time)
     force_master: bool = False  # True if peer wants to force master role
+    never_master: bool = False  # True if peer refuses to ever be master
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
 
@@ -181,6 +182,7 @@ class PeerManager:
         bucket: str,
         group: str | None = None,
         force_master: bool = False,
+        never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
     ) -> None:
@@ -192,6 +194,8 @@ class PeerManager:
             bucket: The bucket name for filtering peers.
             group: Optional group name for filtering peers.
             force_master: If True, this client will always try to be master.
+            never_master: If True, this client is excluded from master election
+                and always remains a client/slave.
             startup_time: Unix timestamp when this client started.
             sync_direction: This client's sync direction
                 ("bidirectional", "upload-only", "download-only").
@@ -200,6 +204,7 @@ class PeerManager:
         self._bucket = bucket
         self._group = group
         self._force_master = force_master
+        self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
         self._peers: dict[str, Peer] = {}
@@ -240,6 +245,11 @@ class PeerManager:
     def force_master(self) -> bool:
         """Get the force_master flag."""
         return self._force_master
+
+    @property
+    def never_master(self) -> bool:
+        """Get the never_master flag."""
+        return self._never_master
 
     @property
     def startup_time(self) -> float:
@@ -299,6 +309,7 @@ class PeerManager:
                 existing.server_ready = peer.server_ready
                 existing.clock_offset = peer.clock_offset
                 existing.force_master = peer.force_master
+                existing.never_master = peer.never_master
                 existing.startup_time = peer.startup_time
                 existing.sync_direction = peer.sync_direction
                 existing.update_last_seen()
@@ -344,22 +355,28 @@ class PeerManager:
         4. Earliest startup_time (first started wins)
         5. Lowest CID lexicographically (tiebreaker)
 
-        This includes the local client in the election.
+        This includes the local client in the election, unless it (or a peer)
+        is marked ``never_master`` — such nodes are excluded from candidacy and
+        always remain clients/slaves. If every node is ``never_master`` the
+        candidate list is empty and no master is elected.
         """
-        # Build list of candidates with their election criteria
+        # Build list of candidates with their election criteria.
         # Each candidate: (cid, force_master, startup_time, sync_direction, server_ready)
-        candidates: list[tuple[str, bool, float, str, bool]] = [
-            (
-                self._local_cid,
-                self._force_master,
-                self._startup_time,
-                self._sync_direction,
-                self._local_server_ready,
+        # never_master nodes are excluded entirely so they are never elected.
+        candidates: list[tuple[str, bool, float, str, bool]] = []
+        if not self._never_master:
+            candidates.append(
+                (
+                    self._local_cid,
+                    self._force_master,
+                    self._startup_time,
+                    self._sync_direction,
+                    self._local_server_ready,
+                )
             )
-        ]
 
         for peer in self._peers.values():
-            if peer.is_alive():
+            if peer.is_alive() and not peer.never_master:
                 candidates.append(
                     (
                         peer.cid,
@@ -583,6 +600,13 @@ class HsyncServiceListener(ServiceListener):
                 if force_master_bytes
                 else False
             )
+            # Never-master flag (peer refuses to ever be master)
+            never_master_bytes = properties.get(b"never_master", b"")
+            never_master = (
+                never_master_bytes.decode("utf-8").lower() == "true"
+                if never_master_bytes
+                else False
+            )
             # Startup time for master election (earlier startup wins)
             startup_time_bytes = properties.get(b"startup_time", b"")
             startup_time = float(startup_time_bytes.decode("utf-8")) if startup_time_bytes else 0.0
@@ -639,6 +663,7 @@ class HsyncServiceListener(ServiceListener):
                 compression_enabled=compression_enabled,
                 server_ready=server_ready,
                 force_master=force_master,
+                never_master=never_master,
                 startup_time=startup_time,
                 sync_direction=sync_direction,
             )
@@ -673,6 +698,7 @@ class LANSync:
         use_https: bool = False,
         cert_fingerprint: str | None = None,
         force_master: bool = False,
+        never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
     ) -> None:
@@ -697,6 +723,7 @@ class LANSync:
         self._use_https = use_https
         self._cert_fingerprint = cert_fingerprint
         self._force_master = force_master
+        self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
         # If port is 0, get a random free port
@@ -757,6 +784,7 @@ class LANSync:
             self._bucket,
             self._group,
             force_master=self._force_master,
+            never_master=self._never_master,
             startup_time=self._startup_time,
             sync_direction=self._sync_direction,
         )
@@ -868,6 +896,9 @@ class LANSync:
         # Add force_master flag for master election
         if self._force_master:
             properties["force_master"] = "true"
+        # Add never_master flag so other peers never elect this node
+        if self._never_master:
+            properties["never_master"] = "true"
         # Add startup time for master election (earlier startup wins)
         properties["startup_time"] = str(self._startup_time)
         # Add sync direction for master election (bidirectional preferred)

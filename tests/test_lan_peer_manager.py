@@ -598,3 +598,68 @@ class TestPeerManager:
                 call for call in mock_log.info.call_args_list if "Master changed" in str(call)
             ]
             assert len(info_calls) > 0
+
+
+class TestNeverMaster:
+    """Tests for the never_master exclusion in master election."""
+
+    def test_local_never_master_not_elected_when_alone(self):
+        """A lone never-master client elects no master (stays client)."""
+        pm = PeerManager(local_cid="local123", bucket="photos", never_master=True)
+        pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=8765))
+        pm.remove_peer("temp")
+        assert pm.is_master() is False
+        assert pm.get_master_cid() is None
+
+    def test_local_never_master_yields_to_peer(self):
+        """A never-master local with an eligible peer makes that peer master."""
+        pm = PeerManager(
+            local_cid="aaa111",
+            bucket="photos",
+            startup_time=100.0,
+            never_master=True,
+        )
+        pm.add_peer(
+            Peer(
+                cid="zzz999",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=200.0,
+            )
+        )
+        assert pm.is_master() is False
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_peer_never_master_ignored_in_election(self):
+        """A never-master peer is never elected even if it started first."""
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                startup_time=100.0,
+                never_master=True,
+            )
+        )
+        # Despite the earlier startup_time, the never-master peer loses;
+        # the local client becomes master.
+        assert pm.is_master() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_all_never_master_no_master_elected(self):
+        """When every node is never-master, no master is elected."""
+        pm = PeerManager(local_cid="local123", bucket="photos", never_master=True)
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=8765,
+                never_master=True,
+            )
+        )
+        assert pm.is_master() is False
+        assert pm.get_master_cid() is None

@@ -123,6 +123,7 @@ The role selector maps to the existing CLI primitives:
 | Auto        | _(none)_                                        | Bidirectional, automatic election    |
 | Master      | `--force-master`                                | NAS holds the authoritative copy     |
 | Slave       | `--sync-direction download-only`                | NAS is a read-only replica           |
+| Never master| `--never-master`                                | Syncs both ways but never becomes master |
 
 ## Locales
 

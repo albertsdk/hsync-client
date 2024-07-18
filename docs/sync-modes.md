@@ -90,7 +90,7 @@ HSYNC_LAN_KEY="mySecretKey" ./dist/<platform>/hsync -b photos -p ~/Pictures --la
 ### How It Works
 
 1. **Discovery** — Peers discover each other via mDNS (Bonjour/Avahi)
-2. **Election** — Master is elected (priority: force_master > bidirectional > earliest startup > lowest CID)
+2. **Election** — Master is elected (priority: force_master > bidirectional > earliest startup > lowest CID; `--never-master` peers are excluded)
 3. **Sync** — Other peers sync files with master via HTTPS
 
 See [LAN Mode](lan-mode.md) for detailed documentation.
