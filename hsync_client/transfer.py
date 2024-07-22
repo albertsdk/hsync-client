@@ -11,9 +11,8 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
-from os import remove, utime
+from os import fsync, remove, replace, utime
 from pathlib import Path
-from shutil import move
 from time import sleep as time_sleep
 from typing import cast
 
@@ -285,6 +284,9 @@ def download_file(file: File) -> None:
             decompressed_data = decompress_data(compressed_data)
             with open(partial_file_path, "wb") as f:
                 f.write(decompressed_data)
+                # Flush OS buffers to disk before the file is considered written
+                f.flush()
+                fsync(f.fileno())
         else:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
@@ -298,6 +300,9 @@ def download_file(file: File) -> None:
                     delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")
                     if delay > 0:
                         time_sleep(delay)
+                # Flush OS buffers to disk before the file is considered written
+                f.flush()
+                fsync(f.fileno())
 
         # Verify SHA-256 checksum of complete file
         sha256sum = compute_sha256(partial_file_path)
@@ -320,8 +325,9 @@ def download_file(file: File) -> None:
             cleanup_partial = False
             return
 
-        # Move partial file to final destination
-        move(partial_file_path, full_save_path)
+        # Atomically move partial file to final destination (same-filesystem
+        # rename) so a partially written file is never visible at the target path
+        replace(partial_file_path, full_save_path)
         cleanup_partial = False
         log.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
