@@ -174,6 +174,14 @@ See [Getting Started](docs/getting-started.md) for detailed instructions.
 - [Architecture](docs/architecture.md) - Internal design
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
+- [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
+- [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
+- [Security Policy](SECURITY.md) - Supported versions and how to report vulnerabilities
+
+### Related projects
+
+- [HSYNC Common](../hsync-common/README.md) - Shared models, constants, and utilities used by the client
+- [HSYNC Server](../hsync-server/README.md) - Central synchronization server (Server Mode)
 
 ## Version
 
