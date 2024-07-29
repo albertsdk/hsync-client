@@ -26,6 +26,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+# CLOCK_SKEW_THRESHOLD is re-exported here for backwards compatibility; its
+# canonical home is hsync_common.clock.
+from hsync_common.clock import CLOCK_SKEW_THRESHOLD  # noqa: F401
 from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
@@ -51,9 +54,6 @@ HEARTBEAT_INTERVAL = 5
 
 # Peer timeout (no heartbeat) in seconds
 PEER_TIMEOUT = 15
-
-# Clock skew warning threshold in seconds
-CLOCK_SKEW_THRESHOLD = 5
 
 
 # =============================================================================
