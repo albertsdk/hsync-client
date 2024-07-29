@@ -438,6 +438,14 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
             record_deletion(src_path)
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not record tombstone for {src_path}: {e}")
+        # Drop the merge base too: a re-created path must start a fresh lineage.
+        try:
+            from hsync_client.sync_state import clear_base, flush
+
+            clear_base(src_path)
+            flush()
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not clear sync-state for {src_path}: {e}")
 
 
 # =============================================================================
