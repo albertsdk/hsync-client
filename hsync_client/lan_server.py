@@ -28,6 +28,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
 from pathlib import Path
+from shutil import disk_usage
 from typing import IO
 from urllib.parse import parse_qs, urlparse
 
@@ -73,6 +74,7 @@ HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
 HTTP_RANGE_NOT_SATISFIABLE = 416
 HTTP_INTERNAL_ERROR = 500
+HTTP_INSUFFICIENT_STORAGE = 507
 
 
 # =============================================================================
@@ -908,6 +910,26 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         from hsync_client.utils import set_permissions
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+
+        # Size-aware disk space guard: reject before writing if the target
+        # filesystem cannot hold the incoming bytes plus the configured reserve,
+        # avoiding a mid-transfer ENOSPC that leaves a .part behind.
+        reserve_mb = CONFIG.get("MIN_FREE_DISK_SPACE", 0)
+        if reserve_mb and reserve_mb > 0:
+            try:
+                free = disk_usage(local_bucket or ".").free
+                required = reserve_mb * 1024 * 1024 + content_length
+                if free < required:
+                    log.error(
+                        f"Insufficient disk space for upload: "
+                        f"{free // (1024 * 1024)} MB available, "
+                        f"{required // (1024 * 1024)} MB required"
+                    )
+                    self._send_error_response(HTTP_INSUFFICIENT_STORAGE, "Insufficient disk space")
+                    return
+            except OSError as e:
+                log.warning(f"Could not check disk space: {e}")
+
         parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
 
         # Mutable state shared with the file_open callback (set by _file_open)
@@ -938,7 +960,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if is_compressed_local:
                 import zstandard as zstd
 
-                writer = zstd.ZstdDecompressor().stream_writer(raw)
+                # closefd=False so closing the decompressor flushes the frame
+                # into ``raw`` without closing it, allowing an explicit fsync.
+                writer = zstd.ZstdDecompressor().stream_writer(raw, closefd=False)
                 out_file = writer
                 return writer.write
             out_file = raw
@@ -955,12 +979,18 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             assert dest_path is not None
             assert tmp_path is not None
 
-            # Close the writer (flushes zstd frame if used)
+            # Close the writer (flushes zstd frame if used), then fsync the
+            # underlying file so the bytes are durable before the atomic rename.
             try:
                 if out_file is not raw_file:
                     out_file.close()
             finally:
                 if raw_file is not None:
+                    try:
+                        raw_file.flush()
+                        os.fsync(raw_file.fileno())
+                    except OSError:
+                        pass
                     raw_file.close()
             out_file = None
             raw_file = None
