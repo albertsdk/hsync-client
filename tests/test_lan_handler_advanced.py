@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from hsync_client.config import HsyncConfig
+from hsync_client.constants import DISCOVERY_POLL_INTERVAL
 
 
 def _make_lan_config(tmp_path, **overrides: Any) -> HsyncConfig:
@@ -30,7 +31,7 @@ def _make_lan_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "LAN_KEY": None,
-        "DISCOVERY_TIMEOUT": 0,
+        "DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "LAN_PERSISTENT": False,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
@@ -511,6 +512,34 @@ class TestRunLanModeNoMasterWarning:
         )
 
 
+class TestRunLanModeDiscoveryTimeout:
+    """Tests for discovery timeout sentinel semantics in the outer LAN loop."""
+
+    def test_timeout_zero_uses_poll_interval_not_busy_spin(self, tmp_path):
+        """DISCOVERY_TIMEOUT=0 keeps waiting but still sleeps in finite polling windows."""
+        from hsync_client.lan_handler import run_lan_mode
+
+        config = _make_lan_config(tmp_path, DISCOVERY_TIMEOUT=0, LAN_PERSISTENT=False)
+        mock_log = MagicMock()
+
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.is_master.return_value = False
+        mock_peer_mgr.get_master_cid.return_value = None
+        mock_peer_mgr.get_master.return_value = None
+
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.start.return_value = mock_peer_mgr
+        mock_lan_sync.port = 9000
+        mock_lan_sync.wait_for_discovery.side_effect = [None, KeyboardInterrupt]
+
+        with patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync):
+            run_lan_mode(config, mock_log)
+
+        first_call = mock_lan_sync.wait_for_discovery.call_args_list[0]
+        assert first_call.kwargs["timeout"] == DISCOVERY_POLL_INTERVAL
+        assert any("Discovery timeout disabled" in str(c) for c in mock_log.info.call_args_list)
+
+
 def _make_master(**overrides: Any) -> MagicMock:
     """Build a master-peer mock with the attributes _run_as_slave reads."""
     master = MagicMock()
@@ -579,6 +608,28 @@ class TestRunAsSlave:
         assert result is False
         assert "Authorization" not in config["REQUEST_HEADERS"]
         assert any("plain HTTP" in str(c) for c in mock_log.warning.call_args_list)
+
+    def test_no_master_non_persistent_wait_indefinitely_keeps_looping(self, tmp_path):
+        """Non-persistent mode can still wait indefinitely for the first peer."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = None
+        mock_log = MagicMock()
+
+        result = _run_as_slave(
+            config,
+            mock_log,
+            MagicMock(),
+            None,
+            False,
+            peer_mgr,
+            wait_indefinitely_for_peer=True,
+        )
+
+        assert result is True
+        assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
 
     def test_persistent_connects_websocket(self, tmp_path):
         """Persistent slave connects via WebSocket and returns True to loop again."""

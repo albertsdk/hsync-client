@@ -45,6 +45,7 @@ from hsync_client.config import (
 )
 from hsync_client.constants import (
     ACTION_LABEL,
+    DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
@@ -216,6 +217,23 @@ def _get_stability_delay_value(cli_value: int | None) -> int:
         except ValueError:
             pass
     return FILE_STABILITY_INTERVAL_DEFAULT
+
+
+def _get_discovery_timeout_value(cli_value: int | None) -> int:
+    """
+    Determine the LAN discovery timeout value.
+
+    Priority: CLI argument > environment variable > default constant.
+    A value of 0 is valid and means "wait indefinitely".
+    """
+    if cli_value is not None:
+        return cli_value
+
+    env_value = get_discovery_timeout()
+    if env_value is not None:
+        return env_value
+
+    return DISCOVERY_TIMEOUT_DEFAULT
 
 
 def _check_deletion_risk(
@@ -393,7 +411,7 @@ def run_sync(
     max_bandwidth_download: int | None,
     lan_mode: bool,
     lan_port: int,
-    discovery_timeout: int,
+    discovery_timeout: int | None,
     lan_group: str | None,
     lan_https: bool,
     lan_persistent: bool,
@@ -575,7 +593,7 @@ def run_sync(
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
         "LAN_MODE": lan_mode,
         "LAN_PORT": lan_port or get_lan_port() or 0,
-        "DISCOVERY_TIMEOUT": discovery_timeout or get_discovery_timeout() or 5,
+        "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or 5,
         "PEER_TIMEOUT": get_peer_timeout() or 15,
         "LAN_KEY": lan_key_from_fd or get_lan_key(),

@@ -67,7 +67,9 @@ class EnvSettings(BaseSettings):
 
     # LAN Discovery Settings
     discovery_timeout: int | None = Field(
-        default=None, ge=1, description="Discovery timeout in seconds"
+        default=None,
+        ge=0,
+        description="Discovery timeout in seconds (0 = wait indefinitely)",
     )
     heartbeat_interval: int | None = Field(
         default=None, ge=1, description="Heartbeat interval in seconds"
@@ -295,7 +297,7 @@ class HsyncConfig(TypedDict):
     LAN_MODE: bool
     # LAN port for master server
     LAN_PORT: int
-    # Discovery timeout in seconds for LAN mode
+    # Discovery timeout in seconds for LAN mode (0 = wait indefinitely)
     DISCOVERY_TIMEOUT: int
     # Heartbeat interval in seconds for LAN mode
     HEARTBEAT_INTERVAL: int

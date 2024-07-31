@@ -16,6 +16,7 @@ from re import sub
 from typing import TYPE_CHECKING
 
 from hsync_client.config import set_config
+from hsync_client.constants import DISCOVERY_POLL_INTERVAL
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
 from hsync_client.lan_server import LANServer
@@ -114,6 +115,12 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
     if persistent:
         log.info("Persistent mode enabled - will wait indefinitely for peers")
 
+    discovery_timeout = config["DISCOVERY_TIMEOUT"]
+    wait_indefinitely_for_peer = discovery_timeout == 0
+    discovery_wait = DISCOVERY_POLL_INTERVAL if wait_indefinitely_for_peer else discovery_timeout
+    if wait_indefinitely_for_peer and not persistent:
+        log.info("Discovery timeout disabled - waiting indefinitely for the first LAN peer/master")
+
     cert_info = None
     if config["LAN_HTTPS"]:
         from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
@@ -150,7 +157,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
     try:
         while True:
             # Wait for peer discovery
-            lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
+            lan_sync.wait_for_discovery(timeout=discovery_wait)
 
             if peer_manager.is_master():
                 no_master_since = None
@@ -209,6 +216,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                     cert_info=cert_info,
                     persistent=persistent,
                     peer_manager=peer_manager,
+                    wait_indefinitely_for_peer=wait_indefinitely_for_peer,
                 )
                 if not should_continue:
                     break
@@ -309,6 +317,7 @@ def _run_as_slave(
     cert_info,
     persistent: bool,
     peer_manager,
+    wait_indefinitely_for_peer: bool = False,
 ) -> bool:
     """Run as client (connect to master). Returns True to continue loop, False to break."""
     from asyncio import run
@@ -336,7 +345,7 @@ def _run_as_slave(
             # Do not self-promote (that would create a second master and
             # split-brain). Keep waiting only in persistent mode; otherwise
             # exit since this node cannot sync with the elected master.
-            return persistent
+            return persistent or wait_indefinitely_for_peer
 
         master_url = master.get_server_url()
         log.info(f"Connecting to master: {master.cid} at {master_url}")
@@ -406,7 +415,7 @@ def _run_as_slave(
         return True
     else:
         # No master and no peers
-        if persistent:
+        if persistent or wait_indefinitely_for_peer:
             log.info("Waiting for peers to join...")
             return True  # Continue the discovery loop
         else:

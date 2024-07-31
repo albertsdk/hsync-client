@@ -99,6 +99,15 @@ HTTP_TIMEOUT_MIN = 1
 HTTP_TIMEOUT_MAX = 300
 HTTP_TIMEOUT_DEFAULT = 30
 
+# LAN discovery timeout (seconds)
+# 0 is reserved as the CLI/env sentinel for "wait indefinitely".
+DISCOVERY_TIMEOUT_DEFAULT = 10
+# Polling window used when discovery waits indefinitely (timeout == 0): how often
+# the LAN loop wakes up to re-evaluate peer/master state. Matches the LAN
+# heartbeat cadence (HEARTBEAT_INTERVAL) so we react within one announce cycle
+# without busy-spinning while no peer is present.
+DISCOVERY_POLL_INTERVAL = 5
+
 # Minimum free disk space limits (MB)
 MIN_FREE_DISK_SPACE_MB_MIN = 0  # 0 = disabled
 MIN_FREE_DISK_SPACE_MB_MAX = 100_000  # 100 GB

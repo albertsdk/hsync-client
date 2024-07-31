@@ -123,9 +123,25 @@ class TestEnvSettings:
         assert settings.lan_group is None
         assert settings.lan_https is True
         assert settings.lan_port is None
+        assert settings.discovery_timeout is None
         assert settings.lan_persistent is True
         assert settings.ignore_delete is False
         assert settings.compression_enabled is True
+
+    def test_discovery_timeout_zero_is_valid(self):
+        """HSYNC_DISCOVERY_TIMEOUT=0 means wait indefinitely and is valid."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_DISCOVERY_TIMEOUT")
+        os.environ["HSYNC_DISCOVERY_TIMEOUT"] = "0"
+        try:
+            settings = EnvSettings()
+            assert settings.discovery_timeout == 0
+        finally:
+            if old is not None:
+                os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
+            else:
+                os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
+            get_env_settings.cache_clear()
 
     def test_reads_from_env(self):
         """Settings are read from HSYNC_ prefixed env vars."""
