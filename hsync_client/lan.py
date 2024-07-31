@@ -34,6 +34,7 @@ from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNC_VERSION
+from hsync_client.events import UiEventName, emit_event
 
 # =============================================================================
 # Constants
@@ -416,6 +417,12 @@ class PeerManager:
                         f"has priority (started earlier). "
                         f"This client will operate as client."
                     )
+                    emit_event(
+                        UiEventName.master_conflict,
+                        conflict_type="conflict_lost",
+                        peer_cid=winner_cid,
+                        peer_address=winner_addr,
+                    )
                 elif winner_cid == self._local_cid:
                     # We won: a remote force_master peer lost
                     loser_addr = loser_peer.address if loser_peer else "unknown"
@@ -424,6 +431,12 @@ class PeerManager:
                         f"peer {loser_cid} at {loser_addr} also has "
                         f"force_master enabled. This client wins "
                         f"(started earlier)."
+                    )
+                    emit_event(
+                        UiEventName.master_conflict,
+                        conflict_type="conflict_won",
+                        peer_cid=loser_cid,
+                        peer_address=loser_addr,
                     )
 
         # Detect force_master takeover: remote force_master peer overrides
@@ -441,6 +454,12 @@ class PeerManager:
                     f"{new_peer.address} has force_master enabled "
                     f"and is taking over as master. "
                     f"This client will switch to client."
+                )
+                emit_event(
+                    UiEventName.master_conflict,
+                    conflict_type="takeover",
+                    peer_cid=new_master_cid,
+                    peer_address=new_peer.address,
                 )
 
         if new_master_cid != self._master_cid:
@@ -488,12 +507,20 @@ class PeerManager:
                 )
 
             # Notify callback
+            emit_event(UiEventName.role, is_master=(new_master_cid == self._local_cid))
             if self._on_master_change:
                 if new_master_cid == self._local_cid or new_master_cid is None:
                     master_peer = None
                 else:
                     master_peer = self._peers.get(new_master_cid)
                 self._on_master_change(master_peer)
+
+        # Surface the current alive-peer count (excludes this node) so the GUI
+        # tracks topology without scraping the discovery log line.
+        emit_event(
+            UiEventName.peers,
+            count=sum(1 for p in self._peers.values() if p.is_alive()),
+        )
 
     def is_master(self) -> bool:
         """Check if this client is the current master."""

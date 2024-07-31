@@ -24,6 +24,7 @@ from requests import RequestException, get, post
 from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
 from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.models.file import File
 from hsync_client.utils import (
     bytes_to_human_readable,
@@ -278,6 +279,9 @@ def download_file(file: File) -> None:
 
     if response.status_code == 401:
         log.error(f'Authentication failed downloading "{file.filepath}"')
+        emit_event(
+            UiEventName.auth_error, message=f'Authentication failed downloading "{file.filepath}"'
+        )
         return
     if response.status_code == 404:
         log.error(f'File not found on server: "{file.filepath}"')
@@ -367,6 +371,7 @@ def download_file(file: File) -> None:
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
         log.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
+        emit_event(UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0)
 
         # Restore the modification time from the remote file. POSIX ctime is
         # not settable, so it is intentionally not restored; atime mirrors mtime.
@@ -634,9 +639,16 @@ def upload_file(file: File, check_size: bool = True) -> None:
             )
             if response.status_code == 201:
                 log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                emit_event(
+                    UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
+                )
                 _record_synced_base(file)
             elif response.status_code == 401:
                 log.error(f'Authentication failed uploading "{file.filepath}"')
+                emit_event(
+                    UiEventName.auth_error,
+                    message=f'Authentication failed uploading "{file.filepath}"',
+                )
             elif response.status_code == 403:
                 log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
@@ -672,6 +684,9 @@ def upload_file(file: File, check_size: bool = True) -> None:
             )
             if response.status_code == 201:
                 log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                emit_event(
+                    UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
+                )
                 _record_synced_base(file)
             elif response.status_code == 202:
                 # Partial upload received - file still incomplete
@@ -683,6 +698,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 )
             elif response.status_code == 401:
                 log.error(f'Authentication failed uploading "{file.filepath}"')
+                emit_event(
+                    UiEventName.auth_error,
+                    message=f'Authentication failed uploading "{file.filepath}"',
+                )
             elif response.status_code == 403:
                 log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:

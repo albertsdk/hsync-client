@@ -141,6 +141,17 @@ def main(
             rich_help_panel="Connection",
         ),
     ] = None,
+    events_json_fd: Annotated[
+        int | None,
+        typer.Option(
+            "--events-json-fd",
+            help="Write structured JSON-Lines status events to the given file descriptor "
+            "(for a parent GUI process).",
+            metavar="FD",
+            hidden=True,
+            rich_help_panel="Connection",
+        ),
+    ] = None,
     # -------------------------------------------------------------------------
     # Sync
     # -------------------------------------------------------------------------
@@ -577,6 +588,7 @@ def main(
         http_timeout=http_timeout,
         api_key_fd=api_key_fd,
         lan_key_fd=lan_key_fd,
+        events_json_fd=events_json_fd,
         local_path=local_path,
         continuous=continuous,
         resync=resync,

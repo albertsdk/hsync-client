@@ -35,6 +35,7 @@ from loguru import logger as log
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.models.dir import Dir
 from hsync_client.models.event import EventName
 from hsync_client.models.file import File
@@ -190,6 +191,7 @@ async def _rename_path(
     try:
         if Path(src_path).exists():
             log.info(f'{_tag(ctx.log_prefix, "RENAME")} "{src_path}" -> "{dst_path}"')
+            emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             parent = str(Path(dst_path).parent)
             if parent and not Path(parent).exists():
                 Path(parent).mkdir(parents=True, exist_ok=True)
@@ -217,6 +219,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
         try:
             if Path(dir_obj.path).exists():
                 log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{dir_obj.path}"')
+                emit_event(UiEventName.transfer, op="delete", file=dir_obj.path)
                 await asyncio.to_thread(rmtree, dir_obj.path, False)
             else:
                 log.warning(f'Cannot delete: "{dir_obj.path}"')
@@ -231,6 +234,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
         try:
             if Path(file_obj.filepath).exists():
                 log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{file_obj.filepath}"')
+                emit_event(UiEventName.transfer, op="delete", file=file_obj.filepath)
                 await asyncio.to_thread(remove, file_obj.filepath)
                 if Path(file_obj.filepath).name == HSYNCKEEP_FILENAME:
                     parent = str(Path(file_obj.filepath).parent)

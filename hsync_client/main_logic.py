@@ -53,6 +53,7 @@ from hsync_client.lan_handler import run_lan_mode
 
 # Backward compatibility alias
 _run_lan_mode = run_lan_mode
+from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.models.file import clear_sha256_cache
 from hsync_client.models.sync_action import SyncActionName
@@ -89,6 +90,7 @@ def _run_preview(log) -> None:
     - [TO_DELETE   ] - file will be deleted
     """
     log.info("--- Preview (dry-run) ---")
+    emit_event(UiEventName.preview_start)
     try:
         # Clear SHA-256 cache so every file is re-hashed with fresh content
         clear_sha256_cache()
@@ -150,24 +152,42 @@ def _run_preview(log) -> None:
             downloads = [a for i, a in enumerate(downloads) if i not in matched_download_idx]
             deletes = [a for a in deletes if id(a) not in matched_delete_ids]
 
-        # Emit structured messages for each file status
+        # Emit structured messages for each file status (text log + event channel)
         for action in synced:
-            size_str = bytes_to_human_readable(action.file.size or 0)
-            log.info(f'[SYNCED      ] "{action.file.filepath}" ({size_str})')
+            size = action.file.size or 0
+            log.info(f'[SYNCED      ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            emit_event(
+                UiEventName.file_status, state="synced", file=action.file.filepath, size=size
+            )
         for del_action, dl_action in renames:
-            size_str = bytes_to_human_readable(dl_action.file.size or 0)
+            size = dl_action.file.size or 0
             log.info(
-                f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({size_str})'
+                f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({bytes_to_human_readable(size)})'
+            )
+            emit_event(
+                UiEventName.rename_status,
+                src=del_action.file.filepath,
+                dst=dl_action.file.filepath,
+                size=size,
             )
         for action in downloads:
-            size_str = bytes_to_human_readable(action.file.size or 0)
-            log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({size_str})')
+            size = action.file.size or 0
+            log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            emit_event(
+                UiEventName.file_status, state="to_download", file=action.file.filepath, size=size
+            )
         for action in uploads:
-            size_str = bytes_to_human_readable(action.file.size or 0)
-            log.info(f'[TO_UPLOAD   ] "{action.file.filepath}" ({size_str})')
+            size = action.file.size or 0
+            log.info(f'[TO_UPLOAD   ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            emit_event(
+                UiEventName.file_status, state="to_upload", file=action.file.filepath, size=size
+            )
         for action in deletes:
-            size_str = bytes_to_human_readable(action.file.size or 0)
-            log.info(f'[TO_DELETE   ] "{action.file.filepath}" ({size_str})')
+            size = action.file.size or 0
+            log.info(f'[TO_DELETE   ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            emit_event(
+                UiEventName.file_status, state="to_delete", file=action.file.filepath, size=size
+            )
 
         log.info(
             f"Preview: {len(synced)} synced, {len(downloads)} downloads, "
@@ -176,7 +196,9 @@ def _run_preview(log) -> None:
         )
     except Exception as e:
         log.error(f"Preview failed: {e}")
+        emit_event(UiEventName.error, message=f"Preview failed: {e}")
     log.info("--- End Preview ---")
+    emit_event(UiEventName.preview_end)
 
 
 def _get_stability_delay_value(cli_value: int | None) -> int:
@@ -384,6 +406,7 @@ def run_sync(
     legend: bool,
     api_key_fd: int | None = None,
     lan_key_fd: int | None = None,
+    events_json_fd: int | None = None,
     auto_confirm: bool = False,
     min_free_disk_space: int = 500,
     sync_hidden: bool = False,
@@ -423,6 +446,10 @@ def run_sync(
                 lan_key_from_fd = None
         except Exception:
             pass  # Fall back to environment variable
+
+    # Install the structured event emitter (P0-B). No-op when the parent did
+    # not pass --events-json-fd, so a plain CLI run is unaffected.
+    init_emitter(events_json_fd)
 
     # Load environment file if specified
     if env_file:
@@ -465,6 +492,7 @@ def run_sync(
     # Validate local directory exists
     if not Path(local_path).exists():
         log.error(f"Directory '{local_path}' does not exist")
+        emit_event(UiEventName.path_not_found, path=local_path)
         return
 
     # Validate log file path
@@ -487,6 +515,7 @@ def run_sync(
     # At this point, effective_server_url is guaranteed to be set
     # (either from args, env, or LAN mode placeholder)
     assert effective_server_url is not None
+    emit_event(UiEventName.server, url=effective_server_url)
 
     # Convert HTTP URL to WebSocket URL for events endpoint
     ws_url = sub(r"^http:", "ws:", effective_server_url)
@@ -496,6 +525,7 @@ def run_sync(
     cid = get_cid()
     set_client_id(cid)
     log.info(f"Session CID: {cid}")
+    emit_event(UiEventName.session, cid=cid)
 
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
@@ -570,6 +600,12 @@ def run_sync(
 
     set_config(config)
     set_debug(debug)
+
+    # Surface the bucket / LAN group on the structured channel so the GUI does
+    # not have to scrape them from log wording.
+    emit_event(UiEventName.bucket, bucket=config["REMOTE_BUCKET"])
+    if config["LAN_GROUP"]:
+        emit_event(UiEventName.group, group=config["LAN_GROUP"])
 
     # Install the process-wide IgnoreMatcher so that all call sites that use
     # is_hidden_file / is_hidden_dir automatically benefit from the new filtering.

@@ -31,6 +31,7 @@ from hsync_client.config import CONFIG, get_api_key
 from hsync_client.constants import HSYNC_VERSION
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.lan import check_version_compatibility
 from hsync_client.models.event import Event, EventName
@@ -93,6 +94,7 @@ async def remote_events() -> None:
         close_timeout=5,
     ) as websocket:
         log.info(f"WebSocket connected to {uri}")
+        emit_event(UiEventName.status, status="connected")
 
         # Authenticate via first message (more secure than URL token)
         # Include client version for compatibility checking
@@ -108,6 +110,7 @@ async def remote_events() -> None:
         auth_result = loads(auth_response)
         if auth_result.get("type") != "auth" or auth_result.get("status") != "ok":
             log.error(f"WebSocket authentication failed: {auth_result}")
+            emit_event(UiEventName.auth_error, message="WebSocket authentication failed")
             # Check if it's a version incompatibility error
             if auth_result.get("error") == "version_incompatible":
                 log.error(
@@ -168,9 +171,11 @@ async def remote_events() -> None:
                 log.warning(f"Connection closed: {e.reason}")
             else:
                 log.warning("Connection closed.")
+            emit_event(UiEventName.status, status="waiting")
         except Exception as e:
             # Unexpected error during event processing
             log.error(f"Exception: {e}")
+            emit_event(UiEventName.error, message=f"Exception: {e}")
         finally:
             # Stop event queue processor
             event_queue.stop()

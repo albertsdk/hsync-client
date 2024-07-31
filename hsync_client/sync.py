@@ -31,6 +31,7 @@ from requests import RequestException, get, post
 from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import (
@@ -162,6 +163,7 @@ async def sync(lan_mode: bool = False) -> None:
                     remove(file.filepath)
                     sync_state.clear_base(file.filepath)
                     log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
+                    emit_event(UiEventName.transfer, op="delete", file=file.filepath)
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
 
@@ -180,15 +182,18 @@ async def sync(lan_mode: bool = False) -> None:
         sync_state.flush()
 
         log.info("Sync completed successfully")
+        emit_event(UiEventName.sync_complete)
 
     except (AuthenticationError, NetworkError, ServerError) as e:
         log.error(f"Sync failed: {e}")
+        emit_event(UiEventName.error, message=f"Sync failed: {e}")
         if is_debug():
             exc_type, exc_value, exc_tb = exc_info()
             if exc_tb:
                 print_tb(exc_tb)
     except Exception as e:
         log.error(f"Unexpected error during sync: {e}")
+        emit_event(UiEventName.error, message=f"Unexpected error during sync: {e}")
         if is_debug():
             exc_type, exc_value, exc_tb = exc_info()
             if exc_tb:
@@ -915,6 +920,7 @@ def update_dir(data: dict) -> Dir | None:
         dir = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
         if dir.path:
             Path(dir.path).mkdir(parents=True, exist_ok=True)
+            emit_event(UiEventName.dir_created, path=dir.path)
             if dir.permissions:
                 set_permissions(dir.path, dir.permissions)
 
