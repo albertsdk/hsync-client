@@ -22,6 +22,12 @@ from asyncio import (
 from json import dumps, loads
 from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 
+from hsync_common.protocol.handshake import (
+    PROTOCOL_VERSION_WS,
+    Capability,
+    build_ws_auth_request,
+    decode_capabilities,
+)
 from hsync_common.text import safe_json_for_log
 from loguru import logger as log
 from watchdog.observers import Observer
@@ -33,7 +39,6 @@ from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_even
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
-from hsync_client.lan import check_version_compatibility
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File
 from hsync_client.sync import sync
@@ -96,13 +101,16 @@ async def remote_events() -> None:
         log.info(f"WebSocket connected to {uri}")
         emit_event(UiEventName.status, status="connected")
 
-        # Authenticate via first message (more secure than URL token)
-        # Include client version for compatibility checking
-        auth_message = {
-            "type": "auth",
-            "token": CONFIG.get("API_KEY") or get_api_key(),
-            "version": HSYNC_VERSION,
-        }
+        # Authenticate via first message (more secure than URL token). The frame
+        # follows the shared handshake contract (hsync_common.protocol.handshake).
+        client_caps: set[Capability] = set()
+        if CONFIG.get("COMPRESSION_ENABLED", False):
+            client_caps.add(Capability.compression)
+        auth_message = build_ws_auth_request(
+            token=CONFIG.get("API_KEY") or get_api_key(),
+            app_version=HSYNC_VERSION,
+            capabilities=client_caps,
+        )
         await websocket.send(dumps(auth_message))
 
         # Wait for authentication confirmation
@@ -111,37 +119,33 @@ async def remote_events() -> None:
         if auth_result.get("type") != "auth" or auth_result.get("status") != "ok":
             log.error(f"WebSocket authentication failed: {auth_result}")
             emit_event(UiEventName.auth_error, message="WebSocket authentication failed")
-            # Check if it's a version incompatibility error
-            if auth_result.get("error") == "version_incompatible":
+            if auth_result.get("error") == "protocol_incompatible":
                 log.error(
-                    f"Server version {auth_result.get('server_version')} is "
-                    f"incompatible with client version {HSYNC_VERSION}"
+                    f"Server protocol {auth_result.get('protocol_version')} is "
+                    f"incompatible with client protocol {PROTOCOL_VERSION_WS}"
                 )
             return
 
-        # Check server version compatibility
-        server_version = auth_result.get("version", "")
-        if server_version:
-            is_compatible, reason = check_version_compatibility(HSYNC_VERSION, server_version)
-            if not is_compatible:
-                log.error(
-                    f"Server version {server_version} is incompatible with "
-                    f"client version {HSYNC_VERSION} (reason: {reason})"
-                )
-                return
-            if reason == "minor_mismatch":
-                log.warning(
-                    f"Server version {server_version} differs from client "
-                    f"version {HSYNC_VERSION}. Sync may have issues."
-                )
+        # Enforce the wire-protocol version: a mismatch is a hard failure
+        # (capabilities are feature flags within a version, never a bridge).
+        server_protocol = auth_result.get("protocol_version", "")
+        if server_protocol != PROTOCOL_VERSION_WS:
+            log.error(
+                f"Server protocol {server_protocol or 'missing'} is incompatible "
+                f"with client protocol {PROTOCOL_VERSION_WS}"
+            )
+            emit_event(UiEventName.auth_error, message="WebSocket protocol incompatible")
+            return
 
-        # Store server compression capability for file transfer decisions
-        server_compression = auth_result.get("compression_enabled", False)
+        # Parse the server's advertised capabilities for this session.
+        server_caps = decode_capabilities(auth_result.get("capabilities"))
+        server_compression = Capability.compression in server_caps
         CONFIG["SERVER_COMPRESSION_ENABLED"] = server_compression
         compression_status = "enabled" if server_compression else "disabled"
         log.info(
             f"WebSocket authenticated successfully "
-            f"(server: {server_version or 'unknown'}, compression: {compression_status})"
+            f"(server: {auth_result.get('app_version') or 'unknown'}, "
+            f"compression: {compression_status})"
         )
 
         log.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")

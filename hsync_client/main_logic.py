@@ -19,6 +19,7 @@ from re import sub
 from typing import Any
 
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 
 from hsync_client.config import (
     CONFIG,
@@ -584,6 +585,7 @@ def run_sync(
             "Authorization": f"Bearer {resolved_api_key}",
             "X-Client-Name": Path(__file__).name,
             "X-Client-Version": HSYNC_VERSION,
+            "X-Protocol-Version": PROTOCOL_VERSION_REST,
         },
         "RECONNECT_DELAY": reconnect_delay,
         "RESYNC": resync,
