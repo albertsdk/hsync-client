@@ -1,0 +1,26 @@
+[Unit]
+Description=HSYNC file synchronization client
+Documentation=https://github.com/albertobasso/hsync-client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=_hsync
+Group=_hsync
+EnvironmentFile=-/etc/hsync/hsync.conf
+ExecStart=/usr/lib/hsync/hsync --lan-mode --watch --bucket ${HSYNC_BUCKET} --path ${HSYNC_PATH} --yes
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/hsync/hsync.log
+StandardError=append:/var/log/hsync/hsync.log
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/hsync /var/log/hsync
+ReadOnlyPaths=/etc/hsync
+
+[Install]
+WantedBy=multi-user.target

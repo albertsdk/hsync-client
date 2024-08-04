@@ -13,6 +13,10 @@
 #   -t, --target TARGET     Build target (default: native)
 #                           Supported:
 #                               native               host OS / arch
+#                               deb                  Debian/Ubuntu .deb
+#                                                    package for host arch
+#                               deb-all              .deb for amd64, arm64,
+#                                                    and armhf (via Docker)
 #                               wd-ex2-ultra-os5     WD My Cloud EX2 Ultra OS5
 #                                                    (ARMv7, packaged as .bin)
 #                               wd-os5-all           Every WD OS5 model
@@ -23,13 +27,22 @@
 #
 # Requirements:
 #   - native target: Python virtual environment (.venv); run 'poetry install'
-#   - wd-ex2-ultra-os5 / wd-os5-all: Docker with qemu-user-static (binfmt)
-#     configured (used for ARMv7 emulation on amd64 hosts).
+#   - deb target: Python virtual environment (.venv) + dpkg-deb (available on
+#     any Debian/Ubuntu system via dpkg-dev)
+#   - deb-all / wd-ex2-ultra-os5 / wd-os5-all: Docker with qemu-user-static
+#     (binfmt) configured (used for cross-arch emulation on amd64 hosts).
 #
 # Output:
 #   native:
 #     - dist/<os>-<arch>/hsync[.exe]   Standalone platform-aware executable
 #       e.g. dist/linux-amd64/hsync, dist/darwin-arm64/hsync
+#   deb:
+#     - dist/deb/hsync-client_<ver>_<arch>.deb
+#                                       Installable with dpkg -i / apt install
+#   deb-all:
+#     - dist/deb/hsync-client_<ver>_amd64.deb
+#     - dist/deb/hsync-client_<ver>_arm64.deb
+#     - dist/deb/hsync-client_<ver>_armhf.deb
 #   wd-ex2-ultra-os5:
 #     - dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_hsync_<ver>.bin
 #                                       Installable through the OS5 dashboard
@@ -138,18 +151,27 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Options:${RESET}
     -c, --clean             Clean build artifacts before building
     -t, --target TARGET     Build target (default: native)
-                            Supported: native, wd-ex2-ultra-os5, wd-os5-all
+                            Supported: native, deb, deb-all,
+                            wd-ex2-ultra-os5, wd-os5-all
     -h, --help              Show this help message
 
 ${BOLD}Examples:${RESET}
     ./compile.sh                                # Native host build
     ./compile.sh --clean                        # Clean and rebuild
+    ./compile.sh --target deb                   # .deb for host arch
+    ./compile.sh --target deb-all               # .deb for amd64, arm64, armhf
     ./compile.sh --target wd-ex2-ultra-os5      # ARMv7 .bin for WD OS5
     ./compile.sh --target wd-os5-all            # All 10 WD OS5 models
 
 ${BOLD}Output:${RESET}
     native:
         ${OUTPUT_DIR}/${APP_NAME}${BIN_EXT}   Standalone executable (platform: ${PLATFORM})
+    deb:
+        ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_<arch>.deb
+    deb-all:
+        ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_amd64.deb
+        ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_arm64.deb
+        ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_armhf.deb
     wd-ex2-ultra-os5:
         dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_${APP_NAME}_<ver>.bin
     wd-os5-all:
@@ -174,8 +196,8 @@ clean_artifacts() {
         ((cleaned++))
     fi
 
-    if [[ -f "${SPEC_FILE}" ]]; then
-        rm -f "${SPEC_FILE}"
+    if [[ -f "${APP_NAME}.spec" ]]; then
+        rm -f "${APP_NAME}.spec"
         ((cleaned++))
     fi
 
@@ -324,6 +346,476 @@ cleanup_temp_files() {
     if [[ ${cleaned} -gt 0 ]]; then
         log_ok "Removed ${cleaned} temporary file(s)"
     fi
+}
+
+# Map uname -m to Debian architecture name.
+_arch_to_deb() {
+    case "$1" in
+        x86_64|amd64)   echo "amd64" ;;
+        aarch64|arm64)  echo "arm64" ;;
+        armv7l|armv7)   echo "armhf" ;;
+        *)              echo "$1" ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# Debian/Ubuntu .deb package build
+# -----------------------------------------------------------------------------
+
+# Configuration for the deb target.
+readonly DEB_DIR="packaging/deb"
+readonly DEB_SRC_CONTROL="${DEB_DIR}/DEBIAN"
+readonly DEB_SRC_DATA="${DEB_DIR}"
+readonly DEB_PKG_NAME="hsync-client"
+readonly DEB_OUTPUT_DIR="${OUTPUT_BASE}/deb"
+readonly DEB_BUILD_DIR="${BUILD_DIR}/deb"
+
+# Normalise a staged .deb payload so the resulting package is lintian-clean:
+#   * directories 0755 / files 0644 under etc/ and usr/ (the source tree is
+#     group-writable; DEBIAN/ control scripts are handled separately);
+#   * the main executable keeps its 0755 bit;
+#   * the man page is gzip-compressed (-n => reproducible header).
+# Shared between the native (build_deb) and Docker (build_deb_all) staging.
+_finalize_deb_stage() {
+    local stage_dir="$1"
+    find "${stage_dir}/etc" "${stage_dir}/usr" -type d -exec chmod 0755 {} + 2>/dev/null || true
+    find "${stage_dir}/etc" "${stage_dir}/usr" -type f -exec chmod 0644 {} + 2>/dev/null || true
+    chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+    local man="${stage_dir}/usr/share/man/man1/${APP_NAME}.1"
+    [[ -f "${man}" ]] && gzip -n -9 -f "${man}"
+    # Sensitive configuration (API/LAN keys): restrict to root only so the
+    # shipped package is never world-readable. postinst re-asserts ownership.
+    chmod 0750 "${stage_dir}/etc/hsync" 2>/dev/null || true
+    [[ -f "${stage_dir}/etc/hsync/hsync.conf" ]] && chmod 0600 "${stage_dir}/etc/hsync/hsync.conf"
+}
+
+# Compute the shared-library dependency string for the staged main executable
+# using dpkg-shlibdeps, so the .deb carries the correct, arch-specific glibc
+# (libc6) minimum version. Echoes the dependency list without the
+# "shlibs:Depends=" prefix (e.g. "libc6 (>= 2.36), libgcc-s1 (>= 4.2)"), or an
+# empty string if dpkg-shlibdeps is unavailable or resolves nothing.
+# dpkg-shlibdeps must run in the target architecture's dpkg environment: on the
+# host for build_deb, inside the per-arch container for build_deb_all.
+# $1 = stage_dir
+_compute_shlib_depends() {
+    local stage_dir="$1"
+    local bin="${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+    command -v dpkg-shlibdeps >/dev/null 2>&1 || { echo ""; return 0; }
+    [[ -f "${bin}" ]] || { echo ""; return 0; }
+    local tmp deps
+    tmp="$(mktemp -d)"
+    mkdir -p "${tmp}/debian"
+    # dpkg-shlibdeps insists on a debian/control in its cwd to derive the
+    # package name; a minimal stub is enough when emitting to stdout (-O).
+    printf 'Source: %s\n\nPackage: %s\nArchitecture: any\n' \
+        "${DEB_PKG_NAME}" "${DEB_PKG_NAME}" > "${tmp}/debian/control"
+    # --ignore-missing-info skips PyInstaller's private libs (no shlibs info)
+    # while still resolving system libraries such as libc6.
+    deps="$(cd "${tmp}" && dpkg-shlibdeps -O --ignore-missing-info \
+        "${bin}" 2>/dev/null \
+        | sed -n 's/^shlibs:Depends=//p')"
+    rm -rf "${tmp}"
+    echo "${deps}"
+}
+
+# Append the computed shared-library dependencies to the Depends: line of the
+# staged DEBIAN/control. No-op (with a warning) if none could be computed.
+# $1 = stage_dir
+_inject_shlib_depends() {
+    local stage_dir="$1"
+    local deps
+    deps="$(_compute_shlib_depends "${stage_dir}")"
+    if [[ -z "${deps}" ]]; then
+        log_warn "dpkg-shlibdeps unavailable; libc6 dependency not added to control"
+        return 0
+    fi
+    log_step "Adding shared-library dependencies: ${deps}"
+    sed -i.bak "s/^Depends: \(.*\)$/Depends: \1, ${deps}/" "${stage_dir}/DEBIAN/control"
+    rm -f "${stage_dir}/DEBIAN/control.bak"
+}
+
+# Build a .deb package for the host architecture (native build, no Docker).
+build_deb() {
+    local version deb_arch
+    version="$(get_version)"
+    deb_arch="$(_arch_to_deb "${ARCH_NAME}")"
+
+    log_step "Building ${DEB_PKG_NAME} v${version} for ${deb_arch} (host build)..."
+
+    # --- prerequisites ---------------------------------------------------
+    check_prerequisites
+    if ! command -v dpkg-deb >/dev/null 2>&1; then
+        log_error "dpkg-deb is required for the deb target."
+        log_info "Install it with: apt install dpkg-dev"
+        exit 1
+    fi
+    mkdir -p "${DEB_OUTPUT_DIR}" "${DEB_BUILD_DIR}"
+
+    # --- PyInstaller --onedir on host ------------------------------------
+    # We reuse the existing build infrastructure but produce a --onedir
+    # layout that we can place under /usr/lib/hsync/.
+    local onedir_dist="${DEB_BUILD_DIR}/pyinstaller"
+    mkdir -p "${onedir_dist}"
+
+    log_step "Compiling ${APP_NAME} with PyInstaller (--onedir)..."
+    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" \
+        --clean --onedir --noconfirm --strip \
+        --name "${APP_NAME}" \
+        --distpath "${onedir_dist}" \
+        --workpath "${DEB_BUILD_DIR}/work" \
+        --specpath "${DEB_BUILD_DIR}/work" \
+        --log-level ERROR \
+        --hidden-import "websockets.legacy" \
+        --hidden-import "websockets.legacy.client" \
+        --hidden-import "websockets.client" \
+        --hidden-import "websockets.exceptions" \
+        --hidden-import "watchdog.observers" \
+        --hidden-import "watchdog.observers.inotify" \
+        --hidden-import "watchdog.observers.inotify_buffer" \
+        --hidden-import "watchdog.events" \
+        --hidden-import "rich._unicode_data" \
+        --hidden-import "rich._unicode_data._versions" \
+        --collect-submodules pathspec \
+        --collect-submodules hsync_common \
+        --exclude-module "pytest" --exclude-module "pytest_asyncio" \
+        --exclude-module "pytest_cov" --exclude-module "tkinter" \
+        --exclude-module "unittest" --exclude-module "pdb" \
+        --exclude-module "doctest" --exclude-module "pip" \
+        --exclude-module "setuptools" --exclude-module "wheel" \
+        --exclude-module "pkg_resources" --exclude-module "rapidfuzz" \
+        "${ENTRY_POINT}"
+
+    local built_dir="${onedir_dist}/${APP_NAME}"
+    if [[ ! -d "${built_dir}" ]]; then
+        log_error "PyInstaller --onedir output not found at ${built_dir}"
+        exit 1
+    fi
+
+    # --- stage .deb tree -------------------------------------------------
+    local stage_dir="${DEB_BUILD_DIR}/${DEB_PKG_NAME}_${version}_${deb_arch}"
+    rm -rf "${stage_dir}"
+    mkdir -p "${stage_dir}"
+
+    log_step "Staging .deb tree at ${stage_dir}..."
+
+    # Copy DEBIAN control files.
+    cp -a "${DEB_SRC_CONTROL}" "${stage_dir}/"
+    chmod 0755 "${stage_dir}/DEBIAN"/*inst* "${stage_dir}/DEBIAN"/*rm* 2>/dev/null || true
+
+    # Copy data files (etc/, usr/), excluding DEBIAN/ itself.
+    local item
+    for item in "${DEB_SRC_DATA}"/*; do
+        local bn
+        bn="$(basename "${item}")"
+        if [[ "${bn}" == "DEBIAN" ]]; then
+            continue
+        fi
+        cp -a "${item}" "${stage_dir}/"
+    done
+
+    # Place the PyInstaller --onedir output under /usr/lib/hsync/.
+    mkdir -p "${stage_dir}/usr/lib"
+    cp -a "${built_dir}" "${stage_dir}/usr/lib/${APP_NAME}"
+    chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+
+    # Create a relative symlink: /usr/bin/hsync -> ../lib/hsync/hsync
+    mkdir -p "${stage_dir}/usr/bin"
+    ln -sf "../lib/${APP_NAME}/${APP_NAME}" "${stage_dir}/usr/bin/${APP_NAME}"
+
+    # Normalise payload permissions and compress the man page.
+    _finalize_deb_stage "${stage_dir}"
+
+    # --- inject version / arch into control ------------------------------
+    log_step "Injecting version ${version} and arch ${deb_arch} into control..."
+    sed -i.bak \
+        -e "s/__VERSION__/${version}/g" \
+        -e "s/__ARCH__/${deb_arch}/g" \
+        "${stage_dir}/DEBIAN/control"
+    rm -f "${stage_dir}/DEBIAN/control.bak"
+
+    # --- inject arch-correct shared-library deps (libc6, ...) ------------
+    # Host arch == target arch here, so dpkg-shlibdeps runs directly.
+    _inject_shlib_depends "${stage_dir}"
+
+    # --- build .deb with dpkg-deb ----------------------------------------
+    log_step "Building .deb package..."
+    # dpkg-deb needs root:root ownership for system paths like /usr/ and /etc/.
+    # Use fakeroot if available, otherwise warn (build may still work).
+    local deb_cmd
+    if command -v fakeroot >/dev/null 2>&1; then
+        deb_cmd="fakeroot"
+    else
+        deb_cmd=""
+        log_warn "fakeroot not available — building .deb with current user ownership"
+    fi
+    ${deb_cmd} dpkg-deb --build "${stage_dir}" "${DEB_OUTPUT_DIR}"
+
+    local deb_name="${DEB_PKG_NAME}_${version}_${deb_arch}.deb"
+    local deb_path="${DEB_OUTPUT_DIR}/${deb_name}"
+    local size deb_abs
+    size="$(du -h "${deb_path}" | cut -f1)"
+    deb_abs="$(cd "$(dirname "${deb_path}")" && pwd)/$(basename "${deb_path}")"
+
+    # Clean up PyInstaller build artifacts.
+    rm -rf "${DEB_BUILD_DIR}/work" "${DEB_BUILD_DIR}/pyinstaller" "${APP_NAME}.spec" 2>/dev/null || true
+
+    echo
+    log_ok "Debian package built!"
+    echo
+    echo -e "  ${BOLD}Package:${RESET}  ${deb_name}"
+    echo -e "  ${BOLD}Arch:${RESET}     ${deb_arch}"
+    echo -e "  ${BOLD}Size:${RESET}     ${size}"
+    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo
+    echo -e "${DIM}Install with:${RESET}"
+    echo -e "${DIM}  sudo dpkg -i ${deb_abs}${RESET}"
+    echo -e "${DIM}  sudo apt install -f  # to resolve any missing dependencies${RESET}"
+    echo
+    local sep="────────────────────────────────────────────────────────────"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo -e "${GREEN}${BOLD}  📦  Installation package:${RESET}"
+    echo -e "${GREEN}${BOLD}      ${deb_abs}${RESET}"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+}
+
+# -----------------------------------------------------------------------------
+# Debian/Ubuntu .deb — All architectures (via Docker)
+# -----------------------------------------------------------------------------
+
+# Configuration for the deb-all target.
+readonly DEB_ALL_DIR="${DEB_DIR}"
+readonly DEB_ALL_OUTPUT_DIR="${OUTPUT_BASE}/deb"
+readonly DEB_ALL_BUILD_DIR="${BUILD_DIR}/deb-all"
+readonly DEB_ALL_BUILDER_IMAGE_PREFIX="hsync-deb-builder"
+
+# Build .deb packages for all 3 Debian/Ubuntu architectures (amd64, arm64, armhf).
+#
+# Docker cross-compilation is used — one build per arch:
+#
+#   amd64 → amd64/debian:bookworm
+#   arm64 → arm64v8/debian:bookworm
+#   armhf → arm32v7/debian:bookworm
+#
+# Output: dist/deb/hsync-client_<ver>_<arch>.deb
+build_deb_all() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${DEB_PKG_NAME} v${version} for all 3 Debian/Ubuntu architectures..."
+
+    # ── prerequisites ─────────────────────────────────────────────────────────
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the deb-all target."
+        exit 1
+    fi
+    if [[ ! -d "${DEB_SRC_CONTROL}" ]]; then
+        log_error "DEBIAN control directory missing: ${DEB_SRC_CONTROL}"
+        exit 1
+    fi
+
+    mkdir -p "${DEB_ALL_OUTPUT_DIR}"
+
+    local repo_root
+    repo_root="$(cd .. && pwd)"
+
+    # ── qemu (required for arm64/armhf on amd64 hosts) ────────────────────────
+    log_step "Registering qemu-user-static binfmt handlers (idempotent)..."
+    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
+        >/dev/null 2>&1 || log_warn "qemu-user-static registration skipped (may already be active)"
+
+    # Common PyInstaller flags — used for all arch builds.
+    local pyinstaller_flags="
+        --clean --onedir --noconfirm --strip
+        --name ${APP_NAME}
+        --log-level ERROR
+        --hidden-import websockets.legacy
+        --hidden-import websockets.legacy.client
+        --hidden-import websockets.client
+        --hidden-import websockets.exceptions
+        --hidden-import watchdog.observers
+        --hidden-import watchdog.observers.inotify
+        --hidden-import watchdog.observers.inotify_buffer
+        --hidden-import watchdog.events
+        --hidden-import rich._unicode_data
+        --hidden-import rich._unicode_data._versions
+        --collect-submodules pathspec
+        --collect-submodules hsync_common
+        --exclude-module pytest --exclude-module pytest_asyncio
+        --exclude-module pytest_cov --exclude-module tkinter
+        --exclude-module unittest --exclude-module pdb
+        --exclude-module doctest --exclude-module pip
+        --exclude-module setuptools --exclude-module wheel
+        --exclude-module pkg_resources --exclude-module rapidfuzz
+        ${ENTRY_POINT}"
+
+    # Architecture definitions: deb_arch  docker_platform  base_image
+    local -A arch_docker_platform
+    local -A arch_base_image
+    arch_docker_platform["amd64"]="linux/amd64"
+    arch_base_image["amd64"]="amd64/debian:bookworm"
+    arch_docker_platform["arm64"]="linux/arm64"
+    arch_base_image["arm64"]="arm64v8/debian:bookworm"
+    arch_docker_platform["armhf"]="linux/arm/v7"
+    arch_base_image["armhf"]="arm32v7/debian:bookworm"
+
+    local -a deb_archs=("amd64" "arm64" "armhf")
+    local out_abs
+    out_abs="$(cd "${DEB_ALL_OUTPUT_DIR}" && pwd)"
+
+    for deb_arch in "${deb_archs[@]}"; do
+        local docker_platform="${arch_docker_platform[${deb_arch}]}"
+        local base_image="${arch_base_image[${deb_arch}]}"
+        local builder_tag="${DEB_ALL_BUILDER_IMAGE_PREFIX}:${deb_arch}"
+        local arch_build_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}"
+        local bin_dir="${arch_build_dir}/pyinstaller"
+        local work_dir="${arch_build_dir}/work"
+        local stage_dir="${arch_build_dir}/${DEB_PKG_NAME}_${version}_${deb_arch}"
+        mkdir -p "${bin_dir}" "${work_dir}"
+
+        echo
+        log_step "─── ${deb_arch} build ───────────────────────────────────────"
+
+        # --- builder image ----------------------------------------------------
+        log_step "Building Docker image ${builder_tag}..."
+        docker build \
+            --platform "${docker_platform}" \
+            --build-arg BASE_IMAGE="${base_image}" \
+            --build-arg TARGET_PLATFORM="${docker_platform}" \
+            -t "${builder_tag}" \
+            -f "${DEB_ALL_DIR}/Dockerfile.builder" \
+            "${DEB_ALL_DIR}"
+
+        # --- PyInstaller in container -----------------------------------------
+        log_step "Compiling ${deb_arch} binary inside container..."
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -v "${repo_root}:/repo" \
+            -w /repo/hsync-client \
+            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
+            -e POETRY_REQUESTS_TIMEOUT=300 \
+            "${builder_tag}" \
+            bash -c "
+                set -euo pipefail
+                poetry config virtualenvs.in-project true
+                poetry config installer.max-workers 4
+                install_ok=0
+                for attempt in 1 2 3; do
+                    if poetry install --no-root --without dev; then install_ok=1; break; fi
+                    echo \"poetry install attempt \${attempt}/3 failed, retrying in 10s...\" >&2
+                    sleep 10
+                done
+                [ \"\${install_ok}\" -eq 1 ] || { echo 'poetry install failed after 3 attempts' >&2; exit 1; }
+                poetry run pyinstaller \
+                    ${pyinstaller_flags} \
+                    --distpath ${bin_dir} \
+                    --workpath ${work_dir} \
+                    --specpath ${work_dir}
+            "
+
+        local built_dir="${bin_dir}/${APP_NAME}"
+        if [[ ! -d "${built_dir}" ]]; then
+            log_error "${deb_arch} build directory not produced at ${built_dir}"
+            exit 1
+        fi
+        log_ok "${deb_arch} binary ready ($(du -sh "${built_dir}" | cut -f1))"
+
+        # --- stage .deb tree --------------------------------------------------
+        log_step "Staging .deb tree for ${deb_arch}..."
+        rm -rf "${stage_dir}"
+        mkdir -p "${stage_dir}"
+
+        # Copy DEBIAN control files.
+        cp -a "${DEB_SRC_CONTROL}" "${stage_dir}/"
+        chmod 0755 "${stage_dir}/DEBIAN"/*inst* "${stage_dir}/DEBIAN"/*rm* 2>/dev/null || true
+
+        # Copy data files (etc/, usr/), excluding DEBIAN/ itself.
+        local item
+        for item in "${DEB_SRC_DATA}"/*; do
+            local bn
+            bn="$(basename "${item}")"
+            if [[ "${bn}" == "DEBIAN" || "${bn}" == "Dockerfile.builder" ]]; then
+                continue
+            fi
+            cp -a "${item}" "${stage_dir}/"
+        done
+
+        # Place the PyInstaller --onedir output under /usr/lib/hsync/.
+        mkdir -p "${stage_dir}/usr/lib"
+        cp -a "${built_dir}" "${stage_dir}/usr/lib/${APP_NAME}"
+        chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+
+        # Create a relative symlink: /usr/bin/hsync -> ../lib/hsync/hsync
+        mkdir -p "${stage_dir}/usr/bin"
+        ln -sf "../lib/${APP_NAME}/${APP_NAME}" "${stage_dir}/usr/bin/${APP_NAME}"
+
+        # Normalise payload permissions and compress the man page.
+        _finalize_deb_stage "${stage_dir}"
+
+        # Inject version / arch into control.
+        sed -i.bak \
+            -e "s/__VERSION__/${version}/g" \
+            -e "s/__ARCH__/${deb_arch}/g" \
+            "${stage_dir}/DEBIAN/control"
+        rm -f "${stage_dir}/DEBIAN/control.bak"
+
+        # --- build .deb with dpkg-deb -----------------------------------------
+        log_step "Building .deb for ${deb_arch}..."
+        # Inside the container dpkg-deb runs as root — no fakeroot needed.
+        # dpkg-shlibdeps runs here too (not on the host) so the libc6 minimum
+        # version is resolved against the target architecture's dpkg database.
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -v "${stage_dir}:/pkg" \
+            -v "${out_abs}:/out" \
+            -w /pkg \
+            "${builder_tag}" \
+            bash -c "
+                set -e
+                bin=/pkg/usr/lib/${APP_NAME}/${APP_NAME}
+                tmp=\$(mktemp -d)
+                mkdir -p \"\${tmp}/debian\"
+                printf 'Source: %s\n\nPackage: %s\nArchitecture: any\n' '${DEB_PKG_NAME}' '${DEB_PKG_NAME}' > \"\${tmp}/debian/control\"
+                deps=\$(cd \"\${tmp}\" && dpkg-shlibdeps -O --ignore-missing-info \"\${bin}\" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+                rm -rf \"\${tmp}\"
+                if [ -n \"\${deps}\" ]; then
+                    sed -i \"s/^Depends: \\(.*\\)\$/Depends: \\1, \${deps}/\" /pkg/DEBIAN/control
+                    echo \"Added shared-library dependencies: \${deps}\"
+                else
+                    echo 'WARNING: dpkg-shlibdeps resolved no dependencies' >&2
+                fi
+                dpkg-deb --build /pkg /out
+                chmod 0644 /out/${DEB_PKG_NAME}_${version}_${deb_arch}.deb
+            "
+
+        local deb_name="${DEB_PKG_NAME}_${version}_${deb_arch}.deb"
+        local deb_path="${out_abs}/${deb_name}"
+        if [[ ! -f "${deb_path}" ]]; then
+            log_error ".deb not produced for ${deb_arch} at ${deb_path}"
+            exit 1
+        fi
+        local pkg_size
+        pkg_size="$(du -h "${deb_path}" | cut -f1)"
+        log_ok "  → ${deb_name} (${pkg_size})"
+    done
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    echo
+    log_ok "All 3 Debian packages built!"
+    echo
+    echo -e "  ${BOLD}Version:${RESET}   ${version}"
+    echo -e "  ${BOLD}Output:${RESET}    ${out_abs}/"
+    echo
+    local sep="────────────────────────────────────────────────────────────"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo -e "${GREEN}${BOLD}  📦  Installation packages:${RESET}"
+    for deb_arch in "${deb_archs[@]}"; do
+        local f="${out_abs}/${DEB_PKG_NAME}_${version}_${deb_arch}.deb"
+        [[ -f "${f}" ]] && echo -e "${GREEN}${BOLD}      $(basename "${f}")${RESET}"
+    done
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo
+    echo -e "${DIM}Install with:  sudo dpkg -i ${out_abs}/${DEB_PKG_NAME}_${version}_<arch>.deb${RESET}"
 }
 
 # -----------------------------------------------------------------------------
@@ -871,6 +1363,31 @@ main() {
             fi
             build_binary
             ;;
+        deb)
+            check_prerequisites
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning deb artifacts..."
+                rm -rf "${DEB_OUTPUT_DIR}" "${DEB_BUILD_DIR}"
+                echo
+            fi
+            build_deb
+            ;;
+        deb-all)
+            if [[ ! -f "pyproject.toml" ]]; then
+                log_error "pyproject.toml not found. Run from the project root."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning deb-all artifacts..."
+                rm -rf "${DEB_ALL_OUTPUT_DIR}" "${DEB_ALL_BUILD_DIR}"
+                docker image rm -f \
+                    "hsync-deb-builder:amd64" \
+                    "hsync-deb-builder:arm64" \
+                    "hsync-deb-builder:armhf" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_deb_all
+            ;;
         wd-ex2-ultra-os5)
             # Only pyproject.toml is required (poetry runs inside the container).
             if [[ ! -f "pyproject.toml" ]]; then
@@ -902,7 +1419,7 @@ main() {
             ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: native, wd-ex2-ultra-os5, wd-os5-all"
+            echo "Supported targets: native, deb, deb-all, wd-ex2-ultra-os5, wd-os5-all"
             exit 1
             ;;
     esac

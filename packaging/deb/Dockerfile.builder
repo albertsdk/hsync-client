@@ -1,0 +1,141 @@
+# syntax=docker/dockerfile:1.6
+#
+# HSYNC — Debian/Ubuntu .deb builder image (amd64 / arm64 / armhf)
+#
+# Multi-stage build that produces a debian:bookworm (glibc 2.36) environment
+# containing Python 3.12, Poetry, and dpkg-dev, ready to:
+#   1. invoke PyInstaller on the project sources mounted at /repo
+#   2. assemble a .deb package with dpkg-deb
+#
+# debian:bookworm targets Debian 12 / Ubuntu 22.04+ (glibc 2.36).
+#
+# Built and consumed locally by:
+#   compile.sh --target deb-all
+# Never published to any registry.
+
+# PYTHON_VERSION and PYTHON_SHA256 are kept in sync with the upstream
+# docker-library/python image (https://github.com/docker-library/python).
+ARG PYTHON_VERSION=3.12.13
+ARG PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684
+
+# Base image and target platform are parametrised so the same Dockerfile
+# produces a builder for every CPU family:
+#   amd64 → amd64/debian:bookworm
+#   arm64 → arm64v8/debian:bookworm
+#   armhf → arm32v7/debian:bookworm
+ARG BASE_IMAGE=amd64/debian:bookworm
+ARG TARGET_PLATFORM=linux/amd64
+
+# -----------------------------------------------------------------------------
+# Stage 1 — compile Python 3.12 from source (cached forever)
+# -----------------------------------------------------------------------------
+FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE} AS python-builder
+
+ARG PYTHON_VERSION
+ARG PYTHON_SHA256
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
+
+# Build dependencies required by the CPython source distribution.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        libssl-dev \
+        zlib1g-dev \
+        libbz2-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libncursesw5-dev \
+        libffi-dev \
+        liblzma-dev \
+        uuid-dev \
+        xz-utils \
+        tk-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build & install CPython into /opt/python3.12. ``--enable-optimizations`` is
+# intentionally omitted — PGO under qemu emulation is extremely slow and the
+# gains are marginal for our use case (one-shot PyInstaller build).
+RUN set -eux; \
+    curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz" \
+        -o /tmp/python.tar.xz; \
+    echo "${PYTHON_SHA256} /tmp/python.tar.xz" | sha256sum -c -; \
+    mkdir -p /tmp/python-src; \
+    tar -xJf /tmp/python.tar.xz -C /tmp/python-src --strip-components=1; \
+    cd /tmp/python-src; \
+    ./configure \
+        --prefix=/opt/python3.12 \
+        --enable-shared \
+        --with-system-ffi \
+        --with-ensurepip=install \
+        LDFLAGS=-Wl,-rpath=/opt/python3.12/lib; \
+    make -j"$(nproc)"; \
+    make install; \
+    /opt/python3.12/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
+    rm -rf /tmp/python-src /tmp/python.tar.xz
+
+# -----------------------------------------------------------------------------
+# Stage 2 — runtime builder image
+# -----------------------------------------------------------------------------
+FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    PATH=/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=0 \
+    POETRY_VIRTUALENVS_CREATE=true \
+    POETRY_NO_INTERACTION=1
+
+# Runtime dependencies for the produced binary + tooling for PyInstaller +
+# dpkg-dev for .deb packaging + build-essential for native Python extensions.
+# The *-dev packages are needed because on armhf PyPI does not publish wheels
+# for ``cryptography``, requiring a source build.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        binutils \
+        upx-ucl \
+        libsqlite3-0 \
+        libbz2-1.0 \
+        liblzma5 \
+        libncursesw6 \
+        libreadline8 \
+        git \
+        build-essential \
+        pkg-config \
+        libffi-dev \
+        libssl-dev \
+        zlib1g-dev \
+        dpkg-dev \
+        fakeroot \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bring in the Python 3.12 install from the previous stage.
+COPY --from=python-builder /opt/python3.12 /opt/python3.12
+
+# Rust toolchain — ``cryptography`` >= 35 uses pyo3 for its native modules.
+# Pinned to a known version so the cached layer is reproducible.
+ENV RUSTUP_HOME=/opt/rust/rustup \
+    CARGO_HOME=/opt/rust/cargo \
+    PATH=/opt/rust/cargo/bin:/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.84.0; \
+    rustc --version; \
+    cargo --version
+
+# Poetry — pinned to a known-good release for reproducibility.
+RUN /opt/python3.12/bin/python3 -m pip install --no-cache-dir --prefer-binary \
+        "poetry==1.8.3"
+
+# Workdir is mounted by the caller (``-v "$PWD:/src"``).
+WORKDIR /src
+
+# Default command is a shell so the entrypoint can be overridden.
+CMD ["bash"]
