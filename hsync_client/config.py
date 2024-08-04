@@ -82,6 +82,13 @@ class EnvSettings(BaseSettings):
         default=False,
         description="Never become master in LAN mode (always remain a client/slave)",
     )
+    lan_require_pairing: bool = Field(
+        default=False,
+        description=(
+            "Strict pairing: refuse a first-seen LAN master certificate until it is "
+            "confirmed out of band (disables Trust-On-First-Use auto-pinning)"
+        ),
+    )
 
     # Sync Settings
     ignore_delete: bool = Field(
@@ -202,6 +209,11 @@ def get_never_master() -> bool:
     return get_env_settings().never_master
 
 
+def get_lan_require_pairing() -> bool:
+    """Get strict-pairing mode (out-of-band cert confirmation) from environment."""
+    return get_env_settings().lan_require_pairing
+
+
 def get_ignore_delete() -> bool:
     """Get ignore delete setting from environment."""
     return get_env_settings().ignore_delete
@@ -315,6 +327,8 @@ class HsyncConfig(TypedDict):
     LAN_FORCE_MASTER: bool
     # Never let this client become master in LAN mode (always client/slave)
     LAN_NEVER_MASTER: bool
+    # Strict pairing: refuse a first-seen master cert until confirmed out of band
+    LAN_REQUIRE_PAIRING: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Ignore file deletion events (backup mode)

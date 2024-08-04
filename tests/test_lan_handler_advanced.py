@@ -559,10 +559,11 @@ def _make_master(**overrides: Any) -> MagicMock:
 class TestRunAsSlave:
     """Direct tests for the _run_as_slave branches not exercised elsewhere."""
 
-    def test_https_sets_fingerprint_and_bearer(self, tmp_path):
+    def test_https_sets_fingerprint_and_bearer(self, tmp_path, monkeypatch):
         """HTTPS master with LAN_KEY stores fingerprint and sends a Bearer token."""
         from hsync_client.lan_handler import _run_as_slave
 
+        monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(tmp_path / "pins.json"))
         config = _make_lan_config(tmp_path, LAN_HTTPS=True, LAN_KEY="secret")
         master = _make_master(
             use_https=True,
@@ -586,6 +587,99 @@ class TestRunAsSlave:
         assert config["REQUEST_HEADERS"]["Authorization"] == "Bearer secret"
         assert config["SERVER_COMPRESSION_ENABLED"] is True
         assert config["API"]["events"]
+
+    def test_first_https_sighting_pins_fingerprint(self, tmp_path, monkeypatch):
+        """First time a master's HTTPS cert is seen it is pinned (TOFU)."""
+        from hsync_client.lan_handler import _run_as_slave
+        from hsync_client.pinning import PinStore
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(pin_file))
+        config = _make_lan_config(tmp_path, LAN_HTTPS=True, LAN_KEY="secret")
+        master = _make_master(
+            use_https=True,
+            cert_fingerprint="a" * 40,
+            get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
+        )
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = master
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run"),
+        ):
+            _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+
+        assert PinStore(pin_file).get("master-1", "test-bucket") == "a" * 40
+
+    def test_changed_fingerprint_is_refused(self, tmp_path, monkeypatch):
+        """A master whose cert no longer matches the pin is refused (no connect)."""
+        from hsync_client.lan_handler import _run_as_slave
+        from hsync_client.pinning import PinStore
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(pin_file))
+        PinStore(pin_file).set("master-1", "test-bucket", "a" * 40)
+
+        config = _make_lan_config(tmp_path, LAN_HTTPS=True, LAN_KEY="secret")
+        master = _make_master(
+            use_https=True,
+            cert_fingerprint="b" * 40,
+            get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
+        )
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = master
+        mock_log = MagicMock()
+        mock_sync = MagicMock()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=mock_sync),
+            patch("asyncio.run") as mock_run,
+        ):
+            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+
+        assert result is False
+        assert config["MASTER_CERT_FINGERPRINT"] is None
+        mock_run.assert_not_called()
+        assert any("FINGERPRINT_CHANGED" in str(c) for c in mock_log.error.call_args_list)
+
+    def test_strict_pairing_refuses_unpinned_first_sighting(self, tmp_path, monkeypatch):
+        """With strict pairing a first-seen cert is refused and never pinned."""
+        from hsync_client.lan_handler import _run_as_slave
+        from hsync_client.pinning import PinStore
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(pin_file))
+
+        config = _make_lan_config(
+            tmp_path, LAN_HTTPS=True, LAN_KEY="secret", LAN_REQUIRE_PAIRING=True
+        )
+        master = _make_master(
+            use_https=True,
+            cert_fingerprint="a" * 40,
+            get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
+        )
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = master
+        mock_log = MagicMock()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run") as mock_run,
+        ):
+            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+
+        assert result is False
+        assert config["MASTER_CERT_FINGERPRINT"] is None
+        mock_run.assert_not_called()
+        assert PinStore(pin_file).get("master-1", "test-bucket") is None
+        assert any("PAIRING_NEEDED" in str(c) for c in mock_log.error.call_args_list)
 
     def test_lan_key_over_http_warns_and_omits_header(self, tmp_path):
         """LAN_KEY set but master is plain HTTP: warn and never send the key."""

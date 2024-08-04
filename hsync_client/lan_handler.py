@@ -15,12 +15,19 @@ import time
 from re import sub
 from typing import TYPE_CHECKING
 
+from hsync_common.protocol.pairing import (
+    PinDecision,
+    evaluate_pin,
+    requires_pairing_confirmation,
+)
+
 from hsync_client.config import set_config
 from hsync_client.constants import DISCOVERY_POLL_INTERVAL
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
+from hsync_client.pinning import default_pin_store
 from hsync_client.sync import sync
 
 if TYPE_CHECKING:
@@ -310,6 +317,63 @@ def _run_as_master(
     return lan_server, lan_ws_server
 
 
+def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
+    """TOFU-pin the master's certificate; return whether the connection may proceed.
+
+    The trust decisions are the shared ones in
+    :mod:`hsync_common.protocol.pairing`; here we only persist the pin and surface
+    structured security events so a front-end can prompt the user instead of
+    silently trusting a certificate.
+
+    Two cases refuse the connection (return ``False``):
+
+    * **Strict pairing** (``LAN_REQUIRE_PAIRING``): a first-seen certificate is
+      not auto-pinned. We emit ``pairing_needed`` and refuse until the operator
+      confirms the peer out of band (by pinning it or disabling strict pairing).
+    * **Fingerprint changed**: the certificate no longer matches the pin. We log
+      a parsable ``[FINGERPRINT_CHANGED]`` line, emit ``fingerprint_changed`` and
+      refuse (possible man-in-the-middle).
+    """
+    store = default_pin_store()
+    bucket = config["REMOTE_BUCKET"]
+
+    if config.get("LAN_REQUIRE_PAIRING", False):
+        first_seen = evaluate_pin(store.get(master.cid, bucket), master.cert_fingerprint)
+        if requires_pairing_confirmation(first_seen, require_pairing=True):
+            log.error(
+                f"[PAIRING_NEEDED] master {master.cid} at {master.address} presented an "
+                f"unpinned certificate and strict pairing is enabled. Refusing to connect; "
+                f"confirm this peer out of band (pin it) to trust it."
+            )
+            emit_event(
+                UiEventName.pairing_needed,
+                peer_cid=master.cid,
+                peer_address=master.address,
+                fingerprint=master.cert_fingerprint,
+                message="LAN master requires explicit pairing confirmation",
+            )
+            return False
+
+    decision = store.check_and_record(master.cid, bucket, master.cert_fingerprint)
+    if decision is PinDecision.changed:
+        log.error(
+            f"[FINGERPRINT_CHANGED] master {master.cid} at {master.address} presented a "
+            f"certificate that does not match the pinned one. Refusing to connect "
+            f"(possible man-in-the-middle). Remove the stale pin to re-trust this peer."
+        )
+        emit_event(
+            UiEventName.fingerprint_changed,
+            peer_cid=master.cid,
+            peer_address=master.address,
+            fingerprint=master.cert_fingerprint,
+            message="LAN master certificate fingerprint changed",
+        )
+        return False
+    if decision is PinDecision.trusted:
+        log.info(f"Pinned LAN master certificate for {master.cid} (trust on first use)")
+    return True
+
+
 def _run_as_slave(
     config: "HsyncConfig",
     log,
@@ -352,6 +416,11 @@ def _run_as_slave(
         emit_event(UiEventName.server, url=master_url)
 
         if master.use_https and master.cert_fingerprint:
+            if not _evaluate_master_pin(config, master, log):
+                # Stay in the discovery loop (persistent) rather than connecting to
+                # a master whose identity can no longer be verified or which has not
+                # yet been paired out of band.
+                return persistent or wait_indefinitely_for_peer
             log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
             config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 

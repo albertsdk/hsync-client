@@ -35,6 +35,7 @@ from hsync_client.config import (
     get_lan_key,
     get_lan_persistent,
     get_lan_port,
+    get_lan_require_pairing,
     get_never_master,
     get_peer_timeout,
     get_server_url,
@@ -317,6 +318,51 @@ def _check_deletion_risk(
     if response not in ("y", "yes"):
         logger.info("Sync cancelled by user.")
         raise SystemExit(0)
+
+
+def _check_lan_write_policy(
+    lan_mode: bool,
+    lan_https: bool,
+    lan_key: str | None,
+    sync_direction: str,
+    auto_confirm: bool,
+    logger: Any,
+) -> None:
+    """Require a shared LAN key for write-capable sync in non-interactive mode.
+
+    A self-signed LAN transport hides traffic but does not prove the master's
+    identity, so an unattended client that uploads data must authenticate with
+    ``HSYNC_LAN_KEY``. The trust policy lives in
+    :func:`hsync_common.protocol.pairing.lan_write_requires_key`; here we apply
+    it. ``auto_confirm`` (the ``--yes`` flag) marks a non-interactive run, where
+    no operator can vouch for the peer out of band.
+
+    Raises SystemExit when the policy is violated.
+    """
+    if not lan_mode:
+        return
+
+    from hsync_common.protocol.pairing import lan_write_requires_key
+
+    interactive = not auto_confirm
+    if not lan_write_requires_key(sync_direction, interactive=interactive):
+        return
+
+    # A key is only effective over HTTPS; it is dropped over plain HTTP, so plain
+    # HTTP can never satisfy the policy for unattended writes.
+    if lan_key and lan_https:
+        return
+
+    logger.error(
+        "[AUTH_REQUIRED] Non-interactive LAN write requires authentication. "
+        "Set HSYNC_LAN_KEY (with HSYNC_LAN_HTTPS enabled) to upload to the master, "
+        "or run interactively (omit --yes), or use --sync-direction download-only."
+    )
+    emit_event(
+        UiEventName.auth_required,
+        message="A shared LAN key (HSYNC_LAN_KEY over HTTPS) is required for non-interactive writes",
+    )
+    raise SystemExit(1)
 
 
 def _check_disk_space(local_path: str, min_free_mb: int, logger: Any) -> None:
@@ -604,6 +650,7 @@ def run_sync(
         "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),
         "LAN_FORCE_MASTER": force_master,
         "LAN_NEVER_MASTER": never_master or get_never_master(),
+        "LAN_REQUIRE_PAIRING": get_lan_require_pairing(),
         "MASTER_CERT_FINGERPRINT": None,
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
@@ -651,6 +698,17 @@ def run_sync(
             lan_mode=lan_mode,
             force_master=force_master,
             sync_direction=sync_direction,
+            auto_confirm=auto_confirm,
+            logger=log,
+        )
+
+    # Enforce the LAN-key policy for unattended write-capable sync (§5).
+    if not dryrun:
+        _check_lan_write_policy(
+            lan_mode=config["LAN_MODE"],
+            lan_https=config["LAN_HTTPS"],
+            lan_key=config["LAN_KEY"],
+            sync_direction=config["SYNC_DIRECTION"],
             auto_confirm=auto_confirm,
             logger=log,
         )
