@@ -42,6 +42,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Gate the markdown docs on valid relative links, including the cross-repo
+      # ADR pointers into the sibling hsync-common checkout. Pure stdlib script.
+      - name: Docs link-check
+        working-directory: hsync-client
+        run: python ../hsync-common/scripts/dev/check_doc_links.py .
+
       - name: Install Poetry
         run: pipx install poetry
 
