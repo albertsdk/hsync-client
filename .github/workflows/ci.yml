@@ -1,0 +1,62 @@
+# CI — hsync-client (§6)
+# Lint + tests for the CLI / LAN P2P client. hsync-client depends on the shared
+# library through a Poetry path dependency (../hsync-common), so the sibling repo
+# is checked out alongside it. The pytest run includes the LAN/pairing behaviour
+# tests that consume the shared golden fixtures.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: lint + tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - name: Checkout hsync-client
+        uses: actions/checkout@v4
+        with:
+          path: hsync-client
+
+      # Path dependency: ../hsync-common must sit next to this repo.
+      # For a private hsync-common, add `token: ${{ secrets.HSYNC_COMMON_PAT }}`.
+      - name: Checkout hsync-common
+        uses: actions/checkout@v4
+        with:
+          repository: albertobasso/hsync-common
+          ref: main
+          path: hsync-common
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        working-directory: hsync-client
+        run: poetry install --no-interaction
+
+      - name: Ruff (lint)
+        working-directory: hsync-client
+        run: poetry run ruff check .
+
+      - name: Ruff (format check)
+        working-directory: hsync-client
+        run: poetry run ruff format --check .
+
+      - name: Tests
+        working-directory: hsync-client
+        run: poetry run pytest -q
