@@ -374,6 +374,17 @@ def main(
             rich_help_panel="LAN Mode",
         ),
     ] = False,
+    require_pairing: Annotated[
+        bool,
+        typer.Option(
+            "--require-pairing",
+            help=(
+                "Strict pairing: refuse a first-seen LAN master certificate until it is "
+                "confirmed out of band (disables Trust-On-First-Use auto-pinning)."
+            ),
+            rich_help_panel="LAN Mode",
+        ),
+    ] = False,
     # -------------------------------------------------------------------------
     # Output
     # -------------------------------------------------------------------------
@@ -617,6 +628,7 @@ def main(
         lan_persistent=lan_persistent,
         force_master=force_master,
         never_master=never_master,
+        lan_require_pairing=require_pairing,
         debug=debug,
         quiet=quiet,
         logfile=logfile,

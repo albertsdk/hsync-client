@@ -255,6 +255,22 @@ class TestTyperCli:
         assert call_kwargs["lan_mode"] is True
 
     @patch("hsync_client.main_logic.run_sync")
+    def test_require_pairing_default_false(self, mock_run_sync):
+        """Without --require-pairing, lan_require_pairing defaults to False."""
+        result = runner.invoke(app, ["-b", "test", "--lan-mode"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["lan_require_pairing"] is False
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_require_pairing_option(self, mock_run_sync):
+        """CLI accepts --require-pairing and forwards lan_require_pairing=True."""
+        result = runner.invoke(app, ["-b", "test", "--lan-mode", "--require-pairing"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["lan_require_pairing"] is True
+
+    @patch("hsync_client.main_logic.run_sync")
     def test_yes_flag_long(self, mock_run_sync):
         """CLI accepts --yes flag."""
         result = runner.invoke(app, ["-b", "test", "--yes", "-s", "http://test:8000"])
