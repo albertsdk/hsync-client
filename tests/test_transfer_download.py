@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from requests import RequestException
 
+from hsync_client.events import UiEventName
 from hsync_client.models.file import File
 from hsync_client.transfer import download_file
 
@@ -29,6 +30,8 @@ class TestDownloadFile:
                     "REMOTE_BUCKET": "test",
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "LOCAL_BUCKET": str(tmp_path),
+                    # Disable retry/backoff (§11) so a single attempt is asserted.
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
             patch("hsync_client.transfer.get") as mock_get,
@@ -97,6 +100,8 @@ class TestDownloadFile:
                     "REMOTE_BUCKET": "test",
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "LOCAL_BUCKET": str(tmp_path),
+                    # Disable retry/backoff (§11): a 5xx is raised and surfaced once.
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
@@ -209,6 +214,42 @@ class TestDownloadFile:
         ):
             download_file(file)
             mock_replace.assert_not_called()
+
+
+class TestDownloadRetry:
+    """Retry/backoff and transfer_failed surfacing for downloads (§11)."""
+
+    def test_transient_error_retries_then_emits_transfer_failed(self, tmp_path):
+        """A persistent transient error is retried then surfaced as transfer_failed."""
+        file = File(filepath="file.txt", sha256sum="abc123", size=100)
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "TRANSFER_RETRY_ATTEMPTS": 3,
+                    "TRANSFER_RETRY_MIN_WAIT": 0,
+                    "TRANSFER_RETRY_MAX_WAIT": 0,
+                },
+            ),
+            patch("hsync_client.transfer.get") as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.emit_event") as mock_emit,
+        ):
+            mock_get.side_effect = RequestException("flaky network")
+            download_file(file)
+            # Exhausted all attempts before giving up.
+            assert mock_get.call_count == 3
+            # Surfaced exactly one transfer_failed event for the UI.
+            failed = [
+                c for c in mock_emit.call_args_list if c.args[0] == UiEventName.transfer_failed
+            ]
+            assert len(failed) == 1
+            assert failed[0].kwargs["op"] == "download"
 
 
 class TestDownloadFileResume:

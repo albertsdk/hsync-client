@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from requests import RequestException
 
+from hsync_client.events import UiEventName
 from hsync_client.models.file import File
 from hsync_client.transfer import upload_file
 
@@ -19,6 +20,8 @@ _BASE_CONFIG = {
     "REMOTE_BUCKET": "test",
     "REQUEST_HEADERS": {"X-API-Key": "test"},
     "CID": "test-client",
+    # Disable retry/backoff (§11) so error-status paths resolve in one attempt.
+    "TRANSFER_RETRY_ATTEMPTS": 1,
 }
 
 
@@ -163,6 +166,8 @@ class TestUploadFile:
                     "LOCAL_BUCKET": str(tmp_path),
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "CID": "test-client",
+                    # Disable retry/backoff (§11): a 5xx is raised and surfaced once.
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
             patch("hsync_client.transfer.post", return_value=mock_response),
@@ -205,6 +210,8 @@ class TestUploadFile:
                     "LOCAL_BUCKET": str(tmp_path),
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "CID": "test-client",
+                    # Disable retry/backoff (§11) so a single attempt is asserted.
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
             patch("hsync_client.transfer.post") as mock_post,
@@ -212,6 +219,48 @@ class TestUploadFile:
         ):
             mock_post.side_effect = RequestException("Connection error")
             upload_file(file, check_size=False)
+            # Retry disabled (§11): the single failing attempt is asserted.
+            mock_post.assert_called_once()
+
+
+class TestUploadRetry:
+    """Retry/backoff and transfer_failed surfacing for uploads (§11)."""
+
+    def test_transient_error_retries_then_emits_transfer_failed(self, tmp_path):
+        """A persistent 5xx is retried then surfaced as transfer_failed."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    **_BASE_CONFIG,
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "TRANSFER_RETRY_ATTEMPTS": 3,
+                    "TRANSFER_RETRY_MIN_WAIT": 0,
+                    "TRANSFER_RETRY_MAX_WAIT": 0,
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.emit_event") as mock_emit,
+        ):
+            upload_file(file, check_size=False)
+            # Exhausted all attempts before giving up.
+            assert mock_post.call_count == 3
+            # Surfaced exactly one transfer_failed event for the UI.
+            failed = [
+                c for c in mock_emit.call_args_list if c.args[0] == UiEventName.transfer_failed
+            ]
+            assert len(failed) == 1
+            assert failed[0].kwargs["op"] == "upload"
 
 
 class TestUploadFileMaxWaitTimeout:

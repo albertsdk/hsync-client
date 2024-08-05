@@ -25,7 +25,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from hsync_client.exceptions import NetworkError
+from hsync_client.exceptions import NetworkError, ServerError
 
 # =============================================================================
 # Retry Configuration
@@ -90,6 +90,37 @@ def retry_on_connection_error(
     """
     return retry(
         retry=retry_if_exception_type(RequestException),
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+        before_sleep=before_sleep_log(log, logging.WARNING),
+        reraise=True,
+    )
+
+
+def retry_on_transient_transfer_error(
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    min_wait: float = DEFAULT_MIN_WAIT,
+    max_wait: float = DEFAULT_MAX_WAIT,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """
+    Create a retry decorator for per-file transfers (§11).
+
+    Retries only on transient failures: connection-level errors
+    (``RequestException``) and server-side 5xx responses (raised as
+    ``ServerError``). Permanent errors (4xx) are signalled differently by the
+    caller and are therefore never retried. The last exception is re-raised
+    after the final attempt so the caller can surface ``transfer_failed``.
+
+    Args:
+        max_attempts: Maximum number of attempts (1 disables retrying).
+        min_wait: Minimum wait time between retries in seconds.
+        max_wait: Maximum wait time between retries in seconds.
+
+    Returns:
+        A retry decorator configured with the specified parameters.
+    """
+    return retry(
+        retry=retry_if_exception_type((RequestException, ServerError)),
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
         before_sleep=before_sleep_log(log, logging.WARNING),

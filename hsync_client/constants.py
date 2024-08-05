@@ -78,6 +78,17 @@ MAX_WAIT_TIMEOUT_DEFAULT = 120  # 2 minutes
 MAX_CONCURRENT_TRANSFERS = int(__import__("os").environ.get("HSYNC_MAX_CONCURRENT_TRANSFERS", "5"))
 
 # =============================================================================
+# Per-File Transfer Retry/Backoff (§11)
+# =============================================================================
+
+# A single transient network blip (timeout, connection reset, 5xx) must not
+# leave a file unsynced until the next full sync: each download/upload is
+# retried with exponential backoff. Permanent errors (4xx) are never retried.
+TRANSFER_RETRY_ATTEMPTS_DEFAULT = 3
+TRANSFER_RETRY_MIN_WAIT_DEFAULT = 1  # seconds
+TRANSFER_RETRY_MAX_WAIT_DEFAULT = 10  # seconds
+
+# =============================================================================
 # CLI Validation Limits
 # =============================================================================
 
