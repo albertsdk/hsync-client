@@ -10,10 +10,12 @@ Command-line interface for HSYNC Client.
 This module provides the Typer-based CLI for the HSYNC command-line interface.
 """
 
+import json
 from os import getcwd
 from typing import Annotated
 
 import typer
+from hsync_common.protocol.capabilities import build_capabilities
 
 from hsync_client.constants import (
     BANDWIDTH_MAX,
@@ -52,6 +54,35 @@ def version_callback(value: bool) -> None:
     if value:
         typer.echo(f"hsync {HSYNC_VERSION}")
         raise typer.Exit()
+
+
+def collect_cli_options(command: typer.core.TyperCommand) -> list[str]:
+    """Return the sorted long-form option flags exposed by ``command``.
+
+    Introspects the underlying click command so the advertised CLI surface can
+    never drift from the real interface (DESIGN_REVIEW §8): every ``--flag`` an
+    option declares (primary and secondary) is reported as a supported option.
+    """
+    flags: set[str] = set()
+    for param in command.params:
+        if param.param_type_name != "option":
+            continue
+        for opt in (*param.opts, *param.secondary_opts):
+            if opt.startswith("--"):
+                flags.add(opt)
+    return sorted(flags)
+
+
+def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
+    """Print the binary's capabilities document as JSON and exit (§8)."""
+    if not value:
+        return
+    doc = build_capabilities(
+        app_version=HSYNC_VERSION,
+        cli_options=collect_cli_options(ctx.command),
+    )
+    typer.echo(json.dumps(doc, indent=2, sort_keys=True))
+    raise typer.Exit()
 
 
 def _validate_bucket(value: str) -> str:
@@ -459,6 +490,15 @@ def main(
             help="Show version and exit.",
             is_eager=True,
             callback=version_callback,
+        ),
+    ] = None,
+    capabilities_json: Annotated[
+        bool | None,
+        typer.Option(
+            "--capabilities-json",
+            help="Print the binary's capabilities document as JSON and exit.",
+            is_eager=True,
+            callback=capabilities_json_callback,
         ),
     ] = None,
 ) -> None:
