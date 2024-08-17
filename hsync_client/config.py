@@ -64,6 +64,11 @@ class EnvSettings(BaseSettings):
 
     # Sync Settings
     stability_delay: int | None = Field(default=None, description="File stability delay in seconds")
+    resync: int | None = Field(
+        default=None,
+        ge=0,
+        description="Periodic resync interval in seconds (0 = disabled, unset = default)",
+    )
 
     # LAN Mode Settings
     lan_key: SecretStr | None = Field(default=None, description="LAN shared secret key")
@@ -179,6 +184,15 @@ def get_stability_delay() -> str | None:
     """Get stability delay from environment."""
     delay = get_env_settings().stability_delay
     return str(delay) if delay is not None else None
+
+
+def get_resync() -> int | None:
+    """Get the periodic resync interval from environment.
+
+    Returns ``None`` when unset (caller applies the default) and ``0``
+    when explicitly disabled.
+    """
+    return get_env_settings().resync
 
 
 def get_lan_key() -> str | None:

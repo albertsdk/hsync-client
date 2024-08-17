@@ -14,7 +14,7 @@ file operations, and data formatting.
 import secrets
 import stat
 from hashlib import sha256
-from os import chmod
+from os import chmod, walk
 from os import stat as os_stat
 from os.path import abspath, normpath
 from pathlib import Path
@@ -38,6 +38,8 @@ from hsync_client.constants import (
     CID_LENGTH,
     FILE_SIZE_MEDIUM,
     FILE_SIZE_SMALL,
+    INOTIFY_MAX_USER_WATCHES_PATH,
+    INOTIFY_WATCH_WARN_RATIO,
     SHA256_CHUNK_SIZE,
 )
 
@@ -294,6 +296,60 @@ def ensure_str_path(path: str | bytes | None) -> str:
     if isinstance(path, bytes):
         return path.decode("utf-8")
     return str(path)
+
+
+# =============================================================================
+# File-System Watcher Diagnostics
+# =============================================================================
+
+
+def warn_if_inotify_watch_limit_low(watch_path: str) -> None:
+    """
+    Warn when *watch_path* may exceed the inotify watch limit (Linux only).
+
+    The recursive watcher schedules one inotify watch per sub-directory.
+    When the tree approaches ``fs.inotify.max_user_watches`` the kernel
+    starts dropping events silently (watchdog does not surface
+    ``IN_Q_OVERFLOW``), so we proactively warn and point at the remedy.
+    Periodic resync (``RESYNC``) is the safety net that recovers any
+    events missed in the meantime.
+
+    This is best-effort diagnostics: any failure is swallowed so it can
+    never block the watcher from starting.
+
+    Args:
+        watch_path: Directory tree that will be watched recursively.
+    """
+    try:
+        limit_file = Path(INOTIFY_MAX_USER_WATCHES_PATH)
+        if not limit_file.exists():
+            return  # Not Linux / inotify limit not exposed.
+
+        max_watches = int(limit_file.read_text().strip())
+        if max_watches <= 0:
+            return
+
+        threshold = int(max_watches * INOTIFY_WATCH_WARN_RATIO)
+
+        # Count directories, stopping as soon as we cross the threshold to
+        # avoid walking a huge tree just to emit a warning.
+        dir_count = 0
+        for _root, _dirs, _files in walk(watch_path):
+            dir_count += 1
+            if dir_count > threshold:
+                break
+
+        if dir_count > threshold:
+            log.warning(
+                f"Directory tree under '{watch_path}' has at least {dir_count} "
+                f"sub-directories, close to the inotify limit "
+                f"(fs.inotify.max_user_watches={max_watches}). File-system events "
+                f"may be dropped silently. Raise the limit, e.g.: "
+                f"sudo sysctl fs.inotify.max_user_watches={max_watches * 4}. "
+                f"Periodic resync (RESYNC) mitigates any events missed meanwhile."
+            )
+    except Exception as exc:  # pragma: no cover - diagnostics must never break startup
+        log.debug(f"inotify watch-limit check skipped: {exc}")
 
 
 # =============================================================================

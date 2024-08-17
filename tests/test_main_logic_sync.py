@@ -12,10 +12,15 @@ import pytest
 from typing_extensions import TypedDict
 
 from hsync_client.config import get_env_settings
-from hsync_client.constants import DISCOVERY_TIMEOUT_DEFAULT, FILE_STABILITY_INTERVAL_DEFAULT
+from hsync_client.constants import (
+    DISCOVERY_TIMEOUT_DEFAULT,
+    FILE_STABILITY_INTERVAL_DEFAULT,
+    RESYNC_DEFAULT,
+)
 from hsync_client.main_logic import (
     _check_server_connectivity,
     _get_discovery_timeout_value,
+    _get_resync_value,
     _get_stability_delay_value,
     run_sync,
 )
@@ -152,6 +157,72 @@ class TestGetDiscoveryTimeoutValue:
                 os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
             else:
                 os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
+            get_env_settings.cache_clear()
+
+
+class TestGetResyncValue:
+    """Tests for _get_resync_value function (§13)."""
+
+    def test_cli_value_takes_priority(self):
+        """CLI argument is used when provided."""
+        assert _get_resync_value(120) == 120
+
+    def test_env_value_used_when_no_cli(self):
+        """Environment variable is used when CLI argument is None."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_RESYNC")
+        os.environ["HSYNC_RESYNC"] = "600"
+        try:
+            get_env_settings.cache_clear()
+            assert _get_resync_value(None) == 600
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            else:
+                os.environ.pop("HSYNC_RESYNC", None)
+            get_env_settings.cache_clear()
+
+    def test_env_zero_disables_resync(self):
+        """Environment value of 0 disables periodic resync (None)."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_RESYNC")
+        os.environ["HSYNC_RESYNC"] = "0"
+        try:
+            get_env_settings.cache_clear()
+            assert _get_resync_value(None) is None
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            else:
+                os.environ.pop("HSYNC_RESYNC", None)
+            get_env_settings.cache_clear()
+
+    def test_default_when_no_cli_no_env(self):
+        """Default constant is used when neither CLI nor env is set."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_RESYNC")
+        os.environ.pop("HSYNC_RESYNC", None)
+        try:
+            get_env_settings.cache_clear()
+            assert _get_resync_value(None) == RESYNC_DEFAULT
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            get_env_settings.cache_clear()
+
+    def test_cli_overrides_env(self):
+        """CLI argument overrides environment variable."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_RESYNC")
+        os.environ["HSYNC_RESYNC"] = "600"
+        try:
+            get_env_settings.cache_clear()
+            assert _get_resync_value(30) == 30
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            else:
+                os.environ.pop("HSYNC_RESYNC", None)
             get_env_settings.cache_clear()
 
 

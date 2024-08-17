@@ -117,6 +117,10 @@ RECONNECT_DELAY_DEFAULT = 5
 # Resync interval limits (seconds)
 RESYNC_MIN = 20
 RESYNC_MAX = 3600
+# Periodic resync is enabled by default as a safety net against silently
+# missed file-system events (e.g. inotify queue overflow). Set HSYNC_RESYNC=0
+# to disable it.
+RESYNC_DEFAULT = 300
 
 # HTTP timeout limits (seconds)
 HTTP_TIMEOUT_MIN = 1
@@ -136,6 +140,17 @@ DISCOVERY_POLL_INTERVAL = 5
 MIN_FREE_DISK_SPACE_MB_MIN = 0  # 0 = disabled
 MIN_FREE_DISK_SPACE_MB_MAX = 100_000  # 100 GB
 MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
+
+# =============================================================================
+# inotify Watch-Limit Diagnostics (Linux only)
+# =============================================================================
+# The recursive watcher schedules one inotify watch per sub-directory. When the
+# tree approaches fs.inotify.max_user_watches, the kernel drops events silently
+# (watchdog does not surface IN_Q_OVERFLOW), so we proactively warn the user.
+# Periodic resync (RESYNC) remains the safety net that recovers missed events.
+INOTIFY_MAX_USER_WATCHES_PATH = "/proc/sys/fs/inotify/max_user_watches"
+# Fraction of the limit at which we emit the warning.
+INOTIFY_WATCH_WARN_RATIO = 0.9
 
 
 # HSYNCKEEP_FILENAME is re-exported from hsync_common.constants above

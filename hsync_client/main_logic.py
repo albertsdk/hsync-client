@@ -41,6 +41,7 @@ from hsync_client.config import (
     get_mass_delete_threshold,
     get_never_master,
     get_peer_timeout,
+    get_resync,
     get_server_url,
     get_stability_delay,
     get_sync_hidden,
@@ -54,6 +55,7 @@ from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
+    RESYNC_DEFAULT,
 )
 from hsync_client.lan_handler import run_lan_mode
 
@@ -239,6 +241,24 @@ def _get_discovery_timeout_value(cli_value: int | None) -> int:
         return env_value
 
     return DISCOVERY_TIMEOUT_DEFAULT
+
+
+def _get_resync_value(cli_value: int | None) -> int | None:
+    """
+    Determine the periodic resync interval (seconds).
+
+    Priority: CLI argument > environment variable > default constant.
+    Periodic resync is enabled by default as a safety net for missed
+    file-system events; a value of 0 (env only) disables it.
+    """
+    if cli_value is not None:
+        return cli_value
+
+    env_value = get_resync()
+    if env_value is not None:
+        return env_value or None  # 0 disables periodic resync
+
+    return RESYNC_DEFAULT
 
 
 def _check_deletion_risk(
@@ -638,7 +658,7 @@ def run_sync(
             "X-Protocol-Version": PROTOCOL_VERSION_REST,
         },
         "RECONNECT_DELAY": reconnect_delay,
-        "RESYNC": resync,
+        "RESYNC": _get_resync_value(resync),
         "FILTER_PATH": filter_path,
         "STABILITY_DELAY": _get_stability_delay_value(stability_delay),
         "HTTP_TIMEOUT": http_timeout,

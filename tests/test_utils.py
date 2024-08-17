@@ -22,6 +22,7 @@ from hsync_client.utils import (
     is_valid_logfile,
     set_permissions,
     verify_master_fingerprint,
+    warn_if_inotify_watch_limit_low,
 )
 
 
@@ -711,3 +712,50 @@ class TestResetBandwidthThrottle:
         # After reset, bucket starts fresh with full tokens
         delay = get_throttle_delay(512, 1024, "reset_test")
         assert delay == 0.0
+
+
+class TestWarnIfInotifyWatchLimitLow:
+    """Tests for warn_if_inotify_watch_limit_low function (§13)."""
+
+    def test_no_warning_when_under_limit(self, tmp_path):
+        """A small tree below the limit emits no warning."""
+        with (
+            patch("hsync_client.utils.Path.exists", return_value=True),
+            patch("hsync_client.utils.Path.read_text", return_value="8192\n"),
+            patch("hsync_client.utils.log.warning") as mock_warn,
+        ):
+            warn_if_inotify_watch_limit_low(str(tmp_path))
+        mock_warn.assert_not_called()
+
+    def test_warns_when_tree_near_limit(self, tmp_path):
+        """A tree exceeding the warn threshold emits a warning."""
+        # Create a few sub-directories so os.walk yields several entries.
+        for i in range(5):
+            (tmp_path / f"sub{i}").mkdir()
+
+        with (
+            patch("hsync_client.utils.Path.exists", return_value=True),
+            # Tiny limit so the threshold (ratio * limit) is crossed quickly.
+            patch("hsync_client.utils.Path.read_text", return_value="2\n"),
+            patch("hsync_client.utils.log.warning") as mock_warn,
+        ):
+            warn_if_inotify_watch_limit_low(str(tmp_path))
+        mock_warn.assert_called_once()
+        assert "max_user_watches" in mock_warn.call_args[0][0]
+
+    def test_no_op_when_limit_file_absent(self, tmp_path):
+        """When the limit file is absent (non-Linux) nothing happens."""
+        with (
+            patch("hsync_client.utils.Path.exists", return_value=False),
+            patch("hsync_client.utils.log.warning") as mock_warn,
+        ):
+            warn_if_inotify_watch_limit_low(str(tmp_path))
+        mock_warn.assert_not_called()
+
+    def test_never_raises_on_error(self, tmp_path):
+        """A malformed limit file must not raise."""
+        with (
+            patch("hsync_client.utils.Path.exists", return_value=True),
+            patch("hsync_client.utils.Path.read_text", return_value="not-a-number"),
+        ):
+            warn_if_inotify_watch_limit_low(str(tmp_path))  # must not raise

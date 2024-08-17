@@ -12,12 +12,28 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
+| `HSYNC_RESYNC` | Periodic full-resync interval (seconds) in continuous mode; `0` disables it | `300` |
 | `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
 
 > `HSYNC_SERVER` and `HSYNC_API_KEY` are required in **Server Mode** only. In
 > **LAN Mode** (`--lan-mode`) they are ignored; use the optional
 > `HSYNC_LAN_KEY` instead (see [LAN Mode Options](#lan-mode-options)).
+
+### Periodic resync and the inotify watch limit (Linux)
+
+In continuous mode (`-w`) the client runs a periodic full sync every
+`HSYNC_RESYNC` seconds (default `300`, set `0` to disable). This is a safety
+net: it recovers any file-system events the watcher may have missed.
+
+On Linux the recursive watcher uses one inotify watch per sub-directory. Large
+trees can exceed `fs.inotify.max_user_watches`, after which the kernel drops
+events silently. The client warns at startup when the watched tree approaches
+this limit; raise it (then re-run) with, e.g.:
+
+```bash
+sudo sysctl fs.inotify.max_user_watches=$(( $(cat /proc/sys/fs/inotify/max_user_watches) * 4 ))
+```
 
 ## Environment Files
 
@@ -54,7 +70,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `-b, --bucket` | Bucket name | (required) |
 | `-p, --path` | Local directory path | cwd |
 | `-w, --watch` | Watch for changes and sync continuously. (Implicit in LAN mode) | `false` |
-| `-i, --interval` | Force full sync every N seconds (requires `-w`) | — |
+| `-i, --interval` | Force full sync every N seconds (requires `-w`); overrides `HSYNC_RESYNC` | `300` |
 | `--retry-delay` | Retry connection after N seconds | `5` |
 | `--stability-delay` | Seconds to wait before uploading modified files | `5` |
 | `--max-wait-timeout` | Maximum time to wait for file stabilization | `120` |
