@@ -81,6 +81,44 @@ def _cleanup_partial_files() -> int:
     return removed_count
 
 
+def _mass_deletion_blocked(
+    delete_count: int, local_count: int, remote_count: int
+) -> tuple[bool, str]:
+    """
+    Decide whether a cycle's deletions look like an accidental mass wipe (§12).
+
+    A master that transiently exposes an empty or wrong bucket must not be able
+    to delete valid local data in a single reconciliation cycle. The guard trips
+    when the master exposes 0 files while local data exists (always suspect), or
+    when the deletions exceed the configured absolute count or percentage of the
+    local files. When disabled via config the guard never trips.
+
+    Args:
+        delete_count: Number of files this cycle would delete.
+        local_count: Total number of local files before deletion.
+        remote_count: Number of files exposed by the remote/master.
+
+    Returns:
+        A ``(blocked, reason)`` tuple; ``reason`` is empty when not blocked.
+    """
+    if not CONFIG.get("MASS_DELETE_GUARD", True) or delete_count == 0:
+        return False, ""
+
+    # An empty master is treated as a suspect state, never a wipe command.
+    if remote_count == 0 and local_count > 0:
+        return True, "master exposes an empty bucket"
+
+    threshold = CONFIG.get("MASS_DELETE_THRESHOLD", 0)
+    if threshold and delete_count >= threshold:
+        return True, f"{delete_count} deletions reach the absolute threshold ({threshold})"
+
+    percent = CONFIG.get("MASS_DELETE_PERCENT", 0)
+    if percent and local_count > 0 and (delete_count / local_count) * 100 >= percent:
+        return True, f"{delete_count}/{local_count} deletions reach {percent}% of local files"
+
+    return False, ""
+
+
 async def sync(lan_mode: bool = False) -> None:
     """
     Perform a full synchronization between local and remote files.
@@ -155,6 +193,22 @@ async def sync(lan_mode: bool = False) -> None:
         # Log files that are already in sync (no I/O needed)
         for file in nothing:
             nothing_to_do(file)
+
+        # Mass-deletion guard: a master that transiently exposes an empty or
+        # wrong bucket must not wipe valid local data in one cycle (§12).
+        blocked, reason = _mass_deletion_blocked(len(deletes), len(local_files), len(remote_files))
+        if blocked:
+            log.warning(
+                f"[GUARD     ] Mass-deletion guard tripped ({reason}); "
+                f"skipping {len(deletes)} deletion(s) this cycle"
+            )
+            emit_event(
+                UiEventName.sync_paused,
+                reason=reason,
+                deletes=len(deletes),
+                local=len(local_files),
+            )
+            deletes = []
 
         # Handle deletions (files that exist only locally in LAN mode)
         for file in deletes:

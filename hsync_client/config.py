@@ -20,6 +20,12 @@ from loguru import logger as log
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from hsync_client.constants import (
+    MASS_DELETE_GUARD_DEFAULT,
+    MASS_DELETE_PERCENT_DEFAULT,
+    MASS_DELETE_THRESHOLD_DEFAULT,
+)
+
 # =============================================================================
 # Environment File Loading
 # =============================================================================
@@ -111,6 +117,23 @@ class EnvSettings(BaseSettings):
         default=TOMBSTONE_TTL_DAYS_DEFAULT,
         ge=0,
         description="Days to retain deletion markers before garbage collection (0 = forever)",
+    )
+
+    # Mass-Deletion Guard (§12)
+    mass_delete_guard: bool = Field(
+        default=MASS_DELETE_GUARD_DEFAULT,
+        description="Pause deletions when a cycle would remove too many local files",
+    )
+    mass_delete_threshold: int = Field(
+        default=MASS_DELETE_THRESHOLD_DEFAULT,
+        ge=0,
+        description="Absolute number of deletions per cycle that trips the guard (0 = disabled)",
+    )
+    mass_delete_percent: int = Field(
+        default=MASS_DELETE_PERCENT_DEFAULT,
+        ge=0,
+        le=100,
+        description="Percentage of local files whose deletion trips the guard (0 = disabled)",
     )
 
     @model_validator(mode="after")
@@ -239,6 +262,21 @@ def get_ignore_patterns() -> list[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
+def get_mass_delete_guard() -> bool:
+    """Get the mass-deletion guard on/off setting from environment (§12)."""
+    return get_env_settings().mass_delete_guard
+
+
+def get_mass_delete_threshold() -> int:
+    """Get the absolute mass-deletion threshold from environment (§12)."""
+    return get_env_settings().mass_delete_threshold
+
+
+def get_mass_delete_percent() -> int:
+    """Get the percentage mass-deletion threshold from environment (§12)."""
+    return get_env_settings().mass_delete_percent
+
+
 # =============================================================================
 # Configuration TypedDict
 # =============================================================================
@@ -349,6 +387,12 @@ class HsyncConfig(TypedDict):
     SYNC_HIDDEN: bool
     # Extra gitignore-style patterns layered on top of .hsyncignore
     IGNORE_PATTERNS: list[str]
+    # Mass-deletion guard: pause deletions over a count/percentage threshold (§12)
+    MASS_DELETE_GUARD: bool
+    # Absolute number of deletions per cycle that trips the guard (0 = disabled)
+    MASS_DELETE_THRESHOLD: int
+    # Percentage of local files whose deletion trips the guard (0 = disabled)
+    MASS_DELETE_PERCENT: int
 
 
 # =============================================================================
