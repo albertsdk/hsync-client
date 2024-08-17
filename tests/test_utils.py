@@ -5,6 +5,8 @@ Tests for utility functions in hsync_client.utils module.
 import os
 import stat
 import tempfile
+import threading
+import time
 from unittest.mock import patch
 
 from hsync_client.config import CONFIG, set_config
@@ -20,6 +22,7 @@ from hsync_client.utils import (
     is_same_paths,
     is_valid_filename,
     is_valid_logfile,
+    path_lock,
     set_permissions,
     verify_master_fingerprint,
     warn_if_inotify_watch_limit_low,
@@ -759,3 +762,63 @@ class TestWarnIfInotifyWatchLimitLow:
             patch("hsync_client.utils.Path.read_text", return_value="not-a-number"),
         ):
             warn_if_inotify_watch_limit_low(str(tmp_path))  # must not raise
+
+
+class TestPathLock:
+    """Tests for the per-path serialization primitive (§14)."""
+
+    def test_serializes_same_path(self, tmp_path):
+        """Two threads on the same path never run their critical sections at once."""
+        target = str(tmp_path / "same")
+        guard = threading.Lock()
+        start = threading.Barrier(2)
+        active = 0
+        max_active = 0
+
+        def worker():
+            nonlocal active, max_active
+            start.wait()
+            with path_lock(target):
+                with guard:
+                    active += 1
+                    max_active = max(max_active, active)
+                time.sleep(0.05)
+                with guard:
+                    active -= 1
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert max_active == 1
+
+    def test_distinct_paths_run_concurrently(self, tmp_path):
+        """Locks on different paths do not block one another."""
+        both_in = threading.Barrier(2, timeout=2)
+        reached: list[str] = []
+
+        def worker(name: str):
+            with path_lock(str(tmp_path / name)):
+                # If distinct paths were serialized this barrier would time out.
+                both_in.wait()
+                reached.append(name)
+
+        t1 = threading.Thread(target=worker, args=("a",))
+        t2 = threading.Thread(target=worker, args=("b",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert sorted(reached) == ["a", "b"]
+
+    def test_registry_is_cleaned_up_after_release(self, tmp_path):
+        """The per-path lock entry is dropped once no waiter holds it."""
+        from hsync_client.utils import _path_locks
+
+        target = str(tmp_path / "cleanup")
+        key = os.path.normpath(os.path.abspath(target))
+        with path_lock(target):
+            assert key in _path_locks
+        assert key not in _path_locks

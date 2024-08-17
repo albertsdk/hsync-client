@@ -39,6 +39,7 @@ from hsync_client.utils import (
     get_chunk_size,
     get_ssl_verify,
     get_throttle_delay,
+    path_lock,
     set_permissions,
     verify_master_fingerprint,
 )
@@ -196,6 +197,18 @@ def _upload_timeout() -> tuple[float, float | None]:
 # =============================================================================
 
 
+def _local_dest_path(file: File) -> str:
+    """Return the absolute local destination path for a downloaded *file*.
+
+    The remote ``file.filepath`` is relative to the bucket; the local copy lives
+    under ``LOCAL_BUCKET``. Shared by the downloader and the per-path lock key so
+    a download serializes against any other operation on the same local path.
+    """
+    relative_dir = str(Path(file.filepath).parent)
+    dest_dir = str(Path(CONFIG["LOCAL_BUCKET"]) / relative_dir.lstrip("/"))
+    return str(Path(dest_dir) / file.name.lstrip("/"))
+
+
 def download_file(file: File) -> None:
     """
     Download a file from the remote server with per-file retry/backoff (§11).
@@ -205,6 +218,9 @@ def download_file(file: File) -> None:
     leave the file unsynced until the next full sync. Permanent errors (4xx) are
     never retried. When every attempt is exhausted the failure is surfaced as a
     ``transfer_failed`` event for the UI.
+
+    The whole download holds the per-path lock (§14) so a concurrent upload or
+    inbound delete of the same local path cannot interleave and lose the update.
 
     Args:
         file: File object with remote metadata (filepath, sha256sum, etc.).
@@ -219,7 +235,8 @@ def download_file(file: File) -> None:
         _download_file_attempt
     )
     try:
-        attempt(file)
+        with path_lock(_local_dest_path(file)):
+            attempt(file)
     except (RequestException, ServerError) as exc:
         log.error(f'Download failed after retries for "{file.filepath}": {exc}')
         _emit_transfer_failed("download", file.filepath, str(exc))
@@ -248,11 +265,8 @@ def _download_file_attempt(file: File) -> None:
         ServerError: On a server-side 5xx response (retryable).
     """
     # Prepare destination directory and partial file path
-    relative_dir = str(Path(file.filepath).parent)
-    dest_dir = str(Path(CONFIG["LOCAL_BUCKET"]) / relative_dir.lstrip("/"))
-    Path(dest_dir).mkdir(parents=True, exist_ok=True)
-
-    full_save_path = str(Path(dest_dir) / file.name.lstrip("/"))
+    full_save_path = _local_dest_path(file)
+    Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
     partial_file_path = f"{full_save_path}.part"
 
     # Check if local file is already up-to-date
@@ -285,7 +299,7 @@ def _download_file_attempt(file: File) -> None:
     reserve_mb = CONFIG.get("MIN_FREE_DISK_SPACE", 0)
     if reserve_mb and reserve_mb > 0:
         try:
-            free = disk_usage(dest_dir).free
+            free = disk_usage(str(Path(full_save_path).parent)).free
             required = reserve_mb * 1024 * 1024 + max(file.size - resume_offset, 0)
             if free < required:
                 log.error(
@@ -336,8 +350,10 @@ def _download_file_attempt(file: File) -> None:
         log.warning(f'Range not satisfiable for "{file.filepath}", restarting download')
         if Path(partial_file_path).exists():
             remove(partial_file_path)
-        # Retry without Range header
-        download_file(file)
+        # Retry without Range header. Recurse into the attempt (not the public
+        # download_file) so we stay inside the per-path lock (§14) already held
+        # by the caller; re-locking the non-reentrant lock would deadlock.
+        _download_file_attempt(file)
         return
     if response.status_code >= 500:
         # Transient server-side failure: raise so the retry wrapper backs off.
@@ -594,7 +610,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
         _upload_file_attempt
     )
     try:
-        attempt(file)
+        # Serialize on the local path (§14) so the read does not race a
+        # concurrent download/delete of the same file.
+        with path_lock(file.filepath):
+            attempt(file)
     except (RequestException, ServerError) as exc:
         log.error(f'Upload failed after retries for "{file.filepath}": {exc}')
         _emit_transfer_failed("upload", file.filepath, str(exc))
