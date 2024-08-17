@@ -301,8 +301,8 @@ class TestUploadFileMaxWaitTimeout:
         ):
             upload_file(file, check_size=True)
 
-    def test_upload_times_out_after_max_wait(self, tmp_path):
-        """Upload proceeds after max wait timeout even if file not stable."""
+    def test_upload_reschedules_after_max_wait(self, tmp_path):
+        """An unstable file is rescheduled (not force-uploaded) after timeout (§15)."""
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
@@ -315,18 +315,7 @@ class TestUploadFileMaxWaitTimeout:
             permissions="-rw-r--r--",
         )
 
-        mock_response = MagicMock()
-        mock_response.status_code = 201
-
-        # Track if upload was called (indicates timeout was reached and upload proceeded)
-        upload_called = False
-
-        def mock_post(*args, **kwargs):
-            nonlocal upload_called
-            upload_called = True
-            return mock_response
-
-        # is_file_stable always returns False to simulate unstable file
+        # is_file_stable always returns False to simulate an unstable file
         with (
             patch(
                 "hsync_client.transfer.CONFIG",
@@ -341,13 +330,14 @@ class TestUploadFileMaxWaitTimeout:
             ),
             patch("hsync_client.transfer.is_file_stable", return_value=False),
             patch("hsync_client.transfer.time_sleep"),
-            patch("hsync_client.transfer.post", side_effect=mock_post),
+            patch("hsync_client.transfer.post") as mock_post,
+            patch("hsync_client.transfer._reschedule_upload") as mock_reschedule,
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
         ):
             upload_file(file, check_size=True)
-            # Verify upload was called even though file never stabilized
-            # (this proves the timeout mechanism worked)
-            assert upload_called, "Upload should proceed after max wait timeout"
+            # The file never stabilized, so the upload must be deferred, not forced.
+            mock_post.assert_not_called()
+            mock_reschedule.assert_called_once_with(file, None)
 
     def test_upload_uses_default_max_wait_timeout(self, tmp_path):
         """Upload uses default timeout when not configured."""
@@ -384,6 +374,77 @@ class TestUploadFileMaxWaitTimeout:
         ):
             # Should not raise, uses default timeout
             upload_file(file, check_size=True)
+
+
+class TestRescheduleUpload:
+    """Tests for _reschedule_upload deferred-upload logic (§15)."""
+
+    def _make_file(self, tmp_path):
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+        return File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=12,
+            mtime=1000,
+            ctime=1000,
+            permissions="-rw-r--r--",
+        )
+
+    def test_schedules_timer_and_decrements(self, tmp_path):
+        """A deferred upload arms a daemon Timer with one fewer attempt left."""
+        from hsync_client.transfer import _reschedule_upload
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {"UPLOAD_RESCHEDULE_DELAY": 7},
+            ),
+            patch("hsync_client.transfer.threading.Timer") as mock_timer,
+        ):
+            _reschedule_upload(file, reschedules_left=3)
+
+            args, kwargs = mock_timer.call_args
+            # delay, target callable
+            assert args[0] == 7
+            assert args[1] is upload_file
+            # re-arms upload_file(file, True, 2)
+            assert kwargs["args"] == (file, True, 2)
+            assert mock_timer.return_value.daemon is True
+            mock_timer.return_value.start.assert_called_once()
+
+    def test_resolves_max_from_config_when_none(self, tmp_path):
+        """A first deferral (None) resolves the bound from CONFIG."""
+        from hsync_client.transfer import _reschedule_upload
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {"UPLOAD_MAX_RESCHEDULES": 4, "UPLOAD_RESCHEDULE_DELAY": 1},
+            ),
+            patch("hsync_client.transfer.threading.Timer") as mock_timer,
+        ):
+            _reschedule_upload(file, reschedules_left=None)
+
+            # Resolved 4 from CONFIG, then decremented to 3 for the next attempt.
+            assert mock_timer.call_args.kwargs["args"] == (file, True, 3)
+
+    def test_exhausted_does_not_schedule(self, tmp_path):
+        """Once reschedules are exhausted the file is skipped, not deferred."""
+        from hsync_client.transfer import _reschedule_upload
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", {}),
+            patch("hsync_client.transfer.threading.Timer") as mock_timer,
+        ):
+            _reschedule_upload(file, reschedules_left=0)
+            mock_timer.assert_not_called()
 
 
 class TestNothingToDo:

@@ -67,6 +67,13 @@ MAX_WAIT_TIMEOUT_MIN = 10
 MAX_WAIT_TIMEOUT_MAX = 3600
 MAX_WAIT_TIMEOUT_DEFAULT = 120  # 2 minutes
 
+# When a file never stabilizes within MAX_WAIT_TIMEOUT the upload is rescheduled
+# for a later attempt instead of being forced (§15), avoiding a "torn" upload of
+# a file still being written. After UPLOAD_MAX_RESCHEDULES deferrals the file is
+# skipped and left to the next file-system event (on_closed) or periodic resync.
+UPLOAD_RESCHEDULE_DELAY_DEFAULT = 30  # seconds between deferred attempts
+UPLOAD_MAX_RESCHEDULES_DEFAULT = 5
+
 
 # =============================================================================
 # Parallel Transfer Settings
