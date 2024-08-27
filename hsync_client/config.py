@@ -124,7 +124,7 @@ class EnvSettings(BaseSettings):
         description="Days to retain deletion markers before garbage collection (0 = forever)",
     )
 
-    # Mass-Deletion Guard (§12)
+    # Mass-Deletion Guard
     mass_delete_guard: bool = Field(
         default=MASS_DELETE_GUARD_DEFAULT,
         description="Pause deletions when a cycle would remove too many local files",
@@ -277,17 +277,17 @@ def get_ignore_patterns() -> list[str]:
 
 
 def get_mass_delete_guard() -> bool:
-    """Get the mass-deletion guard on/off setting from environment (§12)."""
+    """Get the mass-deletion guard on/off setting from environment."""
     return get_env_settings().mass_delete_guard
 
 
 def get_mass_delete_threshold() -> int:
-    """Get the absolute mass-deletion threshold from environment (§12)."""
+    """Get the absolute mass-deletion threshold from environment."""
     return get_env_settings().mass_delete_threshold
 
 
 def get_mass_delete_percent() -> int:
-    """Get the percentage mass-deletion threshold from environment (§12)."""
+    """Get the percentage mass-deletion threshold from environment."""
     return get_env_settings().mass_delete_percent
 
 
@@ -401,7 +401,7 @@ class HsyncConfig(TypedDict):
     SYNC_HIDDEN: bool
     # Extra gitignore-style patterns layered on top of .hsyncignore
     IGNORE_PATTERNS: list[str]
-    # Mass-deletion guard: pause deletions over a count/percentage threshold (§12)
+    # Mass-deletion guard: pause deletions over a count/percentage threshold
     MASS_DELETE_GUARD: bool
     # Absolute number of deletions per cycle that trips the guard (0 = disabled)
     MASS_DELETE_THRESHOLD: int

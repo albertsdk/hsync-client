@@ -345,7 +345,7 @@ class TestCheckDeletionRisk:
 
 
 class TestCheckLanWritePolicy:
-    """Tests for _check_lan_write_policy (LAN-key requirement for §5)."""
+    """Tests for _check_lan_write_policy (LAN-key requirement)."""
 
     # ── Allowed scenarios (no SystemExit) ────────────────────────────
 

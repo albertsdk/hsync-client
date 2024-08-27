@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Trust-On-First-Use certificate pinning store for LAN mode (P1 §5).
+Trust-On-First-Use certificate pinning store for LAN mode.
 
 A LAN master authenticates its transport with a self-signed certificate whose
 fingerprint travels in the mDNS TXT record. That certificate is only meaningful

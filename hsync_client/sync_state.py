@@ -12,7 +12,7 @@ store per local bucket, backed by a hidden ``.hsyncstate`` side-car at the bucke
 root. The store records, per path, the content hash this peer last agreed on with
 the master (``base_hash``) plus its version lineage. Comparing local, remote and
 base lets reconciliation pick the right direction — or flag a true conflict —
-without trusting wall-clock timestamps (see ``§7`` of the design review).
+without trusting wall-clock timestamps.
 
 Writes are serialized with a re-entrant lock because transfers record their
 synced base from the parallel transfer thread pool; persistence is decoupled

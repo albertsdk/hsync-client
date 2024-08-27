@@ -85,7 +85,7 @@ def _mass_deletion_blocked(
     delete_count: int, local_count: int, remote_count: int
 ) -> tuple[bool, str]:
     """
-    Decide whether a cycle's deletions look like an accidental mass wipe (§12).
+    Decide whether a cycle's deletions look like an accidental mass wipe.
 
     A master that transiently exposes an empty or wrong bucket must not be able
     to delete valid local data in a single reconciliation cycle. The guard trips
@@ -195,7 +195,7 @@ async def sync(lan_mode: bool = False) -> None:
             nothing_to_do(file)
 
         # Mass-deletion guard: a master that transiently exposes an empty or
-        # wrong bucket must not wipe valid local data in one cycle (§12).
+        # wrong bucket must not wipe valid local data in one cycle.
         blocked, reason = _mass_deletion_blocked(len(deletes), len(local_files), len(remote_files))
         if blocked:
             log.warning(
@@ -836,7 +836,7 @@ def _compare_files(
     """
     Compare two files, preferring a clock-independent three-way merge.
 
-    When a common-ancestor ``base_hash`` is recorded (``§7``), the direction is
+    When a common-ancestor ``base_hash`` is recorded, the direction is
     decided from content hashes alone: if only one side changed since the base it
     wins, and if both changed it is a genuine conflict (remote wins, local copy
     preserved). Without a recorded base the legacy mtime + SHA-256 heuristic is

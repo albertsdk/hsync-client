@@ -471,7 +471,7 @@ class TestCLIValidation:
 
 
 class TestCapabilitiesJson:
-    """Tests for the --capabilities-json eager option (DESIGN_REVIEW §8)."""
+    """Tests for the --capabilities-json eager option."""
 
     def test_prints_valid_capabilities_document(self):
         """--capabilities-json emits a parseable document and exits cleanly."""

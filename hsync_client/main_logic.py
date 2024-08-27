@@ -729,7 +729,7 @@ def run_sync(
             logger=log,
         )
 
-    # Enforce the LAN-key policy for unattended write-capable sync (§5).
+    # Enforce the LAN-key policy for unattended write-capable sync.
     if not dryrun:
         _check_lan_write_policy(
             lan_mode=config["LAN_MODE"],

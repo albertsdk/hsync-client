@@ -146,7 +146,7 @@ class TestRetryOnConnectionError:
 
 
 class TestRetryOnTransientTransferError:
-    """Tests for retry_on_transient_transfer_error decorator (§11)."""
+    """Tests for retry_on_transient_transfer_error decorator."""
 
     def test_success_no_retry(self):
         """Successful function is not retried."""

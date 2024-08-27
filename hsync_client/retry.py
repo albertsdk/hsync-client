@@ -103,7 +103,7 @@ def retry_on_transient_transfer_error(
     max_wait: float = DEFAULT_MAX_WAIT,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
-    Create a retry decorator for per-file transfers (§11).
+    Create a retry decorator for per-file transfers.
 
     Retries only on transient failures: connection-level errors
     (``RequestException``) and server-side 5xx responses (raised as

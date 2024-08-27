@@ -53,7 +53,7 @@ CONTENT_ENCODING_ZSTD = "zstd"
 
 
 def _transfer_retry_params() -> tuple[int, float, float]:
-    """Return ``(max_attempts, min_wait, max_wait)`` for per-file retries (§11)."""
+    """Return ``(max_attempts, min_wait, max_wait)`` for per-file retries."""
     return (
         CONFIG.get("TRANSFER_RETRY_ATTEMPTS", TRANSFER_RETRY_ATTEMPTS_DEFAULT),
         CONFIG.get("TRANSFER_RETRY_MIN_WAIT", TRANSFER_RETRY_MIN_WAIT_DEFAULT),
@@ -62,7 +62,7 @@ def _transfer_retry_params() -> tuple[int, float, float]:
 
 
 def _emit_transfer_failed(op: str, filepath: str, message: str) -> None:
-    """Surface a permanent/exhausted transfer failure as a structured event (§11)."""
+    """Surface a permanent/exhausted transfer failure as a structured event."""
     emit_event(UiEventName.transfer_failed, op=op, file=filepath, message=message)
 
 
@@ -71,7 +71,7 @@ def _record_synced_base(file: File) -> None:
 
     After a successful transfer (or a no-op because the server already held the
     file), local and remote agree on ``file.sha256sum``; persisting it lets the
-    next reconciliation use a clock-independent three-way merge (see ``§7``).
+    next reconciliation use a clock-independent three-way merge.
     Bookkeeping failures are swallowed so they never abort a successful transfer.
     """
     try:
@@ -215,7 +215,7 @@ def _local_dest_path(file: File) -> str:
 
 def download_file(file: File) -> None:
     """
-    Download a file from the remote server with per-file retry/backoff (§11).
+    Download a file from the remote server with per-file retry/backoff.
 
     Wraps :func:`_download_file_attempt` in an exponential-backoff retry policy
     so a single transient network blip (timeout, connection reset, 5xx) does not
@@ -223,7 +223,7 @@ def download_file(file: File) -> None:
     never retried. When every attempt is exhausted the failure is surfaced as a
     ``transfer_failed`` event for the UI.
 
-    The whole download holds the per-path lock (§14) so a concurrent upload or
+    The whole download holds the per-path lock so a concurrent upload or
     inbound delete of the same local path cannot interleave and lose the update.
 
     Args:
@@ -248,7 +248,7 @@ def download_file(file: File) -> None:
 
 def _download_file_attempt(file: File) -> None:
     """
-    Perform a single download attempt with resume support (§11).
+    Perform a single download attempt with resume support.
 
     Streams the file to a partial file location (.part extension), verifies
     SHA-256 checksum, then moves it to the final destination. Preserves timestamps
@@ -326,7 +326,7 @@ def _download_file_attempt(file: File) -> None:
         log.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
         return
 
-    # A connection-level error here propagates to the retry wrapper (§11).
+    # A connection-level error here propagates to the retry wrapper.
     response = get(
         uri,
         headers=headers,
@@ -355,7 +355,7 @@ def _download_file_attempt(file: File) -> None:
         if Path(partial_file_path).exists():
             remove(partial_file_path)
         # Retry without Range header. Recurse into the attempt (not the public
-        # download_file) so we stay inside the per-path lock (§14) already held
+        # download_file) so we stay inside the per-path lock already held
         # by the caller; re-locking the non-reentrant lock would deadlock.
         _download_file_attempt(file)
         return
@@ -567,7 +567,7 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
 
 def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
     """
-    Defer an upload whose file never stabilized within MAX_WAIT_TIMEOUT (§15).
+    Defer an upload whose file never stabilized within MAX_WAIT_TIMEOUT.
 
     A file still being written is not uploaded ("torn" upload); instead a new
     attempt is scheduled after ``UPLOAD_RESCHEDULE_DELAY`` seconds via a daemon
@@ -603,7 +603,7 @@ def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
 
 def upload_file(file: File, check_size: bool = True, _reschedules_left: int | None = None) -> None:
     """
-    Upload a file to the remote server with per-file retry/backoff (§11).
+    Upload a file to the remote server with per-file retry/backoff.
 
     If check_size is True, waits for the file to stop being written to before
     uploading. The actual transfer is wrapped in an exponential-backoff retry
@@ -613,7 +613,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
 
     A file that does not stabilize within ``MAX_WAIT_TIMEOUT`` is not uploaded in
     a half-written ("torn") state: the upload is rescheduled for a later attempt
-    via :func:`_reschedule_upload`, bounded by ``UPLOAD_MAX_RESCHEDULES`` (§15).
+    via :func:`_reschedule_upload`, bounded by ``UPLOAD_MAX_RESCHEDULES``.
 
     If a previous upload was interrupted, resumes from where it left off.
 
@@ -621,7 +621,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
         file: File object to upload.
         check_size: If True, wait for file writes to complete first.
         _reschedules_left: Internal; remaining deferred attempts when this call
-                           originates from a rescheduled Timer (§15).
+                           originates from a rescheduled Timer.
     """
     # Validate required file attributes
     if not file.filepath:
@@ -642,7 +642,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
 
         if not stabilized:
             # File never stopped being written within the wait window: defer the
-            # upload instead of transferring a half-written file (§15).
+            # upload instead of transferring a half-written file.
             _reschedule_upload(file, _reschedules_left)
             return
 
@@ -661,7 +661,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
         _upload_file_attempt
     )
     try:
-        # Serialize on the local path (§14) so the read does not race a
+        # Serialize on the local path so the read does not race a
         # concurrent download/delete of the same file.
         with path_lock(file.filepath):
             attempt(file)
@@ -672,7 +672,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
 
 def _upload_file_attempt(file: File) -> None:
     """
-    Perform a single upload attempt with resume support (§11).
+    Perform a single upload attempt with resume support.
 
     Transient failures are raised (``RequestException`` for connection-level
     errors, ``ServerError`` for 5xx) so the caller's retry policy can react;

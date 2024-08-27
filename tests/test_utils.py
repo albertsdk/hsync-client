@@ -718,7 +718,7 @@ class TestResetBandwidthThrottle:
 
 
 class TestWarnIfInotifyWatchLimitLow:
-    """Tests for warn_if_inotify_watch_limit_low function (§13)."""
+    """Tests for warn_if_inotify_watch_limit_low function."""
 
     def test_no_warning_when_under_limit(self, tmp_path):
         """A small tree below the limit emits no warning."""
@@ -765,7 +765,7 @@ class TestWarnIfInotifyWatchLimitLow:
 
 
 class TestPathLock:
-    """Tests for the per-path serialization primitive (§14)."""
+    """Tests for the per-path serialization primitive."""
 
     def test_serializes_same_path(self, tmp_path):
         """Two threads on the same path never run their critical sections at once."""
