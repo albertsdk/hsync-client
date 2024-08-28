@@ -567,9 +567,11 @@ async def lan_websocket_client(
         log.error(f"WebSocket connection error: {e}")
     finally:
         # Stop the periodic resync task before tearing down the watcher.
+        # CancelledError is a BaseException, so it must be suppressed
+        # explicitly: awaiting the task we just cancelled re-raises it.
         if resync_task is not None:
             resync_task.cancel()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(asyncio.CancelledError):
                 await resync_task
         # Wait for pending client→master operations to complete before
         # returning to the discovery loop (which triggers a full sync).

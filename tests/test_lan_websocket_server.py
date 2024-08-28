@@ -402,3 +402,63 @@ class TestLANPeriodicResync:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+class TestLanWebsocketClientResyncWiring:
+    """Tests that lan_websocket_client wires the periodic resync task."""
+
+    @staticmethod
+    def _make_resync_factory():
+        """Return a MagicMock whose calls yield a long-lived coroutine."""
+
+        def _coro(*_args, **_kwargs):
+            async def _runner() -> None:
+                await asyncio.sleep(10)
+
+            return _runner()
+
+        return MagicMock(side_effect=_coro)
+
+    @pytest.mark.asyncio
+    async def test_starts_resync_task_when_configured(self, tmp_path):
+        """A truthy RESYNC spawns the periodic resync task (cancelled on teardown)."""
+        import hsync_client.lan_websocket as ws
+
+        mock_resync = self._make_resync_factory()
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("stop connection")
+
+        with (
+            patch.dict(ws.CONFIG, {"LOCAL_BUCKET": str(tmp_path), "RESYNC": 60}, clear=False),
+            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
+            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
+            patch.object(ws, "_lan_periodic_resync", mock_resync),
+            patch("websockets.connect", side_effect=boom),
+        ):
+            await ws.lan_websocket_client("master.local", 9000)
+
+        mock_resync.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_resync_task_when_disabled(self, tmp_path):
+        """RESYNC of 0 leaves the periodic resync task unstarted."""
+        import hsync_client.lan_websocket as ws
+
+        mock_resync = MagicMock()
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("stop connection")
+
+        with (
+            patch.dict(ws.CONFIG, {"LOCAL_BUCKET": str(tmp_path), "RESYNC": 0}, clear=False),
+            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
+            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
+            patch.object(ws, "_lan_periodic_resync", mock_resync),
+            patch("websockets.connect", side_effect=boom),
+        ):
+            await ws.lan_websocket_client("master.local", 9000)
+
+        mock_resync.assert_not_called()

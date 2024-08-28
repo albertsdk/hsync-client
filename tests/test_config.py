@@ -17,6 +17,7 @@ from hsync_client.config import (
     get_api_key,
     get_config,
     get_env_settings,
+    get_resync,
     get_server_url,
     is_debug,
     load_env_file,
@@ -208,4 +209,50 @@ class TestEnvGetters:
         finally:
             if old is not None:
                 os.environ["HSYNC_API_KEY"] = old
+            get_env_settings.cache_clear()
+
+
+class TestGetResync:
+    """Tests for get_resync env getter (periodic resync)."""
+
+    def test_returns_none_when_unset(self):
+        """Unset HSYNC_RESYNC yields None so the caller applies the default."""
+        get_env_settings.cache_clear()
+        old = os.environ.pop("HSYNC_RESYNC", None)
+        try:
+            get_env_settings.cache_clear()
+            assert get_resync() is None
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            get_env_settings.cache_clear()
+
+    def test_returns_configured_interval(self):
+        """A positive HSYNC_RESYNC is returned as an int."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_RESYNC")
+        os.environ["HSYNC_RESYNC"] = "120"
+        try:
+            get_env_settings.cache_clear()
+            assert get_resync() == 120
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            else:
+                os.environ.pop("HSYNC_RESYNC", None)
+            get_env_settings.cache_clear()
+
+    def test_zero_is_preserved_as_disabled(self):
+        """HSYNC_RESYNC=0 is preserved (0 explicitly disables periodic resync)."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_RESYNC")
+        os.environ["HSYNC_RESYNC"] = "0"
+        try:
+            get_env_settings.cache_clear()
+            assert get_resync() == 0
+        finally:
+            if old is not None:
+                os.environ["HSYNC_RESYNC"] = old
+            else:
+                os.environ.pop("HSYNC_RESYNC", None)
             get_env_settings.cache_clear()
