@@ -313,7 +313,7 @@ class TestGetPermissions:
 
         try:
             perms = get_permissions(temp_path)
-            assert perms == "-rw-r--r--"
+            assert perms == "644"
         finally:
             os.unlink(temp_path)
 
@@ -322,7 +322,7 @@ class TestGetPermissions:
         with tempfile.TemporaryDirectory() as temp_dir:
             os.chmod(temp_dir, 0o755)
             perms = get_permissions(temp_dir)
-            assert perms == "drwxr-xr-x"
+            assert perms == "755"
 
     def test_get_executable_permissions(self):
         """Test getting executable file permissions."""
@@ -332,7 +332,7 @@ class TestGetPermissions:
 
         try:
             perms = get_permissions(temp_path)
-            assert perms == "-rwxr-xr-x"
+            assert perms == "755"
         finally:
             os.unlink(temp_path)
 
@@ -346,7 +346,7 @@ class TestSetPermissions:
             temp_path = f.name
 
         try:
-            set_permissions(temp_path, "-rw-r--r--")
+            set_permissions(temp_path, "644")
             mode = stat.S_IMODE(os.stat(temp_path).st_mode)
             assert mode == 0o644
         finally:
@@ -358,7 +358,7 @@ class TestSetPermissions:
             temp_path = f.name
 
         try:
-            set_permissions(temp_path, "-rwxr-xr-x")
+            set_permissions(temp_path, "755")
             mode = stat.S_IMODE(os.stat(temp_path).st_mode)
             assert mode == 0o755
         finally:
@@ -372,7 +372,7 @@ class TestSetPermissions:
 
         try:
             # Should not raise, just return
-            set_permissions(temp_path, "-rw-r--r--")
+            set_permissions(temp_path, "644")
             mode = stat.S_IMODE(os.stat(temp_path).st_mode)
             assert mode == 0o644
         finally:

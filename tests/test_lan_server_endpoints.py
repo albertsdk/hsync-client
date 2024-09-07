@@ -211,7 +211,7 @@ class TestLANRequestHandler:
                 "mtime": "1700000001.0",
                 "size": "12",
                 "sha256sum": "abc123",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
             files = {"file": ("uploaded.txt", b"test content")}
 

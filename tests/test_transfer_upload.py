@@ -47,7 +47,7 @@ class TestUploadFile:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -277,7 +277,7 @@ class TestUploadFileMaxWaitTimeout:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -312,7 +312,7 @@ class TestUploadFileMaxWaitTimeout:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         # is_file_stable always returns False to simulate an unstable file
@@ -350,7 +350,7 @@ class TestUploadFileMaxWaitTimeout:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -388,7 +388,7 @@ class TestRescheduleUpload:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
     def test_schedules_timer_and_decrements(self, tmp_path):
@@ -474,7 +474,7 @@ class TestUploadCompressed:
             size=30,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -511,7 +511,7 @@ class TestUploadCompressed:
             size=test_file.stat().st_size,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -553,7 +553,7 @@ class TestUploadCompressed:
             size=test_file.stat().st_size,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -596,7 +596,7 @@ class TestUploadCompressed:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         # Mock _get_upload_status to return "resumable"
@@ -639,7 +639,7 @@ class TestUploadResumable:
             size=12,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -675,7 +675,7 @@ class TestUploadResumable:
             size=17,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()
@@ -864,7 +864,7 @@ class TestUploadCompressedResponses:
             size=test_file.stat().st_size,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()

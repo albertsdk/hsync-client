@@ -112,7 +112,7 @@ class TestGetSyncActions:
                 "ctime": 1000,
                 "size": 100,
                 "sha256sum": "abc123",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -154,7 +154,7 @@ class TestGetSyncActions:
                 "ctime": mtime,
                 "size": 7,
                 "sha256sum": local_file_dict["sha256sum"],
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -180,7 +180,7 @@ class TestGetSyncActions:
                 "ctime": local_mtime + 1000,
                 "size": 7,
                 "sha256sum": "different_sha256",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -206,7 +206,7 @@ class TestGetSyncActions:
                 "ctime": local_mtime - 1000,
                 "size": 7,
                 "sha256sum": "different_sha256",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -239,7 +239,7 @@ class TestGetSyncActions:
                 "ctime": 1000,
                 "size": 0,
                 "sha256sum": "bb25b1c2b2a7427401c823a90904a759e2bd7425205b0702bca5e27e937e7cff",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -331,7 +331,7 @@ class TestGetSyncActionsLanMode:
                 "ctime": 1000000,
                 "size": 10,
                 "sha256sum": "abc123",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -359,7 +359,7 @@ class TestGetSyncActionsLanMode:
                 "ctime": mtime,
                 "size": 7,
                 "sha256sum": local_file_dict["sha256sum"],
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -387,7 +387,7 @@ class TestGetSyncActionsLanMode:
                 "ctime": local_mtime + 100,
                 "size": 11,
                 "sha256sum": "different",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -419,7 +419,7 @@ class TestConflictResolution:
                 "ctime": mtime,
                 "size": 99,
                 "sha256sum": "deadbeef" * 8,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -447,7 +447,7 @@ class TestConflictResolution:
                 "ctime": mtime + 100,
                 "size": 99,
                 "sha256sum": "deadbeef" * 8,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 
@@ -790,7 +790,7 @@ class TestThreeWayMerge:
             "mtime": mtime,
             "ctime": mtime,
             "size": 1,
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
 
     def _run(self, tmp_path, *, local_text, remote_sha, base_hash):
@@ -960,7 +960,7 @@ class TestThreeWayMergeEndToEnd:
                 "mtime": _E2E_MTIME,
                 "ctime": _E2E_MTIME,
                 "size": len(entry["content"]),
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
             for rel, entry in server.items()
         ]

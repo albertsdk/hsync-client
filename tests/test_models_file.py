@@ -112,14 +112,14 @@ class TestFileModel:
             mtime=1705320700,
             size=1024,
             sha256sum="abc123",
-            permissions="-rw-r--r--",
+            permissions="644",
         )
         d = file.to_dict()
         assert d["filepath"] == "/path/to/file.txt"
         assert d["name"] == "file.txt"
         assert d["size"] == 1024
         assert d["sha256sum"] == "abc123"
-        assert d["permissions"] == "-rw-r--r--"
+        assert d["permissions"] == "644"
 
     def test_get_existing_file(self):
         """Test File.get with existing file."""
@@ -150,7 +150,7 @@ class TestFileModel:
             "mtime": 1705320700,
             "size": 1024,
             "sha256sum": "abc123",
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
         file = File.from_dict(data, dir_prefix="/bucket")
         assert file.filepath == "file.txt"
@@ -189,11 +189,11 @@ class TestFileModel:
             "mtime": 2000.0,
             "size": 500,
             "sha256sum": "abc123",
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
         # Need to provide dir_prefix or set strip_dir_prefix=False
         f = File.from_dict(data, dir_prefix="/bucket", strip_dir_prefix=False)
         assert f.ctime is not None
         assert f.mtime is not None
         assert f.sha256sum == "abc123"
-        assert f.permissions == "-rw-r--r--"
+        assert f.permissions == "644"

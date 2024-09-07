@@ -47,7 +47,7 @@ class TestProcessWebsocketEvents:
             "name": "added",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "newdir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -81,7 +81,7 @@ class TestProcessWebsocketEvents:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -110,7 +110,7 @@ class TestProcessWebsocketEvents:
             "name": "added",
             "cid": "my_client",  # Same as CONFIG["CID"]
             "bucket": "testbucket",
-            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "newdir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -138,7 +138,7 @@ class TestProcessWebsocketEvents:
             "name": "added",
             "cid": "other_client",
             "bucket": "otherbucket",  # Different bucket
-            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "newdir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -166,7 +166,7 @@ class TestProcessWebsocketEvents:
             "name": "invalid_event",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "newdir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -194,8 +194,8 @@ class TestProcessWebsocketEvents:
             "name": "renamed",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "olddir", "permissions": "drwxr-xr-x"},
-            "dst": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "olddir", "permissions": "755"},
+            "dst": {"path": "newdir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -226,7 +226,7 @@ class TestProcessWebsocketEvents:
             "name": "deleted",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "deleteddir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "deleteddir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -255,7 +255,7 @@ class TestProcessWebsocketEvents:
             "name": "modified",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "modifieddir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "modifieddir", "permissions": "755"},
         }
 
         websocket = AsyncMock()
@@ -289,7 +289,7 @@ class TestProcessWebsocketEvents:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -320,7 +320,7 @@ class TestProcessWebsocketEvents:
             "name": "symlink",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "link.txt", "target": "target.txt", "permissions": "lrwxrwxrwx"},
+            "src": {"path": "link.txt", "target": "target.txt", "permissions": "777"},
         }
 
         websocket = AsyncMock()
@@ -348,7 +348,7 @@ class TestProcessWebsocketEvents:
             "name": "added",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "newdir", "permissions": "755"},
         }
 
         websocket = AsyncMock()

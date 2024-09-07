@@ -120,7 +120,7 @@ class TestDownloadFile:
             size=0,
             mtime=1000,
             ctime=1000,
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
         mock_response = MagicMock()

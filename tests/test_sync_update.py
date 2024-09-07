@@ -22,7 +22,7 @@ class TestUpdateDir:
         """New directory is created."""
         data = {
             "path": "new_dir",
-            "permissions": "drwxr-xr-x",
+            "permissions": "755",
         }
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
@@ -35,7 +35,7 @@ class TestUpdateDir:
         """Nested directory is created."""
         data = {
             "path": "level1/level2/level3",
-            "permissions": "drwxr-xr-x",
+            "permissions": "755",
         }
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
@@ -51,7 +51,7 @@ class TestUpdateDir:
 
         data = {
             "path": "existing",
-            "permissions": "drwxr-xr-x",
+            "permissions": "755",
         }
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
@@ -74,7 +74,7 @@ class TestUpdateFile:
             "ctime": 1000,
             "size": 100,
             "sha256sum": "abc123",
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
 
         mock_download = MagicMock()
@@ -100,7 +100,7 @@ class TestUpdateFile:
             "ctime": 2000,
             "size": 11,
             "sha256sum": "different_sha256_hash",
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
 
         mock_download = MagicMock()
@@ -128,7 +128,7 @@ class TestUpdateFile:
             "ctime": 2000,
             "size": 12,
             "sha256sum": "different_sha256_hash",
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
 
         mock_download = MagicMock()
@@ -157,7 +157,7 @@ class TestUpdateFile:
             "ctime": file_obj.ctime,
             "size": file_obj.size,
             "sha256sum": file_obj.sha256sum,
-            "permissions": "-rwxrwxrwx",  # Different permissions
+            "permissions": "777",  # Different permissions
         }
 
         mock_set_perms = MagicMock()
@@ -208,7 +208,7 @@ class TestSync:
                 "ctime": 1000,
                 "size": 10,
                 "sha256sum": "abc123",
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             }
         ]
 

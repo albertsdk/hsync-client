@@ -46,17 +46,17 @@ class TestFilePermissions:
         file_obj = File.get(str(test_file))
         assert file_obj is not None
         assert file_obj.permissions is not None
-        assert "x" in file_obj.permissions
+        assert file_obj.permissions == "700"
 
-    def test_set_permissions_from_symbolic(self, tmp_path):
-        """Test setting permissions from symbolic notation."""
+    def test_set_permissions_from_octal(self, tmp_path):
+        """Test setting permissions from octal notation."""
         from hsync_client.utils import set_permissions
 
         test_file = tmp_path / "perms.txt"
         test_file.write_text("test")
 
         # Set permissions
-        set_permissions(str(test_file), "-rw-r--r--")
+        set_permissions(str(test_file), "644")
         actual = stat.S_IMODE(test_file.stat().st_mode)
         assert actual == stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
 
@@ -69,7 +69,7 @@ class TestFilePermissions:
         test_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
         # Should not fail and should skip if same
-        set_permissions(str(test_file), "-rw-------")
+        set_permissions(str(test_file), "600")
 
         # Now try to set back (for cleanup)
         test_file.chmod(stat.S_IRWXU)
@@ -286,7 +286,7 @@ class TestEdgeCasesFileOperations:
             "mtime": int(time.time()),
             "size": 10,
             "sha256sum": "abc123",
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
 
         # Create local file with different permissions

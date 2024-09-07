@@ -23,8 +23,8 @@ class TestApplyInboundRenameEvent:
 
         event = {
             "name": "renamed",
-            "src": {"path": "source", "permissions": "drwxr-xr-x"},
-            "dst": {"path": "dest", "permissions": "drwxr-xr-x"},
+            "src": {"path": "source", "permissions": "755"},
+            "dst": {"path": "dest", "permissions": "755"},
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
 
@@ -38,8 +38,8 @@ class TestApplyInboundRenameEvent:
         """Recovers a missing source directory by re-fetching the destination."""
         event = {
             "name": "renamed",
-            "src": {"path": "missing", "permissions": "drwxr-xr-x"},
-            "dst": {"path": "dest", "permissions": "drwxr-xr-x"},
+            "src": {"path": "missing", "permissions": "755"},
+            "dst": {"path": "dest", "permissions": "755"},
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
 
@@ -61,7 +61,7 @@ class TestApplyInboundRenameEvent:
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
         event = {
             "name": "renamed",
@@ -83,7 +83,7 @@ class TestApplyInboundRenameEvent:
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
-            "permissions": "-rw-r--r--",
+            "permissions": "644",
         }
         event = {
             "name": "renamed",
