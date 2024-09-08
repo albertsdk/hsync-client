@@ -236,8 +236,9 @@ class TestLANFileEventHandler:
 
     def test_on_file_ready_clears_tombstone(self, handler, ws_server, tmp_path):
         """Re-creating a file clears any prior deletion marker for that path."""
+        from hsync_common.models.file import File
+
         from hsync_client import tombstones as ts_mod
-        from hsync_client.models.file import File
 
         target = tmp_path / "back.txt"
         target.write_text("content")
@@ -280,8 +281,8 @@ class TestLANFileEventHandler:
 
     def test_send_event_download_only_mode(self, handler, ws_server):
         """Test that events are not sent in download-only mode."""
-        from hsync_client.models.event import Event, EventName
-        from hsync_client.models.file import File
+        from hsync_common.models.event import Event, EventName
+        from hsync_common.models.file import File
 
         config = {
             "CID": "test-client",
@@ -301,8 +302,8 @@ class TestLANFileEventHandler:
 
     def test_send_event_normal_broadcasts(self, handler, ws_server):
         """Test that events are broadcast in normal mode."""
-        from hsync_client.models.event import Event, EventName
-        from hsync_client.models.file import File
+        from hsync_common.models.event import Event, EventName
+        from hsync_common.models.file import File
 
         config = {
             "CID": "test-client",

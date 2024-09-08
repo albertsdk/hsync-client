@@ -34,6 +34,9 @@ from pathlib import Path
 from time import time
 from typing import Any
 
+from hsync_common.models.dir import is_hidden_dir
+from hsync_common.models.event import Event, EventName
+from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_file
 from hsync_common.text import escape_loguru_braces
 from loguru import logger as log
 from watchdog.events import FileSystemEventHandler
@@ -48,9 +51,6 @@ from hsync_client.file_event_handler import (
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
 )
-from hsync_client.models.dir import is_hidden_dir
-from hsync_client.models.event import Event, EventName
-from hsync_client.models.file import File, invalidate_sha256_cache, is_hidden_file
 from hsync_client.utils import ensure_str_path, warn_if_inotify_watch_limit_low
 
 # Conservative minimum effective LAN bandwidth used to derive the dynamic

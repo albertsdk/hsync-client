@@ -10,8 +10,8 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.models.file import File
 
-from hsync_client.models.file import File
 from hsync_client.sync import update_dir, update_file
 
 

@@ -23,6 +23,14 @@ from sys import exc_info
 from traceback import print_tb
 from typing import cast
 
+from hsync_common.models.dir import Dir, is_hidden_dir
+from hsync_common.models.file import (
+    File,
+    clear_sha256_cache,
+    invalidate_sha256_cache,
+    is_hidden_file,
+)
+from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
 from hsync_common.models.version import SyncDecision, resolve_three_way
 from loguru import logger as log
@@ -33,14 +41,6 @@ from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
-from hsync_client.models.dir import Dir, is_hidden_dir
-from hsync_client.models.file import (
-    File,
-    clear_sha256_cache,
-    invalidate_sha256_cache,
-    is_hidden_file,
-)
-from hsync_client.models.sync_action import SyncAction, SyncActionName
 from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import get_ssl_verify, set_permissions, verify_master_fingerprint
 

@@ -13,9 +13,8 @@ used with argparse's 'type' parameter.
 
 from argparse import ArgumentTypeError
 from collections.abc import Callable
-from pathlib import Path
 
-from hsync_common.path_validation import has_dotdot_component
+from hsync_common.path_validation import is_valid_bucket_name, safe_resolve_path
 
 from hsync_client.constants import (
     HTTP_TIMEOUT_MAX,
@@ -134,9 +133,7 @@ def valid_bucket(value: str) -> str:
     Raises:
         ArgumentTypeError: If name contains invalid characters.
     """
-    from re import match as re_match
-
-    if not re_match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
+    if not is_valid_bucket_name(value):
         raise ArgumentTypeError(
             "The bucket name must be alphanumeric (hyphens and underscores "
             "allowed, but not at the beginning or end)."
@@ -234,24 +231,11 @@ def valid_bucket_path(value: str) -> str:
     Raises:
         ArgumentTypeError: If path is invalid or contains traversal sequences.
     """
-    from os.path import normpath
-
-    # Normalize the path to resolve any .. or . components
-    normalized = normpath(value)
-
-    # Check for path traversal attempts (".." as a component, not substring,
-    # so legitimate names like "my..backup" are not rejected)
-    if has_dotdot_component(normalized):
+    if safe_resolve_path(value) is None:
         raise ArgumentTypeError(
-            "Path contains invalid traversal sequence (..). "
-            "Paths outside the bucket directory are not allowed."
+            "Path contains invalid traversal sequence (..) or is otherwise "
+            "invalid. Paths outside the bucket directory are not allowed."
         )
-
-    # Convert to Path object for validation
-    try:
-        Path(normalized).resolve()
-    except (ValueError, OSError) as e:
-        raise ArgumentTypeError(f"Invalid path: {e}")
 
     return value
 

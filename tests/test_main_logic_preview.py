@@ -35,8 +35,8 @@ class TestRunPreview:
 
     def test_preview_with_downloads(self, tmp_path):
         """Test preview showing files to download."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 
@@ -64,8 +64,8 @@ class TestRunPreview:
 
     def test_preview_with_uploads(self, tmp_path):
         """Test preview showing files to upload."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 
@@ -93,8 +93,8 @@ class TestRunPreview:
 
     def test_preview_with_deletes(self, tmp_path):
         """Test preview showing files to delete."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 
@@ -122,8 +122,8 @@ class TestRunPreview:
 
     def test_preview_with_synced_files(self, tmp_path):
         """Test preview showing files already in sync."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 
@@ -151,8 +151,8 @@ class TestRunPreview:
 
     def test_preview_detects_renames(self, tmp_path):
         """Test preview detecting rename operations."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 
@@ -189,8 +189,8 @@ class TestRunPreview:
 
     def test_preview_skips_sentinel_files(self, tmp_path):
         """Test preview skipping .hsynckeep sentinel files."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 
@@ -241,8 +241,8 @@ class TestRunPreview:
 
     def test_preview_summary(self, tmp_path):
         """Test preview showing summary statistics."""
-        from hsync_client.models.file import File
-        from hsync_client.models.sync_action import SyncAction, SyncActionName
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
 

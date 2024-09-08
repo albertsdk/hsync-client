@@ -23,6 +23,8 @@ from contextlib import suppress
 from json import dumps, loads
 from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 
+from hsync_common.models.event import Event, EventName
+from hsync_common.models.file import File
 from hsync_common.protocol.handshake import (
     PROTOCOL_VERSION_WS,
     Capability,
@@ -40,8 +42,6 @@ from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_even
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
-from hsync_client.models.event import Event, EventName
-from hsync_client.models.file import File
 from hsync_client.sync import sync
 from hsync_client.transfer import upload_file
 from hsync_client.utils import warn_if_inotify_watch_limit_low

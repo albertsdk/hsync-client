@@ -9,10 +9,10 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.models.file import File
 from requests import RequestException
 
 from hsync_client.events import UiEventName
-from hsync_client.models.file import File
 from hsync_client.transfer import upload_file
 
 _BASE_CONFIG = {

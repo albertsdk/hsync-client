@@ -8,9 +8,9 @@
 
 from unittest.mock import MagicMock, patch
 
+from hsync_common.models.file import File
 from requests import RequestException
 
-from hsync_client.models.file import File
 from hsync_client.transfer import is_file_stable
 
 

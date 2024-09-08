@@ -35,11 +35,8 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 from hsync_common.logger import (
-    DEFAULT_LOG_COMPRESSION,  # noqa: F401  (re-exported for backward compatibility)
-    DEFAULT_LOG_RETENTION,  # noqa: F401  (re-exported for backward compatibility)
-    DEFAULT_LOG_ROTATION,  # noqa: F401  (re-exported for backward compatibility)
-    LEVEL_STYLES,
     BaseInterceptHandler,
+    build_record_formatter,
     get_rotation_config,
 )
 from loguru import logger
@@ -186,66 +183,31 @@ def _get_json_data(record: "Record") -> dict | None:
     return None
 
 
-def _format_record_colored(record: "Record") -> str:
-    """
-    Custom format function for loguru with colors.
-
-    Uses loguru's built-in color tags for proper terminal compatibility
-    and automatic color stripping when output is not a TTY.
-
-    Format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
-    """
+def _append_json_data(record: "Record", message: str) -> str:
+    """Append a pretty-printed, brace-escaped json_data payload to a message."""
     import json
 
-    timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    level = record["level"].name
-    message = record["message"]
-
-    # Get level style tags
-    level_start, level_end = LEVEL_STYLES.get(level, ("", ""))
-
-    # Colorize action labels in message
-    message = _colorize_labels(message, use_colors=True)
-
-    # Check for json_data in extra
     json_data = _get_json_data(record)
     if json_data:
         json_str = json.dumps(json_data, indent=2, default=str)
-        # Escape curly braces to prevent loguru from interpreting them as format placeholders
+        # Escape curly braces so loguru does not treat them as placeholders.
         json_str = json_str.replace("{", "{{").replace("}", "}}")
         message = f"{message}\n{json_str}"
-
-    return (
-        f"<dim>{timestamp}</dim> - [{record['process'].id}] "
-        f"{level_start}{level}{level_end}: {message}\n"
-    )
+    return message
 
 
-def _format_record_plain(record: "Record") -> str:
-    """
-    Custom format function for loguru without colors.
-
-    Format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
-    """
-    import json
-
-    timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    level = record["level"].name
-    message = record["message"]
-
-    # Check for json_data in extra
-    json_data = _get_json_data(record)
-    if json_data:
-        json_str = json.dumps(json_data, indent=2, default=str)
-        # Escape curly braces to prevent loguru from interpreting them as format placeholders
-        json_str = json_str.replace("{", "{{").replace("}", "}}")
-        message = f"{message}\n{json_str}"
-
-    return f"{timestamp} - [{record['process'].id}] {level}: {message}\n"
+def _transform_colored(record: "Record", message: str) -> str:
+    """Colorize action labels then append any json_data payload."""
+    return _append_json_data(record, _colorize_labels(message, use_colors=True))
 
 
-# Backward-compatible alias for the shared rotation config helper.
-_get_rotation_config = get_rotation_config
+def _transform_plain(record: "Record", message: str) -> str:
+    """Append any json_data payload (no label colorizing)."""
+    return _append_json_data(record, message)
+
+
+_format_record_colored = build_record_formatter(colored=True, message_transform=_transform_colored)
+_format_record_plain = build_record_formatter(colored=False, message_transform=_transform_plain)
 
 
 def setup_logging(
@@ -288,7 +250,7 @@ def setup_logging(
 
     if logfile:
         # File handler with rotation - no colors
-        rotation_config = _get_rotation_config()
+        rotation_config = get_rotation_config()
         logger.add(
             logfile,
             level=level,

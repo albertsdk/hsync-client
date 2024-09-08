@@ -15,6 +15,7 @@ import time
 from re import sub
 from typing import TYPE_CHECKING
 
+from hsync_common.clock import CLOCK_SKEW_THRESHOLD
 from hsync_common.protocol.pairing import (
     PinDecision,
     evaluate_pin,
@@ -24,7 +25,7 @@ from hsync_common.protocol.pairing import (
 from hsync_client.config import set_config
 from hsync_client.constants import DISCOVERY_POLL_INTERVAL
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
+from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
 from hsync_client.pinning import default_pin_store

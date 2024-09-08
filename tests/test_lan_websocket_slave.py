@@ -229,7 +229,7 @@ class TestSlaveFileEventHandler:
 
     def test_upload_to_master_success(self, handler):
         """Test _upload_to_master calls upload_file."""
-        from hsync_client.models.file import File
+        from hsync_common.models.file import File
 
         file_obj = File("/test/file.txt")
         with patch("hsync_client.transfer.upload_file") as mock_up:
@@ -238,7 +238,7 @@ class TestSlaveFileEventHandler:
 
     def test_upload_to_master_exception(self, handler):
         """Test _upload_to_master logs error on exception."""
-        from hsync_client.models.file import File
+        from hsync_common.models.file import File
 
         file_obj = File("/test/file.txt")
         with patch("hsync_client.transfer.upload_file", side_effect=Exception("fail")):

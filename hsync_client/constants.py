@@ -44,9 +44,6 @@ CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
 # File Transfer Settings (chunk sizes re-exported from hsync-common above)
 # =============================================================================
 
-# Default chunk size for SHA-256 computation (64KB)
-SHA256_CHUNK_SIZE = 65536
-
 
 # =============================================================================
 # File Stability Check
