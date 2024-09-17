@@ -14,14 +14,10 @@ certificate verification.
 
 from __future__ import annotations
 
-import atexit
 import ipaddress
 import os
-import secrets
-import shutil
 import ssl
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography import x509
@@ -33,70 +29,109 @@ from hsync_common.ssl_utils import (
     generate_rsa_private_key,
     get_server_cert_fingerprint,
     serialize_cert_pem,
-    serialize_key_pem,
+    serialize_private_key_unencrypted,
     verify_cert_fingerprint,
 )
 from loguru import logger as log
+from requests.adapters import DEFAULT_POOLBLOCK, HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
-
-# Certificate validity period (1 day for session-based certificates)
-CERT_VALIDITY_DAYS = 1
 
 # RSA key size
 RSA_KEY_SIZE = DEFAULT_KEY_SIZE
 
-# Session password length in bytes for encrypting the private key on disk.
-# 32 bytes = 256 bits of entropy, generated fresh per process and kept only
-# in memory. If the process is killed and the temp dir survives, the residual
-# key file is unusable because the password died with the process.
-_SESSION_KEY_PASSWORD_BYTES = 32
+# Persistent LAN master certificate validity. Identity is established by
+# fingerprint pinning (TOFU), not by chain/date validation, so a long validity
+# only avoids the operational nuisance of regenerating an expired identity.
+MASTER_CERT_VALIDITY_DAYS = 3650  # ~10 years
 
-# Track temp directories we created so atexit can wipe them out.
-_TEMP_DIRS_TO_CLEAN: list[str] = []
+# Override for the directory holding the persistent LAN master keypair.
+MASTER_CERT_DIR_ENV = "HSYNC_LAN_CERT_DIR"
+
+_MASTER_CERT_FILENAME = "lan_master_cert.pem"
+_MASTER_KEY_FILENAME = "lan_master_key.pem"
 
 __all__ = [
-    "CERT_VALIDITY_DAYS",
+    "MASTER_CERT_DIR_ENV",
+    "MASTER_CERT_VALIDITY_DAYS",
     "RSA_KEY_SIZE",
     "CertificateInfo",
+    "FingerprintHTTPAdapter",
     "create_fingerprint_ssl_context",
-    "generate_self_signed_cert",
+    "default_master_cert_dir",
     "get_server_cert_fingerprint",
-    "save_cert_to_temp_files",
+    "load_or_create_master_cert",
     "verify_cert_fingerprint",
+    "verify_peer_cert_fingerprint",
 ]
 
 
 @dataclass
 class CertificateInfo:
-    """Container for certificate, private key, fingerprint and encryption password.
+    """Container for a LAN master certificate, its private key and fingerprint.
 
-    The ``key_pem`` bytes are always encrypted with ``key_password``; the
-    password lives only in memory for the lifetime of the process.
+    The keypair is persisted on disk (``cert_file``/``key_file``) so the
+    fingerprint is stable across restarts. The private key is stored unencrypted
+    and protected by filesystem permissions; see
+    :func:`load_or_create_master_cert`.
     """
 
     cert_pem: bytes
     key_pem: bytes
     fingerprint: str
-    key_password: bytes = field(default=b"", repr=False)
     cert_file: str | None = None
     key_file: str | None = None
 
 
-def generate_self_signed_cert(
-    common_name: str = "hsync-lan",
-    validity_days: int = CERT_VALIDITY_DAYS,
-) -> CertificateInfo:
-    """
-    Generate a self-signed SSL certificate for LAN mode.
+def default_master_cert_dir() -> Path:
+    """Resolve the LAN master cert dir: ``$HSYNC_LAN_CERT_DIR`` or an OS state dir.
 
-    Args:
-        common_name: The CN (Common Name) for the certificate.
-        validity_days: Number of days the certificate is valid.
+    Mirrors :func:`hsync_client.pinning.default_pin_store_path` so the master's
+    identity lives outside the synced bucket and survives restarts.
+    """
+    override = os.environ.get(MASTER_CERT_DIR_ENV)
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
+    return Path(base) / "hsync" / "lan_cert"
+
+
+def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInfo:
+    """Load the persistent LAN master keypair, generating it on first use.
+
+    The keypair lives in an OS state directory (overridable via
+    ``$HSYNC_LAN_CERT_DIR``) so the master's fingerprint stays stable across
+    restarts: pinned peers keep trusting it (TOFU) instead of seeing a
+    ``[FINGERPRINT_CHANGED]`` mismatch every time the master restarts.
+
+    The private key is written unencrypted and protected by filesystem
+    permissions (``0o600`` in a ``0o700`` directory), the standard model for
+    long-lived self-signed service identities (SSH host keys, Syncthing):
+    identity is pinned, not derived from an encrypted-at-rest secret, and on the
+    LAN threat model local filesystem access already implies full compromise.
 
     Returns:
-        CertificateInfo containing the certificate, key, and fingerprint.
+        CertificateInfo with ``cert_file`` and ``key_file`` pointing at the
+        persistent keypair.
     """
-    log.debug(f"Generating self-signed certificate with CN={common_name}")
+    cert_dir = default_master_cert_dir()
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(cert_dir, 0o700)
+
+    cert_path = cert_dir / _MASTER_CERT_FILENAME
+    key_path = cert_dir / _MASTER_KEY_FILENAME
+
+    if cert_path.exists() and key_path.exists():
+        cert_pem = cert_path.read_bytes()
+        key_pem = key_path.read_bytes()
+        fingerprint = compute_cert_fingerprint(x509.load_pem_x509_certificate(cert_pem))
+        log.info(f"Loaded persistent LAN master certificate: {fingerprint[:16]}...")
+        return CertificateInfo(
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            fingerprint=fingerprint,
+            cert_file=str(cert_path),
+            key_file=str(key_path),
+        )
 
     private_key = generate_rsa_private_key(RSA_KEY_SIZE)
     cert = build_self_signed_certificate(
@@ -110,85 +145,26 @@ def generate_self_signed_cert(
             x509.DNSName("*"),
             x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
         ],
-        validity_days=validity_days,
+        validity_days=MASTER_CERT_VALIDITY_DAYS,
     )
-
-    # Per-session password: 256 bits of entropy, generated in memory and never
-    # serialized. Used to encrypt the PKCS#8 PEM written to disk.
-    key_password = secrets.token_bytes(_SESSION_KEY_PASSWORD_BYTES)
-
     cert_pem = serialize_cert_pem(cert)
-    key_pem = serialize_key_pem(private_key, password=key_password)
+    key_pem = serialize_private_key_unencrypted(private_key)
     fingerprint = compute_cert_fingerprint(cert)
 
-    log.info(f"Generated self-signed certificate with fingerprint: {fingerprint[:16]}...")
+    with open(cert_path, "wb") as f:
+        f.write(cert_pem)
+    os.chmod(cert_path, 0o600)
+    with open(key_path, "wb") as f:
+        f.write(key_pem)
+    os.chmod(key_path, 0o600)
 
+    log.info(f"Generated persistent LAN master certificate: {fingerprint[:16]}...")
     return CertificateInfo(
         cert_pem=cert_pem,
         key_pem=key_pem,
         fingerprint=fingerprint,
-        key_password=key_password,
-    )
-
-
-def _cleanup_ssl_temp_dir(tmpdir: str) -> None:
-    """Remove an SSL temp directory and all files in it (best effort)."""
-    try:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-    except Exception:  # pragma: no cover - best-effort cleanup
-        pass
-
-
-def save_cert_to_temp_files(cert_info: CertificateInfo) -> CertificateInfo:
-    """
-    Save certificate and (encrypted) key to a private temp directory.
-
-    The directory is created with ``mkdtemp`` (mode 0o700 by default) and
-    registered with :mod:`atexit` for cleanup. The key on disk is encrypted
-    with ``cert_info.key_password``; the password is kept only in memory, so
-    even if cleanup is skipped (e.g. SIGKILL) the residual key file is
-    cryptographically useless without the running process.
-
-    Args:
-        cert_info: The CertificateInfo to save. Must carry a non-empty
-            ``key_password`` matching the encryption of ``key_pem``.
-
-    Returns:
-        Updated CertificateInfo with ``cert_file`` and ``key_file`` set.
-    """
-    if not cert_info.key_password:
-        raise ValueError(
-            "cert_info.key_password is required: refusing to write a key without a session password"
-        )
-
-    tmpdir = tempfile.mkdtemp(prefix="hsync_ssl_")
-    # Defence-in-depth: enforce 0o700 even if the platform default differs.
-    os.chmod(tmpdir, 0o700)
-
-    cert_path = str(Path(tmpdir) / "cert.pem")
-    key_path = str(Path(tmpdir) / "key.pem")
-
-    with open(cert_path, "wb") as f:
-        f.write(cert_info.cert_pem)
-    os.chmod(cert_path, 0o600)
-
-    with open(key_path, "wb") as f:
-        f.write(cert_info.key_pem)
-    os.chmod(key_path, 0o600)
-
-    _TEMP_DIRS_TO_CLEAN.append(tmpdir)
-    atexit.register(_cleanup_ssl_temp_dir, tmpdir)
-
-    log.debug(f"Saved certificate to {cert_path}")
-    log.debug(f"Saved encrypted key to {key_path}")
-
-    return CertificateInfo(
-        cert_pem=cert_info.cert_pem,
-        key_pem=cert_info.key_pem,
-        fingerprint=cert_info.fingerprint,
-        key_password=cert_info.key_password,
-        cert_file=cert_path,
-        key_file=key_path,
+        cert_file=str(cert_path),
+        key_file=str(key_path),
     )
 
 
@@ -213,3 +189,58 @@ def create_fingerprint_ssl_context(expected_fingerprint: str) -> ssl.SSLContext:
     ctx.verify_mode = ssl.CERT_NONE
 
     return ctx
+
+
+class FingerprintHTTPAdapter(HTTPAdapter):
+    """``requests`` adapter that pins the peer certificate by SHA-256 fingerprint.
+
+    Binds the fingerprint check to the very connection that carries the request
+    via urllib3's ``assert_fingerprint``, eliminating the TOCTOU window of the
+    old "probe the cert on a separate connection, then request with
+    ``verify=False``" pattern. The certificate chain and hostname are
+    intentionally not validated: trust is established solely by the pinned
+    fingerprint (TOFU), which is the LAN identity model.
+    """
+
+    def __init__(self, fingerprint: str, **kwargs) -> None:
+        # urllib3 accepts hex with or without colons; normalise to lowercase.
+        self._assert_fingerprint = fingerprint.lower()
+        super().__init__(**kwargs)
+
+    def _pin_kwargs(self, kwargs: dict) -> dict:
+        ctx = create_urllib3_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        kwargs["ssl_context"] = ctx
+        kwargs["assert_fingerprint"] = self._assert_fingerprint
+        kwargs["assert_hostname"] = False
+        return kwargs
+
+    def init_poolmanager(
+        self, connections, maxsize, block=DEFAULT_POOLBLOCK, **pool_kwargs
+    ) -> None:
+        super().init_poolmanager(connections, maxsize, block=block, **self._pin_kwargs(pool_kwargs))
+
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        return super().proxy_manager_for(proxy, **self._pin_kwargs(proxy_kwargs))
+
+
+def verify_peer_cert_fingerprint(ssl_object, expected_fingerprint: str) -> bool:
+    """Verify a live TLS connection's peer cert against the pinned fingerprint.
+
+    Used for the WSS slave→master connection, where the certificate must be
+    checked on the same connection that carries the data (no separate probe).
+
+    Args:
+        ssl_object: The live ``ssl.SSLSocket``/``SSLObject`` of the connection.
+        expected_fingerprint: The pinned SHA-256 fingerprint (hex).
+
+    Returns:
+        True if the peer presented a certificate matching the fingerprint.
+    """
+    if not ssl_object:
+        return False
+    cert_der = ssl_object.getpeercert(binary_form=True)
+    if not cert_der:
+        return False
+    return verify_cert_fingerprint(cert_der, expected_fingerprint)

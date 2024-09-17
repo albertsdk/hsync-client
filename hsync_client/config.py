@@ -16,8 +16,7 @@ from typing import Any, TypedDict, cast
 
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
-from loguru import logger as log
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hsync_client.constants import (
@@ -73,7 +72,6 @@ class EnvSettings(BaseSettings):
     # LAN Mode Settings
     lan_key: SecretStr | None = Field(default=None, description="LAN shared secret key")
     lan_group: str | None = Field(default=None, description="LAN group name for peer filtering")
-    lan_https: bool = Field(default=True, description="Use HTTPS for LAN communication")
     lan_port: int | None = Field(default=None, ge=1, le=65535, description="LAN port")
 
     # LAN Discovery Settings
@@ -141,23 +139,6 @@ class EnvSettings(BaseSettings):
         description="Percentage of local files whose deletion trips the guard (0 = disabled)",
     )
 
-    @model_validator(mode="after")
-    def _lan_key_requires_https(self) -> "EnvSettings":
-        """Drop ``lan_key`` when HTTPS is disabled.
-
-        ``lan_key`` is a shared secret sent as a Bearer token; transmitting
-        it over plain HTTP offers no protection. A ``model_validator`` is
-        required here (not a ``field_validator``) because ``lan_key`` is
-        declared before ``lan_https`` and would not see it otherwise.
-        """
-        if self.lan_key is not None and not self.lan_https:
-            log.warning(
-                "HSYNC_LAN_KEY is set but HSYNC_LAN_HTTPS is disabled; "
-                "ignoring the key (secrets are never sent over plain HTTP)."
-            )
-            self.lan_key = None
-        return self
-
 
 @lru_cache
 def get_env_settings() -> EnvSettings:
@@ -204,11 +185,6 @@ def get_lan_key() -> str | None:
 def get_lan_group() -> str | None:
     """Get LAN group name from environment."""
     return get_env_settings().lan_group
-
-
-def get_lan_https() -> bool:
-    """Get LAN HTTPS setting from environment."""
-    return get_env_settings().lan_https
 
 
 def get_lan_port() -> int | None:
@@ -371,8 +347,6 @@ class HsyncConfig(TypedDict):
     LAN_KEY: str | None
     # LAN group name for peer filtering (None = no filtering)
     LAN_GROUP: str | None
-    # LAN HTTPS mode (self-signed certificate per session)
-    LAN_HTTPS: bool
     # LAN persistent mode (stay active indefinitely waiting for peers)
     LAN_PERSISTENT: bool
     # Force this client to be master in LAN mode

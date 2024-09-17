@@ -361,7 +361,6 @@ class _RunSyncKwargs(TypedDict, total=False):
     lan_port: int
     discovery_timeout: int | None
     lan_group: str | None
-    lan_https: bool
     lan_persistent: bool
     force_master: bool
     never_master: bool
@@ -402,7 +401,6 @@ def _default_run_sync_kwargs(
         "lan_port": 0,
         "discovery_timeout": 5,
         "lan_group": None,
-        "lan_https": False,
         "lan_persistent": False,
         "force_master": False,
         "never_master": False,

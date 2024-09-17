@@ -57,9 +57,8 @@ def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
     """
     from hsync_common.clock import measure_clock_offset
     from requests import RequestException
-    from requests import get as http_get
 
-    from hsync_client.utils import get_ssl_verify
+    from hsync_client.utils import get_ssl_verify, http_get
 
     time_url = f"{master.get_server_url()}/api/v1/time"
 
@@ -129,22 +128,18 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
     if wait_indefinitely_for_peer and not persistent:
         log.info("Discovery timeout disabled - waiting indefinitely for the first LAN peer/master")
 
-    cert_info = None
-    if config["LAN_HTTPS"]:
-        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
+    from hsync_client.ssl_utils import load_or_create_master_cert
 
-        log.info("Generating self-signed certificate for HTTPS...")
-        cert_info = generate_self_signed_cert()
-        cert_info = save_cert_to_temp_files(cert_info)
-        log.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
+    cert_info = load_or_create_master_cert()
+    log.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
 
     lan_sync = LANSync(
         cid=config["CID"],
         bucket=config["REMOTE_BUCKET"],
         port=config["LAN_PORT"],
         group=config["LAN_GROUP"],
-        use_https=config["LAN_HTTPS"],
-        cert_fingerprint=cert_info.fingerprint if cert_info else None,
+        use_https=True,
+        cert_fingerprint=cert_info.fingerprint,
         force_master=config["LAN_FORCE_MASTER"],
         never_master=config["LAN_NEVER_MASTER"],
         sync_direction=config["SYNC_DIRECTION"],
@@ -266,39 +261,28 @@ def _run_as_master(
 
     log.info("This client is the MASTER - acting as sync coordinator")
 
-    # Start HTTP server if not already running
+    # Start HTTPS server if not already running (LAN transport is HTTPS-only)
     if lan_server is None:
-        if config["LAN_HTTPS"] and cert_info:
-            lan_server = LANServer(
-                port=lan_sync.port,
-                use_https=True,
-                cert_file=cert_info.cert_file,
-                key_file=cert_info.key_file,
-                key_password=cert_info.key_password,
-            )
-        else:
-            lan_server = LANServer(port=lan_sync.port)
+        lan_server = LANServer(
+            port=lan_sync.port,
+            use_https=True,
+            cert_file=cert_info.cert_file,
+            key_file=cert_info.key_file,
+        )
         lan_server.start()
-
-        protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
-        log.info(f"Master HTTP server on port {lan_sync.port} ({protocol})")
+        log.info(f"Master HTTP server on port {lan_sync.port} (HTTPS)")
 
     # Start WebSocket server if not already running
     if lan_ws_server is None:
         ws_port = lan_sync.port + 1  # Use next port for WebSocket
-        if config["LAN_HTTPS"] and cert_info:
-            lan_ws_server = LANWebSocketServer(
-                port=ws_port,
-                use_https=True,
-                cert_file=cert_info.cert_file,
-                key_file=cert_info.key_file,
-                key_password=cert_info.key_password,
-            )
-        else:
-            lan_ws_server = LANWebSocketServer(port=ws_port)
+        lan_ws_server = LANWebSocketServer(
+            port=ws_port,
+            use_https=True,
+            cert_file=cert_info.cert_file,
+            key_file=cert_info.key_file,
+        )
         lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
-        ws_protocol = "WSS" if config["LAN_HTTPS"] else "WS"
-        log.info(f"Master WebSocket server on port {ws_port} ({ws_protocol})")
+        log.info(f"Master WebSocket server on port {ws_port} (WSS)")
 
         if config["LAN_KEY"]:
             log.info("Authentication enabled (HSYNC_LAN_KEY)")
@@ -394,51 +378,37 @@ def _run_as_slave(
             log.info(f"Waiting for master {master.cid} to start server...")
             return True  # Continue discovery loop
 
-        # Protocol gate (symmetric, no-downgrade): only communicate with a
-        # master whose transport matches our own LAN_HTTPS preference. We do
-        # NOT self-promote on mismatch (that would create a second master and
-        # split-brain); we simply stay in the discovery loop and warn.
-        if master.use_https != config["LAN_HTTPS"]:
-            local_proto = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
-            master_proto = "HTTPS" if master.use_https else "HTTP"
+        # Secure-only LAN: a master must serve over HTTPS and advertise a
+        # certificate fingerprint we can pin. Anything else is refused; there is
+        # no plain-HTTP downgrade path. We do NOT self-promote on refusal (that
+        # would create a second master and split-brain); we stay in the
+        # discovery loop and warn.
+        if not (master.use_https and master.cert_fingerprint):
             log.warning(
-                f"[PROTOCOL_MISMATCH] master {master.cid} uses {master_proto} "
-                f"but this client is configured for {local_proto}. "
-                f"Refusing to start communication (no protocol downgrade/upgrade). "
-                f"Set HSYNC_LAN_HTTPS to match the master ({master_proto}) to sync."
+                f"[INSECURE_MASTER] master {master.cid} does not advertise an HTTPS "
+                f"endpoint with a certificate fingerprint. Refusing to connect "
+                f"(LAN transport is HTTPS-only)."
             )
-            # Do not self-promote (that would create a second master and
-            # split-brain). Keep waiting only in persistent mode; otherwise
-            # exit since this node cannot sync with the elected master.
             return persistent or wait_indefinitely_for_peer
 
         master_url = master.get_server_url()
         log.info(f"Connecting to master: {master.cid} at {master_url}")
         emit_event(UiEventName.server, url=master_url)
 
-        if master.use_https and master.cert_fingerprint:
-            if not _evaluate_master_pin(config, master, log):
-                # Stay in the discovery loop (persistent) rather than connecting to
-                # a master whose identity can no longer be verified or which has not
-                # yet been paired out of band.
-                return persistent or wait_indefinitely_for_peer
-            log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
-            config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
+        if not _evaluate_master_pin(config, master, log):
+            # Stay in the discovery loop (persistent) rather than connecting to
+            # a master whose identity can no longer be verified or which has not
+            # yet been paired out of band.
+            return persistent or wait_indefinitely_for_peer
+        log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
+        config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
         config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
-        ws_master_url = sub(r"^http:", "ws:", master_url)
-        if master.use_https:
-            ws_master_url = sub(r"^http:", "wss:", ws_master_url)
+        ws_master_url = sub(r"^https:", "wss:", master_url)
         config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
 
         if config["LAN_KEY"]:
-            if master.use_https:
-                config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
-            else:
-                log.warning(
-                    "LAN_KEY is set but the master uses plain HTTP; "
-                    "the key will NOT be sent over an unencrypted channel."
-                )
+            config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
 
         # Set compression capability based on master peer
         config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
@@ -474,7 +444,7 @@ def _run_as_slave(
                     lan_websocket_client(
                         host=master.address,
                         port=ws_port,
-                        use_https=master.use_https,
+                        use_https=True,
                     ),
                 )
             )

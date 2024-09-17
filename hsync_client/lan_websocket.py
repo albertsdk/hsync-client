@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import ssl
 import threading
@@ -128,7 +129,6 @@ class LANWebSocketServer:
         use_https: bool = False,
         cert_file: str | None = None,
         key_file: str | None = None,
-        key_password: bytes | None = None,
     ) -> None:
         """
         Initialize the WebSocket server.
@@ -137,15 +137,14 @@ class LANWebSocketServer:
             port: Port to listen on (different from HTTP port).
             use_https: Whether to use WSS instead of WS.
             cert_file: Path to SSL certificate file.
-            key_file: Path to SSL private key file.
-            key_password: Password used to decrypt ``key_file`` (required if
-                ``use_https=True``; the on-disk key is always encrypted).
+            key_file: Path to SSL private key file. The persistent master key is
+                stored unencrypted and protected by filesystem permissions (see
+                ``load_or_create_master_cert``).
         """
         self._port = port
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
-        self._key_password = key_password
         self._clients: set[Any] = set()  # WebSocket connections
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -154,8 +153,8 @@ class LANWebSocketServer:
         self._observer: BaseObserver | None = None
         self._event_handler: LANMasterFileEventHandler | None = None
 
-        if use_https and not key_password:
-            raise ValueError("key_password is required when use_https=True")
+        if use_https and (not cert_file or not key_file):
+            raise ValueError("cert_file and key_file are required when use_https=True")
 
     @property
     def port(self) -> int:
@@ -175,7 +174,10 @@ class LANWebSocketServer:
                 # Wait for auth message
                 auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_data = json.loads(auth_msg)
-                if auth_data.get("type") != "auth" or auth_data.get("token") != lan_key:
+                token = auth_data.get("token")
+                if auth_data.get("type") != "auth" or not (
+                    isinstance(token, str) and hmac.compare_digest(token, str(lan_key))
+                ):
                     log.warning(f"WebSocket auth failed from {client_addr}")
                     await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                     await websocket.close()
@@ -242,7 +244,6 @@ class LANWebSocketServer:
             ssl_context.load_cert_chain(
                 self._cert_file,  # type: ignore[arg-type]
                 self._key_file,  # type: ignore[arg-type]
-                password=self._key_password,
             )
 
         async with websockets.serve(
@@ -466,9 +467,9 @@ async def lan_websocket_client(
     Also starts a local file watcher to upload changes to the master
     (bidirectional sync).
 
-    Note: Certificate fingerprint verification is not performed here because
-    it was already verified during the initial HTTP sync. The WebSocket
-    connection uses the same certificate.
+    In WSS mode the master's certificate is pinned on the live connection: the
+    certificate actually presented during the handshake is bound to the expected
+    SHA-256 fingerprint (TOFU), and the connection is refused on mismatch.
 
     Args:
         host: Master's IP address or hostname.
@@ -508,14 +509,15 @@ async def lan_websocket_client(
     if CONFIG.get("RESYNC"):
         resync_task = asyncio.create_task(_lan_periodic_resync())
 
-    # Set up SSL context for WSS
-    # Note: Certificate fingerprint was already verified during initial HTTP sync.
-    # We trust the same certificate for WebSocket connection.
+    # Set up SSL context for WSS. The self-signed master cert is trusted by
+    # pinned fingerprint (TOFU), not by chain validation, so we accept any cert
+    # at the handshake and verify the fingerprint on the live connection below.
     ssl_context = None
+    expected_fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
     if use_https:
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        from hsync_client.ssl_utils import create_fingerprint_ssl_context
+
+        ssl_context = create_fingerprint_ssl_context(str(expected_fingerprint or ""))
 
     try:
         async with websockets.connect(
@@ -525,6 +527,21 @@ async def lan_websocket_client(
             ping_timeout=30,
             close_timeout=5,
         ) as websocket:
+            # Pin the master's identity on this live WSS connection: bind the
+            # certificate actually presented during the handshake to the pinned
+            # fingerprint, refusing on mismatch. This closes the gap where the
+            # WebSocket previously trusted any certificate (CERT_NONE).
+            if use_https and expected_fingerprint:
+                from hsync_client.ssl_utils import verify_peer_cert_fingerprint
+
+                transport = getattr(websocket, "transport", None)
+                ssl_object = (
+                    transport.get_extra_info("ssl_object") if transport is not None else None
+                )
+                if not verify_peer_cert_fingerprint(ssl_object, str(expected_fingerprint)):
+                    log.error("Master WSS certificate fingerprint mismatch; refusing connection")
+                    return
+
             log.info("WebSocket connected to master")
 
             # Read server greeting to determine if auth is required
@@ -788,9 +805,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
     def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
         """Notify master about a file/directory deletion."""
-        import requests
-
-        from hsync_client.utils import get_ssl_verify, verify_master_fingerprint
+        from hsync_client.utils import get_ssl_verify, http_delete
 
         try:
             protocol = "https" if self._use_https else "http"
@@ -816,12 +831,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            if not verify_master_fingerprint(url):
-                log.error("Master certificate fingerprint mismatch; aborting delete")
-                return
-
             log.info(f'[CLIENT DEL ] "{filepath}"')
-            response = requests.delete(
+            response = http_delete(
                 url,
                 params=params,
                 headers=headers,
@@ -837,9 +848,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
     def _rename_on_master(self, src_path: str, dst_path: str) -> None:
         """Notify master about a file/directory rename."""
-        import requests
-
-        from hsync_client.utils import get_ssl_verify, verify_master_fingerprint
+        from hsync_client.utils import get_ssl_verify, http_patch
 
         try:
             protocol = "https" if self._use_https else "http"
@@ -865,12 +874,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            if not verify_master_fingerprint(url):
-                log.error("Master certificate fingerprint mismatch; aborting rename")
-                return
-
             log.info(f'[CLIENT REN ] "{src_path}" -> "{dst_path}"')
-            response = requests.patch(
+            response = http_patch(
                 url,
                 params=params,
                 headers=headers,

@@ -371,15 +371,6 @@ def main(
             rich_help_panel="LAN Mode",
         ),
     ] = None,
-    lan_https: Annotated[
-        bool,
-        typer.Option(
-            "--no-lan-https/",
-            help="Disable HTTPS for LAN mode (use plain HTTP).",
-            show_default=False,
-            rich_help_panel="LAN Mode",
-        ),
-    ] = True,
     lan_persistent: Annotated[
         bool,
         typer.Option(
@@ -664,7 +655,6 @@ def main(
         lan_port=lan_port,
         discovery_timeout=discovery_timeout,
         lan_group=lan_group,
-        lan_https=lan_https,
         lan_persistent=lan_persistent,
         force_master=force_master,
         never_master=never_master,

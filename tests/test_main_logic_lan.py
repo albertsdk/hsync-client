@@ -18,7 +18,6 @@ def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
         "REMOTE_BUCKET": "test-bucket",
         "LAN_PORT": 9000,
         "LAN_GROUP": None,
-        "LAN_HTTPS": False,
         "LAN_FORCE_MASTER": False,
         "LAN_NEVER_MASTER": False,
         "SYNC_DIRECTION": "bidirectional",
@@ -98,11 +97,11 @@ class TestRunLanMode:
         master_peer.cid = "master-cid"
         master_peer.address = "192.168.1.1"
         master_peer.port = 9000
-        master_peer.use_https = False
-        master_peer.cert_fingerprint = None
+        master_peer.use_https = True
+        master_peer.cert_fingerprint = "abcdef1234567890" * 4
         master_peer.compression_enabled = True
         master_peer.server_ready = True
-        master_peer.get_server_url.return_value = "http://192.168.1.1:9000"
+        master_peer.get_server_url.return_value = "https://192.168.1.1:9000"
 
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.get_alive_peers.return_value = [master_peer]
@@ -117,6 +116,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
             patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
@@ -125,17 +125,18 @@ class TestRunLanMode:
         mock_run.assert_called_once()
         assert any("master" in str(c).lower() for c in mock_log.info.call_args_list)
 
-    def test_slave_protocol_mismatch_refuses(self, tmp_path):
-        """Client refuses to connect to a master using a different protocol."""
-        # Local client is HTTP, master is HTTPS -> mismatch, no sync.
-        config = _make_lan_config(tmp_path, LAN_HTTPS=False)
+    def test_slave_insecure_master_refuses(self, tmp_path):
+        """Client refuses a master that does not serve HTTPS with a fingerprint."""
+        # Secure-only LAN: a plain-HTTP master is rejected, no sync.
+        config = _make_lan_config(tmp_path)
         mock_log = MagicMock()
 
         master_peer = MagicMock()
         master_peer.cid = "master-cid"
         master_peer.address = "192.168.1.1"
         master_peer.port = 9000
-        master_peer.use_https = True
+        master_peer.use_https = False
+        master_peer.cert_fingerprint = None
         master_peer.server_ready = True
 
         mock_peer_mgr = MagicMock()
@@ -156,9 +157,9 @@ class TestRunLanMode:
         ):
             run_lan_mode(config, mock_log)
 
-        # No sync attempted and a protocol-mismatch warning was emitted.
+        # No sync attempted and an insecure-master warning was emitted.
         mock_run.assert_not_called()
-        assert any("PROTOCOL_MISMATCH" in str(c) for c in mock_log.warning.call_args_list)
+        assert any("INSECURE_MASTER" in str(c) for c in mock_log.warning.call_args_list)
 
     def test_slave_dryrun_shows_preview(self, tmp_path):
         """Client in dryrun mode shows preview and exits."""
@@ -168,10 +169,10 @@ class TestRunLanMode:
         master_peer = MagicMock()
         master_peer.cid = "master-cid"
         master_peer.server_ready = True
-        master_peer.use_https = False
-        master_peer.cert_fingerprint = None
+        master_peer.use_https = True
+        master_peer.cert_fingerprint = "abcdef1234567890" * 4
         master_peer.compression_enabled = False
-        master_peer.get_server_url.return_value = "http://192.168.1.1:9000"
+        master_peer.get_server_url.return_value = "https://192.168.1.1:9000"
 
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.get_alive_peers.return_value = [master_peer]
@@ -186,6 +187,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
             patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler._run_preview") as mock_preview,
         ):
             run_lan_mode(config, mock_log)
@@ -214,9 +216,9 @@ class TestRunLanMode:
         mock_lan_sync.stop.assert_called_once()
         assert any("Shutting down" in str(c) for c in mock_log.info.call_args_list)
 
-    def test_https_generates_certificates(self, tmp_path):
-        """LAN_HTTPS=True triggers self-signed certificate generation."""
-        config = _make_lan_config(tmp_path, LAN_HTTPS=True)
+    def test_loads_persistent_master_certificate(self, tmp_path):
+        """LAN mode always loads the persistent master certificate."""
+        config = _make_lan_config(tmp_path)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -234,16 +236,13 @@ class TestRunLanMode:
         with (
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch(
-                "hsync_client.ssl_utils.generate_self_signed_cert", return_value=mock_cert_info
-            ) as mock_gen,
-            patch(
-                "hsync_client.ssl_utils.save_cert_to_temp_files", return_value=mock_cert_info
-            ) as mock_save,
+                "hsync_client.ssl_utils.load_or_create_master_cert",
+                return_value=mock_cert_info,
+            ) as mock_load,
         ):
             run_lan_mode(config, mock_log)
 
-        mock_gen.assert_called_once()
-        mock_save.assert_called_once_with(mock_cert_info)
+        mock_load.assert_called_once()
 
     def test_slave_waits_for_master_server_ready(self, tmp_path):
         """Client re-enters discovery loop when master not ready."""
@@ -257,10 +256,10 @@ class TestRunLanMode:
         master_ready = MagicMock()
         master_ready.cid = "master-cid"
         master_ready.server_ready = True
-        master_ready.use_https = False
-        master_ready.cert_fingerprint = None
+        master_ready.use_https = True
+        master_ready.cert_fingerprint = "abcdef1234567890" * 4
         master_ready.compression_enabled = False
-        master_ready.get_server_url.return_value = "http://192.168.1.1:9000"
+        master_ready.get_server_url.return_value = "https://192.168.1.1:9000"
 
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.get_alive_peers.return_value = [MagicMock()]
@@ -276,6 +275,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
             patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):

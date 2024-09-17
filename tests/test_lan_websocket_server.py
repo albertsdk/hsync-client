@@ -29,13 +29,11 @@ class TestLANWebSocketServer:
             use_https=True,
             cert_file="/path/to/cert.pem",
             key_file="/path/to/key.pem",
-            key_password=b"test-password",
         )
         assert server.port == 9999
         assert server._use_https is True
         assert server._cert_file == "/path/to/cert.pem"
         assert server._key_file == "/path/to/key.pem"
-        assert server._key_password == b"test-password"
 
     def test_server_port_property(self):
         """Test server port property."""

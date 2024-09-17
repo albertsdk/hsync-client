@@ -265,7 +265,7 @@ $ ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 [INFO] LAN P2P mode enabled
 [INFO] Persistent mode enabled - will wait indefinitely for peers
-[INFO] Generating self-signed certificate for HTTPS...
+[INFO] Loading persistent LAN master certificate...
 [INFO] Certificate fingerprint: a1b2c3d4e5f6...
 [INFO] Waiting for peers to join...
 [INFO] Waiting for peers to join...
@@ -280,9 +280,8 @@ $ ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--lan-mode` | Enable LAN P2P mode | `false` |
-| `--lan-port` | Port for HTTP server (0 = random) | `0` |
+| `--lan-port` | Port for the HTTPS server (0 = random) | `0` |
 | `--lan-group` | Group name for peer filtering | `None` |
-| `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled |
 | `--discovery-timeout` | Initial peer discovery timeout in seconds (`0` = wait indefinitely) | `10` |
 | `--no-lan-persistent` | Disable persistent mode (exit when no peers) | Persistent enabled |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
@@ -306,13 +305,13 @@ All LAN options can also be configured via environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HSYNC_LAN_PORT` | Port for HTTP server (0 = random) | `0` |
+| `HSYNC_LAN_PORT` | Port for the HTTPS server (0 = random) | `0` |
 | `HSYNC_DISCOVERY_TIMEOUT` | Initial peer discovery timeout in seconds (`0` = wait indefinitely) | `10` |
 | `HSYNC_HEARTBEAT_INTERVAL` | Heartbeat interval for peer health (seconds) | `5` |
 | `HSYNC_PEER_TIMEOUT` | Timeout before marking peer as offline (seconds) | `15` |
 | `HSYNC_LAN_KEY` | Shared secret for authentication | `None` |
 | `HSYNC_LAN_GROUP` | Group name for peer filtering | `None` |
-| `HSYNC_LAN_HTTPS` | Enable/disable HTTPS (`true`/`false`) | `true` |
+| `HSYNC_LAN_CERT_DIR` | Directory holding the persistent LAN master keypair | OS state dir |
 | `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
 | `HSYNC_NEVER_MASTER` | Never let this peer become master (`true`/`false`) | `false` |
 
@@ -387,15 +386,24 @@ peer without a group matches **only** other peers that also run without a group.
 - **Dev vs Prod**: Isolate development and production environments
 - **Multiple projects**: Same bucket name but different groups for different projects
 
-## HTTPS Support
+## Transport Security (HTTPS/WSS)
 
-LAN mode supports encrypted communication using HTTPS with self-signed certificates.
+LAN mode is **HTTPS/WSS only**: all peer communication is encrypted with the
+master's self-signed certificate. There is no plain-HTTP transport and no way to
+disable encryption — a peer that cannot present an HTTPS endpoint with a
+certificate fingerprint is refused.
 
 ### How It Works
 
-1. **Certificate Generation**: When HTTPS is enabled, a self-signed certificate is generated per session
-2. **Fingerprint Sharing**: The certificate fingerprint (SHA-256) is shared via mDNS TXT records
-3. **Automatic Verification**: Clients can verify the master's certificate using the fingerprint
+1. **Persistent Identity**: On first use the master generates a self-signed
+   certificate and stores the keypair in an OS state directory
+   (`~/.local/state/hsync/lan_cert`, overridable via `HSYNC_LAN_CERT_DIR`). It is
+   reused on every restart, so the fingerprint peers pinned stays stable.
+2. **Fingerprint Sharing**: The certificate fingerprint (SHA-256) is shared via mDNS TXT records (`cert_fp`).
+3. **Connection-level Pinning**: Clients pin the fingerprint on the very TLS
+   connection that carries the data — REST via urllib3's `assert_fingerprint`,
+   WSS via a post-handshake peer-certificate check — so a mismatch fails the
+   handshake instead of leaving a TOCTOU window.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -405,13 +413,13 @@ LAN mode supports encrypted communication using HTTPS with self-signed certifica
 │   Master                              Client                     │
 │   ══════                              ══════                     │
 │   ┌────────────────┐                                             │
-│   │ Generate RSA   │                                             │
-│   │ 2048-bit key   │                                             │
+│   │ Load/create    │                                             │
+│   │ persistent key │                                             │
 │   └───────┬────────┘                                             │
 │           │                                                      │
 │   ┌───────▼────────┐                                             │
-│   │ Create X.509   │                                             │
-│   │ certificate    │                                             │
+│   │ Self-signed    │                                             │
+│   │ X.509 cert     │                                             │
 │   └───────┬────────┘                                             │
 │           │                                                      │
 │   ┌───────▼────────┐        mDNS TXT record                      │
@@ -420,53 +428,42 @@ LAN mode supports encrypted communication using HTTPS with self-signed certifica
 │   │ fingerprint    │                             │ fingerprint  ││
 │   └───────┬────────┘                             └──────┬───────┘│
 │           │                                             │        │
-│   ┌───────▼────────┐        HTTPS request               │        │
+│   ┌───────▼────────┐        HTTPS handshake             │        │
 │   │ Start HTTPS    │ <───────────────────────  ┌────────▼───────┐│
-│   │ server         │                           │ Verify cert    ││
-│   └────────────────┘                           │ fingerprint    ││
+│   │ server         │   pinned at connection     │ Pin fingerprint││
+│   └────────────────┘                           │ (assert_fp)    ││
 │                                                └────────────────┘│
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Usage
 
-HTTPS is **enabled by default** in LAN mode. No additional configuration is needed:
+HTTPS is **mandatory** in LAN mode — it is always on and cannot be disabled. No
+additional configuration is needed:
 
 ```bash
-# HTTPS is enabled by default
+# HTTPS is always on
 ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
-# Combine with authentication for maximum security
+# Combine with authentication for write-capable sync
 HSYNC_LAN_KEY="mySecret" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
-
-# Disable HTTPS (use plain HTTP)
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
-
-# Disable via environment variable
-export HSYNC_LAN_HTTPS=false
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### Security Considerations
 
 | Aspect | Description |
 |--------|-------------|
-| **Certificate Validity** | 1 day (session-based) |
+| **Identity** | Persistent keypair under `~/.local/state/hsync/lan_cert` (`HSYNC_LAN_CERT_DIR`) |
+| **Certificate Validity** | ~10 years (trust comes from the pin, not the date) |
+| **Private Key** | Unencrypted PKCS#8, protected by filesystem permissions (`0o600`) |
 | **Key Size** | RSA 2048-bit |
 | **Fingerprint** | SHA-256 (64 hex characters) |
-| **Trust Model** | Trust-on-first-use (TOFU) via mDNS |
-
-### When to Use HTTPS
-
-- **Shared networks**: Office or shared home networks where traffic sniffing is a concern
-- **Sensitive data**: When syncing confidential files
-- **Combined with `HSYNC_LAN_KEY`**: For both encryption and authentication
+| **Trust Model** | Trust-on-first-use (TOFU), pinned at the connection level |
 
 ### Limitations
 
 - **Self-signed certificates**: Browsers and strict clients may show warnings
-- **No CA verification**: Trust is established via mDNS fingerprint sharing
-- **Session-based**: New certificate generated on each restart
+- **No CA verification**: Trust is established via the pinned mDNS fingerprint (TOFU)
 
 ## Master Election
 

@@ -5,6 +5,7 @@ Tests for hsync_client.pinning (LAN Trust-On-First-Use certificate store).
 import os
 import stat
 
+import pytest
 from hsync_common.protocol.pairing import PinDecision
 
 from hsync_client.pinning import (
@@ -77,7 +78,9 @@ class TestPinStore:
         # the original pin is preserved (a change must not silently overwrite trust)
         assert store.get("cid-1", "bucket") == "abc123"
 
-    def test_check_and_record_no_fingerprint(self, tmp_path):
+    def test_check_and_record_missing_fingerprint_raises(self, tmp_path):
+        """A missing fingerprint violates the HTTPS-only LAN contract."""
         store = PinStore(tmp_path / "pins.json")
-        assert store.check_and_record("cid-1", "bucket", None) is PinDecision.no_fingerprint
+        with pytest.raises(ValueError):
+            store.check_and_record("cid-1", "bucket", None)
         assert store.get("cid-1", "bucket") is None

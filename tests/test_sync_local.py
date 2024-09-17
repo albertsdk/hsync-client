@@ -734,7 +734,6 @@ class TestPushTombstonesRemote:
         payload = {tombstone_key("a.txt"): {"ts": 1, "sha256": "a"}}
         with (
             patch("hsync_client.sync.CONFIG", self._CONFIG),
-            patch("hsync_client.sync.verify_master_fingerprint", return_value=True),
             patch("hsync_client.sync.get_ssl_verify", return_value=True),
             patch("hsync_client.sync.post") as mock_post,
         ):
@@ -745,17 +744,6 @@ class TestPushTombstonesRemote:
             assert args[0] == "https://master/api/v1/buckets/remote/tombstones"
             assert kwargs["json"] == payload
 
-    def test_fingerprint_failure_skips_post(self):
-        """A failed fingerprint check prevents the push without raising."""
-        payload = {tombstone_key("a.txt"): {"ts": 1, "sha256": "a"}}
-        with (
-            patch("hsync_client.sync.CONFIG", self._CONFIG),
-            patch("hsync_client.sync.verify_master_fingerprint", return_value=False),
-            patch("hsync_client.sync.post") as mock_post,
-        ):
-            push_tombstones_remote(payload)
-            mock_post.assert_not_called()
-
     def test_request_exception_is_swallowed(self):
         """A transport error never propagates out of the best-effort push."""
         from requests import RequestException
@@ -763,7 +751,6 @@ class TestPushTombstonesRemote:
         payload = {tombstone_key("a.txt"): {"ts": 1, "sha256": "a"}}
         with (
             patch("hsync_client.sync.CONFIG", self._CONFIG),
-            patch("hsync_client.sync.verify_master_fingerprint", return_value=True),
             patch("hsync_client.sync.get_ssl_verify", return_value=True),
             patch("hsync_client.sync.post", side_effect=RequestException("boom")),
         ):
