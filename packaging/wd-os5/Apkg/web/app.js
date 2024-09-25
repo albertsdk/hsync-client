@@ -18,7 +18,7 @@
 
     const SUPPORTED = ['en', 'it', 'de', 'es', 'fr'];
     const CHECKBOX_KEYS = [
-        'HSYNC_LAN_PERSISTENT', 'HSYNC_LAN_HTTPS',
+        'HSYNC_LAN_PERSISTENT', 'HSYNC_LAN_REQUIRE_PAIRING',
         'HSYNC_WATCH', 'HSYNC_IGNORE_DELETE',
         'HSYNC_NO_COMPRESSION', 'HSYNC_VERBOSE',
     ];

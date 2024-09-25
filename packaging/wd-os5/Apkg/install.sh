@@ -75,6 +75,10 @@ if [ ! -f "${HSYNC_ENV_FILE}" ]; then
 # HSYNC configuration — edited from the web UI at http://<NAS>/${APKG_NAME}/
 # Values follow the .env convention; quoted strings are recommended.
 
+# Defaults tuned for using the NAS as a BACKUP target: it is the authoritative
+# LAN master and never loses files when a client deletes them
+# (HSYNC_IGNORE_DELETE=true). Adjust from the web UI for other use cases.
+
 # Mode: lan | server
 HSYNC_MODE="lan"
 
@@ -84,13 +88,18 @@ HSYNC_PATH="${HSYNC_DATA_DIR}"
 # Bucket name (alphanumeric, hyphens and underscores).
 HSYNC_BUCKET="hsync"
 
-# Role in LAN mode: auto | master | slave
-HSYNC_ROLE="auto"
+# Role in LAN mode: auto | master | slave | never-master
+HSYNC_ROLE="master"
 
-# LAN options
+# LAN options. The LAN transport is HTTPS/WSS-only (protocol lan/1); the master
+# uses a persistent self-signed identity and slaves pin its fingerprint (TOFU).
 HSYNC_LAN_PERSISTENT="true"
-HSYNC_LAN_HTTPS="true"
 HSYNC_LAN_GROUP=""
+# Optional shared secret required to write to the master (recommended).
+HSYNC_LAN_KEY=""
+# Strict pairing: refuse a first-seen master fingerprint until confirmed
+# out of band (disables Trust-On-First-Use auto-pinning).
+HSYNC_LAN_REQUIRE_PAIRING="false"
 HSYNC_DISCOVERY_TIMEOUT="10"
 
 # Server options (used only when HSYNC_MODE=server)
@@ -100,7 +109,7 @@ HSYNC_API_KEY=""
 # Sync behaviour
 HSYNC_WATCH="true"
 HSYNC_INTERVAL="0"
-HSYNC_IGNORE_DELETE="false"
+HSYNC_IGNORE_DELETE="true"
 HSYNC_NO_COMPRESSION="false"
 HSYNC_MAX_BW_UPLOAD=""
 HSYNC_MAX_BW_DOWNLOAD=""

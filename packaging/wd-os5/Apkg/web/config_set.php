@@ -41,7 +41,8 @@ parse_str($raw, $post);
 
 const KEYS = [
     'HSYNC_MODE', 'HSYNC_PATH', 'HSYNC_BUCKET', 'HSYNC_ROLE',
-    'HSYNC_LAN_PERSISTENT', 'HSYNC_LAN_HTTPS', 'HSYNC_LAN_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
+    'HSYNC_LAN_PERSISTENT', 'HSYNC_LAN_KEY', 'HSYNC_LAN_REQUIRE_PAIRING',
+    'HSYNC_LAN_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
     'HSYNC_SERVER', 'HSYNC_API_KEY',
     'HSYNC_WATCH', 'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_NO_COMPRESSION',
     'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB', 'HSYNC_VERBOSE',
@@ -69,7 +70,7 @@ foreach (KEYS as $key) {
             if (!preg_match('/^[0-9]*$/', $val)) $val = '';
             break;
         case 'HSYNC_LAN_PERSISTENT':
-        case 'HSYNC_LAN_HTTPS':
+        case 'HSYNC_LAN_REQUIRE_PAIRING':
         case 'HSYNC_WATCH':
         case 'HSYNC_IGNORE_DELETE':
         case 'HSYNC_NO_COMPRESSION':

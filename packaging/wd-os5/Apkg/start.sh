@@ -59,19 +59,24 @@ if [ -f "${HSYNC_ENV_FILE}" ]; then
     . "${HSYNC_ENV_FILE}"
 fi
 
+# Backup-oriented defaults: the NAS is the authoritative master that keeps a
+# safe copy of the clients' data. Deletions on the clients are NOT propagated
+# (HSYNC_IGNORE_DELETE=true), so the backup never loses files because a source
+# host removed them.
 : "${HSYNC_MODE:=lan}"
 : "${HSYNC_PATH:=${HSYNC_DATA_DIR}}"
 : "${HSYNC_BUCKET:=hsync}"
-: "${HSYNC_ROLE:=auto}"
+: "${HSYNC_ROLE:=master}"
 : "${HSYNC_LAN_PERSISTENT:=true}"
-: "${HSYNC_LAN_HTTPS:=true}"
 : "${HSYNC_LAN_GROUP:=}"
+: "${HSYNC_LAN_KEY:=}"
+: "${HSYNC_LAN_REQUIRE_PAIRING:=false}"
 : "${HSYNC_DISCOVERY_TIMEOUT:=10}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
 : "${HSYNC_WATCH:=true}"
 : "${HSYNC_INTERVAL:=0}"
-: "${HSYNC_IGNORE_DELETE:=false}"
+: "${HSYNC_IGNORE_DELETE:=true}"
 : "${HSYNC_NO_COMPRESSION:=false}"
 : "${HSYNC_MAX_BW_UPLOAD:=}"
 : "${HSYNC_MAX_BW_DOWNLOAD:=}"
@@ -90,10 +95,14 @@ set -- \
 
 case "${HSYNC_MODE}" in
     lan)
+        # LAN transport is HTTPS/WSS-only (protocol lan/1): the master always
+        # serves over TLS with a persistent self-signed identity and advertises
+        # its certificate fingerprint, which slaves pin (TOFU). There is no
+        # plain-HTTP option.
         set -- "$@" --lan-mode
-        [ "${HSYNC_LAN_PERSISTENT}" = "false" ] && set -- "$@" --no-lan-persistent
-        [ "${HSYNC_LAN_HTTPS}" = "false" ]      && set -- "$@" --no-lan-https
-        [ -n "${HSYNC_LAN_GROUP}" ]             && set -- "$@" --lan-group "${HSYNC_LAN_GROUP}"
+        [ "${HSYNC_LAN_PERSISTENT}" = "false" ]       && set -- "$@" --no-lan-persistent
+        [ "${HSYNC_LAN_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
+        [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --lan-group "${HSYNC_LAN_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in
             master)       set -- "$@" --force-master ;;
@@ -125,10 +134,12 @@ esac
 [ "${HSYNC_VERBOSE}" = "true" ]        && set -- "$@" --verbose
 
 # ---------------------------------------------------------------------------
-# Launch under nohup. The API key is exported so the binary picks it up via
-# HSYNC_API_KEY without leaking it through ``ps``.
+# Launch under nohup. Secrets are exported (not passed as flags) so the binary
+# picks them up via HSYNC_API_KEY / HSYNC_LAN_KEY without leaking them through
+# ``ps``.
 # ---------------------------------------------------------------------------
 export HSYNC_API_KEY
+export HSYNC_LAN_KEY
 
 cd "${APKG_PATH}"
 nohup "${HSYNC_BIN}" "$@" >> "${HSYNC_LOG_FILE}" 2>&1 &
