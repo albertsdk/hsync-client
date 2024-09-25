@@ -16,12 +16,13 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Force plain, uncolored CLI output for every test.
 
-    CI environments (e.g. GitHub Actions) make Rich emit ANSI styling, which
-    highlights option names like ``--force-master`` and injects escape codes
-    between the dashes and words. That breaks substring assertions on
-    ``result.output``. Setting ``TERM=dumb`` disables Rich's color system
-    entirely, so error messages stay literal regardless of the host terminal.
+    CI environments (e.g. GitHub Actions) export ``FORCE_COLOR``, which makes
+    Rich emit ANSI styling. The highlighter then wraps option names like
+    ``--force-master`` in escape codes, splitting the substring and breaking
+    assertions on ``result.output``. Clearing the color-forcing variables lets
+    Rich fall back to plain output for the captured (non-terminal) stream while
+    still honouring an explicit ``COLUMNS`` (so width-sensitive help tests can
+    widen the terminal without being clamped, as ``TERM=dumb`` would).
     """
-    monkeypatch.setenv("TERM", "dumb")
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("PY_COLORS", raising=False)
