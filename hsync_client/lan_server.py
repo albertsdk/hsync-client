@@ -33,6 +33,7 @@ from shutil import disk_usage
 from typing import IO
 from urllib.parse import parse_qs, urlparse
 
+from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.file import File, is_hidden_file
 from loguru import logger as log
@@ -956,7 +957,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 raise PermissionError("Access denied")
 
             dest_path = dest_path_local
-            tmp_path = dest_path_local + ".part"
+            tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
             raw = open(tmp_path, "wb")  # noqa: SIM115
             raw_file = raw
             if is_compressed_local:

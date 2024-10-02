@@ -30,6 +30,7 @@ from hsync_client.config import CONFIG
 from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
     MAX_WAIT_TIMEOUT_DEFAULT,
+    PARTIAL_DOWNLOAD_SUFFIX,
     STABILITY_DELAY_ON_CLOSED,
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
@@ -277,7 +278,7 @@ def _download_file_attempt(file: File) -> None:
     # Prepare destination directory and partial file path
     full_save_path = _local_dest_path(file)
     Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
-    partial_file_path = f"{full_save_path}.part"
+    partial_file_path = f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}"
 
     # Check if local file is already up-to-date
     if Path(full_save_path).exists():

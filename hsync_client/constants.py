@@ -24,6 +24,7 @@ from hsync_common.constants import (  # noqa: E402, F401
     FILE_SIZE_MEDIUM,
     FILE_SIZE_SMALL,
     HSYNCKEEP_FILENAME,
+    PARTIAL_DOWNLOAD_SUFFIX,
     VERSION,
 )
 

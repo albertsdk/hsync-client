@@ -37,7 +37,12 @@ from typing import Any
 
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.event import Event, EventName
-from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_file
+from hsync_common.models.file import (
+    File,
+    invalidate_sha256_cache,
+    is_hidden_file,
+    is_partial_file,
+)
 from hsync_common.text import escape_loguru_braces
 from loguru import logger as log
 from watchdog.events import FileSystemEventHandler
@@ -796,7 +801,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
     def _is_temp_file(self, filepath: str) -> bool:
         """Check if a file is a temporary file that should be ignored."""
         # .part files are used during downloads
-        return filepath.endswith(".part")
+        return is_partial_file(filepath)
 
     def _upload_to_master(self, file_obj: File, from_closed: bool = False) -> None:
         """Upload a file to the master server.
