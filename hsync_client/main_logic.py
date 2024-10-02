@@ -52,12 +52,12 @@ from hsync_client.config import (
     set_debug,
 )
 from hsync_client.constants import (
-    ACTION_LABEL,
     DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     RESYNC_DEFAULT,
+    ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.lan_handler import run_lan_mode
@@ -88,10 +88,10 @@ def _run_preview(log) -> None:
     would be synced without actually performing any transfers.
 
     Emits structured log messages for each file with prefixes:
-    - [SYNCED      ] - file is in sync (no action needed)
-    - [TO_DOWNLOAD ] - file needs to be downloaded
-    - [TO_UPLOAD   ] - file needs to be uploaded
-    - [TO_DELETE   ] - file will be deleted
+    - [SYNCED] - file is in sync (no action needed)
+    - [TO_DOWNLOAD] - file needs to be downloaded
+    - [TO_UPLOAD] - file needs to be uploaded
+    - [TO_DELETE] - file will be deleted
     """
     log.info("--- Preview (dry-run) ---")
     emit_event(UiEventName.preview_start)
@@ -159,14 +159,14 @@ def _run_preview(log) -> None:
         # Emit structured messages for each file status (text log + event channel)
         for action in synced:
             size = action.file.size or 0
-            log.info(f'[SYNCED      ] "{action.file.filepath}" ({format_bytes(size)})')
+            log.info(f'{ActionLabel.SYNCED} "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="synced", file=action.file.filepath, size=size
             )
         for del_action, dl_action in renames:
             size = dl_action.file.size or 0
             log.info(
-                f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({format_bytes(size)})'
+                f'{ActionLabel.TO_RENAME} "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({format_bytes(size)})'
             )
             emit_event(
                 UiEventName.rename_status,
@@ -176,19 +176,19 @@ def _run_preview(log) -> None:
             )
         for action in downloads:
             size = action.file.size or 0
-            log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({format_bytes(size)})')
+            log.info(f'{ActionLabel.TO_DOWNLOAD} "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="to_download", file=action.file.filepath, size=size
             )
         for action in uploads:
             size = action.file.size or 0
-            log.info(f'[TO_UPLOAD   ] "{action.file.filepath}" ({format_bytes(size)})')
+            log.info(f'{ActionLabel.TO_UPLOAD} "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="to_upload", file=action.file.filepath, size=size
             )
         for action in deletes:
             size = action.file.size or 0
-            log.info(f'[TO_DELETE   ] "{action.file.filepath}" ({format_bytes(size)})')
+            log.info(f'{ActionLabel.TO_DELETE} "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="to_delete", file=action.file.filepath, size=size
             )
@@ -750,15 +750,15 @@ def run_sync(
     if legend:
         log.info("Log legend:")
         log_labels = {
-            ACTION_LABEL["nothing"]: "File already in sync (no action required)",
-            ACTION_LABEL["skip"]: "File skipped",
-            ACTION_LABEL["download"]: "Download file from server",
-            ACTION_LABEL["upload"]: "Upload file to server",
-            ACTION_LABEL["move"]: "Move/Rename file or directory",
-            ACTION_LABEL["remove"]: "Remove file or directory",
-            ACTION_LABEL["create"]: "Create directory",
-            ACTION_LABEL["permission"]: "Set file/directory permission",
-            ACTION_LABEL["symlink"]: "Create symbolic link",
+            ActionLabel.IN_SYNC: "File already in sync (no action required)",
+            ActionLabel.SKIP: "File skipped",
+            ActionLabel.DOWNLOAD: "Download file from server",
+            ActionLabel.UPLOAD: "Upload file to server",
+            ActionLabel.MOVE: "Move/Rename file or directory",
+            ActionLabel.REMOVE: "Remove file or directory",
+            ActionLabel.CREATE: "Create directory",
+            ActionLabel.PERMISSION: "Set file/directory permission",
+            ActionLabel.SYMLINK: "Create symbolic link",
         }
         for label, description in log_labels.items():
             log.info(f"  {label} {description}")

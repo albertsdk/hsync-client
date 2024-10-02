@@ -35,6 +35,7 @@ from hsync_client.constants import (
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
     UPLOAD_MAX_RESCHEDULES_DEFAULT,
     UPLOAD_RESCHEDULE_DELAY_DEFAULT,
+    ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import ServerError
@@ -297,7 +298,7 @@ def _download_file_attempt(file: File) -> None:
             resume_offset = 0
         elif resume_offset > 0:
             log.info(
-                f'[RESUME    ] "{file.filepath}" from '
+                f'{ActionLabel.RESUME} "{file.filepath}" from '
                 f"{format_bytes(resume_offset)}/{format_bytes(file.size)}"
             )
 
@@ -437,7 +438,7 @@ def _download_file_attempt(file: File) -> None:
         # rename) so a partially written file is never visible at the target path
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
-        log.info(f'[DOWNLOAD  ] "{full_save_path}" {format_bytes(file.size)}')
+        log.info(f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)}')
         emit_event(UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0)
 
         # Restore the modification time from the remote file. POSIX ctime is
@@ -701,7 +702,7 @@ def _upload_file_attempt(file: File) -> None:
 
         if status == "resumable" and offset > 0:
             log.info(
-                f'[RESUME    ] "{file.filepath}" from '
+                f'{ActionLabel.RESUME} "{file.filepath}" from '
                 f"{format_bytes(offset)}/{format_bytes(file.size)}"
             )
 
@@ -770,7 +771,7 @@ def _upload_file_attempt(file: File) -> None:
                 timeout=_upload_timeout(),
             )
             if response.status_code == 201:
-                log.info(f'[UPLOAD    ] "{file.filepath}" {format_bytes(file.size)}')
+                log.info(f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)}')
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
@@ -818,7 +819,7 @@ def _upload_file_attempt(file: File) -> None:
                 timeout=_upload_timeout(),
             )
             if response.status_code == 201:
-                log.info(f'[UPLOAD    ] "{file.filepath}" {format_bytes(file.size)}')
+                log.info(f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)}')
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )

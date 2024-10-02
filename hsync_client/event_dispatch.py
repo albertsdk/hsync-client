@@ -64,7 +64,7 @@ class EventDispatchContext:
 
     Attributes:
         log_prefix: String prepended to log tags, e.g. ``""`` for Remote
-            (``[RENAME    ]``) or ``"LAN "`` for LAN slave
+            (``[RENAME]``) or ``"LAN "`` for LAN slave
             (``[LAN RENAME]``).
         mark_receiving: Optional callback invoked before a local write
             to suppress the self-induced watchdog event.
@@ -86,8 +86,8 @@ class EventDispatchContext:
 
 
 def _tag(prefix: str, name: str) -> str:
-    """Format a 10-character log tag (e.g. ``[RENAME    ]`` or ``[LAN RENAME]``)."""
-    return f"[{prefix}{name:<{10 - len(prefix)}}]"
+    """Format a log tag (e.g. ``[RENAME]`` or ``[LAN RENAME]``)."""
+    return f"[{prefix}{name}]"
 
 
 def _mark(ctx: EventDispatchContext, path: str) -> None:

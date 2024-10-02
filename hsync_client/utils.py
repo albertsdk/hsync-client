@@ -41,6 +41,7 @@ from hsync_client.constants import (
     CID_LENGTH,
     INOTIFY_MAX_USER_WATCHES_PATH,
     INOTIFY_WATCH_WARN_RATIO,
+    ActionLabel,
 )
 
 # =============================================================================
@@ -460,7 +461,7 @@ def set_permissions(file_path: str, permissions: str) -> None:
         return
 
     mode = octal_to_mode(permissions)
-    log.debug(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
+    log.debug(f'{ActionLabel.PERMISSION} Set permission "{permissions}" to {file_path}')
     chmod(file_path, mode)
 
 

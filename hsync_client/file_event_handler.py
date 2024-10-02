@@ -98,7 +98,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def on_created(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
         if event.is_directory and not is_hidden_dir(src_path):
-            log.info(f'[{self._LOG_PREFIX}CREATE ] "{src_path}"')
+            log.info(f'[{self._LOG_PREFIX}CREATE] "{src_path}"')
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 self._broadcast_event(
@@ -131,7 +131,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
         if event.is_directory:
             if not is_hidden_dir(src_path) and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path):
-                log.info(f'[{self._LOG_PREFIX}MODIFY ] "{src_path}"')
+                log.info(f'[{self._LOG_PREFIX}MODIFY] "{src_path}"')
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(
@@ -186,7 +186,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if not dest_path:
             return
 
-        log.debug(f'[{self._LOG_PREFIX}MOVE   ] "{src_path}" -> "{dest_path}"')
+        log.debug(f'[{self._LOG_PREFIX}MOVE] "{src_path}" -> "{dest_path}"')
 
         message: Event | None = None
         if event.is_directory:
@@ -199,7 +199,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 self.on_deleted(DirDeletedEvent(src_path))
                 return
 
-            log.info(f'[{self._LOG_PREFIX}RENAME ] "{src_path}" -> "{dest_path}"')
+            log.info(f'[{self._LOG_PREFIX}RENAME] "{src_path}" -> "{dest_path}"')
             dst = Dir.get(dest_path)
             if dst:
                 src = deepcopy(dst)
@@ -216,7 +216,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if is_hidden_file(src_path):
                 return
 
-            log.info(f'[{self._LOG_PREFIX}RENAME ] "{src_path}" -> "{dest_path}"')
+            log.info(f'[{self._LOG_PREFIX}RENAME] "{src_path}" -> "{dest_path}"')
             invalidate_sha256_cache(src_path)
             invalidate_sha256_cache(dest_path)
             dst = File.get(dest_path)
@@ -244,10 +244,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
 
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f'[{self._LOG_PREFIX}IGNORE ] "{src_path}" (ignore-delete mode)')
+            log.debug(f'[{self._LOG_PREFIX}IGNORE] "{src_path}" (ignore-delete mode)')
             return
 
-        log.info(f'[{self._LOG_PREFIX}REMOVE ] "{src_path}"')
+        log.info(f'[{self._LOG_PREFIX}REMOVE] "{src_path}"')
 
         obj = Dir(src_path) if event.is_directory else File(src_path)
         self._broadcast_event(
