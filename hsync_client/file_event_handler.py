@@ -66,8 +66,13 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """Send event metadata to peers/server."""
         raise NotImplementedError
 
-    def _on_file_ready(self, file: File, src_path: str) -> None:
-        """Called after a file's bytes are ready to propagate."""
+    def _on_file_ready(self, file: File, src_path: str, from_closed: bool = False) -> None:
+        """Called after a file's bytes are ready to propagate.
+
+        ``from_closed`` is True when the originating event was ``on_closed``
+        (``IN_CLOSE_WRITE`` on Linux), letting upload paths trust the close and
+        shorten the stability re-check.
+        """
         raise NotImplementedError
 
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
@@ -163,9 +168,9 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
-        self._process_file_ready(src_path)
+        self._process_file_ready(src_path, from_closed=True)
 
-    def _process_file_ready(self, src_path: str) -> None:
+    def _process_file_ready(self, src_path: str, from_closed: bool = False) -> None:
         """Invalidate the digest cache, build ``File``, delegate to subclass."""
         try:
             if not Path(src_path).exists():
@@ -176,7 +181,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             invalidate_sha256_cache(src_path)
             file_obj = File.get(src_path)
             if file_obj:
-                self._on_file_ready(file_obj, src_path)
+                self._on_file_ready(file_obj, src_path, from_closed)
         except Exception as e:
             log.error(f'Error handling file event for "{src_path}": {e}')
 

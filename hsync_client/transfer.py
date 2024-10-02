@@ -30,6 +30,7 @@ from hsync_client.config import CONFIG
 from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
     MAX_WAIT_TIMEOUT_DEFAULT,
+    STABILITY_DELAY_ON_CLOSED,
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
@@ -468,7 +469,7 @@ def _download_file_attempt(file: File) -> None:
 # =============================================================================
 
 
-def is_file_stable(file: File, interval: int | None = None) -> bool:
+def is_file_stable(file: File, interval: float | None = None) -> bool:
     """
     Check if a file has stopped being written to.
 
@@ -561,6 +562,42 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
     return "new", 0
 
 
+def _wait_for_stable_file(file: File, from_closed: bool = False) -> bool:
+    """
+    Block until *file* has stopped being written to, or give up.
+
+    On Linux an ``on_closed`` (``IN_CLOSE_WRITE``) event already signals that
+    the writer closed the descriptor, so a single short re-check
+    (``STABILITY_DELAY_ON_CLOSED``) is enough to absorb edge cases (NFS chunked
+    writes, rapid multi-close, non-atomic saves) before trusting the close and
+    uploading immediately. When the trigger is not a close event, or the short
+    re-check still sees the file changing, fall back to the conservative poll
+    bounded by ``MAX_WAIT_TIMEOUT``.
+
+    Args:
+        file: File object to check.
+        from_closed: True when the upload was triggered by an ``on_closed``
+                     (``IN_CLOSE_WRITE``) event, enabling the fast re-check.
+
+    Returns:
+        True if the file stabilized, False if it never settled within the wait
+        window (the caller should defer the upload).
+    """
+    # Fast path: trust the close after a single short re-check.
+    if from_closed and is_file_stable(file, STABILITY_DELAY_ON_CLOSED):
+        return True
+
+    # Conservative path: poll until size/mtime settle, bounded by the timeout.
+    max_wait = CONFIG.get("MAX_WAIT_TIMEOUT", MAX_WAIT_TIMEOUT_DEFAULT)
+    elapsed = 0
+    while not is_file_stable(file):
+        if elapsed >= max_wait:
+            return False
+        time_sleep(1)
+        elapsed += 1
+    return True
+
+
 def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
     """
     Defer an upload whose file never stabilized within MAX_WAIT_TIMEOUT.
@@ -592,20 +629,32 @@ def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
         f'File "{file.filepath}" still being written; rescheduling upload in '
         f"{delay}s ({reschedules_left} attempt(s) left)"
     )
-    timer = threading.Timer(delay, upload_file, args=(file, True, reschedules_left - 1))
+    timer = threading.Timer(
+        delay, upload_file, args=(file,), kwargs={"_reschedules_left": reschedules_left - 1}
+    )
     timer.daemon = True
     timer.start()
 
 
-def upload_file(file: File, check_size: bool = True, _reschedules_left: int | None = None) -> None:
+def upload_file(
+    file: File,
+    check_size: bool = True,
+    from_closed: bool = False,
+    _reschedules_left: int | None = None,
+) -> None:
     """
     Upload a file to the remote server with per-file retry/backoff.
 
     If check_size is True, waits for the file to stop being written to before
-    uploading. The actual transfer is wrapped in an exponential-backoff retry
-    policy so a single transient blip (timeout, connection reset, 5xx) does not
-    leave the file unsynced; permanent errors (4xx) are never retried. When every
-    attempt is exhausted the failure is surfaced as a ``transfer_failed`` event.
+    uploading. When ``from_closed`` is True the trigger was an ``on_closed``
+    (``IN_CLOSE_WRITE``) event, so a single short re-check
+    (``STABILITY_DELAY_ON_CLOSED``) replaces the conservative poll, cutting the
+    Slave -> Master latency to sub-second; if that re-check still sees the file
+    changing it degrades to the full guard. The actual transfer is wrapped in an
+    exponential-backoff retry policy so a single transient blip (timeout,
+    connection reset, 5xx) does not leave the file unsynced; permanent errors
+    (4xx) are never retried. When every attempt is exhausted the failure is
+    surfaced as a ``transfer_failed`` event.
 
     A file that does not stabilize within ``MAX_WAIT_TIMEOUT`` is not uploaded in
     a half-written ("torn") state: the upload is rescheduled for a later attempt
@@ -616,6 +665,8 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
     Args:
         file: File object to upload.
         check_size: If True, wait for file writes to complete first.
+        from_closed: If True, the upload was triggered by an ``on_closed``
+                     (``IN_CLOSE_WRITE``) event; enables the fast re-check.
         _reschedules_left: Internal; remaining deferred attempts when this call
                            originates from a rescheduled Timer.
     """
@@ -625,18 +676,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
         return
 
     if check_size:
-        # Wait for file to stop being written, with timeout
-        max_wait = CONFIG.get("MAX_WAIT_TIMEOUT", MAX_WAIT_TIMEOUT_DEFAULT)
-        elapsed = 0
-        stabilized = True
-        while not is_file_stable(file):
-            if elapsed >= max_wait:
-                stabilized = False
-                break
-            time_sleep(1)
-            elapsed += 1
-
-        if not stabilized:
+        if not _wait_for_stable_file(file, from_closed):
             # File never stopped being written within the wait window: defer the
             # upload instead of transferring a half-written file.
             _reschedule_upload(file, _reschedules_left)

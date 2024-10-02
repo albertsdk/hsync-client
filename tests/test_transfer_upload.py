@@ -410,8 +410,9 @@ class TestRescheduleUpload:
             # delay, target callable
             assert args[0] == 7
             assert args[1] is upload_file
-            # re-arms upload_file(file, True, 2)
-            assert kwargs["args"] == (file, True, 2)
+            # re-arms upload_file(file, _reschedules_left=2)
+            assert kwargs["args"] == (file,)
+            assert kwargs["kwargs"] == {"_reschedules_left": 2}
             assert mock_timer.return_value.daemon is True
             mock_timer.return_value.start.assert_called_once()
 
@@ -431,7 +432,8 @@ class TestRescheduleUpload:
             _reschedule_upload(file, reschedules_left=None)
 
             # Resolved 4 from CONFIG, then decremented to 3 for the next attempt.
-            assert mock_timer.call_args.kwargs["args"] == (file, True, 3)
+            assert mock_timer.call_args.kwargs["args"] == (file,)
+            assert mock_timer.call_args.kwargs["kwargs"] == {"_reschedules_left": 3}
 
     def test_exhausted_does_not_schedule(self, tmp_path):
         """Once reschedules are exhausted the file is skipped, not deferred."""
@@ -445,6 +447,84 @@ class TestRescheduleUpload:
         ):
             _reschedule_upload(file, reschedules_left=0)
             mock_timer.assert_not_called()
+
+
+class TestWaitForStableFile:
+    """Tests for the hybrid on_closed fast-path stability guard."""
+
+    def _make_file(self, tmp_path):
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+        return File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=12,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+
+    def test_from_closed_uses_short_recheck(self, tmp_path):
+        """An on_closed trigger trusts the close after one short re-check."""
+        from hsync_client.constants import STABILITY_DELAY_ON_CLOSED
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch("hsync_client.transfer.is_file_stable", return_value=True) as mock_stable,
+            patch("hsync_client.transfer.time_sleep") as mock_sleep,
+        ):
+            assert _wait_for_stable_file(file, from_closed=True) is True
+            # Single re-check with the fast interval, no conservative polling.
+            mock_stable.assert_called_once_with(file, STABILITY_DELAY_ON_CLOSED)
+            mock_sleep.assert_not_called()
+
+    def test_from_closed_falls_back_when_still_changing(self, tmp_path):
+        """If the short re-check still sees changes, the full guard takes over."""
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+
+        # Fast re-check fails, conservative poll then settles.
+        with (
+            patch(
+                "hsync_client.transfer.is_file_stable",
+                side_effect=[False, True],
+            ) as mock_stable,
+            patch("hsync_client.transfer.CONFIG", {"MAX_WAIT_TIMEOUT": 5}),
+            patch("hsync_client.transfer.time_sleep"),
+        ):
+            assert _wait_for_stable_file(file, from_closed=True) is True
+            assert mock_stable.call_count == 2
+
+    def test_non_closed_skips_fast_path(self, tmp_path):
+        """Without an on_closed trigger only the conservative poll runs."""
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch("hsync_client.transfer.is_file_stable", return_value=True) as mock_stable,
+            patch("hsync_client.transfer.CONFIG", {"MAX_WAIT_TIMEOUT": 5}),
+            patch("hsync_client.transfer.time_sleep"),
+        ):
+            assert _wait_for_stable_file(file, from_closed=False) is True
+            # Polled with the default interval (no fast-path argument).
+            mock_stable.assert_called_once_with(file)
+
+    def test_returns_false_when_never_settles(self, tmp_path):
+        """A file that never stabilizes within the window defers the upload."""
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch("hsync_client.transfer.is_file_stable", return_value=False),
+            patch("hsync_client.transfer.CONFIG", {"MAX_WAIT_TIMEOUT": 2}),
+            patch("hsync_client.transfer.time_sleep"),
+        ):
+            assert _wait_for_stable_file(file, from_closed=False) is False
 
 
 class TestNothingToDo:

@@ -400,8 +400,13 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
             event_dict["cid"] = origin_cid
         self._ws_server.broadcast_sync(event_dict)
 
-    def _on_file_ready(self, file: File, src_path: str) -> None:
-        """Broadcast a ``modified`` event so slaves can pull the new bytes."""
+    def _on_file_ready(self, file: File, src_path: str, from_closed: bool = False) -> None:
+        """Broadcast a ``modified`` event so slaves can pull the new bytes.
+
+        The master only propagates metadata (slaves pull the bytes), so
+        ``from_closed`` carries no upload semantics here and is accepted purely
+        to honour the :class:`BaseFileEventHandler` hook contract.
+        """
         log.info(f'{ActionLabel.LAN_FILE} "{src_path}"')
         # A (re-)created/modified file invalidates any prior deletion marker so
         # peers do not delete the freshly written file on their next full sync.
@@ -793,13 +798,18 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # .part files are used during downloads
         return filepath.endswith(".part")
 
-    def _upload_to_master(self, file_obj: File) -> None:
-        """Upload a file to the master server."""
+    def _upload_to_master(self, file_obj: File, from_closed: bool = False) -> None:
+        """Upload a file to the master server.
+
+        ``from_closed`` is True when the upload was triggered by an ``on_closed``
+        (``IN_CLOSE_WRITE``) event, enabling the fast stability re-check that
+        cuts the Slave -> Master latency to sub-second.
+        """
         from hsync_client.transfer import upload_file
 
         try:
             log.info(f'{ActionLabel.CLIENT_UP} "{file_obj.filepath}"')
-            upload_file(file_obj, check_size=True)
+            upload_file(file_obj, check_size=True, from_closed=from_closed)
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
 
@@ -977,10 +987,14 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if event.is_directory or is_hidden_file(src_path):
             return
 
-        self._handle_file_upload(src_path)
+        self._handle_file_upload(src_path, from_closed=True)
 
-    def _handle_file_upload(self, src_path: str) -> None:
-        """Handle a file modification - upload to master."""
+    def _handle_file_upload(self, src_path: str, from_closed: bool = False) -> None:
+        """Handle a file modification - upload to master.
+
+        ``from_closed`` is forwarded to :meth:`_upload_to_master` so an
+        ``on_closed`` (``IN_CLOSE_WRITE``) trigger uses the fast re-check.
+        """
         # Skip uploads in download-only mode
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
@@ -999,7 +1013,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             # Run upload in a separate thread to not block the watcher
             self._start_operation(
                 target=self._upload_to_master,
-                args=(file_obj,),
+                args=(file_obj, from_closed),
                 name=f"upload-{src_path}",
                 bytes_estimate=size_hint,
             )
