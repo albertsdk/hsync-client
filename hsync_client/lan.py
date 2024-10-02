@@ -708,6 +708,12 @@ class LANSync:
         self._peer_manager: PeerManager | None = None
         self._running = False
 
+        # Discovery logging state: the discovery loop polls continuously, so
+        # these guards keep the "waiting"/result messages from being repeated
+        # on every iteration once nothing relevant changes.
+        self._discovery_announced = False
+        self._last_peer_count: int | None = None
+
     @property
     def port(self) -> int:
         """Get the port being used (useful when random port was requested)."""
@@ -914,19 +920,33 @@ class LANSync:
         """
         Wait for peer discovery to complete.
 
+        The discovery loop calls this on every iteration, so the status
+        messages are emitted only when they carry new information: the
+        "waiting" notice is announced once at the start of the countdown, and
+        the discovery result is logged only when the alive-peer count changes.
+        Steady-state polling stays silent (downgraded to ``debug``).
+
         Args:
             timeout: Time to wait for this discovery polling window in seconds.
         """
-        log.info(f"Waiting {timeout}s for peer discovery...")
+        if not self._discovery_announced:
+            log.info(f"Waiting {timeout}s for peer discovery...")
+            self._discovery_announced = True
+        else:
+            log.debug(f"Waiting {timeout}s for peer discovery...")
         time.sleep(timeout)
 
         if self._peer_manager:
             peers = self._peer_manager.get_alive_peers()
+            peer_count = len(peers)
+            changed = peer_count != self._last_peer_count
+            self._last_peer_count = peer_count
             if peers:
-                log.info(f"Discovered {len(peers)} peer(s)")
+                if changed:
+                    log.info(f"Discovered {peer_count} peer(s)")
                 for peer in peers:
                     log.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
-            else:
+            elif changed:
                 log.info("No other peers discovered - this client is alone")
 
     def is_running(self) -> bool:

@@ -104,3 +104,63 @@ class TestLANSync:
 
         lan = LANSync(cid="test123", bucket="photos")
         lan.stop()  # Should not raise
+
+    def test_wait_for_discovery_announces_waiting_once(self):
+        """The "waiting" notice is logged once; later polls drop to debug."""
+        from unittest.mock import MagicMock, patch
+
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan._peer_manager = MagicMock()
+        lan._peer_manager.get_alive_peers.return_value = []
+
+        with (
+            patch("hsync_client.lan.time.sleep"),
+            patch("hsync_client.lan.log") as mock_log,
+        ):
+            lan.wait_for_discovery(timeout=1)
+            lan.wait_for_discovery(timeout=1)
+
+        waiting_info = [
+            c
+            for c in mock_log.info.call_args_list
+            if c.args and "for peer discovery" in str(c.args[0])
+        ]
+        waiting_debug = [
+            c
+            for c in mock_log.debug.call_args_list
+            if c.args and "for peer discovery" in str(c.args[0])
+        ]
+        assert len(waiting_info) == 1, "waiting notice must log once at info level"
+        assert len(waiting_debug) == 1, "subsequent polls must drop to debug"
+
+    def test_wait_for_discovery_logs_result_only_on_change(self):
+        """Discovery results are logged only when the peer count changes."""
+        from unittest.mock import MagicMock, patch
+
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan._peer_manager = MagicMock()
+
+        peer = MagicMock()
+        peer.cid = "peer-1"
+        peer.address = "10.0.0.2"
+        peer.port = 9000
+        # Alone for two polls, then a peer appears on the third.
+        lan._peer_manager.get_alive_peers.side_effect = [[], [], [peer]]
+
+        with (
+            patch("hsync_client.lan.time.sleep"),
+            patch("hsync_client.lan.log") as mock_log,
+        ):
+            lan.wait_for_discovery(timeout=1)
+            lan.wait_for_discovery(timeout=1)
+            lan.wait_for_discovery(timeout=1)
+
+        infos = [str(c.args[0]) for c in mock_log.info.call_args_list if c.args]
+        alone_msgs = [m for m in infos if "this client is alone" in m]
+        discovered_msgs = [m for m in infos if "Discovered 1 peer(s)" in m]
+        assert len(alone_msgs) == 1, "the 'alone' state must log once, not on every poll"
+        assert len(discovered_msgs) == 1, "a new peer count must log once on change"

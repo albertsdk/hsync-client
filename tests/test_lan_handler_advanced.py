@@ -342,6 +342,49 @@ class TestRunAsMaster:
         # The tuple identity is preserved across iterations.
         assert second == first
 
+    def test_run_as_master_startup_messages_logged_once(self, tmp_path):
+        """Role and Ctrl+C notices are emitted only on the first activation.
+
+        The discovery loop re-enters _run_as_master every iteration while the
+        client stays master; the one-shot startup messages must not repeat.
+        """
+        from hsync_client.lan_handler import _run_as_master
+
+        config = _make_lan_config(tmp_path)
+        mock_log = MagicMock()
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.port = 9000
+
+        with (
+            patch("hsync_client.lan_handler.LANServer", return_value=MagicMock()),
+            patch("hsync_client.lan_handler.LANWebSocketServer", return_value=MagicMock()),
+            patch("time.sleep"),
+        ):
+            first = _run_as_master(
+                config=config,
+                log=mock_log,
+                lan_sync=mock_lan_sync,
+                cert_info=_make_cert_info(),
+                persistent=True,
+                lan_server=None,
+                lan_ws_server=None,
+            )
+            _run_as_master(
+                config=config,
+                log=mock_log,
+                lan_sync=mock_lan_sync,
+                cert_info=_make_cert_info(),
+                persistent=True,
+                lan_server=first[0],
+                lan_ws_server=first[1],
+            )
+
+        infos = [str(c.args[0]) for c in mock_log.info.call_args_list if c.args]
+        role_msgs = [m for m in infos if "is the MASTER" in m]
+        ctrlc_msgs = [m for m in infos if "Ctrl+C" in m]
+        assert len(role_msgs) == 1, f"role message must log once, got {role_msgs!r}"
+        assert len(ctrlc_msgs) == 1, f"Ctrl+C message must log once, got {ctrlc_msgs!r}"
+
 
 class TestRunAsMasterPersistentSemantics:
     """Regression tests for the consolidated master loop.
