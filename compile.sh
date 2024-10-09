@@ -140,6 +140,55 @@ log_step() { echo -e "${CYAN}→${RESET} ${BOLD}$*${RESET}"; }
 # Helper Functions
 # -----------------------------------------------------------------------------
 
+# Report whether a binfmt_misc handler exists and is enabled.
+# $1 = handler name (e.g. qemu-arm, qemu-aarch64)
+qemu_handler_active() {
+    local path="/proc/sys/fs/binfmt_misc/$1"
+    [[ -e "${path}" ]] && grep -q '^enabled' "${path}" 2>/dev/null
+}
+
+# Ensure the qemu-user-static binfmt handlers required for cross-arch Docker
+# emulation are registered AND active. On amd64 hosts this is mandatory for
+# arm/v7 and arm64 builds; when a handler is missing the emulated layers die
+# deep inside the build with a cryptic "exec format error". The registration
+# is genuinely idempotent: we only (re)install when a required handler is
+# missing, and we fail loudly if it cannot be activated.
+# $@ = required handler names (default: qemu-arm)
+ensure_qemu_binfmt() {
+    local handlers=("$@")
+    [[ ${#handlers[@]} -eq 0 ]] && handlers=("qemu-arm")
+
+    log_step "Ensuring qemu-user-static binfmt handlers are active: ${handlers[*]}"
+
+    local h missing=()
+    for h in "${handlers[@]}"; do
+        qemu_handler_active "${h}" || missing+=("${h}")
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        log_ok "binfmt handlers already active"
+        return 0
+    fi
+
+    log_info "Registering qemu-user-static binfmt handlers..."
+    if ! docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
+        >/dev/null 2>&1; then
+        log_error "Failed to run multiarch/qemu-user-static (is the Docker daemon reachable?)."
+        exit 1
+    fi
+
+    missing=()
+    for h in "${handlers[@]}"; do
+        qemu_handler_active "${h}" || missing+=("${h}")
+    done
+    if [[ ${#missing[@]} -ne 0 ]]; then
+        log_error "binfmt handlers still inactive after registration: ${missing[*]}"
+        log_error "Cross-arch emulation is unavailable; aborting now to avoid a"
+        log_error "misleading 'exec format error' later in the build."
+        exit 1
+    fi
+    log_ok "binfmt handlers registered and active"
+}
+
 # Display usage information
 show_help() {
     cat << EOF
@@ -619,9 +668,7 @@ build_deb_all() {
     repo_root="$(cd .. && pwd)"
 
     # ── qemu (required for arm64/armhf on amd64 hosts) ────────────────────────
-    log_step "Registering qemu-user-static binfmt handlers (idempotent)..."
-    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
-        >/dev/null 2>&1 || log_warn "qemu-user-static registration skipped (may already be active)"
+    ensure_qemu_binfmt qemu-aarch64 qemu-arm
 
     # Common PyInstaller flags — used for all arch builds.
     local pyinstaller_flags="
@@ -839,6 +886,39 @@ readonly WDOS5_CACHE_DIR="${WDOS5_DIR}/.cache"
 readonly WDOS5_MKSAPKG="${WDOS5_CACHE_DIR}/mksapkg-OS5"
 readonly WDOS5_MODEL="MyCloudEX2Ultra"
 
+# Minimal Docker build context staged by ``_wdos5_stage_context``. It mirrors
+# the ``hsync-client`` / ``hsync-common`` sibling layout so the builder image
+# can install the path dependency and bake the sources (see
+# packaging/wd-os5/Dockerfile.builder).
+readonly WDOS5_CTX_DIR="${WDOS5_BUILD_DIR}/ctx"
+
+# PyInstaller flags shared by every WD OS5 build (single target and all-models).
+# The entry point is intentionally last; ``_run_pyinstaller_in_docker`` appends
+# the per-build --distpath/--workpath/--specpath after it.
+readonly PYINSTALLER_COMMON_FLAGS="
+    --clean --onedir --noconfirm --strip
+    --name ${APP_NAME}
+    --log-level ERROR
+    --hidden-import websockets.legacy
+    --hidden-import websockets.legacy.client
+    --hidden-import websockets.client
+    --hidden-import websockets.exceptions
+    --hidden-import watchdog.observers
+    --hidden-import watchdog.observers.inotify
+    --hidden-import watchdog.observers.inotify_buffer
+    --hidden-import watchdog.events
+    --hidden-import rich._unicode_data
+    --hidden-import rich._unicode_data._versions
+    --collect-submodules pathspec
+    --collect-submodules hsync_common
+    --exclude-module pytest --exclude-module pytest_asyncio
+    --exclude-module pytest_cov --exclude-module tkinter
+    --exclude-module unittest --exclude-module pdb
+    --exclude-module doctest --exclude-module pip
+    --exclude-module setuptools --exclude-module wheel
+    --exclude-module pkg_resources --exclude-module rapidfuzz
+    ${ENTRY_POINT}"
+
 # Create a temporary openssl shim that enables the bf-cbc legacy provider on
 # OpenSSL 3.x.  mksapkg-OS5 calls ``openssl bf-cbc`` via system(); on modern
 # distros bf-cbc lives in the "legacy" provider and is not loaded by default,
@@ -865,6 +945,61 @@ _wdos5_openssl_wrapper_dir() {
     echo "${wrap_dir}"
 }
 
+# Stage the minimal Docker build context consumed by Dockerfile.builder.
+#
+# The builder image installs the project's dependencies and bakes the sources
+# as cached layers, so the context must expose both projects in their relative
+# ``../hsync-common`` layout. __pycache__ directories are pruned to keep the
+# context (and therefore the layer cache) stable across runs.
+_wdos5_stage_context() {
+    log_step "Staging Docker build context at ${WDOS5_CTX_DIR}..."
+    rm -rf "${WDOS5_CTX_DIR}"
+    mkdir -p "${WDOS5_CTX_DIR}/hsync-client" "${WDOS5_CTX_DIR}/hsync-common"
+    cp -a pyproject.toml poetry.lock README.md "${WDOS5_CTX_DIR}/hsync-client/"
+    cp -a hsync_client "${WDOS5_CTX_DIR}/hsync-client/"
+    cp -a ../hsync-common/pyproject.toml ../hsync-common/README.md \
+        "${WDOS5_CTX_DIR}/hsync-common/"
+    cp -a ../hsync-common/hsync_common "${WDOS5_CTX_DIR}/hsync-common/"
+    find "${WDOS5_CTX_DIR}" -name __pycache__ -type d -prune -exec rm -rf {} +
+}
+
+# Build the WD OS5 builder image for one CPU family.
+# Args: docker_platform  base_image  builder_tag
+_wdos5_docker_build() {
+    local docker_platform="$1" base_image="$2" builder_tag="$3"
+    log_step "Building Docker image ${builder_tag} (cached after first run)..."
+    DOCKER_BUILDKIT=1 docker build \
+        --platform "${docker_platform}" \
+        --build-arg "BASE_IMAGE=${base_image}" \
+        --build-arg "TARGET_PLATFORM=${docker_platform}" \
+        -t "${builder_tag}" \
+        -f "${WDOS5_DIR}/Dockerfile.builder" \
+        "${WDOS5_CTX_DIR}"
+}
+
+# Run PyInstaller inside the pre-built builder image. Dependencies and sources
+# are already baked into the image, so this step only produces the frozen
+# binary. The host ${out_dir} is mounted at /out; PyInstaller writes /out/bin
+# (the onedir bundle) and /out/work (intermediates).
+# Args: docker_platform  out_dir  builder_tag
+_run_pyinstaller_in_docker() {
+    local docker_platform="$1" out_dir="$2" builder_tag="$3"
+    local out_abs
+    mkdir -p "${out_dir}"
+    out_abs="$(cd "${out_dir}" && pwd)"
+    docker run --rm \
+        --platform "${docker_platform}" \
+        -v "${out_abs}:/out" \
+        -w /build/hsync-client \
+        -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+        "${builder_tag}" \
+        pyinstaller \
+            ${PYINSTALLER_COMMON_FLAGS} \
+            --distpath /out/bin \
+            --workpath /out/work \
+            --specpath /out/work
+}
+
 # Build the .bin installer for WD My Cloud OS5 (ARMv7).
 build_wd_os5() {
     local version
@@ -884,87 +1019,18 @@ build_wd_os5() {
     mkdir -p "${WDOS5_OUTPUT_DIR}" "${WDOS5_CACHE_DIR}" "${WDOS5_BUILD_DIR}"
 
     # --- qemu-user-static (binfmt) --------------------------------------
-    log_step "Registering qemu-user-static binfmt handlers (idempotent)..."
-    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
-        >/dev/null 2>&1 || log_warn "qemu-user-static registration skipped (may already be active)"
+    ensure_qemu_binfmt qemu-arm
 
-    # --- builder image ---------------------------------------------------
-    log_step "Building Docker image ${WDOS5_BUILDER_IMAGE} (cached after first run)..."
-    docker build \
-        --platform linux/arm/v7 \
-        -t "${WDOS5_BUILDER_IMAGE}" \
-        -f "${WDOS5_DIR}/Dockerfile.builder" \
-        "${WDOS5_DIR}"
+    # --- builder image (dependencies + sources baked as cached layers) --
+    _wdos5_stage_context
+    _wdos5_docker_build linux/arm/v7 arm32v7/debian:buster "${WDOS5_BUILDER_IMAGE}"
 
-    # --- PyInstaller in the emulated container --------------------------
-    # The binary is dropped under build/wdos5/bin/ so the source tree stays
-    # clean. The staging copy of Apkg/ (built below) picks it up from there.
-    #
-    # The repository root (parent of ``hsync-client``) is mounted as ``/repo``
-    # so the ``hsync-common = {path = "../hsync-common"}`` path dependency in
-    # ``pyproject.toml`` resolves inside the container. Workdir is the
-    # ``hsync-client`` subdir so all the script's relative paths still work.
-    local repo_root
-    repo_root="$(cd .. && pwd)"
+    # --- PyInstaller inside the emulated container ----------------------
+    # The image already carries the installed deps and sources, so this only
+    # produces the frozen binary under build/wdos5/bin/ (mounted at /out),
+    # keeping the source tree clean for the Apkg staging step below.
     log_step "Running PyInstaller inside the ARMv7 container..."
-    # PIP_DEFAULT_TIMEOUT / PIP_RETRIES make Poetry's PEP-517 chef resilient
-    # to the slow PyPI transfers we see under qemu-user emulation (the
-    # cryptography build pulls maturin, setuptools, cffi from source).
-    docker run --rm \
-        --platform linux/arm/v7 \
-        -v "${repo_root}:/repo" \
-        -w /repo/hsync-client \
-        -e LC_ALL=C \
-        -e PYTHONWARNINGS=ignore \
-        -e PIP_DEFAULT_TIMEOUT=300 \
-        -e PIP_RETRIES=10 \
-        -e POETRY_REQUESTS_TIMEOUT=300 \
-        "${WDOS5_BUILDER_IMAGE}" \
-        bash -c "
-            set -euo pipefail
-            poetry config virtualenvs.in-project true
-            poetry config installer.max-workers 4
-            # Retry transient PyPI timeouts (common under qemu-user emulation).
-            install_ok=0
-            for attempt in 1 2 3; do
-                if poetry install --no-root --without dev; then
-                    install_ok=1
-                    break
-                fi
-                echo \"poetry install failed (attempt \${attempt}/3), retrying in 10s...\" >&2
-                sleep 10
-            done
-            if [ \"\${install_ok}\" -ne 1 ]; then
-                echo 'poetry install failed after 3 attempts' >&2
-                exit 1
-            fi
-            poetry run pyinstaller \
-                --clean --onedir --noconfirm --strip \
-                --name ${APP_NAME} \
-                --distpath ${WDOS5_BUILD_DIR}/bin \
-                --workpath ${WDOS5_BUILD_DIR}/work \
-                --specpath ${WDOS5_BUILD_DIR}/work \
-                --log-level ERROR \
-                --hidden-import websockets.legacy \
-                --hidden-import websockets.legacy.client \
-                --hidden-import websockets.client \
-                --hidden-import websockets.exceptions \
-                --hidden-import watchdog.observers \
-                --hidden-import watchdog.observers.inotify \
-                --hidden-import watchdog.observers.inotify_buffer \
-                --hidden-import watchdog.events \
-                --hidden-import rich._unicode_data \
-                --hidden-import rich._unicode_data._versions \
-                --collect-submodules pathspec \
-                --collect-submodules hsync_common \
-                --exclude-module pytest --exclude-module pytest_asyncio \
-                --exclude-module pytest_cov --exclude-module tkinter \
-                --exclude-module unittest --exclude-module pdb \
-                --exclude-module doctest --exclude-module pip \
-                --exclude-module setuptools --exclude-module wheel \
-                --exclude-module pkg_resources --exclude-module rapidfuzz \
-                ${ENTRY_POINT}
-        "
+    _run_pyinstaller_in_docker linux/arm/v7 "${WDOS5_BUILD_DIR}" "${WDOS5_BUILDER_IMAGE}"
 
     local built_dir="${WDOS5_BUILD_DIR}/bin/${APP_NAME}"
     if [[ ! -d "${built_dir}" ]]; then
@@ -1153,91 +1219,26 @@ build_wd_os5_all() {
     local mksapkg_abs
     mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
 
-    local repo_root
-    repo_root="$(cd .. && pwd)"
-
     # ── qemu (ARMv7 emulation on amd64 hosts) ────────────────────────────────
-    log_step "Registering qemu-user-static binfmt handlers (idempotent)..."
-    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
-        >/dev/null 2>&1 || log_warn "qemu-user-static registration skipped (may already be active)"
+    ensure_qemu_binfmt qemu-arm
 
-    # Common PyInstaller flags — used for both arch builds.
-    local pyinstaller_flags="
-        --clean --onedir --noconfirm --strip
-        --name ${APP_NAME}
-        --log-level ERROR
-        --hidden-import websockets.legacy
-        --hidden-import websockets.legacy.client
-        --hidden-import websockets.client
-        --hidden-import websockets.exceptions
-        --hidden-import watchdog.observers
-        --hidden-import watchdog.observers.inotify
-        --hidden-import watchdog.observers.inotify_buffer
-        --hidden-import watchdog.events
-        --hidden-import rich._unicode_data
-        --hidden-import rich._unicode_data._versions
-        --collect-submodules pathspec
-        --collect-submodules hsync_common
-        --exclude-module pytest --exclude-module pytest_asyncio
-        --exclude-module pytest_cov --exclude-module tkinter
-        --exclude-module unittest --exclude-module pdb
-        --exclude-module doctest --exclude-module pip
-        --exclude-module setuptools --exclude-module wheel
-        --exclude-module pkg_resources --exclude-module rapidfuzz
-        ${ENTRY_POINT}"
-
-    # Helper: run poetry install + PyInstaller inside a container.
-    # Args: docker_platform  bin_dir  work_dir  builder_tag
-    _run_pyinstaller_in_docker() {
-        local docker_platform="$1" bin_dir="$2" work_dir="$3" builder_tag="$4"
-        docker run --rm \
-            --platform "${docker_platform}" \
-            -v "${repo_root}:/repo" \
-            -w /repo/hsync-client \
-            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
-            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
-            -e POETRY_REQUESTS_TIMEOUT=300 \
-            "${builder_tag}" \
-            bash -c "
-                set -euo pipefail
-                poetry config virtualenvs.in-project true
-                poetry config installer.max-workers 4
-                install_ok=0
-                for attempt in 1 2 3; do
-                    if poetry install --no-root --without dev; then install_ok=1; break; fi
-                    echo \"poetry install attempt \${attempt}/3 failed, retrying in 10s...\" >&2
-                    sleep 10
-                done
-                [ \"\${install_ok}\" -eq 1 ] || { echo 'poetry install failed after 3 attempts' >&2; exit 1; }
-                poetry run pyinstaller \
-                    ${pyinstaller_flags} \
-                    --distpath ${bin_dir} \
-                    --workpath ${work_dir} \
-                    --specpath ${work_dir}
-            "
-    }
+    # ── Docker build context (shared by both CPU families) ───────────────────
+    # Both builder images consume the same staged context; only the platform
+    # and base image differ. PyInstaller flags live in PYINSTALLER_COMMON_FLAGS.
+    _wdos5_stage_context
 
     # ── ARMv7 binary ──────────────────────────────────────────────────────────
     echo
     log_step "─── ARMv7 build ───────────────────────────────────────"
     local armv7_tag="hsync-wdos5-builder:armv7"
-    local armv7_bin_dir="${all_build}/armv7/bin"
-    local armv7_work_dir="${all_build}/armv7/work"
-    mkdir -p "${armv7_bin_dir}" "${armv7_work_dir}"
+    local armv7_out="${all_build}/armv7"
+    local armv7_binary="${armv7_out}/bin/${APP_NAME}"
 
-    log_step "Building Docker image ${armv7_tag}..."
-    docker build \
-        --platform linux/arm/v7 \
-        --build-arg BASE_IMAGE=arm32v7/debian:buster \
-        --build-arg TARGET_PLATFORM=linux/arm/v7 \
-        -t "${armv7_tag}" \
-        -f "${WDOS5_DIR}/Dockerfile.builder" \
-        "${WDOS5_DIR}"
+    _wdos5_docker_build linux/arm/v7 arm32v7/debian:buster "${armv7_tag}"
 
     log_step "Compiling ARMv7 binary inside container..."
-    _run_pyinstaller_in_docker linux/arm/v7 "${armv7_bin_dir}" "${armv7_work_dir}" "${armv7_tag}"
+    _run_pyinstaller_in_docker linux/arm/v7 "${armv7_out}" "${armv7_tag}"
 
-    local armv7_binary="${armv7_bin_dir}/${APP_NAME}"
     if [[ ! -d "${armv7_binary}" ]]; then
         log_error "ARMv7 build directory not produced at ${armv7_binary}"
         exit 1
@@ -1248,23 +1249,14 @@ build_wd_os5_all() {
     echo
     log_step "─── amd64 build ───────────────────────────────────────"
     local amd64_tag="hsync-wdos5-builder:amd64"
-    local amd64_bin_dir="${all_build}/amd64/bin"
-    local amd64_work_dir="${all_build}/amd64/work"
-    mkdir -p "${amd64_bin_dir}" "${amd64_work_dir}"
+    local amd64_out="${all_build}/amd64"
+    local amd64_binary="${amd64_out}/bin/${APP_NAME}"
 
-    log_step "Building Docker image ${amd64_tag}..."
-    docker build \
-        --platform linux/amd64 \
-        --build-arg BASE_IMAGE=amd64/debian:buster \
-        --build-arg TARGET_PLATFORM=linux/amd64 \
-        -t "${amd64_tag}" \
-        -f "${WDOS5_DIR}/Dockerfile.builder" \
-        "${WDOS5_DIR}"
+    _wdos5_docker_build linux/amd64 amd64/debian:buster "${amd64_tag}"
 
     log_step "Compiling amd64 binary inside container..."
-    _run_pyinstaller_in_docker linux/amd64 "${amd64_bin_dir}" "${amd64_work_dir}" "${amd64_tag}"
+    _run_pyinstaller_in_docker linux/amd64 "${amd64_out}" "${amd64_tag}"
 
-    local amd64_binary="${amd64_bin_dir}/${APP_NAME}"
     if [[ ! -d "${amd64_binary}" ]]; then
         log_error "amd64 build directory not produced at ${amd64_binary}"
         exit 1

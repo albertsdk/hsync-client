@@ -3,8 +3,10 @@
 # HSYNC — WD My Cloud OS5 builder image (ARMv7 / amd64)
 #
 # Multi-stage build that produces a debian:buster (glibc 2.28) environment
-# containing Python 3.12 and Poetry, ready to invoke PyInstaller on the
-# project sources mounted at /repo.
+# containing Python 3.12, the project's third-party dependencies (compiled
+# once and cached as a BuildKit layer) and the application sources, ready to
+# invoke PyInstaller. The expensive ARMv7 source builds therefore happen at
+# `docker build` time instead of on every `docker run`.
 #
 # The base is Debian 10 buster on purpose: its glibc (2.28) is below the
 # 2.30 ceiling exposed by the stock WD OS5 firmware, so the binary that
@@ -30,6 +32,13 @@ ARG PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b6
 # 2.30 ceiling exposed by stock WD OS5 firmware.
 ARG BASE_IMAGE=arm32v7/debian:buster
 ARG TARGET_PLATFORM=linux/arm/v7
+
+# OpenSSL 3 source-build parameters (consumed in the builder stage below).
+# cryptography >= 43 refuses to compile against OpenSSL < 3.0.0, but Debian
+# Buster only ships 1.1.1; we therefore build a static OpenSSL 3 from source.
+# Pinned + integrity-checked via SHA256 (mirrors the CPython pinning above).
+ARG OPENSSL_VERSION=3.0.16
+ARG OPENSSL_SHA256=57e03c50feab5d31b152af2b764f10379aecd8ee92f16c985983ce4a99f7ef86
 
 # -----------------------------------------------------------------------------
 # Stage 1 — compile Python 3.12 from source (cached forever)
@@ -112,7 +121,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=0 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
     POETRY_VIRTUALENVS_CREATE=true \
     POETRY_NO_INTERACTION=1
 
@@ -128,12 +137,13 @@ RUN set -eux; \
 # Runtime dependencies for the produced binary + tooling for PyInstaller +
 # build dependencies needed to compile native Python extensions from source.
 #
-# Why the *-dev packages: on ARMv7, PyPI does not publish ``armv7l`` wheels
-# for ``cryptography`` (a transitive dependency of ``poetry`` via
-# keyring → SecretStorage), so it must be compiled from source — which
-# requires ``gcc`` + ``libffi-dev`` + ``libssl-dev``.  On amd64 the binary
-# wheels are available (manylinux2014, glibc ≥ 2.17 — satisfied by buster)
-# so the dev packages are unused but harmless.
+# Why the *-dev packages and perl: on ARMv7, PyPI does not publish ``armv7l``
+# wheels for ``cryptography`` (a direct project dependency, pinned >=48,<50),
+# so it is compiled from source — which needs ``gcc`` + ``libffi-dev`` plus a
+# Rust toolchain and OpenSSL 3 (built from source below, since Buster ships
+# only 1.1.1). ``perl`` is required to configure the OpenSSL source tree. On
+# amd64 the binary wheels are available (manylinux2014, glibc ≥ 2.17 —
+# satisfied by buster) so these build packages are unused but harmless.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -146,6 +156,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libreadline7 \
         git \
         build-essential \
+        perl \
         pkg-config \
         libffi-dev \
         libssl-dev \
@@ -170,17 +181,107 @@ RUN set -eux; \
     rustc --version; \
     cargo --version
 
-# Poetry — pinned to a known-good 1.x release for reproducibility.
+# -----------------------------------------------------------------------------
+# OpenSSL 3 — required by cryptography (>= 43 drops OpenSSL 1.1.x)
+# -----------------------------------------------------------------------------
+# Build a *static* OpenSSL 3 into /opt/openssl3 and point the Rust
+# ``openssl-sys`` build (used by ``cryptography``) at it via OPENSSL_DIR +
+# OPENSSL_STATIC=1. The compiled ``cryptography`` extension then embeds
+# OpenSSL 3 statically, so the PyInstaller bundle is self-contained on the NAS
+# and the CPython ``ssl`` module (linked against the system libssl 1.1.1) is
+# left untouched. ``-fPIC`` is mandatory so the static archive can be linked
+# into the ``_rust`` shared object.
+ARG OPENSSL_VERSION
+ARG OPENSSL_SHA256
+RUN set -eux; \
+    update-ca-certificates --fresh; \
+    curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+        -o /tmp/openssl.tar.gz; \
+    echo "${OPENSSL_SHA256}  /tmp/openssl.tar.gz" | sha256sum -c -; \
+    mkdir -p /tmp/openssl-src; \
+    tar -xzf /tmp/openssl.tar.gz -C /tmp/openssl-src --strip-components=1; \
+    cd /tmp/openssl-src; \
+    ./config --prefix=/opt/openssl3 --openssldir=/opt/openssl3 \
+        no-shared no-tests -fPIC; \
+    make -j"$(nproc)"; \
+    make install_sw; \
+    rm -rf /tmp/openssl-src /tmp/openssl.tar.gz
+
+# Make the static OpenSSL 3 the one cryptography's openssl-sys build resolves,
+# overriding the system 1.1.1 discovered via pkg-config / /usr/include.
+ENV OPENSSL_DIR=/opt/openssl3 \
+    OPENSSL_STATIC=1
+
+# Poetry — pinned to a known-good 2.x release for reproducibility. Version
+# >= 2.0 is mandatory: the project declares its metadata via the PEP 621
+# ``[project]`` table and the lock file is generated by Poetry 2.x; older
+# 1.x releases ignore ``[project]`` and abort with "fields ... are required
+# in package mode" while also rejecting the newer lock-file format.
 # ``--prefer-binary`` lets pip pick wheels when available (on amd64 this
 # covers most dependencies; on ARMv7 it covers msgpack, rapidfuzz and others
 # that publish armv7l wheels), falling back to source builds only when
 # strictly needed.
 RUN /opt/python3.12/bin/python3 -m pip install --no-cache-dir --prefer-binary \
-        "poetry==1.8.3"
+        "poetry==2.3.2"
 
-# Workdir is mounted by the caller (``-v "$PWD:/src"``).
-WORKDIR /src
+# -----------------------------------------------------------------------------
+# Project dependency + source layers
+# -----------------------------------------------------------------------------
+# Install all third-party dependencies into an in-project virtualenv and bake
+# the application sources into the image. Doing this here (rather than on every
+# `docker run`) means the slow ARMv7 native builds — cryptography (Rust),
+# zstandard / cffi (C) and the PyInstaller bootloader — are compiled once and
+# persisted as a cached layer.
+#
+# Layer ordering is deliberate: only the dependency manifests feed the heavy
+# `poetry install` step, so editing application sources rebuilds just the cheap
+# COPY layers below it and reuses the cached install.
 
-# Default command is a shell so the entrypoint can be overridden from the
-# host. ``compile.sh`` invokes a one-shot ``bash -lc '…'`` to build.
+# The in-project venv (/build/hsync-client/.venv) is selected via
+# POETRY_VIRTUALENVS_IN_PROJECT above — env vars outrank `poetry config`, so it
+# is the single source of truth — and is what the runtime `pyinstaller`
+# invocation resolves on PATH. Here we only raise the installer worker count.
+RUN poetry config installer.max-workers 4
+
+# 1) Dependency manifests only (rarely change → install layer stays cached).
+#    The two projects keep their relative layout so the
+#    ``hsync-common = {path = "../hsync-common"}`` path dependency resolves.
+COPY hsync-client/pyproject.toml hsync-client/poetry.lock hsync-client/README.md /build/hsync-client/
+COPY hsync-common/pyproject.toml hsync-common/README.md /build/hsync-common/
+
+# 2) Stub package so Poetry can build the editable (develop=true) wheel for the
+#    ``hsync-common`` path dependency without busting the install cache on every
+#    source edit. The real sources are layered in at the same path afterwards;
+#    Poetry's editable .pth keeps resolving to whatever lives there.
+RUN mkdir -p /build/hsync-common/hsync_common \
+ && : > /build/hsync-common/hsync_common/__init__.py
+
+# 3) Heavy layer: compile + install every non-dev dependency. Retries make the
+#    PEP-517 source builds resilient to the slow PyPI transfers seen under qemu.
+WORKDIR /build/hsync-client
+ENV PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10 \
+    POETRY_REQUESTS_TIMEOUT=300
+RUN set -eux; \
+    install_ok=0; \
+    for attempt in 1 2 3; do \
+        if poetry install --no-root --without dev; then install_ok=1; break; fi; \
+        echo "poetry install attempt ${attempt}/3 failed, retrying in 10s..." >&2; \
+        sleep 10; \
+    done; \
+    [ "${install_ok}" -eq 1 ]
+
+# 4) Real application sources — cheap layers that rebuild without touching the
+#    cached dependency install above.
+COPY hsync-common/hsync_common /build/hsync-common/hsync_common
+COPY hsync-client/hsync_client /build/hsync-client/hsync_client
+
+# Put the in-project venv on PATH so the runtime entrypoint calls `pyinstaller`
+# directly, then fail fast at build time if the editable path dependency or any
+# of its submodules fail to resolve.
+ENV PATH=/build/hsync-client/.venv/bin:/opt/rust/cargo/bin:/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN python -c "import hsync_client, hsync_common, hsync_common.models, hsync_common.constants"
+
+# The caller mounts a host directory at /out and invokes PyInstaller; the
+# default command is a shell for ad-hoc inspection.
 CMD ["bash"]
