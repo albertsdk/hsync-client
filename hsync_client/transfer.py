@@ -12,6 +12,7 @@ synchronizing files with the remote server.
 """
 
 import threading
+from collections.abc import Iterator
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
@@ -121,6 +122,29 @@ class _ThrottledFileReader:
 _UPLOAD_CHUNK_SIZE = 64 * 1024
 
 
+class _SizedStreamingBody:
+    """Streaming request body that advertises its exact length.
+
+    ``requests`` frames a bare generator body with ``Transfer-Encoding:
+    chunked`` because it cannot measure it; paired with a manual
+    ``Content-Length`` that produces a request carrying both framing headers,
+    which strict HTTP/1.1 parsers (h11/uvicorn) reject as malformed ("Invalid
+    HTTP request received"). Exposing ``__len__`` lets ``requests`` frame the
+    request with a single ``Content-Length`` while still streaming each chunk
+    from disk.
+    """
+
+    def __init__(self, chunks: Iterator[bytes], length: int) -> None:
+        self._chunks = chunks
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __iter__(self) -> Iterator[bytes]:
+        return iter(self._chunks)
+
+
 def _build_multipart_streaming(
     file_path: str,
     fields: dict,
@@ -132,10 +156,11 @@ def _build_multipart_streaming(
 ):
     """Construct a streaming multipart/form-data body.
 
-    Returns ``(generator, content_length, content_type)`` where ``generator``
-    yields the body in chunks (file part streamed from disk, never loaded
-    into memory) and ``content_length`` is the exact total byte count for
-    the HTTP Content-Length header.
+    Returns ``(body, content_type)`` where ``body`` is a
+    :class:`_SizedStreamingBody` streaming the multipart payload from disk
+    (never loaded into memory) and advertising its exact length via ``__len__``
+    so ``requests`` frames the request with ``Content-Length`` instead of
+    chunked transfer-encoding.
     """
     if filename is None:
         filename = Path(file_path).name
@@ -189,7 +214,7 @@ def _build_multipart_streaming(
         yield file_trailer
         yield closing
 
-    return _generator(), content_length, content_type
+    return _SizedStreamingBody(_generator(), content_length), content_type
 
 
 def _upload_timeout() -> tuple[float, float | None]:
@@ -842,7 +867,7 @@ def _upload_file_attempt(file: File) -> None:
             import uuid
 
             boundary = uuid.uuid4().hex
-            body_iter, content_length, content_type = _build_multipart_streaming(
+            body, content_type = _build_multipart_streaming(
                 file.filepath,
                 dict(data),
                 boundary=boundary,
@@ -850,12 +875,14 @@ def _upload_file_attempt(file: File) -> None:
                 offset=offset,
                 bandwidth_limit=ul_bw_limit,
             )
+            # Content-Length is derived by requests from body.__len__; setting it
+            # here as well would coexist with the chunked framing requests adds
+            # for generators, yielding a request h11/uvicorn rejects.
             headers["Content-Type"] = content_type
-            headers["Content-Length"] = str(content_length)
             response = post(
                 uri,
                 headers=headers,
-                data=body_iter,
+                data=body,
                 verify=get_ssl_verify(),
                 timeout=_upload_timeout(),
             )
