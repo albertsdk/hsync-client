@@ -74,6 +74,8 @@ from hsync_client.sync import (
     sync,
 )
 from hsync_client.utils import (
+    _suppress_insecure_warning,
+    diagnose_connection_error,
     get_cid,
     is_valid_logfile,
     reset_bandwidth_throttle,
@@ -613,15 +615,22 @@ def run_sync(
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
 
+    # Fail fast on a missing API key: every authenticated server endpoint
+    # requires a valid key, so an empty key can never sync. Reporting it here
+    # avoids a late, opaque "Invalid API key" failure mid-sync. LAN mode has
+    # its own shared-key policy and is exempt.
+    if not lan_mode and not resolved_api_key:
+        log.error(
+            "No API key configured. Set HSYNC_API_KEY (or pass it via "
+            "--api-key-fd) to authenticate with the server."
+        )
+        return
+
     # Security gate: never transmit the API key over an unencrypted channel.
     # The rule keys on the URL scheme the client connects to, so an HTTPS
     # reverse proxy in front of an HTTP backend is fully supported (the
     # client uses an https:// URL; the backend stays HTTP behind the proxy).
-    if (
-        not lan_mode
-        and resolved_api_key
-        and not effective_server_url.lower().startswith("https://")
-    ):
+    if not lan_mode and not effective_server_url.lower().startswith("https://"):
         log.error(
             f"API key provided but server URL is not HTTPS ('{effective_server_url}'). "
             "Refusing to send credentials over an unencrypted connection. "
@@ -687,6 +696,13 @@ def run_sync(
 
     set_config(config)
     set_debug(debug)
+
+    # When TLS verification is disabled (--insecure), silence urllib3's
+    # per-request InsecureRequestWarning once up-front. The connectivity check
+    # and clock-skew probe issue raw requests that bypass get_ssl_verify(), so
+    # suppressing here ensures even the very first health check stays quiet.
+    if config["NO_VERIFY_SSL"]:
+        _suppress_insecure_warning()
 
     # Surface the bucket / LAN group on the structured channel so the GUI does
     # not have to scrape them from log wording.
@@ -977,7 +993,11 @@ def _check_server_connectivity(
         logger.debug(f"Server is reachable (status: {status_code})")
         return True
     except RequestException as e:
-        logger.error(f"Cannot connect to server after retries: {server_url} ({e})")
+        hint = diagnose_connection_error(e, server_url)
+        if hint:
+            logger.error(hint)
+        else:
+            logger.error(f"Cannot connect to server after retries: {server_url} ({e})")
         return False
 
 

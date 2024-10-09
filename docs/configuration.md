@@ -117,6 +117,22 @@ server URL is required — peers are discovered automatically via mDNS, so
 
 The client supports encrypted communication via HTTPS and WSS (WebSocket Secure).
 
+### API Key & Encryption Policy
+
+In **Server Mode** an API key (`HSYNC_API_KEY`) is **required**: the server
+rejects every authenticated request that lacks a valid `Authorization: Bearer`
+token.
+
+- **Missing key** — the client aborts immediately with a clear error
+  (`No API key configured`) instead of failing later mid-sync with
+  `Invalid API key`.
+- **HTTPS required** — the key is only ever transmitted over an encrypted
+  channel. The check keys on the **URL scheme** (`https://`), so a reverse
+  proxy that terminates TLS in front of a plain-HTTP backend is fully
+  supported: simply point the client at the proxy's `https://` URL.
+- **LAN Mode** is exempt — it relies on the optional shared secret
+  `HSYNC_LAN_KEY` over its mandatory HTTPS transport instead.
+
 ### Connecting to a Server with Valid SSL Certificate
 
 ```bash

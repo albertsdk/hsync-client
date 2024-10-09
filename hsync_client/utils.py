@@ -75,6 +75,9 @@ def get_ssl_verify() -> bool | str:
         - True for default SSL verification
     """
     if CONFIG.get("NO_VERIFY_SSL"):
+        # --insecure deliberately skips verification; silence the per-request
+        # urllib3 warning so it does not flood the logs on every transfer.
+        _suppress_insecure_warning()
         return False
     # In LAN mode with fingerprint, we disable standard SSL verification
     # and verify the fingerprint manually before each request
@@ -127,6 +130,47 @@ def http_post(url: str, **kwargs) -> "Response":
 def http_delete(url: str, **kwargs) -> "Response":
     """DELETE ``url`` through a fingerprint-pinned session."""
     return get_http_session().delete(url, **kwargs)
+
+
+# OpenSSL signatures emitted when an HTTPS client speaks to a plaintext HTTP
+# server. The exact code varies across OpenSSL versions, so we match the stable
+# family of record/protocol-mismatch errors rather than a single string.
+_PLAINTEXT_TLS_SIGNATURES: tuple[str, ...] = (
+    "WRONG_VERSION_NUMBER",
+    "RECORD_LAYER_FAILURE",
+    "UNEXPECTED_EOF_WHILE_READING",
+    "RECORD_TOO_SMALL",
+)
+
+
+def diagnose_connection_error(exc: BaseException, server_url: str) -> str | None:
+    """Return an actionable hint for common TLS connection failures.
+
+    Detects the frequent misconfiguration where the client targets an
+    ``https://`` URL but the server only speaks plaintext HTTP: the TLS
+    handshake then fails with an OpenSSL record/protocol-mismatch error that is
+    otherwise opaque. Also recognizes certificate-verification failures.
+
+    Returns ``None`` when *exc* is not an SSL error or matches no known pattern,
+    so callers can fall back to their generic message.
+    """
+    from requests.exceptions import SSLError
+
+    if not isinstance(exc, SSLError):
+        return None
+    detail = str(exc).upper()
+    if any(sig in detail for sig in _PLAINTEXT_TLS_SIGNATURES):
+        return (
+            f"TLS handshake failed for '{server_url}': the server appears to speak "
+            "plaintext HTTP, not HTTPS. Use an http:// server URL, or enable TLS on "
+            "the server (HSYNC_SSL_ENABLED=true)."
+        )
+    if "CERTIFICATE_VERIFY_FAILED" in detail:
+        return (
+            f"TLS certificate verification failed for '{server_url}'. Provide the "
+            "server CA with --ca-cert, or use --insecure for a self-signed certificate."
+        )
+    return None
 
 
 def http_patch(url: str, **kwargs) -> "Response":
