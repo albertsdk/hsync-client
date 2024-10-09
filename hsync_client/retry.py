@@ -15,7 +15,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from loguru import logger as log
 from requests import RequestException
 from tenacity import (
     before_sleep_log,
@@ -35,6 +34,12 @@ from hsync_client.exceptions import NetworkError, ServerError
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_MIN_WAIT = 1  # seconds
 DEFAULT_MAX_WAIT = 10  # seconds
+
+# Route tenacity's before-sleep logs through the stdlib logger so they pass
+# the InterceptHandler, which neutralizes loguru markup (tenacity messages
+# embed qualified names containing ``<locals>`` that would otherwise be parsed
+# as a color tag and raise ``ValueError``).
+_retry_log = logging.getLogger("hsync_client.retry")
 
 
 def retry_on_network_error(
@@ -65,7 +70,7 @@ def retry_on_network_error(
         retry=retry_if_exception_type((RequestException, NetworkError)),
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(log, logging.WARNING),
+        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
         reraise=True,
     )
 
@@ -92,7 +97,7 @@ def retry_on_connection_error(
         retry=retry_if_exception_type(RequestException),
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(log, logging.WARNING),
+        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
         reraise=True,
     )
 
@@ -123,6 +128,6 @@ def retry_on_transient_transfer_error(
         retry=retry_if_exception_type((RequestException, ServerError)),
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(log, logging.WARNING),
+        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
         reraise=True,
     )
