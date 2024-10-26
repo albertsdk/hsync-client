@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.6
+#
+# HSYNC — WD My Cloud OS5 packaging runtime (mksapkg-OS5)
+#
+# Minimal amd64 image whose only job is to execute the upstream prebuilt
+# ``mksapkg-OS5`` tool. The tool itself is NOT baked in: compile.sh
+# (``_wdos5_run_mksapkg``) bind-mounts the cached copy from
+# packaging/wd-os5/.cache/ at run time, so there stays a single tool copy.
+#
+# Debian bullseye is chosen on purpose, because mksapkg-OS5 expects an old
+# runtime that modern build hosts no longer provide:
+#   * it still ships ``libxml2.so.2`` — the exact soname mksapkg-OS5 links
+#     against (recent hosts such as Ubuntu 26.04 only carry libxml2 ``.so.16``),
+#     and
+#   * its OpenSSL 1.1.1 enables the legacy ``bf-cbc`` cipher by default, which
+#     mksapkg-OS5 shells out to (``openssl bf-cbc``) when signing apkg.sign.
+#     OpenSSL 3 on modern hosts hides bf-cbc behind the legacy provider.
+#
+# Built and consumed locally by compile.sh; never published to any registry.
+FROM amd64/debian:bullseye-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libxml2 \
+        openssl \
+    && rm -rf /var/lib/apt/lists/*

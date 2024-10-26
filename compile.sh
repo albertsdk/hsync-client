@@ -885,6 +885,9 @@ readonly WDOS5_MKSAPKG_URL="https://raw.githubusercontent.com/WDCommunity/wdpksr
 readonly WDOS5_CACHE_DIR="${WDOS5_DIR}/.cache"
 readonly WDOS5_MKSAPKG="${WDOS5_CACHE_DIR}/mksapkg-OS5"
 readonly WDOS5_MODEL="MyCloudEX2Ultra"
+# Runtime image used to execute mksapkg-OS5 (see ``_wdos5_build_mksapkg_image``).
+readonly WDOS5_MKSAPKG_IMAGE="hsync-wdos5-mksapkg:bullseye"
+readonly WDOS5_MKSAPKG_DOCKERFILE="${WDOS5_DIR}/Dockerfile.mksapkg"
 
 # Minimal Docker build context staged by ``_wdos5_stage_context``. It mirrors
 # the ``hsync-client`` / ``hsync-common`` sibling layout so the builder image
@@ -919,30 +922,42 @@ readonly PYINSTALLER_COMMON_FLAGS="
     --exclude-module pkg_resources --exclude-module rapidfuzz
     ${ENTRY_POINT}"
 
-# Create a temporary openssl shim that enables the bf-cbc legacy provider on
-# OpenSSL 3.x.  mksapkg-OS5 calls ``openssl bf-cbc`` via system(); on modern
-# distros bf-cbc lives in the "legacy" provider and is not loaded by default,
-# causing openssl to produce only the Salted__ header (16 bytes) with no
-# ciphertext.  The NAS CGI then rejects the malformed apkg.sign and aborts
-# the installation before running any lifecycle script.
-#
-# Prints the wrapper directory path; the caller must prepend it to PATH and
-# remove it when done.
-_wdos5_openssl_wrapper_dir() {
-    local wrap_dir ossl_bin provider_flags
-    wrap_dir="$(mktemp -d)"
-    ossl_bin="$(command -v openssl)"
-    provider_flags=""
-    if "${ossl_bin}" bf-cbc -provider legacy -help >/dev/null 2>&1; then
-        provider_flags="-provider legacy -provider default"
-    fi
-    # Inject provider flags AFTER the openssl sub-command name so that the
-    # resulting invocation is: openssl <cmd> -provider legacy ... [rest]
-    # Putting them before the sub-command is not accepted by OpenSSL 3.x.
-    printf '#!/bin/sh\nfirst="$1"; shift; exec "%s" "$first" %s "$@"\n' \
-        "${ossl_bin}" "${provider_flags}" > "${wrap_dir}/openssl"
-    chmod 0755 "${wrap_dir}/openssl"
-    echo "${wrap_dir}"
+# Build the small amd64 image that runs mksapkg-OS5. The upstream tool is a
+# prebuilt x86-64 binary linked against ``libxml2.so.2`` and it shells out to
+# ``openssl bf-cbc`` (a legacy cipher) to sign apkg.sign. Modern hosts no longer
+# provide either — e.g. Ubuntu 26.04 ships libxml2 ``.so.16`` only, and OpenSSL 3
+# hides bf-cbc behind the legacy provider — so the tool runs inside a Debian
+# bullseye container that still carries libxml2.so.2 and an OpenSSL 1.1.1 with
+# bf-cbc enabled by default (see Dockerfile.mksapkg). Cached after first build.
+_wdos5_build_mksapkg_image() {
+    log_step "Building mksapkg runtime image ${WDOS5_MKSAPKG_IMAGE} (cached after first run)..."
+    DOCKER_BUILDKIT=1 docker build \
+        --platform linux/amd64 \
+        -t "${WDOS5_MKSAPKG_IMAGE}" \
+        -f "${WDOS5_MKSAPKG_DOCKERFILE}" \
+        "${WDOS5_DIR}"
+}
+
+# Run mksapkg-OS5 against a staged package tree inside the runtime image.
+# mksapkg-OS5 has no output-path flag: it ``cd ..`` and drops the .bin in the
+# parent of its working directory, so the staging dir's parent is mounted at
+# /work and the staging dir itself is the container CWD. Running with the host
+# uid keeps the produced artifacts owned by the caller.
+# Args: stage_abs  model
+_wdos5_run_mksapkg() {
+    local stage_abs="$1" model="$2"
+    local stage_parent stage_name mksapkg_abs
+    stage_parent="$(dirname "${stage_abs}")"
+    stage_name="$(basename "${stage_abs}")"
+    mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
+    docker run --rm \
+        --platform linux/amd64 \
+        -u "$(id -u):$(id -g)" \
+        -v "${stage_parent}:/work" \
+        -v "${mksapkg_abs}:/usr/local/bin/mksapkg-OS5:ro" \
+        -w "/work/${stage_name}" \
+        "${WDOS5_MKSAPKG_IMAGE}" \
+        mksapkg-OS5 -E -s -m "${model}"
 }
 
 # Stage the minimal Docker build context consumed by Dockerfile.builder.
@@ -1067,10 +1082,10 @@ build_wd_os5() {
         curl -fsSL "${WDOS5_MKSAPKG_URL}" -o "${WDOS5_MKSAPKG}"
         chmod 0755 "${WDOS5_MKSAPKG}"
     fi
+    _wdos5_build_mksapkg_image
 
     log_step "Building OS5 .bin package..."
-    local mksapkg_abs stage_abs stage_parent out_abs
-    mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
+    local stage_abs stage_parent out_abs
     stage_abs="$(cd "${WDOS5_STAGE_DIR}" && pwd)"
     stage_parent="$(dirname "${stage_abs}")"
     out_abs="$(cd "${WDOS5_OUTPUT_DIR}" && pwd)"
@@ -1079,10 +1094,7 @@ build_wd_os5() {
     # .bin in the parent of its current working directory. Clean any stale
     # artifact there so the lookup below picks up the fresh one.
     rm -f "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin*
-    local _ossl_wrap
-    _ossl_wrap="$(_wdos5_openssl_wrapper_dir)"
-    ( cd "${stage_abs}" && PATH="${_ossl_wrap}:${PATH}" "${mksapkg_abs}" -E -s -m "${WDOS5_MODEL}" )
-    rm -rf "${_ossl_wrap}"
+    _wdos5_run_mksapkg "${stage_abs}" "${WDOS5_MODEL}"
 
     local produced_bin bin_path
     produced_bin="$(ls -t "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
@@ -1129,11 +1141,13 @@ build_wd_os5() {
 #   $4  stage_base — directory under which a disposable <model>/<APP_NAME>/
 #                    staging tree is created (the inner dir name must equal
 #                    APP_NAME or OS5 rejects the .bin at upload time)
-#   $5  mksapkg    — absolute path to the mksapkg-OS5 executable
-#   $6  out_abs    — absolute path to the final output directory
+#   $5  out_abs    — absolute path to the final output directory
+#
+# Requires the mksapkg runtime image (``_wdos5_build_mksapkg_image``) to be
+# built beforehand by the caller.
 _wdos5_package_model() {
     local model="$1" binary_path="$2" version="$3"
-    local stage_base="$4" mksapkg_abs="$5" out_abs="$6"
+    local stage_base="$4" out_abs="$5"
 
     # Disposable staging copy so the source tree stays pristine. The inner
     # directory **must** be named after the package (APP_NAME) — mksapkg-OS5
@@ -1162,10 +1176,7 @@ _wdos5_package_model() {
     stage_parent="$(dirname "${stage_abs}")"
 
     rm -f "${stage_parent}/${model}_${APP_NAME}_"*.bin*
-    local _ossl_wrap
-    _ossl_wrap="$(_wdos5_openssl_wrapper_dir)"
-    ( cd "${stage_abs}" && PATH="${_ossl_wrap}:${PATH}" "${mksapkg_abs}" -E -s -m "${model}" )
-    rm -rf "${_ossl_wrap}"
+    _wdos5_run_mksapkg "${stage_abs}" "${model}"
 
     local produced
     produced="$(ls -t "${stage_parent}/${model}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
@@ -1216,8 +1227,7 @@ build_wd_os5_all() {
         curl -fsSL "${WDOS5_MKSAPKG_URL}" -o "${WDOS5_MKSAPKG}"
         chmod 0755 "${WDOS5_MKSAPKG}"
     fi
-    local mksapkg_abs
-    mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
+    _wdos5_build_mksapkg_image
 
     # ── qemu (ARMv7 emulation on amd64 hosts) ────────────────────────────────
     ensure_qemu_binfmt qemu-arm
@@ -1276,14 +1286,14 @@ build_wd_os5_all() {
     log_step "─── Packaging ARMv7 models (${#armv7_models[@]}) ─────────────────────────────"
     for model in "${armv7_models[@]}"; do
         _wdos5_package_model "${model}" "${armv7_binary}" "${version}" \
-            "${stage_base}" "${mksapkg_abs}" "${out_abs}"
+            "${stage_base}" "${out_abs}"
     done
 
     echo
     log_step "─── Packaging amd64 models (${#amd64_models[@]}) ─────────────────────────────"
     for model in "${amd64_models[@]}"; do
         _wdos5_package_model "${model}" "${amd64_binary}" "${version}" \
-            "${stage_base}" "${mksapkg_abs}" "${out_abs}"
+            "${stage_base}" "${out_abs}"
     done
 
     # ── Summary ───────────────────────────────────────────────────────────────
