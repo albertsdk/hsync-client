@@ -38,6 +38,7 @@
     "action.start":   "Avvia",
     "action.stop":    "Ferma",
     "action.restart": "Riavvia",
+    "action.log":     "Visualizza log",
 
     "status.running": "in esecuzione",
     "status.stopped": "fermo",
@@ -49,6 +50,12 @@
     "toast.started":     "Servizio avviato",
     "toast.stopped":     "Servizio fermato",
     "toast.restarted":   "Servizio riavviato",
+    "toast.log_error":   "Caricamento del log non riuscito",
+
+    "log.title":  "Log applicazione",
+    "log.follow": "Scorrimento automatico",
+    "log.clear":  "Pulisci",
+    "log.close":  "Chiudi",
 
     "footer.version": "Versione"
 }

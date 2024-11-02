@@ -161,6 +161,57 @@
     }
 
     // -----------------------------------------------------------------
+    // Live log viewer (incremental polling)
+    // -----------------------------------------------------------------
+    // The backend returns only the bytes appended since the byte offset we
+    // last received, so a short poll feels real-time without re-transferring
+    // the whole file. A negative offset asks the server for the tail window.
+    const LOG_POLL_MS = 2000;
+    let logOffset = -1;
+    let logTimer  = null;
+
+    async function pollLog() {
+        const q = logOffset >= 0 ? `?offset=${logOffset}` : '';
+        let j;
+        try {
+            const r = await fetch(`${BASE}/log_get.php${q}`, { cache: 'no-store' });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            j = await r.json();
+        } catch (e) {
+            stopLog();
+            toast(t('toast.log_error', 'Failed to load log') + ': ' + e.message, 'error');
+            return;
+        }
+        logOffset = j.offset;
+        if (j.data) {
+            const v = $('#hsync-log-view');
+            v.textContent += j.data;
+            if ($('#hsync-log-follow').checked) v.scrollTop = v.scrollHeight;
+        }
+    }
+
+    function startLog() {
+        if (logTimer === null) logTimer = setInterval(pollLog, LOG_POLL_MS);
+    }
+
+    function stopLog() {
+        if (logTimer !== null) { clearInterval(logTimer); logTimer = null; }
+    }
+
+    function openLog() {
+        $('#hsync-log-view').textContent = '';
+        logOffset = -1;                 // first poll requests the tail window
+        $('#hsync-log-modal').hidden = false;
+        pollLog();                      // immediate first paint
+        startLog();
+    }
+
+    function closeLog() {
+        stopLog();
+        $('#hsync-log-modal').hidden = true;
+    }
+
+    // -----------------------------------------------------------------
     // Wiring
     // -----------------------------------------------------------------
     // The dashboard injects this HTML via jQuery .load() after its own
@@ -190,6 +241,10 @@
         $('#hsync-btn-start')  .addEventListener('click', async () => { try { await service('start');   toast(t('toast.started', 'Service started'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
         $('#hsync-btn-stop')   .addEventListener('click', async () => { try { await service('stop');    toast(t('toast.stopped', 'Service stopped'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
         $('#hsync-btn-restart').addEventListener('click', async () => { try { await service('restart'); toast(t('toast.restarted', 'Service restarted'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+
+        $('#hsync-btn-log')   .addEventListener('click', openLog);
+        $('#hsync-log-close') .addEventListener('click', closeLog);
+        $('#hsync-log-clear') .addEventListener('click', () => { $('#hsync-log-view').textContent = ''; });
 
         refreshStatus();
         setInterval(refreshStatus, 10000);

@@ -38,6 +38,7 @@
     "action.start":   "Start",
     "action.stop":    "Stop",
     "action.restart": "Restart",
+    "action.log":     "View log",
 
     "status.running": "running",
     "status.stopped": "stopped",
@@ -49,6 +50,12 @@
     "toast.started":     "Service started",
     "toast.stopped":     "Service stopped",
     "toast.restarted":   "Service restarted",
+    "toast.log_error":   "Failed to load log",
+
+    "log.title":  "Application log",
+    "log.follow": "Auto-scroll",
+    "log.clear":  "Clear",
+    "log.close":  "Close",
 
     "footer.version": "Version"
 }

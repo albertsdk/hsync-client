@@ -105,13 +105,53 @@ server URL is required — peers are discovered automatically via mDNS, so
 
 ## LAN Mode Options
 
-| Option | Description |
-|--------|-------------|
-| `--lan-mode` | Enable LAN P2P mode (no server required) |
-| `--lan-port` | Port for the LAN HTTPS server (0 = random) |
-| `HSYNC_LAN_KEY` | Shared secret for LAN authentication (env var only) |
-| `--lan-group` | Group name for peer filtering |
-| `--discovery-timeout` | Initial peer discovery timeout in seconds (`0` = wait indefinitely) |
+This is the single reference for every LAN (`--lan-mode`) option and `HSYNC_*`
+environment variable. For the end-user guide see [LAN Mode](lan-mode.md); for the
+protocol internals see [LAN Internals](lan-internals.md).
+
+### CLI Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--lan-mode` | Enable LAN P2P mode (no server required) | `false` |
+| `--lan-port PORT` | Port used when acting as LAN master (`0` = random) | `0` |
+| `--discovery-timeout SEC` | Initial peer discovery timeout (`0` = wait indefinitely) | `10` |
+| `--lan-group GROUP` | Group name for peer filtering | none |
+| `--no-lan-persistent` | Exit after a single sync attempt instead of waiting for peers | persistent on |
+| `--force-master` | Always be the LAN master | `false` |
+| `--never-master` | Never become master; stay a client/slave | `false` |
+| `--require-pairing` | Strict pairing: refuse a first-seen master certificate until confirmed out of band (disables TOFU auto-pinning) | `false` |
+
+> `--sync-direction` and `-y, --yes` also affect LAN mode; they are listed under
+> [Sync](#sync) and [General](#general) above.
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HSYNC_LAN_KEY` | Shared secret for LAN authentication (env var only — no CLI flag) | none |
+| `HSYNC_LAN_PORT` | Master HTTPS server port (`0` = random) | `0` |
+| `HSYNC_LAN_GROUP` | Group name for peer filtering | none |
+| `HSYNC_DISCOVERY_TIMEOUT` | Initial peer discovery timeout (`0` = wait indefinitely) | `10` |
+| `HSYNC_HEARTBEAT_INTERVAL` | Heartbeat interval for peer health (seconds) | `5` |
+| `HSYNC_PEER_TIMEOUT` | Time before a silent peer is marked offline (seconds) | `15` |
+| `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
+| `HSYNC_NEVER_MASTER` | Never become master (`true`/`false`) | `false` |
+| `HSYNC_LAN_REQUIRE_PAIRING` | Strict pairing — disable TOFU auto-pinning (`true`/`false`) | `false` |
+| `HSYNC_LAN_CERT_DIR` | Directory holding the persistent LAN master keypair | `~/.local/state/hsync/lan_cert` |
+
+### Incompatibilities & Priority
+
+- `--force-master` cannot be combined with `--sync-direction upload-only` or
+  `download-only` — the master must stay bidirectional; the client refuses to start.
+- `--force-master` and `--never-master` are mutually exclusive; the client
+  refuses to start if both are set.
+- If **every** discovered peer is `--never-master`, no master is elected and a
+  parsable `[NO_MASTER]` warning is logged after a 60-second grace period.
+
+```
+CLI argument > Environment variable > Default value
+```
 
 ## SSL/TLS (HTTPS/WSS)
 

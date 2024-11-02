@@ -2,35 +2,26 @@
 
 This guide will help you get HSYNC up and running quickly.
 
+> **Already have a binary?** If you've installed a prebuilt binary, `.deb`, or
+> WD OS5 `.bin` (see [Installation](installation.md)), jump straight to
+> [Choose an Operating Mode](#2-choose-an-operating-mode).
+
 ## Requirements
 
-For building:
-- Python ≥3.12, <3.14
-- Poetry (for dependency management)
-
-For running:
-- The compiled binary (no Python required)
+To **run** HSYNC you only need the compiled binary — no Python runtime is
+required. To **build** it from source, see the prerequisites in
+[Installation → Build from source](installation.md#build-from-source).
 
 ## Quick Start
 
-### 1. Build the Client
+### 1. Get the Client
 
-```bash
-cd hsync-client
+Download a prebuilt binary (recommended) or build it from source — both paths are
+covered in [Installation](installation.md). The rest of this guide assumes you
+have a working `hsync` binary.
 
-# Install dependencies (first time only)
-poetry install
-
-# Compile the binary
-./compile.sh
-
-# The binary will be in dist/<os>-<arch>/hsync
-# e.g. dist/linux-amd64/hsync, dist/darwin-arm64/hsync, dist/windows-amd64/hsync.exe
-```
-
-> **Note**: `<platform>` in examples below is a shorthand for `<os>-<arch>`
+> **Note**: `<platform>` in the examples below is a shorthand for `<os>-<arch>`
 > (e.g. `linux-amd64`, `darwin-arm64`, `windows-amd64`).
-> The compile script detects the current platform automatically.
 
 ### 2. Choose an Operating Mode
 
@@ -63,14 +54,6 @@ See [Sync Modes](sync-modes.md#operating-modes-server-vs-lan) for a full compari
 ```
 
 See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
-
-## Build Options
-
-```bash
-./compile.sh           # Build the binary
-./compile.sh --clean   # Clean artifacts and rebuild
-./compile.sh --help    # Show help
-```
 
 ## Environment Configuration
 

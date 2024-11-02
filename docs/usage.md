@@ -4,23 +4,10 @@ This document provides detailed usage instructions for the HSYNC Client.
 
 ## Quick Start
 
-```mermaid
-flowchart LR
-    A[Install] -->|"①→②"| B[Configure]
-    B -->|"②→③"| C[Run]
-
-    subgraph "① Install"
-        A1[poetry install]
-    end
-
-    subgraph "② Configure"
-        B1[Set HSYNC_API_KEY]
-    end
-
-    subgraph "③ Run"
-        C1[hsync -s URL -b bucket]
-    end
-```
+Three steps: **install** a binary (or build it), **configure** the connection,
+then **run** a sync. The full walkthrough is in
+[Getting Started](getting-started.md); installation options are in
+[Installation](installation.md).
 
 ## Command Line Interface
 
@@ -41,50 +28,8 @@ for when to use each.
 
 ### Options Overview
 
-```mermaid
-mindmap
-  root((hsync))
-    Connection
-      -s, --server
-      --timeout
-      --ca-cert
-      --insecure
-    Sync
-      -b, --bucket
-      -p, --path
-      -w, --watch
-      -i, --interval
-      --sync-direction
-      --stability-delay
-      --max-wait-timeout
-      --filter-path
-      --ignore-delete
-      --sync-hidden
-      --ignore-patterns
-      --no-compression
-      --min-free-disk-space
-      --max-bandwidth-upload
-      --max-bandwidth-download
-    LAN
-      --lan-mode
-      --lan-port
-      --lan-group
-      --no-lan-persistent
-      --force-master
-      --never-master
-      --discovery-timeout
-    Output
-      -v, --verbose
-      -q, --quiet
-      -o, --output
-      --no-color
-    Other
-      -y, --yes
-      -n, --dry-run
-      --env-file
-      -V, --version
-      --help-symbols
-```
+Options are grouped into **Connection**, **Sync**, **LAN**, **Output** and
+**General** panels (run `hsync --help` to see them in your terminal).
 
 > For the **complete option reference** (descriptions, defaults and accepted
 > values) see [Configuration → CLI Options](configuration.md#cli-options).
@@ -133,21 +78,11 @@ Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 
 ## Error Handling
 
-```mermaid
-flowchart TD
-    E[① Error Occurs] -->|"②"| T{Error Type}
-
-    T -->|"③a Network"| N[Retry with backoff]
-    T -->|"③b Auth"| A[Check API key]
-    T -->|"③c Not Found"| NF[Skip file]
-    T -->|"③d Permission"| P[Log warning]
-
-    N -->|"④"| R{Retry count}
-    R -->|"⑤a < 5"| W[Wait and retry]
-    R -->|"⑤b >= 5"| F[Mark as failed]
-
-    W -->|"⑥ Retry"| E
-```
+Errors are handled per item, so one failure never aborts the whole run: network
+errors are retried with backoff (then marked failed), authentication errors abort
+early, missing files are skipped and permission issues are logged as warnings.
+The full decision flow is documented in
+[Architecture → Error Handling & Retries](architecture.md#error-handling--retries).
 
 ## Environment Variables
 

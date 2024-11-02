@@ -7,8 +7,8 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
 > End-user / human docs live in [`../docs/`](../docs/architecture.md)
 > (`getting-started`, `usage`, `configuration`, `sync-modes`, `lan-mode`,
-> `examples`). This wiki is the **first search surface**: start here, follow the
-> `path/to/file.py:line` references to reach code directly.
+> `lan-internals`, `examples`, `faq`). This wiki is the **first search surface**:
+> start here, follow the `path/to/file.py:line` references to reach code directly.
 
 ## Map
 

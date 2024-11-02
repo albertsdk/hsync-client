@@ -6,7 +6,8 @@ that can be installed through the stock admin Dashboard
 (`Apps → Install an App manually`).
 
 The package wraps the standalone `hsync` PyInstaller binary together with a
-small web UI for configuring the service without SSH access.
+small web UI for configuring the service, controlling it (start/stop/restart)
+and viewing its runtime log — all without SSH access.
 
 ## Target
 
@@ -97,7 +98,8 @@ packaging/wd-os5/
 │       ├── i18n/{en,it,de,es,fr}.json
 │       ├── config_get.php   # reads /mnt/HD/HD_a2/hsync/config/hsync.env
 │       ├── config_set.php   # writes the same .env back atomically
-│       └── service.php      # start/stop/status of the daemon
+│       ├── service.php      # start/stop/status of the daemon
+│       └── log_get.php      # tails hsync.log incrementally for the log viewer
 └── scripts/
     └── generate_icon.py     # produces hsync.png from the Android design
 ```
@@ -164,6 +166,18 @@ The web UI ships with the same five locales as the desktop / Android clients:
 **EN, IT, DE, ES, FR**. Language is auto-detected from
 `navigator.language` and can be overridden from the UI header.
 
+## Log viewer
+
+The **View log** button opens an overlay that tails the runtime log at
+`/mnt/HD/HD_a2/hsync/log/hsync.log` in near real time. The browser polls
+`log_get.php`, which returns only the bytes appended since the last byte offset
+it received, so updates feel live without re-transferring the whole file; the
+first load shows the tail window (last 64 KiB) and each poll is capped (256 KiB)
+so a write burst cannot return an unbounded payload. The endpoint is read-only
+with a fixed path (no user input selects the file). The overlay offers
+**Auto-scroll**, **Clear** and **Close**; polling stops when the overlay is
+closed.
+
 ## Notes for maintainers
 
 * The package **version** is taken from `pyproject.toml` at build time and
@@ -184,6 +198,12 @@ The web UI ships with the same five locales as the desktop / Android clients:
 * The builder image is built locally and is **not** published to any
   registry. Re-run `compile.sh --target wd-ex2-ultra-os5 --clean` to force a
   rebuild.
+* **Host-uid PyInstaller.** The `docker run … pyinstaller` step runs as the
+  host uid (`-u "$(id -u):$(id -g)"`, with `HOME`/`XDG_CACHE_HOME` pointed at
+  `/tmp` so the cache is writable) so the bundle it writes to `build/wdos5/`
+  stays caller-owned. Otherwise PyInstaller would run as root and the later
+  `build/` cleanup of a plain `./compile.sh` (native) build would fail with
+  *Permission denied*.
 * The **dependency install** is a cached Docker layer keyed on
   `pyproject.toml` + `poetry.lock` (for both `hsync-client` and the
   `hsync-common` path-dependency). It is recompiled only when those manifests

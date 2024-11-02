@@ -89,7 +89,14 @@ readonly OUTPUT_BASE="dist"
 readonly OUTPUT_DIR="${OUTPUT_BASE}/${PLATFORM}"
 readonly BUILD_DIR="build"
 readonly VENV_DIR=".venv"
-readonly PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
+# PyInstaller lives under Scripts/ on Windows venvs and bin/ elsewhere.
+if [[ "${OS_NAME}" == "windows" ]]; then
+    readonly PYINSTALLER="${VENV_DIR}/Scripts/pyinstaller.exe"
+else
+    readonly PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
+fi
+# --strip needs binutils and is unreliable on Windows; omit it there.
+readonly STRIP_FLAG="$([[ "${OS_NAME}" == "windows" ]] && echo "" || echo "--strip")"
 
 # -----------------------------------------------------------------------------
 # Colors (disabled if not a terminal)
@@ -316,7 +323,7 @@ build_binary() {
     LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" \
         --clean \
         --onefile \
-        --strip \
+        ${STRIP_FLAG} \
         --name "${APP_NAME}" \
         --distpath "${OUTPUT_DIR}" \
         --log-level ERROR \
@@ -733,9 +740,16 @@ build_deb_all() {
             "${DEB_ALL_DIR}"
 
         # --- PyInstaller in container -----------------------------------------
+        # Run as the host uid:gid so the bundle written under build/deb-all and
+        # the in-project .venv (created in the mounted tree) stay caller-owned;
+        # otherwise the host-side cleanup (rm -rf build) fails on root files.
+        # HOME/XDG_CACHE_HOME point at /tmp because an arbitrary uid has no
+        # writable home for the poetry/PyInstaller caches.
         log_step "Compiling ${deb_arch} binary inside container..."
         docker run --rm \
             --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
             -v "${repo_root}:/repo" \
             -w /repo/hsync-client \
             -e LC_ALL=C -e PYTHONWARNINGS=ignore \
@@ -808,11 +822,17 @@ build_deb_all() {
 
         # --- build .deb with dpkg-deb -----------------------------------------
         log_step "Building .deb for ${deb_arch}..."
-        # Inside the container dpkg-deb runs as root — no fakeroot needed.
+        # Inside the container dpkg-deb runs as root — no fakeroot needed — so
+        # the package's internal /usr and /etc paths are owned root:root.
         # dpkg-shlibdeps runs here too (not on the host) so the libc6 minimum
         # version is resolved against the target architecture's dpkg database.
+        # The .deb ownership is captured by dpkg-deb at build time, so chowning
+        # the host-mounted /pkg (control rewritten by root) and the produced
+        # .deb back to the caller afterwards keeps the host tree cleanable
+        # (rm -rf build / dist) without touching the archive's internal owners.
         docker run --rm \
             --platform "${docker_platform}" \
+            -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             -v "${stage_dir}:/pkg" \
             -v "${out_abs}:/out" \
             -w /pkg \
@@ -833,6 +853,7 @@ build_deb_all() {
                 fi
                 dpkg-deb --build /pkg /out
                 chmod 0644 /out/${DEB_PKG_NAME}_${version}_${deb_arch}.deb
+                chown -R \"\${HOST_UID}:\${HOST_GID}\" /pkg \"/out/${DEB_PKG_NAME}_${version}_${deb_arch}.deb\"
             "
 
         local deb_name="${DEB_PKG_NAME}_${version}_${deb_arch}.deb"
@@ -1002,8 +1023,15 @@ _run_pyinstaller_in_docker() {
     local out_abs
     mkdir -p "${out_dir}"
     out_abs="$(cd "${out_dir}" && pwd)"
+    # Run as the host uid:gid so the produced bundle under /out (the host
+    # ${out_dir}, e.g. build/wdos5) is owned by the caller and not root —
+    # otherwise the host-side cleanup (rm -rf build) of a later native build
+    # fails with "Permission denied". HOME/XDG_CACHE_HOME are pointed at /tmp
+    # because an arbitrary uid has no writable home for PyInstaller's cache.
     docker run --rm \
         --platform "${docker_platform}" \
+        -u "$(id -u):$(id -g)" \
+        -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
         -v "${out_abs}:/out" \
         -w /build/hsync-client \
         -e LC_ALL=C -e PYTHONWARNINGS=ignore \

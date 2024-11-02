@@ -38,6 +38,7 @@
     "action.start":   "Démarrer",
     "action.stop":    "Arrêter",
     "action.restart": "Redémarrer",
+    "action.log":     "Voir le journal",
 
     "status.running": "en cours",
     "status.stopped": "arrêté",
@@ -49,6 +50,12 @@
     "toast.started":     "Service démarré",
     "toast.stopped":     "Service arrêté",
     "toast.restarted":   "Service redémarré",
+    "toast.log_error":   "Échec du chargement du journal",
+
+    "log.title":  "Journal de l'application",
+    "log.follow": "Défilement automatique",
+    "log.clear":  "Effacer",
+    "log.close":  "Fermer",
 
     "footer.version": "Version"
 }

@@ -38,6 +38,7 @@
     "action.start":   "Starten",
     "action.stop":    "Stoppen",
     "action.restart": "Neu starten",
+    "action.log":     "Protokoll anzeigen",
 
     "status.running": "läuft",
     "status.stopped": "gestoppt",
@@ -49,6 +50,12 @@
     "toast.started":     "Dienst gestartet",
     "toast.stopped":     "Dienst gestoppt",
     "toast.restarted":   "Dienst neu gestartet",
+    "toast.log_error":   "Protokoll konnte nicht geladen werden",
+
+    "log.title":  "Anwendungsprotokoll",
+    "log.follow": "Auto-Scroll",
+    "log.clear":  "Leeren",
+    "log.close":  "Schließen",
 
     "footer.version": "Version"
 }

@@ -205,6 +205,54 @@
     background: #ecf6ed; border-color: #2e7d32; color: #2e7d32;
 }
 
+/* ---- live log viewer (overlay) ---- */
+#hsync-app #hsync-log-modal {
+    display: flex !important;
+    position: fixed !important;
+    inset: 0;
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px !important;
+    background: rgba(0, 0, 0, 0.5);
+}
+#hsync-app #hsync-log-modal[hidden] { display: none !important; }
+#hsync-app .hsync-log-box {
+    display: flex !important;
+    flex-direction: column;
+    width: 100% !important;
+    max-width: 900px !important;
+    max-height: 80vh;
+    background: #ffffff;
+    border: 1px solid #cfd8d8;
+    border-radius: 6px;
+    overflow: hidden;
+}
+#hsync-app .hsync-log-head {
+    display: flex !important;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px !important;
+    background: #006A6A;
+    color: #fff;
+}
+#hsync-app .hsync-log-head .hsync-log-title { flex: 1; font-weight: 600; }
+#hsync-app .hsync-log-head .hsync-label { margin: 0 !important; }
+#hsync-app .hsync-log-head .hsync-label > span { color: #fff !important; }
+#hsync-app #hsync-log-view {
+    flex: 1;
+    margin: 0 !important;
+    padding: 12px 16px !important;
+    overflow: auto;
+    background: #0b1f1f;
+    color: #d6e6e6;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* ---- footer ---- */
 #hsync-app .hsync-footer {
     display: block !important;
@@ -352,8 +400,25 @@
         <button type="button" id="hsync-btn-start"   class="hsync-btn" data-i18n="action.start">Start</button>
         <button type="button" id="hsync-btn-stop"    class="hsync-btn" data-i18n="action.stop">Stop</button>
         <button type="button" id="hsync-btn-restart" class="hsync-btn" data-i18n="action.restart">Restart</button>
+        <button type="button" id="hsync-btn-log"     class="hsync-btn" data-i18n="action.log">View log</button>
     </div>
     <p id="hsync-toast" hidden></p>
+</div>
+
+<!-- Live log viewer: tails hsync.log via log_get.php (see app.js). -->
+<div id="hsync-log-modal" hidden>
+    <div class="hsync-log-box">
+        <div class="hsync-log-head">
+            <span class="hsync-log-title" data-i18n="log.title">Application log</span>
+            <label class="hsync-label hsync-check">
+                <input type="checkbox" id="hsync-log-follow" checked>
+                <span data-i18n="log.follow">Auto-scroll</span>
+            </label>
+            <button type="button" id="hsync-log-clear" class="hsync-btn" data-i18n="log.clear">Clear</button>
+            <button type="button" id="hsync-log-close" class="hsync-btn" data-i18n="log.close">Close</button>
+        </div>
+        <pre id="hsync-log-view"></pre>
+    </div>
 </div>
 
 <div class="hsync-footer">

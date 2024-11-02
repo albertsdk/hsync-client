@@ -435,6 +435,33 @@ Upload and download bandwidth can be limited via `--max-bandwidth-upload` and `-
 
 See [Configuration > Bandwidth Limiting](configuration.md#bandwidth-limiting) for usage details.
 
+## Error Handling & Retries
+
+Errors are classified by type and handled independently so a single failing file
+never aborts the whole sync:
+
+```mermaid
+flowchart TD
+    E[① Error Occurs] -->|"②"| T{Error Type}
+
+    T -->|"③a Network"| N[Retry with backoff]
+    T -->|"③b Auth"| A[Check API key]
+    T -->|"③c Not Found"| NF[Skip file]
+    T -->|"③d Permission"| P[Log warning]
+
+    N -->|"④"| R{Retry count}
+    R -->|"⑤a < 5"| W[Wait and retry]
+    R -->|"⑤b >= 5"| F[Mark as failed]
+
+    W -->|"⑥ Retry"| E
+```
+
+- **Network errors** are retried with backoff up to a bounded number of attempts,
+  then the item is marked failed and the sync continues with the next file.
+- **Authentication errors** abort early with a clear message (see
+  [Configuration > API Key & Encryption Policy](configuration.md#api-key--encryption-policy)).
+- **Not-found** items are skipped; **permission** issues are logged as warnings.
+
 ## Project Structure
 
 ```
