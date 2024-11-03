@@ -77,7 +77,7 @@ In plain terms, LAN mode works in three steps:
 
 ```bash
 # On all devices - they will discover each other automatically
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### With Authentication
@@ -85,27 +85,27 @@ In plain terms, LAN mode works in three steps:
 ```bash
 # On all devices - use the same key via environment variable
 export HSYNC_LAN_KEY="mySecretKey123"
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+hsync -b photos -p ~/Pictures --lan-mode
 
 # Or inline
-HSYNC_LAN_KEY="mySecretKey123" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_KEY="mySecretKey123" hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### With Specific Port
 
 ```bash
 # Use a specific port instead of random
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --lan-port 9000
+hsync -b photos -p ~/Pictures --lan-mode --lan-port 9000
 ```
 
 ### Disable Persistent Mode
 
 ```bash
 # Exit immediately if no peers are found (one-shot sync)
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --no-lan-persistent
+hsync -b photos -p ~/Pictures --lan-mode --no-lan-persistent
 
 # Or via environment variable
-HSYNC_LAN_PERSISTENT=false ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_PERSISTENT=false hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ## Persistent Mode (Default)
@@ -132,7 +132,7 @@ Use `--no-lan-persistent` to disable this behavior and exit after a single sync 
 ### Example Flow
 
 ```
-$ ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+$ hsync -b photos -p ~/Pictures --lan-mode
 
 [INFO] LAN P2P mode enabled
 [INFO] Persistent mode enabled - will wait indefinitely for peers
@@ -177,7 +177,7 @@ connection that carries the data.
   ```bash
   # All peers must use the same key
   export HSYNC_LAN_KEY="mySecretKey123"
-  ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+  hsync -b photos -p ~/Pictures --lan-mode
   ```
 
 - **Trusted home networks** — on a network you control you can run without a key;
@@ -210,13 +210,13 @@ peer without a group matches **only** other peers that also run without a group.
 
 ```bash
 # Team A - only sees other Team A peers
-./dist/<platform>/hsync -b project -p ~/Projects --lan-mode --lan-group "team-a"
+hsync -b project -p ~/Projects --lan-mode --lan-group "team-a"
 
 # Team B - only sees other Team B peers
-./dist/<platform>/hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
+hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
 
 # No group - only sees other peers that also run without a group
-./dist/<platform>/hsync -b project -p ~/Projects --lan-mode
+hsync -b project -p ~/Projects --lan-mode
 ```
 
 ### Use Cases
@@ -304,10 +304,10 @@ When running in LAN mode **without `--force-master`** and the shared directory i
 
 ```bash
 # The client will show a warning and ask for confirmation
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+hsync -b photos -p ~/Pictures --lan-mode
 
 # Skip the interactive confirmation (e.g. in scripts or systemd services)
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode -y
+hsync -b photos -p ~/Pictures --lan-mode -y
 ```
 
 The warning is **not shown** when:

@@ -40,31 +40,32 @@ See [Sync Modes](sync-modes.md#operating-modes-server-vs-lan) for a full compari
 
 ```bash
 # Single sync
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir
+hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir
 
 # Continuous sync (watch mode)
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
+hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir -w
 ```
+
+> For local development with a self-signed certificate, add `--insecure` and
+> use `https://` (the client refuses to send API keys over plain HTTP).
+> See [SSL/TLS](configuration.md#ssltls-httpswss) for details.
 
 **LAN Mode** — peer-to-peer, no server required (run on each device):
 
 ```bash
 # Peers discover each other via mDNS; watch mode is implicit
-./dist/<platform>/hsync -b mybucket -p /path/to/dir --lan-mode
+hsync -b mybucket -p /path/to/dir --lan-mode
 ```
 
 See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
 
 ## Environment Configuration
 
-The client provides environment file templates:
+Set the required variables in your shell or export them in a `.env` file:
 
 ```bash
-# Development (HTTP, localhost)
-source dev.env
-
-# Production (HTTPS, remote server)
-source prod.env
+export HSYNC_SERVER="https://server.example.com:8765"
+export HSYNC_API_KEY="your-api-key"
 ```
 
-See [Configuration](configuration.md) for details.
+See [Configuration](configuration.md) for the full list of environment variables.

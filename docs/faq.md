@@ -134,8 +134,36 @@ Large directory trees can exceed the inotify watch limit. Raise
 approached. See
 [inotify watch limit](configuration.md#periodic-resync-and-the-inotify-watch-limit-linux).
 
+## Debian Package
+
+### How do I customise the sync path for the systemd service?
+
+See the [Debian Package Guide](debian-package.md#customising-the-sync-path) for
+the full procedure (editing the config, granting ACLs, updating systemd
+sandboxing, and restarting the service).
+
+### Why does the service report "Directory '…' does not exist" for a path under /home?
+
+This is caused by `ProtectHome=yes` (an older package default) or missing
+`x` (traverse) permissions on parent directories. See
+[ProtectHome and directory visibility](debian-package.md#protecthome-and-directory-visibility)
+in the Debian Package Guide.
+
+### Why can't the service write to my chosen directory?
+
+Two layers control write access: systemd sandboxing (`ReadWritePaths`) and
+POSIX permissions / ACLs. Both must be satisfied. See
+[Understanding write access](debian-package.md#understanding-write-access) in
+the Debian Package Guide.
+
+### Can I run the service as my own user instead of _hsync?
+
+Yes. See [Running as a different user](debian-package.md#running-as-a-different-user)
+in the Debian Package Guide.
+
 ## See also
 
 - [Getting Started](getting-started.md) — first sync walkthrough.
 - [Usage](usage.md) — full command-line reference.
 - [Configuration](configuration.md) — every CLI option and environment variable.
+- [Debian Package Guide](debian-package.md) — detailed guide for the `.deb` package.

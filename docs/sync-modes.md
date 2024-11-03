@@ -21,10 +21,10 @@ mutually exclusive and selected per invocation.
 
 ```bash
 # Server Mode — central hub
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir
+hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir
 
 # LAN Mode — peer-to-peer, no server (run on each device)
-./dist/<platform>/hsync -b mybucket -p /path/to/dir --lan-mode
+hsync -b mybucket -p /path/to/dir --lan-mode
 ```
 
 The sections below (single / watch / sync direction) apply to **both**
@@ -36,7 +36,7 @@ master election.
 Performs a synchronization and exits.
 
 ```bash
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir
+hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir
 ```
 
 ## Watch Mode (`-w`)
@@ -49,7 +49,7 @@ Maintains a persistent connection and watches for changes:
 - Propagates changes in real-time
 
 ```bash
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
+hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir -w
 ```
 
 ## Sync Direction
@@ -66,10 +66,10 @@ Controls the direction of file synchronization:
 
 ```bash
 # Upload-only: push local files to server
-./dist/<platform>/hsync -s http://server:8765 -b backup -w --sync-direction upload-only
+hsync -s https://server.example.com:8765 -b backup -w --sync-direction upload-only
 
 # Download-only: mirror remote content locally
-./dist/<platform>/hsync -s http://server:8765 -b shared -w --sync-direction download-only
+hsync -s https://server.example.com:8765 -b shared -w --sync-direction download-only
 ```
 
 ## LAN Mode (P2P)
@@ -78,10 +78,10 @@ Peer-to-peer synchronization without a centralized server:
 
 ```bash
 # Basic LAN mode (HTTPS is mandatory)
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+hsync -b photos -p ~/Pictures --lan-mode
 
 # With authentication
-HSYNC_LAN_KEY="mySecretKey" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_KEY="mySecretKey" hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### How It Works
@@ -98,7 +98,7 @@ Force full sync at regular intervals:
 
 ```bash
 # Re-sync every 5 minutes
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -w -i 300
+hsync -s https://server.example.com:8765 -b mybucket -w -i 300
 ```
 
 ## Dry Run
@@ -106,5 +106,5 @@ Force full sync at regular intervals:
 Preview operations without making changes:
 
 ```bash
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -n
+hsync -s https://server.example.com:8765 -b mybucket -n
 ```
