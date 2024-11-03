@@ -148,13 +148,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         binutils \
-        upx-ucl \
         libsqlite3-0 \
         libbz2-1.0 \
         liblzma5 \
         libncursesw6 \
         libreadline7 \
-        git \
         build-essential \
         perl \
         pkg-config \
