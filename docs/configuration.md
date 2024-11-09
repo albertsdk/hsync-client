@@ -219,36 +219,17 @@ hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
 ## File Compression
 
 HSYNC supports automatic file compression to optimize transfers using **Zstandard (zstd)**.
-
-### How It Works
-
-- Files are compressed before transfer and decompressed on receipt
-- Compression is enabled by default and can be disabled via `--no-compression`
-- Server informs client about compression support during WebSocket handshake
-- In LAN mode, peers advertise compression capability via mDNS
-
-### Compression Thresholds
-
-Different thresholds are used based on network characteristics:
-
-| Context | Threshold | Rationale |
-|---------|-----------|-----------|
-| **Download** (Server→Client) | 10 KB | Server CPU is acceptable, clear benefit above this size |
-| **Upload** (Client→Server) | 32 KB | Client CPU is more precious, typical production threshold |
-| **LAN mode** | 100 KB | Local network is fast (1Gbps+), only compress large files |
-
-### Skipped Files
-
-Compression is automatically skipped for:
-- Files below the threshold (depends on context)
-- Pre-compressed formats: `.jpg`, `.png`, `.mp4`, `.zip`, `.gz`, `.pdf`, `.docx`, etc.
-
-### Configuration
+Compression is enabled by default and automatically skips already-compressed formats
+(images, videos, archives, documents). Disable it when transferring over fast local
+networks or when CPU is constrained:
 
 | Option | Description |
 |--------|-------------|
 | `--no-compression` | Disable compression for this session |
 | `HSYNC_COMPRESSION_ENABLED` | Environment variable to disable compression (default: `true`) |
+
+> For details on compression thresholds and protocol-level negotiation, see the
+> [Developer Guide → Compression Internals](developer.md#compression-internals).
 
 ## Bandwidth Limiting
 

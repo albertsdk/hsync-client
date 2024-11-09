@@ -129,7 +129,8 @@ flowchart TD
 
 ## Event queue and retry
 
-The client queues outbound events and retries with exponential backoff:
+The client queues outbound events (local file changes detected by the watchdog)
+and sends them to the server via WebSocket with retry logic:
 
 ```mermaid
 stateDiagram-v2
@@ -148,6 +149,29 @@ stateDiagram-v2
         Max retries: 5
     end note
 ```
+
+### Queue interaction with the sync engine
+
+The event queue and the sync engine operate independently but coordinate
+through shared state:
+
+- **Event queue** handles real-time propagation: local watchdog events are
+  queued immediately and sent to the server as soon as the WebSocket is
+  available. Events are not batched — each file change produces a separate
+  event.
+- **Sync engine** handles full reconciliation: on startup, on reconnection,
+  and periodically via `HSYNC_RESYNC`. It compares the full local and remote
+  file lists and generates `SyncAction`s.
+- **Coordination**: During a full sync, the event queue is drained before
+  the sync engine computes its actions. This ensures that events generated
+  during the sync window are not lost and are processed before the next
+  reconciliation cycle.
+- **Debouncing**: The watchdog debounces rapid successive writes to the same
+  file (e.g., an editor saving multiple times). On Linux, `on_closed` provides
+  natural debouncing; on macOS/Windows, a 1-second debounce window is applied.
+
+> For the three-way merge algorithm used during conflict resolution, see
+> [Conflict Resolution](conflict-resolution.md).
 
 ## Connection recovery
 

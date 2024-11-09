@@ -7,14 +7,33 @@
 > The software is provided "as is", without warranty of any kind — see the full
 > [Disclaimer](#disclaimer) and [License](#license) below.
 
+
+**HSYNC Client** is the tool you run on each device to keep a local folder in sync.
+It works in two ways: connect to a central HSYNC Server (ideal for syncing across
+the internet), or go peer-to-peer with nearby devices on the same local network —
+no server needed.
+
 ---
 
-**HSYNC** - HTTP-based file synchronization client.
+**Quick navigation:**
+- **New to HSync?** Start with [Why HSYNC?](#why-hsync) and [Getting Started](docs/getting-started.md)
+- **Looking for installation options?** Jump to [Installation](docs/installation.md) (prebuilt binaries, .deb, WD OS5 .bin, build from source)
+- **Want to contribute?** See [Contributing](CONTRIBUTING.md)
+- **Looking for detailed documentation?** Navigate to [docs/README.md](docs/README.md)
 
-Synchronize files between a local directory and a remote **bucket**. A bucket is a shared directory hosted on a central HSYNC server or on another peer in LAN Mode.
+## Table of Contents
 
-- In **Server Mode**, clients connect to a centralized server.
-- In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no central server required.
+- [Why HSYNC?](#why-hsync)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Quick Overview](#quick-overview)
+- [LAN Mode (P2P) Overview](#lan-mode-p2p-overview)
+- [Documentation](#documentation)
+- [Version](#version)
+- [License](#license)
+- [Disclaimer](#disclaimer)
+
+---
 
 ## Why HSYNC?
 
