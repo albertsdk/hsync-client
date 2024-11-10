@@ -678,28 +678,33 @@ build_deb_all() {
     ensure_qemu_binfmt qemu-aarch64 qemu-arm
 
     # Common PyInstaller flags — used for all arch builds.
-    local pyinstaller_flags="
-        --clean --onedir --noconfirm --strip
-        --name ${APP_NAME}
-        --log-level ERROR
-        --hidden-import websockets.legacy
-        --hidden-import websockets.legacy.client
-        --hidden-import websockets.client
-        --hidden-import websockets.exceptions
-        --hidden-import watchdog.observers
-        --hidden-import watchdog.observers.inotify
-        --hidden-import watchdog.observers.inotify_buffer
-        --hidden-import watchdog.events
-        --hidden-import rich._unicode_data
-        --hidden-import rich._unicode_data._versions
-        --collect-submodules pathspec
-        --collect-submodules hsync_common
-        --exclude-module pytest --exclude-module pytest_asyncio
-        --exclude-module pytest_cov --exclude-module tkinter
-        --exclude-module unittest --exclude-module pdb
-        --exclude-module doctest --exclude-module pip
-        --exclude-module setuptools --exclude-module wheel
-        --exclude-module pkg_resources --exclude-module rapidfuzz
+    # NOTE: backslash continuations (not embedded newlines) are used so the
+    # variable expands to a single line.  When this variable is later
+    # interpolated inside a ``bash -c "…"`` string, embedded newlines would
+    # be treated as command separators, splitting ``pyinstaller`` away from
+    # its arguments and triggering "error: the following arguments are
+    # required: scriptname".
+    local pyinstaller_flags="--clean --onedir --noconfirm --strip \
+        --name ${APP_NAME} \
+        --log-level ERROR \
+        --hidden-import websockets.legacy \
+        --hidden-import websockets.legacy.client \
+        --hidden-import websockets.client \
+        --hidden-import websockets.exceptions \
+        --hidden-import watchdog.observers \
+        --hidden-import watchdog.observers.inotify \
+        --hidden-import watchdog.observers.inotify_buffer \
+        --hidden-import watchdog.events \
+        --hidden-import rich._unicode_data \
+        --hidden-import rich._unicode_data._versions \
+        --collect-submodules pathspec \
+        --collect-submodules hsync_common \
+        --exclude-module pytest --exclude-module pytest_asyncio \
+        --exclude-module pytest_cov --exclude-module tkinter \
+        --exclude-module unittest --exclude-module pdb \
+        --exclude-module doctest --exclude-module pip \
+        --exclude-module setuptools --exclude-module wheel \
+        --exclude-module pkg_resources --exclude-module rapidfuzz \
         ${ENTRY_POINT}"
 
     # Architecture definitions: deb_arch  docker_platform  base_image
@@ -919,28 +924,30 @@ readonly WDOS5_CTX_DIR="${WDOS5_BUILD_DIR}/ctx"
 # PyInstaller flags shared by every WD OS5 build (single target and all-models).
 # The entry point is intentionally last; ``_run_pyinstaller_in_docker`` appends
 # the per-build --distpath/--workpath/--specpath after it.
-readonly PYINSTALLER_COMMON_FLAGS="
-    --clean --onedir --noconfirm --strip
-    --name ${APP_NAME}
-    --log-level ERROR
-    --hidden-import websockets.legacy
-    --hidden-import websockets.legacy.client
-    --hidden-import websockets.client
-    --hidden-import websockets.exceptions
-    --hidden-import watchdog.observers
-    --hidden-import watchdog.observers.inotify
-    --hidden-import watchdog.observers.inotify_buffer
-    --hidden-import watchdog.events
-    --hidden-import rich._unicode_data
-    --hidden-import rich._unicode_data._versions
-    --collect-submodules pathspec
-    --collect-submodules hsync_common
-    --exclude-module pytest --exclude-module pytest_asyncio
-    --exclude-module pytest_cov --exclude-module tkinter
-    --exclude-module unittest --exclude-module pdb
-    --exclude-module doctest --exclude-module pip
-    --exclude-module setuptools --exclude-module wheel
-    --exclude-module pkg_resources --exclude-module rapidfuzz
+# NOTE: backslash continuations (not embedded newlines) are used so the
+# variable expands to a single line, keeping the ``pyinstaller`` command and
+# its arguments on the same logical line.
+readonly PYINSTALLER_COMMON_FLAGS="--clean --onedir --noconfirm --strip \
+    --name ${APP_NAME} \
+    --log-level ERROR \
+    --hidden-import websockets.legacy \
+    --hidden-import websockets.legacy.client \
+    --hidden-import websockets.client \
+    --hidden-import websockets.exceptions \
+    --hidden-import watchdog.observers \
+    --hidden-import watchdog.observers.inotify \
+    --hidden-import watchdog.observers.inotify_buffer \
+    --hidden-import watchdog.events \
+    --hidden-import rich._unicode_data \
+    --hidden-import rich._unicode_data._versions \
+    --collect-submodules pathspec \
+    --collect-submodules hsync_common \
+    --exclude-module pytest --exclude-module pytest_asyncio \
+    --exclude-module pytest_cov --exclude-module tkinter \
+    --exclude-module unittest --exclude-module pdb \
+    --exclude-module doctest --exclude-module pip \
+    --exclude-module setuptools --exclude-module wheel \
+    --exclude-module pkg_resources --exclude-module rapidfuzz \
     ${ENTRY_POINT}"
 
 # Build the small amd64 image that runs mksapkg-OS5. The upstream tool is a
