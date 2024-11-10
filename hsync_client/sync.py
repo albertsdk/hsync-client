@@ -39,7 +39,7 @@ from requests import RequestException
 
 from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.retry import retry_on_network_error
@@ -241,8 +241,10 @@ async def sync(lan_mode: bool = False) -> None:
         if downloads or uploads:
             await _execute_parallel_transfers(downloads, uploads)
 
-        # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete)
-        # in a single atomic write at the end of the cycle.
+        # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
+        # and every _record_synced_base() from completed transfers) in a single
+        # atomic write at the end of the cycle, avoiding redundant per-file
+        # rewrites of the entire .hsyncstate side-car.
         sync_state.flush()
 
         log.info("Sync completed successfully")
@@ -278,16 +280,19 @@ async def _execute_parallel_transfers(
         downloads: List of files to download from remote.
         uploads: List of files to upload to remote.
     """
+    from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
     from hsync_client.transfer import download_file, upload_file
 
+    max_concurrent = CONFIG.get("MAX_CONCURRENT_TRANSFERS", MAX_CONCURRENT_TRANSFERS_DEFAULT)
+
     # Semaphore to limit concurrent transfers
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSFERS)
+    semaphore = asyncio.Semaphore(max_concurrent)
 
     # Get the current event loop
     loop = asyncio.get_running_loop()
 
     # Create a thread pool for I/O-bound operations
-    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TRANSFERS) as executor:
+    with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
 
         async def transfer_with_semaphore(func: Callable[[File], None], file: File) -> None:
             """Execute a transfer function with semaphore limiting."""
@@ -313,7 +318,7 @@ async def _execute_parallel_transfers(
         if tasks:
             log.info(
                 f"Starting parallel transfers: {len(downloads)} downloads, "
-                f"{len(uploads)} uploads (max {MAX_CONCURRENT_TRANSFERS} concurrent)"
+                f"{len(uploads)} uploads (max {max_concurrent} concurrent)"
             )
             await asyncio.gather(*tasks, return_exceptions=True)
 

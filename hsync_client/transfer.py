@@ -81,13 +81,16 @@ def _record_synced_base(file: File) -> None:
     file), local and remote agree on ``file.sha256sum``; persisting it lets the
     next reconciliation use a clock-independent three-way merge.
     Bookkeeping failures are swallowed so they never abort a successful transfer.
+
+    Persistence is deferred to the single ``sync_state.flush()`` at the end of
+    the sync cycle (``sync.py``), avoiding redundant per-file rewrites of the
+    entire ``.hsyncstate`` side-car.
     """
     try:
-        from hsync_client.sync_state import flush, record_base
+        from hsync_client.sync_state import record_base
 
         if file.filepath and file.sha256sum:
             record_base(file.filepath, file.sha256sum)
-            flush()
     except Exception as e:  # pragma: no cover - bookkeeping must never break sync
         log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
 

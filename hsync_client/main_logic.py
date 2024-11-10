@@ -41,6 +41,7 @@ from hsync_client.config import (
     get_mass_delete_guard,
     get_mass_delete_percent,
     get_mass_delete_threshold,
+    get_max_concurrent_transfers,
     get_never_master,
     get_peer_timeout,
     get_resync,
@@ -257,6 +258,43 @@ def _get_resync_value(cli_value: int | None) -> int | None:
         return env_value or None  # 0 disables periodic resync
 
     return RESYNC_DEFAULT
+
+
+def _get_max_concurrent_transfers_value(cli_value: int | None) -> int:
+    """
+    Determine the max concurrent transfers value.
+
+    Priority: CLI argument > environment variable > default constant.
+    """
+    from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
+
+    if cli_value is not None:
+        return cli_value
+    env_value = get_max_concurrent_transfers()
+    if env_value is not None:
+        return env_value
+    return MAX_CONCURRENT_TRANSFERS_DEFAULT
+
+
+def _get_mass_delete_guard_value(cli_value: bool | None) -> bool:
+    """Determine mass-deletion guard on/off. Priority: CLI > env > default."""
+    if cli_value is not None:
+        return cli_value
+    return get_mass_delete_guard()
+
+
+def _get_mass_delete_threshold_value(cli_value: int | None) -> int:
+    """Determine mass-deletion absolute threshold. Priority: CLI > env > default."""
+    if cli_value is not None:
+        return cli_value
+    return get_mass_delete_threshold()
+
+
+def _get_mass_delete_percent_value(cli_value: int | None) -> int:
+    """Determine mass-deletion percentage threshold. Priority: CLI > env > default."""
+    if cli_value is not None:
+        return cli_value
+    return get_mass_delete_percent()
 
 
 def _check_deletion_risk(
@@ -496,6 +534,10 @@ def run_sync(
     min_free_disk_space: int = 500,
     sync_hidden: bool = False,
     ignore_patterns: list[str] | None = None,
+    max_concurrent_transfers: int | None = None,
+    mass_delete_guard: bool | None = None,
+    mass_delete_threshold: int | None = None,
+    mass_delete_percent: int | None = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -689,9 +731,10 @@ def run_sync(
         "IGNORE_PATTERNS": ignore_patterns
         if ignore_patterns is not None
         else get_ignore_patterns(),
-        "MASS_DELETE_GUARD": get_mass_delete_guard(),
-        "MASS_DELETE_THRESHOLD": get_mass_delete_threshold(),
-        "MASS_DELETE_PERCENT": get_mass_delete_percent(),
+        "MASS_DELETE_GUARD": _get_mass_delete_guard_value(mass_delete_guard),
+        "MASS_DELETE_THRESHOLD": _get_mass_delete_threshold_value(mass_delete_threshold),
+        "MASS_DELETE_PERCENT": _get_mass_delete_percent_value(mass_delete_percent),
+        "MAX_CONCURRENT_TRANSFERS": _get_max_concurrent_transfers_value(max_concurrent_transfers),
     }
 
     set_config(config)

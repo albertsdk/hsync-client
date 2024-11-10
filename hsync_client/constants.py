@@ -85,9 +85,12 @@ UPLOAD_MAX_RESCHEDULES_DEFAULT = 5
 # =============================================================================
 
 # Maximum number of concurrent file transfers (downloads/uploads)
-# Higher values increase throughput but also server load
+# Higher values increase throughput but also server load.
 # Can be overridden via HSYNC_MAX_CONCURRENT_TRANSFERS environment variable
-MAX_CONCURRENT_TRANSFERS = int(__import__("os").environ.get("HSYNC_MAX_CONCURRENT_TRANSFERS", "5"))
+# or --max-concurrent-transfers CLI option.
+MAX_CONCURRENT_TRANSFERS_DEFAULT = 5
+MAX_CONCURRENT_TRANSFERS_MIN = 1
+MAX_CONCURRENT_TRANSFERS_MAX = 20
 
 # =============================================================================
 # Per-File Transfer Retry/Backoff

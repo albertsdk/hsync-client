@@ -8,7 +8,7 @@ This guide explains how to configure HSYNC for your environment.
 |----------|-------------|---------|
 | `HSYNC_SERVER` | Server URL | (required or use `-s`) |
 | `HSYNC_API_KEY` | API key for authentication | (required) |
-| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
+| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | `5` |
 | `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
@@ -74,6 +74,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--retry-delay` | Retry connection after N seconds | `5` |
 | `--stability-delay` | Seconds to wait before uploading modified files | `5` |
 | `--max-wait-timeout` | Maximum time to wait for file stabilization | `120` |
+| `--max-concurrent-transfers` | Maximum number of concurrent file transfers (1-20, overrides `HSYNC_MAX_CONCURRENT_TRANSFERS`) | `5` |
 | `--filter-path` | Sync only files within this subdirectory path | — |
 | `-n, --dry-run` | Show what would be done without making changes | `false` |
 | `--ignore-delete` | Do not propagate file deletions | `false` |
@@ -84,6 +85,79 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `500` |
 | `--sync-hidden` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
+| `--mass-delete-guard` | Enable the mass-deletion safety guard (pause deletions over threshold) | `true` |
+| `--no-mass-delete-guard` | Disable the mass-deletion safety guard | — |
+| `--mass-delete-threshold` | Absolute number of deletions per cycle that trips the guard (`0` = disabled) | `50` |
+| `--mass-delete-percent` | Percentage of local files whose deletion trips the guard (`0` = disabled) | `50` |
+
+### Mass-Deletion Safety Guard
+
+A transient failure or misconfiguration can make the master expose an empty (or
+nearly-empty) bucket to connected peers. Without protection, a single
+reconciliation cycle would delete every local file that is not in the master's
+listing — effectively a **mass accidental wipe**.
+
+The **mass-deletion safety guard** prevents this: before executing any deletion,
+the client counts how many files would be removed in the current cycle. If the
+count exceeds either the **absolute threshold** (`--mass-delete-threshold`) or
+the **percentage of total local files** (`--mass-delete-percent`), the cycle is
+**paused** — deletions are skipped, a `[GUARD]` warning is logged, and a
+structured `sync_paused` event is emitted. The guard can be disabled entirely
+with `--no-mass-delete-guard` or by setting `HSYNC_MASS_DELETE_GUARD=false`.
+
+#### How it works
+
+```
+Sync cycle start
+  └─ Compare local vs remote file lists
+       └─ Count how many files would be DELETED
+            │
+            ├─ 0 deletions?  ──────────► proceed normally
+            │
+            ├─ Remote has 0 files?
+            │  (empty bucket from the master) ──► BLOCK (always suspect)
+            │
+            ├─ deletions >= --mass-delete-threshold?  ──► BLOCK
+            │
+            ├─ deletions >= --mass-delete-percent% of local files? ──► BLOCK
+            │
+            └─ below both thresholds ──► proceed normally
+```
+
+An empty master (0 remote files while local data exists) is **always blocked**,
+regardless of threshold settings — the only way to proceed in that scenario is
+to explicitly disable the guard with `--no-mass-delete-guard`.
+
+#### Configuration
+
+| Setting | CLI flag | Env var | Default | Meaning |
+|---------|----------|---------|---------|---------|
+| Enable/disable | `--mass-delete-guard` / `--no-mass-delete-guard` | `HSYNC_MASS_DELETE_GUARD` | `true` | Master switch for the entire guard |
+| Absolute threshold | `--mass-delete-threshold N` | `HSYNC_MASS_DELETE_THRESHOLD` | `50` | Max deletions/cycle (0 = disabled) |
+| Percentage threshold | `--mass-delete-percent PCT` | `HSYNC_MASS_DELETE_PERCENT` | `50` | Max % of local files (0 = disabled) |
+
+Priority: **CLI flag > environment variable > default**.
+
+#### When to adjust
+
+- **Decrease thresholds** on directories with many small, frequently-changing
+  files (e.g. source trees with thousands of files) — a 50% deletion of 10,000
+  files is 5,000 files, which may be legitimate after a reorganisation.
+- **Increase thresholds** on backup targets where nearly all files are expected
+  to be present on both sides — even 5% would be suspicious.
+- **Disable entirely** (`--no-mass-delete-guard`) when you are confident the
+  master state is authoritative and you want deletions to flow unimpeded.
+
+#### Related safety features
+
+The guard complements other deletion-safety measures:
+
+- **`--ignore-delete`** — never propagate any deletions at all (backup mode).
+- **`--sync-direction upload-only`** — never pull remote changes; local data
+  can't be deleted by the master.
+- **Conflict resolution** — the three-way merge preserves local edits as
+  `.conflict-*` files before applying a conflicting remote deletion (see
+  [Conflict Resolution](conflict-resolution.md)).
 
 ### Output
 
