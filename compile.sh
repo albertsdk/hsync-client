@@ -790,6 +790,7 @@ build_deb_all() {
         log_step "Staging .deb tree for ${deb_arch}..."
         rm -rf "${stage_dir}"
         mkdir -p "${stage_dir}"
+        stage_abs="$(cd "${stage_dir}" && pwd)"
 
         # Copy DEBIAN control files.
         cp -a "${DEB_SRC_CONTROL}" "${stage_dir}/"
@@ -838,7 +839,7 @@ build_deb_all() {
         docker run --rm \
             --platform "${docker_platform}" \
             -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
-            -v "${stage_dir}:/pkg" \
+            -v "${stage_abs}:/pkg" \
             -v "${out_abs}:/out" \
             -w /pkg \
             "${builder_tag}" \
