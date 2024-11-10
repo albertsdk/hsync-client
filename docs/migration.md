@@ -28,7 +28,7 @@ and caveats to watch for.
 
 ### Migration steps
 
-1. **Set up the HSYNC Server** following the [Deployment Guide](../../hsync-server/docs/deployment.md).
+1. **Set up the HSYNC Server** following the [Deployment Guide](https://github.com/albertobasso/hsync-server/blob/main/docs/deployment.md).
 
 2. **Choose the source of truth**. Pick one device whose files represent the
    current state you want to keep.
@@ -145,8 +145,8 @@ and caveats to watch for.
    two sync tools watching the same directory.
 
 4. **Set up access from outside your network** by deploying the HSYNC Server
-   behind a reverse proxy with a public domain (see
-   [Deployment Guide](../../hsync-server/docs/deployment.md)).
+    behind a reverse proxy with a public domain (see
+    [Deployment Guide](https://github.com/albertobasso/hsync-server/blob/main/docs/deployment.md)).
 
 ### Caveats
 
@@ -193,7 +193,7 @@ drives), HSYNC automates the entire process:
 - [ ] Sync direction is configured correctly (`--sync-direction`)
 - [ ] Bandwidth limits are set if needed (`--max-bandwidth-*`)
 - [ ] Watch mode (`-w`) is enabled on devices that need real-time sync
-- [ ] Backup strategy is in place (see [Operations Guide](../../hsync-server/docs/operations.md))
+- [ ] Backup strategy is in place (see [Operations Guide](https://github.com/albertobasso/hsync-server/blob/main/docs/operations.md))
 
 ## See also
 

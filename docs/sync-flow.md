@@ -5,7 +5,7 @@ its own perspective. The client is the **active agent**: it watches the local
 filesystem, decides what to sync, and drives the transfer.
 
 > For the server-side flow (file storage, event broadcast, tombstones) see the
-> [server Sync Flow](../../hsync-server/docs/sync-flow.md).
+> [server Sync Flow](https://github.com/albertobasso/hsync-server/blob/main/docs/sync-flow.md).
 
 ## Overview
 
@@ -215,4 +215,4 @@ upload is rescheduled rather than uploading a torn file.
 - [Usage](usage.md) — CLI options reference and log labels.
 - [Configuration](configuration.md) — environment variables and CLI options.
 - [Sync Modes](sync-modes.md) — single, watch, and LAN mode comparison.
-- [Server Sync Flow](../../hsync-server/docs/sync-flow.md) — the server's perspective.
+- [Server Sync Flow](https://github.com/albertobasso/hsync-server/blob/main/docs/sync-flow.md) — the server's perspective.
