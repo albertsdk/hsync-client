@@ -8,7 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Build**: Fix CI "Build .deb and WD OS5 packages" failure caused by the
+- **Build**: Fix CI "Build .deb and WD OS5 packages" failure in the CPython
+  source-compile step where compilation aborted with
+  `error: 'PY_TIME_T_MIN' undeclared` in `Python/pytime.c`. Under qemu-user
+  emulation the CPython `configure` runtime probe for `sizeof(time_t)` is
+  unreliable and could leave `SIZEOF_TIME_T` empty in `pyconfig.h`, so neither
+  `PY_TIME_T_MIN`/`PY_TIME_T_MAX` branch was defined. Both builder images now
+  measure `sizeof(time_t)` with a small target-native C program and seed
+  `ac_cv_sizeof_time_t` into configure's cache, and log the resulting
+  `SIZEOF_TIME_T` for diagnostics.
+- **Build**: Fix an earlier CI "Build .deb and WD OS5 packages" failure in the
   CPython source-compile step. The deprecated `--with-system-ffi` configure
   flag (removed in Python 3.12) has been dropped, `make -j$(nproc)` is now
   capped at `-j4` to avoid OOM kills under qemu-user emulation on GitHub
