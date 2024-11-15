@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Build**: Fix CI "Build .deb and WD OS5 packages" failure caused by the
+  CPython source-compile step. The deprecated `--with-system-ffi` configure
+  flag (removed in Python 3.12) has been dropped, `make -j$(nproc)` is now
+  capped at `-j4` to avoid OOM kills under qemu-user emulation on GitHub
+  Actions runners (arm64/armhf), and the python.org tarball download is
+  retried up to 3 times to survive transient CDN failures. The same
+  `make -j4` cap is applied to the static OpenSSL 3 build in the WD OS5
+  builder image.
+
 ### Changed
 - **Perf**: `_record_synced_base()` no longer calls `flush()` after every
   transfer. The merged sync-state is now persisted only once at the end of

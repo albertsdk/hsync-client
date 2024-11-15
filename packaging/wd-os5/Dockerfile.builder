@@ -86,15 +86,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # intentionally omitted — PGO under qemu emulation is extremely slow and the
 # gains are marginal for our use case (one-shot PyInstaller build).
 #
+# ``--with-system-ffi`` was removed in Python 3.12 (the bundled copy is now the
+# only option and the flag produces a configure warning); it is omitted here.
+#
 # The tarball is verified against PYTHON_SHA256; this is what guarantees
 # integrity, not the TLS chain. We additionally force-refresh the CA bundle
 # (``update-ca-certificates --fresh``) so curl's TLS handshake succeeds even
 # on the archived Buster image, where the postinst trigger may have left an
 # incomplete trust store.
+#
+# The download is retried up to 3 times to survive transient python.org / CDN
+# failures seen on GitHub Actions runners. ``make -j`` is capped at 4 jobs
+# instead of ``$(nproc)``: under qemu-user emulation (ARMv7) each gcc process
+# has significant memory overhead, and the 16 GB Actions runner can OOM with
+# the full ``$(nproc)`` parallelism, killing the build with exit code 1.
 RUN set -eux; \
     update-ca-certificates --fresh; \
-    curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz" \
-        -o /tmp/python.tar.xz; \
+    for attempt in 1 2 3; do \
+        curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz" \
+            -o /tmp/python.tar.xz && break; \
+        echo "curl attempt ${attempt}/3 failed, retrying in 5s..." >&2; \
+        sleep 5; \
+    done; \
+    test -s /tmp/python.tar.xz; \
     echo "${PYTHON_SHA256} /tmp/python.tar.xz" | sha256sum -c -; \
     mkdir -p /tmp/python-src; \
     tar -xJf /tmp/python.tar.xz -C /tmp/python-src --strip-components=1; \
@@ -102,10 +116,9 @@ RUN set -eux; \
     ./configure \
         --prefix=/opt/python3.12 \
         --enable-shared \
-        --with-system-ffi \
         --with-ensurepip=install \
         LDFLAGS=-Wl,-rpath=/opt/python3.12/lib; \
-    make -j"$(nproc)"; \
+    make -j4; \
     make install; \
     /opt/python3.12/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
     rm -rf /tmp/python-src /tmp/python.tar.xz
@@ -189,6 +202,9 @@ RUN set -eux; \
 # and the CPython ``ssl`` module (linked against the system libssl 1.1.1) is
 # left untouched. ``-fPIC`` is mandatory so the static archive can be linked
 # into the ``_rust`` shared object.
+#
+# ``make -j`` is capped at 4 (same rationale as the CPython build above) to
+# avoid OOM kills under qemu-user emulation on GitHub Actions runners.
 ARG OPENSSL_VERSION
 ARG OPENSSL_SHA256
 RUN set -eux; \
@@ -201,7 +217,7 @@ RUN set -eux; \
     cd /tmp/openssl-src; \
     ./config --prefix=/opt/openssl3 --openssldir=/opt/openssl3 \
         no-shared no-tests -fPIC; \
-    make -j"$(nproc)"; \
+    make -j4; \
     make install_sw; \
     rm -rf /tmp/openssl-src /tmp/openssl.tar.gz
 
