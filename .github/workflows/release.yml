@@ -129,6 +129,19 @@ jobs:
           ref: main
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}
+      # The .deb/WD OS5 images are cross-built for ARMv7/arm64 under qemu-user.
+      # The QEMU that ships with the ubuntu-latest runner has regressed and makes
+      # gcc crash deterministically with SIGSEGV (exit 139) while emitting -O3
+      # code for some CPython/OpenSSL translation units (e.g. Python/_warnings.c),
+      # aborting the source builds even at -j1. Register a pinned, known-good
+      # QEMU/binfmt build instead of relying on the runner default.
+      - name: Set up QEMU (pinned, known-good)
+        uses: docker/setup-qemu-action@v3
+        with:
+          image: tonistiigi/binfmt:qemu-v7.0.0
+          platforms: arm,arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build .deb and WD OS5 packages
         working-directory: hsync-client
         run: |
