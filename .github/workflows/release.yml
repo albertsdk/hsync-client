@@ -112,7 +112,7 @@ jobs:
           else
             tar czf "../../release-out/hsync-${version}-${{ matrix.target }}.tar.gz" hsync
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}
           path: hsync-client/release-out/*
@@ -151,7 +151,7 @@ jobs:
         run: |
           ./compile.sh --target deb-all
           ./compile.sh --target wd-os5-all
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: |
@@ -162,7 +162,7 @@ jobs:
     needs: [build-binaries, build-packages]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
