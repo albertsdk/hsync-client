@@ -6,6 +6,7 @@
 
 """Tests for download transfer functionality."""
 
+import io
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,7 @@ class TestDownloadFile:
 
     def test_network_error_logs_and_returns(self, tmp_path):
         """Network error during download is logged."""
-        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
+        file = File(filepath="path/to/file.txt", sha256sum="abc123", size=100)
 
         with (
             patch(
@@ -45,7 +46,7 @@ class TestDownloadFile:
 
     def test_auth_error_401_returns(self, tmp_path):
         """401 response returns without downloading."""
-        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
+        file = File(filepath="path/to/file.txt", sha256sum="abc123", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -67,7 +68,7 @@ class TestDownloadFile:
 
     def test_not_found_404_returns(self, tmp_path):
         """404 response returns without downloading."""
-        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
+        file = File(filepath="path/to/file.txt", sha256sum="abc123", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -89,7 +90,7 @@ class TestDownloadFile:
 
     def test_server_error_500_returns(self, tmp_path):
         """500 response returns without downloading."""
-        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
+        file = File(filepath="path/to/file.txt", sha256sum="abc123", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -446,7 +447,7 @@ class TestDownloadCompressed:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.headers = {"Content-Encoding": "zstd"}
-        mock_response.content = compressed_content
+        mock_response.raw = io.BytesIO(compressed_content)
 
         with (
             patch(

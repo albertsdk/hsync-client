@@ -11,22 +11,25 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
+import os
 import threading
 from collections.abc import Iterator
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
 from time import sleep as time_sleep
-from typing import cast
+from typing import IO, cast
 
+import zstandard as zstd
 from hsync_common.format import format_bytes
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256
 from hsync_common.models.file import File
+from hsync_common.path_validation import resolve_within
 from hsync_common.text import safe_json_for_log
 from loguru import logger as log
 from requests import RequestException
 
-from hsync_client.compression import compress_data, decompress_data, should_compress
+from hsync_client.compression import compress_data, decompress_stream, should_compress
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
@@ -236,16 +239,32 @@ def _upload_timeout() -> tuple[float, float | None]:
 # =============================================================================
 
 
-def _local_dest_path(file: File) -> str:
+def _local_dest_path(file: File) -> str | None:
     """Return the absolute local destination path for a downloaded *file*.
 
     The remote ``file.filepath`` is relative to the bucket; the local copy lives
     under ``LOCAL_BUCKET``. Shared by the downloader and the per-path lock key so
     a download serializes against any other operation on the same local path.
+
+    The remote path is untrusted: it is validated (no traversal, absolute
+    paths, backslashes or internal engine artifacts) and confined to
+    ``LOCAL_BUCKET`` even against symlink escapes. Returns ``None`` when the
+    remote path is unsafe and must be rejected.
     """
-    relative_dir = str(Path(file.filepath).parent)
-    dest_dir = str(Path(CONFIG["LOCAL_BUCKET"]) / relative_dir.lstrip("/"))
-    return str(Path(dest_dir) / file.name.lstrip("/"))
+    return resolve_within(CONFIG["LOCAL_BUCKET"], file.filepath)
+
+
+def _open_partial_no_follow(path: str, write_mode: str) -> IO[bytes]:
+    """Open a ``.part`` file for writing without following planted symlinks.
+
+    Uses ``O_NOFOLLOW`` where the platform supports it so a symlink raced in
+    between path validation and file creation cannot redirect the write
+    outside the bucket. On platforms without ``O_NOFOLLOW`` (Windows) the
+    flag is omitted and the confinement checks remain the defense.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if "a" in write_mode else os.O_TRUNC)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags, 0o666), write_mode)
 
 
 def download_file(file: File) -> None:
@@ -269,12 +288,25 @@ def download_file(file: File) -> None:
         log.error("Invalid file metadata: missing filepath or name")
         return
 
+    # The remote path is untrusted: refuse anything that would escape the
+    # local bucket (traversal, absolute paths, symlink hops, engine files).
+    dest = _local_dest_path(file)
+    if dest is None:
+        log.warning(f'[SECURITY] Rejected unsafe download path "{file.filepath}"')
+        emit_event(
+            UiEventName.security_rejected,
+            op="download",
+            path=file.filepath,
+            message="unsafe remote path rejected",
+        )
+        return
+
     max_attempts, min_wait, max_wait = _transfer_retry_params()
     attempt = retry_on_transient_transfer_error(max_attempts, min_wait, max_wait)(
         _download_file_attempt
     )
     try:
-        with path_lock(_local_dest_path(file)):
+        with path_lock(dest):
             attempt(file)
     except (RequestException, ServerError) as exc:
         log.error(f'Download failed after retries for "{file.filepath}": {exc}')
@@ -305,6 +337,10 @@ def _download_file_attempt(file: File) -> None:
     """
     # Prepare destination directory and partial file path
     full_save_path = _local_dest_path(file)
+    if full_save_path is None:
+        # Already gated in download_file; stay defensive for direct callers.
+        log.error(f'Refusing unsafe download path "{file.filepath}"')
+        return
     Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
     partial_file_path = f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}"
 
@@ -414,15 +450,16 @@ def _download_file_attempt(file: File) -> None:
         chunk_size = adaptive_chunk_size(file.size)
 
         if is_compressed and resume_offset == 0:
-            # Compressed response - download all and decompress
-            # (compression is not used with resume)
-            compressed_data = response.content
-            log.debug(
-                f"Decompressing {format_bytes(len(compressed_data))} -> ~{format_bytes(file.size)}"
-            )
-            decompressed_data = decompress_data(compressed_data)
-            with open(partial_file_path, "wb") as f:
-                f.write(decompressed_data)
+            # Compressed response — stream-decompress straight to disk with a
+            # hard output cap (anti decompression-bomb): the payload comes
+            # from a remote peer, so neither the compressed body nor the
+            # expanded content is ever fully buffered in memory. The cap is
+            # the declared size: the real content must match it exactly (the
+            # SHA-256 check below verifies integrity against the listing).
+            response.raw.decode_content = False
+            with _open_partial_no_follow(partial_file_path, "wb") as f:
+                for chunk in decompress_stream(response.raw, max_output_size=file.size or 0):
+                    f.write(chunk)
                 # Flush OS buffers to disk before the file is considered written
                 f.flush()
                 fsync(f.fileno())
@@ -430,7 +467,7 @@ def _download_file_attempt(file: File) -> None:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
             dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
-            with open(partial_file_path, write_mode) as f:
+            with _open_partial_no_follow(partial_file_path, write_mode) as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if not chunk:
                         break
@@ -485,6 +522,10 @@ def _download_file_attempt(file: File) -> None:
 
     except PermissionError as e:
         log.error(f'Permission denied saving "{file.filepath}": {e}')
+    except zstd.ZstdError as e:
+        # Hostile/corrupt compressed payload (e.g. decompression bomb):
+        # permanent failure — the partial file is dropped in ``finally``.
+        log.error(f'Decompression failed for "{file.filepath}": {e}')
     except OSError as e:
         log.error(f'Error saving file "{file.filepath}": {e}')
     finally:

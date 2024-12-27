@@ -32,7 +32,7 @@ from hsync_common.path_validation import (
     is_reserved_name,
 )
 from hsync_common.permissions import get_permissions as _read_permissions
-from hsync_common.permissions import octal_to_mode
+from hsync_common.permissions import octal_to_mode, sanitize_remote_permissions
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
@@ -181,38 +181,6 @@ def http_patch(url: str, **kwargs) -> "Response":
 # =============================================================================
 # Path Utilities
 # =============================================================================
-
-
-def is_valid_filename(filename: str) -> bool:
-    """
-    Validate a filename for cross-platform compatibility.
-
-    Checks for:
-    - Empty filename
-    - Forbidden characters (cross-platform)
-    - Control characters (ASCII 1-31)
-    - Reserved names on Windows (including with extensions, e.g., NUL.txt)
-    - Problematic trailing characters (space, period)
-
-    Args:
-        filename: The filename to validate (without path).
-
-    Returns:
-        True if the filename is valid, False otherwise.
-    """
-    if not filename:
-        return False
-
-    if has_forbidden_chars(filename, FORBIDDEN_FILENAME_CHARS):
-        return False
-
-    if has_control_chars(filename):
-        return False
-
-    if is_reserved_name(filename):
-        return False
-
-    return not has_problematic_trailing(filename)
 
 
 def is_valid_logfile(path_string: str) -> bool:
@@ -496,10 +464,17 @@ def set_permissions(file_path: str, permissions: str) -> None:
     Converts the octal permission string (e.g., '644') to a numeric
     mode and applies it to the file.
 
+    Every call site applies a value received from a remote peer (download
+    metadata, inbound events, LAN uploads), so special bits
+    (setuid/setgid/sticky) are always stripped: a synced file carrying
+    ``4755`` must never become a setuid executable on this host.
+
     Args:
         file_path: Path to the file.
         permissions: Octal permission string (e.g., '644').
     """
+    permissions = sanitize_remote_permissions(permissions)
+
     # Skip if permissions already match
     if Path(file_path).exists() and permissions == get_permissions(file_path):
         return

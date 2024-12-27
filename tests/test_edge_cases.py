@@ -279,9 +279,9 @@ class TestEdgeCasesFileOperations:
         from hsync_client.config import CONFIG
         from hsync_client.sync import update_file
 
-        # Create remote file data
+        # Create remote file data (wire paths are bucket-relative)
         remote_data = {
-            "filepath": str(tmp_path / "test.txt"),
+            "filepath": "test.txt",
             "mtime": int(time.time()),
             "size": 10,
             "sha256sum": "abc123",

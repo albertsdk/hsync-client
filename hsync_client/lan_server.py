@@ -26,6 +26,7 @@ import hmac
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
 from pathlib import Path
@@ -34,8 +35,11 @@ from typing import IO
 from urllib.parse import parse_qs, urlparse
 
 from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
+from hsync_common.hashing import compute_sha256
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.file import File, is_hidden_file
+from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
+from hsync_common.path_validation import resolve_within
 from loguru import logger as log
 
 from hsync_client.compression import (
@@ -78,87 +82,44 @@ HTTP_RANGE_NOT_SATISFIABLE = 416
 HTTP_INTERNAL_ERROR = 500
 HTTP_INSUFFICIENT_STORAGE = 507
 
+# Cap on tombstone-gossip POST bodies: the store itself is capped at
+# TOMBSTONE_MAX_ENTRIES entries (at most ~165 bytes of JSON each with a
+# content hash), so a larger payload can never be legitimate and would only
+# waste memory.
+MAX_TOMBSTONE_PAYLOAD_BYTES = TOMBSTONE_MAX_ENTRIES * 192
+
+# Wire-supplied mtimes/ctimes may not exceed now + this skew: a peer
+# asserting far-future timestamps would win every mtime-based conflict
+# resolution on every other peer (conflict engineering).
+MTIME_MAX_FUTURE_SKEW_SECONDS = 300
+
+
+class _CappedBytesWriter:
+    """File-like wrapper that aborts once more than *cap* bytes are written.
+
+    Placed between a decompressor and the destination file so a hostile
+    upload cannot expand a small compressed payload past its declared size
+    (decompression bomb containment on the receiving side).
+    """
+
+    def __init__(self, write, cap: int) -> None:
+        self._write = write
+        self._cap = cap
+        self.written = 0
+
+    def write(self, data: bytes):
+        self.written += len(data)
+        if self.written > self._cap:
+            raise ValueError(f"Upload exceeds declared size ({self._cap} bytes)")
+        return self._write(data)
+
+    def close(self) -> None:
+        """No-op: the underlying file is owned and closed by the caller."""
+
 
 # =============================================================================
 # Multipart Parser
 # =============================================================================
-
-
-def _parse_multipart(
-    body: bytes, content_type: str
-) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
-    """
-    Parse multipart/form-data request body.
-
-    This is a simple parser that handles the format sent by requests library.
-    It replaces the deprecated cgi.FieldStorage.
-
-    Args:
-        body: Raw request body bytes.
-        content_type: Content-Type header value.
-
-    Returns:
-        Tuple of (form_fields, file_fields) where:
-        - form_fields: dict of field_name -> value
-        - file_fields: dict of field_name -> (filename, content)
-    """
-    import re
-
-    # Extract boundary from content-type
-    match = re.search(r"boundary=([^\s;]+)", content_type)
-    if not match:
-        raise ValueError("No boundary found in content-type")
-
-    boundary = match.group(1).encode()
-    # Handle quoted boundary
-    if boundary.startswith(b'"') and boundary.endswith(b'"'):
-        boundary = boundary[1:-1]
-
-    form_data: dict[str, str] = {}
-    file_data: dict[str, tuple[str, bytes]] = {}
-
-    # Split by boundary
-    parts = body.split(b"--" + boundary)
-
-    for part in parts:
-        # Skip empty parts and closing boundary
-        if not part or part.strip() in (b"", b"--", b"--\r\n"):
-            continue
-
-        # Remove leading CRLF if present
-        if part.startswith(b"\r\n"):
-            part = part[2:]
-
-        # Remove trailing CRLF and -- if present
-        if part.endswith(b"--\r\n"):
-            part = part[:-4]
-        elif part.endswith(b"\r\n"):
-            part = part[:-2]
-
-        # Split headers from content
-        if b"\r\n\r\n" in part:
-            headers_raw, content = part.split(b"\r\n\r\n", 1)
-        else:
-            continue
-
-        headers_str = headers_raw.decode("utf-8", errors="replace")
-
-        # Parse Content-Disposition header
-        name_match = re.search(r'name="([^"]*)"', headers_str)
-        if not name_match:
-            continue
-        field_name = name_match.group(1)
-
-        filename_match = re.search(r'filename="([^"]*)"', headers_str)
-        if filename_match:
-            # This is a file field
-            filename = filename_match.group(1)
-            file_data[field_name] = (filename, content)
-        else:
-            # This is a regular form field
-            form_data[field_name] = content.decode("utf-8", errors="replace")
-
-    return form_data, file_data
 
 
 class _StreamingMultipartParser:
@@ -483,20 +444,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
-        # Build full paths
-        src_path = str(Path(local_bucket) / src_rel)
-        dst_path = str(Path(local_bucket) / dst_rel)
-
-        # Security check: ensure paths are within bucket
-        try:
-            real_bucket = str(Path(local_bucket).resolve())
-            real_src = str(Path(src_path).resolve())
-            # For dst, check parent since it doesn't exist yet
-            real_dst_parent = str(Path(dst_path).parent.resolve())
-            if not real_src.startswith(real_bucket) or not real_dst_parent.startswith(real_bucket):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
-                return
-        except Exception:
+        # Peer-supplied paths are untrusted: validate the relative form and
+        # confine both endpoints to the bucket (rejects traversal, absolute
+        # paths, backslashes, sibling-prefix confusion and engine artifacts).
+        src_path = resolve_within(local_bucket, src_rel)
+        dst_path = resolve_within(local_bucket, dst_rel)
+        if not src_path or not dst_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
@@ -547,17 +500,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
-        # Build full path
-        full_path = str(Path(local_bucket) / rel_path)
-
-        # Security check: ensure path is within bucket
-        try:
-            real_bucket = str(Path(local_bucket).resolve())
-            real_path = str(Path(full_path).resolve())
-            if not real_path.startswith(real_bucket):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
-                return
-        except Exception:
+        # Peer-supplied path is untrusted: validate and confine to the bucket
+        # (rejects traversal, absolute paths and sibling-prefix confusion).
+        full_path = resolve_within(local_bucket, rel_path)
+        if not full_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
@@ -647,8 +593,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         Returns the master's current timestamp so slaves can calculate
         clock offset using round-trip measurement (NTP-like).
         """
-        import time
-
         self._send_json_response(HTTP_OK, {"timestamp": time.time()})
 
     def _handle_list_files(self, query: dict) -> None:
@@ -714,6 +658,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
         if content_length <= 0:
             self._send_json_response(HTTP_OK, {"merged": 0})
+            return
+        # Gossip payloads are untrusted: reject bodies that could never be a
+        # legitimate payload before buffering them in memory.
+        if content_length > MAX_TOMBSTONE_PAYLOAD_BYTES:
+            self._send_error_response(HTTP_BAD_REQUEST, "Tombstone payload too large")
             return
 
         try:
@@ -784,21 +733,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
-        # Build full path - filename is relative to bucket
-        if filename.startswith("/"):
-            filepath = str(Path(local_bucket) / filename.lstrip("/"))
-        else:
-            filepath = str(Path(local_bucket) / filename)
+        # Peer-supplied path is untrusted: validate and confine to the bucket
+        # (rejects traversal, absolute paths and sibling-prefix confusion).
+        filepath = resolve_within(local_bucket, filename)
+        if not filepath:
+            self._send_error_response(HTTP_FORBIDDEN, "Access denied")
+            return
 
         if not Path(filepath).exists():
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
-            return
-
-        # Security check: ensure file is within bucket
-        real_bucket = str(Path(local_bucket).resolve())
-        real_file = str(Path(filepath).resolve())
-        if not real_file.startswith(real_bucket):
-            self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
         try:
@@ -947,29 +890,41 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             path = form_fields.get("path", "")
             is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
 
-            dest_dir = str(Path(local_bucket) / path) if path else local_bucket
-            Path(dest_dir).mkdir(parents=True, exist_ok=True)
-            dest_path_local = str(Path(dest_dir) / filename)
-
-            real_bucket = str(Path(local_bucket).resolve())
-            real_dest = str(Path(dest_path_local).resolve())
-            if not real_dest.startswith(real_bucket):
+            # Peer-supplied destination is untrusted: validate the relative
+            # directory and the filename (rejecting traversal, absolute
+            # paths, backslashes and internal engine artifacts) and confine
+            # the result to the bucket.
+            rel_dest = f"{path.rstrip('/')}/{filename}" if path else filename
+            dest_path_local = resolve_within(local_bucket, rel_dest)
+            if dest_path_local is None:
                 raise PermissionError("Access denied")
+            Path(dest_path_local).parent.mkdir(parents=True, exist_ok=True)
 
             dest_path = dest_path_local
             tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
             raw = open(tmp_path, "wb")  # noqa: SIM115
             raw_file = raw
+            # Cap the bytes landing on disk at the declared size, when
+            # declared: without a cap a hostile peer could expand a small
+            # compressed frame unboundedly (decompression bomb).
+            try:
+                declared_size = int(form_fields.get("size", ""))
+            except (TypeError, ValueError):
+                declared_size = -1
+            capped = _CappedBytesWriter(raw.write, declared_size) if declared_size > 0 else raw
             if is_compressed_local:
                 import zstandard as zstd
 
+                if declared_size <= 0:
+                    raise ValueError("Missing/invalid 'size' for compressed upload")
+
                 # closefd=False so closing the decompressor flushes the frame
                 # into ``raw`` without closing it, allowing an explicit fsync.
-                writer = zstd.ZstdDecompressor().stream_writer(raw, closefd=False)
+                writer = zstd.ZstdDecompressor().stream_writer(capped, closefd=False)
                 out_file = writer
                 return writer.write
-            out_file = raw
-            return raw.write
+            out_file = capped
+            return capped.write
 
         try:
             form_fields, file_meta = parser.parse(_file_open)
@@ -1003,6 +958,22 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             ctime = form_fields.get("ctime", "")
             permissions = form_fields.get("permissions", "664")
 
+            # Integrity is mandatory: the received bytes must hash to the
+            # declared SHA-256 before they are committed over the destination
+            # (a hostile or corrupt peer must not propagate content to slaves).
+            expected_sha = form_fields.get("sha256sum", "")
+            if not expected_sha:
+                self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
+                return
+            actual_sha = compute_sha256(tmp_path)
+            if actual_sha != expected_sha:
+                log.warning(
+                    f'Rejected upload "{dest_path}": checksum mismatch '
+                    f"(declared {expected_sha}, computed {actual_sha})"
+                )
+                self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
+                return
+
             # Honour the echo-suppression CID only on authenticated requests;
             # an unauthenticated CID is untrusted and ignored.
             if cid and CONFIG.get("LAN_KEY"):
@@ -1015,10 +986,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             if mtime or ctime:
                 try:
+                    max_ts = time.time() + MTIME_MAX_FUTURE_SKEW_SECONDS
                     mtime_val = float(mtime) if mtime else None
                     atime_val = mtime_val or (float(ctime) if ctime else None)
                     if mtime_val:
-                        os.utime(dest_path, (atime_val or mtime_val, mtime_val))
+                        # Clamp far-future peer-supplied timestamps (conflict
+                        # engineering would favour the newest mtime).
+                        mtime_val = min(mtime_val, max_ts)
+                        atime_val = min(atime_val, max_ts) if atime_val else mtime_val
+                        os.utime(dest_path, (atime_val, mtime_val))
                 except (ValueError, OSError):
                     pass
 
@@ -1034,6 +1010,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         except PermissionError:
             self._send_error_response_safe(HTTP_FORBIDDEN, "Access denied")
+            response_sent = True
+        except ValueError as e:
+            # Malformed upload metadata (e.g. missing size on a compressed
+            # upload) or decompressed bytes beyond the declared size.
+            self._send_error_response_safe(HTTP_BAD_REQUEST, f"Invalid upload: {e}")
             response_sent = True
         except Exception as e:
             log.error(f"Error handling upload: {e}")

@@ -50,7 +50,7 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, WS_MAX_MESSAGE_BYTES, ActionLabel
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
@@ -536,6 +536,7 @@ async def lan_websocket_client(
             ping_interval=60,
             ping_timeout=30,
             close_timeout=5,
+            max_size=WS_MAX_MESSAGE_BYTES,
         ) as websocket:
             # Pin the master's identity on this live WSS connection: bind the
             # certificate actually presented during the handshake to the pinned

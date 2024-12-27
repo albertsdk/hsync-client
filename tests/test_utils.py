@@ -9,6 +9,8 @@ import threading
 import time
 from unittest.mock import patch
 
+from hsync_common.path_validation import is_valid_filename
+
 from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
     _suppress_insecure_warning,
@@ -18,7 +20,6 @@ from hsync_client.utils import (
     get_permissions,
     get_ssl_verify,
     is_same_paths,
-    is_valid_filename,
     is_valid_logfile,
     path_lock,
     set_permissions,

@@ -39,11 +39,20 @@ peers are ignored.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `LANServer` | `lan_server.py:1067` | HTTPS file server (REST mirror of hsync-server) |
-| `LANRequestHandler` | `:328` | per-request handler; endpoints `API_PREFIX` (`:55`) |
-| `_StreamingMultipartParser` / `_parse_multipart` | `:164` / `:87` | streaming upload parsing |
+| `LANServer` | `lan_server.py:1048` | HTTPS file server (REST mirror of hsync-server) |
+| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`) |
+| `_StreamingMultipartParser` | `:125` | streaming upload parsing |
+| `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the declared size (decompression-bomb cap) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast |
+
+Peer-supplied paths on download/delete/rename/upload are validated with
+`validate_remote_relpath` and confined with `resolve_within` (no `startswith`
+prefix checks — sibling directories cannot bypass confinement). Uploads require
+a matching `sha256sum` form field (verified before the atomic rename), clamp
+far-future mtimes (`MTIME_MAX_FUTURE_SKEW_SECONDS`), and cap decompressed bytes
+at the declared `size`. Tombstone gossip POST bodies are size-capped
+(`MAX_TOMBSTONE_PAYLOAD_BYTES`).
 
 ## Slave client (`lan_websocket.py`)
 

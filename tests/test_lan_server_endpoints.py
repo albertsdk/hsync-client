@@ -4,6 +4,7 @@ Tests for LAN embedded HTTP server endpoints.
 
 import json
 import time
+from hashlib import sha256 as _sha256
 from http.client import HTTPConnection
 from unittest.mock import patch
 
@@ -210,7 +211,7 @@ class TestLANRequestHandler:
                 "ctime": "1700000000.0",
                 "mtime": "1700000001.0",
                 "size": "12",
-                "sha256sum": "abc123",
+                "sha256sum": _sha256(b"test content").hexdigest(),
                 "permissions": "644",
             }
             files = {"file": ("uploaded.txt", b"test content")}
@@ -239,7 +240,13 @@ class TestLANRequestHandler:
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            data = {"cid": "test", "path": "", "mtime": "", "ctime": ""}
+            data = {
+                "cid": "test",
+                "path": "",
+                "mtime": "",
+                "ctime": "",
+                "sha256sum": _sha256(b"content").hexdigest(),
+            }
             files = {"file": ("test.txt", b"content")}
 
             # Without auth - should fail
@@ -329,6 +336,7 @@ class TestLANSyncIntegration:
                 "path": "",
                 "mtime": str(time.time()),
                 "ctime": str(time.time()),
+                "sha256sum": _sha256(b"client content").hexdigest(),
             }
             files = {"file": ("new_from_client.txt", b"client content")}
 
@@ -338,74 +346,6 @@ class TestLANSyncIntegration:
             # Verify file exists on master
             assert (master_bucket / "new_from_client.txt").exists()
             assert (master_bucket / "new_from_client.txt").read_text() == "client content"
-
-
-class TestMultipartParser:
-    """Tests for multipart form-data parser."""
-
-    def test_parse_multipart_basic(self):
-        """Test basic multipart parsing."""
-        from hsync_client.lan_server import _parse_multipart
-
-        body = b"""--boundary\r
-Content-Disposition: form-data; name="field1"\r
-\r
-value1\r
---boundary--\r
-"""
-        form_data, file_data = _parse_multipart(body, "multipart/form-data; boundary=boundary")
-        assert form_data["field1"] == "value1"
-        assert file_data == {}
-
-    def test_parse_multipart_with_file(self):
-        """Test multipart parsing with file upload."""
-        from hsync_client.lan_server import _parse_multipart
-
-        body = b"""--boundary\r
-Content-Disposition: form-data; name="file"; filename="test.txt"\r
-\r
-file content\r
---boundary--\r
-"""
-        form_data, file_data = _parse_multipart(body, "multipart/form-data; boundary=boundary")
-        assert form_data == {}
-        assert "file" in file_data
-        filename, content = file_data["file"]
-        assert filename == "test.txt"
-        assert content == b"file content"
-
-    def test_parse_multipart_multiple_fields(self):
-        """Test multipart parsing with multiple fields."""
-        from hsync_client.lan_server import _parse_multipart
-
-        body = b"""--boundary\r
-Content-Disposition: form-data; name="field1"\r
-\r
-value1\r
---boundary\r
-Content-Disposition: form-data; name="field2"\r
-\r
-value2\r
---boundary--\r
-"""
-        form_data, file_data = _parse_multipart(body, "multipart/form-data; boundary=boundary")
-        assert form_data["field1"] == "value1"
-        assert form_data["field2"] == "value2"
-
-    def test_parse_multipart_no_boundary(self):
-        """Test that missing boundary raises error."""
-        from hsync_client.lan_server import _parse_multipart
-
-        with pytest.raises(ValueError, match="No boundary"):
-            _parse_multipart(b"some data", "multipart/form-data")
-
-    def test_parse_multipart_quoted_boundary(self):
-        """Test multipart parsing with quoted boundary."""
-        from hsync_client.lan_server import _parse_multipart
-
-        body = b'--boundary\r\nContent-Disposition: form-data; name="field1"\r\n\r\nvalue1\r\n--boundary--\r\n'
-        form_data, file_data = _parse_multipart(body, 'multipart/form-data; boundary="boundary"')
-        assert form_data["field1"] == "value1"
 
 
 class TestLANRequestHandlerDELETE:
@@ -653,7 +593,13 @@ class TestLANRequestHandlerInboundOriginMarking:
             {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": self._KEY},
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            data = {"cid": "peer-1", "path": "", "mtime": "", "ctime": ""}
+            data = {
+                "cid": "peer-1",
+                "path": "",
+                "mtime": "",
+                "ctime": "",
+                "sha256sum": _sha256(b"hello").hexdigest(),
+            }
             files = {"file": ("inbound.txt", b"hello")}
             headers = {"Authorization": f"Bearer {self._KEY}"}
             response = requests.post(url, data=data, files=files, headers=headers, timeout=5)
@@ -733,7 +679,13 @@ class TestLANRequestHandlerInboundOriginMarking:
             {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            data = {"cid": "spoofed", "path": "", "mtime": "", "ctime": ""}
+            data = {
+                "cid": "spoofed",
+                "path": "",
+                "mtime": "",
+                "ctime": "",
+                "sha256sum": _sha256(b"hello").hexdigest(),
+            }
             files = {"file": ("inbound.txt", b"hello")}
             response = requests.post(url, data=data, files=files, timeout=5)
             assert response.status_code == 201
@@ -1017,6 +969,8 @@ class TestLANRequestHandlerUpload:
                 "path": "",
                 "mtime": "1700000000.0",
                 "compressed": "true",
+                "size": str(len(original_content)),
+                "sha256sum": _sha256(original_content).hexdigest(),
             }
             files = {"file": ("compressed.txt", compressed_content)}
 
@@ -1121,7 +1075,7 @@ class TestLANRequestHandlerTombstones:
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             ts_mod.reset_cache()
-            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=ts)
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
 
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/tombstones")
@@ -1129,7 +1083,7 @@ class TestLANRequestHandlerTombstones:
 
             assert response.status == 200
             data = json.loads(response.read().decode())
-            assert data[tombstone_key("gone.txt")] == {"ts": ts, "sha256": "abc"}
+            assert data[tombstone_key("gone.txt")] == {"ts": ts, "sha256": "a" * 64}
             conn.close()
             ts_mod.reset_cache()
 
@@ -1149,14 +1103,14 @@ class TestLANRequestHandlerTombstones:
         ):
             ts_mod.reset_cache()
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
-            payload = {key: {"ts": ts, "sha256": "def"}}
+            payload = {key: {"ts": ts, "sha256": "d" * 64}}
 
             response = requests.post(url, json=payload, timeout=5)
             assert response.status_code == 200
             assert response.json()["merged"] == 1
 
             # The merged marker is now served back.
-            assert ts_mod.get_payload()[key] == {"ts": ts, "sha256": "def"}
+            assert ts_mod.get_payload()[key] == {"ts": ts, "sha256": "d" * 64}
             ts_mod.reset_cache()
 
     def test_post_empty_body_merges_nothing(self, server, tmp_path):

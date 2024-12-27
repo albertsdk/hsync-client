@@ -105,7 +105,7 @@ class TestGetSyncActions:
         """File on remote only triggers download."""
         remote_files = [
             {
-                "filepath": str(tmp_path / "remote_file.txt"),
+                "filepath": "remote_file.txt",
                 "name": "remote_file.txt",
                 "mtime": 1000,
                 "ctime": 1000,
@@ -649,12 +649,12 @@ class TestClientTombstonesModule:
         ts = int(time.time())
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ts_mod.reset_cache()
-            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=ts)
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
 
             payload = ts_mod.get_payload()
             key = tombstone_key("gone.txt")
             assert key in payload
-            assert payload[key] == {"ts": ts, "sha256": "abc"}
+            assert payload[key] == {"ts": ts, "sha256": "a" * 64}
             ts_mod.reset_cache()
 
     def test_record_persists_and_reloads(self, tmp_path):
@@ -662,7 +662,7 @@ class TestClientTombstonesModule:
         ts = int(time.time())
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ts_mod.reset_cache()
-            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=ts)
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
             # Drop the in-memory cache so the next access loads from disk.
             ts_mod.reset_cache()
 
@@ -684,20 +684,20 @@ class TestClientTombstonesModule:
         now = int(time.time())
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ts_mod.reset_cache()
-            ts_mod.record_deletion(str(tmp_path / "a.txt"), sha256sum="a", timestamp=now)
+            ts_mod.record_deletion(str(tmp_path / "a.txt"), sha256sum="a" * 64, timestamp=now)
 
             key_a = tombstone_key("a.txt")
             key_b = tombstone_key("b.txt")
             remote = {
-                key_a: {"ts": now + 1000, "sha256": "a2"},  # newer wins
-                key_b: {"ts": now - 1000, "sha256": "b"},  # new entry
+                key_a: {"ts": now + 60, "sha256": "b" * 64},  # newer wins
+                key_b: {"ts": now - 1000, "sha256": "c" * 64},  # new entry
             }
             changed = ts_mod.merge_payload(remote)
 
             payload = ts_mod.get_payload()
             assert changed == 2
-            assert payload[key_a] == {"ts": now + 1000, "sha256": "a2"}
-            assert payload[key_b] == {"ts": now - 1000, "sha256": "b"}
+            assert payload[key_a] == {"ts": now + 60, "sha256": "b" * 64}
+            assert payload[key_b] == {"ts": now - 1000, "sha256": "c" * 64}
             ts_mod.reset_cache()
 
     def test_record_outside_bucket_is_noop(self, tmp_path):

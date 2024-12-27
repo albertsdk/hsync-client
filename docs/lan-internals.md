@@ -322,10 +322,23 @@ GET /api/v1/buckets/photos/files/download?filename=vacation/photo1.jpg HTTP/1.1
 Authorization: Bearer mySecretKey123
 ```
 
+> All peer-supplied paths (download `filename`, delete `path`, rename
+> `src`/`dst`, upload `path` + filename) are validated and confined to the
+> bucket root; traversal (`..`), absolute paths, backslashes and internal
+> engine files (`.hsyncignore`, `.hsyncstate`, `.hsynctombstones`, `*.part`)
+> are rejected.
+
 ### Upload File
 
 The `cid` form field identifies the originating peer. The master uses it to tag
 the resulting filesystem event so that the sender can discard the echo.
+
+The `sha256sum` form field is **mandatory**: the master verifies the received
+bytes against it before atomically renaming the `.part` file over the
+destination, and rejects the upload (400) on mismatch. For compressed uploads
+(`compressed=true`) the `size` field is also mandatory and the decompressed
+bytes are capped at it (anti decompression-bomb). Peer-supplied paths are
+validated and confined to the bucket, and far-future mtimes are clamped.
 
 ```http
 POST /api/v1/buckets/photos/files HTTP/1.1
@@ -344,6 +357,10 @@ vacation
 Content-Disposition: form-data; name="mtime"
 
 1706000000.0
+--boundary
+Content-Disposition: form-data; name="sha256sum"
+
+b94d27b9934d3e08a52e52d7da7dabfa...
 --boundary
 Content-Disposition: form-data; name="file"; filename="photo2.jpg"
 Content-Type: application/octet-stream

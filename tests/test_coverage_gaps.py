@@ -15,6 +15,7 @@ from argparse import ArgumentTypeError
 from unittest.mock import patch
 
 import pytest
+from hsync_common.path_validation import is_valid_filename
 
 from hsync_client.config import CONFIG
 from hsync_client.events import EventEmitter, emit_event, init_emitter
@@ -33,7 +34,6 @@ from hsync_client.utils import (
     get_cid,
     get_throttle_delay,
     is_same_paths,
-    is_valid_filename,
     is_valid_logfile,
     parse_bandwidth,
     path_lock,
@@ -326,7 +326,7 @@ class TestTombstonesCoverageGaps:
 
         from hsync_common.models.tombstone import tombstone_key
 
-        payload = {tombstone_key("merged.txt"): {"ts": int(time.time()), "sha256": "xyz"}}
+        payload = {tombstone_key("merged.txt"): {"ts": int(time.time()), "sha256": "a" * 64}}
         changed = merge_payload(payload)
         assert changed == 1
         assert tombstone_key("merged.txt") in get_payload()
