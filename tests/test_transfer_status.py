@@ -41,6 +41,28 @@ class TestGetUploadStatus:
             assert status == "complete"
             assert offset == 1000
 
+    def test_get_upload_status_invalid_offsets_fall_back_to_new(self, tmp_path):
+        """Hostile/garbage resumable offsets are clamped back to a fresh upload."""
+        from hsync_client.transfer import _get_upload_status
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+        }
+        for bad_offset in (-1, "500", 1001, None, True):
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"status": "resumable", "offset": bad_offset}
+
+            with (
+                patch("hsync_client.transfer.CONFIG", config),
+                patch("hsync_client.transfer.get", return_value=mock_response),
+                patch("hsync_client.transfer.get_ssl_verify", return_value=True),
+            ):
+                status, offset = _get_upload_status("file.txt", "abc123", 1000)
+                assert (status, offset) == ("new", 0), f"offset {bad_offset!r}"
+
     def test_get_upload_status_resumable(self, tmp_path):
         """Test getting upload status returns resumable."""
         from hsync_client.transfer import _get_upload_status

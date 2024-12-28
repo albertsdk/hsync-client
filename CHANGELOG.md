@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream-decompressed straight to disk capped at the declared file size (the
   payload is never fully buffered in memory); LAN-master compressed uploads
   abort when the decompressed bytes exceed the declared `size`
+- **Absolute inbound size cap (`--max-download-size`)**: the declared size
+  alone was not a safe bound — a hostile server/master could declare an
+  arbitrary size and expand a decompression bomb up to it on disk before the
+  SHA-256 check discarded the content. Downloads and received LAN uploads are
+  now capped at `min(declared size, MAX_DOWNLOAD_SIZE)`; uncompressed bodies
+  and LAN uploads with no declared size are capped at `MAX_DOWNLOAD_SIZE`
+  outright. Defaults to 10 GB (mirroring the server's `max_upload_size`);
+  `0` restores the declared-size-only behaviour. The cap policy is a single
+  shared implementation (`utils.inbound_size_cap`) for downloads and
+  LAN-master uploads alike
 - **Upload integrity on the LAN master**: the `sha256sum` form field is
   mandatory and verified before the atomic rename, so corrupt or
   attacker-controlled content is never committed nor propagated to slaves
@@ -34,6 +44,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Wire-supplied mtimes** are clamped to `now + 5 min` on the LAN master
   (conflict-engineering mitigation); WebSocket connections declare an
   explicit 4 MiB `max_size`
+- **Inbound event gate validates every path key**: an event payload carrying
+  both `filepath` and `path` is now rejected unless *both* validate
+  (previously only the first present key was checked)
+- **LAN master echo-suppression CID format-validated**: the `cid` on
+  upload/delete/rename is honoured only when it passes `is_valid_cid` and the
+  request is authenticated (`LAN_KEY` set)
+- **Constant-time checksum comparisons**: SHA-256 integrity checks now use
+  `hmac.compare_digest` (download verification, LAN-master upload check);
+  wire-supplied digests are shape-validated first (`is_sha256_hex`), since
+  `compare_digest` raises `TypeError` on non-ASCII input
+- **Event application confined against in-bucket symlink escapes**: inbound
+  delete/rename/symlink events (and remote-triggered mkdir/metadata updates)
+  now resolve targets with `resolve_within`, so a symlink *inside* the bucket
+  (e.g. `docs -> /home/user`) can no longer redirect a remote-triggered
+  delete/rename/symlink/create outside it — the same confinement downloads
+  already had
+- **LAN multipart parser memory caps**: form-field values (64 KiB) and
+  part-header lines (8 KiB) are now hard-capped — previously a single giant
+  "field" was buffered unboundedly in master RAM
+- **LAN `.part` uploads opened with `O_NOFOLLOW`** (shared helper in
+  `utils.py`, same as downloads): a pre-existing/raced `.part` symlink can no
+  longer redirect a peer's streamed upload outside the bucket
+- **Robust reconciliation against hostile listings/events**: one malformed
+  remote listing entry (bogus `size`/mtime types, unreadable stat) no longer
+  stalls the whole sync cycle — the entry is skipped for comparison but
+  still counts as remotely present, so it can never trigger a spurious
+  delete (download-only) or re-upload; one malformed server event no longer
+  kills the remote WebSocket loop (per-message isolation, as the LAN loop
+  already had); garbage resumable `offset` values from the server are
+  clamped back to a fresh upload
+- **Pin store written with `0600` from creation**: the TOFU pin file no
+  longer has a window where trusted-peer fingerprints are world-readable
 
 ### Removed
 - **LAN master**: dead `_parse_multipart` helper (superseded by the streaming

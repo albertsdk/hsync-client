@@ -15,6 +15,30 @@ from hsync_client.remote_websocket import REMOTE_DISPATCH_CTX
 class TestApplyInboundRenameEvent:
     """Tests for the ``renamed`` branch of :func:`apply_inbound_event`."""
 
+    async def test_rename_rejected_through_in_bucket_symlink(self, tmp_path):
+        """A rename whose dst crosses an in-bucket symlink must not move
+        content outside the bucket."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        (bucket / "docs").symlink_to(outside)
+        src_file = bucket / "a.txt"
+        src_file.write_text("content")
+
+        event = {
+            "name": "renamed",
+            "src": {"filepath": "a.txt", "sha256sum": "abc", "size": 7},
+            "dst": {"filepath": "docs/evil.txt", "sha256sum": "abc", "size": 7},
+        }
+        config = {"LOCAL_BUCKET": str(bucket)}
+
+        with patch("hsync_client.event_dispatch.CONFIG", config):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert src_file.exists()
+        assert not (outside / "evil.txt").exists()
+
     async def test_rename_directory_success(self, tmp_path):
         """Successfully renames directory when source exists."""
         src_dir = tmp_path / "source"

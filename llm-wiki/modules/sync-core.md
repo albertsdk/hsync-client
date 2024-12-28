@@ -39,9 +39,17 @@ Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:653`,
 | `_local_dest_path` | `transfer.py:242` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
 | `_open_partial_no_follow` | `transfer.py:257` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
 
-Compressed downloads stream through `decompress_stream` capped at the declared
-file size (anti decompression-bomb, `transfer.py:448`); the payload is never
-fully buffered in memory. Wire-supplied permissions go through
+Compressed downloads stream through `decompress_stream` with a hard output cap
+(anti decompression-bomb, `transfer.py:448`); the payload is never fully
+buffered in memory. The cap is `min(declared size, MAX_DOWNLOAD_SIZE)`
+(`utils.inbound_size_cap` — the single implementation shared with LAN-master
+received uploads): the declared size alone is not a
+safe bound because a hostile server/master can declare an arbitrary size and
+expand a bomb up to it on disk before the SHA-256 check discards the content.
+The same cap also bounds uncompressed bodies, so an over-cap download (hostile
+or simply larger than the configured maximum) is aborted and the `.part`
+dropped. `MAX_DOWNLOAD_SIZE` defaults to 10 GB (`--max-download-size`,
+mirroring the server's `max_upload_size`; `0` = declared size only). Wire-supplied permissions go through
 `utils.set_permissions` (`utils.py:492`) which strips setuid/setgid/sticky bits
 (`sanitize_remote_permissions`).
 
@@ -61,8 +69,16 @@ Path resolution: `_resolve_local_path` (`:178`).
 `hsync_common.path_validation.validate_remote_relpath` before dispatch —
 traversal, absolute paths, backslashes and internal engine files
 (`.hsync*`/`*.part`) are dropped, logged `[SECURITY]` and surfaced as a
-`security_rejected` UI event (`_reject_unsafe:103`). `_apply_symlink` also
-validates the link target with `is_safe_symlink_target`.
+`security_rejected` UI event (`_reject_unsafe:103`). When a payload carries
+both `filepath` and `path`, *every* present key is validated
+(`hsync_common.wire_relpaths`, SSOT shared with the server relay gate) so a
+malicious second key cannot smuggle past the gate.
+Delete/rename/symlink targets are additionally **confined** with
+`resolve_within` (`_confined_local:113`): lexical safety alone cannot stop a
+symlink *inside* the bucket (e.g. `docs -> /home/user`) from redirecting the
+operation outside it. `_apply_symlink` also validates the link target with
+`is_safe_symlink_target`; `update_dir`/`update_file` (`sync.py`) apply the
+same confinement before mkdir/metadata writes.
 
 ## file_event_handler.py — watchdog adapter
 

@@ -81,6 +81,7 @@ fi
 : "${HSYNC_MAX_BW_UPLOAD:=}"
 : "${HSYNC_MAX_BW_DOWNLOAD:=}"
 : "${HSYNC_MIN_FREE_DISK_MB:=}"
+: "${HSYNC_MAX_DOWNLOAD_SIZE_MB:=}"
 : "${HSYNC_VERBOSE:=false}"
 
 mkdir -p "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}" "${HSYNC_PATH}"
@@ -131,6 +132,7 @@ esac
 [ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --max-bandwidth-upload "${HSYNC_MAX_BW_UPLOAD}"
 [ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --max-bandwidth-download "${HSYNC_MAX_BW_DOWNLOAD}"
 [ -n "${HSYNC_MIN_FREE_DISK_MB}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK_MB}"
+[ -n "${HSYNC_MAX_DOWNLOAD_SIZE_MB}" ] && set -- "$@" --max-download-size "${HSYNC_MAX_DOWNLOAD_SIZE_MB}"
 [ "${HSYNC_VERBOSE}" = "true" ]        && set -- "$@" --verbose
 
 # ---------------------------------------------------------------------------

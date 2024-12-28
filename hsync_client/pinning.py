@@ -80,7 +80,12 @@ class PinStore:
     def _save(self, data: dict[str, str]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        # Create the temp file with 0600 from the start: writing first and
+        # chmoding after would leave a window where the trusted-peer pins are
+        # readable by other local users.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _PIN_FILE_MODE)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2, sort_keys=True))
         os.chmod(tmp, _PIN_FILE_MODE)
         os.replace(tmp, self._path)
 

@@ -197,6 +197,7 @@ class TestDownloadFile:
 
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.headers = {}
         mock_response.iter_content = MagicMock(return_value=[b"test content"])
 
         with (
@@ -433,7 +434,7 @@ class TestDownloadCompressed:
 
         file = File(
             filepath="file.txt",
-            sha256sum="abc123def",
+            sha256sum="a" * 64,
             size=100,
             mtime=1000,
             ctime=1000,
@@ -461,13 +462,173 @@ class TestDownloadCompressed:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
+            patch("hsync_client.transfer.compute_sha256", return_value="a" * 64),
             patch("hsync_client.transfer.replace") as mock_replace,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),
         ):
             download_file(file)
             mock_replace.assert_called()
+
+
+class TestDownloadChecksumFormat:
+    """Non-ASCII / malformed wire checksums must not crash compare_digest."""
+
+    def _config(self, tmp_path):
+        return {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "LOCAL_BUCKET": str(tmp_path),
+            "TRANSFER_RETRY_ATTEMPTS": 1,
+        }
+
+    def test_non_ascii_server_checksum_header_ignored(self, tmp_path):
+        """A malformed X-Checksum-SHA256 header is skipped (check 2 still
+        verifies integrity against the listing)."""
+        import hashlib
+
+        content = b"download me"
+        file = File(
+            filepath="f.txt",
+            sha256sum=hashlib.sha256(content).hexdigest(),
+            size=len(content),
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"X-Checksum-SHA256": "é" * 64}
+        mock_response.iter_content.return_value = [content]
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            download_file(file)
+
+        assert (tmp_path / "f.txt").read_bytes() == content
+
+    def test_non_ascii_listing_checksum_rejected_without_crash(self, tmp_path):
+        """A listing carrying a non-ASCII sha256sum fails closed (no file,
+        no TypeError from compare_digest)."""
+        content = b"download me"
+        file = File(filepath="f.txt", sha256sum="é" * 64, size=len(content))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.iter_content.return_value = [content]
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            download_file(file)
+
+        assert not (tmp_path / "f.txt").exists()
+
+
+class TestDownloadSizeCap:
+    """MAX_DOWNLOAD_SIZE is an absolute cap applied on top of the peer-declared
+    size: a hostile server/master can no longer expand a decompression bomb
+    (or stream an undeclared body) up to an arbitrary declaration."""
+
+    def _config(self, tmp_path, max_download_size):
+        return {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "LOCAL_BUCKET": str(tmp_path),
+            # Disable retry/backoff so a single attempt is asserted.
+            "TRANSFER_RETRY_ATTEMPTS": 1,
+            "MAX_DOWNLOAD_SIZE": max_download_size,
+        }
+
+    def test_write_cap_disabled_uses_declared_only(self):
+        from hsync_client.utils import inbound_size_cap
+
+        assert inbound_size_cap(100, 0) == 100
+        assert inbound_size_cap(0, 0) is None
+        assert inbound_size_cap(None, 0) is None
+
+    def test_write_cap_enabled_bounds_declaration(self):
+        from hsync_client.utils import inbound_size_cap
+
+        assert inbound_size_cap(100, 50) == 50  # min(declared, cap)
+        assert inbound_size_cap(30, 50) == 30
+        assert inbound_size_cap(None, 50) == 50  # cap is the only bound
+        assert inbound_size_cap(0, 50) == 50
+
+    def test_compressed_bomb_beyond_absolute_cap_aborted(self, tmp_path):
+        """A peer declaring a huge size is capped at MAX_DOWNLOAD_SIZE."""
+        import zstandard as zstd
+
+        original_content = b"A" * 1000
+        compressed_content = zstd.ZstdCompressor().compress(original_content)
+        # Lie: the listing declares 1 GB so the declared-size cap would allow it.
+        file = File(filepath="bomb.txt", sha256sum="abc123", size=1_000_000_000)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"Content-Encoding": "zstd"}
+        mock_response.raw = io.BytesIO(compressed_content)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path, 50)),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            download_file(file)
+
+        assert not (tmp_path / "bomb.txt").exists()
+        assert not (tmp_path / "bomb.txt.part").exists()
+
+    def test_uncompressed_beyond_absolute_cap_aborted(self, tmp_path):
+        """An uncompressed body larger than the cap is aborted and dropped."""
+        content = b"A" * 1000
+        file = File(filepath="big.txt", sha256sum="abc123", size=1000)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.iter_content.return_value = [content]
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path, 50)),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            download_file(file)
+
+        assert not (tmp_path / "big.txt").exists()
+        assert not (tmp_path / "big.txt.part").exists()
+
+    def test_download_within_cap_succeeds(self, tmp_path):
+        """A download under the absolute cap is unaffected."""
+        import hashlib
+
+        content = b"legit content within the cap"
+        file = File(
+            filepath="ok.txt",
+            sha256sum=hashlib.sha256(content).hexdigest(),
+            size=len(content),
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.iter_content.return_value = [content]
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path, 1024)),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            download_file(file)
+
+        assert (tmp_path / "ok.txt").read_bytes() == content
 
 
 class TestDownloadPathLocking:

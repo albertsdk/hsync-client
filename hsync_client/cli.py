@@ -26,6 +26,9 @@ from hsync_client.constants import (
     HTTP_TIMEOUT_MIN,
     MAX_CONCURRENT_TRANSFERS_MAX,
     MAX_CONCURRENT_TRANSFERS_MIN,
+    MAX_DOWNLOAD_SIZE_MB_DEFAULT,
+    MAX_DOWNLOAD_SIZE_MB_MAX,
+    MAX_DOWNLOAD_SIZE_MB_MIN,
     MAX_WAIT_TIMEOUT_MAX,
     MAX_WAIT_TIMEOUT_MIN,
     MIN_FREE_DISK_SPACE_MB_DEFAULT,
@@ -323,6 +326,19 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    max_download_size: Annotated[
+        int,
+        typer.Option(
+            "--max-download-size",
+            help=(
+                "Maximum size in MB of a single inbound file (download or "
+                "received LAN upload), enforced as an absolute cap on top of "
+                "the peer-declared size. 0 = disabled."
+            ),
+            metavar="MB",
+            rich_help_panel="Sync",
+        ),
+    ] = MAX_DOWNLOAD_SIZE_MB_DEFAULT,
     sync_hidden: Annotated[
         bool,
         typer.Option(
@@ -631,6 +647,11 @@ def main(
             f"Minimum free disk space must be between "
             f"{MIN_FREE_DISK_SPACE_MB_MIN} and {MIN_FREE_DISK_SPACE_MB_MAX} MB."
         )
+    if max_download_size < MAX_DOWNLOAD_SIZE_MB_MIN or max_download_size > MAX_DOWNLOAD_SIZE_MB_MAX:
+        raise typer.BadParameter(
+            f"Max download size must be between "
+            f"{MAX_DOWNLOAD_SIZE_MB_MIN} and {MAX_DOWNLOAD_SIZE_MB_MAX} MB."
+        )
 
     # Parse and validate bandwidth limits
     from hsync_client.utils import parse_bandwidth
@@ -720,6 +741,7 @@ def main(
         legend=legend,
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
+        max_download_size=max_download_size,
         sync_hidden=sync_hidden,
         ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
         max_concurrent_transfers=max_concurrent_transfers,

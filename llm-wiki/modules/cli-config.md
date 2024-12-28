@@ -47,8 +47,11 @@ Flags map to env keys; capabilities JSON is built from
 
 - `constants.py` — bounds + defaults: stability (`:57`–`:73`), reschedule
   (`:79`/`:80`), concurrency (`:90`), retry (`:99`–`:101`), mass-delete (`:112`–`:114`),
-  bandwidth (`:121`/`:122`), resync (`:130`–`:135`), inotify (`:163`/`:165`); visual
-  `ActionLabel` enum (`:176`).
+  bandwidth (`:121`/`:122`), resync (`:130`–`:135`), max inbound file size
+  (  `MAX_DOWNLOAD_SIZE_MB_*`, default 10 GB — absolute anti-bomb cap applied as
+  `min(declared, cap)` to downloads and received LAN uploads, wired into
+  `CONFIG["MAX_DOWNLOAD_SIZE"]` in bytes), inotify (`:176`/`:178`); visual
+  `ActionLabel` enum (`:195`).
 - `validators.py` — range validators via `create_int_range_validator` (`:33`):
   `valid_reconnect_delay` (`:72`), `valid_resync` (`:96`), `valid_bucket` (`:120`),
   `valid_stability_delay` (`:144`), `valid_http_timeout` (`:168`),

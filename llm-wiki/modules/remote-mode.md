@@ -10,7 +10,7 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 | ------ | ---- | ---- |
 | `remote_events` | `remote_websocket.py:58` | top-level: initial sync + WS connect + watcher |
 | `remote_connect` | `:275` | open WS, run auth handshake, then process loop |
-| `_process_remote_events` | `:212` | read inbound events, dispatch via `REMOTE_DISPATCH_CTX` (`:205`) |
+| `_process_remote_events` | `:212` | read inbound events, dispatch via `REMOTE_DISPATCH_CTX` (`:205`); per-message error isolation (one malformed event cannot kill the loop) |
 | `resync` | `:257` | periodic/triggered full re-reconcile |
 | `RemoteFileEventHandler` | `:324` | watchdog → `upload_file` (threads `from_closed`) |
 

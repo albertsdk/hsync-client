@@ -35,8 +35,9 @@ from typing import IO
 from urllib.parse import parse_qs, urlparse
 
 from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
-from hsync_common.hashing import compute_sha256
+from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.models.dir import is_hidden_dir
+from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File, is_hidden_file
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
 from hsync_common.path_validation import resolve_within
@@ -49,6 +50,7 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.utils import inbound_size_cap, open_partial_no_follow
 
 # =============================================================================
 # Constants
@@ -93,13 +95,21 @@ MAX_TOMBSTONE_PAYLOAD_BYTES = TOMBSTONE_MAX_ENTRIES * 192
 # resolution on every other peer (conflict engineering).
 MTIME_MAX_FUTURE_SKEW_SECONDS = 300
 
+# Multipart parsing bounds: form-field values and part-header lines are
+# buffered in memory, so they need a hard cap — an unbounded buffer lets a
+# peer exhaust master RAM with a single giant "field" (the file part itself
+# is streamed to disk and needs no such cap).
+MAX_FORM_FIELD_BYTES = 64 * 1024
+MAX_PART_HEADER_LINE_BYTES = 8 * 1024
+
 
 class _CappedBytesWriter:
     """File-like wrapper that aborts once more than *cap* bytes are written.
 
     Placed between a decompressor and the destination file so a hostile
-    upload cannot expand a small compressed payload past its declared size
-    (decompression bomb containment on the receiving side).
+    upload cannot expand a small compressed payload past the effective cap
+    — min(declared size, ``MAX_DOWNLOAD_SIZE``) — (decompression bomb
+    containment on the receiving side).
     """
 
     def __init__(self, write, cap: int) -> None:
@@ -110,7 +120,7 @@ class _CappedBytesWriter:
     def write(self, data: bytes):
         self.written += len(data)
         if self.written > self._cap:
-            raise ValueError(f"Upload exceeds declared size ({self._cap} bytes)")
+            raise ValueError(f"Upload exceeds the maximum allowed size ({self._cap} bytes)")
         return self._write(data)
 
     def close(self) -> None:
@@ -159,10 +169,15 @@ class _StreamingMultipartParser:
         """Read one CRLF-terminated line, replenishing the buffer as needed.
 
         Returns the line without the trailing CRLF, or None on EOF.
+        Raises ValueError if the line grows past the header-line cap.
         """
         while b"\r\n" not in self._buf:
+            if len(self._buf) > MAX_PART_HEADER_LINE_BYTES:
+                raise ValueError("multipart header line too long")
             if not self._read_more():
                 break
+        if len(self._buf) > MAX_PART_HEADER_LINE_BYTES:
+            raise ValueError("multipart header line too long")
         if b"\r\n" not in self._buf:
             return None
         line, self._buf = self._buf.split(b"\r\n", 1)
@@ -271,9 +286,19 @@ class _StreamingMultipartParser:
                 writer = file_open(form_fields, field_name, filename)
                 marker = self._read_until_boundary(writer)
             elif name_m:
-                buf = bytearray()
-                marker = self._read_until_boundary(buf.extend)
-                form_fields[name_m.group(1)] = bytes(buf).decode("utf-8", "replace")
+                # Form field: buffered in memory, so hard-capped (the file
+                # part is the only part allowed to be large, and it streams).
+                field_buf = bytearray()
+
+                def _field_writer(data: bytes, _buf=field_buf) -> None:
+                    if len(_buf) + len(data) > MAX_FORM_FIELD_BYTES:
+                        raise ValueError(
+                            f"multipart form field exceeds {MAX_FORM_FIELD_BYTES} bytes"
+                        )
+                    _buf.extend(data)
+
+                marker = self._read_until_boundary(_field_writer)
+                form_fields[name_m.group(1)] = bytes(field_buf).decode("utf-8", "replace")
             else:
                 marker = self._read_until_boundary(None)
 
@@ -469,7 +494,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # only honoured on authenticated requests: without LAN_KEY any LAN
             # peer could spoof another peer's CID and suppress its events.
             origin_cid = query.get("cid", [None])[0]
-            if origin_cid and CONFIG.get("LAN_KEY"):
+            if origin_cid and is_valid_cid(origin_cid) and CONFIG.get("LAN_KEY"):
                 from hsync_client.lan_websocket import mark_inbound_origin
 
                 mark_inbound_origin(src_path, origin_cid)
@@ -517,7 +542,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # only on authenticated requests; an unauthenticated CID is untrusted
         # and ignored.
         origin_cid = query.get("cid", [None])[0]
-        if origin_cid and CONFIG.get("LAN_KEY"):
+        if origin_cid and is_valid_cid(origin_cid) and CONFIG.get("LAN_KEY"):
             from hsync_client.lan_websocket import mark_inbound_origin
 
             mark_inbound_origin(full_path, origin_cid)
@@ -902,16 +927,26 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             dest_path = dest_path_local
             tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
-            raw = open(tmp_path, "wb")  # noqa: SIM115
+            # O_NOFOLLOW where supported: a pre-existing/raced .part symlink
+            # must not redirect the streamed write outside the bucket.
+            raw = open_partial_no_follow(tmp_path, "wb")
             raw_file = raw
-            # Cap the bytes landing on disk at the declared size, when
-            # declared: without a cap a hostile peer could expand a small
-            # compressed frame unboundedly (decompression bomb).
+            # Cap the bytes landing on disk (decompression bomb containment
+            # on the receiving side). The peer-declared size alone is not a
+            # safe bound: a hostile peer could declare an arbitrary size and
+            # expand a bomb up to it before the SHA-256 check discards the
+            # content. The shared inbound_size_cap policy applies
+            # min(declared, MAX_DOWNLOAD_SIZE), with MAX_DOWNLOAD_SIZE as the
+            # only bound when no size is declared at all.
             try:
                 declared_size = int(form_fields.get("size", ""))
             except (TypeError, ValueError):
                 declared_size = -1
-            capped = _CappedBytesWriter(raw.write, declared_size) if declared_size > 0 else raw
+            cap = inbound_size_cap(
+                declared_size if declared_size > 0 else None,
+                CONFIG.get("MAX_DOWNLOAD_SIZE", 0),
+            )
+            capped = _CappedBytesWriter(raw.write, cap) if cap is not None else raw
             if is_compressed_local:
                 import zstandard as zstd
 
@@ -961,12 +996,17 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # Integrity is mandatory: the received bytes must hash to the
             # declared SHA-256 before they are committed over the destination
             # (a hostile or corrupt peer must not propagate content to slaves).
+            # The declared digest must be well-formed: compare_digest raises
+            # TypeError on non-ASCII input.
             expected_sha = form_fields.get("sha256sum", "")
             if not expected_sha:
                 self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
                 return
+            if not is_sha256_hex(expected_sha):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'sha256sum' format")
+                return
             actual_sha = compute_sha256(tmp_path)
-            if actual_sha != expected_sha:
+            if not hmac.compare_digest(actual_sha, expected_sha):
                 log.warning(
                     f'Rejected upload "{dest_path}": checksum mismatch '
                     f"(declared {expected_sha}, computed {actual_sha})"
@@ -976,7 +1016,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             # Honour the echo-suppression CID only on authenticated requests;
             # an unauthenticated CID is untrusted and ignored.
-            if cid and CONFIG.get("LAN_KEY"):
+            if cid and is_valid_cid(cid) and CONFIG.get("LAN_KEY"):
                 from hsync_client.lan_websocket import mark_inbound_origin
 
                 mark_inbound_origin(dest_path, cid)
