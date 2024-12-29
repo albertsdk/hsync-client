@@ -133,6 +133,17 @@ class DownloadError(SyncError):
     default_message = "Download failed"
 
 
+class PermanentDownloadError(DownloadError):
+    """Permanent download failure (e.g. file exceeds the size cap).
+
+    Raised instead of returning silently so the caller can add the filepath
+    to a skip-set and stop retrying it on every resync cycle (H8).
+    """
+
+    error_code = "HSYNC-C3004"
+    default_message = "Download permanently failed"
+
+
 class ChecksumError(SyncError):
     """Checksum verification failed."""
 

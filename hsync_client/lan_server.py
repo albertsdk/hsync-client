@@ -49,12 +49,57 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_DOWNLOAD_SIZE_MB_DEFAULT
 from hsync_client.utils import inbound_size_cap, open_partial_no_follow
 
 # =============================================================================
 # Constants
 # =============================================================================
+
+# Maximum number of concurrent request threads the LAN master will spawn.
+# Bounds resource consumption against a flood of peer connections.
+LAN_SERVER_MAX_THREADS = 32
+
+# Chunk size (bytes) for streaming file reads on the download path. Mirrors
+# the client transfer module so the master never reads more than necessary
+# into RAM per iteration.
+_LAN_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threading HTTP server with a hard cap on concurrent request threads.
+
+    ``ThreadingHTTPServer`` spawns an unbounded thread per request: a flood of
+    peer connections (or slow clients holding sockets open) can exhaust file
+    descriptors and memory on the master. This subclass guards every
+    ``process_request`` with a :class:`threading.BoundedSemaphore` so at most
+    ``max_threads`` requests are served concurrently; excess connections wait
+    in the (bounded) socket backlog and are picked up as slots free up.
+    """
+
+    def __init__(self, *args, max_threads: int = LAN_SERVER_MAX_THREADS, **kwargs):
+        self._thread_semaphore = threading.BoundedSemaphore(max_threads)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address) -> None:
+        # Acquire a slot before spawning a thread. If the cap is reached the
+        # call blocks until a running request finishes, keeping the backlog
+        # bounded by the socket's request_queue_size.
+        self._thread_semaphore.acquire()
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            # Release on failure so the slot is not leaked.
+            self._thread_semaphore.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            # Release the slot held for the duration of the request.
+            self._thread_semaphore.release()
+
 
 # API Configuration
 API_VERSION = "v1"
@@ -765,6 +810,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
+        # L16: a peer can request a hidden/ignored file by its explicit
+        # path. Reject it so the master never serves files the local
+        # user excluded from sync (e.g. via .hsyncignore or dot-files).
+        from hsync_common.ignore import should_skip
+
+        if should_skip(filepath):
+            self._send_error_response(HTTP_FORBIDDEN, "Access denied")
+            return
+
         if not Path(filepath).exists():
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
@@ -793,31 +847,52 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             with open(filepath, "rb") as f:
                 if range_tuple:
-                    # Partial content
+                    # Partial content — stream in chunks, never load the
+                    # whole range into RAM (H5: master LAN RAM exhaustion).
                     start, end = range_tuple
                     f.seek(start)
-                    content = f.read(end - start)
+                    range_len = end - start
 
                     self.send_response(HTTP_PARTIAL_CONTENT)
                     self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                    self.send_header("Content-Length", str(len(content)))
+                    self.send_header("Content-Length", str(range_len))
                     self.send_header("Content-Range", f"bytes {start}-{end - 1}/{file_size}")
                     self.send_header("Accept-Ranges", "bytes")
                     self.send_header("X-SHA256", file_obj.sha256sum or "")
                     self.send_header("X-Permissions", file_obj.permissions or "")
                     self.end_headers()
-                    self.wfile.write(content)
+                    remaining = range_len
+                    while remaining > 0:
+                        chunk = f.read(min(_LAN_UPLOAD_CHUNK_SIZE, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
                 else:
-                    # Full file - check if compression should be used
-                    content = f.read()
-
-                    # Use compression if enabled and beneficial
+                    # Full file — stream in chunks, never load the whole
+                    # file into RAM (H5: master LAN RAM exhaustion).
+                    # Use compression if enabled and beneficial.
                     # In LAN mode, use higher threshold (100KB) since local network is fast
                     use_compression = CONFIG.get("COMPRESSION_ENABLED", False) and should_compress(
                         filepath, file_size, is_lan=True
                     )
 
                     if use_compression:
+                        # Compression requires the full content to compute the
+                        # zstd frame; cap the in-memory size to MAX_DOWNLOAD_SIZE
+                        # so a hostile huge file cannot OOM the master. When the
+                        # cap is not configured (0), fall back to the default
+                        # max download size so an unbounded f.read() is never
+                        # possible on the compressed branch (H5).
+                        max_dl = CONFIG.get("MAX_DOWNLOAD_SIZE", 0) or (
+                            MAX_DOWNLOAD_SIZE_MB_DEFAULT * 1024 * 1024
+                        )
+                        if max_dl and file_size > max_dl:
+                            self._send_error_response(
+                                HTTP_FORBIDDEN, "File too large for compressed transfer"
+                            )
+                            return
+                        content = f.read(max_dl)
                         compressed_content = compress_data(content)
                         log.debug(
                             f"Compressed download: {len(content)} -> "
@@ -834,12 +909,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     else:
                         self.send_response(HTTP_OK)
                         self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                        self.send_header("Content-Length", str(len(content)))
+                        self.send_header("Content-Length", str(file_size))
                         self.send_header("Accept-Ranges", "bytes")
                         self.send_header("X-SHA256", file_obj.sha256sum or "")
                         self.send_header("X-Permissions", file_obj.permissions or "")
                         self.end_headers()
-                        self.wfile.write(content)
+                        while True:
+                            chunk = f.read(_LAN_UPLOAD_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
 
         except OSError as e:
             log.error(f"Error reading file {filepath}: {e}")
@@ -1141,9 +1220,14 @@ class LANServer:
             log.warning("LAN server already running")
             return
 
-        self._server = ThreadingHTTPServer(("0.0.0.0", self._port), LANRequestHandler)
+        self._server = BoundedThreadingHTTPServer(
+            ("0.0.0.0", self._port), LANRequestHandler, max_threads=LAN_SERVER_MAX_THREADS
+        )
         # Daemonize per-request threads so they don't block process shutdown
         self._server.daemon_threads = True
+        # Cap the socket backlog so excess connections queue (bounded) instead
+        # of being accepted immediately and consuming a thread slot.
+        self._server.request_queue_size = LAN_SERVER_MAX_THREADS
 
         # Wrap socket with SSL if HTTPS is enabled
         if self._use_https:

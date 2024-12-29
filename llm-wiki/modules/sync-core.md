@@ -14,8 +14,9 @@ and LAN modes.
 | `get_sync_actions` | `sync.py:690` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`) |
 | `_compare_files` | `sync.py:820` | per-file decision (hash/mtime + base via sync_state) |
 | `_save_conflict_copy` | `sync.py:905` | write a conflict copy on three-way conflict |
-| `_execute_parallel_transfers` | `sync.py:267` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`) |
+| `_execute_parallel_transfers` | `sync.py:267` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` (H8) |
 | `_mass_deletion_blocked` | `sync.py:94` | §12 guard: pause when deletions exceed threshold/percent or empty master |
+| `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `sync.py:58` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
 | `update_file` / `update_dir` | `sync.py:996` / `:957` | apply inbound metadata; reject unsafe remote paths |
 | `ensure_hsynckeep_files` | `sync.py:326` | keep empty dirs via sentinel |
 | `_cleanup_partial_files` | `sync.py:62` | drop stale `.part` files |
