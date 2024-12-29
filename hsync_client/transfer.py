@@ -446,7 +446,7 @@ def _download_file_attempt(file: File) -> None:
         chunk_size = adaptive_chunk_size(file.size)
 
         if is_compressed:
-            # L17: a compressed response cannot be resumed with a Range
+            # A compressed response cannot be resumed with a Range
             # request — the zstd frame would be appended raw to the partial,
             # corrupting it. If we have a partial from a previous attempt,
             # discard it and restart the decompression from byte 0.
@@ -489,7 +489,7 @@ def _download_file_attempt(file: File) -> None:
                         # Over-cap body (hostile or simply larger than the
                         # configured maximum): permanent failure — the
                         # partial file is dropped in ``finally``.
-                        # H8: raise a PermanentDownloadError so the caller
+                        # Raise a PermanentDownloadError so the caller
                         # can add the filepath to a skip-set and stop
                         # retrying this file on every resync cycle.
                         log.error(

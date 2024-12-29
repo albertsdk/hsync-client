@@ -810,7 +810,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
-        # L16: a peer can request a hidden/ignored file by its explicit
+        # A peer can request a hidden/ignored file by its explicit
         # path. Reject it so the master never serves files the local
         # user excluded from sync (e.g. via .hsyncignore or dot-files).
         from hsync_common.ignore import should_skip
@@ -848,7 +848,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             with open(filepath, "rb") as f:
                 if range_tuple:
                     # Partial content — stream in chunks, never load the
-                    # whole range into RAM (H5: master LAN RAM exhaustion).
+                    # whole range into RAM (master LAN RAM exhaustion).
                     start, end = range_tuple
                     f.seek(start)
                     range_len = end - start
@@ -870,7 +870,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                         remaining -= len(chunk)
                 else:
                     # Full file — stream in chunks, never load the whole
-                    # file into RAM (H5: master LAN RAM exhaustion).
+                    # file into RAM (master LAN RAM exhaustion).
                     # Use compression if enabled and beneficial.
                     # In LAN mode, use higher threshold (100KB) since local network is fast
                     use_compression = CONFIG.get("COMPRESSION_ENABLED", False) and should_compress(
@@ -883,7 +883,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                         # so a hostile huge file cannot OOM the master. When the
                         # cap is not configured (0), fall back to the default
                         # max download size so an unbounded f.read() is never
-                        # possible on the compressed branch (H5).
+                        # possible on the compressed branch.
                         max_dl = CONFIG.get("MAX_DOWNLOAD_SIZE", 0) or (
                             MAX_DOWNLOAD_SIZE_MB_DEFAULT * 1024 * 1024
                         )

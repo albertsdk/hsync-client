@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
-- **Permanent download failure skip-set (H8)**: a download that fails
+- **Permanent download failure skip-set**: a download that fails
   permanently (e.g. declared size exceeds the configured cap) now raises
   `PermanentDownloadError`, which the sync caller catches, records in a
   per-cycle skip-set (keyed by `filepath|sha256`), and emits a
@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tick within the same cycle. Also fixed a latent `NameError` (the exception
   was raised but never imported in `transfer.py`) and an `IndentationError`
   on the compressed-download branch.
-- **LAN master thread cap (H5)**: the LAN master HTTP server now caps
+- **LAN master thread cap**: the LAN master HTTP server now caps
   concurrent request threads with a `BoundedSemaphore` (default 32) instead
   of spawning an unbounded thread per connection, preventing FD/memory
   exhaustion under a flood of peer requests. The compressed-download branch
