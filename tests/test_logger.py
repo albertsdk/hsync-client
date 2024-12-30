@@ -28,8 +28,6 @@ from hsync_client.logger import (
     _format_record_colored,
     _format_record_plain,
     _get_json_data,
-    get_client_id,
-    set_client_id,
     setup_logging,
 )
 
@@ -223,27 +221,6 @@ class TestSetupLogging:
         """Test logging setup with colors disabled."""
         # Should not raise
         setup_logging(no_color=True)
-
-
-class TestClientIdContext:
-    """Tests for client ID context functions."""
-
-    def test_get_client_id_default_none(self):
-        """Test get_client_id returns None by default."""
-        set_client_id(None)
-        assert get_client_id() is None
-
-    def test_set_and_get_client_id(self):
-        """Test setting and getting client ID."""
-        set_client_id("test-client-123")
-        assert get_client_id() == "test-client-123"
-        set_client_id(None)  # cleanup
-
-    def test_client_id_can_be_cleared(self):
-        """Test client ID can be cleared."""
-        set_client_id("test-id")
-        set_client_id(None)
-        assert get_client_id() is None
 
 
 class TestInterceptHandler:

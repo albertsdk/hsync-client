@@ -16,25 +16,6 @@ from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
 
-class TestLANServer:
-    """Tests for LANServer class."""
-
-    def test_server_creation(self):
-        """Test creating a server instance."""
-        server = LANServer(port=9999)
-        assert server.port == 9999
-        assert server.is_running() is False
-
-    def test_server_start_stop(self):
-        """Test starting and stopping the server."""
-        server = LANServer(port=0)  # Use random port
-        server.start()
-        assert server.is_running() is True
-        time.sleep(0.1)  # Give server time to start
-        server.stop()
-        assert server.is_running() is False
-
-
 class TestLANRequestHandler:
     """Tests for LANRequestHandler endpoints."""
 
@@ -581,12 +562,10 @@ class TestLANRequestHandlerInboundOriginMarking:
         import requests
 
         from hsync_client.lan_websocket import (
-            _clear_inbound_origin,
             consume_inbound_origin,
         )
 
         srv, port = server
-        _clear_inbound_origin()
 
         with patch(
             "hsync_client.lan_server.CONFIG",
@@ -610,12 +589,10 @@ class TestLANRequestHandlerInboundOriginMarking:
         import requests
 
         from hsync_client.lan_websocket import (
-            _clear_inbound_origin,
             consume_inbound_origin,
         )
 
         srv, port = server
-        _clear_inbound_origin()
         target = tmp_path / "gone.txt"
         target.write_text("bye")
 
@@ -635,12 +612,10 @@ class TestLANRequestHandlerInboundOriginMarking:
         import requests
 
         from hsync_client.lan_websocket import (
-            _clear_inbound_origin,
             consume_inbound_origin,
         )
 
         srv, port = server
-        _clear_inbound_origin()
         src = tmp_path / "src.txt"
         src.write_text("x")
         dst = tmp_path / "dst.txt"
@@ -667,12 +642,10 @@ class TestLANRequestHandlerInboundOriginMarking:
         import requests
 
         from hsync_client.lan_websocket import (
-            _clear_inbound_origin,
             consume_inbound_origin,
         )
 
         srv, port = server
-        _clear_inbound_origin()
 
         with patch(
             "hsync_client.lan_server.CONFIG",
@@ -697,12 +670,10 @@ class TestLANRequestHandlerInboundOriginMarking:
         import requests
 
         from hsync_client.lan_websocket import (
-            _clear_inbound_origin,
             consume_inbound_origin,
         )
 
         srv, port = server
-        _clear_inbound_origin()
         target = tmp_path / "gone.txt"
         target.write_text("bye")
 
@@ -723,12 +694,10 @@ class TestLANRequestHandlerInboundOriginMarking:
         import requests
 
         from hsync_client.lan_websocket import (
-            _clear_inbound_origin,
             consume_inbound_origin,
         )
 
         srv, port = server
-        _clear_inbound_origin()
         src = tmp_path / "src.txt"
         src.write_text("x")
         dst = tmp_path / "dst.txt"
@@ -1053,7 +1022,6 @@ class TestLANRequestHandlerTombstones:
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ts_mod.reset_cache()
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/tombstones")
             response = conn.getresponse()
@@ -1061,7 +1029,6 @@ class TestLANRequestHandlerTombstones:
             assert response.status == 200
             assert json.loads(response.read().decode()) == {}
             conn.close()
-            ts_mod.reset_cache()
 
     def test_get_serves_recorded_tombstones(self, server, tmp_path):
         """A locally recorded deletion is returned by the GET endpoint."""
@@ -1074,7 +1041,6 @@ class TestLANRequestHandlerTombstones:
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ts_mod.reset_cache()
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
 
             conn = HTTPConnection("localhost", port, timeout=5)
@@ -1085,7 +1051,6 @@ class TestLANRequestHandlerTombstones:
             data = json.loads(response.read().decode())
             assert data[tombstone_key("gone.txt")] == {"ts": ts, "sha256": "a" * 64}
             conn.close()
-            ts_mod.reset_cache()
 
     def test_post_merges_pushed_payload(self, server, tmp_path):
         """A pushed payload is merged and then visible through the GET endpoint."""
@@ -1101,7 +1066,6 @@ class TestLANRequestHandlerTombstones:
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ts_mod.reset_cache()
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
             payload = {key: {"ts": ts, "sha256": "d" * 64}}
 
@@ -1111,7 +1075,6 @@ class TestLANRequestHandlerTombstones:
 
             # The merged marker is now served back.
             assert ts_mod.get_payload()[key] == {"ts": ts, "sha256": "d" * 64}
-            ts_mod.reset_cache()
 
     def test_post_empty_body_merges_nothing(self, server, tmp_path):
         """An empty body is accepted and merges zero entries."""
@@ -1125,13 +1088,11 @@ class TestLANRequestHandlerTombstones:
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ts_mod.reset_cache()
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
             response = requests.post(url, data=b"", timeout=5)
 
             assert response.status_code == 200
             assert response.json()["merged"] == 0
-            ts_mod.reset_cache()
 
     def test_post_invalid_json_returns_400(self, server, tmp_path):
         """A malformed body is rejected with a 400."""
@@ -1145,9 +1106,7 @@ class TestLANRequestHandlerTombstones:
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ts_mod.reset_cache()
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
             response = requests.post(url, data=b"not-json", timeout=5)
 
             assert response.status_code == 400
-            ts_mod.reset_cache()

@@ -46,27 +46,6 @@ class ConfigurationError(HSyncClientError):
     default_message = "Configuration error"
 
 
-class InvalidLocalPathError(ConfigurationError):
-    """Local directory path is invalid or does not exist."""
-
-    error_code = "HSYNC-C1001"
-    default_message = "Invalid local path"
-
-
-class InvalidServerUrlError(ConfigurationError):
-    """Server URL is invalid."""
-
-    error_code = "HSYNC-C1002"
-    default_message = "Invalid server URL"
-
-
-class InvalidBucketNameError(ConfigurationError):
-    """Bucket name is invalid."""
-
-    error_code = "HSYNC-C1003"
-    default_message = "Invalid bucket name"
-
-
 # =============================================================================
 # Network/Connection Errors (C2XXX)
 # =============================================================================
@@ -93,13 +72,6 @@ class AuthenticationError(NetworkError):
     default_message = "Authentication failed"
 
 
-class WebSocketError(NetworkError):
-    """WebSocket connection error."""
-
-    error_code = "HSYNC-C2003"
-    default_message = "WebSocket error"
-
-
 class ServerError(NetworkError):
     """Server returned an error response."""
 
@@ -117,13 +89,6 @@ class SyncError(HSyncClientError):
 
     error_code = "HSYNC-C3000"
     default_message = "Sync error"
-
-
-class UploadError(SyncError):
-    """File upload failed."""
-
-    error_code = "HSYNC-C3001"
-    default_message = "Upload failed"
 
 
 class DownloadError(SyncError):
@@ -144,13 +109,6 @@ class PermanentDownloadError(DownloadError):
     default_message = "Download permanently failed"
 
 
-class ChecksumError(SyncError):
-    """Checksum verification failed."""
-
-    error_code = "HSYNC-C3003"
-    default_message = "Checksum mismatch"
-
-
 # =============================================================================
 # File Operation Errors (C4XXX)
 # =============================================================================
@@ -161,20 +119,6 @@ class FileOperationError(HSyncClientError):
 
     error_code = "HSYNC-C4000"
     default_message = "File operation failed"
-
-
-class FileReadError(FileOperationError):
-    """Failed to read file."""
-
-    error_code = "HSYNC-C4001"
-    default_message = "File read failed"
-
-
-class FileWriteError(FileOperationError):
-    """Failed to write file."""
-
-    error_code = "HSYNC-C4002"
-    default_message = "File write failed"
 
 
 class PermissionError(FileOperationError):

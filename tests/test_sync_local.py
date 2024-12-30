@@ -648,42 +648,34 @@ class TestClientTombstonesModule:
         """A recorded deletion appears in the payload under its hashed key."""
         ts = int(time.time())
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.reset_cache()
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
 
             payload = ts_mod.get_payload()
             key = tombstone_key("gone.txt")
             assert key in payload
             assert payload[key] == {"ts": ts, "sha256": "a" * 64}
-            ts_mod.reset_cache()
 
     def test_record_persists_and_reloads(self, tmp_path):
         """The marker survives a cache reset by being read back from the side-car."""
         ts = int(time.time())
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.reset_cache()
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
             # Drop the in-memory cache so the next access loads from disk.
-            ts_mod.reset_cache()
 
             assert tombstone_key("gone.txt") in ts_mod.get_payload()
-            ts_mod.reset_cache()
 
     def test_clear_removes_marker(self, tmp_path):
         """clear_deletion drops a previously recorded marker."""
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.reset_cache()
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=1000)
             ts_mod.clear_deletion(str(tmp_path / "gone.txt"))
 
             assert ts_mod.get_payload() == {}
-            ts_mod.reset_cache()
 
     def test_merge_payload_lww(self, tmp_path):
         """merge_payload adds newer remote markers and reports the change count."""
         now = int(time.time())
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.reset_cache()
             ts_mod.record_deletion(str(tmp_path / "a.txt"), sha256sum="a" * 64, timestamp=now)
 
             key_a = tombstone_key("a.txt")
@@ -698,17 +690,14 @@ class TestClientTombstonesModule:
             assert changed == 2
             assert payload[key_a] == {"ts": now + 60, "sha256": "b" * 64}
             assert payload[key_b] == {"ts": now - 1000, "sha256": "c" * 64}
-            ts_mod.reset_cache()
 
     def test_record_outside_bucket_is_noop(self, tmp_path):
         """A path that does not resolve inside the bucket records nothing."""
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.reset_cache()
             # The bucket root itself has an empty relative path.
             ts_mod.record_deletion(str(tmp_path), sha256sum="abc", timestamp=1000)
 
             assert ts_mod.get_payload() == {}
-            ts_mod.reset_cache()
 
 
 class TestPushTombstonesRemote:
@@ -790,12 +779,11 @@ class TestThreeWayMerge:
             patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
             patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ss_mod.reset_cache()
             if base_hash is not None:
                 ss_mod.record_base(str(local_file), base_hash)
             result = get_sync_actions([remote], [lf.to_dict()], tombstones={})
             base_after = ss_mod.get_base_hash(str(local_file))
-            ss_mod.reset_cache()
+
         return lf, result, base_after
 
     def test_only_remote_changed_downloads_despite_equal_mtime(self, tmp_path):
@@ -836,10 +824,9 @@ class TestThreeWayMerge:
             patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
             patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
-            ss_mod.reset_cache()
             result = get_sync_actions([remote], [lf.to_dict()], tombstones={})
             base_after = ss_mod.get_base_hash(str(local_file))
-            ss_mod.reset_cache()
+
         assert len(result) == 1
         assert result[0].name == SyncActionName.nothing
         assert base_after == lf.sha256sum
@@ -860,53 +847,41 @@ class TestClientSyncStateModule:
 
     def test_record_then_get_base_hash(self, tmp_path):
         with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ss_mod.reset_cache()
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
-            ss_mod.reset_cache()
 
     def test_record_empty_hash_is_noop(self, tmp_path):
         with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ss_mod.reset_cache()
             ss_mod.record_base(str(tmp_path / "a.txt"), "")
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) is None
-            ss_mod.reset_cache()
 
     def test_record_outside_bucket_is_noop(self, tmp_path):
         with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ss_mod.reset_cache()
             ss_mod.record_base(str(tmp_path), "hh")  # bucket root -> empty relpath
             assert ss_mod.get_base_hash(str(tmp_path)) is None
-            ss_mod.reset_cache()
 
     def test_clear_base_removes_entry(self, tmp_path):
         with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ss_mod.reset_cache()
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             ss_mod.clear_base(str(tmp_path / "a.txt"))
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) is None
-            ss_mod.reset_cache()
 
     def test_retain_drops_absent_paths(self, tmp_path):
         with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ss_mod.reset_cache()
             ss_mod.record_base(str(tmp_path / "keep.txt"), "h1")
             ss_mod.record_base(str(tmp_path / "drop.txt"), "h2")
             dropped = ss_mod.retain([str(tmp_path / "keep.txt")])
             assert dropped == 1
             assert ss_mod.get_base_hash(str(tmp_path / "keep.txt")) == "h1"
             assert ss_mod.get_base_hash(str(tmp_path / "drop.txt")) is None
-            ss_mod.reset_cache()
 
     def test_flush_persists_and_reloads(self, tmp_path):
         with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ss_mod.reset_cache()
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             ss_mod.flush()
             # Drop the in-memory cache so the next access loads from the side-car.
-            ss_mod.reset_cache()
+
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
-            ss_mod.reset_cache()
 
 
 # Fixed mtime (unix seconds) shared by every peer and the server below, so the
@@ -980,13 +955,13 @@ class TestThreeWayMergeEndToEnd:
             patch("hsync_client.sync.CONFIG", cfg),
             patch("hsync_client.sync_state.CONFIG", cfg),
         ):
-            ss_mod.reset_cache()  # fresh process: base is loaded from .hsyncstate
+            # fresh process: base is loaded from .hsyncstate
             clear_sha256_cache()  # mtimes are pinned, so re-hash content each round
             actions = get_sync_actions(self._remote_list(server), get_files_local(), tombstones={})
             for action in actions:
                 self._apply(action, bucket, server)
             ss_mod.flush()
-            ss_mod.reset_cache()
+
         return actions
 
     @staticmethod

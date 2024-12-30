@@ -36,7 +36,11 @@ from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import DISCOVERY_TIMEOUT_DEFAULT, HSYNC_VERSION
+from hsync_client.constants import (
+    DISCOVERY_TIMEOUT_DEFAULT,
+    HSYNC_VERSION,
+    PEER_TIMEOUT,
+)
 from hsync_client.events import UiEventName, emit_event
 
 # =============================================================================
@@ -52,12 +56,6 @@ HSYNC_LAN_PORT = 0
 
 # Discovery timeout in seconds
 DISCOVERY_TIMEOUT = DISCOVERY_TIMEOUT_DEFAULT
-
-# Heartbeat interval in seconds
-HEARTBEAT_INTERVAL = 5
-
-# Peer timeout (no heartbeat) in seconds
-PEER_TIMEOUT = 15
 
 
 # =============================================================================
@@ -219,10 +217,6 @@ class PeerManager:
         """Get the startup timestamp."""
         return self._startup_time
 
-    def set_master_change_callback(self, callback: Callable[[Peer | None], None]) -> None:
-        """Set callback to be called when master changes."""
-        self._on_master_change = callback
-
     def _is_group_compatible(self, peer_group: str | None) -> bool:
         """
         Check if a peer's group is compatible with this client's group.
@@ -290,16 +284,6 @@ class PeerManager:
                 del self._peers[cid]
                 log.info(f"Peer disconnected: {cid}")
                 self._elect_master()
-
-    def get_peer(self, cid: str) -> Peer | None:
-        """Get a peer by CID."""
-        with self._lock:
-            return self._peers.get(cid)
-
-    def get_all_peers(self) -> list[Peer]:
-        """Get all known peers."""
-        with self._lock:
-            return list(self._peers.values())
 
     def get_alive_peers(self) -> list[Peer]:
         """Get all peers that are still alive."""
@@ -517,32 +501,6 @@ class HsyncServiceListener(ServiceListener):
         self._peer_manager = peer_manager
         self._zeroconf = zeroconf
 
-    def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        """Called when a new service is discovered."""
-        info = zc.get_service_info(type_, name)
-        if info:
-            self._register_peer_from_info(info)
-
-    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        """Called when a service is updated."""
-        info = zc.get_service_info(type_, name)
-        if info:
-            self._register_peer_from_info(info)
-
-    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        """Called when a service is removed."""
-        # Extract CID from service name (format: bucket-cid._hsync._tcp.local.)
-        try:
-            parts = name.split(".")
-            if parts:
-                service_name = parts[0]
-                # Service name format: bucket-cid
-                if "-" in service_name:
-                    cid = service_name.rsplit("-", 1)[-1]
-                    self._peer_manager.remove_peer(cid)
-        except Exception as e:
-            log.debug(f"Error parsing service name on removal: {e}")
-
     def _register_peer_from_info(self, info: ServiceInfo) -> None:
         """Extract peer information from ServiceInfo and register it."""
         try:
@@ -644,6 +602,30 @@ class HsyncServiceListener(ServiceListener):
 
         except Exception as e:
             log.error(f"Error registering peer from service info: {e}")
+
+    def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        """Called when a new service is discovered."""
+        info = zc.get_service_info(type_, name)
+        if info:
+            self._register_peer_from_info(info)
+
+    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        """Called when a service is updated."""
+        info = zc.get_service_info(type_, name)
+        if info:
+            self._register_peer_from_info(info)
+
+    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        """Called when a service is removed."""
+        try:
+            parts = name.split(".")
+            if parts:
+                service_name = parts[0]
+                if "-" in service_name:
+                    cid = service_name.rsplit("-", 1)[-1]
+                    self._peer_manager.remove_peer(cid)
+        except Exception as e:
+            log.debug(f"Error parsing service name on removal: {e}")
 
 
 # =============================================================================
@@ -948,7 +930,3 @@ class LANSync:
                     log.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
             elif changed:
                 log.info("No other peers discovered - this client is alone")
-
-    def is_running(self) -> bool:
-        """Check if LAN sync is running."""
-        return self._running

@@ -6,23 +6,15 @@ import pytest
 
 from hsync_client.exceptions import (
     AuthenticationError,
-    ChecksumError,
     ConfigurationError,
     ConnectionError,
     DownloadError,
     FileOperationError,
-    FileReadError,
-    FileWriteError,
     HSyncClientError,
-    InvalidBucketNameError,
-    InvalidLocalPathError,
-    InvalidServerUrlError,
     NetworkError,
     PermissionError,
     ServerError,
     SyncError,
-    UploadError,
-    WebSocketError,
 )
 
 
@@ -66,28 +58,6 @@ class TestConfigurationErrors:
         assert exc.message == "Configuration error"
         assert isinstance(exc, HSyncClientError)
 
-    def test_invalid_local_path_error(self):
-        """Test InvalidLocalPathError."""
-        exc = InvalidLocalPathError(details={"path": "/invalid/path"})
-        assert exc.error_code == "HSYNC-C1001"
-        assert exc.message == "Invalid local path"
-        assert exc.details == {"path": "/invalid/path"}
-        assert isinstance(exc, ConfigurationError)
-
-    def test_invalid_server_url_error(self):
-        """Test InvalidServerUrlError."""
-        exc = InvalidServerUrlError(message="URL must start with http")
-        assert exc.error_code == "HSYNC-C1002"
-        assert exc.message == "URL must start with http"
-        assert isinstance(exc, ConfigurationError)
-
-    def test_invalid_bucket_name_error(self):
-        """Test InvalidBucketNameError."""
-        exc = InvalidBucketNameError()
-        assert exc.error_code == "HSYNC-C1003"
-        assert exc.message == "Invalid bucket name"
-        assert isinstance(exc, ConfigurationError)
-
 
 class TestNetworkErrors:
     """Tests for network-related exceptions."""
@@ -113,13 +83,6 @@ class TestNetworkErrors:
         assert exc.message == "Invalid API key"
         assert isinstance(exc, NetworkError)
 
-    def test_websocket_error(self):
-        """Test WebSocketError."""
-        exc = WebSocketError()
-        assert exc.error_code == "HSYNC-C2003"
-        assert exc.message == "WebSocket error"
-        assert isinstance(exc, NetworkError)
-
     def test_server_error(self):
         """Test ServerError."""
         exc = ServerError(details={"status_code": 500})
@@ -138,13 +101,6 @@ class TestSyncErrors:
         assert exc.message == "Sync error"
         assert isinstance(exc, HSyncClientError)
 
-    def test_upload_error(self):
-        """Test UploadError."""
-        exc = UploadError(message="Failed to upload file.txt")
-        assert exc.error_code == "HSYNC-C3001"
-        assert exc.message == "Failed to upload file.txt"
-        assert isinstance(exc, SyncError)
-
     def test_download_error(self):
         """Test DownloadError."""
         exc = DownloadError()
@@ -152,37 +108,12 @@ class TestSyncErrors:
         assert exc.message == "Download failed"
         assert isinstance(exc, SyncError)
 
-    def test_checksum_error(self):
-        """Test ChecksumError."""
-        exc = ChecksumError(details={"expected": "abc123", "actual": "def456"})
-        assert exc.error_code == "HSYNC-C3003"
-        assert exc.message == "Checksum mismatch"
-        assert isinstance(exc, SyncError)
-
-
-class TestFileOperationErrors:
-    """Tests for file operation exceptions."""
-
     def test_file_operation_error(self):
         """Test FileOperationError."""
         exc = FileOperationError()
         assert exc.error_code == "HSYNC-C4000"
         assert exc.message == "File operation failed"
         assert isinstance(exc, HSyncClientError)
-
-    def test_file_read_error(self):
-        """Test FileReadError."""
-        exc = FileReadError(details={"file": "/path/to/file.txt"})
-        assert exc.error_code == "HSYNC-C4001"
-        assert exc.message == "File read failed"
-        assert isinstance(exc, FileOperationError)
-
-    def test_file_write_error(self):
-        """Test FileWriteError."""
-        exc = FileWriteError(message="Disk full")
-        assert exc.error_code == "HSYNC-C4002"
-        assert exc.message == "Disk full"
-        assert isinstance(exc, FileOperationError)
 
     def test_permission_error(self):
         """Test PermissionError."""
@@ -199,21 +130,13 @@ class TestExceptionHierarchy:
         """Test that all exceptions inherit from HSyncClientError."""
         exceptions = [
             ConfigurationError,
-            InvalidLocalPathError,
-            InvalidServerUrlError,
-            InvalidBucketNameError,
             NetworkError,
             ConnectionError,
             AuthenticationError,
-            WebSocketError,
             ServerError,
             SyncError,
-            UploadError,
             DownloadError,
-            ChecksumError,
             FileOperationError,
-            FileReadError,
-            FileWriteError,
             PermissionError,
         ]
         for exc_class in exceptions:
@@ -227,12 +150,12 @@ class TestExceptionHierarchy:
 
         # Catch SyncError subclasses
         with pytest.raises(SyncError):
-            raise UploadError()
+            raise DownloadError()
 
         # Catch FileOperationError subclasses
         with pytest.raises(FileOperationError):
-            raise FileReadError()
+            raise PermissionError()
 
         # Catch all by base class
         with pytest.raises(HSyncClientError):
-            raise InvalidBucketNameError()
+            raise ConfigurationError()
