@@ -44,6 +44,13 @@ from hsync_client.constants import (
     UPLOAD_RESCHEDULE_DELAY_DEFAULT,
     ActionLabel,
 )
+from hsync_client.delta_transfer import (
+    DeltaTransferError,
+    download_file_delta,
+    prepare_delta_download,
+    prepare_delta_upload,
+    upload_file_delta,
+)
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import PermanentDownloadError, ServerError
 from hsync_client.retry import retry_on_transient_transfer_error
@@ -347,6 +354,25 @@ def _download_file_attempt(file: File) -> None:
         if file.mtime is not None and local_mtime >= file.mtime:
             nothing_to_do(file)
             return
+
+    # Delta branch: when the local file IS the recorded base, only the changed
+    # blocks need to cross the wire. Any recoverable failure falls through to
+    # the full-download body below (same attempt, retry policy unchanged).
+    if delta_ctx := prepare_delta_download(file, full_save_path):
+        try:
+            download_file_delta(file, delta_ctx)
+            log.info(f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)}')
+            emit_event(
+                UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0
+            )
+            if file.mtime is not None:
+                utime(full_save_path, (file.mtime, file.mtime))
+            if file.permissions:
+                set_permissions(full_save_path, file.permissions)
+            _record_synced_base(file)
+            return
+        except (DeltaTransferError, OSError) as exc:
+            log.warning(f'Delta download for "{file.filepath}" fell back to full transfer ({exc})')
 
     # Check for existing partial file and determine resume offset
     resume_offset = 0
@@ -843,6 +869,23 @@ def _upload_file_attempt(file: File) -> None:
         prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
         path = str(Path(file.filepath).parent).rstrip("/").removeprefix(prefix).lstrip("/")
         filename = f"{path}/{Path(file.filepath).name}" if path else Path(file.filepath).name
+
+        # Delta branch: when the peer still holds the recorded base, only the
+        # changed blocks need to cross the wire. Any recoverable failure falls
+        # through to the full-upload body below (same attempt, retry unchanged).
+        if delta_ctx := prepare_delta_upload(file, filename):
+            try:
+                upload_file_delta(file, delta_ctx)
+                log.info(f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)}')
+                emit_event(
+                    UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
+                )
+                _record_synced_base(file)
+                return
+            except (DeltaTransferError, OSError) as exc:
+                log.warning(
+                    f'Delta upload for "{file.filepath}" fell back to full transfer ({exc})'
+                )
 
         # Check for resumable upload
         if file.sha256sum is None:

@@ -14,6 +14,7 @@ and provides typed configuration structures for the application.
 from functools import lru_cache
 from typing import Any, TypedDict, cast
 
+from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_LAN
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
 from pydantic import Field, SecretStr
@@ -105,6 +106,19 @@ class EnvSettings(BaseSettings):
     )
     compression_enabled: bool = Field(
         default=True, description="Enable zstd compression for file transfers"
+    )
+    delta_enabled: bool = Field(
+        default=True, description="Enable rsync-style delta transfer (block-level sync)"
+    )
+    delta_min_file_size: int = Field(
+        default=DELTA_MIN_FILE_SIZE,
+        ge=0,
+        description="Minimum file size in bytes for delta transfer (remote mode)",
+    )
+    delta_min_file_size_lan: int = Field(
+        default=DELTA_MIN_FILE_SIZE_LAN,
+        ge=0,
+        description="Minimum file size in bytes for delta transfer in LAN mode",
     )
     sync_hidden: bool = Field(
         default=False,
@@ -245,6 +259,21 @@ def get_compression_enabled() -> bool:
     return get_env_settings().compression_enabled
 
 
+def get_delta_enabled() -> bool:
+    """Get delta transfer enabled setting from environment."""
+    return get_env_settings().delta_enabled
+
+
+def get_delta_min_file_size() -> int:
+    """Get the minimum file size for delta transfer (remote mode)."""
+    return get_env_settings().delta_min_file_size
+
+
+def get_delta_min_file_size_lan() -> int:
+    """Get the minimum file size for delta transfer in LAN mode."""
+    return get_env_settings().delta_min_file_size_lan
+
+
 def get_sync_hidden() -> bool:
     """Get sync-hidden setting from environment."""
     return get_env_settings().sync_hidden
@@ -376,6 +405,10 @@ class HsyncConfig(TypedDict):
     COMPRESSION_ENABLED: bool
     # Server compression capability (set at runtime after handshake)
     SERVER_COMPRESSION_ENABLED: bool
+    # Enable rsync-style delta transfer (block-level sync)
+    DELTA_ENABLED: bool
+    # Peer delta capability (set at runtime after handshake / master election)
+    SERVER_DELTA_ENABLED: bool
     # Sync direction: "bidirectional", "upload-only", or "download-only"
     SYNC_DIRECTION: str
     # Maximum upload bandwidth in bytes per second (None = unlimited)

@@ -421,6 +421,7 @@ def _run_as_slave(
 
         # Set compression capability based on master peer
         config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
+        config["SERVER_DELTA_ENABLED"] = master.delta_enabled
 
         set_config(config)
 
