@@ -41,7 +41,7 @@ Flags map to env keys; capabilities JSON is built from
 | `set_config` / `get_config` | `:397` / `:422` | write/read the global |
 | `set_debug` / `is_debug` | `:411` / `:432` | debug flag |
 | `load_env_file` | `:33` | dotenv loader |
-| typed getters | `:154`–`:265` | `get_server_url`, `get_api_key`, LAN getters, guard getters, etc. |
+| typed getters | `:154`–`:265` | `get_server_url`, `get_api_key`, LAN getters, guard getters, delta getters (`get_delta_enabled`, `get_delta_min_file_size`, `get_delta_min_file_size_lan`), etc. |
 
 ## Constants & validators
 
@@ -51,7 +51,8 @@ Flags map to env keys; capabilities JSON is built from
   (  `MAX_DOWNLOAD_SIZE_MB_*`, default 10 GB — absolute anti-bomb cap applied as
   `min(declared, cap)` to downloads and received LAN uploads, wired into
   `CONFIG["MAX_DOWNLOAD_SIZE"]` in bytes), inotify (`:176`/`:178`); visual
-  `ActionLabel` enum (`:195`).
+   `ActionLabel` enum (`:195`); delta transfer (`:185`–`:189`: `DELTA_ENABLED`,
+   `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_LAN` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB).
 - `validators.py` — range validators via `create_int_range_validator` (`:33`):
   `valid_reconnect_delay` (`:72`), `valid_resync` (`:96`), `valid_bucket` (`:120`),
   `valid_stability_delay` (`:144`), `valid_http_timeout` (`:168`),

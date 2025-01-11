@@ -148,6 +148,9 @@ option to configure.
 | Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |
 | Bandwidth limits    | `--max-bandwidth-upload/--download`            | unlimited                        |
 | Compression         | `--no-compression`                             | enabled                          |
+| Delta transfer      | `HSYNC_DELTA_ENABLED`                          | enabled                          |
+| Delta min size      | `HSYNC_DELTA_MIN_FILE_SIZE`                    | `262144` (256 KB)                |
+| Delta min size LAN  | `HSYNC_DELTA_MIN_FILE_SIZE_LAN`                | `1048576` (1 MB)                 |
 | Min free disk space | `--min-free-disk-space`                        | service default                  |
 | Max inbound size    | `--max-download-size`                          | service default                  |
 | Max concurrent      | `--max-concurrent-transfers`                   | `5`                              |

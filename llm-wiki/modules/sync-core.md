@@ -24,12 +24,34 @@ and LAN modes.
 Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:653`,
 `MTIME_TOLERANCE` `:650`).
 
+## delta_transfer.py — rsync-style block sync
+
+Delta transfer reduces bandwidth for large files with small changes by transferring
+only changed blocks. Integrated transparently into `transfer.py` upload/download paths.
+
+| Symbol | Line | Role |
+| ------ | ---- | ---- |
+| `upload_delta` | `delta_transfer.py:45` | GET signatures → rolling match → POST apply; fallback to full upload on failure |
+| `download_delta` | `delta_transfer.py:120` | POST signatures → GET data → rebuild; fallback to full download on failure |
+| `should_use_delta` | `delta_transfer.py:25` | gate: size threshold, base hash exists, capability check, direction logic |
+
+Delta transfer is **enabled by default** (`HSYNC_DELTA_ENABLED=true`). Size thresholds:
+≥ 256 KB server mode, ≥ 1 MB LAN mode (configurable via `HSYNC_DELTA_MIN_FILE_SIZE`
+and `HSYNC_DELTA_MIN_FILE_SIZE_LAN`). Falls back to full transfer on any failure
+(network error, hash mismatch, peer doesn't support delta).
+
+**TOCTOU protection**: After the rolling scan, the client re-checks mtime+size. For
+files smaller than 10 MB (`DELTA_TOCTOU_REHASH_THRESHOLD`), it also does a full SHA-256
+re-hash to catch content changes that mtime+size alone miss (e.g., rapid edits within
+the same second). If the file changed during the scan, the delta is aborted and the
+caller falls back to a full transfer.
+
 ## transfer.py — file I/O over HTTP(S)
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `download_file` / `_download_file_attempt` | `transfer.py:270` / `:316` | retry wrapper + one attempt (raises transient → retry) |
-| `upload_file` / `_upload_file_attempt` | `transfer.py:697` / `:770` | retry wrapper + one attempt; resumable via `.part` + offset |
+| `download_file` / `_download_file_attempt` | `transfer.py:270` / `:316` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta` |
+| `upload_file` / `_upload_file_attempt` | `transfer.py:697` / `:770` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta` |
 | `_get_upload_status` | `transfer.py:598` | query server for resume offset |
 | `is_file_stable` / `_wait_for_stable_file` | `transfer.py:542` / `:635` | size+mtime stability gate; fast path on `from_closed` |
 | `_reschedule_upload` | `transfer.py:671` | §15: defer torn-file uploads (bounded) |
