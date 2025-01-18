@@ -298,3 +298,4 @@ config.delta_enabled = False
 - [Configuration](configuration.md) — environment variables and CLI options.
 - [Sync Modes](sync-modes.md) — single, watch, and LAN mode comparison.
 - [Server Sync Flow](https://github.com/albertobasso/hsync-server/blob/main/docs/sync-flow.md) — the server's perspective.
+- [Server Delta Transfer Guide](https://github.com/albertobasso/hsync-server/blob/main/docs/delta-transfer.md) — server-side delta transfer endpoints and configuration.
