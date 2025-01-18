@@ -15,6 +15,7 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_RESYNC` | Periodic full-resync interval (seconds) in continuous mode; `0` disables it | `300` |
 | `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
+| `HSYNC_COMPRESSION_ENABLED` | Enable zstd compression for file transfers | `true` |
 | `HSYNC_DELTA_ENABLED` | Enable rsync-style delta transfer for large files | `true` |
 | `HSYNC_DELTA_MIN_FILE_SIZE` | Minimum file size (bytes) for delta transfer in server mode | `262144` (256 KB) |
 | `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Minimum file size (bytes) for delta transfer in LAN mode | `1048576` (1 MB) |
@@ -49,6 +50,17 @@ source dev.env
 # Production (HTTPS, remote server)
 source prod.env
 ```
+
+### Log rotation
+
+When file logging is enabled with `-o/--output` (or `HSYNC_LOG_FILE`), the
+client rotates logs automatically via Loguru. Configure rotation with:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HSYNC_LOG_ROTATION` | `10 MB` | Rotate when the log file reaches this size (examples: `100 MB`, `1 GB`, `1 day`) |
+| `HSYNC_LOG_RETENTION` | `7 days` | Keep rotated logs for this duration (examples: `30 days`, `1 month`, `5` files) |
+| `HSYNC_LOG_COMPRESSION` | `xz` | Compression for rotated logs (`gz`, `bz2`, `xz`, `tar.gz`, `zip`, …) |
 
 ## CLI Options
 
@@ -216,6 +228,7 @@ protocol internals see [LAN Internals](lan-internals.md).
 | `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
 | `HSYNC_NEVER_MASTER` | Never become master (`true`/`false`) | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Strict pairing — disable TOFU auto-pinning (`true`/`false`) | `false` |
+| `HSYNC_LAN_HTTPS` | Use HTTPS for LAN peer communication (always on; self-signed cert generated per master) | `true` |
 | `HSYNC_LAN_CERT_DIR` | Directory holding the persistent LAN master keypair | `$XDG_STATE_HOME/hsync/lan_cert` or `~/.local/state/hsync/lan_cert` |
 | `HSYNC_LAN_PIN_FILE` | File storing the pinned fingerprints of known LAN peers (TOFU) | `$XDG_STATE_HOME/hsync/lan_known_peers.json` or `~/.local/state/hsync/lan_known_peers.json` |
 
