@@ -14,3 +14,7 @@
 2. Check the [documentation](docs/README.md) — the installation, configuration, and usage guides cover common issues.
 3. Run with verbose output (`-v`) to see detailed log messages.
 4. Verify your configuration: `HSYNC_SERVER` and `HSYNC_API_KEY` must be set (Server Mode), or `--lan-mode` with a reachable LAN peer.
+
+## 💚 Solo project
+
+HSYNC is developed entirely by a single person in their spare time. Feature requests, bug reports, and pull requests are reviewed as soon as possible, but response times may vary. The developer does their best to maintain and improve the project — thank you for your patience and support!
