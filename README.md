@@ -100,7 +100,7 @@ poetry install
 # Run  (replace <platform> with your os-arch, e.g. linux-amd64)
 # The client refuses to send the API key over plain HTTP: use https://.
 # For local development with a self-signed certificate, add --insecure.
-./dist/<platform>/hsync -s https://localhost:8765 -b mybucket -p /path/to/dir -w
+./dist/<platform>/hsync -s https://localhost:9753 -b mybucket -p /path/to/dir -w
 ```
 
 See [Getting Started](docs/getting-started.md) for detailed instructions.

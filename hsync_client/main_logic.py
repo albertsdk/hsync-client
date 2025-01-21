@@ -642,7 +642,7 @@ def run_sync(
 
     # In LAN mode without server URL, use placeholder
     if lan_mode and not effective_server_url:
-        effective_server_url = "http://localhost:8765"
+        effective_server_url = "http://localhost:9753"
 
     # At this point, effective_server_url is guaranteed to be set
     # (either from args, env, or LAN mode placeholder)

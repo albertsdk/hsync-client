@@ -429,7 +429,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        handler = LANSlaveFileEventHandler("host", 8765, use_https=False)
+        handler = LANSlaveFileEventHandler("host", 9753, use_https=False)
 
         with (
             patch("hsync_client.event_dispatch.CONFIG", config),

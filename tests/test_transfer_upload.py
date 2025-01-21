@@ -1032,7 +1032,7 @@ class TestBuildMultipartStreaming:
         prepared = Session().prepare_request(
             Request(
                 "POST",
-                "https://localhost:8765/x",
+                "https://localhost:9753/x",
                 headers={"Content-Type": content_type},
                 data=body,
             )

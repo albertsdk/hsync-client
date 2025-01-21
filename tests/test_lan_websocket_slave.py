@@ -26,15 +26,15 @@ class TestSlaveFileEventHandler:
         """Create a LANSlaveFileEventHandler instance."""
         return LANSlaveFileEventHandler(
             master_host="192.168.1.100",
-            master_port=8765,
+            master_port=9753,
             use_https=False,
         )
 
     def test_handler_creation(self):
         """Test creating a client file event handler."""
-        handler = LANSlaveFileEventHandler("192.168.1.100", 8765, use_https=True)
+        handler = LANSlaveFileEventHandler("192.168.1.100", 9753, use_https=True)
         assert handler._master_host == "192.168.1.100"
-        assert handler._master_port == 8765
+        assert handler._master_port == 9753
         assert handler._use_https is True
         assert handler._last_modified == {}
         assert handler._receiving_files == set()

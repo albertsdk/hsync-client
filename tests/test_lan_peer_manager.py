@@ -36,7 +36,7 @@ class TestPeerManager:
                 cid="zzz999",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=200.0,
             )
         )
@@ -51,7 +51,7 @@ class TestPeerManager:
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=100.0,
             )
         )
@@ -65,7 +65,7 @@ class TestPeerManager:
         """Test that local client is master when alone."""
         pm = PeerManager(local_cid="local123", bucket="photos")
         # Trigger election by adding and removing a peer
-        pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=8765))
+        pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=9753))
         pm.remove_peer("temp")
         assert pm.is_master() is True
 
@@ -83,7 +83,7 @@ class TestPeerManager:
                 cid="zzz999",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=100.0,
                 sync_direction="bidirectional",
             )
@@ -104,7 +104,7 @@ class TestPeerManager:
                 cid="zzz999",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=100.0,
                 sync_direction="bidirectional",
             )
@@ -127,7 +127,7 @@ class TestPeerManager:
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=100.0,
                 sync_direction="bidirectional",
             )
@@ -148,7 +148,7 @@ class TestPeerManager:
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=200.0,
                 sync_direction="download-only",
             )
@@ -171,7 +171,7 @@ class TestPeerManager:
                     cid="zzz999",
                     bucket="photos",
                     address="192.168.1.100",
-                    port=8765,
+                    port=9753,
                     startup_time=200.0,
                     sync_direction="download-only",
                 )
@@ -197,7 +197,7 @@ class TestPeerManager:
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=100.0,
                 sync_direction="upload-only",
             )
@@ -217,7 +217,7 @@ class TestPeerManager:
                 cid="alive1",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
             )
         )
         # Add dead peer
@@ -226,7 +226,7 @@ class TestPeerManager:
                 cid="dead1",
                 bucket="photos",
                 address="192.168.1.101",
-                port=8765,
+                port=9753,
                 last_seen=time.time() - PEER_TIMEOUT - 10,
             )
         )
@@ -252,7 +252,7 @@ class TestPeerManager:
                     cid="remote",
                     bucket="photos",
                     address="192.168.1.100",
-                    port=8765,
+                    port=9753,
                     force_master=True,
                     startup_time=50.0,
                 )
@@ -281,7 +281,7 @@ class TestPeerManager:
                 cid="old_master",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 force_master=False,
                 startup_time=200.0,
             )
@@ -295,7 +295,7 @@ class TestPeerManager:
                     cid="new_force",
                     bucket="photos",
                     address="192.168.1.101",
-                    port=8765,
+                    port=9753,
                     force_master=True,
                     startup_time=50.0,
                 )
@@ -324,7 +324,7 @@ class TestPeerManager:
                 cid="incumbent",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 server_ready=True,
                 startup_time=200.0,
             )
@@ -351,7 +351,7 @@ class TestPeerManager:
                 cid="new_force",
                 bucket="photos",
                 address="192.168.1.101",
-                port=8765,
+                port=9753,
                 force_master=True,
                 startup_time=50.0,
             )
@@ -375,7 +375,7 @@ class TestPeerManager:
                     cid="peer1",
                     bucket="photos",
                     address="192.168.1.100",
-                    port=8765,
+                    port=9753,
                     startup_time=200.0,
                 )
             )
@@ -404,7 +404,7 @@ class TestPeerManager:
                     cid="peer1",
                     bucket="photos",
                     address="192.168.1.100",
-                    port=8765,
+                    port=9753,
                     startup_time=100.0,
                 )
             )
@@ -423,7 +423,7 @@ class TestNeverMaster:
     def test_local_never_master_not_elected_when_alone(self):
         """A lone never-master client elects no master (stays client)."""
         pm = PeerManager(local_cid="local123", bucket="photos", never_master=True)
-        pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=8765))
+        pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=9753))
         pm.remove_peer("temp")
         assert pm.is_master() is False
         assert pm.get_master_cid() is None
@@ -441,7 +441,7 @@ class TestNeverMaster:
                 cid="zzz999",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=200.0,
             )
         )
@@ -456,7 +456,7 @@ class TestNeverMaster:
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 startup_time=100.0,
                 never_master=True,
             )
@@ -474,7 +474,7 @@ class TestNeverMaster:
                 cid="peer1",
                 bucket="photos",
                 address="192.168.1.100",
-                port=8765,
+                port=9753,
                 never_master=True,
             )
         )

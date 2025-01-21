@@ -269,7 +269,7 @@ token.
 
 ```bash
 # Standard HTTPS connection (certificate verified against system CA store)
-hsync -s https://server.example.com:8765 -b mybucket
+hsync -s https://server.example.com:9753 -b mybucket
 ```
 
 ### Connecting to a Server with Self-Signed Certificate
@@ -283,14 +283,14 @@ When the server uses a self-signed certificate, you have two options:
 scp server:/path/to/certs/server.crt ./server.crt
 
 # Connect using the CA certificate
-hsync -s https://server:8765 -b mybucket --ca-cert server.crt
+hsync -s https://server:9753 -b mybucket --ca-cert server.crt
 ```
 
 **Option 2: Disable SSL verification (not recommended for production)**
 
 ```bash
 # Skip certificate verification (insecure!)
-hsync -s https://server:8765 -b mybucket --insecure
+hsync -s https://server:9753 -b mybucket --insecure
 ```
 
 > ⚠️ **Warning**: Using `--insecure` disables all SSL certificate verification, making the connection vulnerable to man-in-the-middle attacks. Only use this for testing.
@@ -299,12 +299,12 @@ hsync -s https://server:8765 -b mybucket --insecure
 
 **Watch mode with self-signed certificate:**
 ```bash
-hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
+hsync -s https://server:9753 -b mybucket -w --ca-cert server.crt
 ```
 
 **Dry-run with HTTPS:**
 ```bash
-hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
+hsync -s https://server:9753 -b mybucket -n --ca-cert server.crt
 ```
 
 ## File Compression
@@ -395,13 +395,13 @@ HSYNC supports upload and download bandwidth limiting using a **token bucket** a
 
 ```bash
 # Limit upload to 1 MB/s
-hsync -s https://server.example.com:8765 -b mybucket -w --max-bandwidth-upload 1MB
+hsync -s https://server.example.com:9753 -b mybucket -w --max-bandwidth-upload 1MB
 
 # Limit download to 500 KB/s
-hsync -s https://server.example.com:8765 -b mybucket -w --max-bandwidth-download 500KB
+hsync -s https://server.example.com:9753 -b mybucket -w --max-bandwidth-download 500KB
 
 # Limit both directions
-hsync -s https://server.example.com:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
+hsync -s https://server.example.com:9753 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
 ```
 
 ### Supported Formats
@@ -493,7 +493,7 @@ will then be applied:
 
 ```bash
 # Sync hidden files too, but still exclude build artefacts via .hsyncignore
-hsync -s https://server.example.com:8765 -b mybucket --sync-hidden
+hsync -s https://server.example.com:9753 -b mybucket --sync-hidden
 ```
 
 ### Extra patterns via CLI
@@ -501,7 +501,7 @@ hsync -s https://server.example.com:8765 -b mybucket --sync-hidden
 Pass extra patterns without creating a `.hsyncignore` file:
 
 ```bash
-hsync -s https://server.example.com:8765 -b mybucket --ignore-patterns "*.log,/build/,/dist/"
+hsync -s https://server.example.com:9753 -b mybucket --ignore-patterns "*.log,/build/,/dist/"
 ```
 
 ### Hot-reload

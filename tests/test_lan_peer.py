@@ -20,12 +20,12 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
         )
         assert peer.cid == "abc123"
         assert peer.bucket == "photos"
         assert peer.address == "192.168.1.100"
-        assert peer.port == 8765
+        assert peer.port == 9753
         assert peer.version == "0.0.0"  # Default version
 
     def test_peer_creation_with_version(self):
@@ -34,7 +34,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
             version="0.1.0",
         )
         assert peer.version == "0.1.0"
@@ -45,7 +45,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
         )
         assert peer.is_alive() is True
 
@@ -55,7 +55,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
             last_seen=time.time() - PEER_TIMEOUT - 1,
         )
         assert peer.is_alive() is False
@@ -66,7 +66,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
             last_seen=time.time() - 100,
         )
         assert peer.is_alive() is False
@@ -79,9 +79,9 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
         )
-        assert peer.get_server_url() == "http://192.168.1.100:8765"
+        assert peer.get_server_url() == "http://192.168.1.100:9753"
 
     def test_peer_get_server_url_https(self):
         """Test getting the HTTPS server URL for a peer."""
@@ -89,11 +89,11 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
             use_https=True,
             cert_fingerprint="abc123def456",
         )
-        assert peer.get_server_url() == "https://192.168.1.100:8765"
+        assert peer.get_server_url() == "https://192.168.1.100:9753"
 
     def test_peer_https_fields(self):
         """Test HTTPS-related fields on Peer."""
@@ -101,7 +101,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
             use_https=True,
             cert_fingerprint="abc123def456789",
         )
@@ -114,7 +114,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
         )
         assert peer.use_https is False
         assert peer.cert_fingerprint is None
@@ -125,7 +125,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
         )
         assert peer.sync_direction == "bidirectional"
 
@@ -135,7 +135,7 @@ class TestPeer:
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
-            port=8765,
+            port=9753,
             sync_direction="upload-only",
         )
         assert peer.sync_direction == "upload-only"

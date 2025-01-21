@@ -40,10 +40,10 @@ See [Sync Modes](sync-modes.md#operating-modes-server-vs-lan) for a full compari
 
 ```bash
 # Single sync
-hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir
+hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 
 # Continuous sync (watch mode)
-hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir -w
+hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir -w
 ```
 
 > For local development with a self-signed certificate, add `--insecure` and
@@ -67,7 +67,7 @@ running locally (Docker or Poetry) with `HSYNC_API_KEY` set.
 
 ```bash
 # 1. Start the server (see the server docs for Docker/Poetry setup)
-#    It listens on https://localhost:8765 with a self-signed cert.
+#    It listens on https://localhost:9753 with a self-signed cert.
 
 # 2. Create two empty folders to sync
 mkdir -p /tmp/hsync-a /tmp/hsync-b
@@ -76,10 +76,10 @@ mkdir -p /tmp/hsync-a /tmp/hsync-b
 echo "hello hsync" > /tmp/hsync-a/hello.txt
 
 # 4. Sync folder A → server (one-shot, self-signed cert)
-hsync -s https://localhost:8765 -b demo -p /tmp/hsync-a --insecure
+hsync -s https://localhost:9753 -b demo -p /tmp/hsync-a --insecure
 
 # 5. Sync server → folder B (one-shot, self-signed cert)
-hsync -s https://localhost:8765 -b demo -p /tmp/hsync-b --insecure
+hsync -s https://localhost:9753 -b demo -p /tmp/hsync-b --insecure
 
 # 6. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
@@ -107,7 +107,7 @@ the full explanation.
 Set the required variables in your shell or export them in a `.env` file:
 
 ```bash
-export HSYNC_SERVER="https://server.example.com:8765"
+export HSYNC_SERVER="https://server.example.com:9753"
 export HSYNC_API_KEY="your-api-key"
 ```
 
