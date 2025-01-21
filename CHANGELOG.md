@@ -131,6 +131,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs**: Note in the user documentation (`README.md`, `faq.md`) that the
   desktop GUI (`hsync-desktop`) and Android app (`hsync-android`) are still
   under active development and not yet ready for production use.
+- **Docs**: The `README.md` Quick Start now shows both run modes side by side:
+  the existing Server Mode command and a new LAN Mode one-liner
+  (`hsync -b <bucket> -p <path> --lan-mode`), so the peer-to-peer path — the
+  simplest to try, since it needs no server or API key — is visible on the
+  project's landing page instead of only in `docs/`.
+- **Docs**: Expanded the client FAQ (`docs/faq.md`) with six new entries:
+  basic concepts (bucket, server/client, master/slave roles), why the periodic
+  resync exists and why the file-system watcher can miss events, whether
+  hidden files and directories are synced by default, running multiple hsync
+  instances on the same machine, how to update to a new version, and what the
+  `.hsyncstate` / `.hsynctombstones` side-car files are.
+- **Docs**: Added a "Key terms" glossary table to `docs/getting-started.md`
+  (bucket, Server/LAN Mode, master/slave, watch mode, side-cars) so the core
+  vocabulary is defined in one place before the first-run walkthrough.
 - **Perf**: `_record_synced_base()` no longer calls `flush()` after every
   transfer. The merged sync-state is now persisted only once at the end of
   the sync cycle (in `sync_state.flush()`), avoiding redundant per-file
