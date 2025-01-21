@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Installer script** (`install.sh`): a self-contained installer for Linux and
+  macOS that detects the host platform, downloads the correct prebuilt binary
+  from GitHub Releases, verifies its SHA-256 checksum, installs it to
+  `~/.local/share/hsync-client`, and creates a symlink in `~/.local/bin`.
+  Published as `install-<version>.sh` in every release. Clears the macOS
+  quarantine flag automatically.
+- **Unified archive naming**: prebuilt binary archives now use the
+  `hsync-client-<version>-<target>` prefix (was `hsync-<version>-<target>`),
+  matching the Debian package naming and the `hsync-client` project identity.
 - **Delta transfer (rsync-style block sync)**: for large files with small
   changes, only the changed blocks are transferred instead of the whole file.
   Delta transfer is attempted automatically when the file is ≥ 256 KB (server

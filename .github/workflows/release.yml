@@ -108,9 +108,9 @@ jobs:
           mkdir -p release-out
           cd "dist/${{ matrix.target }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a "../../release-out/hsync-${version}-${{ matrix.target }}.zip" hsync.exe
+            7z a "../../release-out/hsync-client-${version}-${{ matrix.target }}.zip" hsync.exe
           else
-            tar czf "../../release-out/hsync-${version}-${{ matrix.target }}.tar.gz" hsync
+            tar czf "../../release-out/hsync-client-${version}-${{ matrix.target }}.tar.gz" hsync
           fi
       - uses: actions/upload-artifact@v7
         with:
@@ -190,6 +190,11 @@ jobs:
           # Move every file to the top level for flat release assets.
           find . -mindepth 2 -type f -exec mv -t . {} +
           find . -mindepth 1 -type d -empty -delete
+      - name: Prepare installer
+        run: |
+          sed "s/^readonly DEFAULT_VERSION=.*/readonly DEFAULT_VERSION=\"${{ steps.tag.outputs.tag }}\"/" \
+            hsync-client/install.sh > "assets/install-${{ steps.tag.outputs.tag }}.sh"
+          chmod 755 "assets/install-${{ steps.tag.outputs.tag }}.sh"
       - name: Generate checksums
         run: |
           cd assets

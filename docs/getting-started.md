@@ -2,8 +2,9 @@
 
 This guide will help you get HSYNC up and running quickly.
 
-> **Already have a binary?** If you've installed a prebuilt binary, `.deb`, or
-> WD OS5 `.bin` (see [Installation](installation.md)), jump straight to
+> **Already have a binary?** If you've installed the client via the installer
+> script, a prebuilt binary, `.deb`, or WD OS5 `.bin` (see
+> [Installation](installation.md)), jump straight to
 > [Choose an Operating Mode](#2-choose-an-operating-mode).
 
 ## Requirements
@@ -16,12 +17,10 @@ required. To **build** it from source, see the prerequisites in
 
 ### 1. Get the Client
 
-Download a prebuilt binary (recommended) or build it from source — both paths are
-covered in [Installation](installation.md). The rest of this guide assumes you
-have a working `hsync` binary.
-
-> **Note**: `<platform>` in the examples below is a shorthand for `<os>-<arch>`
-> (e.g. `linux-amd64`, `darwin-arm64`, `windows-amd64`).
+The quickest way on Linux and macOS is the
+[installer script](installation.md#installer-script-recommended); for all other
+platforms and formats see [Installation](installation.md). The rest of this
+guide assumes you have a working `hsync` binary.
 
 ### 2. Choose an Operating Mode
 

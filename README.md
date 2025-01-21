@@ -91,19 +91,37 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 
 ## Quick Start
 
-```bash
-# Build
-poetry install
-./compile.sh
-# Binary output: dist/<os>-<arch>/hsync  (e.g. dist/linux-amd64/hsync)
+Download the installer, verify it, and run — no Python or build tools required
+(Linux and macOS):
 
-# Run  (replace <platform> with your os-arch, e.g. linux-amd64)
-# The client refuses to send the API key over plain HTTP: use https://.
-# For local development with a self-signed certificate, add --insecure.
-./dist/<platform>/hsync -s https://localhost:9753 -b mybucket -p /path/to/dir -w
+```bash
+VERSION=v1.0.0
+
+# 1. Download the installer and checksums
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install-${VERSION}.sh"
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/SHA256SUMS"
+
+# 2. Verify the download
+sha256sum -c SHA256SUMS --ignore-missing
+
+# 3. Run the installer (detects your platform, downloads and verifies the binary)
+chmod 700 install-${VERSION}.sh
+./install-${VERSION}.sh
+hsync --help
 ```
 
-See [Getting Started](docs/getting-started.md) for detailed instructions.
+Connect to an HSYNC server (the client refuses to send the API key over plain
+HTTP — use `https://`; add `--insecure` only for local development with a
+self-signed certificate):
+
+```bash
+hsync -s https://localhost:9753 -b mybucket -p /path/to/dir -w
+```
+
+See [Installation](docs/installation.md) for all platforms and formats, and
+[Getting Started](docs/getting-started.md) for the first-run walkthrough. To
+build from source instead, see
+[Installation → Build from source](docs/installation.md#build-from-source).
 
 ## Quick Overview
 
