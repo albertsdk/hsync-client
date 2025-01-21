@@ -247,7 +247,7 @@ user-facing summary is in [LAN Mode → Security & Pairing](lan-mode.md#security
 │           │                                             │        │
 │   ┌───────▼────────┐        HTTPS handshake             │        │
 │   │ Start HTTPS    │ <───────────────────────  ┌────────▼───────┐│
-│   │ server         │   pinned at connection     │ Pin fingerprint││
+│   │ server         │   pinned at connection    │ Pin fingerprint││
 │   └────────────────┘                           │ (assert_fp)    ││
 │                                                └────────────────┘│
 └──────────────────────────────────────────────────────────────────┘
