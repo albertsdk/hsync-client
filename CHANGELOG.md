@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   macOS that detects the host platform, downloads the correct prebuilt binary
   from GitHub Releases, verifies its SHA-256 checksum, installs it to
   `~/.local/share/hsync-client`, and creates a symlink in `~/.local/bin`.
-  Published as `install-<version>.sh` in every release. Clears the macOS
+  Published as `install.sh` in every release. Clears the macOS
   quarantine flag automatically.
 - **Unified archive naming**: prebuilt binary archives now use the
   `hsync-client-<version>-<target>` prefix (was `hsync-<version>-<target>`),
@@ -145,6 +145,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs**: Added a "Key terms" glossary table to `docs/getting-started.md`
   (bucket, Server/LAN Mode, master/slave, watch mode, side-cars) so the core
   vocabulary is defined in one place before the first-run walkthrough.
+- **Docs**: The `README.md` Quick Start and `docs/installation.md` now show a
+  one-command quick install (`curl -fsSL … | bash`) as the primary path, with
+  the verified multi-step download as an alternative.
+- **Release**: The installer asset is now published as `install.sh` (was
+  `install-<version>.sh`) since the version is already in the release URL
+  path. The `release.yml` workflow and all documentation URLs have been
+  updated accordingly.
 - **Docs**: Updated `CONTRIBUTING.md` — the test-structure table now reflects
   the actual 50+ test files organised by area (sync, transfer, WebSocket,
   LAN, security, config, delta, models), and the release process documents

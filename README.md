@@ -91,22 +91,21 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 
 ## Quick Start
 
-Download the installer, verify it, and run — no Python or build tools required
-(Linux and macOS):
+Install the client in one command (Linux and macOS):
+
+```bash
+curl -fsSL https://github.com/albertobasso/hsync-client/releases/download/v1.0.0/install.sh | bash
+```
+
+Or, if you prefer to verify the download before running it:
 
 ```bash
 VERSION=v1.0.0
-
-# 1. Download the installer and checksums
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install-${VERSION}.sh"
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install.sh"
 curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/SHA256SUMS"
-
-# 2. Verify the download
 sha256sum -c SHA256SUMS --ignore-missing
-
-# 3. Run the installer (detects your platform, downloads and verifies the binary)
-chmod 700 install-${VERSION}.sh
-./install-${VERSION}.sh
+chmod 700 install.sh
+./install.sh
 hsync --help
 ```
 

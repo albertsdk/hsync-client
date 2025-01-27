@@ -11,7 +11,7 @@ section for the install steps.
 
 | Format | OS | Architecture | Asset name | Install |
 | ------ | -- | ------------ | ---------- | ------- |
-| Installer script | Linux/macOS | x86-64/ARM64 | `install-<version>.sh` | [Installer](#installer-script-recommended) |
+| Installer script | Linux/macOS | x86-64/ARM64 | `install.sh` | [Installer](#installer-script-recommended) |
 | Standalone binary | Linux | x86-64 | `hsync-client-<version>-linux-amd64.tar.gz` | [Binary](#standalone-binary) |
 | Standalone binary | Linux | ARM64 | `hsync-client-<version>-linux-arm64.tar.gz` | [Binary](#standalone-binary) |
 | Standalone binary | macOS | Apple Silicon | `hsync-client-<version>-darwin-arm64.tar.gz` | [Binary](#standalone-binary) |
@@ -33,7 +33,7 @@ section for the install steps.
 Every tagged release (`vX.Y.Z`) publishes a complete set of ready-to-run assets
 on the [Releases page](https://github.com/albertobasso/hsync-client/releases):
 standalone binaries for all supported platforms, Debian/Ubuntu `.deb` packages,
-WD My Cloud OS5 `.bin` installers, an `install-<version>.sh` installer script,
+WD My Cloud OS5 `.bin` installers, an `install.sh` installer script,
 and a `SHA256SUMS` checksum file. See the
 [Available formats](#available-formats) table for the full list.
 
@@ -44,17 +44,25 @@ It detects your platform, downloads the correct binary, verifies its checksum,
 installs it to `~/.local/share/hsync-client`, and creates a symlink in
 `~/.local/bin`.
 
+**Quick install (one command):**
+
+```bash
+curl -fsSL https://github.com/albertobasso/hsync-client/releases/download/v1.0.0/install.sh | bash
+```
+
+**Verified install (checksum):**
+
 ```bash
 VERSION=v1.0.0
 
 # Download and verify the installer
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install-${VERSION}.sh"
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install.sh"
 curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/SHA256SUMS"
 sha256sum -c SHA256SUMS --ignore-missing
 
 # Run it
-chmod 700 install-${VERSION}.sh
-./install-${VERSION}.sh
+chmod 700 install.sh
+./install.sh
 
 # Verify the installation
 hsync --help
@@ -62,7 +70,7 @@ hsync --help
 
 The installer never invokes `sudo`; it uses a user-writable directory. Re-running
 it updates the binary to the selected version while preserving the install
-directory. Run `./install-${VERSION}.sh --help` for options (`--version`,
+directory. Run `./install.sh --help` for options (`--version`,
 `--install-dir`, `--no-symlink`, `--dry-run`).
 
 ### Standalone binary
