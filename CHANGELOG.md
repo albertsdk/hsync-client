@@ -145,6 +145,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs**: Added a "Key terms" glossary table to `docs/getting-started.md`
   (bucket, Server/LAN Mode, master/slave, watch mode, side-cars) so the core
   vocabulary is defined in one place before the first-run walkthrough.
+- **Docs**: Updated `CONTRIBUTING.md` — the test-structure table now reflects
+  the actual 50+ test files organised by area (sync, transfer, WebSocket,
+  LAN, security, config, delta, models), and the release process documents
+  the tag-driven `release.yml` workflow (push `vX.Y.Z` → CI auto-build +
+  publish) and the `bump-version.sh` wrapper instead of the old manual
+  upload steps.
 - **Perf**: `_record_synced_base()` no longer calls `flush()` after every
   transfer. The merged sync-state is now persisted only once at the end of
   the sync cycle (in `sync_state.flush()`), avoiding redundant per-file
