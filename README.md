@@ -1,17 +1,18 @@
 # HSYNC Client
 
+**HSYNC Client** is the tool you run on each device to keep a local folder in sync.
+It works in two ways:
+
+- In **Server Mode**, clients connect to a centralized server (HSYNC Server required).
+- In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no central server required (NO server required).
+
+
 > [!WARNING]
 > **HSYNC manipulates files and directories** — it creates, overwrites, moves, and deletes data.
 > Misconfiguration, software defects, or other unforeseen conditions may lead to **data loss or
 > corruption**. **Use at your own risk and always keep verified, independent backups.**
 > The software is provided "as is", without warranty of any kind — see the full
 > [Disclaimer](#disclaimer) and [License](#license) below.
-
-
-**HSYNC Client** is the tool you run on each device to keep a local folder in sync.
-It works in two ways: connect to a central HSYNC Server (ideal for syncing across
-the internet), or go peer-to-peer with nearby devices on the same local network —
-no server needed.
 
 ---
 
