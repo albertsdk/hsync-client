@@ -30,6 +30,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 - **First sync?** → Follow the [Getting Started](getting-started.md) guide.
 - **Coming from another tool?** → See the [Migration Guide](migration.md).
 - **All CLI options?** → Check [Configuration](configuration.md).
+- **Using a central server?** → Read [Server Mode](server-mode.md).
 - **Peer-to-peer on the LAN?** → Read [LAN Mode](lan-mode.md).
 - **Contributing?** → See the [Developer Guide](developer.md).
 
@@ -51,6 +52,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | [usage.md](usage.md) | Complete command-line reference and common workflows. |
 | [configuration.md](configuration.md) | Single reference for every CLI option and environment variable. |
 | [sync-modes.md](sync-modes.md) | Server vs LAN modes, sync directions, and conflict handling. |
+| [server-mode.md](server-mode.md) | Server mode guide: how it works, quick start, security, and troubleshooting. |
 | [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
 | [examples.md](examples.md) | Practical, copy-paste usage recipes. |
 

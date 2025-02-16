@@ -6,7 +6,7 @@ REST+WS) and **LAN** (peer-to-peer master/slave over mDNS + HTTPS/WSS) — shari
 one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
 > End-user / human docs live in [`../docs/`](../docs/architecture.md)
-> (`getting-started`, `usage`, `configuration`, `sync-modes`, `lan-mode`,
+> (`getting-started`, `usage`, `configuration`, `sync-modes`, `server-mode`, `lan-mode`,
 > `lan-internals`, `examples`, `faq`). This wiki is the **first search surface**:
 > start here, follow the `path/to/file.py:line` references to reach code directly.
 
