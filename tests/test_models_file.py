@@ -11,13 +11,32 @@ from hsync_common.models.file import File, is_hidden_file
 
 
 class TestIsHiddenFile:
-    """Tests for is_hidden_file function."""
+    """Tests for is_hidden_file function.
 
-    def test_hidden_dotfile(self):
-        """Files starting with dot are hidden."""
-        assert is_hidden_file(".gitignore") is True
-        assert is_hidden_file("/path/to/.gitignore") is True
-        assert is_hidden_file(".hidden") is True
+    Following the industry standard (Syncthing, rsync, Nextcloud, OneDrive),
+    dotfiles in general (.env, .config, .git …) are NOT excluded: only OS
+    cache files and editor/office temporary files are filtered by default.
+    """
+
+    def test_dotfile_not_hidden(self):
+        """Dotfiles like .env, .config, .gitignore are synced normally."""
+        assert is_hidden_file(".gitignore") is False
+        assert is_hidden_file("/path/to/.gitignore") is False
+        assert is_hidden_file(".hidden") is False
+        assert is_hidden_file(".env") is False
+        assert is_hidden_file(".config") is False
+
+    def test_ds_store_is_hidden(self):
+        """macOS .DS_Store cache files are hidden."""
+        assert is_hidden_file(".DS_Store") is True
+
+    def test_thumbs_db_is_hidden(self):
+        """Windows Thumbs.db cache files are hidden."""
+        assert is_hidden_file("Thumbs.db") is True
+
+    def test_office_lock_is_hidden(self):
+        """Microsoft Office lock files are hidden."""
+        assert is_hidden_file("~$document.docx") is True
 
     def test_backup_tilde(self):
         """Backup files ending with tilde are hidden."""
@@ -55,6 +74,17 @@ class TestIsHiddenFile:
         assert is_hidden_file("file.txt") is False
         assert is_hidden_file("document.pdf") is False
         assert is_hidden_file("/path/to/file.py") is False
+
+    def test_internal_files_are_hidden(self):
+        """Engine-owned files are always hidden."""
+        assert is_hidden_file(".hsyncignore") is True
+        assert is_hidden_file(".hsyncstate") is True
+        assert is_hidden_file(".hsynctombstones") is True
+
+    def test_partial_files_are_hidden(self):
+        """In-progress transfer artifacts are always hidden."""
+        assert is_hidden_file("document.txt.part") is True
+        assert is_hidden_file("document.txt.delta.part") is True
 
 
 class TestFileParseTime:

@@ -365,14 +365,6 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = MAX_DOWNLOAD_SIZE_MB_DEFAULT,
-    sync_hidden: Annotated[
-        bool,
-        typer.Option(
-            "--sync-hidden",
-            help="Include hidden/system files in sync (disables built-in filters).",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
     ignore_patterns: Annotated[
         str | None,
         typer.Option(
@@ -771,7 +763,6 @@ def main(
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
         max_download_size=max_download_size,
-        sync_hidden=sync_hidden,
         ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
         max_concurrent_transfers=max_concurrent_transfers,
         mass_delete_guard=mass_delete_guard,

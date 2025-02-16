@@ -13,7 +13,6 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
 | `HSYNC_RESYNC` | Periodic full-resync interval (seconds) in continuous mode; `0` disables it | `300` |
-| `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
 | `HSYNC_COMPRESSION_ENABLED` | Enable zstd compression for file transfers | `true` |
 | `HSYNC_DELTA_ENABLED` | Enable rsync-style delta transfer for large files | `true` |
@@ -99,7 +98,6 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--no-compression` | Disable zstd compression for file transfers | `false` |
 | `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `500` |
 | `--max-download-size` | Maximum size in MB of a single inbound file (download or received LAN upload), enforced as an absolute cap on top of the peer-declared size. `0` = disabled | `10240` |
-| `--sync-hidden` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
 | `--mass-delete-guard` | Enable the mass-deletion safety guard (pause deletions over threshold) | `true` |
 | `--no-mass-delete-guard` | Disable the mass-deletion safety guard | — |
@@ -446,15 +444,26 @@ control which files and directories are excluded from synchronization.
 
 ### Default behaviour
 
-By default (without `.hsyncignore` and without `--sync-hidden`), HSYNC
-automatically excludes:
+Following the industry standard (Syncthing, rsync, Nextcloud, OneDrive), HSYNC
+synchronises **all files by default**, including dotfiles (`.env`, `.git/`,
+`.config/`, …). Only a built-in **ignore list** of operating-system cache files
+and editor/office temporary files is excluded automatically:
 
-- Files whose name starts with `.` (e.g. `.DS_Store`, `.git/`)
-- Temporary / editor swap files (`.swp`, `~`, `.bak`, `.tmp`, etc.)
-- Lock files (`.~lock.*#`)
-- Numbered temporary files (`4913`)
+- **macOS cache**: `.DS_Store`, `._*`, `.Spotlight-V100`, `.Trashes`
+- **Windows cache**: `Thumbs.db`, `Thumbs.db:encryptable`, `ehthumbs.db`,
+  `ehthumbs_vista.db`, `desktop.ini`
+- **Office lock files**: `~$*`
+- **Editor swap/backup**: `*.swp`, `*.swo`, `*~`, `4913`, `.~lock.*#`
+- **Generic temp/backup**: `*.tmp`, `*.temp`, `*.bak`
+- **Date-stamped backups**: `*-????-??-??-??????`
+
+These built-in patterns are **always active** and cannot be disabled. Users can
+re-include any of them via negation rules in `.hsyncignore` (e.g. `!*.tmp`).
 
 The sentinel file `.hsynckeep` is **always included** regardless of any rule.
+
+Engine-owned artifacts (`.hsyncignore`, `.hsyncstate`, `.hsynctombstones`,
+`*.part`) are never synced.
 
 ### `.hsyncignore` syntax
 
@@ -485,15 +494,23 @@ The file follows [gitignore pattern syntax](https://git-scm.com/docs/gitignore):
 !important.log
 ```
 
-### Including hidden files
+### Excluding dotfiles
 
-Use `--sync-hidden` (or `HSYNC_SYNC_HIDDEN=true`) to disable the built-in
-hidden-file patterns.  Only patterns in `.hsyncignore` and `--ignore-patterns`
-will then be applied:
+Since dotfiles are synchronised by default, to exclude specific dotfiles or
+dotfile directories (e.g. `.git/`, `.env`) add them to `.hsyncignore`:
+
+```
+# Exclude .git directory
+.git/
+
+# Exclude .env files
+.env
+```
+
+Or use `--ignore-patterns`:
 
 ```bash
-# Sync hidden files too, but still exclude build artefacts via .hsyncignore
-hsync -s https://server.example.com:9753 -b mybucket --sync-hidden
+hsync -s https://server.example.com:9753 -b mybucket --ignore-patterns ".git/,.env"
 ```
 
 ### Extra patterns via CLI

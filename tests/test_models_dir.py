@@ -9,22 +9,30 @@ from hsync_common.models.dir import Dir, is_hidden_dir
 
 
 class TestIsHiddenDir:
-    """Tests for is_hidden_dir function."""
+    """Tests for is_hidden_dir function.
 
-    def test_hidden_parent(self):
-        """Directory with hidden parent is hidden."""
-        assert is_hidden_dir("/.git/objects") is True
-        assert is_hidden_dir("/path/.hidden/subdir") is True
+    Following the industry standard (Syncthing, rsync, Nextcloud, OneDrive),
+    dotfile directories in general (.git/, .config/ …) are NOT excluded:
+    only OS cache directories and editor/office temporary files are filtered
+    by default.
+    """
+
+    def test_dotdir_not_hidden(self):
+        """Dotfile directories like .git, .config are synced normally."""
+        assert is_hidden_dir("/.git/objects") is False
+        assert is_hidden_dir("/path/.hidden/subdir") is False
+        assert is_hidden_dir("/home/user/.config/test") is False
 
     def test_regular_dir(self):
         """Regular directories are not hidden."""
         assert is_hidden_dir("/path/to/dir") is False
         assert is_hidden_dir("/regular/path") is False
 
-    def test_root_hidden(self):
-        """Hidden directory at root is detected via parent."""
-        # Note: is_hidden_dir checks parent directory name
-        assert is_hidden_dir("/home/user/.config/test") is True
+    def test_internal_dir_is_hidden(self):
+        """Engine-owned directories are always hidden."""
+        assert is_hidden_dir(".hsyncignore") is True
+        assert is_hidden_dir(".hsyncstate") is True
+        assert is_hidden_dir(".hsynctombstones") is True
 
 
 class TestDirModel:

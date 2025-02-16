@@ -120,10 +120,6 @@ class EnvSettings(BaseSettings):
         ge=0,
         description="Minimum file size in bytes for delta transfer in LAN mode",
     )
-    sync_hidden: bool = Field(
-        default=False,
-        description="Include hidden/system files in sync (disables built-in filters)",
-    )
     ignore_patterns: str = Field(
         default="",
         description="Comma-separated extra gitignore-style patterns (layered on .hsyncignore)",
@@ -274,11 +270,6 @@ def get_delta_min_file_size_lan() -> int:
     return get_env_settings().delta_min_file_size_lan
 
 
-def get_sync_hidden() -> bool:
-    """Get sync-hidden setting from environment."""
-    return get_env_settings().sync_hidden
-
-
 def get_ignore_patterns() -> list[str]:
     """Return extra gitignore patterns parsed from the env variable.
 
@@ -421,8 +412,6 @@ class HsyncConfig(TypedDict):
     # peer-declared size as min(declared, MAX_DOWNLOAD_SIZE) — anti
     # decompression-bomb (0 = disabled, cap = declared size only)
     MAX_DOWNLOAD_SIZE: int
-    # Include hidden/system files in sync (disables built-in filters)
-    SYNC_HIDDEN: bool
     # Extra gitignore-style patterns layered on top of .hsyncignore
     IGNORE_PATTERNS: list[str]
     # Mass-deletion guard: pause deletions over a count/percentage threshold

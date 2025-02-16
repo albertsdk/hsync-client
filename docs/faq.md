@@ -154,19 +154,23 @@ the CLI, or set `HSYNC_IGNORE_PATTERNS`. See
 
 ### Are hidden files and directories synced?
 
-By default, **no**. HSYNC automatically excludes:
+**Yes.** Following the industry standard (Syncthing, rsync, Nextcloud,
+OneDrive), HSYNC synchronises **all files by default**, including dotfiles
+(`.env`, `.git/`, `.config/`, ...). Only a built-in **ignore list** of
+operating-system cache files and editor/office temporary files is excluded
+automatically:
 
-- Files and directories whose name starts with a dot (`.git/`, `.DS_Store`,
-  `.env`, …)
-- Editor temporary / swap files (`.swp`, `~`, `.bak`, `.tmp`, …)
-- Lock files (`.~lock.*#`) and numbered temp files (`4913`)
+- **macOS cache**: `.DS_Store`, `._*`, `.Spotlight-V100`, `.Trashes`
+- **Windows cache**: `Thumbs.db`, `desktop.ini`
+- **Office lock files**: `~$*`
+- **Editor swap/backup**: `*.swp`, `*.swo`, `*~`, `4913`, `.~lock.*#`
+- **Generic temp/backup**: `*.tmp`, `*.temp`, `*.bak`
 
 The sentinel file `.hsynckeep` (used to keep empty directories) is always
 included regardless of any rule.
 
-To sync hidden files as well, use `--sync-hidden` (or
-`HSYNC_SYNC_HIDDEN=true`): this disables the built-in hidden-file filters and
-leaves only `.hsyncignore` and `--ignore-patterns` in effect. See
+To exclude specific dotfiles or dotfile directories, add them to
+`.hsyncignore` or use `--ignore-patterns`. See
 [Default behaviour](configuration.md#default-behaviour) for the full list of
 built-in exclusions.
 

@@ -321,16 +321,16 @@ class TestSlaveFileEventHandler:
         ):
             handler._rename_on_master("/bucket/a", "/bucket/b")  # no raise
 
-    def test_on_created_hidden_dir_ignored(self, handler, tmp_path):
-        """Test on_created ignores hidden directories."""
-        hidden = tmp_path / ".hidden"
-        hidden.mkdir()
-        event = DirCreatedEvent(str(hidden))
+    def test_on_created_os_cache_dir_ignored(self, handler, tmp_path):
+        """Test on_created ignores OS cache directories."""
+        cache = tmp_path / ".DS_Store"
+        cache.mkdir()
+        event = DirCreatedEvent(str(cache))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
         with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_created(event)
         # No sentinel should be created in hidden dir
-        assert not (hidden / ".hsynckeep").exists()
+        assert not (cache / ".hsynckeep").exists()
 
     def test_on_created_symlink_uploads(self, handler, tmp_path):
         """Test on_created uploads symlinks immediately."""
@@ -371,9 +371,9 @@ class TestSlaveFileEventHandler:
         handler.on_modified(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_modified_hidden_file_ignored(self, handler, tmp_path):
-        """Test on_modified ignores hidden files."""
-        event = FileModifiedEvent(str(tmp_path / ".hidden"))
+    def test_on_modified_os_cache_file_ignored(self, handler, tmp_path):
+        """Test on_modified ignores OS cache files."""
+        event = FileModifiedEvent(str(tmp_path / "Thumbs.db"))
         handler.on_modified(event)
         assert len(handler._pending_ops) == 0
 
@@ -432,9 +432,9 @@ class TestSlaveFileEventHandler:
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_closed_hidden_file_ignored(self, handler, tmp_path):
-        """Test on_closed ignores hidden files."""
-        event = FileModifiedEvent(str(tmp_path / ".hidden"))
+    def test_on_closed_os_cache_file_ignored(self, handler, tmp_path):
+        """Test on_closed ignores OS cache files."""
+        event = FileModifiedEvent(str(tmp_path / "Thumbs.db"))
         with patch("hsync_client.lan_websocket.SUPPORTS_ON_CLOSED", True):
             handler.on_closed(event)
         assert len(handler._pending_ops) == 0
@@ -519,17 +519,17 @@ class TestSlaveFileEventHandler:
             handler.on_deleted(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_deleted_hidden_dir_ignored(self, handler, tmp_path):
-        """Test on_deleted ignores hidden directories."""
-        event = DirDeletedEvent(str(tmp_path / ".hidden"))
+    def test_on_deleted_os_cache_dir_ignored(self, handler, tmp_path):
+        """Test on_deleted ignores OS cache directories."""
+        event = DirDeletedEvent(str(tmp_path / ".DS_Store"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
         with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_deleted_hidden_file_ignored(self, handler, tmp_path):
-        """Test on_deleted ignores hidden files."""
-        event = FileDeletedEvent(str(tmp_path / ".hidden"))
+    def test_on_deleted_os_cache_file_ignored(self, handler, tmp_path):
+        """Test on_deleted ignores OS cache files."""
+        event = FileDeletedEvent(str(tmp_path / "Thumbs.db"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
         with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_deleted(event)
@@ -570,19 +570,19 @@ class TestSlaveFileEventHandler:
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_moved_hidden_to_hidden_ignored(self, handler, tmp_path):
-        """Test on_moved both hidden skipped."""
-        event = FileMovedEvent(str(tmp_path / ".a"), str(tmp_path / ".b"))
+    def test_on_moved_os_cache_to_os_cache_ignored(self, handler, tmp_path):
+        """Test on_moved both OS cache skipped."""
+        event = FileMovedEvent(str(tmp_path / ".DS_Store"), str(tmp_path / "Thumbs.db"))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
         with patch("hsync_client.lan_websocket.CONFIG", config):
             handler.on_moved(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_moved_hidden_to_visible_file_uploads(self, handler, tmp_path):
-        """Test on_moved hidden->visible triggers upload."""
+    def test_on_moved_os_cache_to_visible_file_uploads(self, handler, tmp_path):
+        """Test on_moved OS-cache->visible triggers upload."""
         f = tmp_path / "visible.txt"
         f.write_text("x")
-        event = FileMovedEvent(str(tmp_path / ".hidden"), str(f))
+        event = FileMovedEvent(str(tmp_path / "Thumbs.db"), str(f))
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
@@ -593,9 +593,9 @@ class TestSlaveFileEventHandler:
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
 
-    def test_on_moved_visible_to_hidden_deletes(self, handler, tmp_path):
-        """Test on_moved visible->hidden triggers deletion."""
-        event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / ".hid"))
+    def test_on_moved_visible_to_os_cache_deletes(self, handler, tmp_path):
+        """Test on_moved visible->OS-cache triggers deletion."""
+        event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / "Thumbs.db"))
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
@@ -608,9 +608,9 @@ class TestSlaveFileEventHandler:
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
 
-    def test_on_moved_visible_to_hidden_ignore_delete(self, handler, tmp_path):
-        """Test on_moved visible->hidden skips when ignore-delete."""
-        event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / ".hid"))
+    def test_on_moved_visible_to_os_cache_ignore_delete(self, handler, tmp_path):
+        """Test on_moved visible->OS-cache skips when ignore-delete."""
+        event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / "Thumbs.db"))
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",

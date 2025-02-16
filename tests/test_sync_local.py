@@ -49,30 +49,40 @@ class TestGetFilesLocal:
             assert any("file1.txt" in fp for fp in filepaths)
             assert any("file2.txt" in fp for fp in filepaths)
 
-    def test_skips_hidden_files(self, tmp_path):
-        """Hidden files are skipped."""
+    def test_skips_os_cache_files(self, tmp_path):
+        """OS cache files (.DS_Store, Thumbs.db) are skipped."""
         (tmp_path / "visible.txt").write_text("visible")
-        (tmp_path / ".hidden").write_text("hidden")
+        (tmp_path / ".DS_Store").write_text("cache")
+        (tmp_path / "Thumbs.db").write_text("cache")
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
             assert len(result) == 1
             assert "visible.txt" in result[0]["filepath"]
 
-    def test_skips_hidden_directories(self, tmp_path):
-        """Hidden directories are skipped."""
+    def test_dotfiles_are_synced(self, tmp_path):
+        """Dotfiles like .env, .gitignore are synced normally (industry standard)."""
+        (tmp_path / "visible.txt").write_text("visible")
+        (tmp_path / ".env").write_text("env")
+        (tmp_path / ".gitignore").write_text("git")
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_files_local()
+            assert len(result) == 3
+
+    def test_dotfile_directories_are_synced(self, tmp_path):
+        """Dotfile directories like .git/ are synced normally (industry standard)."""
         visible_dir = tmp_path / "visible"
         visible_dir.mkdir()
         (visible_dir / "file.txt").write_text("visible")
 
-        hidden_dir = tmp_path / ".hidden"
-        hidden_dir.mkdir()
-        (hidden_dir / "file.txt").write_text("hidden")
+        dot_dir = tmp_path / ".config"
+        dot_dir.mkdir()
+        (dot_dir / "file.txt").write_text("config")
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_files_local()
-            assert len(result) == 1
-            assert "visible" in result[0]["filepath"]
+            assert len(result) == 2
 
     def test_handles_nested_directories(self, tmp_path):
         """Files in nested directories are returned."""
