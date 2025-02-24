@@ -999,8 +999,8 @@ _wdos5_stage_context() {
     log_step "Staging Docker build context at ${WDOS5_CTX_DIR}..."
     rm -rf "${WDOS5_CTX_DIR}"
     mkdir -p "${WDOS5_CTX_DIR}/hsync-client" "${WDOS5_CTX_DIR}/hsync-common"
-    cp -a pyproject.toml poetry.lock packaging/wd-os5/README-client.md "${WDOS5_CTX_DIR}/hsync-client/"
-    mv "${WDOS5_CTX_DIR}/hsync-client/README-client.md" "${WDOS5_CTX_DIR}/hsync-client/README.md"
+    cp -a pyproject.toml poetry.lock packaging/wd-os5/README.nas.md "${WDOS5_CTX_DIR}/hsync-client/"
+    mv "${WDOS5_CTX_DIR}/hsync-client/README.nas.md" "${WDOS5_CTX_DIR}/hsync-client/README.md"
     cp -a hsync_client "${WDOS5_CTX_DIR}/hsync-client/"
     cp -a ../hsync-common/pyproject.toml ../hsync-common/README.md \
         "${WDOS5_CTX_DIR}/hsync-common/"
