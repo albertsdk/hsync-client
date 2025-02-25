@@ -7,7 +7,7 @@ peer-to-peer, without a centralized HSYNC server.
 > - Full option & environment-variable reference → [Configuration](configuration.md#lan-mode-options)
 > - Ready-to-use recipes → [Examples](examples.md)
 > - Server vs LAN comparison → [Sync Modes](sync-modes.md#operating-modes-server-vs-lan)
-> - Protocol internals (diagrams, HTTP/WS API, echo suppression) → [LAN Internals](lan-internals.md)
+> - Protocol internals (diagrams, HTTP/WS API, echo suppression) → [LAN Internals](internal/lan-internals.md)
 
 ## Overview
 
@@ -69,7 +69,7 @@ In plain terms, LAN mode works in three steps:
 
 > The architecture and discovery/election/sync **sequence diagrams**, the full
 > bidirectional operations table and the WebSocket event format are in
-> [LAN Internals](lan-internals.md).
+> [LAN Internals](internal/lan-internals.md).
 
 ## Quick Start
 
@@ -184,7 +184,7 @@ connection that carries the data.
   peers then sync without authentication.
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
-> [LAN Internals → Transport Security](lan-internals.md#transport-security-internals).
+> [LAN Internals → Transport Security](internal/lan-internals.md#transport-security-internals).
 
 ## Group Filtering
 
@@ -241,7 +241,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 > **Note**: Peers running with `--never-master` are **excluded from the candidate pool** before any of the criteria above are applied. They never win the election, regardless of startup time or CID.
 
 > The decision-flow diagram for this algorithm is in
-> [LAN Internals → Master Election Algorithm](lan-internals.md#master-election-algorithm).
+> [LAN Internals → Master Election Algorithm](internal/lan-internals.md#master-election-algorithm).
 
 **Rules:**
 - The `sync_direction` and `never_master` flag of each peer are shared via mDNS TXT records during discovery
@@ -315,7 +315,7 @@ The warning is **not shown** when:
 - `--force-master` is set (this peer is authoritative)
 - `--sync-direction upload-only` is set (local files are never deleted)
 
-See also: [Architecture > Pre-Sync Safety Check](architecture.md#pre-sync-safety-check-deletion-risk)
+See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sync-safety-check-deletion-risk)
 
 ## Troubleshooting
 
@@ -346,4 +346,4 @@ The deep protocol details — architecture and sequence diagrams, the master's
 HTTP/WS API with request/response examples, the certificate flow, the
 master-election decision diagram, CID/echo suppression
 (`InboundOriginTracker`), and the mDNS/thread model — live in
-[LAN Internals](lan-internals.md).
+[LAN Internals](internal/lan-internals.md).

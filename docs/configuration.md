@@ -84,11 +84,11 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `-b, --bucket` | Bucket name | (required) |
 | `-p, --path` | Local directory path | cwd |
 | `-w, --watch` | Watch for changes and sync continuously. (Implicit in LAN mode) | `false` |
-| `-i, --interval` | Force full sync every N seconds (requires `-w`); overrides `HSYNC_RESYNC` | `300` |
+| `-i, --interval` | Force full sync every N seconds (requires `-w`); overrides `HSYNC_RESYNC` | — (default: `300` via env/constant) |
 | `--retry-delay` | Retry connection after N seconds | `5` |
-| `--stability-delay` | Seconds to wait before uploading modified files | `5` |
+| `--stability-delay` | Seconds to wait before uploading modified files | — (default: `5` via env/constant) |
 | `--max-wait-timeout` | Maximum time to wait for file stabilization | `120` |
-| `--max-concurrent-transfers` | Maximum number of concurrent file transfers (1-20, overrides `HSYNC_MAX_CONCURRENT_TRANSFERS`) | `5` |
+| `--max-concurrent-transfers` | Maximum number of concurrent file transfers (1-20, overrides `HSYNC_MAX_CONCURRENT_TRANSFERS`) | — (default: `5` via env/constant) |
 | `--filter-path` | Sync only files within this subdirectory path | — |
 | `-n, --dry-run` | Show what would be done without making changes | `false` |
 | `--ignore-delete` | Do not propagate file deletions | `false` |
@@ -96,13 +96,16 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--max-bandwidth-upload` | Maximum upload bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
 | `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
 | `--no-compression` | Disable zstd compression for file transfers | `false` |
+| `--no-delta` | Disable rsync-style delta transfer (block-level sync) for large files | `false` |
+| `--delta-min-file-size` | Minimum file size in bytes for delta transfer in server mode. Default: 262144 (256 KB) | — |
+| `--delta-min-file-size-lan` | Minimum file size in bytes for delta transfer in LAN mode. Default: 1048576 (1 MB) | — |
 | `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `500` |
 | `--max-download-size` | Maximum size in MB of a single inbound file (download or received LAN upload), enforced as an absolute cap on top of the peer-declared size. `0` = disabled | `10240` |
 | `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
 | `--mass-delete-guard` | Enable the mass-deletion safety guard (pause deletions over threshold) | `true` |
 | `--no-mass-delete-guard` | Disable the mass-deletion safety guard | — |
-| `--mass-delete-threshold` | Absolute number of deletions per cycle that trips the guard (`0` = disabled) | `50` |
-| `--mass-delete-percent` | Percentage of local files whose deletion trips the guard (`0` = disabled) | `50` |
+| `--mass-delete-threshold` | Absolute number of deletions per cycle that trips the guard (`0` = disabled) | — (default: `50` via env/constant) |
+| `--mass-delete-percent` | Percentage of local files whose deletion trips the guard (`0` = disabled) | — (default: `50` via env/constant) |
 
 ### Mass-Deletion Safety Guard
 
@@ -189,13 +192,14 @@ The guard complements other deletion-safety measures:
 |--------|-------------|
 | `-y, --yes` | Skip interactive confirmation prompts (still shows warnings) |
 | `--env-file` | Load environment variables from a file |
-| `-V, --version` | Show version |
+| `--capabilities-json` | Print the binary's capabilities document as JSON and exit | — |
+| `-V, --version` | Show version | — |
 
 ## LAN Mode Options
 
 This is the single reference for every LAN (`--lan-mode`) option and `HSYNC_*`
 environment variable. For the end-user guide see [LAN Mode](lan-mode.md); for the
-protocol internals see [LAN Internals](lan-internals.md).
+protocol internals see [LAN Internals](internal/lan-internals.md).
 
 ### CLI Options
 
@@ -318,7 +322,7 @@ networks or when CPU is constrained:
 | `HSYNC_COMPRESSION_ENABLED` | Environment variable to disable compression (default: `true`) |
 
 > For details on compression thresholds and protocol-level negotiation, see the
-> [Developer Guide → Compression Internals](developer.md#compression-internals).
+> [Developer Guide → Compression Internals](internal/developer.md#compression-internals).
 
 ## Delta Transfer
 

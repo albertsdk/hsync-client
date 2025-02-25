@@ -26,6 +26,17 @@ the relevant guide.
   app, and ships ready for WD My Cloud OS5 NAS devices. The desktop GUI and
   Android app are still under development; the CLI is the production-ready
   client today.
+- **Safe with your data.** Deletions can be ignored (backup mode), a pre-sync
+  safety check guards against mass-deletion, and transfers are resumable with
+  SHA-256 integrity verification.
+- **Open ecosystem.** The same engine powers the CLI, a desktop GUI, an Android
+  app, and ships ready for WD My Cloud OS5 NAS devices. The desktop GUI and
+  Android app are still under development; the CLI is the production-ready
+  client today.
+- **Open ecosystem.** The same engine powers the CLI, a desktop GUI, an Android
+  app, and ships ready for WD My Cloud OS5 NAS devices. The desktop GUI and
+  Android app are still under development; the CLI is the production-ready
+  client today.
 
 ### Do I need a server to use HSYNC?
 
@@ -96,7 +107,7 @@ until confirmed out of band. See [LAN Mode Options](configuration.md#lan-mode-op
 
 By default deletions are propagated. To keep a destination that never deletes
 (pure backup), set `HSYNC_IGNORE_DELETE=true`. A built-in
-[pre-sync safety check](architecture.md#pre-sync-safety-check-deletion-risk)
+[pre-sync safety check](internal/architecture.md#pre-sync-safety-check-deletion-risk)
 also aborts when an unusually large deletion is detected.
 
 ## Sync Behavior
@@ -199,7 +210,7 @@ group name. See [LAN Mode Options](configuration.md#lan-mode-options).
 
 Yes — uploads are resumable and verified with SHA-256, so an interrupted transfer
 resumes from where it stopped rather than restarting. See
-[Architecture](architecture.md).
+[Architecture](internal/architecture.md).
 
 ### Can I limit how much bandwidth HSYNC uses?
 
@@ -227,11 +238,11 @@ state. You normally never touch them:
 - **`.hsyncstate`** — records the last-synced hash (base version) for each
   file, used by the three-way merge to decide whether a local or remote change
   is a conflict. See
-  [Architecture → State persistence](architecture.md#state-persistence-side-cars).
+  [Architecture → State persistence](internal/architecture.md#state-persistence-side-cars).
 - **`.hsynctombstones`** — records deletion markers so a file deleted on the
   master while a peer was offline is not resurrected on the next
   reconciliation. See
-  [Architecture → State persistence](architecture.md#state-persistence-side-cars).
+  [Architecture → State persistence](internal/architecture.md#state-persistence-side-cars).
 
 Both are excluded from sync and safe to leave in place; deleting them forces a
 full re-reconciliation on the next cycle.

@@ -82,7 +82,7 @@ Errors are handled per item, so one failure never aborts the whole run: network
 errors are retried with backoff (then marked failed), authentication errors abort
 early, missing files are skipped and permission issues are logged as warnings.
 The full decision flow is documented in
-[Architecture → Error Handling & Retries](architecture.md#error-handling--retries).
+[Architecture → Error Handling & Retries](internal/architecture.md#error-handling--retries).
 
 ## Environment Variables
 

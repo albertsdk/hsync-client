@@ -32,7 +32,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 - **All CLI options?** → Check [Configuration](configuration.md).
 - **Using a central server?** → Read [Server Mode](server-mode.md).
 - **Peer-to-peer on the LAN?** → Read [LAN Mode](lan-mode.md).
-- **Contributing?** → See the [Developer Guide](developer.md).
+- **Contributing?** → See the [Developer Guide](internal/developer.md).
 
 ## Documentation map
 
@@ -61,17 +61,17 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | Document | What it covers |
 | -------- | -------------- |
 | [sync-flow.md](sync-flow.md) | Client-side sync flow: initial sync, watch mode, event queue, retry. |
-| [architecture.md](architecture.md) | How the client is structured internally. |
 | [faq.md](faq.md) | Frequently asked questions and why to choose HSYNC. |
 
-### For Contributors
+### Internal / For Contributors
 
 | Document | What it covers |
 | -------- | -------------- |
-| [conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling. |
-| [lan-internals.md](lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
-| [developer.md](developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
-| [testing.md](testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |
+| [internal/architecture.md](internal/architecture.md) | How the client is structured internally. |
+| [internal/conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling. |
+| [internal/lan-internals.md](internal/lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
+| [internal/developer.md](internal/developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
+| [internal/testing.md](internal/testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |
 
 ## Related projects
 

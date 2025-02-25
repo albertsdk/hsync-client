@@ -137,7 +137,7 @@ The `--sync-direction` option controls which operations are executed. Filtering 
 
 The Observer (watchdog) continues running in all modes — events are filtered inline rather than stopping the Observer. This allows the sync direction to be changed dynamically at runtime via stdin command without restarting the process.
 
-> **LAN Mode note**: In LAN mode, the `sync_direction` is also published via mDNS TXT records and used during master election — peers with **bidirectional** sync are preferred as master. Using `--force-master` with a non-bidirectional direction is an error. See [LAN Mode > Master Election](lan-mode.md#master-election) for details.
+> **LAN Mode note**: In LAN mode, the `sync_direction` is also published via mDNS TXT records and used during master election — peers with **bidirectional** sync are preferred as master. Using `--force-master` with a non-bidirectional direction is an error. See [LAN Mode > Master Election](../lan-mode.md#master-election) for details.
 
 ## Event Processing
 

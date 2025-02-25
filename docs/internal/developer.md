@@ -4,7 +4,7 @@ This page covers internal implementation details useful for contributors and
 developers working on the HSYNC Client codebase.
 
 > For the high-level system design, see [Architecture](architecture.md).
-> For the sync protocol, see [Sync Flow](sync-flow.md).
+> For the sync protocol, see [Sync Flow](../sync-flow.md).
 
 ## Table of Contents
 
@@ -106,7 +106,7 @@ Upload and download bandwidth can be limited via `--max-bandwidth-upload` and `-
 - **Downloads**: Throttle delay is applied after each downloaded chunk in the streaming loop
 - Throttle state is reset between sync sessions via `reset_bandwidth_throttle()`
 
-For usage details, see [Configuration > Bandwidth Limiting](configuration.md#bandwidth-limiting).
+For usage details, see [Configuration > Bandwidth Limiting](../configuration.md#bandwidth-limiting).
 
 ## Error Handling & Retries
 
@@ -132,7 +132,7 @@ flowchart TD
 - **Network errors** are retried with backoff up to a bounded number of attempts,
   then the item is marked failed and the sync continues with the next file.
 - **Authentication errors** abort early with a clear message (see
-  [Configuration > API Key & Encryption Policy](configuration.md#api-key--encryption-policy)).
+  [Configuration > API Key & Encryption Policy](../configuration.md#api-key--encryption-policy)).
 - **Not-found** items are skipped; **permission** issues are logged as warnings.
 
 ## Compression Internals
@@ -162,7 +162,7 @@ Compression is automatically skipped for:
 - Server informs client about compression support during WebSocket handshake
 - In LAN mode, peers advertise compression capability via mDNS
 
-For usage and configuration, see [Configuration > Compression](configuration.md#compression).
+For usage and configuration, see [Configuration > Compression](../configuration.md#compression).
 
 ## WebSocket Reconnection
 
@@ -264,9 +264,9 @@ multiple untrusted devices share the same network.
 
 ### see also
 
-- [Conflict Resolution](conflict-resolution.md) — three-way merge algorithm and conflict handling.
+- [Conflict Resolution](../conflict-resolution.md) — three-way merge algorithm and conflict handling.
 - [Architecture](architecture.md) — high-level system overview and data flows.
-- [Sync Flow](sync-flow.md) — client-side sync flow.
+- [Sync Flow](../sync-flow.md) — client-side sync flow.
 - [LAN Internals](lan-internals.md) — deep dive into the LAN protocol.
-- [Contributing](../CONTRIBUTING.md) — development setup and guidelines.
+- [Contributing](../../CONTRIBUTING.md) — development setup and guidelines.
 - [HSYNC Common docs](https://github.com/albertobasso/hsync-common/blob/main/docs/README.md) — shared models and protocol.

@@ -3,7 +3,7 @@
 This guide covers the test suite for the HSYNC Client: structure, how to run
 tests, how to write new tests, and cross-project testing with `hsync-common`.
 
-> For development setup, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+> For development setup, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Table of Contents
 
@@ -210,6 +210,6 @@ compression tests.
 
 ## See also
 
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — development setup and workflow.
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) — development setup and workflow.
 - [Developer Guide](developer.md) — internal implementation details.
-- [Sync Flow](sync-flow.md) — client-side sync flow.
+- [Sync Flow](../sync-flow.md) — client-side sync flow.

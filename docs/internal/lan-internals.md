@@ -1,13 +1,13 @@
 # LAN Mode — Internals (Technical Reference)
 
-This is the **technical companion** to [LAN Mode](lan-mode.md). It documents the
+This is the **technical companion** to [LAN Mode](../lan-mode.md). It documents the
 low-level mechanisms behind peer-to-peer synchronization: the master's HTTP/WS
 API, the discovery/election/sync flows, certificate pinning, and the
 echo-suppression machinery.
 
 > **Most users do not need this page.** For setup, options and recipes start
-> from [LAN Mode](lan-mode.md), [Configuration](configuration.md) and
-> [Examples](examples.md). Read on only if you want to understand or extend the
+> from [LAN Mode](../lan-mode.md), [Configuration](../configuration.md) and
+> [Examples](../examples.md). Read on only if you want to understand or extend the
 > protocol.
 
 ## Architecture
@@ -178,7 +178,7 @@ sequenceDiagram
 ## Master Election Algorithm
 
 The conceptual rules, priority table and worked scenarios live in
-[LAN Mode → Master Election](lan-mode.md#master-election). The diagram below
+[LAN Mode → Master Election](../lan-mode.md#master-election). The diagram below
 shows the decision flow each peer runs independently:
 
 ```mermaid
@@ -207,7 +207,7 @@ flowchart TD
 
 LAN mode is **HTTPS/WSS only**: all peer communication is encrypted with the
 master's self-signed certificate, pinned at the connection level (TOFU). The
-user-facing summary is in [LAN Mode → Security & Pairing](lan-mode.md#security--pairing).
+user-facing summary is in [LAN Mode → Security & Pairing](../lan-mode.md#security--pairing).
 
 ### How it works
 

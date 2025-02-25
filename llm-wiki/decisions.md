@@ -2,19 +2,19 @@
 
 Ecosystem ADRs are SSOT in `hsync-common`
 ([decisions index](../../hsync-common/llm-wiki/decisions.md) →
-`hsync-common/docs/adr/`). This page maps each ADR to the **client code** that
+`hsync-common/docs/internal/adr/`). This page maps each ADR to the **client code** that
 implements it, plus client-only operational rules.
 
 ## ADR → client code
 
 | ADR | Client implementation |
 | --- | --------------------- |
-| [0001 server-vs-lan-modes](../../hsync-common/docs/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:459`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
-| [0002 lan-master-election](../../hsync-common/docs/adr/0002-lan-master-election.md) | `PeerManager._elect_master` (`lan.py:129`) → calls common `elect_master` |
-| [0003 tombstone-gossip](../../hsync-common/docs/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
-| [0004 desktop-subprocess-contract](../../hsync-common/docs/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:76`) |
-| [0005 protocol-versioning](../../hsync-common/docs/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:275`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
-| [0006 master-authoritative-conflict-model](../../hsync-common/docs/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:905`) |
+| [0001 server-vs-lan-modes](../../hsync-common/docs/internal/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:459`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
+| [0002 lan-master-election](../../hsync-common/docs/internal/adr/0002-lan-master-election.md) | `PeerManager._elect_master` (`lan.py:129`) → calls common `elect_master` |
+| [0003 tombstone-gossip](../../hsync-common/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
+| [0004 desktop-subprocess-contract](../../hsync-common/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:76`) |
+| [0005 protocol-versioning](../../hsync-common/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:275`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
+| [0006 master-authoritative-conflict-model](../../hsync-common/docs/internal/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:905`) |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
 in [`LAN_PROTOCOL.md`](../../hsync-common/docs/LAN_PROTOCOL.md) and maps to
