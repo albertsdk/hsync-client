@@ -98,18 +98,17 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 
 ## Quick Start
 
-Install the client in one command (Linux and macOS):
+Install the client in one command (Linux and macOS, latest stable release):
 
 ```bash
-curl -fsSL https://github.com/albertobasso/hsync-client/releases/download/v1.0.0/install.sh | bash
+curl -fsSL https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh | bash
 ```
 
 Or, if you prefer to verify the download before running it:
 
 ```bash
-VERSION=v1.0.0
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install.sh"
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/SHA256SUMS"
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh"
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/SHA256SUMS"
 sha256sum -c SHA256SUMS --ignore-missing
 chmod 700 install.sh
 ./install.sh

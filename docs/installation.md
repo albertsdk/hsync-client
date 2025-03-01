@@ -44,20 +44,18 @@ It detects your platform, downloads the correct binary, verifies its checksum,
 installs it to `~/.local/share/hsync-client`, and creates a symlink in
 `~/.local/bin`.
 
-**Quick install (one command):**
+**Quick install (one command, latest stable release):**
 
 ```bash
-curl -fsSL https://github.com/albertobasso/hsync-client/releases/download/v1.0.0/install.sh | bash
+curl -fsSL https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh | bash
 ```
 
 **Verified install (checksum):**
 
 ```bash
-VERSION=v1.0.0
-
-# Download and verify the installer
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/install.sh"
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/download/${VERSION}/SHA256SUMS"
+# Download and verify the installer (latest stable release)
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh"
+curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/SHA256SUMS"
 sha256sum -c SHA256SUMS --ignore-missing
 
 # Run it
@@ -72,6 +70,12 @@ The installer never invokes `sudo`; it uses a user-writable directory. Re-runnin
 it updates the binary to the selected version while preserving the install
 directory. Run `./install.sh --help` for options (`--version`,
 `--install-dir`, `--no-symlink`, `--dry-run`).
+
+To install a **specific version** instead of the latest stable one, download the
+installer from that release (replace `latest/download` with
+`download/vX.Y.Z` in the URLs above) or pass the version explicitly:
+`./install.sh --version v1.0.0`. Conversely, `--version latest` makes any
+installer resolve and install the latest stable release automatically.
 
 ### Standalone binary
 
