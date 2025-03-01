@@ -200,7 +200,7 @@ flowchart TD
 ```
 
 > The canonical algorithm is shared across the Python client and Android via
-> `hsync_common.protocol.lan`. See `hsync-common/docs/LAN_PROTOCOL.md` for the
+> `hsync_common.protocol.lan`. See `hsync-common/docs/lan-protocol.md` for the
 > protocol specification.
 
 ## Transport Security Internals
@@ -502,5 +502,5 @@ flowchart TB
 ```
 
 > The canonical discovery/election protocol is specified in
-> `hsync-common/docs/LAN_PROTOCOL.md` and shared across the Python client and
+> `hsync-common/docs/lan-protocol.md` and shared across the Python client and
 > Android via `hsync_common.protocol.lan`.

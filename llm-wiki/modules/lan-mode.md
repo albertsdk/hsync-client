@@ -5,7 +5,7 @@ and the master serves files over HTTPS/WSS while slaves sync to it. Security and
 election rules are SSOT in `hsync-common`.
 
 > **Domain-critical**: before changing discovery/election/security, read
-> [`hsync-common/docs/LAN_PROTOCOL.md`](../../../hsync-common/docs/LAN_PROTOCOL.md).
+> [`hsync-common/docs/lan-protocol.md`](../../../hsync-common/docs/lan-protocol.md).
 
 ## Entry & roles (`lan_handler.py`)
 
@@ -86,4 +86,4 @@ HTTPS/WSS is mandatory in LAN mode (no plaintext fallback). Write-capable sync i
 non-interactive mode requires a LAN key (`main_logic._check_lan_write_policy`).
 
 > Human guide: `../docs/lan-mode.md`. Election/security rationale:
-> ADRs 0001/0002 + `LAN_PROTOCOL.md` (see [decisions.md](../decisions.md)).
+> ADRs 0001/0002 + `lan-protocol.md` (see [decisions.md](../decisions.md)).
