@@ -42,7 +42,7 @@ graph LR
             lan_handler[lan_handler.py]
         end
 
-        subgraph "models/"
+        subgraph "models (from hsync-common)"
             file[file.py]
             dir[dir.py]
             event[event.py]

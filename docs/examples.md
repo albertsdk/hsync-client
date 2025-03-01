@@ -14,6 +14,30 @@ Server-based examples require an `HSYNC_API_KEY` matching the one
 configured on the server. The simplest way to set it is via a `.env`
 file (see [`dev.env`](../dev.env) / [`prod.env`](../prod.env)).
 
+### Configuration via `.env` file
+
+Instead of exporting variables in your shell, create a `.env` file in your
+working directory:
+
+```bash
+# .env
+HSYNC_SERVER="https://hsync.example.com:9753"
+HSYNC_API_KEY="your-api-key"
+HSYNC_BUCKET="documents"
+HSYNC_PATH="$HOME/Documents"
+HSYNC_WATCH=true
+HSYNC_SYNC_DIRECTION="bidirectional"
+```
+
+Then simply run:
+
+```bash
+hsync
+```
+
+The client automatically reads `.env` on startup. This is the recommended
+approach for systemd services, Docker containers, and cron jobs.
+
 ```bash
 export HSYNC_SERVER="https://hsync.example.com:9753"
 export HSYNC_API_KEY="your-api-key"
@@ -149,7 +173,8 @@ hsync -b shared -p ~/Shared --lan-mode
 ### 2.2 Sync your photo library across devices without internet
 
 Useful at home, in a hotel room, on a plane. Use a shared key so only
-your devices participate.
+your devices participate restricting sync to a trusted group requiring
+authentication:
 
 ```bash
 export HSYNC_LAN_KEY="my-secret-key"
