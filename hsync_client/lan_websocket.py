@@ -163,6 +163,7 @@ class LANWebSocketServer:
     async def _handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection."""
         client_addr = websocket.remote_address
+        client_cid = "unknown"
         log.info(f"WebSocket client connected: {client_addr}")
 
         # Send greeting: tell the client whether authentication is required
@@ -174,22 +175,23 @@ class LANWebSocketServer:
                 auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_data = json.loads(auth_msg)
                 token = auth_data.get("token")
+                client_cid = auth_data.get("cid", "unknown")
                 if auth_data.get("type") != "auth" or not (
                     isinstance(token, str) and hmac.compare_digest(token, str(lan_key))
                 ):
-                    log.warning(f"WebSocket auth failed from {client_addr}")
+                    log.warning(f"WebSocket auth failed from {client_addr} (CID: {client_cid})")
                     await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                     await websocket.close()
                     return
                 await websocket.send(json.dumps({"type": "auth", "status": "ok"}))
-                log.info(f"WebSocket client authenticated: {client_addr}")
+                log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
             except TimeoutError:
-                log.warning(f"WebSocket auth timeout from {client_addr}")
+                log.warning(f"WebSocket auth timeout from {client_addr} (CID: {client_cid})")
                 await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                 await websocket.close()
                 return
             except Exception as e:
-                log.warning(f"WebSocket auth error from {client_addr}: {e}")
+                log.warning(f"WebSocket auth error from {client_addr} (CID: {client_cid}): {e}")
                 await websocket.close()
                 return
         else:
@@ -203,12 +205,14 @@ class LANWebSocketServer:
             async for message in websocket:
                 # Currently we don't expect messages from slaves
                 # but we keep the connection alive
-                log.debug(f"Received from {client_addr}: {escape_loguru_markup(message)}")
+                log.debug(
+                    f"Received from {client_addr} (CID: {client_cid}): {escape_loguru_markup(message)}"
+                )
         except Exception as e:
-            log.debug(f"WebSocket client {client_addr} disconnected: {e}")
+            log.debug(f"WebSocket client {client_addr} (CID: {client_cid}) disconnected: {e}")
         finally:
             self._clients.discard(websocket)
-            log.info(f"WebSocket client disconnected: {client_addr}")
+            log.info(f"WebSocket client disconnected: {client_addr} (CID: {client_cid})")
 
     async def broadcast(self, event_dict: dict) -> None:
         """Broadcast an event to all connected clients."""
@@ -554,7 +558,7 @@ async def lan_websocket_client(
                 if not lan_key:
                     log.error("WebSocket authentication failed – server requires LAN key")
                     return
-                auth_msg = json.dumps({"type": "auth", "token": lan_key})
+                auth_msg = json.dumps({"type": "auth", "token": lan_key, "cid": CONFIG["CID"]})
                 await websocket.send(auth_msg)
 
                 response = await asyncio.wait_for(websocket.recv(), timeout=10.0)

@@ -44,7 +44,7 @@ peers are ignored.
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_DOWNLOAD_SIZE`) — (decompression-bomb containment) |
-| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) |
+| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`); extracts CID from auth message for logging |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast |
 
 Peer-supplied paths on download/delete/rename/upload are validated with
@@ -67,7 +67,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `lan_websocket_client` | `lan_websocket.py:468` | connect to master WSS, verify cert fp, sync |
+| `lan_websocket_client` | `lan_websocket.py:468` | connect to master WSS, verify cert fp, auth (includes CID), sync |
 | `_handle_lan_event` | `:636` | apply inbound master events locally |
 | `LANSlaveFileEventHandler` | `:667` | slave-local FS changes → upload to master |
 | `_lan_periodic_resync` | `:616` | periodic full reconcile (§13) |
