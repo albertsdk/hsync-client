@@ -225,9 +225,11 @@ def handle_delta_signatures_post(handler) -> None:
         return
 
     relpath = body.get("path")
+    if not isinstance(relpath, str):
+        relpath = None
     block_size = body.get("block_size")
-    filepath = _resolve_servable(handler, relpath if isinstance(relpath, str) else None)
-    if filepath is None:
+    filepath = _resolve_servable(handler, relpath)
+    if filepath is None or relpath is None:
         return
     if not isinstance(block_size, int) or block_size <= 0:
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid block_size")
@@ -397,6 +399,9 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         return
 
     part_path = f"{filepath}{PARTIAL_DELTA_SUFFIX}"
+    # Cleanup tracker: cleared once the rebuilt file has been renamed over the
+    # base, so the finally block removes only genuine leftovers.
+    cleanup_path: str | None = part_path
     try:
         with _delta_compute_sem, open(literal_file, "rb") as literal_stream:
             from hsync_common.delta import apply_delta
@@ -429,7 +434,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
                 mark_inbound_origin(filepath, cid)
 
         os.replace(part_path, filepath)
-        part_path = None
+        cleanup_path = None
 
         mtime = meta.get("mtime")
         if mtime:
@@ -446,7 +451,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
 
         handler._send_json_response(_HTTP_OK, {"status": "ok", "sha256": rebuilt, "size": new_size})
     finally:
-        for leftover in (part_path, decompressed_path):
+        for leftover in (cleanup_path, decompressed_path):
             if leftover and Path(leftover).exists():
                 try:
                     os.remove(leftover)

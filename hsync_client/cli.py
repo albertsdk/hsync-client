@@ -12,7 +12,7 @@ This module provides the Typer-based CLI for the HSYNC command-line interface.
 
 import json
 from os import getcwd
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from hsync_common.protocol.capabilities import build_capabilities
@@ -84,7 +84,9 @@ def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
         return
     doc = build_capabilities(
         app_version=HSYNC_VERSION,
-        cli_options=collect_cli_options(ctx.command),
+        # ctx.command is typed as click.Command in the stubs, but a Typer app
+        # always builds a TyperCommand at runtime.
+        cli_options=collect_cli_options(cast(typer.core.TyperCommand, ctx.command)),
     )
     typer.echo(json.dumps(doc, indent=2, sort_keys=True))
     raise typer.Exit()
@@ -717,6 +719,11 @@ def main(
     # Validate mass-delete-percent range
     if mass_delete_percent is not None and (mass_delete_percent < 0 or mass_delete_percent > 100):
         raise typer.BadParameter("--mass-delete-percent must be between 0 and 100 (0 = disabled).")
+    # Validate delta size floors (0 = delta for every file size)
+    if delta_min_file_size is not None and delta_min_file_size < 0:
+        raise typer.BadParameter("--delta-min-file-size must be >= 0.")
+    if delta_min_file_size_lan is not None and delta_min_file_size_lan < 0:
+        raise typer.BadParameter("--delta-min-file-size-lan must be >= 0.")
 
     # Import and call the actual main logic
     from hsync_client.main_logic import run_sync

@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content changes that mtime+size alone miss (e.g., rapid edits within the same
   second). If the file changed during the scan, the delta is aborted and the
   caller falls back to a full transfer.
+- **Runtime environment awareness**: at startup the client logs a one-line
+  summary of the detected runtime environment (container runtime, cgroup
+  memory/CPU limits, TTY state) via `hsync_common.runtime.runtime_summary()`.
+  Colored output now also honors the standard [`NO_COLOR`](https://no-color.org)
+  environment variable, in addition to `--no-color` and the automatic non-TTY
+  detection. In LAN mode, running inside a container logs a warning that mDNS
+  peer discovery cannot cross container bridge/NAT networking and suggests
+  host networking (`docker run --network host`).
 
 ### Security
 - **Permanent download failure skip-set**: a download that fails
@@ -129,6 +137,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Utils**: duplicated `is_valid_filename` (use the `hsync-common` SSOT)
 
 ### Changed
+- **Non-interactive run detection**: a run is now considered unattended when no
+  interactive terminal is attached (container without `-t`, systemd, cron,
+  pipes), not only when `--yes` is passed. Two consequences: the deletion-risk
+  confirmation fails fast with a clear error and exit code 1 instead of
+  blocking on an unreadable prompt (previously it cancelled silently with exit
+  0 via `EOFError`); and the LAN write policy now requires `HSYNC_LAN_KEY` for
+  write-capable sync in such runs even without `--yes`.
 - **Deps**: Updated runtime and development dependencies: typer 0.27.0,
   zeroconf 0.150.0, aiofiles 25.1.0 (via hsync-common), cffi 2.1.0,
   charset-normalizer 3.4.9, coverage 7.15.2, filelock 3.31.2, librt 0.13.0,

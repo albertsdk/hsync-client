@@ -20,16 +20,17 @@ Flags map to env keys; capabilities JSON is built from
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_sync` | `main_logic.py:459` | validate → safety checks → branch mode → watcher loop |
-| `_check_deletion_risk` | `:262` | warn/prompt on risky delete settings (`--yes` bypass) |
-| `_check_lan_write_policy` | `:344` | enforce LAN key for non-interactive writes |
-| `_check_disk_space` | `:388` | min-free-disk guard |
-| `_check_server_connectivity` | `:954` | fail fast on unreachable server |
-| `_warn_on_clock_skew` | `:1004` | warn on large clock offset |
-| `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `:210` / `:227` / `:244` | resolve CLI > env > default |
-| `_start_hsyncignore_watcher` | `:421` | hot-reload `.hsyncignore` matcher |
-| `_run_preview` | `:85` | dry-run action preview |
-| stdin runtime control | `:830`/`:928`/`:933` | live commands (e.g. change direction) via `stdin_commands.StdinCommandHandler` (`stdin_commands.py:35`) |
+| `run_sync` | `main_logic.py:529` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup |
+| `_check_deletion_risk` | `:304` | warn/prompt on risky delete settings (`--yes` bypass; fails fast with exit 1 when no interactive TTY) |
+| `_check_lan_write_policy` | `:396` | enforce LAN key for unattended writes (`--yes` **or** no interactive TTY, via `is_tty_interactive()`) |
+| `_warn_if_lan_in_container` | `:441` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
+| `_check_disk_space` | `:458` | min-free-disk guard |
+| `_check_server_connectivity` | `:1040` | fail fast on unreachable server |
+| `_warn_on_clock_skew` | `:1090` | warn on large clock offset |
+| `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `:215` / `:232` / `:249` | resolve CLI > env > default |
+| `_start_hsyncignore_watcher` | `:463` | hot-reload `.hsyncignore` matcher |
+| `_run_preview` | `:87` | dry-run action preview |
+| stdin runtime control | `:916`/`:1014`/`:1019` | live commands (e.g. change direction) via `stdin_commands.StdinCommandHandler` (`stdin_commands.py:35`) |
 
 ## Config (`config.py`)
 

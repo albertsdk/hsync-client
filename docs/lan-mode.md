@@ -324,6 +324,11 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 1. **Check firewall**: Ensure mDNS (UDP port 5353) is allowed
 2. **Check network**: All devices must be on the same subnet
 3. **Increase timeout**: Use `--discovery-timeout 15` for slower networks, or `--discovery-timeout 0` to wait indefinitely for the first peer/master
+4. **Running in a container?**: mDNS multicast cannot cross the NAT boundary of
+   the default bridge network used by container runtimes, so peers will never
+   be found. Run the client with host networking (e.g.
+   `docker run --network host ...`) — the client detects the container at
+   startup and logs this hint as a warning.
 
 ### Authentication Failures
 

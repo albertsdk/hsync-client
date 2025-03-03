@@ -78,9 +78,9 @@ CONTENT_ENCODING_ZSTD = "zstd"
 def _transfer_retry_params() -> tuple[int, float, float]:
     """Return ``(max_attempts, min_wait, max_wait)`` for per-file retries."""
     return (
-        CONFIG.get("TRANSFER_RETRY_ATTEMPTS", TRANSFER_RETRY_ATTEMPTS_DEFAULT),
-        CONFIG.get("TRANSFER_RETRY_MIN_WAIT", TRANSFER_RETRY_MIN_WAIT_DEFAULT),
-        CONFIG.get("TRANSFER_RETRY_MAX_WAIT", TRANSFER_RETRY_MAX_WAIT_DEFAULT),
+        cast(int, CONFIG.get("TRANSFER_RETRY_ATTEMPTS", TRANSFER_RETRY_ATTEMPTS_DEFAULT)),
+        cast(float, CONFIG.get("TRANSFER_RETRY_MIN_WAIT", TRANSFER_RETRY_MIN_WAIT_DEFAULT)),
+        cast(float, CONFIG.get("TRANSFER_RETRY_MAX_WAIT", TRANSFER_RETRY_MAX_WAIT_DEFAULT)),
     )
 
 
@@ -756,7 +756,9 @@ def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
                           call (None) and decremented on each subsequent one.
     """
     if reschedules_left is None:
-        reschedules_left = CONFIG.get("UPLOAD_MAX_RESCHEDULES", UPLOAD_MAX_RESCHEDULES_DEFAULT)
+        reschedules_left = cast(
+            int, CONFIG.get("UPLOAD_MAX_RESCHEDULES", UPLOAD_MAX_RESCHEDULES_DEFAULT)
+        )
 
     if reschedules_left <= 0:
         log.warning(
@@ -765,7 +767,7 @@ def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
         )
         return
 
-    delay = CONFIG.get("UPLOAD_RESCHEDULE_DELAY", UPLOAD_RESCHEDULE_DELAY_DEFAULT)
+    delay = cast(float, CONFIG.get("UPLOAD_RESCHEDULE_DELAY", UPLOAD_RESCHEDULE_DELAY_DEFAULT))
     log.info(
         f'File "{file.filepath}" still being written; rescheduling upload in '
         f"{delay}s ({reschedules_left} attempt(s) left)"

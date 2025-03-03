@@ -9,6 +9,7 @@ from typing import Unpack
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.runtime import ContainerInfo
 from typing_extensions import TypedDict
 
 from hsync_client.config import get_env_settings
@@ -22,6 +23,7 @@ from hsync_client.main_logic import (
     _get_discovery_timeout_value,
     _get_resync_value,
     _get_stability_delay_value,
+    _warn_if_lan_in_container,
     run_sync,
 )
 
@@ -515,6 +517,7 @@ class TestRunSync:
             patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
@@ -538,6 +541,7 @@ class TestRunSync:
             patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
             mock_log_setup.return_value = MagicMock()
             run_sync(**kwargs)
@@ -560,6 +564,7 @@ class TestRunSync:
             patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
             mock_log_setup.return_value = MagicMock()
             run_sync(**kwargs)
@@ -710,3 +715,29 @@ class TestRunSync:
 
         with pytest.raises(SystemExit):
             run_sync(**kwargs)
+
+
+class TestWarnIfLanInContainer:
+    """Tests for _warn_if_lan_in_container (container networking caveat)."""
+
+    def test_no_warning_outside_container(self):
+        """On bare metal no container warning is emitted."""
+        mock_logger = MagicMock()
+        with patch(
+            "hsync_client.main_logic.detect_container",
+            return_value=ContainerInfo(False),
+        ):
+            _warn_if_lan_in_container(mock_logger)
+        mock_logger.warning.assert_not_called()
+
+    def test_warning_inside_container(self):
+        """Inside a container the mDNS/bridge warning suggests host networking."""
+        mock_logger = MagicMock()
+        with patch(
+            "hsync_client.main_logic.detect_container",
+            return_value=ContainerInfo(True, "docker", "/.dockerenv"),
+        ):
+            _warn_if_lan_in_container(mock_logger)
+        warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "docker" in warning_texts
+        assert "--network host" in warning_texts

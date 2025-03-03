@@ -203,6 +203,12 @@ The guard complements other deletion-safety measures:
 | `--no-color` | Disable colored output |
 | `--help-symbols` | Show output symbols legend |
 
+Colored output is also disabled automatically when stdout is not an interactive
+terminal (containers, pipes, systemd units, cron) or when the standard
+[`NO_COLOR`](https://no-color.org) environment variable is set to any non-empty
+value. At startup the client logs one line describing the detected runtime
+environment (container runtime, cgroup memory/CPU limits, TTY state).
+
 ### General
 
 | Option | Description |
@@ -211,6 +217,16 @@ The guard complements other deletion-safety measures:
 | `--env-file` | Load environment variables from a file |
 | `--capabilities-json` | Print the binary's capabilities document as JSON and exit | — |
 | `-V, --version` | Show version | — |
+
+### Non-interactive runs (containers, systemd, cron)
+
+When no interactive terminal is attached (e.g. inside a container started
+without `-t`, or under a systemd unit), no operator can answer confirmation
+prompts: if one would be required (e.g. the deletion-risk prompt), the client
+fails fast with a clear error instead of blocking. Pass `-y/--yes` for
+unattended runs. In LAN mode, write-capable sync without an interactive
+terminal additionally requires `HSYNC_LAN_KEY` (see
+[LAN Mode Options](#lan-mode-options)).
 
 ## LAN Mode Options
 
@@ -470,13 +486,26 @@ synchronises **all files by default**, including dotfiles (`.env`, `.git/`,
 `.config/`, …). Only a built-in **ignore list** of operating-system cache files
 and editor/office temporary files is excluded automatically:
 
-- **macOS cache**: `.DS_Store`, `._*`, `.Spotlight-V100`, `.Trashes`
-- **Windows cache**: `Thumbs.db`, `Thumbs.db:encryptable`, `ehthumbs.db`,
-  `ehthumbs_vista.db`, `desktop.ini`
-- **Office lock files**: `~$*`
-- **Editor swap/backup**: `*.swp`, `*.swo`, `*~`, `4913`, `.~lock.*#`
-- **Generic temp/backup**: `*.tmp`, `*.temp`, `*.bak`
-- **Date-stamped backups**: `*-????-??-??-??????`
+| Pattern | Category | Example excluded files |
+|---------|----------|------------------------|
+| `.DS_Store` | macOS cache | macOS Finder metadata |
+| `._*` | macOS cache | Apple Double resource fork files (e.g. `._myfile.pdf`) |
+| `.Spotlight-V100` | macOS cache | Spotlight index directory |
+| `.Trashes` | macOS cache | Trash folder on removable drives |
+| `Thumbs.db` | Windows cache | Windows Explorer thumbnail cache |
+| `Thumbs.db:encryptable` | Windows cache | Encrypted thumbnail cache (NTFS alternate data stream) |
+| `ehthumbs.db` | Windows cache | Windows Media Center thumbnail cache |
+| `ehthumbs_vista.db` | Windows cache | Windows Vista thumbnail cache |
+| `desktop.ini` | Windows cache | Folder customisation metadata |
+| `~$*` | Office lock | Microsoft Office lock/temp files (e.g. `~$document.docx`) |
+| `.*.sw?` | Editor swap | Vim/Neovim swap files — dotfiles only (e.g. `.hello.txt.swp`, `.hello.txt.swx`). Does **not** exclude non-hidden files like `animation.swf` |
+| `*~` | Editor backup | Backup files created by editors (e.g. `file.txt~`) |
+| `4913` | Editor temp | Legacy Vim temporary file |
+| `.~lock.*#` | Editor lock | LibreOffice/OpenOffice lock files (e.g. `.~lock.document.odt#`) |
+| `*.tmp` | Generic temp | Temporary files (e.g. `output.tmp`) |
+| `*.temp` | Generic temp | Temporary files (e.g. `draft.temp`) |
+| `*.bak` | Generic backup | Backup files (e.g. `config.bak`) |
+| `*-????-??-??-??????` | Date-stamped backup | Timestamped backup files (e.g. `archive-2024-01-15-120000`) |
 
 These built-in patterns are **always active** and cannot be disabled. Users can
 re-include any of them via negation rules in `.hsyncignore` (e.g. `!*.tmp`).
@@ -508,8 +537,8 @@ The file follows [gitignore pattern syntax](https://git-scm.com/docs/gitignore):
 **/__pycache__/
 *.pyc
 
-# Ignore editor files (already in defaults; explicit for clarity)
-*.swp
+# Ignore editor swap files (already in defaults; explicit for clarity)
+.*.sw?
 
 # Re-include a specific log file
 !important.log

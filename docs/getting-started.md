@@ -117,11 +117,11 @@ echo "hello hsync lan" > /tmp/hsync-lan-a/hello.txt
 
 # 3. Terminal 1 — force this peer to be the master (it holds the canonical data,
 #    so no deletion-risk warning is shown) and start LAN Mode
-hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master -y
+hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master
 
 # 4. Terminal 2 — start a second peer; it discovers the master via mDNS and
 #    downloads hello.txt
-hsync -b demo-lan -p /tmp/hsync-lan-b --lan-mode -y
+hsync -b demo-lan -p /tmp/hsync-lan-b --lan-mode
 
 # 5. Verify the file arrived
 cat /tmp/hsync-lan-b/hello.txt   # → hello hsync lan
