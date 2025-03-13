@@ -164,7 +164,7 @@ class LANWebSocketServer:
         """Handle a single WebSocket client connection."""
         client_addr = websocket.remote_address
         client_cid = "unknown"
-        log.info(f"WebSocket client connected: {client_addr}")
+        log.info(f"WebSocket client connected (pre-auth): {client_addr}")
 
         # Send greeting: tell the client whether authentication is required
         lan_key = CONFIG.get("LAN_KEY")
@@ -196,6 +196,7 @@ class LANWebSocketServer:
                 return
         else:
             await websocket.send(json.dumps({"type": "connected"}))
+            log.info(f"WebSocket client connected (no auth): {client_addr} (CID: {client_cid})")
 
         # Add client to set
         self._clients.add(websocket)
@@ -220,7 +221,11 @@ class LANWebSocketServer:
             return
 
         message = json.dumps(event_dict)
-        log.debug(f"Broadcasting to {len(self._clients)} clients: {event_dict.get('name')}")
+        origin_cid = event_dict.get("cid")
+        origin_info = f" (origin: {origin_cid})" if origin_cid else ""
+        log.debug(
+            f"Broadcasting to {len(self._clients)} clients: {event_dict.get('name')}{origin_info}"
+        )
 
         # Send to all clients, removing disconnected ones
         disconnected = set()
