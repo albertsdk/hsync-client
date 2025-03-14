@@ -29,6 +29,7 @@ from hsync_client.config import (
     CONFIG,
     HsyncConfig,
     get_api_key,
+    get_autotune_enabled,
     get_compression_enabled,
     get_delta_enabled,
     get_discovery_timeout,
@@ -62,6 +63,9 @@ from hsync_client.constants import (
     MAX_DOWNLOAD_SIZE_MB_DEFAULT,
     PEER_TIMEOUT,
     RESYNC_DEFAULT,
+    TRANSFER_RETRY_ATTEMPTS_DEFAULT,
+    TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+    TRANSFER_RETRY_MIN_WAIT_DEFAULT,
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event, init_emitter
@@ -264,11 +268,11 @@ def _get_resync_value(cli_value: int | None) -> int | None:
     return RESYNC_DEFAULT
 
 
-def _get_max_concurrent_transfers_value(cli_value: int | None) -> int:
+def _get_max_concurrent_transfers_value(cli_value: int | None, autotune: int | None = None) -> int:
     """
     Determine the max concurrent transfers value.
 
-    Priority: CLI argument > environment variable > default constant.
+    Priority: CLI argument > environment variable > autotune > default constant.
     """
     from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
 
@@ -277,7 +281,79 @@ def _get_max_concurrent_transfers_value(cli_value: int | None) -> int:
     env_value = get_max_concurrent_transfers()
     if env_value is not None:
         return env_value
+    if autotune is not None:
+        return autotune
     return MAX_CONCURRENT_TRANSFERS_DEFAULT
+
+
+def _get_http_timeout_value(cli_value: int | None, autotune: int | None = None) -> int:
+    """
+    Determine the HTTP timeout value.
+
+    Priority: CLI argument > environment variable > autotune > default constant.
+    """
+    from hsync_client.config import get_http_timeout
+    from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
+
+    if cli_value is not None:
+        return cli_value
+    env_value = get_http_timeout()
+    if env_value is not None:
+        return env_value
+    if autotune is not None:
+        return autotune
+    return HTTP_TIMEOUT_DEFAULT
+
+
+def _get_reconnect_delay_value(cli_value: int | None, autotune: int | None = None) -> int:
+    """
+    Determine the reconnection delay value.
+
+    Priority: CLI argument > environment variable > autotune > default constant.
+    """
+    from hsync_client.config import get_reconnect_delay
+    from hsync_client.constants import RECONNECT_DELAY_DEFAULT
+
+    if cli_value is not None:
+        return cli_value
+    env_value = get_reconnect_delay()
+    if env_value is not None:
+        return env_value
+    if autotune is not None:
+        return autotune
+    return RECONNECT_DELAY_DEFAULT
+
+
+def _get_transfer_retry_min_wait_value(autotune: int | None = None) -> float:
+    """
+    Determine the per-file retry minimum wait value.
+
+    Priority: environment variable > autotune > default constant.
+    """
+    from hsync_client.config import get_transfer_retry_min_wait
+
+    env_value = get_transfer_retry_min_wait()
+    if env_value is not None:
+        return env_value
+    if autotune is not None:
+        return float(autotune)
+    return TRANSFER_RETRY_MIN_WAIT_DEFAULT
+
+
+def _get_transfer_retry_max_wait_value(autotune: int | None = None) -> float:
+    """
+    Determine the per-file retry maximum wait value.
+
+    Priority: environment variable > autotune > default constant.
+    """
+    from hsync_client.config import get_transfer_retry_max_wait
+
+    env_value = get_transfer_retry_max_wait()
+    if env_value is not None:
+        return env_value
+    if autotune is not None:
+        return float(autotune)
+    return TRANSFER_RETRY_MAX_WAIT_DEFAULT
 
 
 def _get_mass_delete_guard_value(cli_value: bool | None) -> bool:
@@ -532,11 +608,11 @@ def run_sync(
     server_url: str | None,
     verify_ssl: bool,
     ca_cert: str | None,
-    http_timeout: int,
+    http_timeout: int | None,
     local_path: str,
     continuous: bool,
     resync: int | None,
-    reconnect_delay: int,
+    reconnect_delay: int | None,
     stability_delay: int | None,
     max_wait_timeout: int,
     filter_path: str | None,
@@ -567,6 +643,7 @@ def run_sync(
     max_download_size: int = MAX_DOWNLOAD_SIZE_MB_DEFAULT,
     ignore_patterns: list[str] | None = None,
     max_concurrent_transfers: int | None = None,
+    no_autotune: bool = False,
     mass_delete_guard: bool | None = None,
     mass_delete_threshold: int | None = None,
     mass_delete_percent: int | None = None,
@@ -717,6 +794,53 @@ def run_sync(
         return
 
     # Populate global configuration dictionary
+
+    # ── Auto-tuning ────────────────────────────────────────────────────
+    autotune_enabled = not no_autotune and (not dryrun or continuous) and get_autotune_enabled()
+    tuning: Any = None  # TuningProfile | None
+    if autotune_enabled:
+        try:
+            from urllib.parse import urlparse
+
+            import hsync_client.autotune as autotune_mod
+            from hsync_client.autotune import (
+                ProbeResults,
+                classify_bandwidth,
+                classify_network,
+                derive_profile,
+                detect_storage_type,
+                measure_rtt,
+                profile_transfer_queue,
+            )
+
+            parsed = urlparse(effective_server_url)
+            rtt_host = parsed.hostname or "localhost"
+            rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+            rtt_ms = measure_rtt(rtt_host, rtt_port)
+            net_class = classify_network(rtt_ms)
+            bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
+            storage_type = detect_storage_type(local_path)
+
+            probe_results = ProbeResults(
+                rtt_ms=rtt_ms,
+                net_class=net_class,
+                bw_class=bw_class,
+                storage_type=storage_type,
+                queue_profile=profile_transfer_queue([]),  # MIXED at startup
+            )
+            tuning = derive_profile(probe_results)
+            log.info(f"autotune: {tuning.notes}")
+        except Exception as e:
+            log.warning(f"autotune: probe/policy failed ({e}); using safe defaults")
+            autotune_enabled = False
+
+    _autotune_timeout = tuning.http_timeout if tuning else None
+    _autotune_retry_min = tuning.retry_min_wait if tuning else None
+    _autotune_retry_max = tuning.retry_max_wait if tuning else None
+    _autotune_reconnect = tuning.reconnect_delay if tuning else None
+    _autotune_concurrency = tuning.concurrency if tuning else None
+
     config: HsyncConfig = {
         "API": {
             "buckets": f"{effective_server_url}/api/v1/buckets",
@@ -738,11 +862,11 @@ def run_sync(
             "X-Client-Version": HSYNC_VERSION,
             "X-Protocol-Version": PROTOCOL_VERSION_REST,
         },
-        "RECONNECT_DELAY": reconnect_delay,
+        "RECONNECT_DELAY": _get_reconnect_delay_value(reconnect_delay, _autotune_reconnect),
         "RESYNC": _get_resync_value(resync),
         "FILTER_PATH": filter_path,
         "STABILITY_DELAY": _get_stability_delay_value(stability_delay),
-        "HTTP_TIMEOUT": http_timeout,
+        "HTTP_TIMEOUT": _get_http_timeout_value(http_timeout, _autotune_timeout),
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
         "LAN_MODE": lan_mode,
         "LAN_PORT": lan_port or get_lan_port() or 0,
@@ -777,11 +901,27 @@ def run_sync(
         "MASS_DELETE_GUARD": _get_mass_delete_guard_value(mass_delete_guard),
         "MASS_DELETE_THRESHOLD": _get_mass_delete_threshold_value(mass_delete_threshold),
         "MASS_DELETE_PERCENT": _get_mass_delete_percent_value(mass_delete_percent),
-        "MAX_CONCURRENT_TRANSFERS": _get_max_concurrent_transfers_value(max_concurrent_transfers),
+        "MAX_CONCURRENT_TRANSFERS": _get_max_concurrent_transfers_value(
+            max_concurrent_transfers, _autotune_concurrency
+        ),
+        "TRANSFER_RETRY_ATTEMPTS": TRANSFER_RETRY_ATTEMPTS_DEFAULT,
+        "TRANSFER_RETRY_MIN_WAIT": _get_transfer_retry_min_wait_value(_autotune_retry_min),
+        "TRANSFER_RETRY_MAX_WAIT": _get_transfer_retry_max_wait_value(_autotune_retry_max),
+        # Auto-tuning runtime state (updated below after set_config)
+        "AUTOTUNE_ENABLED": autotune_enabled,
+        "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
     }
 
     set_config(config)
     set_debug(debug)
+
+    # Store the effective autotune decision for the reconnect path
+    CONFIG["AUTOTUNE_ENABLED"] = autotune_enabled
+
+    # Cache the autotune storage type so the per-cycle concurrency refresh
+    # (sync.py) can re-derive without probing the filesystem again.
+    if autotune_enabled and tuning:
+        CONFIG["AUTOTUNE_STORAGE_TYPE"] = tuning.storage_type.value
 
     # When TLS verification is disabled (--insecure), silence urllib3's
     # per-request InsecureRequestWarning once up-front. The connectivity check

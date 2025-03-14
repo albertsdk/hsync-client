@@ -84,6 +84,49 @@ early, missing files are skipped and permission issues are logged as warnings.
 The full decision flow is documented in
 [Architecture → Error Handling & Retries](internal/architecture.md#error-handling--retries).
 
+## Auto-Tuning
+
+HSYNC automatically tunes HTTP timeout, retry backoff, and transfer
+concurrency based on the runtime environment (network latency, bandwidth,
+storage type). This is enabled by default and requires no configuration.
+
+### How it works
+
+At startup the client probes the environment:
+
+- **Network latency** (TCP connect RTT to the server/LAN master)
+- **Bandwidth** (passive EMA from real transfers; optional active probe)
+- **Storage type** (HDD / SSD / NVMe, probed from the sync root)
+- **Transfer-queue profile** (re-evaluated each sync cycle, zero I/O)
+
+The derived values are used as defaults when the user has not set an explicit
+override. Per-cycle concurrency is refreshed from the live queue shape.
+
+### Resolution chain
+
+```
+CLI flag  >  HSYNC_* env var  >  auto-tuned value  >  static default
+```
+
+Set any of `HSYNC_HTTP_TIMEOUT`, `HSYNC_RECONNECT_DELAY`,
+`HSYNC_MAX_CONCURRENT_TRANSFERS`, `HSYNC_TRANSFER_RETRY_MIN_WAIT`, or
+`HSYNC_TRANSFER_RETRY_MAX_WAIT` to override the auto-tuned value. Use
+`--no-autotune` or `HSYNC_AUTOTUNE=false` to disable auto-tuning entirely
+and use the built-in static defaults.
+
+### Tuned parameters
+
+| Parameter | Static default | Auto-tuned range |
+| --------- | -------------- | ---------------- |
+| HTTP timeout | 30 s | 30 / 45 / 60 s (based on RTT) |
+| Retry min wait | 1 s | 5–15 s (scales with RTT) |
+| Retry max wait | 10 s | 10–30 s (scales with RTT) |
+| Reconnect delay | 5 s | 5–15 s (scales with RTT) |
+| Concurrency | 5 | 5–20 (based on storage + bandwidth + queue) |
+
+See [Configuration → Environment Variables](configuration.md#environment-variables)
+for the full reference.
+
 ## Environment Variables
 
 Environment variables and the provided `dev.env` / `prod.env` templates are

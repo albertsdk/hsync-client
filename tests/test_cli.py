@@ -214,7 +214,7 @@ class TestTyperCli:
         assert call_kwargs["quiet"] is False
         assert call_kwargs["dryrun"] is False
         assert call_kwargs["verify_ssl"] is True
-        assert call_kwargs["reconnect_delay"] == 5
+        assert call_kwargs["reconnect_delay"] is None
         assert call_kwargs["ca_cert"] is None
         assert call_kwargs["filter_path"] is None
         assert call_kwargs["logfile"] is None

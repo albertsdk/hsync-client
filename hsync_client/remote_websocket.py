@@ -283,6 +283,55 @@ async def resync() -> None:
         log.debug(f"Resync task stopped: {e}")
 
 
+async def _refresh_network_tuning() -> None:
+    """Re-measure RTT on WS reconnect and update network-derived CONFIG keys."""
+    if not CONFIG.get("AUTOTUNE_ENABLED", False):
+        return
+    try:
+        from urllib.parse import urlparse
+
+        from hsync_client.autotune import (
+            classify_network,
+            derive_retry,
+            derive_timeout,
+            measure_rtt,
+        )
+        from hsync_client.constants import (
+            HTTP_TIMEOUT_MAX,
+            HTTP_TIMEOUT_MIN,
+            RECONNECT_DELAY_MAX,
+            RECONNECT_DELAY_MIN,
+        )
+
+        api_url = CONFIG["API"]["buckets"]
+        parsed = urlparse(api_url)
+        rtt_host = parsed.hostname or "localhost"
+        rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        rtt_ms = measure_rtt(rtt_host, rtt_port)
+        net_class = classify_network(rtt_ms)
+
+        timeout = derive_timeout(rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX)
+        min_wait, max_wait, reconnect = derive_retry(
+            rtt_ms,
+            net_class,
+            RECONNECT_DELAY_MIN,
+            RECONNECT_DELAY_MAX,
+        )
+
+        CONFIG["HTTP_TIMEOUT"] = timeout
+        CONFIG["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
+        CONFIG["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
+        CONFIG["RECONNECT_DELAY"] = reconnect
+        log.debug(
+            f"autotune (reconnect): rtt={rtt_ms or '?'}ms "
+            f"net={net_class.value} -> timeout={timeout}s "
+            f"retry=({min_wait},{max_wait})s reconnect={reconnect}s"
+        )
+    except Exception as e:
+        log.debug(f"autotune: reconnect RTT probe failed ({e}); keeping current values")
+
+
 async def remote_connect() -> None:
     """
     Manage WebSocket connection with automatic reconnection.
@@ -324,6 +373,9 @@ async def remote_connect() -> None:
             await sleep(CONFIG["RECONNECT_DELAY"])
 
         finally:
+            # Re-measure RTT to catch network changes (e.g. laptop moved
+            # from Ethernet to Wi-Fi) before the next sync cycle starts.
+            await _refresh_network_tuning()
             log.info(f"Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
 
 

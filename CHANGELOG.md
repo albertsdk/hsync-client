@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Auto-tuning of timeout, retry & concurrency**: the client now
+  auto-detects the runtime environment (network latency, bandwidth, storage
+  type) and derives adaptive defaults for HTTP timeout, retry backoff, and
+  transfer concurrency. Probes run at startup and per sync cycle (concurrency
+  only); the resolution chain is `CLI > env > autotune > default`. Kill switch:
+  `--no-autotune` / `HSYNC_AUTOTUNE=false`. New env vars: `HSYNC_AUTOTUNE`,
+  `HSYNC_HTTP_TIMEOUT`, `HSYNC_RECONNECT_DELAY`, `HSYNC_TRANSFER_RETRY_MIN_WAIT`,
+  `HSYNC_TRANSFER_RETRY_MAX_WAIT`. New module: `hsync_client/autotune.py`.
 - **`install.sh --version latest`**: the installer now accepts `latest` as the
   version value, resolving the newest stable GitHub Release automatically
   (via the `releases/latest` redirect; drafts and pre-releases are excluded),

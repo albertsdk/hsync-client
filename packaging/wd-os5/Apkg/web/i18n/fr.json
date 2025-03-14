@@ -31,6 +31,14 @@
     "field.max_download_mb": "Taille maximale des fichiers entrants (Mo, 0 = off)",
     "field.verbose": "Journal détaillé",
 
+    "section.autotune": "Auto-réglage",
+    "note.autotune": "L'auto-réglage analyse le réseau et le stockage au démarrage et dérive des valeurs par défaut adaptatives pour le timeout, les retries et la concurrence. Laissez les champs ci-dessous vides pour utiliser les valeurs auto-réglées.",
+    "field.autotune": "Activer l'auto-réglage",
+    "field.http_timeout": "Timeout HTTP (s, 1-300, vide = auto)",
+    "field.reconnect_delay": "Délai de reconnexion (s, 1-60, vide = auto)",
+    "field.retry_min_wait": "Attente min. de retry (s, vide = auto)",
+    "field.retry_max_wait": "Attente max. de retry (s, vide = auto)",
+
     "mode.lan": "LAN (pair-à-pair)",
     "mode.server": "Serveur (serveur HSYNC centralisé)",
     "role.auto":   "Auto (bidirectionnel, élection automatique)",

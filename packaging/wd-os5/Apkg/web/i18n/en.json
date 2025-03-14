@@ -31,6 +31,14 @@
     "field.max_download_mb": "Max inbound file size (MB, 0 = off)",
     "field.verbose": "Verbose log",
 
+    "section.autotune": "Auto-tuning",
+    "note.autotune": "Auto-tuning probes the network and storage at startup and derives adaptive defaults for timeout, retry, and concurrency. Leave the fields below empty to use the auto-tuned values.",
+    "field.autotune": "Enable auto-tuning",
+    "field.http_timeout": "HTTP timeout (s, 1-300, empty = auto)",
+    "field.reconnect_delay": "Reconnect delay (s, 1-60, empty = auto)",
+    "field.retry_min_wait": "Retry min wait (s, empty = auto)",
+    "field.retry_max_wait": "Retry max wait (s, empty = auto)",
+
     "mode.lan": "LAN (peer-to-peer)",
     "mode.server": "Server (central HSYNC server)",
     "role.auto":   "Auto (bidirectional, automatic election)",
