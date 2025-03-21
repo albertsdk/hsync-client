@@ -227,7 +227,7 @@ In LAN mode, the master is the source of truth and slaves sync from it. Both dir
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
 - [Architecture](docs/internal/architecture.md) - Internal design
-- [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/adr/README.md) - Why the stable, cross-project decisions were made
+- [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
 - [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
