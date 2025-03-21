@@ -79,7 +79,7 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 - 🧩 Delta transfer (rsync-style block sync for large files)
 - 🔗 Symbolic link synchronization support
 - 🙈 `.hsyncignore` (gitignore-style) filtering
-- 🎛️ Adaptive timeouts, retry backoff, transfer concurrency
+- 🎛️ Adaptive timeouts, retry backoff and transfer concurrency
 - 📦 Compilable to standalone binary (PyInstaller)
 
 ### Server Mode

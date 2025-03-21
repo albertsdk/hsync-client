@@ -1,6 +1,6 @@
 # autotune — Adaptive tuning of timeout, retry & concurrency
 
-> Source: `hsync_client/autotune.py:1` · Design: `docs/internal/autotune-design.md`
+> Source: `hsync_client/autotune.py:1` · Design: `docs/internal/autotune.md`
 
 ## Purpose
 
