@@ -46,6 +46,7 @@ flowchart TB
 | **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
 | **Optional Authentication** | Shared secret key for security |
 | **Random Port Allocation** | Avoids port conflicts |
+| **Auto-Tuning** | Environment-adaptive defaults for HTTP timeout, retry, and concurrency |
 
 ## How It Works
 
