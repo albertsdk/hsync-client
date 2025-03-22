@@ -52,7 +52,11 @@ from hsync_client.delta_transfer import (
     upload_file_delta,
 )
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.exceptions import PermanentDownloadError, ServerError
+from hsync_client.exceptions import (
+    PermanentDownloadError,
+    PermanentUploadError,
+    ServerError,
+)
 from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.utils import (
     get_ssl_verify,
@@ -844,7 +848,7 @@ def upload_file(
         # concurrent download/delete of the same file.
         with path_lock(file.filepath):
             attempt(file)
-    except (RequestException, ServerError) as exc:
+    except (RequestException, ServerError, PermanentUploadError) as exc:
         log.error(f'Upload failed after retries for "{file.filepath}": {exc}')
         _emit_transfer_failed("upload", file.filepath, str(exc))
 
@@ -993,7 +997,15 @@ def _upload_file_attempt(file: File) -> None:
                     f'Server error uploading "{file.filepath}": {response.status_code}'
                 )
             else:
-                response.raise_for_status()
+                # 4xx (not 401/403/409): permanent — log the server's
+                # diagnostic body and raise a non-retryable error.
+                body = response.text[:500] if response.text else ""
+                log.error(
+                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
+                )
+                raise PermanentUploadError(
+                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
+                )
         else:
             # Standard upload: stream the multipart body directly from disk
             # so files of arbitrary size do not need to be loaded into RAM.
@@ -1051,7 +1063,15 @@ def _upload_file_attempt(file: File) -> None:
                     f'Server error uploading "{file.filepath}": {response.status_code}'
                 )
             else:
-                response.raise_for_status()
+                # 4xx (not 401/403/409): permanent — log the server's
+                # diagnostic body and raise a non-retryable error.
+                body = response.text[:500] if response.text else ""
+                log.error(
+                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
+                )
+                raise PermanentUploadError(
+                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
+                )
     except FileNotFoundError:
         log.error(f'File not found: "{file.filepath}"')
     except PermissionError:

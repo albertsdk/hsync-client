@@ -109,6 +109,26 @@ class PermanentDownloadError(DownloadError):
     default_message = "Download permanently failed"
 
 
+class UploadError(SyncError):
+    """File upload failed."""
+
+    error_code = "HSYNC-C3003"
+    default_message = "Upload failed"
+
+
+class PermanentUploadError(UploadError):
+    """Permanent upload failure (e.g. server rejected the payload with 4xx).
+
+    Raised instead of ``HTTPError`` so the retry decorator does not retry a
+    deterministic client-side rejection, and so the response body (which
+    carries the server's diagnostic message) is preserved in the exception
+    text for logging.
+    """
+
+    error_code = "HSYNC-C3005"
+    default_message = "Upload permanently failed"
+
+
 # =============================================================================
 # File Operation Errors (C4XXX)
 # =============================================================================

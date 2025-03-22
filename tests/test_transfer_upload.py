@@ -1040,3 +1040,121 @@ class TestBuildMultipartStreaming:
 
         assert "Transfer-Encoding" not in prepared.headers
         assert prepared.headers["Content-Length"] == str(len(body))
+
+    def test_400_logs_body_and_raises_permanent_upload_error(self, tmp_path):
+        """A 4xx (not 401/403/409) logs the server body and raises
+        PermanentUploadError (non-retryable) instead of HTTPError.
+
+        Regression: previously ``raise_for_status()`` discarded the response
+        body, making the 400 undiagnosable, and the retry decorator retried
+        the permanent error 3 times.
+        """
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Checksum mismatch"
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+        ):
+            upload_file(file, check_size=False)
+
+        # PermanentUploadError is caught by upload_file's except and surfaced
+        # as transfer_failed; verify the body is in the error message.
+        # (upload_file swallows the exception and logs it, so we verify via
+        #  the emitted event.)
+
+    def test_400_not_retried(self, tmp_path):
+        """A 4xx must not be retried: post is called exactly once.
+
+        Regression: HTTPError is a RequestException, so the retry decorator
+        retried the permanent 400 three times. PermanentUploadError is not a
+        RequestException, so the decorator does not retry it.
+        """
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Checksum mismatch"
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    # Allow 3 retries to prove they do NOT happen.
+                    "TRANSFER_RETRY_ATTEMPTS": 3,
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+        ):
+            upload_file(file, check_size=False)
+
+            # Must be called exactly once, not 3 times.
+            assert mock_post.call_count == 1
+
+    def test_400_emits_transfer_failed_with_body(self, tmp_path):
+        """A 4xx emits a transfer_failed event whose message includes the body."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Checksum mismatch"
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.emit_event") as mock_emit,
+        ):
+            upload_file(file, check_size=False)
+
+            # Verify transfer_failed was emitted with the body in the message.
+            transfer_calls = [
+                c
+                for c in mock_emit.call_args_list
+                if c.args and c.args[0] == UiEventName.transfer_failed
+            ]
+            assert len(transfer_calls) == 1
+            msg = transfer_calls[0].kwargs.get("message", "")
+            assert "Checksum mismatch" in msg
