@@ -50,7 +50,12 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, WS_MAX_MESSAGE_BYTES, ActionLabel
+from hsync_client.constants import (
+    HSYNCKEEP_FILENAME,
+    STABILITY_DELAY_ON_CLOSED,
+    WS_MAX_MESSAGE_BYTES,
+    ActionLabel,
+)
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
@@ -65,6 +70,15 @@ MIN_BANDWIDTH_BPS = 10 * 1024 * 1024
 # Hard cap on the dynamic ``wait_pending`` timeout to avoid waiting forever
 # if a transfer stalls (30 minutes).
 MAX_WAIT_PENDING_SECONDS = 30 * 60
+
+# Short window an ``on_created`` upload is deferred so that ``on_closed``
+# (``IN_CLOSE_WRITE``) — the reliable "fd closed, content complete" trigger —
+# can cancel it and take precedence (it also enables the fast stability
+# re-check). Files that arrive already complete with no writer fd (atomic
+# rename from outside the watch tree, hard-links, ``mv`` from a sibling
+# directory) never receive ``on_closed``, so after this window the deferred
+# upload fires as a fallback via the conservative stability poll.
+CREATE_UPLOAD_DEFER_S = STABILITY_DELAY_ON_CLOSED
 
 
 # =============================================================================
@@ -605,6 +619,10 @@ async def lan_websocket_client(
         # This prevents race conditions where a rename/upload/delete is
         # still in-flight while the full sync runs and reverts it.
         if _slave_event_handler is not None:
+            # Cancel any not-yet-fired on_created-deferred uploads first so
+            # they cannot start new uploads during/after the wait; their
+            # files will be reconciled by the full sync on reconnect.
+            _slave_event_handler.cancel_all_create_timers()
             _slave_event_handler.wait_pending(timeout=30.0)
         # Stop the file watcher
         observer.stop()
@@ -653,6 +671,7 @@ async def _handle_lan_event(
         log_prefix="LAN ",
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
         unmark_receiving=slave_handler.unmark_receiving if slave_handler else None,
+        record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
         create_symlink_locally=False,
         recover_on_missing_rename_src=False,
     )
@@ -693,12 +712,28 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # Track files we're currently receiving from master to avoid echo
         self._receiving_files: set[str] = set()
         self._receiving_lock = threading.Lock()
+        # Track recently applied inbound renames (exact (src,dst) pair) so
+        # a watchdog echo of the same rename can be distinguished from a real
+        # 404 divergence when the slave re-sends it to the master.  The echo
+        # always carries the identical (src,dst) of the inbound rename; a
+        # genuine user rename that collides with the source path does not.
+        self._inbound_renames: dict[tuple[str, str], float] = {}
+        self._inbound_renames_lock = threading.Lock()
+        self._INBOUND_RENAME_TTL_S: float = 10.0
         # Track pending operations (rename, upload, delete) for graceful
         # shutdown.  Each entry is ``(thread, bytes_estimate)`` so that
         # ``wait_pending`` can derive a timeout proportional to the volume
         # still in flight (large uploads can legitimately take minutes).
         self._pending_ops: list[tuple[threading.Thread, int]] = []
         self._pending_ops_lock = threading.Lock()
+        # Deferred ``on_created`` uploads: a short daemon ``Timer`` per path
+        # that fires only if no ``on_closed`` arrives in time. ``on_closed``
+        # is the reliable trigger (fd closed → content complete, fast
+        # stability re-check) and takes precedence by cancelling the timer;
+        # the timer is the fallback for files that arrive already complete
+        # with no writer fd to close (atomic rename / hard-link / mv-in).
+        self._pending_create_timers: dict[str, threading.Timer] = {}
+        self._pending_create_timers_lock = threading.Lock()
 
     def mark_receiving(self, filepath: str) -> None:
         """Mark a file as being received from master (to avoid upload echo)."""
@@ -714,6 +749,33 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         """Check if a file is currently being received from master."""
         with self._receiving_lock:
             return filepath in self._receiving_files
+
+    def record_inbound_rename(self, src: str, dst: str) -> None:
+        """Record a rename applied locally on behalf of an inbound master event.
+
+        The exact ``(src, dst)`` pair is cached for a short TTL so a later
+        watchdog echo of the *same* rename can be recognised as benign when
+        the master responds 404 (source already renamed).  A genuine user
+        rename that re-uses one of the paths will have a different pair and
+        will not match.
+        """
+        now = time()
+        with self._inbound_renames_lock:
+            self._inbound_renames[(src, dst)] = now
+            cutoff = now - self._INBOUND_RENAME_TTL_S
+            for key in [k for k, ts in self._inbound_renames.items() if ts < cutoff]:
+                del self._inbound_renames[key]
+
+    def is_inbound_rename_echo(self, src: str, dst: str) -> bool:
+        """Return True if ``(src, dst)`` matches a recent inbound rename."""
+        with self._inbound_renames_lock:
+            ts = self._inbound_renames.get((src, dst))
+            if ts is None:
+                return False
+            if time() - ts > self._INBOUND_RENAME_TTL_S:
+                del self._inbound_renames[(src, dst)]
+                return False
+            return True
 
     def _start_operation(
         self,
@@ -899,7 +961,17 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             )
 
             if response.status_code not in (200, 204):
-                log.warning(f"Rename request failed: {response.status_code}")
+                if response.status_code == 404 and self.is_inbound_rename_echo(src_path, dst_path):
+                    # Source no longer exists on master because the rename
+                    # was already applied there (this PATCH is the echo of an
+                    # inbound `renamed` event we just applied locally).
+                    # Benign: nothing left to rename.
+                    log.debug(
+                        f"Rename source already gone on master (inbound echo): "
+                        f'"{src_path}" -> "{dst_path}"'
+                    )
+                else:
+                    log.warning(f"Rename request failed: {response.status_code}")
 
         except Exception as e:
             log.error(f"Failed to rename on master: {e}")
@@ -933,17 +1005,22 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                 # corresponding `IN_MOVED_FROM`, hard-links, `mv` from a
                 # sibling directory, etc.) arrive already complete and will
                 # not generate a subsequent on_closed / on_modified event.
-                # Trigger the upload immediately when the file is non-empty
-                # at creation time; otherwise wait for on_closed / on_modified.
+                # Defer the upload for a short window so that, when the file
+                # WAS opened for writing, on_closed (the reliable, fd-closed
+                # trigger) can cancel this fallback and take precedence. If
+                # no on_closed arrives (atomic rename / hard-link), the timer
+                # fires and uploads the already-complete file. Empty files
+                # wait for on_closed / on_modified to avoid uploading a
+                # half-opened file.
                 try:
                     size = Path(src_path).stat().st_size
                 except OSError:
                     size = 0
                 if size > 0:
                     log.debug(
-                        f'{ActionLabel.CLIENT_NEW} "{src_path}" ({size} bytes, complete on create)'
+                        f'{ActionLabel.CLIENT_NEW} "{src_path}" ({size} bytes, deferred to on_closed)'
                     )
-                    self._handle_file_upload(src_path)
+                    self._schedule_create_upload(src_path)
 
     def on_modified(self, event) -> None:
         """Handle file/directory modification events."""
@@ -992,7 +1069,64 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if event.is_directory or is_hidden_file(src_path):
             return
 
+        # Cancel any on_created-deferred upload for this path: on_closed is
+        # the reliable trigger (fd closed → content complete) and takes
+        # precedence, using the fast stability re-check. If the deferred
+        # timer already fired its upload is in flight; the stability check
+        # converges both on the final content (redundant, not data-losing).
+        self._cancel_create_upload(src_path)
         self._handle_file_upload(src_path, from_closed=True)
+
+    def _schedule_create_upload(self, src_path: str) -> None:
+        """Defer an ``on_created`` upload so a later ``on_closed`` can win.
+
+        ``on_closed`` (``IN_CLOSE_WRITE``) is the reliable trigger — the
+        writer fd is closed so the content is guaranteed complete, and it
+        uses the fast stability re-check. By deferring for a short window we
+        let ``on_closed`` cancel this fallback and take over. If
+        ``on_closed`` never arrives (atomic rename from outside the watch
+        tree, hard-link, ``mv`` from a sibling directory — no writer fd to
+        close), the timer fires and uploads the already-complete file via
+        the conservative stability poll.
+        """
+        with self._pending_create_timers_lock:
+            # Replace any prior pending timer for this path (rapid
+            # create/create) so only the latest creation uploads.
+            prior = self._pending_create_timers.pop(src_path, None)
+            if prior is not None:
+                prior.cancel()
+            timer = threading.Timer(
+                CREATE_UPLOAD_DEFER_S,
+                self._handle_file_upload,
+                args=(src_path,),
+            )
+            timer.daemon = True
+            timer.name = f"create-upload-{src_path}"
+            self._pending_create_timers[src_path] = timer
+            to_start = timer
+        to_start.start()
+
+    def _cancel_create_upload(self, src_path: str) -> None:
+        """Cancel a pending ``on_created``-deferred upload for *src_path*.
+
+        Called from ``on_closed`` (the reliable trigger takes precedence) and
+        from ``on_deleted`` / ``on_moved(src)`` (the file no longer exists at
+        that path). If the timer already fired its upload is in flight and
+        cannot be stopped, which is acceptable: the stability check converges
+        both the fallback and the close-triggered upload on the final content.
+        """
+        with self._pending_create_timers_lock:
+            timer = self._pending_create_timers.pop(src_path, None)
+        if timer is not None:
+            timer.cancel()
+
+    def cancel_all_create_timers(self) -> None:
+        """Cancel every pending ``on_created``-deferred upload (e.g. shutdown)."""
+        with self._pending_create_timers_lock:
+            timers = list(self._pending_create_timers.values())
+            self._pending_create_timers.clear()
+        for timer in timers:
+            timer.cancel()
 
     def _handle_file_upload(self, src_path: str, from_closed: bool = False) -> None:
         """Handle a file modification - upload to master.
@@ -1050,6 +1184,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         """Handle file/directory deletion events."""
         src_path = ensure_str_path(event.src_path)
 
+        # The file no longer exists: cancel any on_created-deferred upload so
+        # a stale timer does not try to upload a deleted file.
+        self._cancel_create_upload(src_path)
+
         # Skip temp files (.part files used during downloads)
         if self._is_temp_file(src_path):
             return
@@ -1083,6 +1221,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         if not dest_path:
             return
+
+        # The file moved away from src_path: cancel any on_created-deferred
+        # upload for it so a stale timer does not upload a moved file.
+        self._cancel_create_upload(src_path)
 
         # Skip in download-only mode (don't propagate local renames)
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
