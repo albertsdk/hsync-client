@@ -145,8 +145,8 @@ stateDiagram-v2
 
     note right of Retry
         Backoff: 1s, 2s, 4s, 8s...
-        Max: 60s
-        Max retries: 5
+        Max: 10s
+        Max retries: 3
     end note
 ```
 

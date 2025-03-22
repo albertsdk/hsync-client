@@ -211,7 +211,7 @@ automatically:
 - **macOS cache**: `.DS_Store`, `._*`, `.Spotlight-V100`, `.Trashes`
 - **Windows cache**: `Thumbs.db`, `desktop.ini`
 - **Office lock files**: `~$*`
-- **Editor swap/backup**: `*.swp`, `*.swo`, `*~`, `4913`, `.~lock.*#`
+- **Editor swap/backup**: `.*.sw?` (dotfiles only), `*~`, `4913`, `.~lock.*#`
 - **Generic temp/backup**: `*.tmp`, `*.temp`, `*.bak`
 
 The sentinel file `.hsynckeep` (used to keep empty directories) is always

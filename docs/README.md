@@ -68,7 +68,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | Document | What it covers |
 | -------- | -------------- |
 | [internal/architecture.md](internal/architecture.md) | How the client is structured internally. |
-| [internal/conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling. |
+| [conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling. |
 | [internal/lan-internals.md](internal/lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
 | [internal/developer.md](internal/developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
 | [internal/testing.md](internal/testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |

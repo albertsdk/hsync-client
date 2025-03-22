@@ -23,6 +23,7 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_DELTA_ENABLED` | Enable rsync-style delta transfer for large files | `true` |
 | `HSYNC_DELTA_MIN_FILE_SIZE` | Minimum file size (bytes) for delta transfer in server mode | `262144` (256 KB) |
 | `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Minimum file size (bytes) for delta transfer in LAN mode | `1048576` (1 MB) |
+| `HSYNC_TOMBSTONE_TTL_DAYS` | Days to retain deletion markers before garbage collection (`0` = forever) | `30` |
 
 > `HSYNC_SERVER` and `HSYNC_API_KEY` are required in **Server Mode** only. In
 > **LAN Mode** (`--lan-mode`) they are ignored; use the optional
@@ -85,7 +86,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-s, --server` | Server URL (Server Mode only) | (required or `HSYNC_SERVER`) |
-| `--timeout` | HTTP request timeout in seconds | `30` |
+| `--timeout` | HTTP request timeout in seconds | auto (`30`/`45`/`60`) |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
 | `--insecure` | Skip SSL certificate verification | `false` |
 
@@ -97,10 +98,11 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `-p, --path` | Local directory path | cwd |
 | `-w, --watch` | Watch for changes and sync continuously. (Implicit in LAN mode) | `false` |
 | `-i, --interval` | Force full sync every N seconds (requires `-w`); overrides `HSYNC_RESYNC` | — (default: `300` via env/constant) |
-| `--retry-delay` | Retry connection after N seconds | `5` |
+| `--retry-delay` | Retry connection after N seconds | auto (`5`–`15`) |
 | `--stability-delay` | Seconds to wait before uploading modified files | — (default: `5` via env/constant) |
 | `--max-wait-timeout` | Maximum time to wait for file stabilization | `120` |
 | `--max-concurrent-transfers` | Maximum number of concurrent file transfers (1-20, overrides `HSYNC_MAX_CONCURRENT_TRANSFERS`) | — (default: `5` via env/constant) |
+| `--no-autotune` | Disable auto-tuning of timeout, retry, and concurrency (use static defaults) | `false` |
 | `--filter-path` | Sync only files within this subdirectory path | — |
 | `-n, --dry-run` | Show what would be done without making changes | `false` |
 | `--ignore-delete` | Do not propagate file deletions | `false` |
@@ -275,7 +277,7 @@ protocol internals see [LAN Internals](internal/lan-internals.md).
 | `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
 | `HSYNC_NEVER_MASTER` | Never become master (`true`/`false`) | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Strict pairing — disable TOFU auto-pinning (`true`/`false`) | `false` |
-| `HSYNC_LAN_HTTPS` | Use HTTPS for LAN peer communication (always on; self-signed cert generated per master) | `true` |
+| `HSYNC_LAN_HTTPS` | Use HTTPS for LAN peer communication (always on; self-signed cert generated per master) | `true` (always on, not configurable) |
 | `HSYNC_LAN_CERT_DIR` | Directory holding the persistent LAN master keypair | `$XDG_STATE_HOME/hsync/lan_cert` or `~/.local/state/hsync/lan_cert` |
 | `HSYNC_LAN_PIN_FILE` | File storing the pinned fingerprints of known LAN peers (TOFU) | `$XDG_STATE_HOME/hsync/lan_known_peers.json` or `~/.local/state/hsync/lan_known_peers.json` |
 

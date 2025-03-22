@@ -62,6 +62,14 @@ Use `--help-symbols` to display this legend in the terminal.
 | `[PERMISSION]` | Permissions | Setting file / directory permissions |
 | `[SYMLINK]` | Symlink | Creating symbolic link |
 | `[IGNORE DEL]` | Ignore delete | Deletion ignored (backup / ignore-delete mode) |
+| `[CONFLICT]` | Conflict | File conflict detected (three-way merge) |
+| `[GUARD]` | Guard | Mass-deletion guard tripped (deletions paused) |
+| `[TOMBSTONE]` | Tombstone | File deleted remotely while offline; local copy removed |
+| `[SYNCED]` | Synced | File is in sync (preview / dry-run) |
+| `[TO_DOWNLOAD]` | To download | File would be downloaded (preview / dry-run) |
+| `[TO_UPLOAD]` | To upload | File would be uploaded (preview / dry-run) |
+| `[TO_DELETE]` | To delete | File would be deleted (preview / dry-run) |
+| `[TO_RENAME]` | To rename | File would be renamed (preview / dry-run) |
 
 ### LAN Client Operations
 
@@ -73,6 +81,8 @@ Use `--help-symbols` to display this legend in the terminal.
 | `[CLIENT DIR]` | Client dir | Client creates directory on master |
 | `[CLIENT KEEP]` | Client sentinel | Client creates sentinel file (`.hsynckeep`) |
 | `[CLIENT IGN]` | Client ignore | Client ignores deletion (ignore-delete mode) |
+| `[CLIENT NEW]` | Client new | Client creates a new file on master |
+| `[LAN FILE]` | LAN file | LAN master broadcasts a file event |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 

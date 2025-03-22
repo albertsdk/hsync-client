@@ -186,7 +186,7 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 |----------|---------|---------|
 | `HSYNC_BUCKET` † | `hsync` | Remote bucket name |
 | `HSYNC_PATH` † | `/var/lib/hsync` | Local directory to synchronise |
-| `HSYNC_LAN_HTTPS` | `true` | Use HTTPS for LAN peer communication |
+| `HSYNC_LAN_HTTPS` | `true` | Use HTTPS for LAN peer communication (always on, not configurable) |
 | `HSYNC_LAN_PERSISTENT` | `true` | Stay active indefinitely waiting for peers |
 | `HSYNC_LAN_GROUP` | *(empty)* | Restrict discovery to a group |
 | `HSYNC_LAN_KEY` | *(empty)* | Shared secret for peer authentication |
