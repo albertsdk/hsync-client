@@ -15,6 +15,7 @@ implements it, plus client-only operational rules.
 | [0004 desktop-subprocess-contract](../../hsync-common/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:76`) |
 | [0005 protocol-versioning](../../hsync-common/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:275`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
 | [0006 master-authoritative-conflict-model](../../hsync-common/docs/internal/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:905`) |
+| [0017 lan-slave-outbound-event-reliability](../../hsync-common/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
 in [`lan-protocol.md`](../../hsync-common/docs/lan-protocol.md) and maps to
