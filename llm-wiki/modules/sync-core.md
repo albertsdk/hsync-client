@@ -107,9 +107,34 @@ same confinement before mkdir/metadata writes.
 
 `BaseFileEventHandler` (`file_event_handler.py:49`) maps watchdog callbacks to the
 transfer pipeline. Linux uses `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other
-platforms debounce `on_modified` (`MODIFIED_DEBOUNCE_INTERVAL`, `:46`). `on_closed`
-threads `from_closed=True` into the stability fast path. Subclasses implement
-`_on_file_ready` (remote/LAN-master variants).
+platforms fall back to `on_modified`. Subclasses implement `_on_file_ready`
+(remote/LAN-master variants).
+
+**Safe-save handling** (`on_moved` file branch, `:244`): when an editor
+safe-saves (writes to a temp like `.goutputstream-*` or `*.tmp` then atomically
+renames over the final file), the temp is hidden (`DEFAULT_IGNORE_PATTERNS`)
+so the rename is reframed as a content `modified` of the destination via
+`_process_file_ready(dest, trigger="safe-save")` — not a user-initiated
+`renamed`.
+
+**Content-aware dedup** (`_process_file_ready`, `:177`): a two-stage filter
+suppresses spurious broadcasts without a naive time-based debounce (which was
+counterproductive: it suppressed the real safe-save rename while keeping the
+preceding no-op close):
+
+1. **Stat pre-check** — compares `(mtime, size)` with the last broadcast for
+   the path (`_last_broadcast_stat`). If identical, skips without hashing
+   (catches an editor open/close with no write; cost: one `stat()`).
+2. **Hash compare** — if the stat changed, computes the SHA-256 (via
+   `File.get`, which the code already did) and compares with
+   `_last_broadcast_hash`. If the content is identical (e.g. mtime touched
+   but bytes unchanged), skips the broadcast. Only a genuine content change
+   propagates.
+
+This correctly handles the no-op-close-before-safe-save scenario: the first
+close (content unchanged) is skipped at stage 2, and the subsequent rename
+(content changed) is broadcast. The hash is already computed by `File.get`,
+so the comparison adds zero I/O cost.
 
 ## event_queue.py — outbound WS event retries
 

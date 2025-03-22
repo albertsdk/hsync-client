@@ -418,14 +418,27 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
             event_dict["cid"] = origin_cid
         self._ws_server.broadcast_sync(event_dict)
 
-    def _on_file_ready(self, file: File, src_path: str, from_closed: bool = False) -> None:
+    def _on_file_ready(
+        self,
+        file: File,
+        src_path: str,
+        from_closed: bool = False,
+        *,
+        trigger: str | None = None,
+    ) -> None:
         """Broadcast a ``modified`` event so slaves can pull the new bytes.
 
         The master only propagates metadata (slaves pull the bytes), so
         ``from_closed`` carries no upload semantics here and is accepted purely
-        to honour the :class:`BaseFileEventHandler` hook contract.
+        to honour the :class:`BaseFileEventHandler` hook contract. ``trigger``
+        overrides the log trigger label (e.g. ``"safe-save"``).
         """
-        log.info(f'{ActionLabel.LAN_FILE} "{src_path}"')
+        # The label mirrors ``[{prefix}MODIFY]`` used for directory modify
+        # events (file_event_handler.on_modified): both broadcast
+        # ``EventName.modified``. The trigger suffix disambiguates the two
+        # close-write fires a GNOME/gvfs safe-save produces on the master.
+        actual_trigger = trigger or ("closed" if from_closed else "modified")
+        log.info(f'{ActionLabel.LAN_MODIFY} "{src_path}" ({actual_trigger})')
         # A (re-)created/modified file invalidates any prior deletion marker so
         # peers do not delete the freshly written file on their next full sync.
         # Best-effort: tombstone bookkeeping must never break event propagation.

@@ -2,7 +2,6 @@
 Tests for LAN file event handler (master side) functionality.
 """
 
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,7 +37,8 @@ class TestLANFileEventHandler:
         """Test creating a file event handler."""
         handler = LANMasterFileEventHandler(ws_server)
         assert handler._ws_server is ws_server
-        assert handler._last_modified == {}
+        assert handler._last_broadcast_stat == {}
+        assert handler._last_broadcast_hash == {}
 
     def test_on_created_directory(self, handler, ws_server, tmp_path):
         """Test handling directory creation event."""
@@ -167,6 +167,38 @@ class TestLANFileEventHandler:
 
             # Should broadcast the event
             ws_server.broadcast_sync.assert_called_once()
+
+    def test_on_file_ready_logs_lan_modify_with_trigger(self, handler, ws_server, tmp_path):
+        """_on_file_ready logs [LAN MODIFY] with the (closed)/(modified) trigger.
+
+        Regression for the [LAN FILE] -> [LAN MODIFY] rename: the label must
+        describe the broadcast ``modified`` event and the trigger suffix must
+        distinguish an ``IN_CLOSE_WRITE`` fire (``closed``) from the
+        ``on_modified`` debounce fallback (``modified``).
+        """
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+
+        config = {
+            "CID": "test-client",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "remote",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        file_obj = MagicMock()
+        file_obj.filepath = str(test_file)
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.log") as mock_log,
+        ):
+            handler._on_file_ready(file_obj, str(test_file), from_closed=True)
+            handler._on_file_ready(file_obj, str(test_file), from_closed=False)
+
+            msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
+            assert any("[LAN MODIFY]" in m and "(closed)" in m for m in msgs), msgs
+            assert any("[LAN MODIFY]" in m and "(modified)" in m for m in msgs), msgs
 
     def test_on_deleted_file(self, handler, ws_server, tmp_path):
         """Test handling file deletion event."""
@@ -375,14 +407,22 @@ class TestLANFileEventHandler:
             handler.on_modified(event)
             ws_server.broadcast_sync.assert_called_once()
 
-    def test_on_modified_file_non_linux_debounce_skip(self, handler, ws_server, tmp_path):
-        """Test on_modified file skipped when within debounce interval."""
+    def test_on_modified_file_non_linux_unchanged_stat_skips(self, handler, ws_server, tmp_path):
+        """on_modified file skipped when stat (mtime, size) is unchanged.
+
+        Replaces the old time-based debounce test: the two-stage stat+hash
+        dedup suppresses the broadcast when the file's (mtime, size) matches
+        the last propagated state.
+        """
         f = tmp_path / "file.txt"
         f.write_text("x")
+
         event = FileModifiedEvent(str(f))
 
-        # Pre-set recent modification time
-        handler._last_modified[str(f)] = time.time()
+        # Pre-set the stat to the current file's (mtime, size) so stage-1
+        # catches it as unchanged.
+        st = f.stat()
+        handler._last_broadcast_stat[str(f)] = (st.st_mtime_ns, st.st_size)
 
         config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r"}
         with (
