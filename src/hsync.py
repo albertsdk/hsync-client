@@ -51,6 +51,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 
+HSYNC_VERSION = "0.1.0"
+
+
 def log(message: str = "") -> None:
     """Logs a message with a timestamp, process ID, and log level.
 
@@ -414,7 +417,7 @@ async def sync():
             log(f"[E] Exception: {e}")
 
     todo = 0
-    
+
     if CONFIG["DRYRUN"]:
         for sync_action in sync_actions:
             if DEBUG:
@@ -492,7 +495,7 @@ async def ws_events():
     cid = CONFIG["CID"]
     bucket = CONFIG["BUCKET"]
     uri = f"{api_events}/{bucket}/{cid}?token={HSYNC_API_KEY}"
-    
+
     ssl_context = None
     if str(api_events).startswith("wss"):
         ssl_context = create_default_context(Purpose.SERVER_AUTH)
@@ -502,7 +505,7 @@ async def ws_events():
         else:
             ssl_context.check_hostname = True
             ssl_context.verify_mode = CERT_REQUIRED
-        
+
     async with connect(
         uri,
         ssl=ssl_context,
@@ -833,7 +836,8 @@ def main():
             super(SortedHelpFormatter, self).add_arguments(actions)
 
     parser = ArgumentParser(
-        description="HSYNC CLI - Sync files utility", formatter_class=SortedHelpFormatter
+        description="HSYNC Client - HTTP Files synchronization client",
+        formatter_class=SortedHelpFormatter,
     )
     parser.add_argument(
         "-u",
@@ -913,8 +917,8 @@ def main():
         "--no-verify-ssl",
         action="store_false",
         help=(
-            "By default, the HSYNC CLI uses SSL when communicating with AWS services. "
-            "For each SSL connection, the HSYNC CLI will verify SSL certificates. "
+            "By default, the HSYNC client uses SSL when communicating with AWS services. "
+            "For each SSL connection, the HSYNC client will verify SSL certificates. "
             "This option overrides the default behavior of verifying SSL certificates."
         ),
     )
@@ -922,8 +926,8 @@ def main():
         "-v",
         "--version",
         action="version",
-        version="%(prog)s 0.1.5",
-        help="Display the version of this tool.",
+        version=f"%(prog)s {HSYNC_VERSION}",
+        help="Display the version of the tool.",
     )
 
     args = parser.parse_args()
@@ -958,7 +962,7 @@ def main():
             "accept": "application/json",
             "Authorization": f"Bearer {HSYNC_API_KEY}",
             "X-Client-Name": basename(__file__),
-            "X-Client-Version": "0.1.5",
+            "X-Client-Version": HSYNC_VERSION,
         },
         "SYNC_ORDER": args.sync_order,
         "SYNC_RECONNECT": args.sync_reconnect,
