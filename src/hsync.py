@@ -7,7 +7,7 @@ from model.dir import Dir, is_hidden_dir
 from model.file import File, is_hidden_file
 from model.sync_action import SyncAction, SyncActionName
 from argparse import ArgumentParser, ArgumentTypeError, HelpFormatter
-from asyncio import run, get_running_loop, run_coroutine_threadsafe, sleep
+from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe, sleep
 from copy import deepcopy
 from datetime import datetime
 from hashlib import md5
@@ -25,6 +25,7 @@ from os import (
     walk,
 )
 from os.path import (
+    abspath,
     basename,
     dirname,
     exists,
@@ -32,6 +33,7 @@ from os.path import (
     getsize,
     islink,
     join,
+    normpath,
 )
 from pathlib import Path
 from random import choices
@@ -54,7 +56,7 @@ from watchdog.events import FileSystemEventHandler
 HSYNC_VERSION = "0.1.0"
 
 
-def log(message: str = "") -> None:
+def log(message: str = "", data: dict = None) -> None:
     """Logs a message with a timestamp, process ID, and log level.
 
     Args:
@@ -66,6 +68,8 @@ def log(message: str = "") -> None:
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S") + f"Z.{time.microsecond // 1000:03d}"
     level = "DEBUG" if DEBUG else "INFO"
     string = f"{timestamp} - [{getpid()}] {level}: {message}"
+    if data:
+        string = string + "\n" + dumps(data, indent=4, sort_keys=True)
     if CONFIG and CONFIG["LOGFILE"]:
         with open(CONFIG["LOGFILE"], "a") as file:
             file.write(f"{string}\n")
@@ -103,6 +107,10 @@ def is_valid_logfile(path_string: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def is_same_paths(path1, path2):
+    return normpath(abspath(path1)) == normpath(abspath(path2))
 
 
 def get_cid(length=10):
@@ -169,7 +177,7 @@ def get_files_local() -> dict[File]:
 
 def get_files_remote() -> dict[File]:
     try:
-        uri = f"{CONFIG["API"]["files"]}/{CONFIG["BUCKET"]}"
+        uri = f"{CONFIG["API"]["files"]}/{CONFIG["REMOTE_BUCKET"]}"
         response = get(
             uri,
             headers=CONFIG["REQUEST_HEADERS"],
@@ -180,14 +188,17 @@ def get_files_remote() -> dict[File]:
             },
             verify=CONFIG["NO_VERIFY_SSL"],
         )
-        response.raise_for_status()
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
         return response.json()
-    except RequestException as e:
+    except Exception as e:
         raise Exception(f"Error downloading files list: {e}")
 
 
 def download_file(file: File):
-    uri = f"{CONFIG["API"]["download"]}/{CONFIG["BUCKET"]}"
+    uri = f"{CONFIG["API"]["download"]}/{CONFIG["REMOTE_BUCKET"]}"
     response = get(
         uri,
         headers=CONFIG["REQUEST_HEADERS"],
@@ -197,7 +208,7 @@ def download_file(file: File):
     )
     if DEBUG:
         log(f"[I] Request URI: {uri}")
-        log(f"[I] Request Header: {CONFIG["REQUEST_HEADERS"]}")
+        log(f"[I] Request Header:", CONFIG["REQUEST_HEADERS"])
 
     if response.status_code == 200:
         with NamedTemporaryFile(delete=False) as temp_file:
@@ -276,7 +287,7 @@ def upload_file(file: File, check_size: bool = True):
         return
 
     try:
-        uri = f"{CONFIG["API"]["upload"]}/{CONFIG["BUCKET"]}"
+        uri = f"{CONFIG["API"]["upload"]}/{CONFIG["REMOTE_BUCKET"]}"
         prefix = f"{CONFIG["LOCAL_BUCKET"]}".rstrip("/")
         path = dirname(file.filepath).rstrip("/").removeprefix(prefix).lstrip("/")
         data = {
@@ -292,8 +303,8 @@ def upload_file(file: File, check_size: bool = True):
         if DEBUG:
             log(f"[I] Upload file: {file.filepath}")
             log(f"[I]         URI: {uri}")
-            log(f"[I]      Header: {CONFIG["REQUEST_HEADERS"]}")
-            log(f"[I]        data: {dumps(data)}")
+            log(f"[I]      Header:", CONFIG["REQUEST_HEADERS"])
+            log(f"[I]        data:", data)
 
         with open(file.filepath, "rb") as upload:
             files = {"file": (basename(file.filepath), upload)}
@@ -308,7 +319,7 @@ def upload_file(file: File, check_size: bool = True):
                 log(f'[U] "{file.filepath}" {bytes_to_human_readable(file.size)}')
             elif response.status_code == 409:
                 if DEBUG:
-                    log(f'[W] "{file.filepath}" (already present)')
+                    log(f'[I] "{file.filepath}" (already present)')
             else:
                 response.raise_for_status()
     except RequestException as e:
@@ -325,10 +336,6 @@ def nothing_to_do(file: File):
 def get_sync_actions(
     remote_files: dict[File] = [], local_files: dict[File] = []
 ) -> list[SyncAction]:
-    if DEBUG:
-        log(f"[I] Local files: {dumps(local_files)}")
-        log(f"[I] Remote files: {dumps(remote_files)}")
-
     sync_actions = []
     remote_filepaths = set()
 
@@ -371,7 +378,7 @@ def get_sync_actions(
     return sync_actions
 
 
-def valid_sync_reconnect(value):
+def valid_reconnect_delay(value):
     try:
         ivalue = int(value)
     except ValueError:
@@ -379,6 +386,18 @@ def valid_sync_reconnect(value):
 
     if ivalue <= 1 or ivalue >= 60:
         raise ArgumentTypeError("The value must be between 1 and 60 sec.")
+
+    return ivalue
+
+
+def valid_resync(value):
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise ArgumentTypeError(f"The value '{value}' must be integer.")
+
+    if ivalue <= 1 or ivalue >= 3600:
+        raise ArgumentTypeError("The value must be between 20 and 3600 sec.")
 
     return ivalue
 
@@ -404,8 +423,8 @@ async def sync():
             SyncActionName.nothing: lambda file: nothing_to_do(file),
         }
         if DEBUG:
-            log(f"[I] Local files: {dumps(local_files)}")
-            log(f"[I] Remote files: {dumps(remote_files)}")
+            log(f"[I] Local files:", local_files)
+            log(f"[I] Remote files:", remote_files)
             log(f"[I] Sync actions: {sync_actions}")
     except Exception as e:
         if DEBUG:
@@ -421,7 +440,7 @@ async def sync():
     if CONFIG["DRYRUN"]:
         for sync_action in sync_actions:
             if DEBUG:
-                log(f"[I] Sync action: {dumps(sync_action.to_dict())}")
+                log(f"[I] Sync action:", sync_action.to_dict())
             else:
                 if sync_action.name == SyncActionName.download:
                     action = "D"
@@ -487,13 +506,13 @@ def update_file(data: dict):
         download_file(file)
 
 
-async def ws_events():
+async def remote_events():
     log("[I] Continuous sync starting…")
     # Construct the URI by formatting each part explicitly with single quotes
     # to avoid any conflicts or errors with double quotes within the f-string.
     api_events = CONFIG["API"]["events"]
     cid = CONFIG["CID"]
-    bucket = CONFIG["BUCKET"]
+    bucket = CONFIG["REMOTE_BUCKET"]
     uri = f"{api_events}/{bucket}/{cid}?token={HSYNC_API_KEY}"
 
     ssl_context = None
@@ -510,12 +529,11 @@ async def ws_events():
         uri,
         ssl=ssl_context,
     ) as websocket:
+        uri_log = uri.replace(f"?token={HSYNC_API_KEY}", "")
+        log(f"[I] WebSocket connected to {uri_log}")
         if DEBUG:
-            log(f"[I] WebSocket connected to {uri}")
-            log(f"[I] Sync reconnetion time: {CONFIG["SYNC_RECONNECT"]} sec.")
-        else:
-            uri_log = uri.replace(f"?token={HSYNC_API_KEY}", "")
-            log(f"[I] WebSocket connected to {uri_log}")
+            log(f"[I] Sync reconnetion delay: {CONFIG["RECONNECT_DELAY"]} sec.")
+            log(f"[I] Force resync: {CONFIG["RESYNC"]} sec.")
 
         log(f"[I] Client ID (CID): {CONFIG["CID"]}")
 
@@ -538,7 +556,7 @@ async def ws_events():
                     EventName.renamed.value,
                     EventName.deleted.value,
                 }:
-                    log(f"[E] Invalid event name: {message.get("name")}")
+                    log(f"[E] Invalid event: {message.get("name")}")
                     continue
 
                 if message.get("cid") == CONFIG["CID"]:
@@ -552,14 +570,6 @@ async def ws_events():
 
                 src = message.get("src", None)
                 dst = message.get("dst", None)
-
-                """
-                # Validate message paths
-                if not is_safe_paths(src, dst):
-                    log(f"[E] Message contains invalid paths: {src} or {dst}")
-                    continue
-                """
-
                 event_name = EventName(message.get("name"))
 
                 # Added / Modified
@@ -596,6 +606,7 @@ async def ws_events():
                             download_file(dst_file)
                 # Deleted
                 elif event_name == EventName.deleted:
+                    # Dir
                     if src and "path" in src:
                         dir = Dir().from_dict(src, CONFIG["LOCAL_BUCKET"])
                         if exists(dir.path):
@@ -625,18 +636,28 @@ async def ws_events():
             observer.join()
 
 
-async def ws_events_reconnect():
+async def resync():
+    while True:
+        log(f"[I] Force sync ({CONFIG["RESYNC"]} sec.)")
+        await sync()
+        await sleep(CONFIG["RESYNC"])
+
+
+async def remote_connect():
     while True:
         try:
             await sync()
-            await ws_events()
+            if CONFIG["RESYNC"]:
+                create_task(resync())
+            await remote_events()
+                
         except ConnectionClosed:
-            await sleep(CONFIG["SYNC_RECONNECT"])
+            await sleep(CONFIG["RECONNECT_DELAY"])
         except Exception as e:
             log(f"[E] An unexpected error occurred: {e}.")
-            await sleep(CONFIG["SYNC_RECONNECT"])
+            await sleep(CONFIG["RECONNECT_DELAY"])
         finally:
-            log(f"[I] Reconnecting in {CONFIG["SYNC_RECONNECT"]} sec.…")
+            log(f"[I] Reconnecting in {CONFIG["RECONNECT_DELAY"]} sec.…")
 
 
 class FileEventHandler(FileSystemEventHandler):
@@ -665,17 +686,14 @@ class FileEventHandler(FileSystemEventHandler):
                     log(f"[I] Skip hidden {kind} {hidden_prefix}: {path}")
 
     def on_created(self, event):
+        # Dir
         if event.is_directory and not is_hidden_dir(event.src_path):
             log(f'[C] "{event.src_path}"')
             dir = Dir().get(event.src_path)
-            data = (
-                Dir().from_dict(dir.to_dict(), CONFIG["LOCAL_BUCKET"], True).to_dict()
-            )
-            dir = update_dir(data)
             message = Event(
                 CONFIG["CID"],
                 CONFIG["LOCAL_BUCKET"],
-                CONFIG["BUCKET"],
+                CONFIG["REMOTE_BUCKET"],
                 EventName.added,
                 dir,
             )
@@ -685,19 +703,24 @@ class FileEventHandler(FileSystemEventHandler):
                 self.websocket.send(dumps(message.to_dict())), self.loop
             )
         else:
+            # Symlink
             if not is_hidden_file(event.src_path) and islink(event.src_path):
                 # TODO: implement symlink event
                 upload_file(File().get(event.src_path))
 
     def on_modified(self, event):
-        if event.is_directory and not is_hidden_dir(event.src_path):
-            data = Dir().get(event.src_path).to_dict()
-            data = Dir().from_dict(data, CONFIG["LOCAL_BUCKET"], True).to_dict()
-            dir = update_dir(data)
+        # Dir
+        if (
+            event.is_directory
+            and not is_hidden_dir(event.src_path)
+            and not is_same_paths(CONFIG["LOCAL_BUCKET"], event.src_path)
+        ):
+            log(f'[M] "{event.src_path}"')
+            dir = Dir().get(event.src_path)
             message = Event(
                 CONFIG["CID"],
                 CONFIG["LOCAL_BUCKET"],
-                CONFIG["BUCKET"],
+                CONFIG["REMOTE_BUCKET"],
                 EventName.modified,
                 dir,
             )
@@ -756,7 +779,7 @@ class FileEventHandler(FileSystemEventHandler):
                 message = Event(
                     CONFIG["CID"],
                     CONFIG["LOCAL_BUCKET"],
-                    CONFIG["BUCKET"],
+                    CONFIG["REMOTE_BUCKET"],
                     EventName.renamed,
                     src,
                     dst,
@@ -765,7 +788,7 @@ class FileEventHandler(FileSystemEventHandler):
                 message = Event(
                     CONFIG["CID"],
                     CONFIG["LOCAL_BUCKET"],
-                    CONFIG["BUCKET"],
+                    CONFIG["REMOTE_BUCKET"],
                     EventName.modified,
                     src,
                 )
@@ -782,7 +805,7 @@ class FileEventHandler(FileSystemEventHandler):
             message = Event(
                 CONFIG["CID"],
                 CONFIG["LOCAL_BUCKET"],
-                CONFIG["BUCKET"],
+                CONFIG["REMOTE_BUCKET"],
                 EventName.renamed,
                 src,
                 dst,
@@ -806,7 +829,7 @@ class FileEventHandler(FileSystemEventHandler):
         message = Event(
             CONFIG["CID"],
             CONFIG["LOCAL_BUCKET"],
-            CONFIG["BUCKET"],
+            CONFIG["REMOTE_BUCKET"],
             EventName.deleted,
             obj,
         )
@@ -899,8 +922,17 @@ def main():
         help="Continuous synchronization.",
     )
     parser.add_argument(
-        "--sync-reconnect",
-        type=valid_sync_reconnect,
+        "--resync",
+        type=valid_resync,
+        required=False,
+        help=(
+            "Automatic reconnection after the given seconds "
+            "(only on continuous synchronization)."
+        ),
+    )
+    parser.add_argument(
+        "--reconnect-delay",
+        type=valid_reconnect_delay,
         required=False,
         default=5,
         help=(
@@ -951,38 +983,40 @@ def main():
             "files": f"{endpoint_url}/files/v1",
             "upload": f"{endpoint_url}/upload/v1",
         },
-        "BUCKET": args.bucket,
         "CID": get_cid(),
         "DRYRUN": args.dryrun,
         "LOCAL_BUCKET": args.dir,
         "LOGFILE": args.logfile,
         "NO_VERIFY_SSL": args.no_verify_ssl,
         "QUIET": args.quiet,
+        "REMOTE_BUCKET": args.bucket,
         "REQUEST_HEADERS": {
             "accept": "application/json",
             "Authorization": f"Bearer {HSYNC_API_KEY}",
             "X-Client-Name": basename(__file__),
             "X-Client-Version": HSYNC_VERSION,
         },
+        "RECONNECT_DELAY": args.reconnect_delay,
+        "RESYNC": args.resync,
         "SYNC_ORDER": args.sync_order,
-        "SYNC_RECONNECT": args.sync_reconnect,
     }
     DEBUG = args.debug
 
     if DEBUG:
-        log(f"[I] Local configuration: {dumps(CONFIG)}")
+        log(f"[I] Local configuration:", CONFIG)
 
     if args.legend:
         log("[I] Log legend")
         log_levels = {
-            "I": "Info",
-            "W": "Warning",
-            "E": "Error",
-            "D": "Download file",
-            "U": "Upload file",
-            "R": "Remove file/dir",
-            "M": "Move/Rename file/dir",
             "-": "File not changed (no action required)",
+            "D": "Download file",
+            "E": "Error",
+            "I": "Info",
+            "M": "Move/Rename file/dir",
+            "P": "Set permission",
+            "R": "Remove file/dir",
+            "U": "Upload file",
+            "W": "Warning",
         }
         for key, description in log_levels.items():
             log(f"    {key}: {description}")
@@ -991,10 +1025,10 @@ def main():
     if CONFIG["DRYRUN"] and args.continuous:
         log("[W] Contiunous sync is disabled due to dryrun option set")
     elif not CONFIG["DRYRUN"] and args.continuous:
-        # Start directory watching
-        run(ws_events_reconnect())
+        # Start continuous directory watching
+        run(remote_connect())
     else:
-        # Just sync
+        # Just single sync
         run(sync())
 
 

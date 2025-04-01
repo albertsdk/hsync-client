@@ -58,8 +58,6 @@ class File:
             f"name={self.name}, "
             f"ctime={self.ctime}, "
             f"mtime={self.mtime}, "
-            # f"cdate={self.cdate}, "
-            # f"mdate={self.mdate}, "
             f"size={self.size}, "
             f"md5sum={self.md5sum}, "
             f"permissions={self.permissions})"
@@ -92,8 +90,6 @@ class File:
             "name": self.name,
             "ctime": self.ctime,
             "mtime": self.mtime,
-            # "cdate": self.cdate,
-            # "mdate": self.mdate,
             "size": self.size,
             "md5sum": self.md5sum,
             "permissions": self.permissions,
