@@ -396,7 +396,7 @@ def valid_resync(value):
     except ValueError:
         raise ArgumentTypeError(f"The value '{value}' must be integer.")
 
-    if ivalue <= 1 or ivalue >= 3600:
+    if ivalue <= 20 or ivalue >= 3600:
         raise ArgumentTypeError("The value must be between 20 and 3600 sec.")
 
     return ivalue
