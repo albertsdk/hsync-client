@@ -221,10 +221,20 @@ class _StreamingMultipartParser:
         """
         while b"\r\n" not in self._buf:
             if len(self._buf) > MAX_PART_HEADER_LINE_BYTES:
+                log.warning(
+                    f"multipart header line too long ({len(self._buf)} bytes, "
+                    f"cap {MAX_PART_HEADER_LINE_BYTES}): "
+                    f"buf_head={self._buf[:256]!r}"
+                )
                 raise ValueError("multipart header line too long")
             if not self._read_more():
                 break
         if len(self._buf) > MAX_PART_HEADER_LINE_BYTES:
+            log.warning(
+                f"multipart header line too long ({len(self._buf)} bytes, "
+                f"cap {MAX_PART_HEADER_LINE_BYTES}): "
+                f"buf_head={self._buf[:256]!r}"
+            )
             raise ValueError("multipart header line too long")
         if b"\r\n" not in self._buf:
             return None

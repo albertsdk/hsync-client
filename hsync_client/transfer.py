@@ -998,10 +998,13 @@ def _upload_file_attempt(file: File) -> None:
                 )
             else:
                 # 4xx (not 401/403/409): permanent — log the server's
-                # diagnostic body and raise a non-retryable error.
-                body = response.text[:500] if response.text else ""
+                # diagnostic body and raise a non-retryable error. Escape
+                # braces so loguru does not interpret JSON bodies (e.g.
+                # {"error": "..."}) as format placeholders.
+                body = (response.text or "")[:500]
+                body_safe = body.replace("{", "{{").replace("}", "}}")
                 log.error(
-                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
+                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body_safe}'
                 )
                 raise PermanentUploadError(
                     f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
@@ -1064,10 +1067,13 @@ def _upload_file_attempt(file: File) -> None:
                 )
             else:
                 # 4xx (not 401/403/409): permanent — log the server's
-                # diagnostic body and raise a non-retryable error.
-                body = response.text[:500] if response.text else ""
+                # diagnostic body and raise a non-retryable error. Escape
+                # braces so loguru does not interpret JSON bodies (e.g.
+                # {"error": "..."}) as format placeholders.
+                body = (response.text or "")[:500]
+                body_safe = body.replace("{", "{{").replace("}", "}}")
                 log.error(
-                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
+                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body_safe}'
                 )
                 raise PermanentUploadError(
                     f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
