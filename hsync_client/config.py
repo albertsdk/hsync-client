@@ -459,9 +459,9 @@ class HsyncConfig(TypedDict):
     # Minimum free disk space in MB before sync (0 = disabled)
     MIN_FREE_DISK_SPACE: int
     # Absolute cap in bytes on a single inbound file, applied on top of the
-    # peer-declared size as min(declared, MAX_DOWNLOAD_SIZE) — anti
+    # peer-declared size as min(declared, MAX_INBOUND_SIZE) — anti
     # decompression-bomb (0 = disabled, cap = declared size only)
-    MAX_DOWNLOAD_SIZE: int
+    MAX_INBOUND_SIZE: int
     # Extra gitignore-style patterns layered on top of .hsyncignore
     IGNORE_PATTERNS: list[str]
     # Mass-deletion guard: pause deletions over a count/percentage threshold

@@ -389,7 +389,7 @@ def open_partial_no_follow(path: str, write_mode: str) -> IO[bytes]:
     return os.fdopen(os.open(path, flags, 0o666), write_mode)
 
 
-def inbound_size_cap(declared_size: int | None, max_download_size: int) -> int | None:
+def inbound_size_cap(declared_size: int | None, max_inbound_size: int) -> int | None:
     """Effective cap in bytes on the bytes written to disk for one inbound file.
 
     Single implementation of the anti decompression-bomb bound shared by
@@ -400,7 +400,7 @@ def inbound_size_cap(declared_size: int | None, max_download_size: int) -> int |
 
     Args:
         declared_size: The peer-declared file size (``None``/``0`` = unknown).
-        max_download_size: The absolute ``MAX_DOWNLOAD_SIZE`` config in bytes
+        max_inbound_size: The absolute ``MAX_INBOUND_SIZE`` config in bytes
             (``0`` = disabled): caps the declared value, and is the only bound
             when no size is declared.
 
@@ -409,8 +409,8 @@ def inbound_size_cap(declared_size: int | None, max_download_size: int) -> int |
     numeric cap map ``None`` to their own strict default).
     """
     declared = declared_size or 0
-    if max_download_size > 0:
-        return min(declared, max_download_size) if declared > 0 else max_download_size
+    if max_inbound_size > 0:
+        return min(declared, max_inbound_size) if declared > 0 else max_inbound_size
     return declared if declared > 0 else None
 
 

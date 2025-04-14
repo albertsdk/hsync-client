@@ -114,7 +114,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--delta-min-file-size` | Minimum file size in bytes for delta transfer in server mode. Default: 262144 (256 KB) | — |
 | `--delta-min-file-size-lan` | Minimum file size in bytes for delta transfer in LAN mode. Default: 1048576 (1 MB) | — |
 | `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `500` |
-| `--max-download-size` | Maximum size in MB of a single inbound file (download or received LAN upload), enforced as an absolute cap on top of the peer-declared size. `0` = disabled | `10240` |
+| `--max-inbound-size` | Maximum size in MB of a single inbound file (download or received LAN upload), enforced as an absolute cap on top of the peer-declared size. `0` = disabled | `10240` |
 | `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
 | `--mass-delete-guard` | Enable the mass-deletion safety guard (pause deletions over threshold) | `true` |
 | `--no-mass-delete-guard` | Disable the mass-deletion safety guard | — |

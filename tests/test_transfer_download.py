@@ -533,11 +533,11 @@ class TestDownloadChecksumFormat:
 
 
 class TestDownloadSizeCap:
-    """MAX_DOWNLOAD_SIZE is an absolute cap applied on top of the peer-declared
+    """MAX_INBOUND_SIZE is an absolute cap applied on top of the peer-declared
     size: a hostile server/master can no longer expand a decompression bomb
     (or stream an undeclared body) up to an arbitrary declaration."""
 
-    def _config(self, tmp_path, max_download_size):
+    def _config(self, tmp_path, max_inbound_size):
         return {
             "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
             "REMOTE_BUCKET": "test",
@@ -545,7 +545,7 @@ class TestDownloadSizeCap:
             "LOCAL_BUCKET": str(tmp_path),
             # Disable retry/backoff so a single attempt is asserted.
             "TRANSFER_RETRY_ATTEMPTS": 1,
-            "MAX_DOWNLOAD_SIZE": max_download_size,
+            "MAX_INBOUND_SIZE": max_inbound_size,
         }
 
     def test_write_cap_disabled_uses_declared_only(self):
@@ -564,7 +564,7 @@ class TestDownloadSizeCap:
         assert inbound_size_cap(0, 50) == 50
 
     def test_compressed_bomb_beyond_absolute_cap_aborted(self, tmp_path):
-        """A peer declaring a huge size is capped at MAX_DOWNLOAD_SIZE."""
+        """A peer declaring a huge size is capped at MAX_INBOUND_SIZE."""
         import zstandard as zstd
 
         original_content = b"A" * 1000

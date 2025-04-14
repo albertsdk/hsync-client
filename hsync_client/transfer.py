@@ -490,14 +490,14 @@ def _download_file_attempt(file: File) -> None:
                 # hard output cap (anti decompression-bomb): the payload comes
                 # from a remote peer, so neither the compressed body nor the
                 # expanded content is ever fully buffered in memory. The cap is
-                # min(declared size, MAX_DOWNLOAD_SIZE): the real content must
+                # min(declared size, MAX_INBOUND_SIZE): the real content must
                 # match the declared size exactly (the SHA-256 check below
                 # verifies integrity against the listing), and the absolute cap
                 # keeps a hostile peer from expanding a bomb up to an arbitrarily
                 # large declaration.
                 response.raw.decode_content = False
                 with _open_partial_no_follow(partial_file_path, "wb") as f:
-                    write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_DOWNLOAD_SIZE", 0))
+                    write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_INBOUND_SIZE", 0))
                     for chunk in decompress_stream(
                         response.raw, max_output_size=write_cap if write_cap is not None else 0
                     ):
@@ -509,7 +509,7 @@ def _download_file_attempt(file: File) -> None:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
             dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
-            write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_DOWNLOAD_SIZE", 0))
+            write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_INBOUND_SIZE", 0))
             written = resume_offset
             with _open_partial_no_follow(partial_file_path, write_mode) as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):

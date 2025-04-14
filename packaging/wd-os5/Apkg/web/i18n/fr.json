@@ -28,7 +28,7 @@
     "field.bw_upload": "Bande passante max. en émission (ex. 1MB)",
     "field.bw_download": "Bande passante max. en réception (ex. 1MB)",
     "field.min_free_mb": "Espace libre minimum (Mo, 0 = off)",
-    "field.max_download_mb": "Taille maximale des fichiers entrants (Mo, 0 = off)",
+    "field.max_inbound_mb": "Taille maximale des fichiers entrants (Mo, 0 = off)",
     "field.verbose": "Journal détaillé",
 
     "section.autotune": "Auto-réglage",

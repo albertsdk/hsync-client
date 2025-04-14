@@ -43,7 +43,7 @@ peers are ignored.
 | `BoundedThreadingHTTPServer` | `:66` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap on concurrent request threads (H5, default `LAN_SERVER_MAX_THREADS=32`) |
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
-| `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_DOWNLOAD_SIZE`) — (decompression-bomb containment) |
+| `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`); extracts CID from auth message for logging |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast |
 
@@ -53,9 +53,9 @@ prefix checks — sibling directories cannot bypass confinement). Uploads requir
 a matching `sha256sum` form field (format-validated with `is_sha256_hex`,
 verified with `hmac.compare_digest` before the atomic rename), clamp
 far-future mtimes (`MTIME_MAX_FUTURE_SKEW_SECONDS`), and cap the bytes landing
-on disk at `min(declared size, MAX_DOWNLOAD_SIZE)` — the declared size alone is
+on disk at `min(declared size, MAX_INBOUND_SIZE)` — the declared size alone is
 not a safe bound against a hostile peer, and uploads with no declared size are
-capped at `MAX_DOWNLOAD_SIZE` outright. The `.part` temp file is opened with
+capped at `MAX_INBOUND_SIZE` outright. The `.part` temp file is opened with
 `O_NOFOLLOW` (`utils.open_partial_no_follow`), so a raced symlink cannot
 redirect the streamed write. Multipart form fields (64 KiB) and part-header
 lines (8 KiB) are memory-capped; only the file part streams. Tombstone gossip
@@ -73,6 +73,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | `_lan_periodic_resync` | `:616` | periodic full reconcile (§13) |
 | echo suppression | `:85`/`:98` | `mark_inbound_origin` / `consume_inbound_origin` (TTL `:82`) |
 | inbound-rename echo | `LANSlaveFileEventHandler.record_inbound_rename` / `is_inbound_rename_echo` | exact `(src,dst)` pair cache (TTL `:703`); a 404 from the master on a re-sent rename is degraded to DEBUG when it matches a recent inbound rename, else stays WARNING (real divergence) |
+| inbound-delete echo | `event_dispatch._apply_delete` (dir `:293` / file `:312`) | a `deleted` event for a path already absent locally is a benign echo (originator removed it / peer delete converged / never existed here): logged at DEBUG, not WARNING. Echo suppression can miss when the master has no `LAN_KEY` (the `mark_inbound_origin` cid gate is a security measure) or when `rmtree` removes a directory's children without individually marking them |
 | create-upload deferral | `LANSlaveFileEventHandler._schedule_create_upload` / `_cancel_create_upload` / `cancel_all_create_timers` | an `on_created` upload for a non-empty regular file is deferred (`CREATE_UPLOAD_DEFER_S` = `STABILITY_DELAY_ON_CLOSED`) so `on_closed` (`IN_CLOSE_WRITE`, the reliable fd-closed trigger) can cancel it and take precedence with the fast stability re-check; the timer is the fallback for files that arrive already complete with no writer fd (atomic rename / hard-link / `mv` in). `on_deleted` / `on_moved(src)` / shutdown cancel pending timers so stale uploads never fire. Eliminates the double `[CLIENT UP]`/`[UPLOAD]` and avoids uploading half-written files. |
 
 ## Security: TOFU pinning + persistent identity

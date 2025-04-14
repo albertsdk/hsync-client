@@ -167,14 +167,14 @@ MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
 
 # Maximum size of a single inbound file (MB), applied to downloads and to
 # received LAN uploads as an absolute cap on top of the peer-declared size:
-# the effective anti-bomb cap is min(declared, MAX_DOWNLOAD_SIZE). Without an
+# the effective anti-bomb cap is min(declared, MAX_INBOUND_SIZE). Without an
 # absolute cap a hostile peer could declare an arbitrary size and expand a
 # decompression bomb up to it on disk before the SHA-256 check discards it.
 # The default mirrors the server's max_upload_size (10 GB): larger files
 # require raising both.
-MAX_DOWNLOAD_SIZE_MB_MIN = 0  # 0 = disabled (cap = declared size only)
-MAX_DOWNLOAD_SIZE_MB_MAX = 10_000_000  # 10 TB
-MAX_DOWNLOAD_SIZE_MB_DEFAULT = 10_240  # 10 GB
+MAX_INBOUND_SIZE_MB_MIN = 0  # 0 = disabled (cap = declared size only)
+MAX_INBOUND_SIZE_MB_MAX = 10_000_000  # 10 TB
+MAX_INBOUND_SIZE_MB_DEFAULT = 10_240  # 10 GB
 
 # =============================================================================
 # inotify Watch-Limit Diagnostics (Linux only)

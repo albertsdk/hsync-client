@@ -55,7 +55,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   peer discovery cannot cross container bridge/NAT networking and suggests
   host networking (`docker run --network host`).
 
+### Changed
+- **CLI flag rename**: `--max-download-size` is renamed to
+  `--max-inbound-size`, and the config key `MAX_DOWNLOAD_SIZE` to
+  `MAX_INBOUND_SIZE` (env `HSYNC_MAX_DOWNLOAD_SIZE_MB` →
+  `HSYNC_MAX_INBOUND_SIZE_MB`). The old name was misleading: the cap applies
+  to **both** downloads and LAN-master received uploads (the anti
+  decompression-bomb bound in `inbound_size_cap`), not just downloads. The
+  new name is direction-neutral, consistent with the `inbound_size_cap`
+  helper and the "Max inbound size" label already used in the WD README.
+
 ### Fixed
+- **Spurious "Cannot delete"/"Not found" warnings on LAN delete echo**: when a
+  slave deleted a directory locally and notified the master, the master
+  broadcast the resulting `deleted` events (for the directory and its
+  `.hsynckeep` sentinel) back to the originator. Echo suppression missed
+  because the master's `mark_inbound_origin` cid gate is a security measure
+  that only propagates the originator's CID on authenticated (`LAN_KEY`-set)
+  requests, and because `rmtree` removes a directory's children without
+  individually marking them. The slave then ran `_apply_delete` on paths it had
+  already removed, emitting WARNING noise for a no-op. An inbound `deleted`
+  event for a path already absent locally is now logged at DEBUG (benign echo),
+  mirroring the rename 404-echo degradation and the master's "File already
+  deleted" success branch. The deletion itself always succeeded (HTTP 200); no
+  data was lost.
 - **Streaming upload of binary files**: the LAN master's multipart parser
   rejected uploads with "multipart header line too long" for any file whose
   body exceeded 8 KB (mp3, flac, …). The parser's `_read_line` checked the
