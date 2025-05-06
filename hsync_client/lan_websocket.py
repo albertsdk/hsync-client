@@ -410,12 +410,27 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
             return
         event_dict = event.to_dict()
         origin_cid = None
+        origin_source = "none"
         if src_abs_path:
             origin_cid = consume_inbound_origin(src_abs_path)
+            if origin_cid:
+                origin_source = "src"
         if origin_cid is None and dst_abs_path:
             origin_cid = consume_inbound_origin(dst_abs_path)
+            if origin_cid:
+                origin_source = "dst"
         if origin_cid:
             event_dict["cid"] = origin_cid
+        # Diagnostic: a "master-fallback" cid means the originator will NOT
+        # recognise its own echo (echo suppression misses). Tracked to confirm
+        # whether the missed mark is a child of an rmtree'd directory or an
+        # already-deleted early-return path.
+        log.debug(
+            f"[ECHO-SUPPR] name={event_dict.get('name')} "
+            f"path={src_abs_path or dst_abs_path} "
+            f"cid={'substituted:' + origin_cid if origin_cid else 'master-fallback'} "
+            f"via={origin_source}"
+        )
         self._ws_server.broadcast_sync(event_dict)
 
     def _on_file_ready(

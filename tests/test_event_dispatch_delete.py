@@ -114,15 +114,28 @@ class TestApplyInboundDeleteEvent:
         assert not dir_to_delete.exists()
 
     async def test_delete_directory_not_found(self, tmp_path):
-        """Handles missing directory gracefully."""
+        """A missing directory is a benign echo, logged at DEBUG (not WARNING).
+
+        Regression: a slave that already removed the path locally receives
+        the master's broadcast ``deleted`` echo for the same path. The delete
+        already succeeded, so an absent path must degrade WARNING->DEBUG
+        (mirrors the rename 404-echo degradation and the master's
+        "File already deleted" success branch).
+        """
         event = {
             "name": "deleted",
             "src": {"path": "missing", "permissions": "755"},
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
 
-        with patch("hsync_client.event_dispatch.CONFIG", config):
+        with (
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.log") as mock_log,
+        ):
             await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert mock_log.debug.called
+        assert not mock_log.warning.called
 
     async def test_delete_file_success(self, tmp_path):
         """Successfully deletes existing file."""
@@ -148,7 +161,11 @@ class TestApplyInboundDeleteEvent:
         assert not file_to_delete.exists()
 
     async def test_delete_file_not_found(self, tmp_path):
-        """Handles missing file gracefully."""
+        """A missing file is a benign echo, logged at DEBUG (not WARNING).
+
+        Regression: see ``test_delete_directory_not_found`` — same echo
+        behaviour for the file branch.
+        """
         event = {
             "name": "deleted",
             "src": {
@@ -162,8 +179,14 @@ class TestApplyInboundDeleteEvent:
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
 
-        with patch("hsync_client.event_dispatch.CONFIG", config):
+        with (
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.log") as mock_log,
+        ):
             await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert mock_log.debug.called
+        assert not mock_log.warning.called
 
     async def test_delete_ignore_delete_mode(self, tmp_path):
         """Skips deletion when ``IGNORE_DELETE`` is true."""

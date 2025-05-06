@@ -291,8 +291,17 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(rmtree, local, False)
             else:
-                log.warning(f'Cannot delete: "{local}"')
-                log.warning(f'Not found: "{local}"')
+                # The path is already absent locally: this is a benign echo
+                # (the originator deleted it, or a peer's delete converged
+                # after a local deletion, or the path never existed here).
+                # Mirrors the master's "File already deleted" success branch
+                # (lan_server.py:_handle_delete) and the rename 404-echo
+                # degradation (_rename_on_master): a WARNING here is noise
+                # because there is nothing to act on; the periodic resync
+                # catches genuine divergences.
+                log.debug(
+                    f'{_tag(ctx.log_prefix, "DELETE")} Already absent (benign echo): "{local}"'
+                )
         finally:
             _unmark(ctx, local)
     elif "filepath" in src:
@@ -310,8 +319,17 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
                     if safe_rmdir_if_empty(parent):
                         log.debug(f'Removed empty directory "{parent}"')
             else:
-                log.warning(f'Cannot delete: "{local}"')
-                log.warning(f'Not found: "{local}"')
+                # The path is already absent locally: this is a benign echo
+                # (the originator deleted it, or a peer's delete converged
+                # after a local deletion, or the path never existed here).
+                # Mirrors the master's "File already deleted" success branch
+                # (lan_server.py:_handle_delete) and the rename 404-echo
+                # degradation (_rename_on_master): a WARNING here is noise
+                # because there is nothing to act on; the periodic resync
+                # catches genuine divergences.
+                log.debug(
+                    f'{_tag(ctx.log_prefix, "DELETE")} Already absent (benign echo): "{local}"'
+                )
         finally:
             _unmark(ctx, local)
 
