@@ -853,7 +853,7 @@ def get_sync_actions(
         # engine artifact instead of acting on them.
         if validate_remote_relpath(str(remote_file_info.get("filepath", ""))) is None:
             log.warning(
-                f"[SECURITY] Ignoring unsafe remote listing entry: "
+                f"{ActionLabel.SECURITY} Ignoring unsafe remote listing entry: "
                 f'"{remote_file_info.get("filepath")}"'
             )
             continue
@@ -864,7 +864,7 @@ def get_sync_actions(
             local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
         except (ValueError, TypeError, OverflowError, AttributeError, OSError) as e:
             log.warning(
-                f"[SECURITY] Ignoring malformed remote listing entry "
+                f"{ActionLabel.SECURITY} Ignoring malformed remote listing entry "
                 f'"{remote_file_info.get("filepath")}": {e}'
             )
             # The entry IS on the remote (the listing says so) even though it
@@ -1097,12 +1097,16 @@ def update_dir(data: dict) -> Dir | None:
     """
     # Remote event data is untrusted input: refuse unsafe paths.
     if validate_remote_relpath(str(data.get("path", ""))) is None:
-        log.warning(f'[SECURITY] Rejected unsafe remote directory: "{data.get("path")}"')
+        log.warning(
+            f'{ActionLabel.SECURITY} Rejected unsafe remote directory: "{data.get("path")}"'
+        )
         return None
     # Lexical safety is not enough: a symlink *inside* the bucket could still
     # redirect the mkdir/permission change outside it.
     if resolve_within(CONFIG["LOCAL_BUCKET"], str(data.get("path", ""))) is None:
-        log.warning(f'[SECURITY] Rejected remote directory escaping bucket: "{data.get("path")}"')
+        log.warning(
+            f'{ActionLabel.SECURITY} Rejected remote directory escaping bucket: "{data.get("path")}"'
+        )
         return None
 
     # Get local directory if it exists
@@ -1141,12 +1145,14 @@ def update_file(data: dict) -> None:
 
     # Remote event data is untrusted input: refuse unsafe paths.
     if validate_remote_relpath(str(data.get("filepath", ""))) is None:
-        log.warning(f'[SECURITY] Rejected unsafe remote file: "{data.get("filepath")}"')
+        log.warning(f'{ActionLabel.SECURITY} Rejected unsafe remote file: "{data.get("filepath")}"')
         return
     # Lexical safety is not enough: a symlink *inside* the bucket could still
     # redirect local metadata operations outside it.
     if resolve_within(CONFIG["LOCAL_BUCKET"], str(data.get("filepath", ""))) is None:
-        log.warning(f'[SECURITY] Rejected remote file escaping bucket: "{data.get("filepath")}"')
+        log.warning(
+            f'{ActionLabel.SECURITY} Rejected remote file escaping bucket: "{data.get("filepath")}"'
+        )
         return
 
     file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"], False)

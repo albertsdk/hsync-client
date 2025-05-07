@@ -288,7 +288,7 @@ protocol internals see [LAN Internals](internal/lan-internals.md).
 - `--force-master` and `--never-master` are mutually exclusive; the client
   refuses to start if both are set.
 - If **every** discovered peer is `--never-master`, no master is elected and a
-  parsable `[NO_MASTER]` warning is logged after a 60-second grace period.
+  parsable `[NO MASTER]` warning is logged after a 60-second grace period.
 
 ```
 CLI argument > Environment variable > Default value

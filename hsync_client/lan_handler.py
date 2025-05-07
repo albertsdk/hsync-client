@@ -23,7 +23,11 @@ from hsync_common.protocol.pairing import (
 )
 
 from hsync_client.config import set_config
-from hsync_client.constants import DISCOVERY_POLL_INTERVAL, HTTP_TIMEOUT_DEFAULT
+from hsync_client.constants import (
+    DISCOVERY_POLL_INTERVAL,
+    HTTP_TIMEOUT_DEFAULT,
+    ActionLabel,
+)
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
@@ -37,7 +41,7 @@ if TYPE_CHECKING:
 
 # Seconds to wait before warning that no master has been elected (e.g. when every
 # peer in the group is configured with --never-master). Emitted as a parsable
-# ``[NO_MASTER]`` warning so front-ends (desktop UI) can surface a notification.
+# ``[NO MASTER]`` warning so front-ends (desktop UI) can surface a notification.
 NO_MASTER_WARNING_TIMEOUT = 60.0
 
 
@@ -198,7 +202,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                         now - no_master_since >= NO_MASTER_WARNING_TIMEOUT
                     ):
                         log.warning(
-                            f"[NO_MASTER] No master elected after "
+                            f"{ActionLabel.NO_MASTER} No master elected after "
                             f"{int(now - no_master_since)}s. All discovered peers "
                             f"may be configured with --never-master; no node will "
                             f"serve files and synchronization cannot proceed."
@@ -325,7 +329,7 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
       not auto-pinned. We emit ``pairing_needed`` and refuse until the operator
       confirms the peer out of band (by pinning it or disabling strict pairing).
     * **Fingerprint changed**: the certificate no longer matches the pin. We log
-      a parsable ``[FINGERPRINT_CHANGED]`` line, emit ``fingerprint_changed`` and
+      a parsable ``[FINGERPRINT CHANGED]`` line, emit ``fingerprint_changed`` and
       refuse (possible man-in-the-middle).
     """
     store = default_pin_store()
@@ -335,7 +339,7 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
         first_seen = evaluate_pin(store.get(master.cid, bucket), master.cert_fingerprint)
         if requires_pairing_confirmation(first_seen, require_pairing=True):
             log.error(
-                f"[PAIRING_NEEDED] master {master.cid} at {master.address} presented an "
+                f"{ActionLabel.PAIRING_NEEDED} master {master.cid} at {master.address} presented an "
                 f"unpinned certificate and strict pairing is enabled. Refusing to connect; "
                 f"confirm this peer out of band (pin it) to trust it."
             )
@@ -351,7 +355,7 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
     decision = store.check_and_record(master.cid, bucket, master.cert_fingerprint)
     if decision is PinDecision.changed:
         log.error(
-            f"[FINGERPRINT_CHANGED] master {master.cid} at {master.address} presented a "
+            f"{ActionLabel.FINGERPRINT_CHANGED} master {master.cid} at {master.address} presented a "
             f"certificate that does not match the pinned one. Refusing to connect "
             f"(possible man-in-the-middle). Remove the stale pin to re-trust this peer."
         )
@@ -394,7 +398,7 @@ def _run_as_slave(
         # discovery loop and warn.
         if not (master.use_https and master.cert_fingerprint):
             log.warning(
-                f"[INSECURE_MASTER] master {master.cid} does not advertise an HTTPS "
+                f"{ActionLabel.INSECURE_MASTER} master {master.cid} does not advertise an HTTPS "
                 f"endpoint with a certificate fingerprint. Refusing to connect "
                 f"(LAN transport is HTTPS-only)."
             )

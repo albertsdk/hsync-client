@@ -442,7 +442,7 @@ class TestCheckLanWritePolicy:
             )
         assert exc_info.value.code == 1
         error_texts = " ".join(str(c) for c in mock_logger.error.call_args_list)
-        assert "AUTH_REQUIRED" in error_texts
+        assert "AUTH REQUIRED" in error_texts
         mock_emit.assert_called_once()
 
     def test_non_interactive_upload_only_without_key_exits(self):
@@ -477,7 +477,7 @@ class TestCheckLanWritePolicy:
             )
         assert exc_info.value.code == 1
         error_texts = " ".join(str(c) for c in mock_logger.error.call_args_list)
-        assert "AUTH_REQUIRED" in error_texts
+        assert "AUTH REQUIRED" in error_texts
         mock_emit.assert_called_once()
 
 

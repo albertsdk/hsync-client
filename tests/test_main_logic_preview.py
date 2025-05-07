@@ -60,7 +60,7 @@ class TestRunPreview:
             _run_preview(mock_logger)
 
             # Should log download action
-            assert any("TO_DOWNLOAD" in str(call) for call in mock_logger.info.call_args_list)
+            assert any("TO DOWNLOAD" in str(call) for call in mock_logger.info.call_args_list)
 
     def test_preview_with_uploads(self, tmp_path):
         """Test preview showing files to upload."""
@@ -89,7 +89,7 @@ class TestRunPreview:
             _run_preview(mock_logger)
 
             # Should log upload action
-            assert any("TO_UPLOAD" in str(call) for call in mock_logger.info.call_args_list)
+            assert any("TO UPLOAD" in str(call) for call in mock_logger.info.call_args_list)
 
     def test_preview_with_deletes(self, tmp_path):
         """Test preview showing files to delete."""
@@ -118,7 +118,7 @@ class TestRunPreview:
             _run_preview(mock_logger)
 
             # Should log delete action
-            assert any("TO_DELETE" in str(call) for call in mock_logger.info.call_args_list)
+            assert any("TO DELETE" in str(call) for call in mock_logger.info.call_args_list)
 
     def test_preview_with_synced_files(self, tmp_path):
         """Test preview showing files already in sync."""
@@ -185,7 +185,7 @@ class TestRunPreview:
             _run_preview(mock_logger)
 
             # Should log rename action
-            assert any("TO_RENAME" in str(call) for call in mock_logger.info.call_args_list)
+            assert any("TO RENAME" in str(call) for call in mock_logger.info.call_args_list)
 
     def test_preview_skips_sentinel_files(self, tmp_path):
         """Test preview skipping .hsynckeep sentinel files."""
@@ -215,7 +215,7 @@ class TestRunPreview:
 
             # Should not log sentinel file in upload list
             upload_calls = [
-                str(call) for call in mock_logger.info.call_args_list if "TO_UPLOAD" in str(call)
+                str(call) for call in mock_logger.info.call_args_list if "TO UPLOAD" in str(call)
             ]
             assert len(upload_calls) == 0
 

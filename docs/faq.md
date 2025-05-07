@@ -234,7 +234,7 @@ CID; peers started with `--never-master` are excluded. See
 ### What if no device can become master?
 
 If **every** discovered peer is `--never-master`, no master is elected and a
-parsable `[NO_MASTER]` warning is logged after a grace period. See
+parsable `[NO MASTER]` warning is logged after a grace period. See
 [Incompatibilities & Priority](configuration.md#incompatibilities--priority).
 
 ### Can I keep separate sync groups on the same network?

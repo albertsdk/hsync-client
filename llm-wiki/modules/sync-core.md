@@ -102,9 +102,9 @@ being individually marked.
 **Inbound path security gate** (`:139`): every src/dst path is validated with
 `hsync_common.path_validation.validate_remote_relpath` before dispatch —
 traversal, absolute paths, backslashes and internal engine files
-(`.hsync*`/`*.part`) are dropped, logged `[SECURITY]` and surfaced as a
-`security_rejected` UI event (`_reject_unsafe:103`). When a payload carries
-both `filepath` and `path`, *every* present key is validated
+(`.hsync*`/`*.part`) are dropped, logged with `ActionLabel.SECURITY` and
+surfaced as a `security_rejected` UI event (`_reject_unsafe:103`). When a
+payload carries both `filepath` and `path`, *every* present key is validated
 (`hsync_common.wire_relpaths`, SSOT shared with the server relay gate) so a
 malicious second key cannot smuggle past the gate.
 Delete/rename/symlink targets are additionally **confined** with
@@ -114,12 +114,21 @@ operation outside it. `_apply_symlink` also validates the link target with
 `is_safe_symlink_target`; `update_dir`/`update_file` (`sync.py`) apply the
 same confinement before mkdir/metadata writes.
 
+**Log labels** (`_tag:99`): every bracketed label in this module is resolved
+through `hsync_common.labels.resolve_label` (the SSOT shared with
+`BaseFileEventHandler._label`), so the watchdog handlers and the inbound
+dispatcher emit identical, colorizable tags (`[RENAME]`, `[LAN RENAME]`,
+`[SECURITY]`, …). There is no project-local label table.
+
 ## file_event_handler.py — watchdog adapter
 
 `BaseFileEventHandler` (`file_event_handler.py:49`) maps watchdog callbacks to the
 transfer pipeline. Linux uses `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other
 platforms fall back to `on_modified`. Subclasses implement `_on_file_ready`
-(remote/LAN-master variants).
+(remote/LAN-master variants). `_label` (`:60`) resolves bracketed log labels
+through `hsync_common.labels.resolve_label`, honouring `_LOG_PREFIX`
+(`""` → `[CREATE]`, `"LAN "` → `[LAN CREATE]`), so the master's watchdog
+output is colorized identically to the slave's inbound dispatcher.
 
 **Safe-save handling** (`on_moved` file branch, `:244`): when an editor
 safe-saves (writes to a temp like `.goutputstream-*` or `*.tmp` then atomically

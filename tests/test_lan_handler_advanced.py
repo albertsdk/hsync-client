@@ -518,14 +518,14 @@ class TestRunLanModeOuterLoopMasterPath:
 
 
 class TestRunLanModeNoMasterWarning:
-    """Tests for the [NO_MASTER] warning emitted when no master is elected.
+    """Tests for the [NO MASTER] warning emitted when no master is elected.
 
     This happens, for example, when every discovered peer is configured
     with --never-master so the candidate list is empty.
     """
 
     def test_no_master_warning_after_timeout(self, tmp_path):
-        """A parsable [NO_MASTER] warning is logged once after the timeout."""
+        """A parsable [NO MASTER] warning is logged once after the timeout."""
         from hsync_client import lan_handler
         from hsync_client.lan_handler import NO_MASTER_WARNING_TIMEOUT, run_lan_mode
 
@@ -559,9 +559,9 @@ class TestRunLanModeNoMasterWarning:
             run_lan_mode(config, mock_log)
 
         warnings = [str(c.args[0]) for c in mock_log.warning.call_args_list if c.args]
-        no_master_warnings = [w for w in warnings if "[NO_MASTER]" in w]
+        no_master_warnings = [w for w in warnings if "[NO MASTER]" in w]
         assert len(no_master_warnings) == 1, (
-            f"expected exactly one [NO_MASTER] warning, got {warnings!r}"
+            f"expected exactly one [NO MASTER] warning, got {warnings!r}"
         )
 
 
@@ -702,7 +702,7 @@ class TestRunAsSlave:
         assert result is False
         assert config["MASTER_CERT_FINGERPRINT"] is None
         mock_run.assert_not_called()
-        assert any("FINGERPRINT_CHANGED" in str(c) for c in mock_log.error.call_args_list)
+        assert any("FINGERPRINT CHANGED" in str(c) for c in mock_log.error.call_args_list)
 
     def test_strict_pairing_refuses_unpinned_first_sighting(self, tmp_path, monkeypatch):
         """With strict pairing a first-seen cert is refused and never pinned."""
@@ -734,7 +734,7 @@ class TestRunAsSlave:
         assert config["MASTER_CERT_FINGERPRINT"] is None
         mock_run.assert_not_called()
         assert PinStore(pin_file).get("master-1", "test-bucket") is None
-        assert any("PAIRING_NEEDED" in str(c) for c in mock_log.error.call_args_list)
+        assert any("PAIRING NEEDED" in str(c) for c in mock_log.error.call_args_list)
 
     def test_insecure_master_is_refused(self, tmp_path):
         """A plain-HTTP master is refused (secure-only LAN); the key is never sent."""
@@ -757,7 +757,7 @@ class TestRunAsSlave:
         assert result is False
         assert "Authorization" not in config["REQUEST_HEADERS"]
         mock_run.assert_not_called()
-        assert any("INSECURE_MASTER" in str(c) for c in mock_log.warning.call_args_list)
+        assert any("INSECURE MASTER" in str(c) for c in mock_log.warning.call_args_list)
 
     def test_no_master_non_persistent_wait_indefinitely_keeps_looping(self, tmp_path):
         """Non-persistent mode can still wait indefinitely for the first peer."""

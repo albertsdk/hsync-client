@@ -66,10 +66,10 @@ Use `--help-symbols` to display this legend in the terminal.
 | `[GUARD]` | Guard | Mass-deletion guard tripped (deletions paused) |
 | `[TOMBSTONE]` | Tombstone | File deleted remotely while offline; local copy removed |
 | `[SYNCED]` | Synced | File is in sync (preview / dry-run) |
-| `[TO_DOWNLOAD]` | To download | File would be downloaded (preview / dry-run) |
-| `[TO_UPLOAD]` | To upload | File would be uploaded (preview / dry-run) |
-| `[TO_DELETE]` | To delete | File would be deleted (preview / dry-run) |
-| `[TO_RENAME]` | To rename | File would be renamed (preview / dry-run) |
+| `[TO DOWNLOAD]` | To download | File would be downloaded (preview / dry-run) |
+| `[TO UPLOAD]` | To upload | File would be uploaded (preview / dry-run) |
+| `[TO DELETE]` | To delete | File would be deleted (preview / dry-run) |
+| `[TO RENAME]` | To rename | File would be renamed (preview / dry-run) |
 
 ### LAN Client Operations
 
@@ -154,4 +154,4 @@ End-user oriented examples have moved to a dedicated document:
   two devices, push-only backups, read-only mirrors, scripted /
   unattended execution, bandwidth tuning and more.
 
-> **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. Use `--never-master` to keep a peer out of the election entirely (incompatible with `--force-master`); if every peer is `--never-master`, no master is elected and a `[NO_MASTER]` warning is logged after 60 s. See [LAN Mode > Master Election](lan-mode.md#master-election) for the full election algorithm.
+> **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. Use `--never-master` to keep a peer out of the election entirely (incompatible with `--force-master`); if every peer is `--never-master`, no master is elected and a `[NO MASTER]` warning is logged after 60 s. See [LAN Mode > Master Election](lan-mode.md#master-election) for the full election algorithm.

@@ -28,6 +28,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+from hsync_common.labels import resolve_label
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_file
@@ -55,6 +56,19 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
     # Prepended to log labels, e.g. ``""`` -> "[CREATE]", ``"LAN "`` -> "[LAN CREATE]".
     _LOG_PREFIX: str = ""
+
+    def _label(self, name: str) -> str:
+        """Return the bracketed label for *name*, honouring ``_LOG_PREFIX``.
+
+        Delegates to :func:`hsync_common.labels.resolve_label` so the label is
+        resolved through :class:`ActionLabel` and colorized consistently with
+        the inbound event dispatcher (no duplicated tag-formatting logic).
+
+        Examples:
+            - ``_LOG_PREFIX=""``, name="CREATE" -> ``[CREATE]``
+            - ``_LOG_PREFIX="LAN "``, name="CREATE" -> ``[LAN CREATE]``
+        """
+        return resolve_label(self._LOG_PREFIX, name)
 
     def __init__(self) -> None:
         # Two-stage content dedup for file-ready events:
@@ -142,7 +156,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def on_created(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
         if event.is_directory and not is_hidden_dir(src_path):
-            log.info(f'[{self._LOG_PREFIX}CREATE] "{src_path}"')
+            log.info(f'{self._label("CREATE")} "{src_path}"')
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 self._broadcast_event(
@@ -156,7 +170,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     src_abs_path=src_path,
                 )
         elif not is_hidden_file(src_path) and Path(src_path).is_symlink():
-            log.info(f'[{self._LOG_PREFIX}SYMLINK] "{src_path}"')
+            log.info(f'{self._label("SYMLINK")} "{src_path}"')
             symlink = Symlink.get(src_path)
             if symlink:
                 self._broadcast_event(
@@ -175,7 +189,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
         if event.is_directory:
             if not is_hidden_dir(src_path) and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path):
-                log.info(f'[{self._LOG_PREFIX}MODIFY] "{src_path}"')
+                log.info(f'{self._label("MODIFY")} "{src_path}"')
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(
@@ -270,7 +284,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if not dest_path:
             return
 
-        log.debug(f'[{self._LOG_PREFIX}MOVE] "{src_path}" -> "{dest_path}"')
+        log.debug(f'{self._label("MOVE")} "{src_path}" -> "{dest_path}"')
 
         message: Event | None = None
         if event.is_directory:
@@ -283,7 +297,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 self.on_deleted(DirDeletedEvent(src_path))
                 return
 
-            log.info(f'[{self._LOG_PREFIX}RENAME] "{src_path}" -> "{dest_path}"')
+            log.info(f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"')
             dst = Dir.get(dest_path)
             if dst:
                 src = deepcopy(dst)
@@ -308,7 +322,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     self._process_file_ready(dest_path, trigger="safe-save")
                 return
 
-            log.info(f'[{self._LOG_PREFIX}RENAME] "{src_path}" -> "{dest_path}"')
+            log.info(f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"')
             invalidate_sha256_cache(src_path)
             invalidate_sha256_cache(dest_path)
             dst = File.get(dest_path)
@@ -336,10 +350,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
 
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f'[{self._LOG_PREFIX}IGNORE] "{src_path}" (ignore-delete mode)')
+            log.debug(f'{self._label("IGNORE DEL")} "{src_path}" (ignore-delete mode)')
             return
 
-        log.info(f'[{self._LOG_PREFIX}REMOVE] "{src_path}"')
+        log.info(f'{self._label("REMOVE")} "{src_path}"')
 
         obj = Dir(src_path) if event.is_directory else File(src_path)
         self._broadcast_event(
