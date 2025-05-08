@@ -337,6 +337,12 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     src,
                     dst,
                 )
+                # The source path no longer exists; drop its dedup cache so a
+                # file later re-created at the same path with identical stat
+                # and/or hash is re-evaluated (not skipped as "unchanged").
+                # Mirrors the invalidation in on_deleted for the same bug class.
+                self._last_broadcast_stat.pop(src_path, None)
+                self._last_broadcast_hash.pop(src_path, None)
 
         if message:
             self._broadcast_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
@@ -366,4 +372,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
             ),
             src_abs_path=src_path,
         )
+
+        # Invalidate the content-dedup cache for this path: a re-created file
+        # must be re-evaluated against a fresh stat/hash, not skipped because it
+        # happens to share mtime+size (stage 1) or sha256 (stage 2) with the
+        # pre-deletion version. Without this, create -> delete -> re-create of
+        # the same file (same content, preserved mtime) silently drops the
+        # third event as "Skip unchanged (stat)".
+        self._last_broadcast_stat.pop(src_path, None)
+        self._last_broadcast_hash.pop(src_path, None)
+
         self._on_deleted(src_path, event.is_directory)
