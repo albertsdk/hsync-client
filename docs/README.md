@@ -55,6 +55,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | [server-mode.md](server-mode.md) | Server mode guide: how it works, quick start, security, and troubleshooting. |
 | [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
 | [examples.md](examples.md) | Practical, copy-paste usage recipes. |
+| [log-labels.md](log-labels.md) | Every action label that can appear in the logs and what it means. |
 
 ### How It Works
 
