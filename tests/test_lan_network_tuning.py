@@ -175,6 +175,47 @@ class TestRefreshLanNetworkTuning:
         mock_rtt.assert_not_called()
         assert config["HTTP_TIMEOUT"] == 30
 
+    def test_autotune_log_does_not_raise_loguru_keyerror(self, tmp_path):
+        """Regression: dict braces in the autotune log must not crash loguru.
+
+        Before the fix, interpolating ``{updates}`` via f-string produced a
+        message containing ``{'HTTP_TIMEOUT': 30, ...}``; loguru then parsed
+        the ``{...}`` as a format placeholder and raised
+        ``KeyError: "'HTTP_TIMEOUT'"`` during ``Handler.emit``.
+
+        This uses the project's real callable formatter
+        (``_format_record_plain``) with ``catch=False`` so the exception
+        propagates instead of being silently captured by loguru's default
+        error handler. The test fails if the autotune summary message cannot
+        be formatted.
+        """
+        from loguru import logger
+
+        from hsync_client.lan_handler import _refresh_lan_network_tuning
+        from hsync_client.logger import _format_record_plain
+
+        config = _make_config(tmp_path)
+        CONFIG.clear()
+        CONFIG.update(config)
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
+        try:
+            with patch("hsync_client.lan_handler.measure_rtt", return_value=0.1):
+                # Pass the real loguru logger so emit() runs the formatter.
+                _refresh_lan_network_tuning(_make_master(), config, logger)
+        finally:
+            logger.remove(handler_id)
+
+        # If we got here, no KeyError was raised by loguru's formatter.
+        assert any("autotune (LAN)" in m for m in captured)
+        # The dict is JSON-serialized with escaped braces so it renders verbatim.
+        assert any("HTTP_TIMEOUT" in m and "30" in m for m in captured)
+
 
 class TestSlaveTuningRefreshOrdering:
     """_run_as_slave must refresh tuning after the pin check, before clock sync."""
