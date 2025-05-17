@@ -75,6 +75,7 @@ Emitted by the LAN **master** when it broadcasts a filesystem event to slaves.
 | `[LAN REMOVE]` | delete | Master broadcasts a removal |
 | `[LAN SYMLINK]` | create | Master broadcasts a symbolic link creation |
 | `[LAN DELETE]` | delete | Master broadcasts a deletion |
+| `[LAN DOWNLOAD]` | transfer | Master serves a file download to a slave |
 | `[LAN IGNORE DEL]` | warning | Master ignores a deletion (ignore-delete mode) |
 | `[LAN SECURITY]` | security | Master rejected an unsafe inbound path |
 | `[LAN ECHO]` | infrastructure | Master echoed a slave-originated event to the other slaves |
