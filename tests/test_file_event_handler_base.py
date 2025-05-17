@@ -883,6 +883,88 @@ class TestFileEventHandler:
             self.handler.on_modified(event)
             mock_run.assert_not_called()
 
+    def test_on_modified_directory_dedup_suppresses_identical_stat(self):
+        """Regression: identical directory MODIFY events are deduplicated.
+
+        inotify fires IN_ATTRIB on a directory whenever a child is created,
+        written, renamed or removed, so a single file save can emit several
+        directory MODIFY lines with the same (mtime_ns, size). The stat-based
+        dedup (mirroring the file stage-1 filter) must suppress the second
+        broadcast and the second INFO log line.
+        """
+        path = "/bucket/subdir"
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 4096
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            # First fire: broadcast + log
+            self.handler.on_modified(event)
+            assert mock_broadcast.call_count == 1
+            # Second fire with identical stat: suppressed (no new broadcast)
+            self.handler.on_modified(event)
+            assert mock_broadcast.call_count == 1
+
+    def test_on_modified_directory_broadcasts_when_stat_changes(self):
+        """A directory MODIFY with a different stat still broadcasts.
+
+        The dedup must not over-suppress: when the directory mtime genuinely
+        changes between two IN_ATTRIB fires (e.g. two different children
+        modified at different times), the second event broadcasts normally.
+        """
+        path = "/bucket/subdir"
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        stat1 = MagicMock()
+        stat1.st_mtime_ns = 100
+        stat1.st_size = 4096
+        stat2 = MagicMock()
+        stat2.st_mtime_ns = 200
+        stat2.st_size = 4096
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.stat.side_effect = [stat1, stat2]
+
+            self.handler.on_modified(event)
+            self.handler.on_modified(event)
+            assert mock_broadcast.call_count == 2
+
     def test_on_modified_non_linux_uploads_file(self):
         """on_modified uploads file on non-Linux (fallback path)."""
         event = MagicMock()
