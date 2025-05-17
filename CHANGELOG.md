@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Log lines for LAN P2P events now attribute the originating client: every
+  master-side event (`[LAN CREATE]`, `[LAN MODIFY]`, `[LAN RENAME]`,
+  `[LAN REMOVE]`, `[LAN DOWNLOAD]`) and slave-side operation
+  (`[CLIENT UP]`, `[CLIENT DEL]`, `[CLIENT REN]`) includes a
+  `(CID: <cid>)` suffix identifying the peer that triggered it. The redundant
+  `Renaming/Deleting from client request` / `Received file from` log lines in
+  `hsync_client/lan_server.py` were removed since the watcher now logs the
+  same information with the event label.
+
 ### Fixed
 
 - Fixed `KeyError: "'HTTP_TIMEOUT'"` raised by loguru while formatting the

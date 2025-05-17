@@ -123,6 +123,26 @@ def consume_inbound_origin(filepath: str) -> str | None:
     return cid
 
 
+def peek_inbound_origin(filepath: str) -> str | None:
+    """Return the originator CID for ``filepath`` without consuming it.
+
+    Unlike :func:`consume_inbound_origin`, this does not remove the entry,
+    so the subsequent ``_broadcast_event`` can still substitute the CID into
+    the broadcast for echo suppression. Used by the master's watchdog log
+    lines to attribute an event to the peer that triggered it.
+    """
+    if not filepath:
+        return None
+    with _inbound_origin_lock:
+        entry = _inbound_origin.get(filepath)
+    if entry is None:
+        return None
+    cid, expiry = entry
+    if expiry < time():
+        return None
+    return cid
+
+
 # =============================================================================
 # WebSocket Server
 # =============================================================================
@@ -389,6 +409,22 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         super().__init__()
         self._ws_server = ws_server
 
+    def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
+        """Return the originator CID for a filesystem event, if known.
+
+        Peeks the inbound-origin map (without consuming) so the log line can
+        attribute the event to the peer that triggered it via the HTTP API.
+        The CID is *not* consumed here: the subsequent ``_broadcast_event``
+        still needs it for echo suppression.
+        """
+        if src_path:
+            cid = peek_inbound_origin(src_path)
+            if cid:
+                return cid
+        if dst_path:
+            return peek_inbound_origin(dst_path)
+        return None
+
     def _broadcast_event(
         self,
         event: Event,
@@ -453,7 +489,9 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         # ``EventName.modified``. The trigger suffix disambiguates the two
         # close-write fires a GNOME/gvfs safe-save produces on the master.
         actual_trigger = trigger or ("closed" if from_closed else "modified")
-        log.info(f'{ActionLabel.LAN_MODIFY} "{src_path}" ({actual_trigger})')
+        log.info(
+            f'{ActionLabel.LAN_MODIFY} "{src_path}" ({actual_trigger}){self._cid_suffix(src_path)}'
+        )
         # A (re-)created/modified file invalidates any prior deletion marker so
         # peers do not delete the freshly written file on their next full sync.
         # Best-effort: tombstone bookkeeping must never break event propagation.
@@ -903,7 +941,9 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            log.info(f'{ActionLabel.CLIENT_UP} "{file_obj.filepath}"')
+            own_cid = CONFIG.get("CID")
+            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
+            log.info(f'{ActionLabel.CLIENT_UP} "{file_obj.filepath}"{cid_suffix}')
             upload_file(file_obj, check_size=True, from_closed=from_closed)
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
@@ -936,7 +976,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            log.info(f'{ActionLabel.CLIENT_DEL} "{filepath}"')
+            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
+            log.info(f'{ActionLabel.CLIENT_DEL} "{filepath}"{cid_suffix}')
             response = http_delete(
                 url,
                 params=params,
@@ -979,7 +1020,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            log.info(f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dst_path}"')
+            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
+            log.info(f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dst_path}"{cid_suffix}')
             response = http_patch(
                 url,
                 params=params,

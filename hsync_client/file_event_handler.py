@@ -70,6 +70,22 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """
         return resolve_label(self._LOG_PREFIX, name)
 
+    def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
+        """Return the originator CID for a filesystem event, if known.
+
+        The base implementation returns ``None`` (no origin attribution).
+        The LAN master overrides this to peek the inbound-origin map so the
+        log line can attribute the event to the peer that triggered it via
+        the HTTP API. The CID is *not* consumed here: the subsequent
+        ``_broadcast_event`` still needs it for echo suppression.
+        """
+        return None
+
+    def _cid_suffix(self, src_path: str | None = None, dst_path: str | None = None) -> str:
+        """Return a ``(CID: xxx)`` suffix for log lines, or ``""`` when unknown."""
+        cid = self._origin_cid(src_path, dst_path)
+        return f" (CID: {cid})" if cid else ""
+
     def __init__(self) -> None:
         # Two-stage content dedup for file-ready events:
         # 1. stat pre-check (mtime, size): cheap filter that avoids re-hashing
@@ -156,7 +172,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def on_created(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
         if event.is_directory and not is_hidden_dir(src_path):
-            log.info(f'{self._label("CREATE")} "{src_path}"')
+            log.info(f'{self._label("CREATE")} "{src_path}"{self._cid_suffix(src_path)}')
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 self._broadcast_event(
@@ -170,7 +186,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     src_abs_path=src_path,
                 )
         elif not is_hidden_file(src_path) and Path(src_path).is_symlink():
-            log.info(f'{self._label("SYMLINK")} "{src_path}"')
+            log.info(f'{self._label("SYMLINK")} "{src_path}"{self._cid_suffix(src_path)}')
             symlink = Symlink.get(src_path)
             if symlink:
                 self._broadcast_event(
@@ -207,7 +223,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 ):
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
                     return
-                log.info(f'{self._label("MODIFY")} "{src_path}" (dir)')
+                log.info(f'{self._label("MODIFY")} "{src_path}" (dir){self._cid_suffix(src_path)}')
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(
@@ -317,7 +333,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 self.on_deleted(DirDeletedEvent(src_path))
                 return
 
-            log.info(f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"')
+            log.info(
+                f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"'
+                f"{self._cid_suffix(src_path, dest_path)}"
+            )
             dst = Dir.get(dest_path)
             if dst:
                 src = deepcopy(dst)
@@ -342,7 +361,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     self._process_file_ready(dest_path, trigger="safe-save")
                 return
 
-            log.info(f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"')
+            log.info(
+                f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"'
+                f"{self._cid_suffix(src_path, dest_path)}"
+            )
             invalidate_sha256_cache(src_path)
             invalidate_sha256_cache(dest_path)
             dst = File.get(dest_path)
@@ -379,7 +401,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             log.debug(f'{self._label("IGNORE DEL")} "{src_path}" (ignore-delete mode)')
             return
 
-        log.info(f'{self._label("REMOVE")} "{src_path}"')
+        log.info(f'{self._label("REMOVE")} "{src_path}"{self._cid_suffix(src_path)}')
 
         obj = Dir(src_path) if event.is_directory else File(src_path)
         self._broadcast_event(

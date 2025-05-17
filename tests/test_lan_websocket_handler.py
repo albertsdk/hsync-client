@@ -168,6 +168,33 @@ class TestLANFileEventHandler:
             # Should broadcast the event
             ws_server.broadcast_sync.assert_called_once()
 
+    def test_peek_inbound_origin(self):
+        """Test peek_inbound_origin returns the CID without consuming it."""
+        from hsync_client.lan_websocket import (
+            consume_inbound_origin,
+            mark_inbound_origin,
+            peek_inbound_origin,
+        )
+
+        mark_inbound_origin("/tmp/test.txt", "test-cid-123")
+        assert peek_inbound_origin("/tmp/test.txt") == "test-cid-123"
+        # peek does not consume
+        assert peek_inbound_origin("/tmp/test.txt") == "test-cid-123"
+        # consume does
+        assert consume_inbound_origin("/tmp/test.txt") == "test-cid-123"
+        assert peek_inbound_origin("/tmp/test.txt") is None
+
+    def test_origin_cid_on_rename_log(self, handler, tmp_path):
+        """Test _origin_cid returns the origin CID for a marked path."""
+        from hsync_client.lan_websocket import mark_inbound_origin
+
+        src = str(tmp_path / "old.txt")
+        dst = str(tmp_path / "new.txt")
+        mark_inbound_origin(src, "peer-cid-456")
+        mark_inbound_origin(dst, "peer-cid-456")
+
+        assert handler._origin_cid(src, dst) == "peer-cid-456"
+
     def test_on_file_ready_logs_lan_modify_with_trigger(self, handler, ws_server, tmp_path):
         """_on_file_ready logs [LAN MODIFY] with the (closed)/(modified) trigger.
 
