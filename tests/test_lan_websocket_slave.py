@@ -313,6 +313,25 @@ class TestSlaveFileEventHandler:
             handler._upload_to_master(file_obj)
             mock_up.assert_called_once_with(file_obj, check_size=True, from_closed=False)
 
+    def test_upload_to_master_emits_no_intent_line(self, handler):
+        """A slave upload produces a single log line (the [UPLOAD] from upload_file).
+
+        The former ``[CLIENT UP]`` intent line was removed: its CID suffix
+        always carried this node's own CID (no information) and the
+        ``[UPLOAD]`` line logged by ``upload_file`` already covers the action,
+        mirroring the single ``[DOWNLOAD]`` line of the inbound path.
+        """
+        from hsync_common.models.file import File
+
+        file_obj = File("/test/file.txt")
+        with (
+            patch("hsync_client.transfer.upload_file"),
+            patch("hsync_client.lan_websocket.log") as mock_log,
+        ):
+            handler._upload_to_master(file_obj)
+            mock_log.info.assert_not_called()
+            mock_log.error.assert_not_called()
+
     def test_upload_to_master_forwards_from_closed(self, handler):
         """An on_closed-triggered upload enables the fast stability re-check."""
         from hsync_common.models.file import File

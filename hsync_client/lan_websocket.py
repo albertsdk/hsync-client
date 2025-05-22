@@ -399,8 +399,6 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
     ``_on_file_ready`` emits a ``modified`` event instead of uploading bytes.
     """
 
-    _LOG_PREFIX = "LAN "
-
     def __init__(self, ws_server: LANWebSocketServer) -> None:
         """
         Args:
@@ -484,13 +482,14 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         to honour the :class:`BaseFileEventHandler` hook contract. ``trigger``
         overrides the log trigger label (e.g. ``"safe-save"``).
         """
-        # The label mirrors ``[{prefix}MODIFY]`` used for directory modify
-        # events (file_event_handler.on_modified): both broadcast
+        # The label mirrors the MODIFY label used for directory modify events
+        # (file_event_handler.on_modified): both broadcast
         # ``EventName.modified``. The trigger suffix disambiguates the two
         # close-write fires a GNOME/gvfs safe-save produces on the master.
         actual_trigger = trigger or ("closed" if from_closed else "modified")
         log.info(
-            f'{ActionLabel.LAN_MODIFY} "{src_path}" ({actual_trigger}){self._cid_suffix(src_path)}'
+            f'{self._label("MODIFY", src_path)} "{src_path}"'
+            f" ({actual_trigger}){self._cid_suffix(src_path)}"
         )
         # A (re-)created/modified file invalidates any prior deletion marker so
         # peers do not delete the freshly written file on their next full sync.
@@ -734,7 +733,6 @@ async def _handle_lan_event(
             as receiving (suppresses the slave's own watchdog echo).
     """
     ctx = EventDispatchContext(
-        log_prefix="LAN ",
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
         unmark_receiving=slave_handler.unmark_receiving if slave_handler else None,
         record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
@@ -1010,9 +1008,6 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            own_cid = CONFIG.get("CID")
-            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
-            log.info(f'{ActionLabel.CLIENT_UP} "{file_obj.filepath}"{cid_suffix}')
             upload_file(file_obj, check_size=True, from_closed=from_closed)
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
@@ -1046,7 +1041,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                         headers[k] = v
 
             cid_suffix = f" (CID: {own_cid})" if own_cid else ""
-            log.info(f'{ActionLabel.CLIENT_DEL} "{filepath}"{cid_suffix}')
+            log.info(f'{ActionLabel.LOCAL_DELETE} "{filepath}"{cid_suffix}')
             response = http_delete(
                 url,
                 params=params,
@@ -1090,7 +1085,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                         headers[k] = v
 
             cid_suffix = f" (CID: {own_cid})" if own_cid else ""
-            log.info(f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dst_path}"{cid_suffix}')
+            log.info(f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dst_path}"{cid_suffix}')
             response = http_patch(
                 url,
                 params=params,
@@ -1136,7 +1131,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             # Create a .hsynckeep sentinel so the empty directory is
             # synced to the master.  The watchdog will pick up the new
             # file and trigger an upload via on_closed / on_modified.
-            log.debug(f'{ActionLabel.CLIENT_DIR} "{src_path}"')
+            log.debug(f'{ActionLabel.LOCAL_CREATE} "{src_path}" (dir)')
             self._ensure_sentinel(src_path)
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
@@ -1162,7 +1157,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     size = 0
                 if size > 0:
                     log.debug(
-                        f'{ActionLabel.CLIENT_NEW} "{src_path}" ({size} bytes, deferred to on_closed)'
+                        f'{ActionLabel.LOCAL_CREATE} "{src_path}"'
+                        f" ({size} bytes, deferred to on_closed)"
                     )
                     self._schedule_create_upload(src_path)
 
@@ -1320,7 +1316,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if not Path(sentinel).exists():
             try:
                 open(sentinel, "w").close()  # noqa: SIM115
-                log.debug(f'{ActionLabel.CLIENT_KEEP} Created sentinel "{sentinel}"')
+                log.debug(f'{ActionLabel.LOCAL_KEEP} Created sentinel "{sentinel}"')
             except OSError as exc:
                 log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
 
@@ -1348,7 +1344,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip if in ignore-delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f"{ActionLabel.CLIENT_IGN} Deletion ignored (ignore-delete mode)")
+            log.debug(f"{ActionLabel.LOCAL_IGNORE_DEL} Deletion ignored (ignore-delete mode)")
             return
 
         # Notify master about deletion
@@ -1436,7 +1432,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             own_cid = CONFIG.get("CID")
             cid_suffix = f" (CID: {own_cid})" if own_cid else ""
             log.debug(
-                f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dest_path}"'
+                f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dest_path}"'
                 f"{cid_suffix} (redundant rename, skipped)"
             )
             return

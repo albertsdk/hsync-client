@@ -459,7 +459,7 @@ sequenceDiagram
     M->>M: consume_inbound_origin(path) → "A1"
     M-->>A: WebSocket: modified {cid: "A1"}
     M-->>B: WebSocket: modified {cid: "A1"}
-    Note over A: cid == ownCid → [LAN ECHO] discard
+    Note over A: cid == ownCid → [REMOTE ECHO] discard
     B->>M: GET file (download)
 ```
 

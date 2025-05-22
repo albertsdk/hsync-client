@@ -79,9 +79,9 @@ class TestLabelStyles:
         """Test move label uses blue tag."""
         assert LABEL_STYLES["[MOVE]"] == ("<blue>", "</blue>")
 
-    def test_remove_label(self):
-        """Test remove label uses red tag."""
-        assert LABEL_STYLES["[REMOVE]"] == ("<red>", "</red>")
+    def test_local_delete_label(self):
+        """Test local-origin delete label uses red tag."""
+        assert LABEL_STYLES["[LOCAL DELETE]"] == ("<red>", "</red>")
 
     def test_delete_label(self):
         """Test delete label uses red tag."""
@@ -108,36 +108,41 @@ class TestLabelStyles:
         assert LABEL_STYLES["[SKIP]"] == ("<dim>", "</dim>")
 
     def test_ignore_del_label(self):
-        """Test ignore-del label uses yellow tag."""
-        assert LABEL_STYLES["[IGNORE DEL]"] == ("<yellow>", "</yellow>")
+        """Test ignore-del labels use yellow tag."""
+        assert LABEL_STYLES["[LOCAL IGNORE DEL]"] == ("<yellow>", "</yellow>")
+        assert LABEL_STYLES["[REMOTE IGNORE DEL]"] == ("<yellow>", "</yellow>")
 
-    def test_slave_up_label(self):
-        """Test client upload label uses green tag."""
-        assert LABEL_STYLES["[CLIENT UP]"] == ("<green>", "</green>")
+    def test_local_create_label(self):
+        """Test local-origin create label uses green tag."""
+        assert LABEL_STYLES["[LOCAL CREATE]"] == ("<green>", "</green>")
 
-    def test_slave_del_label(self):
-        """Test client delete label uses red tag."""
-        assert LABEL_STYLES["[CLIENT DEL]"] == ("<red>", "</red>")
+    def test_remote_create_label(self):
+        """Test remote-origin create label uses green tag."""
+        assert LABEL_STYLES["[REMOTE CREATE]"] == ("<green>", "</green>")
 
-    def test_slave_ren_label(self):
-        """Test client rename label uses blue tag."""
-        assert LABEL_STYLES["[CLIENT REN]"] == ("<blue>", "</blue>")
+    def test_local_rename_label(self):
+        """Test local-origin rename label uses blue tag."""
+        assert LABEL_STYLES["[LOCAL RENAME]"] == ("<blue>", "</blue>")
 
-    def test_slave_dir_label(self):
-        """Test client dir label uses green tag."""
-        assert LABEL_STYLES["[CLIENT DIR]"] == ("<green>", "</green>")
+    def test_remote_rename_label(self):
+        """Test remote-origin rename label uses blue tag."""
+        assert LABEL_STYLES["[REMOTE RENAME]"] == ("<blue>", "</blue>")
 
-    def test_slave_keep_label(self):
-        """Test client keep label uses dim tag."""
-        assert LABEL_STYLES["[CLIENT KEEP]"] == ("<dim>", "</dim>")
+    def test_local_keep_label(self):
+        """Test local-origin keep label uses dim tag."""
+        assert LABEL_STYLES["[LOCAL KEEP]"] == ("<dim>", "</dim>")
 
-    def test_slave_ign_label(self):
-        """Test client ignore label uses yellow tag."""
-        assert LABEL_STYLES["[CLIENT IGN]"] == ("<yellow>", "</yellow>")
+    def test_remote_security_label(self):
+        """Test remote-origin security label uses red tag."""
+        assert LABEL_STYLES["[REMOTE SECURITY]"] == ("<red>", "</red>")
 
-    def test_lan_download_label(self):
-        """Test LAN download label uses cyan tag."""
-        assert LABEL_STYLES["[LAN DOWNLOAD]"] == ("<cyan>", "</cyan>")
+    def test_remote_echo_label(self):
+        """Test remote-origin echo label uses magenta tag."""
+        assert LABEL_STYLES["[REMOTE ECHO]"] == ("<magenta>", "</magenta>")
+
+    def test_remote_download_label(self):
+        """Test remote download label uses cyan tag."""
+        assert LABEL_STYLES["[REMOTE DOWNLOAD]"] == ("<cyan>", "</cyan>")
 
 
 class TestColorizeLabels:
@@ -153,10 +158,10 @@ class TestColorizeLabels:
         result = _colorize_labels('[UPLOAD] "file.txt" 1.2MB')
         assert "<green>[UPLOAD]</green>" in result
 
-    def test_colorize_remove_label(self):
-        """Test remove label gets colored red."""
-        result = _colorize_labels('[REMOVE] "/path/to/file"')
-        assert "<red>[REMOVE]</red>" in result
+    def test_colorize_delete_label(self):
+        """Test delete label gets colored red."""
+        result = _colorize_labels('[DELETE] "/path/to/file"')
+        assert "<red>[DELETE]</red>" in result
 
     def test_colorize_multiple_labels(self):
         """Test message is unchanged when it has no labels."""
@@ -175,15 +180,15 @@ class TestColorizeLabels:
         assert "<cyan>" not in result
         assert result == '[DOWNLOAD] "file.txt"'
 
-    def test_colorize_slave_label(self):
-        """Test LAN client label gets colored."""
-        result = _colorize_labels('[CLIENT DEL] "/path/to/file"')
-        assert "<red>[CLIENT DEL]</red>" in result
+    def test_colorize_local_label(self):
+        """Test local-origin label gets colored."""
+        result = _colorize_labels('[LOCAL DELETE] "/path/to/file"')
+        assert "<red>[LOCAL DELETE]</red>" in result
 
-    def test_colorize_lan_download_label(self):
-        """Test LAN download label gets colored."""
-        result = _colorize_labels('[LAN DOWNLOAD] "/path/to/file"')
-        assert "<cyan>[LAN DOWNLOAD]</cyan>" in result
+    def test_colorize_remote_download_label(self):
+        """Test remote download label gets colored."""
+        result = _colorize_labels('[REMOTE DOWNLOAD] "/path/to/file"')
+        assert "<cyan>[REMOTE DOWNLOAD]</cyan>" in result
 
 
 class TestSetupLogging:

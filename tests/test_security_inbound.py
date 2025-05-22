@@ -112,12 +112,13 @@ class TestInboundEventPathValidation:
         assert (tmp_path / "docs" / "sub").is_dir()
 
     async def test_added_directory_logs_create_line(self, tmp_path):
-        """Regression: an inbound `added` directory must emit a [CREATE] log line.
+        """Regression: an inbound `added` directory must emit a [REMOTE CREATE] line.
 
         Before the fix, ``_apply_add_or_modify`` delegated to ``update_dir``
         without logging; directories appeared in the log only via the
         subsequent `.hsynckeep` sentinel upload, with no line for the
-        directory creation itself.
+        directory creation itself. Inbound events are peer-caused, so the
+        label is REMOTE-prefixed.
         """
         from loguru import logger
 
@@ -144,18 +145,18 @@ class TestInboundEventPathValidation:
             logger.remove(handler_id)
 
         assert (tmp_path / "newdir").is_dir()
-        # The directory create must be logged (label resolves to [CREATE]
-        # because REMOTE_DISPATCH_CTX.log_prefix == "").
-        assert any("[CREATE]" in m and "newdir" in m for m in captured)
+        # The directory create must be logged as [REMOTE CREATE] (inbound
+        # dispatch labels are always REMOTE-prefixed).
+        assert any("[REMOTE CREATE]" in m and "newdir" in m for m in captured)
 
     async def test_added_directory_rejected_by_update_dir_not_logged_as_create(self, tmp_path):
-        """A security-rejected directory must not be logged as [CREATE].
+        """A security-rejected directory must not be logged as [REMOTE CREATE].
 
         ``update_dir`` performs the symlink-escape check (``resolve_within``)
-        and returns ``None`` with a ``[SECURITY]`` line if a remote path
+        and returns ``None`` with a ``[REMOTE SECURITY]`` line if a remote path
         escapes the bucket via an in-bucket symlink. The new log line in
         ``_apply_add_or_modify`` must be gated on that success so a rejected
-        directory is not misleadingly logged as ``[CREATE]`` first.
+        directory is not misleadingly logged as ``[REMOTE CREATE]`` first.
         """
         from loguru import logger
 
@@ -183,8 +184,36 @@ class TestInboundEventPathValidation:
             logger.remove(handler_id)
 
         assert not (tmp_path / "evil").exists()
-        # No [CREATE] line must be emitted for a rejected directory.
-        assert not any("[CREATE]" in m for m in captured)
+        # No [REMOTE CREATE] line must be emitted for a rejected directory.
+        assert not any("[REMOTE CREATE]" in m for m in captured)
+
+    async def test_inbound_delete_logs_remote_delete(self, tmp_path):
+        """Remote-mode inbound dispatch: a deleted event logs [REMOTE DELETE]."""
+        from loguru import logger
+
+        from hsync_client.logger import _format_record_plain
+
+        target = tmp_path / "old.txt"
+        target.write_text("data")
+        event = {
+            "name": "deleted",
+            "src": {"filepath": "old.txt", "sha256sum": "a" * 64},
+        }
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
+        try:
+            with patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+                await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+        finally:
+            logger.remove(handler_id)
+
+        assert not target.exists()
+        assert any("[REMOTE DELETE]" in m for m in captured), captured
 
 
 class TestSymlinkTargetValidation:

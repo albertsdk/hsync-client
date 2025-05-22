@@ -12,8 +12,8 @@ Both Remote sync (events from the central server) and LAN slave mode
 operations — add/modify a file or directory, rename, delete, recreate a
 symlink — in response to events received over a WebSocket. This module
 factors that logic out so each transport only needs to provide a small
-``EventDispatchContext`` describing its peculiarities (log prefix,
-optional echo-suppression callbacks, fallback policy when a rename
+``EventDispatchContext`` describing its peculiarities (optional
+echo-suppression callbacks, fallback policy when a rename
 source is missing, symlink handling strategy).
 
 All blocking I/O is dispatched to a worker thread via
@@ -70,9 +70,6 @@ class EventDispatchContext:
     """Per-transport behaviour for inbound event application.
 
     Attributes:
-        log_prefix: String prepended to log tags, e.g. ``""`` for Remote
-            (``[RENAME]``) or ``"LAN "`` for LAN slave
-            (``[LAN RENAME]``).
         mark_receiving: Optional callback invoked before a local write
             to suppress the self-induced watchdog event.
         unmark_receiving: Optional callback invoked after a local write
@@ -89,7 +86,6 @@ class EventDispatchContext:
             (downloaded or resynced) instead of being silently dropped.
     """
 
-    log_prefix: str = ""
     mark_receiving: Callable[[str], None] | None = None
     unmark_receiving: Callable[[str], None] | None = None
     record_inbound_rename: Callable[[str, str], None] | None = None
@@ -97,15 +93,21 @@ class EventDispatchContext:
     recover_on_missing_rename_src: bool = False
 
 
-def _tag(prefix: str, name: str) -> str:
-    """Format a log tag (e.g. ``[RENAME]`` or ``[LAN RENAME]``).
+#: Prefix for every inbound-dispatch label: the event is always caused by a
+#: remote peer (the master for a LAN slave, the central server in remote
+#: mode), so the origin prefix is constant for this whole module.
+INBOUND_PREFIX = "REMOTE "
+
+
+def _tag(name: str) -> str:
+    """Format an inbound-dispatch log tag (e.g. ``[REMOTE RENAME]``).
 
     Thin wrapper over :func:`hsync_common.labels.resolve_label`, which resolves
     the label through :class:`ActionLabel` so the colorization system in
     ``hsync_common.labels`` can match it. Shared with the watchdog handlers
     via ``BaseFileEventHandler._label`` to keep the two transports in sync.
     """
-    return resolve_label(prefix, name)
+    return resolve_label(INBOUND_PREFIX, name)
 
 
 def _confined_local(rel: object, event_name: object, ctx: EventDispatchContext) -> str | None:
@@ -126,7 +128,7 @@ def _confined_local(rel: object, event_name: object, ctx: EventDispatchContext) 
 
 def _reject_unsafe(event_name: object, rel: str | None, ctx: EventDispatchContext) -> None:
     """Log and surface the rejection of an unsafe remote-supplied path."""
-    log.warning(f"{_tag(ctx.log_prefix, 'SECURITY')} Rejected unsafe {event_name} path: {rel!r}")
+    log.warning(f"{_tag('SECURITY')} Rejected unsafe {event_name} path: {rel!r}")
     emit_event(
         UiEventName.security_rejected,
         op=str(event_name),
@@ -159,11 +161,11 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
 
     own_cid = CONFIG.get("CID")
     if own_cid and origin_cid == own_cid:
-        log.debug(f"{_tag(ctx.log_prefix, 'ECHO')} Ignoring own event: {event_name}")
+        log.debug(f"{_tag('ECHO')} Ignoring own event: {event_name}")
         return
 
     if CONFIG.get("SYNC_DIRECTION") == "upload-only":
-        log.debug(f"Upload-only mode: {ctx.log_prefix.strip() or 'remote'} event ignored.")
+        log.debug("Upload-only mode: remote-origin event ignored.")
         return
 
     if not src:
@@ -213,10 +215,7 @@ async def _apply_add_or_modify(
                 _unmark(ctx, target)
         if result is not None:
             label = "CREATE" if event_name == EventName.added.value else "MODIFY"
-            log.info(
-                f'{_tag(ctx.log_prefix, label)} "{target or src.get("path")}"'
-                f"{_cid_suffix(origin_cid)}"
-            )
+            log.info(f'{_tag(label)} "{target or src.get("path")}"{_cid_suffix(origin_cid)}')
             emit_event(
                 UiEventName.transfer,
                 op="create" if label == "CREATE" else "modify",
@@ -296,10 +295,7 @@ async def _rename_path(
     _mark(ctx, dst_path)
     try:
         if Path(src_path).exists():
-            log.info(
-                f'{_tag(ctx.log_prefix, "RENAME")} "{src_path}" -> "{dst_path}"'
-                f"{_cid_suffix(origin_cid)}"
-            )
+            log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{_cid_suffix(origin_cid)}')
             emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             parent = str(Path(dst_path).parent)
             if parent and not Path(parent).exists():
@@ -319,7 +315,7 @@ async def _rename_path(
 async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
     """Apply a delete event for either a directory or a file."""
     if CONFIG.get("IGNORE_DELETE", False):
-        log.debug(f"{_tag(ctx.log_prefix, 'IGNORE DEL')} Deletion ignored (ignore-delete mode)")
+        log.debug(f"{_tag('IGNORE DEL')} Deletion ignored (ignore-delete mode)")
         return
 
     if "path" in src:
@@ -329,7 +325,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         _mark(ctx, local)
         try:
             if Path(local).exists():
-                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"{_cid_suffix(origin_cid)}')
+                log.info(f'{_tag("DELETE")} "{local}"{_cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(rmtree, local, False)
             else:
@@ -341,9 +337,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 # degradation (_rename_on_master): a WARNING here is noise
                 # because there is nothing to act on; the periodic resync
                 # catches genuine divergences.
-                log.debug(
-                    f'{_tag(ctx.log_prefix, "DELETE")} Already absent (benign echo): "{local}"'
-                )
+                log.debug(f'{_tag("DELETE")} Already absent (benign echo): "{local}"')
         finally:
             _unmark(ctx, local)
     elif "filepath" in src:
@@ -353,7 +347,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         _mark(ctx, local)
         try:
             if Path(local).exists():
-                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"{_cid_suffix(origin_cid)}')
+                log.info(f'{_tag("DELETE")} "{local}"{_cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(_remove_locked, local)
                 if Path(local).name == HSYNCKEEP_FILENAME:
@@ -369,9 +363,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 # degradation (_rename_on_master): a WARNING here is noise
                 # because there is nothing to act on; the periodic resync
                 # catches genuine divergences.
-                log.debug(
-                    f'{_tag(ctx.log_prefix, "DELETE")} Already absent (benign echo): "{local}"'
-                )
+                log.debug(f'{_tag("DELETE")} Already absent (benign echo): "{local}"')
         finally:
             _unmark(ctx, local)
 
@@ -396,8 +388,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
             _reject_unsafe(EventName.symlink.value, target, ctx)
             return
         log.info(
-            f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{local}" -> "{target}"'
-            f"{_cid_suffix(origin_cid)}"
+            f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{_cid_suffix(origin_cid)}'
         )
         parent = str(Path(local).parent)
         if not Path(parent).exists():
