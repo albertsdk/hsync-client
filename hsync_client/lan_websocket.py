@@ -786,6 +786,16 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._inbound_renames: dict[tuple[str, str], float] = {}
         self._inbound_renames_lock = threading.Lock()
         self._INBOUND_RENAME_TTL_S: float = 10.0
+        # Track directory renames this slave has just sent to the master (or
+        # about to send). When the local watcher renames a directory it emits
+        # an `on_moved` for the directory AND one for each child (e.g. the
+        # `.hsynckeep` sentinel); but a single PATCH of a directory rename on
+        # the master already renames the whole tree, so the child PATCHes are
+        # redundant and fail with 404. This map lets `on_moved` skip those
+        # redundant child PATCHes (outbound direction, same `/`-suffix guard).
+        self._outbound_dir_renames: dict[tuple[str, str], float] = {}
+        self._outbound_dir_renames_lock = threading.Lock()
+        self._OUTBOUND_DIR_RENAME_TTL_S: float = 10.0
         # Track pending operations (rename, upload, delete) for graceful
         # shutdown.  Each entry is ``(thread, bytes_estimate)`` so that
         # ``wait_pending`` can derive a timeout proportional to the volume
@@ -858,6 +868,43 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             for (r_src, r_dst), ts in list(self._inbound_renames.items()):
                 if now - ts > self._INBOUND_RENAME_TTL_S:
                     del self._inbound_renames[(r_src, r_dst)]
+                    continue
+                if dst.startswith(r_dst):
+                    suffix = dst[len(r_dst) :]
+                    if (not suffix or suffix.startswith("/")) and src == r_src + suffix:
+                        return True
+            return False
+
+    def _record_outbound_dir_rename(self, src: str, dst: str) -> None:
+        """Record a directory rename this slave is about to send to the master.
+
+        The callback chain is: watchdog fires ``on_moved`` for the directory
+        first, then for each child. Recording the directory pair lets the
+        subsequent child events be recognised as redundant (the single PATCH
+        of the directory already renamed the whole tree on the master).
+        """
+        now = time()
+        with self._outbound_dir_renames_lock:
+            self._outbound_dir_renames[(src, dst)] = now
+            cutoff = now - self._OUTBOUND_DIR_RENAME_TTL_S
+            for key in [k for k, ts in self._outbound_dir_renames.items() if ts < cutoff]:
+                del self._outbound_dir_renames[key]
+
+    def is_outbound_dir_descendant(self, src: str, dst: str) -> bool:
+        """Return True if ``(src, dst)`` is a child of a recent outbound dir rename.
+
+        If the slave sent ``r_src -> r_dst`` for a directory, a later child
+        event ``r_src/<suffix> -> r_dst/<suffix>`` (e.g. the ``.hsynckeep``
+        sentinel) is redundant: the master already renamed the whole tree.
+        The trailing suffix must start with ``/`` (or be empty), so a genuine
+        rename sharing a path prefix (``ABC-keeper -> ABC-123-keeper``) is
+        never suppressed.
+        """
+        with self._outbound_dir_renames_lock:
+            now = time()
+            for (r_src, r_dst), ts in list(self._outbound_dir_renames.items()):
+                if now - ts > self._OUTBOUND_DIR_RENAME_TTL_S:
+                    del self._outbound_dir_renames[(r_src, r_dst)]
                     continue
                 if dst.startswith(r_dst):
                     suffix = dst[len(r_dst) :]
@@ -1053,13 +1100,18 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             )
 
             if response.status_code not in (200, 204):
-                if response.status_code == 404 and self.is_inbound_rename_echo(src_path, dst_path):
-                    # Source no longer exists on master because the rename
-                    # was already applied there (this PATCH is the echo of an
-                    # inbound `renamed` event we just applied locally).
-                    # Benign: nothing left to rename.
+                if response.status_code == 404 and (
+                    self.is_inbound_rename_echo(src_path, dst_path)
+                    or self.is_outbound_dir_descendant(src_path, dst_path)
+                ):
+                    # Source no longer exists on master. This is benign when
+                    # the rename was already applied there: either it was an
+                    # inbound `renamed` event we just applied locally, or it
+                    # is a child of a directory rename this slave already
+                    # sent (the single PATCH of the directory renamed the
+                    # whole tree). Nothing left to rename.
                     log.debug(
-                        f"Rename source already gone on master (inbound echo): "
+                        f"Rename source already gone on master (redundant echo): "
                         f'"{src_path}" -> "{dst_path}"'
                     )
                 else:
@@ -1370,20 +1422,31 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                 )
             return
 
-        # Normal rename - use PATCH endpoint, unless this rename is the echo
-        # of an inbound `renamed` event we just applied locally (the master
-        # already performed the rename itself, so re-sending it would fail
-        # with 404 and produce a spurious WARNING).  ``is_inbound_rename_echo``
-        # covers both the exact (src, dst) pair and descendant echoes of a
-        # directory rename (e.g. ``ABC/.hsynckeep -> ABC-123/.hsynckeep``).
-        if self.is_inbound_rename_echo(src_path, dest_path):
+        # Normal rename - use PATCH endpoint, unless this rename is redundant:
+        # - the echo of an inbound `renamed` event we just applied locally
+        #   (the master already performed the rename), or
+        # - a child of a directory rename this slave just sent (the single
+        #   PATCH of the directory already renamed the whole tree on the
+        #   master, so the child PATCH would 404).
+        # `is_inbound_rename_echo` / `is_outbound_dir_descendant` cover both
+        # the exact pair and descendants (same `/`-suffix guard).
+        if self.is_inbound_rename_echo(src_path, dest_path) or self.is_outbound_dir_descendant(
+            src_path, dest_path
+        ):
             own_cid = CONFIG.get("CID")
             cid_suffix = f" (CID: {own_cid})" if own_cid else ""
             log.debug(
                 f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dest_path}"'
-                f"{cid_suffix} (inbound echo, skipped)"
+                f"{cid_suffix} (redundant rename, skipped)"
             )
             return
+
+        # Record a directory rename before sending its PATCH: the watchdog
+        # will also emit an `on_moved` for each child, which a single PATCH on
+        # the master already covers (renaming the whole tree). This lets those
+        # child events be skipped above as redundant instead of 404-ing.
+        if event.is_directory:
+            self._record_outbound_dir_rename(src_path, dest_path)
 
         self._start_operation(
             target=self._rename_on_master,
