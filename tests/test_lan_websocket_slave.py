@@ -82,6 +82,31 @@ class TestSlaveFileEventHandler:
             )
         assert not handler.is_inbound_rename_echo("/b/old.txt", "/b/new.txt")
 
+    def test_inbound_rename_echo_descendant_match(self, handler):
+        """A descendant echo of a cached directory rename is recognised.
+
+        If the master renamed ``ABC -> ABC-123``, the slave's own watcher may
+        also emit echo events for children under the old path (e.g.
+        ``ABC/.hsynckeep -> ABC-123/.hsynckeep``). This must be treated as a
+        benign echo so the redundant PATCH (and its 404 WARNING) are avoided.
+        """
+        handler.record_inbound_rename("/b/ABC", "/b/ABC-123")
+        assert handler.is_inbound_rename_echo("/b/ABC", "/b/ABC-123")
+        assert handler.is_inbound_rename_echo("/b/ABC/.hsynckeep", "/b/ABC-123/.hsynckeep")
+        assert handler.is_inbound_rename_echo("/b/ABC/sub/x.txt", "/b/ABC-123/sub/x.txt")
+
+    def test_inbound_rename_echo_prefix_collision_not_matched(self, handler):
+        """A rename sharing a path prefix without a separator must NOT match.
+
+        ``ABC-keeper -> ABC-123-keeper`` is a real rename, not a descendant
+        echo of ``ABC -> ABC-123``: the trailing suffix does not start with
+        ``/``, so it must not be suppressed.
+        """
+        handler.record_inbound_rename("/b/ABC", "/b/ABC-123")
+        assert not handler.is_inbound_rename_echo("/b/ABC-keeper", "/b/ABC-123-keeper")
+        assert not handler.is_inbound_rename_echo("/b/ABC", "/b/ABC-124")
+        assert not handler.is_inbound_rename_echo("/b/other", "/b/ABC-123/x")
+
     def test_is_temp_file(self, handler):
         """Test detecting temporary files."""
         assert handler._is_temp_file("/path/to/file.part")
@@ -685,6 +710,38 @@ class TestSlaveFileEventHandler:
         ):
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
+
+    def test_on_moved_inbound_echo_skips_patch(self, handler, tmp_path):
+        """on_moved must NOT re-send a rename that is the echo of an inbound
+        master event (exact or descendant): the master already performed it,
+        so a PATCH would 404 and produce a spurious WARNING."""
+        src = str(tmp_path / "ABC")
+        dst = str(tmp_path / "ABC-123")
+        handler.record_inbound_rename(src, dst)
+
+        # Exact echo
+        event = FileMovedEvent(src, dst)
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_rename_on_master") as mock_ren,
+        ):
+            handler.on_moved(event)
+        assert len(handler._pending_ops) == 0
+        mock_ren.assert_not_called()
+
+        # Descendant echo (the sentinel inside the renamed directory)
+        event2 = FileMovedEvent(
+            str(tmp_path / "ABC" / ".hsynckeep"),
+            str(tmp_path / "ABC-123" / ".hsynckeep"),
+        )
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_rename_on_master") as mock_ren2,
+        ):
+            handler.on_moved(event2)
+        assert len(handler._pending_ops) == 0
+        mock_ren2.assert_not_called()
 
     def test_wait_pending_timeout(self, handler):
         """Test wait_pending returns count of timed-out operations."""
