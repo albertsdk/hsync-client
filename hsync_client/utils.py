@@ -460,15 +460,19 @@ def get_cid(length: int = CID_LENGTH) -> str:
     identify the source of events and prevent echo. Uses the secrets
     module for cryptographic security.
 
-    The default configuration provides 126 bits of entropy:
-    - 21 characters from a 64-character alphabet (URL-safe)
-    - Probability of collision: ~1 in 2^126
+    The default configuration provides ~125 bits of entropy:
+    - 21 characters from a strictly alphanumeric 62-character alphabet
+    - Probability of collision: ~1 in 2^125
+
+    The alphabet is strictly alphanumeric (`A-Za-z0-9`, matching the
+    ``hsync_common.models.event.CID_PATTERN`` wire contract), so a generated
+    CID always starts with a letter or digit — never ``-`` or ``_``.
 
     Args:
         length: Length of the ID string (default: CID_LENGTH = 21).
 
     Returns:
-        Cryptographically secure random string (URL-safe).
+        Cryptographically secure random alphanumeric string.
     """
     return "".join(secrets.choice(CID_ALPHABET) for _ in range(length))
 

@@ -488,13 +488,13 @@ class TestApplyValidation:
         )
 
         meta = _valid_metadata(base, bytes(new), ops=[op.to_dict() for op in ops])
-        meta["cid"] = "slave-cid-1"
+        meta["cid"] = "slavecid1"
         meta["mtime"] = 1_600_000_000.0
         meta["permissions"] = "0o644"
         _apply(apply_handler, meta, literals)
         status, _body = apply_handler.sent[0]
         assert status == 200
-        assert marked == [(str(target), "slave-cid-1")]
+        assert marked == [(str(target), "slavecid1")]
         assert perms == [(str(target), "0o644")]
         assert abs(target.stat().st_mtime - 1_600_000_000.0) < 2
 

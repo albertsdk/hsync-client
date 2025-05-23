@@ -347,7 +347,7 @@ class TestLANUploadCidValidation:
             patch("hsync_client.lan_server.CONFIG", self._config(tmp_path)),
             patch("hsync_client.lan_websocket.mark_inbound_origin") as mock_mark,
         ):
-            response = self._upload(port, "good-cid_1")
+            response = self._upload(port, "goodcid1")
 
             assert response.status_code == 201
             mock_mark.assert_called_once()

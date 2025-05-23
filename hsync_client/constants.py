@@ -38,9 +38,11 @@ HSYNC_VERSION = VERSION
 # =============================================================================
 
 # Client ID Generation (NanoID-style)
-# 21 characters with 64-char alphabet = 126 bits of entropy
+# 21 characters with a strictly alphanumeric 62-char alphabet = ~125 bits of entropy.
+# The alphabet matches the wire contract (hsync_common.models.event.CID_PATTERN):
+# no `-`/`_`, so a generated CID always starts with a letter or digit.
 CID_LENGTH = 21
-CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 
 # =============================================================================

@@ -195,10 +195,10 @@ class TestGetCid:
         cid = get_cid(length=32)
         assert len(cid) == 32
 
-    def test_url_safe_characters(self):
-        """Test CID contains only URL-safe characters (a-zA-Z0-9-_)."""
+    def test_alphanumeric_characters(self):
+        """Test CID contains only strictly alphanumeric characters (A-Za-z0-9)."""
         cid = get_cid(length=100)
-        valid_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        valid_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
         assert all(c in valid_chars for c in cid)
 
     def test_unique_cids(self):
@@ -206,12 +206,16 @@ class TestGetCid:
         cids = [get_cid() for _ in range(100)]
         assert len(set(cids)) == 100
 
-    def test_contains_special_chars(self):
-        """Test CID can contain - and _ characters."""
-        # Generate many CIDs to statistically ensure we get special chars
+    def test_no_special_chars(self):
+        """Test CID never contains - or _ (always starts alphanumeric)."""
+        # Generate many CIDs; none may contain the old URL-safe specials.
         cids = "".join(get_cid() for _ in range(100))
-        # With 64-char alphabet and 2100 chars, probability of no - or _ is negligible
-        assert "-" in cids or "_" in cids
+        assert "-" not in cids and "_" not in cids
+
+    def test_first_char_always_alphanumeric(self):
+        """Every generated CID starts with a letter or digit, never -/_."""
+        for _ in range(200):
+            assert get_cid()[0].isalnum()
 
 
 class TestGetPermissions:
