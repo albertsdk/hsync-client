@@ -1280,6 +1280,17 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if not Path(src_path).exists():
             return
 
+        # .hsynckeep is a per-peer local sentinel: the periodic reconcile
+        # already excludes it from sync actions in both directions, so the
+        # event-driven upload path must too. Each peer maintains its own
+        # sentinels (ensure_hsynckeep_files / _ensure_sentinel*), and the
+        # directory itself is propagated by the directory event — uploading
+        # the sentinel only produces a 0-byte [UPLOAD] line and a broadcast
+        # round-trip.
+        if Path(src_path).name == HSYNCKEEP_FILENAME:
+            log.debug(f'Skip sentinel upload: "{src_path}"')
+            return
+
         invalidate_sha256_cache(src_path)
         file_obj = File.get(src_path)
         if file_obj:

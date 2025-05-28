@@ -24,8 +24,9 @@ while large transfers are in flight.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import remove, rename, unlink
 from os import symlink as os_symlink
 from pathlib import Path
@@ -65,6 +66,45 @@ def _remove_locked(filepath: str) -> bool:
     return False
 
 
+class _DirDedup:
+    """Per-connection cache suppressing duplicate no-op directory events.
+
+    Maps ``absolute dir path -> permissions`` for inbound directory events
+    that were already applied without change. ``mkdir`` on a peer produces a
+    burst of near-identical ``added``/``modified`` directory events (inotify
+    fires several ``IN_ATTRIB`` per operation); each would otherwise be
+    re-logged and re-emitted as a fresh change. Thread-safe because the
+    dispatch loop and ``asyncio.to_thread`` workers can touch it concurrently.
+    """
+
+    _MAX_ENTRIES = 10_000
+
+    def __init__(self) -> None:
+        self._seen: dict[str, str | None] = {}
+        self._lock = threading.Lock()
+
+    def is_duplicate(self, path: str, permissions: str | None) -> bool:
+        """Return True if *path* was already applied with these *permissions*."""
+        with self._lock:
+            return self._seen.get(path, _MISSING) == permissions
+
+    def record(self, path: str, permissions: str | None) -> None:
+        """Remember *path* as applied with *permissions* (evicting oldest at cap)."""
+        with self._lock:
+            if path not in self._seen and len(self._seen) >= self._MAX_ENTRIES:
+                self._seen.pop(next(iter(self._seen)), None)
+            self._seen[path] = permissions
+
+    def forget(self, path: str) -> None:
+        """Drop *path* (delete/rename) so a later re-create is applied fresh."""
+        with self._lock:
+            self._seen.pop(path, None)
+
+
+#: Sentinel distinct from any real permissions value (including ``None``).
+_MISSING = object()
+
+
 @dataclass(frozen=True)
 class EventDispatchContext:
     """Per-transport behaviour for inbound event application.
@@ -84,6 +124,13 @@ class EventDispatchContext:
         recover_on_missing_rename_src: If ``True`` and a rename's source
             does not exist locally, the destination is materialised
             (downloaded or resynced) instead of being silently dropped.
+        dir_dedup: Mutable per-connection cache of ``dir path -> permissions``
+            for inbound directory events already applied without change, so a
+            duplicate ``added``/``modified`` burst for the same directory
+            (inotify fires several ``IN_ATTRIB`` per mkdir) is not re-logged
+            and re-emitted as if it were a fresh change. ``None`` disables the
+            dedup (each event is applied and logged). The default factory
+            provides a shared cache per context instance.
     """
 
     mark_receiving: Callable[[str], None] | None = None
@@ -91,6 +138,7 @@ class EventDispatchContext:
     record_inbound_rename: Callable[[str, str], None] | None = None
     create_symlink_locally: bool = False
     recover_on_missing_rename_src: bool = False
+    dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
 
 
 #: Prefix for every inbound-dispatch label: the event is always caused by a
@@ -198,7 +246,12 @@ async def _apply_add_or_modify(
 ) -> None:
     """Materialise an added/modified directory or file locally."""
     if "path" in src:
-        target = _resolve_local_path(src, "path") if ctx.mark_receiving else None
+        # Always resolve the absolute local path: it keys the dedup cache
+        # consistently with the delete/rename invalidation (which uses the
+        # confined absolute path), so a re-created directory is never wrongly
+        # suppressed. ``target`` separately stays gated on mark_receiving.
+        abs_local = _resolve_local_path(src, "path")
+        target = abs_local if ctx.mark_receiving else None
         _mark(ctx, target) if target else None
         try:
             # Directories carry no content hash, so update_dir only ever
@@ -215,7 +268,24 @@ async def _apply_add_or_modify(
                 _unmark(ctx, target)
         if result is not None:
             label = "CREATE" if event_name == EventName.added.value else "MODIFY"
-            log.info(f'{_tag(label)} "{target or src.get("path")}"{_cid_suffix(origin_cid)}')
+            # Key on the absolute path so it matches the delete/rename
+            # invalidation (which uses the confined absolute path); fall back
+            # to the wire path only if resolution failed.
+            path_key = abs_local or str(src.get("path") or "")
+            permissions = src.get("permissions")
+            # Suppress the duplicate added/modified burst a single mkdir
+            # produces (the master's watcher emits several IN_ATTRIB-driven
+            # events ~1ms apart for the same directory). Record *before*
+            # acting so a sibling event dispatched concurrently is caught;
+            # a genuine later change carries different permissions and is
+            # never skipped. A security-rejected path (result is None) is
+            # never recorded, so it is also never silenced.
+            if ctx.dir_dedup is not None and path_key:
+                if ctx.dir_dedup.is_duplicate(path_key, permissions):
+                    log.debug(f'{_tag(label)} Duplicate directory event: "{path_key}"')
+                    return
+                ctx.dir_dedup.record(path_key, permissions)
+            log.info(f'{_tag(label)} "{path_key}"{_cid_suffix(origin_cid)}')
             emit_event(
                 UiEventName.transfer,
                 op="create" if label == "CREATE" else "modify",
@@ -291,6 +361,13 @@ async def _rename_path(
     """Rename ``src_path`` to ``dst_path``, with optional recovery on missing source."""
     if not (src_path and dst_path):
         return
+    # A renamed directory must not stay in the dedup cache under either its
+    # old or new path: a later event for the destination (or a re-created
+    # source) with unchanged permissions would be wrongly skipped. Forgetting
+    # a file path is a harmless no-op (files are never recorded).
+    if ctx.dir_dedup is not None:
+        ctx.dir_dedup.forget(src_path)
+        ctx.dir_dedup.forget(dst_path)
     _mark(ctx, src_path)
     _mark(ctx, dst_path)
     try:
@@ -322,6 +399,10 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         local = _confined_local(src.get("path"), EventName.deleted.value, ctx)
         if local is None:
             return
+        # A deleted directory must not stay in the dedup cache: re-creating it
+        # later with the same permissions would be wrongly skipped as a no-op.
+        if ctx.dir_dedup is not None:
+            ctx.dir_dedup.forget(local)
         _mark(ctx, local)
         try:
             if Path(local).exists():

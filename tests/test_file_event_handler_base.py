@@ -965,6 +965,57 @@ class TestFileEventHandler:
             self.handler.on_modified(event)
             assert mock_broadcast.call_count == 2
 
+    def test_on_modified_directory_records_stat_before_broadcast(self):
+        """Regression: the dedup stat is recorded *before* the broadcast.
+
+        mkdir emits a burst of IN_ATTRIB events ~1ms apart. The second one can
+        be dispatched while Dir.get + broadcast of the first is still in
+        flight. Recording the stat up front (before ``_broadcast_event``) lets
+        the dedup pre-check catch that sibling immediately. We observe this by
+        re-invoking ``on_modified`` from inside the broadcast: the nested call
+        must hit the dedup and not broadcast again.
+        """
+        path = "/bucket/subdir"
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 4096
+
+        broadcast_calls = 0
+
+        def broadcast_reentrant(*args, **kwargs):
+            nonlocal broadcast_calls
+            broadcast_calls += 1
+            # Re-enter on_modified while the first broadcast is "in flight":
+            # the stat must already be recorded, so this nested call is a
+            # duplicate and must not trigger another broadcast.
+            self.handler.on_modified(event)
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event", side_effect=broadcast_reentrant),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.stat.return_value = mock_stat
+            self.handler.on_modified(event)
+
+        # Only the outer call broadcast; the nested (re-entrant) call was
+        # deduplicated because the stat was recorded before broadcasting.
+        assert broadcast_calls == 1
+
     def test_on_modified_non_linux_uploads_file(self):
         """on_modified uploads file on non-Linux (fallback path)."""
         event = MagicMock()

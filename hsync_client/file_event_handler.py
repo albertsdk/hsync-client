@@ -226,6 +226,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 ):
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
                     return
+                # Record the stat *before* logging/broadcasting: mkdir emits a
+                # burst of IN_ATTRIB events ~1ms apart, and the second one can
+                # be dispatched before Dir.get + broadcast of the first has
+                # completed. Recording up front lets the dedup pre-check catch
+                # that sibling immediately; a later genuine content change
+                # updates the directory mtime and is never skipped.
+                if current_stat is not None:
+                    self._record_broadcast(src_path, current_stat, "")
                 log.info(
                     f'{self._label("MODIFY", src_path)} "{src_path}" (dir)'
                     f"{self._cid_suffix(src_path)}"
@@ -242,8 +250,6 @@ class BaseFileEventHandler(FileSystemEventHandler):
                         ),
                         src_abs_path=src_path,
                     )
-                    if current_stat is not None:
-                        self._record_broadcast(src_path, current_stat, "")
             return
 
         if SUPPORTS_ON_CLOSED or is_hidden_file(src_path):

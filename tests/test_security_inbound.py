@@ -187,6 +187,79 @@ class TestInboundEventPathValidation:
         # No [REMOTE CREATE] line must be emitted for a rejected directory.
         assert not any("[REMOTE CREATE]" in m for m in captured)
 
+    async def test_duplicate_directory_event_not_relogged(self, tmp_path):
+        """Regression: a duplicate added/modified directory burst is not re-logged.
+
+        mkdir on a peer produces several near-identical added/modified
+        directory events ~1ms apart (inotify fires several IN_ATTRIB per
+        operation). Before the dedup, each one was re-logged as a fresh
+        [REMOTE CREATE]/[REMOTE MODIFY] line. The second identical event must
+        be suppressed (DEBUG), while a genuine change (different permissions)
+        must still be logged.
+        """
+        from loguru import logger
+
+        from hsync_client.logger import _format_record_plain
+
+        ctx = EventDispatchContext()  # own dir_dedup cache
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="DEBUG", format=_format_record_plain, catch=False)
+        try:
+            with (
+                patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            ):
+                event = {"name": "modified", "src": {"path": "d", "permissions": "755"}}
+                await apply_inbound_event(event, ctx)  # first: applied + logged
+                await apply_inbound_event(event, ctx)  # duplicate: suppressed
+                # A genuine change (different permissions) must still log.
+                changed = {"name": "modified", "src": {"path": "d", "permissions": "700"}}
+                await apply_inbound_event(changed, ctx)
+        finally:
+            logger.remove(handler_id)
+
+        info_modify = [m for m in captured if "[REMOTE MODIFY]" in m and "INFO" in m]
+        # exactly two INFO lines: the first apply and the permission change
+        assert len(info_modify) == 2, captured
+        assert any("[REMOTE MODIFY]" in m and "Duplicate" in m for m in captured)
+
+    async def test_dir_dedup_invalidated_on_delete(self, tmp_path):
+        """A deleted directory must not stay in the dedup cache: re-creating it
+        with the same permissions is a real change and must be logged again."""
+        from loguru import logger
+
+        from hsync_client.logger import _format_record_plain
+
+        ctx = EventDispatchContext()
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
+        try:
+            with (
+                patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            ):
+                event = {"name": "added", "src": {"path": "d", "permissions": "755"}}
+                await apply_inbound_event(event, ctx)  # create + log
+                # delete the directory (forgets the dedup entry)
+                await apply_inbound_event({"name": "deleted", "src": {"path": "d"}}, ctx)
+                # re-create with identical permissions → must log again
+                await apply_inbound_event(event, ctx)
+        finally:
+            logger.remove(handler_id)
+
+        creates = [m for m in captured if "[REMOTE CREATE]" in m and m.rstrip().endswith('/d"')]
+        assert len(creates) == 2, captured
+
     async def test_inbound_delete_logs_remote_delete(self, tmp_path):
         """Remote-mode inbound dispatch: a deleted event logs [REMOTE DELETE]."""
         from loguru import logger
