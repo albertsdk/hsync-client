@@ -32,6 +32,7 @@ import json
 from dataclasses import dataclass
 from os import fsync, remove, replace
 from pathlib import Path
+from time import monotonic
 from typing import cast
 
 import zstandard as zstd
@@ -43,7 +44,7 @@ from hsync_common.delta import (
     is_delta_worthwhile,
     optimal_block_size,
 )
-from hsync_common.format import format_bytes
+from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.models.delta import (
     BlockSignature,
@@ -183,6 +184,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         RequestException: Connection-level failure (retryable by the caller).
         ServerError: Server-side 5xx (retryable by the caller).
     """
+    t0 = monotonic()
     headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
     sig_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/signatures"
 
@@ -291,7 +293,8 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         raise DeltaTransferError("apply response hash mismatch")
     log.info(
         f'[DELTA ↑] "{file.filepath}" {format_bytes(len(literals))} literal '
-        f"(saved {format_bytes(file.size - len(literals))})"
+        f"(saved {format_bytes(file.size - len(literals))}) "
+        f"in {format_duration(monotonic() - t0, subsecond=True)}"
     )
 
 
@@ -325,6 +328,7 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
         RequestException: Connection-level failure (retryable by the caller).
         ServerError: Server-side 5xx (retryable by the caller).
     """
+    t0 = monotonic()
     headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
     sig_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/signatures"
 
@@ -434,7 +438,8 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
         replace(part_path, ctx.local_path)
         log.info(
             f'[DELTA ↓] "{file.filepath}" {format_bytes(Path(payload_path).stat().st_size)} literal '
-            f"(saved {format_bytes(max(new_size - Path(payload_path).stat().st_size, 0))})"
+            f"(saved {format_bytes(max(new_size - Path(payload_path).stat().st_size, 0))}) "
+            f"in {format_duration(monotonic() - t0, subsecond=True)}"
         )
     finally:
         for leftover in (part_path, payload_path):
