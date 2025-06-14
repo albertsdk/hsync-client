@@ -85,40 +85,62 @@ CREATE_UPLOAD_DEFER_S = STABILITY_DELAY_ON_CLOSED
 # Inbound File Origin Tracking (echo suppression for LAN master)
 # =============================================================================
 
-# Map of absolute filepath -> (originator_cid, expiration_timestamp).
+# Map of absolute filepath -> (originator_cid, expiration_timestamp, authenticated).
 # The master populates this map every time it writes / deletes / renames a
 # path on behalf of a peer (via HTTP POST/DELETE/PATCH).  When the watchdog
-# fires the resulting filesystem event, ``LANMasterFileEventHandler._send_event``
-# substitutes the originator's CID into the broadcast so that the original
-# sender (and only that sender) can recognise and discard its own echo.
-_inbound_origin: dict[str, tuple[str, float]] = {}
+# fires the resulting filesystem event:
+# - ``peek_inbound_origin`` returns the CID regardless of *authenticated*
+#   (enables accurate ``REMOTE`` logging even without ``LAN_KEY``).
+# - ``consume_inbound_origin`` returns the CID **only** if *authenticated*
+#   is True, so a CID that arrived without the shared secret cannot be
+#   substituted into the WebSocket broadcast (echo suppression security).
+_inbound_origin: dict[str, tuple[str, float, bool]] = {}
 _inbound_origin_lock = threading.Lock()
 INBOUND_ORIGIN_TTL = 10.0
 
 
-def mark_inbound_origin(filepath: str, cid: str, ttl: float = INBOUND_ORIGIN_TTL) -> None:
-    """Record that ``filepath`` was just written/changed on behalf of ``cid``."""
+def mark_inbound_origin(
+    filepath: str,
+    cid: str,
+    ttl: float = INBOUND_ORIGIN_TTL,
+    authenticated: bool = True,
+) -> None:
+    """Record that ``filepath`` was just written/changed on behalf of ``cid``.
+
+    ``authenticated`` controls whether the CID can be used for echo
+    suppression (only on authenticated requests).  The CID is always
+    stored so that logging can show the correct origin even in the
+    absence of a shared secret.
+    """
     if not filepath or not cid:
         return
     now = time()
     with _inbound_origin_lock:
         # Opportunistic GC of expired entries
-        expired = [k for k, (_, exp) in _inbound_origin.items() if exp <= now]
+        expired = [k for k, (_, exp, _) in _inbound_origin.items() if exp <= now]
         for k in expired:
             _inbound_origin.pop(k, None)
-        _inbound_origin[filepath] = (cid, now + ttl)
+        _inbound_origin[filepath] = (cid, now + ttl, authenticated)
 
 
 def consume_inbound_origin(filepath: str) -> str | None:
-    """Return and remove the originator CID for ``filepath`` if still fresh."""
+    """Return and remove the originator CID for ``filepath`` if still fresh.
+
+    The CID is returned **only** when the entry was marked as authenticated
+    (i.e. the request carried a valid ``LAN_KEY``).  Unauthenticated CIDs
+    are consumed without returning so they cannot be injected into the
+    WebSocket broadcast — the master's own CID is used instead.
+    """
     if not filepath:
         return None
     with _inbound_origin_lock:
         entry = _inbound_origin.pop(filepath, None)
     if entry is None:
         return None
-    cid, expiry = entry
+    cid, expiry, authenticated = entry
     if expiry < time():
+        return None
+    if not authenticated:
         return None
     return cid
 
@@ -126,10 +148,11 @@ def consume_inbound_origin(filepath: str) -> str | None:
 def peek_inbound_origin(filepath: str) -> str | None:
     """Return the originator CID for ``filepath`` without consuming it.
 
-    Unlike :func:`consume_inbound_origin`, this does not remove the entry,
-    so the subsequent ``_broadcast_event`` can still substitute the CID into
-    the broadcast for echo suppression. Used by the master's watchdog log
-    lines to attribute an event to the peer that triggered it.
+    Unlike :func:`consume_inbound_origin`, this does not remove the entry
+    and does **not** require authentication: the CID is returned regardless
+    of whether the request was authenticated.  Used by the master's watchdog
+    log lines and the ``on_modified`` directory dedup so the ``REMOTE``
+    prefix and CID suffix are accurate even without ``LAN_KEY``.
     """
     if not filepath:
         return None
@@ -137,7 +160,7 @@ def peek_inbound_origin(filepath: str) -> str | None:
         entry = _inbound_origin.get(filepath)
     if entry is None:
         return None
-    cid, expiry = entry
+    cid, expiry, _ = entry
     if expiry < time():
         return None
     return cid
@@ -482,13 +505,14 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         to honour the :class:`BaseFileEventHandler` hook contract. ``trigger``
         overrides the log trigger label (e.g. ``"safe-save"``).
         """
-        # The label mirrors the MODIFY label used for directory modify events
-        # (file_event_handler.on_modified): both broadcast
-        # ``EventName.modified``. The trigger suffix disambiguates the two
-        # close-write fires a GNOME/gvfs safe-save produces on the master.
+        # Distinguish a genuinely new file (first time this watcher sees it)
+        # from an update to an already-known path.  The broadcast is always
+        # ``EventName.modified`` (slaves must pull the bytes either way);
+        # only the log label changes so the operator sees the right verb.
+        label = "CREATE" if src_path not in self._last_broadcast_stat else "MODIFY"
         actual_trigger = trigger or ("closed" if from_closed else "modified")
         log.info(
-            f'{self._label("MODIFY", src_path)} "{src_path}"'
+            f'{self._label(label, src_path)} "{src_path}"'
             f" ({actual_trigger}){self._cid_suffix(src_path)}"
         )
         # A (re-)created/modified file invalidates any prior deletion marker so
@@ -1012,6 +1036,56 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
 
+    def _create_dir_on_master(self, dir_path: str) -> None:
+        """Notify master about a directory creation.
+
+        POSTs to the master's ``/dirs`` endpoint so the directory (and any
+        missing parents) is created on the master and propagated to other
+        slaves. Respects ``SYNC_DIRECTION == "download-only"``.
+        """
+        from hsync_client.utils import get_ssl_verify, http_post
+
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            return
+
+        try:
+            protocol = "https" if self._use_https else "http"
+            prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
+            rel_path = dir_path.removeprefix(prefix).lstrip("/")
+
+            url = (
+                f"{protocol}://{self._master_host}:{self._master_port}"
+                f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}/dirs"
+            )
+
+            params = {"path": rel_path}
+            # Include our CID so the master can attribute the resulting
+            # filesystem event back to us and suppress the echo broadcast.
+            own_cid = CONFIG.get("CID")
+            if own_cid:
+                params["cid"] = own_cid
+            headers: dict[str, str] = {}
+            req_headers = CONFIG.get("REQUEST_HEADERS")
+            if req_headers and isinstance(req_headers, dict):
+                for k, v in req_headers.items():
+                    if isinstance(k, str) and isinstance(v, str):
+                        headers[k] = v
+
+            log.info(f'{ActionLabel.LOCAL_CREATE} "{dir_path}" (dir)')
+            response = http_post(
+                url,
+                params=params,
+                headers=headers,
+                verify=get_ssl_verify(),
+                timeout=30,
+            )
+
+            if response.status_code not in (200, 201, 204):
+                log.warning(f"Create dir request failed: {response.status_code}")
+
+        except Exception as e:
+            log.error(f"Failed to create dir on master: {e}")
+
     def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
         """Notify master about a file/directory deletion."""
         from hsync_client.utils import get_ssl_verify, http_delete
@@ -1040,8 +1114,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
-            log.info(f'{ActionLabel.LOCAL_DELETE} "{filepath}"{cid_suffix}')
+            log.info(f'{ActionLabel.LOCAL_DELETE} "{filepath}"')
             response = http_delete(
                 url,
                 params=params,
@@ -1084,8 +1157,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
-            log.info(f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dst_path}"{cid_suffix}')
+            log.info(f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dst_path}"')
             response = http_patch(
                 url,
                 params=params,
@@ -1133,6 +1205,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             # file and trigger an upload via on_closed / on_modified.
             log.debug(f'{ActionLabel.LOCAL_CREATE} "{src_path}" (dir)')
             self._ensure_sentinel(src_path)
+            # Notify the master to create the directory (and any missing
+            # parents) so it is propagated to other slaves.  The sentinel
+            # upload is skipped by _handle_file_upload, so the directory
+            # itself must be propagated via the dedicated /dirs endpoint.
+            self._start_operation(
+                target=self._create_dir_on_master,
+                args=(src_path,),
+                name=f"create-dir-{src_path}",
+            )
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
             if Path(src_path).is_symlink():

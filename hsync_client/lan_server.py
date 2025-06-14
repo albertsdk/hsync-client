@@ -111,6 +111,7 @@ ENDPOINT_TIME = f"{API_PREFIX}/time"
 ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
 ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
+ENDPOINT_DIRS_SUFFIX = "/dirs"
 ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
 ENDPOINT_DELTA_SIGNATURES_SUFFIX = "/files/delta/signatures"
 ENDPOINT_DELTA_APPLY_SUFFIX = "/files/delta/apply"
@@ -497,6 +498,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._handle_delta_apply()
             return
 
+        # Create directory: /api/v1/buckets/{bucket}/dirs
+        if path.endswith(ENDPOINT_DIRS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            query = parse_qs(urlparse(self.path).query)
+            self._handle_create_dir(query)
+            return
+
         # Upload file: /api/v1/buckets/{bucket}/files
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_upload()
@@ -577,11 +584,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # only honoured on authenticated requests: without LAN_KEY any LAN
             # peer could spoof another peer's CID and suppress its events.
             origin_cid = query.get("cid", [None])[0]
-            if origin_cid and is_valid_cid(origin_cid) and CONFIG.get("LAN_KEY"):
+            if origin_cid and is_valid_cid(origin_cid):
                 from hsync_client.lan_websocket import mark_inbound_origin
 
-                mark_inbound_origin(src_path, origin_cid)
-                mark_inbound_origin(dst_path, origin_cid)
+                authenticated = bool(CONFIG.get("LAN_KEY"))
+                mark_inbound_origin(src_path, origin_cid, authenticated=authenticated)
+                mark_inbound_origin(dst_path, origin_cid, authenticated=authenticated)
 
             rename(src_path, dst_path)
 
@@ -627,15 +635,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         # Mark the path as inbound so the resulting `deleted` event from the
-        # filesystem watcher is broadcast with the originator's CID.  Honoured
-        # only on authenticated requests; an unauthenticated CID is untrusted
-        # and ignored.
+        # filesystem watcher is broadcast with the originator's CID.
+        # The CID is always recorded for accurate logging; only authenticated
+        # CIDs are used for echo suppression (consume_inbound_origin gate).
         origin_cid = query.get("cid", [None])[0]
         marked = False
-        if origin_cid and is_valid_cid(origin_cid) and CONFIG.get("LAN_KEY"):
+        if origin_cid and is_valid_cid(origin_cid):
             from hsync_client.lan_websocket import mark_inbound_origin
 
-            mark_inbound_origin(full_path, origin_cid)
+            authenticated = bool(CONFIG.get("LAN_KEY"))
+            mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
             marked = True
         log.debug(
             f"[DELETE-API] delete branch: path={full_path} is_dir={is_dir} "
@@ -700,6 +709,61 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
         if safe_rmdir_if_empty(dir_path):
             log.debug(f'Removed empty directory "{dir_path}"')
+
+    def _handle_create_dir(self, query: dict) -> None:
+        """Handle directory creation from a slave peer.
+
+        Creates the directory (and any missing parents) inside the local
+        bucket, applies optional permissions, records the originator CID for
+        echo suppression, and creates a ``.hsynckeep`` sentinel if the new
+        directory is empty so the sync engine preserves it.
+        """
+        rel_path = query.get("path", [None])[0]
+        if not rel_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
+            return
+
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+
+        # Peer-supplied path is untrusted: validate and confine to the bucket
+        # (rejects traversal, absolute paths and sibling-prefix confusion).
+        full_path = resolve_within(local_bucket, rel_path)
+        if not full_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return
+
+        try:
+            # Only mark inbound origin if the directory doesn't already
+            # exist: an already-existing directory means the slave is
+            # echoing a directory it received from us via broadcast, so
+            # the mark must not be recorded (it would paint the slave's
+            # CID over a genuinely local path, causing later local
+            # events to be misattributed as REMOTE).
+            if not Path(full_path).exists():
+                origin_cid = query.get("cid", [None])[0]
+                if origin_cid and is_valid_cid(origin_cid):
+                    from hsync_client.lan_websocket import mark_inbound_origin
+
+                    authenticated = bool(CONFIG.get("LAN_KEY"))
+                    mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
+
+            Path(full_path).mkdir(parents=True, exist_ok=True)
+
+            # Apply optional permissions if provided.
+            permissions = query.get("permissions", [None])[0]
+            if permissions:
+                from hsync_client.utils import set_permissions
+
+                set_permissions(full_path, permissions)
+
+            self._send_json_response(HTTP_CREATED, {"info": "Directory created successfully"})
+
+        except Exception as e:
+            log.error(f"Error creating directory {full_path}: {e}")
+            self._send_error_response(HTTP_INTERNAL_ERROR, f"Create dir error: {e}")
 
     def _handle_health(self) -> None:
         """Handle health check endpoint."""
@@ -1144,12 +1208,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
                 return
 
-            # Honour the echo-suppression CID only on authenticated requests;
-            # an unauthenticated CID is untrusted and ignored.
-            if cid and is_valid_cid(cid) and CONFIG.get("LAN_KEY"):
+            # Record the CID for accurate logging.  Only authenticated CIDs
+            # are used for echo suppression (consume_inbound_origin gate).
+            if cid and is_valid_cid(cid):
                 from hsync_client.lan_websocket import mark_inbound_origin
 
-                mark_inbound_origin(dest_path, cid)
+                authenticated = bool(CONFIG.get("LAN_KEY"))
+                mark_inbound_origin(dest_path, cid, authenticated=authenticated)
 
             os.replace(tmp_path, dest_path)
             tmp_path = None
