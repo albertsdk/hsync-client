@@ -42,7 +42,7 @@ It works in two ways:
 
 ## Why HSYNC?
 
-HSYNC is designed to synchronize files using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
+HSYNC is designed to synchronize files **in real-time** using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
 
 Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
 
@@ -68,6 +68,7 @@ Most traditional file synchronization tools rely on protocols that are often blo
 - ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
 - 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
 - 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
+- ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets.
 
 Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate proxies, reverse proxies, load balancers, and CDNs without any special configuration.
 
@@ -81,7 +82,7 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 - ✅ SHA-256-based file integrity verification
 - 🗜️ Zstandard (zstd) transfer compression
 - 🧩 Delta transfer (rsync-style block sync for large files)
-- 🔗 Symbolic link synchronization support
+- 🔗 Symbolic link synchronization support (preserves links as-is)
 - 🙈 `.hsyncignore` (gitignore-style) filtering
 - 🎛️ Adaptive timeouts, retry backoff and transfer concurrency
 - 📦 Compilable to standalone binary (PyInstaller)
