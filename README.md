@@ -4,7 +4,7 @@
 
 # HSYNC Client
 
-**HSYNC Client** is the tool you run on each device to keep a local folder in sync.
+**HSYNC Client** is the tool you run on each device to keep a local folder in sync in real-time.
 It works in two ways:
 
 - In **Server Mode**, clients connect to a centralized server ([HSYNC Server](https://github.com/albertobasso/hsync-server/blob/main/README.md) required).
