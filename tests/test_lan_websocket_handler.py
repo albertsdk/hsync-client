@@ -196,12 +196,13 @@ class TestLANFileEventHandler:
         assert handler._origin_cid(src, dst) == "peer-cid-456"
 
     def test_on_file_ready_logs_local_modify_with_trigger(self, handler, ws_server, tmp_path):
-        """_on_file_ready logs [LOCAL MODIFY] with the (closed)/(modified) trigger.
+        """_on_file_ready logs [LOCAL CREATE] with the (closed)/(modified) trigger.
 
         Without an inbound-origin marker the event originates from the
-        master's own watcher, so the label is LOCAL-prefixed. The trigger
-        suffix distinguishes an ``IN_CLOSE_WRITE`` fire (``closed``) from
-        the ``on_modified`` debounce fallback (``modified``).
+        master's own watcher, and since it is the first time the path is
+        seen, the label is LOCAL CREATE (not LOCAL MODIFY).
+        The trigger suffix distinguishes an ``IN_CLOSE_WRITE`` fire
+        (``closed``) from the ``on_modified`` debounce fallback (``modified``).
         """
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
@@ -224,13 +225,13 @@ class TestLANFileEventHandler:
             handler._on_file_ready(file_obj, str(test_file), from_closed=False)
 
             msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
-            assert any("[LOCAL MODIFY]" in m and "(closed)" in m for m in msgs), msgs
-            assert any("[LOCAL MODIFY]" in m and "(modified)" in m for m in msgs), msgs
+            assert any("[LOCAL CREATE]" in m and "(closed)" in m for m in msgs), msgs
+            assert any("[LOCAL CREATE]" in m and "(modified)" in m for m in msgs), msgs
 
     def test_on_file_ready_logs_remote_modify_with_origin_marker(
         self, handler, ws_server, tmp_path
     ):
-        """_on_file_ready logs [REMOTE MODIFY] when the path was slave-written.
+        """_on_file_ready logs [REMOTE CREATE] when the path was slave-written.
 
         When the master applies a peer upload via the HTTP API, the
         inbound-origin map attributes the resulting watchdog event to the
@@ -259,7 +260,7 @@ class TestLANFileEventHandler:
             handler._on_file_ready(file_obj, str(test_file), from_closed=True)
 
             msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
-            assert any("[REMOTE MODIFY]" in m and "(closed)" in m for m in msgs), msgs
+            assert any("[REMOTE CREATE]" in m and "(closed)" in m for m in msgs), msgs
             assert any("(CID: peer-cid-789)" in m for m in msgs), msgs
 
     def test_on_deleted_logs_remote_delete_with_origin_marker(self, handler, ws_server, tmp_path):
@@ -326,7 +327,7 @@ class TestLANFileEventHandler:
             handler._on_file_ready(file_obj, str(test_file), from_closed=True)
 
             msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
-            assert any("[LOCAL MODIFY]" in m for m in msgs), msgs
+            assert any("[LOCAL CREATE]" in m for m in msgs), msgs
             assert not any("(CID:" in m for m in msgs), msgs
 
     def test_on_deleted_file(self, handler, ws_server, tmp_path):

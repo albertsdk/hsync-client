@@ -7,22 +7,22 @@ and LAN modes.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `sync` | `sync.py:132` | one full reconcile cycle (lan_mode flag) |
-| `get_files_local` | `sync.py:452` | scan local tree (parallel, adaptive workers `_get_optimal_workers:409`) |
-| `get_files_remote` | `sync.py:515` | fetch remote file list |
-| `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:566` / `:615` | tombstone exchange |
-| `get_sync_actions` | `sync.py:690` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`) |
-| `_compare_files` | `sync.py:820` | per-file decision (hash/mtime + base via sync_state) |
-| `_save_conflict_copy` | `sync.py:905` | write a conflict copy on three-way conflict |
-| `_execute_parallel_transfers` | `sync.py:267` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` |
-| `_mass_deletion_blocked` | `sync.py:94` | §12 guard: pause when deletions exceed threshold/percent or empty master |
-| `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `sync.py:58` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
-| `update_file` / `update_dir` | `sync.py:996` / `:957` | apply inbound metadata; reject unsafe remote paths |
-| `ensure_hsynckeep_files` | `sync.py:326` | keep empty dirs via sentinel |
-| `_cleanup_partial_files` | `sync.py:62` | drop stale `.part` files |
+| `sync` | `sync.py:172` | one full reconcile cycle (lan_mode flag) |
+| `get_files_local` | `sync.py:577` | scan local tree (parallel, adaptive workers `_get_optimal_workers:528`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed |
+| `get_files_remote` | `sync.py:661` | fetch remote file list |
+| `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:712` / `:761` | tombstone exchange |
+| `get_sync_actions` | `sync.py:830` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`) |
+| `_compare_files` | `sync.py:989` | per-file decision (hash/mtime + base via sync_state) |
+| `_save_conflict_copy` | `sync.py:1074` | write a conflict copy on three-way conflict |
+| `_execute_parallel_transfers` | `sync.py:357` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` |
+| `_mass_deletion_blocked` | `sync.py:134` | §12 guard: pause when deletions exceed threshold/percent or empty master |
+| `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `sync.py:79` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
+| `update_file` / `update_dir` | `sync.py:1159` / `:1111` | apply inbound metadata; reject unsafe remote paths |
+| `ensure_hsynckeep_files` | `sync.py:445` | keep empty dirs via sentinel |
+| `_cleanup_partial_files` | `sync.py:102` | drop stale `.part` files |
 
-Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:653`,
-`MTIME_TOLERANCE` `:650`).
+Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:799`,
+`MTIME_TOLERANCE` `:796`).
 
 ## delta_transfer.py — rsync-style block sync
 
@@ -54,17 +54,18 @@ caller falls back to a full transfer.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `download_file` / `_download_file_attempt` | `transfer.py:270` / `:316` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta` |
-| `upload_file` / `_upload_file_attempt` | `transfer.py:697` / `:770` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta` |
-| `_get_upload_status` | `transfer.py:598` | query server for resume offset |
-| `is_file_stable` / `_wait_for_stable_file` | `transfer.py:542` / `:635` | size+mtime stability gate; fast path on `from_closed` |
-| `_reschedule_upload` | `transfer.py:671` | §15: defer torn-file uploads (bounded) |
-| `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:154` / `:131` | streaming multipart |
-| `_ThrottledFileReader` | `transfer.py:101` | bandwidth throttle on upload reads |
-| `_record_synced_base` | `transfer.py:80` | persist merge base after success (sync_state) |
-| `_emit_transfer_failed` | `transfer.py:75` | emit `transfer_failed` UI event on exhaustion |
-| `_local_dest_path` | `transfer.py:242` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
-| `_open_partial_no_follow` | `transfer.py:257` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
+| `download_file` / `_download_file_attempt` | `transfer.py:280` / `:326` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta` |
+| `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta` |
+| `_get_upload_status` | `transfer.py:680` | query server for resume offset |
+| `is_file_stable` / `_wait_for_stable_file` | `transfer.py:624` / `:728` | size+mtime stability gate; fast path on `from_closed` |
+| `_reschedule_upload` | `transfer.py:764` | §15: defer torn-file uploads (bounded) |
+| `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:172` / `:149` | streaming multipart |
+| `_ThrottledFileReader` | `transfer.py:119` | bandwidth throttle on upload reads |
+| `_record_synced_base` | `transfer.py:98` | persist merge base after success (sync_state) |
+| `_emit_transfer_failed` | `transfer.py:93` | emit `transfer_failed` UI event on exhaustion |
+| `_local_dest_path` | `transfer.py:265` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
+| `_open_partial_no_follow` | `utils.py:379` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
+| escaping-symlink upload guard | `upload_file` `transfer.py:804` | refuses (before any hashing/read) a symlink inside the bucket whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` — covers the realtime watch/LAN-slave upload path that builds the `File` without the `get_files_local` scan guard. In-bucket symlinks keep their current semantic (uploaded as the link entry). Emits `security_rejected` |
 
 **Transfer duration logging**: every `[DOWNLOAD]`/`[UPLOAD]` success log
 includes the per-attempt wall-clock duration via
@@ -94,13 +95,13 @@ from `constants.py:99`–`:101`.
 
 ## event_dispatch.py — apply inbound events
 
-`apply_inbound_event` (`event_dispatch.py:148`) routes a remote event dict to
-`_apply_add_or_modify` (`:194`, also receives `event_name` to log `[REMOTE CREATE]` vs
+`apply_inbound_event` (`event_dispatch.py:198`) routes a remote event dict to
+`_apply_add_or_modify` (`:244`, also receives `event_name` to log `[REMOTE CREATE]` vs
 `[REMOTE MODIFY]` for the directory branch — the log is gated on `update_dir` returning
-non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:245`), `_apply_delete` (`:319`,
-locked via `_remove_locked:55`), `_apply_symlink` (`:379`). Echo suppression uses
-the per-event `EventDispatchContext` (`:68`) marking (`_mark:138`/`_unmark:143`).
-Path resolution: `_resolve_local_path` (`:235`).
+non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:314`), `_apply_delete` (`:392`,
+locked via `_remove_locked:55`), `_apply_symlink` (`:452`). Echo suppression uses
+the per-event `EventDispatchContext` (`:68`) marking (`_mark:188`/`_unmark:193`).
+Path resolution: `_resolve_local_path` (`:304`).
 
 **Inbound directory dedup** (`_apply_add_or_modify` + `_DirDedup`): the master
 broadcasts a burst of near-identical `added`/`modified` directory events per
@@ -116,8 +117,8 @@ caught, and is invalidated on `deleted` (`_apply_delete`) and `renamed`
 fresh. A genuine change carries different permissions and is never skipped; a
 security-rejected path (`update_dir` → `None`) is never recorded.
 
-**Benign-echo degradation** (`_apply_delete`, dir branch `:293` / file branch
-`:312`): when an inbound `deleted` event targets a path already absent locally,
+**Benign-echo degradation** (`_apply_delete`, dir branch `:398` / file branch
+`:424`): when an inbound `deleted` event targets a path already absent locally,
 the delete has nothing to act on (the originator removed it, a peer's delete
 converged after a local deletion, or the path never existed here). This is logged
 at **DEBUG**, not WARNING — mirroring the master's "File already deleted" success
@@ -127,22 +128,22 @@ when the master has no `LAN_KEY` set (the `mark_inbound_origin` cid gate is a
 security measure) or when a directory's children are removed by `rmtree` without
 being individually marked.
 
-**Inbound path security gate** (`:139`): every src/dst path is validated with
+**Inbound path security gate** (`:228`): every src/dst path is validated with
 `hsync_common.path_validation.validate_remote_relpath` before dispatch —
 traversal, absolute paths, backslashes and internal engine files
 (`.hsync*`/`*.part`) are dropped, logged with `ActionLabel.SECURITY` and
-surfaced as a `security_rejected` UI event (`_reject_unsafe:103`). When a
+surfaced as a `security_rejected` UI event (`_reject_unsafe:177`). When a
 payload carries both `filepath` and `path`, *every* present key is validated
 (`hsync_common.wire_relpaths`, SSOT shared with the server relay gate) so a
 malicious second key cannot smuggle past the gate.
 Delete/rename/symlink targets are additionally **confined** with
-`resolve_within` (`_confined_local:113`): lexical safety alone cannot stop a
+`resolve_within` (`_confined_local:161`): lexical safety alone cannot stop a
 symlink *inside* the bucket (e.g. `docs -> /home/user`) from redirecting the
 operation outside it. `_apply_symlink` also validates the link target with
 `is_safe_symlink_target`; `update_dir`/`update_file` (`sync.py`) apply the
 same confinement before mkdir/metadata writes.
 
-**Log labels** (`_tag:107`): every bracketed label in this module is resolved
+**Log labels** (`_tag:150`): every bracketed label in this module is resolved
 through `hsync_common.labels.resolve_label` (the SSOT shared with
 `BaseFileEventHandler._label`), so the watchdog handlers and the inbound
 dispatcher emit identical, colorizable tags. Inbound events are always
@@ -169,14 +170,22 @@ output is colorized identically to the slave's inbound dispatcher. The `[MOVE]`
 debug trace (`:324`) is deliberately unprefixed (internal trace, not the
 propagated event).
 
-**Safe-save handling** (`on_moved` file branch, `:244`): when an editor
+**Safe-save handling** (`on_moved` file branch, `:341`): when an editor
 safe-saves (writes to a temp like `.goutputstream-*` or `*.tmp` then atomically
 renames over the final file), the temp is hidden (`DEFAULT_IGNORE_PATTERNS`)
 so the rename is reframed as a content `modified` of the destination via
 `_process_file_ready(dest, trigger="safe-save")` — not a user-initiated
 `renamed`.
 
-**Content-aware dedup** (`_process_file_ready`, `:177`): a two-stage filter
+**Symlink broadcast guard** (`on_created`, `file_event_handler.py:192`): the
+shared watchdog handler (remote + LAN master) refuses to broadcast a `symlink`
+event whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` — an
+escaping link such as `secret -> /etc/passwd` must never reach peers (the
+server/master would re-create the out-of-bucket link, and a LAN slave that
+materialises links as files would copy the target's content). In-bucket
+symlinks are broadcast normally.
+
+**Content-aware dedup** (`_process_file_ready`, `:271`): a two-stage filter
 suppresses spurious broadcasts without a naive time-based debounce (which was
 counterproductive: it suppressed the real safe-save rename while keeping the
 preceding no-op close):

@@ -32,10 +32,15 @@ from hsync_common.models.file import (
     is_hidden_file,
     is_partial_file,
 )
+from hsync_common.models.symlink import Symlink
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
 from hsync_common.models.version import SyncDecision, resolve_three_way
-from hsync_common.path_validation import resolve_within, validate_remote_relpath
+from hsync_common.path_validation import (
+    is_safe_symlink_target,
+    resolve_within,
+    validate_remote_relpath,
+)
 from loguru import logger as log
 from requests import RequestException
 
@@ -471,7 +476,7 @@ def ensure_hsynckeep_files() -> None:
 
 def _get_single_file_metadata(file_path: str) -> dict | None:
     """
-    Get metadata for a single file (used for parallel processing).
+    Get metadata for a single file or symlink (used for parallel processing).
 
     Retries up to 3 times with exponential backoff if the file is
     temporarily locked or inaccessible (common with files being written).
@@ -480,10 +485,17 @@ def _get_single_file_metadata(file_path: str) -> dict | None:
         file_path: Full path to the file.
 
     Returns:
-        File metadata dictionary or None if file cannot be read.
+        File or Symlink metadata dictionary or None if file cannot be read.
     """
     import time
     from errno import EACCES, EBUSY, EIO, ENOENT
+
+    # Symlink first: emit a symlink entry without computing a content hash.
+    if Path(file_path).is_symlink():
+        link = Symlink.get(file_path)
+        if link is not None:
+            return link.to_dict()
+        return None
 
     # Retry up to 3 times for transient file access errors
     max_retries = 3
@@ -596,14 +608,35 @@ def get_files_local() -> list[dict]:
     # First pass: collect all file paths (no checksum computation)
     file_paths = []
     for root, dirs, files in walk(CONFIG["LOCAL_BUCKET"]):
-        # Skip hidden directories
+        # Skip hidden directories. ``os.walk`` runs with followlinks=False (the
+        # default), so a symlinked directory *inside* the bucket pointing
+        # outside it is never descended into; only its name appears in ``dirs``
+        # and, being a directory, it is never emitted as a ``File`` entry.
         dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
 
         for file in files:
             # Skip hidden files
             if is_hidden_file(file):
                 continue
-            file_paths.append(str(Path(root) / file))
+            file_path = str(Path(root) / file)
+            # Security: a file-symlink whose target escapes the bucket must never
+            # be followed. ``os.walk`` (followlinks=False, the default) already
+            # prevents descending into symlinked *directories*, but a symlink to a
+            # file is still enumerated in ``files``. Without this guard,
+            # ``File.get`` (exists/stat/sha256) and the upload path would
+            # dereference it and exfiltrate the out-of-bucket target — e.g.
+            # ``secret -> /etc/passwd`` would leak its content to the peer.
+            if Path(file_path).is_symlink():
+                link = Symlink.get(file_path)
+                if link is not None and not is_safe_symlink_target(
+                    file_path, link.target, CONFIG["LOCAL_BUCKET"]
+                ):
+                    log.warning(
+                        f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                        f'skipping: "{file_path}" -> "{link.target}"'
+                    )
+                    continue
+            file_paths.append(file_path)
 
     # Early return if no files
     if not file_paths:

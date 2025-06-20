@@ -25,7 +25,8 @@ import zstandard as zstd
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
-from hsync_common.path_validation import resolve_within
+from hsync_common.models.symlink import Symlink
+from hsync_common.path_validation import is_safe_symlink_target, resolve_within
 from hsync_common.text import escape_loguru_markup, safe_json_for_log
 from loguru import logger as log
 from requests import RequestException
@@ -826,6 +827,14 @@ def upload_file(
 
     If a previous upload was interrupted, resumes from where it left off.
 
+    A symlink *inside* the bucket whose target escapes ``LOCAL_BUCKET`` must
+    never be dereferenced: the guard below refuses the upload entirely, so an
+    out-of-bucket target such as ``secret -> /etc/passwd`` is never hashed,
+    read or exfiltrated to the peer (matches the ``get_files_local`` scan
+    guard in ``sync.py``). Symlinks whose target stays inside the bucket keep
+    their current semantic (treated as a regular file, i.e. the link itself,
+    not the target), consistent with the periodic reconcile.
+
     Args:
         file: File object to upload.
         check_size: If True, wait for file writes to complete first.
@@ -838,6 +847,34 @@ def upload_file(
     if not file.filepath:
         log.error("Cannot upload file: missing filepath")
         return
+
+    # Security: never dereference a symlink whose target escapes the bucket.
+    # This covers the realtime (watch/LAN slave) upload path, which builds the
+    # ``File`` directly from the watchdog event without the ``get_files_local``
+    # scan guard. A symlink that stays inside the bucket is uploaded as the
+    # link entry itself (its dereferenced metadata), not as a symlink object.
+    if Path(file.filepath).is_symlink():
+        try:
+            link = Symlink.get(file.filepath)
+            if link is not None and not is_safe_symlink_target(
+                file.filepath, link.target, CONFIG["LOCAL_BUCKET"]
+            ):
+                log.warning(
+                    f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                    f'not uploading: "{file.filepath}" -> "{link.target}"'
+                )
+                emit_event(
+                    UiEventName.security_rejected,
+                    op="upload",
+                    path=file.filepath,
+                    message="symlink target escapes bucket",
+                )
+                return
+        except OSError:
+            log.warning(
+                f'{ActionLabel.SECURITY} Cannot inspect symlink, not uploading: "{file.filepath}"'
+            )
+            return
 
     if check_size:
         if not _wait_for_stable_file(file, from_closed):

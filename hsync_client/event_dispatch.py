@@ -118,9 +118,6 @@ class EventDispatchContext:
             rename with the exact ``(src_path, dst_path)`` pair, so a
             later watchdog echo returning a 404 from the master can be
             recognised as benign rather than a real divergence.
-        create_symlink_locally: If ``True`` a ``symlink`` event recreates
-            the link via ``os.symlink``; if ``False`` the entry is
-            fetched as a regular file.
         recover_on_missing_rename_src: If ``True`` and a rename's source
             does not exist locally, the destination is materialised
             (downloaded or resynced) instead of being silently dropped.
@@ -136,7 +133,6 @@ class EventDispatchContext:
     mark_receiving: Callable[[str], None] | None = None
     unmark_receiving: Callable[[str], None] | None = None
     record_inbound_rename: Callable[[str, str], None] | None = None
-    create_symlink_locally: bool = False
     recover_on_missing_rename_src: bool = False
     dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
 
@@ -450,38 +446,40 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
 
 
 async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
-    """Apply a symlink event: either recreate the link locally or fetch as a file."""
-    if ctx.create_symlink_locally:
-        if src.get("type") != "symlink":
+    """Apply a symlink event: always recreate the link locally."""
+    if src.get("type") != "symlink":
+        return
+    link = Symlink.from_dict(src, strip_dir_prefix=False)
+    # The link location must be confined (a symlink *inside* the bucket
+    # could otherwise redirect the create/unlink outside it); the target
+    # must also stay inside the bucket, otherwise a hostile peer could
+    # plant a symlink to arbitrary local files (e.g. /etc/passwd).
+    local = _confined_local(link.filepath, EventName.symlink.value, ctx)
+    if local is None:
+        return
+    target = link.target
+    if not target:
+        return
+    if not is_safe_symlink_target(local, target, CONFIG["LOCAL_BUCKET"]):
+        _reject_unsafe(EventName.symlink.value, target, ctx)
+        return
+    log.info(
+        f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{_cid_suffix(origin_cid)}'
+    )
+    parent = str(Path(local).parent)
+    if not Path(parent).exists():
+        Path(parent).mkdir(parents=True, exist_ok=True)
+    # Existing-path cleanup: unlink a file/link, rmdir an empty directory,
+    # refuse a non-empty directory (mirrors _create_symlink_local).
+    if Path(local).is_dir() and not Path(local).is_symlink():
+        try:
+            Path(local).rmdir()
+        except OSError:
+            log.warning(
+                f"{_tag('SECURITY')} Refusing to replace non-empty directory with symlink: "
+                f'"{local}"{_cid_suffix(origin_cid)}'
+            )
             return
-        link = Symlink.from_dict(src)
-        # The link location must be confined (a symlink *inside* the bucket
-        # could otherwise redirect the create/unlink outside it); the target
-        # must also stay inside the bucket, otherwise a hostile peer could
-        # plant a symlink to arbitrary local files (e.g. /etc/passwd).
-        local = _confined_local(link.filepath, EventName.symlink.value, ctx)
-        if local is None:
-            return
-        target = link.target
-        if not target:
-            return
-        if not is_safe_symlink_target(local, target, CONFIG["LOCAL_BUCKET"]):
-            _reject_unsafe(EventName.symlink.value, target, ctx)
-            return
-        log.info(
-            f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{_cid_suffix(origin_cid)}'
-        )
-        parent = str(Path(local).parent)
-        if not Path(parent).exists():
-            Path(parent).mkdir(parents=True, exist_ok=True)
-        if Path(local).is_symlink() or Path(local).exists():
-            unlink(local)
-        await asyncio.to_thread(os_symlink, target, local)
-    elif "filepath" in src:
-        file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
-        if file_obj.filepath:
-            _mark(ctx, file_obj.filepath)
-            try:
-                await asyncio.to_thread(update_file, src)
-            finally:
-                _unmark(ctx, file_obj.filepath)
+    elif Path(local).is_symlink() or Path(local).exists():
+        unlink(local)
+    await asyncio.to_thread(os_symlink, target, local)

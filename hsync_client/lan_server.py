@@ -743,6 +743,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # CID over a genuinely local path, causing later local
             # events to be misattributed as REMOTE).
             if not Path(full_path).exists():
+                # A symlink *inside* the bucket pointing outside it must not
+                # redirect the mkdir into the out-of-bucket location (the
+                # path was already confined via resolve_within, which resolves
+                # existing symlink components — a symlink that would escape is
+                # rejected there). Nothing extra is needed here: resolve_within
+                # returns None when the path crosses an escaping symlink.
                 origin_cid = query.get("cid", [None])[0]
                 if origin_cid and is_valid_cid(origin_cid):
                     from hsync_client.lan_websocket import mark_inbound_origin
@@ -796,7 +802,29 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 if is_hidden_file(file):
                     continue
 
-                file_obj = File.get(str(Path(root) / file))
+                file_path = str(Path(root) / file)
+                # A file-symlink whose target escapes the bucket must never be
+                # dereferenced: File.get() (exists/stat/sha256) would follow it
+                # and the listing would exfiltrate the out-of-bucket target to
+                # every slave (e.g. ``secret -> /etc/passwd``).
+                if Path(file_path).is_symlink():
+                    from hsync_common.models.symlink import Symlink
+                    from hsync_common.path_validation import is_safe_symlink_target
+
+                    try:
+                        link = Symlink.get(file_path)
+                    except OSError:
+                        link = None
+                    if link is not None and not is_safe_symlink_target(
+                        file_path, link.target, local_bucket
+                    ):
+                        log.warning(
+                            f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                            f'skipping: "{file_path}" -> "{link.target}"'
+                        )
+                        continue
+
+                file_obj = File.get(file_path)
                 if file_obj:
                     file_dict = file_obj.to_dict()
                     # Normalize path to be relative to bucket (like server does)
@@ -937,6 +965,26 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         if not Path(filepath).exists():
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
+
+        # A symlink inside the bucket whose target escapes it must never be
+        # dereferenced: File.get() (exists/stat/sha256) and the read below
+        # would follow it and serve the out-of-bucket target (e.g.
+        # ``secret -> /etc/passwd``) to the requesting peer.
+        if Path(filepath).is_symlink():
+            from hsync_common.models.symlink import Symlink
+            from hsync_common.path_validation import is_safe_symlink_target
+
+            try:
+                link = Symlink.get(filepath)
+            except OSError:
+                link = None
+            if link is not None and not is_safe_symlink_target(filepath, link.target, local_bucket):
+                log.warning(
+                    f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                    f'not serving: "{filepath}" -> "{link.target}"'
+                )
+                self._send_error_response(HTTP_FORBIDDEN, "Access denied")
+                return
 
         try:
             # Get file metadata
@@ -1112,7 +1160,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # Peer-supplied destination is untrusted: validate the relative
             # directory and the filename (rejecting traversal, absolute
             # paths, backslashes and internal engine artifacts) and confine
-            # the result to the bucket.
+            # the result to the bucket. ``resolve_within`` also resolves
+            # existing symlink components, so a path crossing an escaping
+            # in-bucket symlink is rejected here.
             rel_dest = f"{path.rstrip('/')}/{filename}" if path else filename
             dest_path_local = resolve_within(local_bucket, rel_dest)
             if dest_path_local is None:

@@ -54,10 +54,10 @@ class TestSymlinkModel:
             "filepath": "/path/to/link",
             "name": "link",
             "target": "../target",
-            "ctime": 1705320600.0,
-            "mtime": 1705320700.0,
+            "ctime": 1705320600,
+            "mtime": 1705320700,
         }
-        symlink = Symlink.from_dict(data)
+        symlink = Symlink.from_dict(data, strip_dir_prefix=False)
 
         assert symlink.filepath == "/path/to/link"
         assert symlink.name == "link"

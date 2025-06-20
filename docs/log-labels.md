@@ -41,6 +41,7 @@ Emitted while the client watches its bucket or applies inbound peer events.
 | `[LOCAL RENAME]` | rename | Local watcher: file/directory renamed (on a slave, also the rename pushed to the master) |
 | `[LOCAL DELETE]` | delete | Local watcher: file/directory deleted (on a slave, also the delete pushed to the master) |
 | `[LOCAL SYMLINK]` | create | Local watcher: symbolic link created |
+| `[LOCAL SECURITY]` | security | Local watcher: unsafe local path rejected (escaping symlink, traversal) |
 | `[LOCAL IGNORE DEL]` | warning | Local watcher: deletion skipped (ignore-delete / backup mode) |
 | `[LOCAL KEEP]` | in_sync | Local watcher: `.hsynckeep` sentinel created to preserve an empty directory |
 | `[REMOTE CREATE]` | create | Peer-caused: directory created (inbound event applied, or master broadcasting a slave's create). Duplicate directory events for the same path are deduplicated (a single `mkdir` triggers a burst of `IN_ATTRIB` on the master) |

@@ -293,7 +293,7 @@ class TestSymlinkTargetValidation:
     """_apply_symlink must refuse targets escaping the bucket."""
 
     async def test_absolute_target_outside_bucket_rejected(self, tmp_path):
-        ctx = EventDispatchContext(create_symlink_locally=True)
+        ctx = EventDispatchContext()
         event = {
             "name": "symlink",
             "src": {"type": "symlink", "filepath": "link.txt", "target": "/etc/passwd"},
@@ -303,7 +303,7 @@ class TestSymlinkTargetValidation:
         assert not (tmp_path / "link.txt").exists()
 
     async def test_relative_target_escaping_bucket_rejected(self, tmp_path):
-        ctx = EventDispatchContext(create_symlink_locally=True)
+        ctx = EventDispatchContext()
         event = {
             "name": "symlink",
             "src": {"type": "symlink", "filepath": "sub/link.txt", "target": "../../out"},
@@ -313,7 +313,7 @@ class TestSymlinkTargetValidation:
         assert not (tmp_path / "sub" / "link.txt").exists()
 
     async def test_target_within_bucket_allowed(self, tmp_path):
-        ctx = EventDispatchContext(create_symlink_locally=True)
+        ctx = EventDispatchContext()
         target = tmp_path / "real.txt"
         target.write_text("data")
         event = {
