@@ -1,0 +1,76 @@
+# Sync Modes — Server Mode
+
+HSYNC supports two operating topologies. This page covers **Server Mode**.
+
+> For LAN P2P mode, see [Sync Modes — LAN P2P Mode](sync-modes-lan.md).
+
+## Server Mode
+
+In Server Mode, a central HSYNC Server holds the canonical copy of each bucket.
+Every client connects to the server, authenticates with an API key, and
+synchronizes files through it.
+
+```bash
+hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+```
+
+### How it works
+
+1. The client connects to the server over HTTPS/WSS.
+2. Authenticates with `HSYNC_API_KEY`.
+3. Performs an initial full sync (bidirectional by default).
+4. Enters watch mode: monitors the local folder and receives real-time events
+   from the server via WebSocket.
+
+### Sync Directions
+
+| Direction | CLI Flag | Description |
+|---|---|---|
+| **Bidirectional** (default) | `--sync-direction bidirectional` | Send local changes to server AND receive remote changes. |
+| **Upload-only** | `--sync-direction upload-only` | Send local changes, ignore remote. |
+| **Download-only** | `--sync-direction download-only` | Receive remote changes, ignore local. |
+
+### Watch Mode
+
+When `--watch` is enabled:
+
+- The client monitors the local folder for changes (create, modify, delete, rename).
+- Changes are immediately uploaded to the server.
+- The WebSocket pushes remote changes to the client in real time.
+
+```bash
+hsync --watch -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+```
+
+### Single Sync
+
+Without `--watch`, the client performs one sync cycle and exits:
+
+```bash
+hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+```
+
+### Dry Run
+
+Preview what would change without modifying files:
+
+```bash
+hsync --preview -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+```
+
+### Conflict Handling
+
+The server is the authoritative source. If a file was modified on both the
+client and the server since the last sync:
+
+1. A three-way merge is attempted.
+2. If automatic merge fails, the **server version wins**.
+3. The local version is renamed to `filename.hsyncconflict`.
+
+See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
+
+### Further Reading
+
+- [Server Mode Guide](server-mode.md) — detailed walkthrough
+- [Configuration — Server Mode](configuration-server.md) — all server-mode CLI options
+- [Authentication — Client-Side](authentication.md) — auth flow diagrams

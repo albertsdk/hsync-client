@@ -5,7 +5,7 @@ and the master serves files over HTTPS/WSS while slaves sync to it. Security and
 election rules are SSOT in `hsync-common`.
 
 > **Domain-critical**: before changing discovery/election/security, read
-> [`hsync-common/docs/lan-protocol.md`](../../../hsync-common/docs/lan-protocol.md).
+> [`hsync-common/docs/lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/docs/lan-protocol.md).
 
 ## Entry & roles (`lan_handler.py`)
 
@@ -45,7 +45,7 @@ peers are ignored.
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
-| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`); extracts CID from auth message for logging |
+| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); when no `LAN_KEY` is set, a lightweight `hello` handshake lets peers declare their CID for logging (qualified as `unauthenticated`) — CID format is validated in both paths |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
 
 Peer-supplied paths on download/delete/rename/upload are validated with
@@ -96,5 +96,5 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 HTTPS/WSS is mandatory in LAN mode (no plaintext fallback). Write-capable sync in
 non-interactive mode requires a LAN key (`main_logic._check_lan_write_policy`).
 
-> Human guide: `../docs/lan-mode.md`. Election/security rationale:
+> Human guide: `../../docs/lan-mode.md`. Election/security rationale:
 > ADRs 0001/0002 + `lan-protocol.md` (see [decisions.md](../decisions.md)).

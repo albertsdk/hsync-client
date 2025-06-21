@@ -5,9 +5,12 @@ two mutually exclusive modes — **remote** (talks to an `hsync-server` over
 REST+WS) and **LAN** (peer-to-peer master/slave over mDNS + HTTPS/WSS) — sharing
 one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
-> End-user / human docs live in [`../docs/`](../docs/internal/architecture.md)
-> (`getting-started`, `usage`, `configuration`, `sync-modes`, `server-mode`, `lan-mode`,
-> `lan-internals`, `examples`, `faq`). This wiki is the **first search surface**:
+> End-user / human docs live in [`../docs/`](../docs/README.md)
+> (`getting-started`, `getting-started-server`, `getting-started-lan`,
+> `usage`, `configuration`, `configuration-server`, `configuration-lan`,
+> `sync-modes-server`, `sync-modes-lan`, `server-mode`, `lan-mode`,
+> `sync-flow-server`, `sync-flow-lan`, `examples-server`, `examples-lan`,
+> `faq-server`, `faq-lan`). This wiki is the **first search surface**:
 > start here, follow the `path/to/file.py:line` references to reach code directly.
 
 ## Map

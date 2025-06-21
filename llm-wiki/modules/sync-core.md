@@ -240,4 +240,4 @@ sending over the WS with exponential backoff (`MAX_RETRIES` `:43`, `INITIAL/MAX/
 MULTIPLIER` `:44`–`:46`). `WebSocketProtocol` (`:31`) is the minimal send interface.
 
 > Human-facing: event processing + stability + parallel transfers in
-> `../docs/architecture.md`; modes in `../docs/sync-modes.md`.
+> `../../docs/architecture.md`; modes in `../../docs/sync-modes-server.md` and `../../docs/sync-modes-lan.md`.

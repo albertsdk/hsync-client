@@ -36,7 +36,7 @@ from time import time
 from typing import Any
 
 from hsync_common.models.dir import is_hidden_dir
-from hsync_common.models.event import Event, EventName
+from hsync_common.models.event import Event, EventName, is_valid_cid
 from hsync_common.models.file import (
     File,
     invalidate_sha256_cache,
@@ -232,7 +232,18 @@ class LANWebSocketServer:
                 auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_data = json.loads(auth_msg)
                 token = auth_data.get("token")
-                client_cid = auth_data.get("cid", "unknown")
+                declared_cid = auth_data.get("cid")
+                if not isinstance(declared_cid, str) or not is_valid_cid(declared_cid):
+                    log.warning(
+                        f"WebSocket auth rejected – invalid CID from {client_addr}: "
+                        f"{declared_cid!r}"
+                    )
+                    await websocket.send(
+                        json.dumps({"type": "auth", "status": "failed", "reason": "invalid_cid"})
+                    )
+                    await websocket.close()
+                    return
+                client_cid = declared_cid
                 if auth_data.get("type") != "auth" or not (
                     isinstance(token, str) and hmac.compare_digest(token, str(lan_key))
                 ):
@@ -252,8 +263,34 @@ class LANWebSocketServer:
                 await websocket.close()
                 return
         else:
-            await websocket.send(json.dumps({"type": "connected"}))
-            log.info(f"WebSocket client connected (no auth): {client_addr} (CID: {client_cid})")
+            # No shared secret: request the client's CID via a lightweight
+            # hello handshake so the operator can distinguish peers in logs.
+            # The CID is NOT authenticated (no LAN_KEY), so every log line
+            # carries an explicit "(unauthenticated)" qualifier.
+            await websocket.send(json.dumps({"type": "hello"}))
+            try:
+                hello_msg = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                hello_data = json.loads(hello_msg)
+                declared_cid = hello_data.get("cid")
+                if (
+                    hello_data.get("type") == "hello"
+                    and isinstance(declared_cid, str)
+                    and is_valid_cid(declared_cid)
+                ):
+                    client_cid = declared_cid
+                    log.info(
+                        f"WebSocket client connected (no auth): {client_addr} "
+                        f"(CID: {client_cid}, unauthenticated)"
+                    )
+                else:
+                    log.warning(
+                        f"WebSocket hello invalid from {client_addr}: "
+                        f"type={hello_data.get('type')!r} cid={declared_cid!r}"
+                    )
+            except TimeoutError:
+                log.warning(f"WebSocket hello timeout from {client_addr}")
+            except Exception as e:
+                log.warning(f"WebSocket hello error from {client_addr}: {e}")
 
         # Add client to set
         self._clients.add(websocket)
@@ -675,6 +712,13 @@ async def lan_websocket_client(
                     log.error("WebSocket authentication failed")
                     return
                 log.info("WebSocket authenticated with master")
+            elif greeting_data.get("type") == "hello":
+                # Lightweight hello handshake: the master has no LAN_KEY
+                # but still wants to know our CID for log attribution.
+                # The CID is sent unauthenticated (the master logs it
+                # with an "(unauthenticated)" qualifier).
+                await websocket.send(json.dumps({"type": "hello", "cid": CONFIG["CID"]}))
+                log.info("WebSocket hello sent to master (no auth)")
             else:
                 log.info("No WebSocket authentication required")
 

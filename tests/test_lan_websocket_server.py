@@ -147,7 +147,7 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.return_value = json.dumps({"type": "auth", "token": "secret", "cid": "slave-test"})
+        ws.recv.return_value = json.dumps({"type": "auth", "token": "secret", "cid": "slaveTest"})
 
         # Proper async iterator that yields nothing (immediate disconnect)
         async def _empty_aiter(self_ws):
@@ -173,7 +173,7 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.return_value = json.dumps({"type": "auth", "token": "wrong", "cid": "slave-bad"})
+        ws.recv.return_value = json.dumps({"type": "auth", "token": "wrong", "cid": "slaveBad"})
 
         config = {"LAN_KEY": "secret"}
         with patch("hsync_client.lan_websocket.CONFIG", config):
@@ -215,11 +215,12 @@ class TestLANWebSocketServer:
         assert ws not in server._clients
 
     @pytest.mark.asyncio
-    async def test_handle_client_no_auth_required(self):
-        """Test _handle_client when no LAN_KEY is configured."""
+    async def test_handle_client_no_auth_hello_valid_cid(self):
+        """Test _handle_client with hello handshake and a valid CID."""
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
+        ws.recv.return_value = json.dumps({"type": "hello", "cid": "slaveTest"})
 
         async def _empty_aiter(self_ws):
             return
@@ -232,8 +233,73 @@ class TestLANWebSocketServer:
             await server._handle_client(ws)
 
         calls = [c.args[0] for c in ws.send.call_args_list]
-        assert json.loads(calls[0])["type"] == "connected"
+        assert json.loads(calls[0])["type"] == "hello"
         # Client is discarded in the finally block after the async-for exits
+        assert ws not in server._clients
+
+    @pytest.mark.asyncio
+    async def test_handle_client_no_auth_hello_invalid_cid(self):
+        """Test _handle_client hello with malformed CID — stays 'unknown'."""
+        server = LANWebSocketServer(port=9999)
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.2", 5555)
+        ws.recv.return_value = json.dumps({"type": "hello", "cid": "bad cid!"})
+
+        async def _empty_aiter(self_ws):
+            return
+            yield  # noqa
+
+        ws.__aiter__ = _empty_aiter
+
+        config = {}  # no LAN_KEY
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[0])["type"] == "hello"
+        assert ws not in server._clients
+
+    @pytest.mark.asyncio
+    async def test_handle_client_no_auth_hello_timeout(self):
+        """Test _handle_client hello times out — stays 'unknown'."""
+        server = LANWebSocketServer(port=9999)
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.2", 5555)
+        ws.recv.side_effect = TimeoutError()
+
+        async def _empty_aiter(self_ws):
+            return
+            yield  # noqa
+
+        ws.__aiter__ = _empty_aiter
+
+        config = {}  # no LAN_KEY
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[0])["type"] == "hello"
+        assert ws not in server._clients
+
+    @pytest.mark.asyncio
+    async def test_handle_client_auth_invalid_cid(self):
+        """Test _handle_client rejects auth with invalid CID format."""
+        server = LANWebSocketServer(port=9999)
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.2", 5555)
+        ws.recv.return_value = json.dumps({"type": "auth", "token": "secret", "cid": "bad\ncid"})
+
+        config = {"LAN_KEY": "secret"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[1]) == {
+            "type": "auth",
+            "status": "failed",
+            "reason": "invalid_cid",
+        }
+        ws.close.assert_called_once()
         assert ws not in server._clients
 
     @pytest.mark.asyncio
