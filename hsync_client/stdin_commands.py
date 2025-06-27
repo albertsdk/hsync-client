@@ -31,6 +31,37 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+# Maximum stdin line length (1 MiB). A JSON command line is a compact
+# structured message (typically < 1 KB); this cap prevents an OOM DoS from
+# a single unbounded readline() when the parent process sends a giant frame.
+_MAX_STDIN_LINE_BYTES = 1 * 1024 * 1024
+
+
+async def _readline_bounded(reader: asyncio.StreamReader, max_bytes: int) -> bytes:
+    """Read a newline-terminated line with a hard size cap.
+
+    Returns the line (including the trailing newline) or an empty bytes
+    object on EOF.  If *max_bytes* is exceeded, the reader is drained up
+    to the cap and an empty line is returned (treated as a malformed
+    message by the caller).
+    """
+    buf = bytearray()
+    total = 0
+    while total < max_bytes:
+        byte = await reader.read(1)
+        if not byte:
+            return bytes(buf)  # EOF
+        buf.append(byte[0])
+        total += 1
+        if byte == b"\n":
+            return bytes(buf)
+    # Cap exceeded: drain the rest of the (giant) line so subsequent reads
+    # are not poisoned, then return empty to signal a skipped message.
+    while True:
+        byte = await reader.read(1)
+        if not byte or byte == b"\n":
+            break
+
 
 class StdinCommandHandler:
     """Async reader that dispatches JSON commands received on stdin."""
@@ -84,7 +115,7 @@ class StdinCommandHandler:
 
         while True:
             try:
-                line = await reader.readline()
+                line = await _readline_bounded(reader, _MAX_STDIN_LINE_BYTES)
                 if not line:  # EOF
                     break
 

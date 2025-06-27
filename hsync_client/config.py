@@ -11,13 +11,14 @@ This module uses pydantic-settings for type-safe environment variable handling
 and provides typed configuration structures for the application.
 """
 
+import re
 from functools import lru_cache
 from typing import Any, TypedDict, cast
 
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_LAN
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hsync_client.constants import (
@@ -60,6 +61,21 @@ class EnvSettings(BaseSettings):
 
     # Server Connection
     server: str | None = Field(default=None, description="Server URL")
+
+    @field_validator("server", mode="before")
+    @classmethod
+    def _validate_server_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = str(v).strip()
+        if not v:
+            return None
+        if not v.startswith("https://"):
+            raise ValueError("Server URL must start with 'https://'")
+        if not re.match(r"^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(\:\d+)?(/.*)?$", v):
+            raise ValueError(f"Invalid server URL format: {v!r}")
+        return v
+
     api_key: SecretStr = Field(default=SecretStr(""), description="API key for authentication")
 
     # Sync Settings
