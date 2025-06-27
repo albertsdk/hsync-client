@@ -73,22 +73,15 @@ class _ClientGlobalsGuard:
         self._cfg_mod = cfg_mod
         self._saved_config = copy.deepcopy(dict(cfg_mod.CONFIG))
         self._saved_debug = cfg_mod.DEBUG
-        try:
-            from hsync_common.ignore import get_active_matcher, set_active_matcher
+        from hsync_common.ignore import get_active_matcher, set_active_matcher
 
-            self._saved_matcher = get_active_matcher()
-            self._set_matcher = set_active_matcher
-        except Exception:  # noqa: BLE001
-            self._saved_matcher = None
-            self._set_matcher = None
-        try:
-            from hsync_client import events as events_mod
+        self._saved_matcher = get_active_matcher()
+        self._set_matcher = set_active_matcher
 
-            self._events_mod = events_mod
-            self._saved_emitter = events_mod.get_emitter()
-        except Exception:  # noqa: BLE001
-            self._events_mod = None
-            self._saved_emitter = None
+        from hsync_client import events as events_mod
+
+        self._events_mod = events_mod
+        self._saved_emitter = events_mod.get_emitter()
         return self
 
     def __exit__(self, *exc):
@@ -222,7 +215,12 @@ def live_server(tmp_path_factory):
             try:
                 if requests.get(f"{base_url}/health", timeout=1.0, verify=False).status_code == 200:
                     break
-            except Exception as exc:  # noqa: BLE001
+            except (
+                ConnectionError,
+                ConnectionRefusedError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+            ) as exc:
                 last_exc = exc
             time.sleep(0.15)
         else:

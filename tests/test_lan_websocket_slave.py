@@ -214,6 +214,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
+            "REMOTE_BUCKET": "test-bucket",
         }
 
         with patch("hsync_client.lan_websocket.CONFIG", config):
@@ -474,7 +475,7 @@ class TestSlaveFileEventHandler:
             F.get.return_value = MagicMock()
             handler.on_created(event)
             # _handle_file_upload should have been called (starts operation)
-            assert len(handler._pending_ops) >= 0  # at least exercised the branch
+            assert len(handler._pending_ops) >= 1
 
     def test_on_created_escaping_symlink_not_uploaded(self, handler, tmp_path):
         """A symlink whose target escapes the bucket must not be uploaded.
