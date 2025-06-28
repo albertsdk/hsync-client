@@ -526,3 +526,496 @@ class TestLanStrictPairing:
                 _terminate(slave)
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# Directory & symlink propagation
+# =============================================================================
+
+
+class TestLanDirectorySync:
+    def test_directory_creation_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """mkdir on master → directory (with .hsynckeep) appears on slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Create directory on master
+                master_subdir = Path(lan_master_dir) / "subdir"
+                master_subdir.mkdir()
+                (master_subdir / "file.txt").write_bytes(b"inside\n")
+
+                # Wait for the directory to appear on slave
+                slave_subdir = Path(lan_slave_dir) / "subdir"
+                assert _wait_for_file(str(slave_subdir), timeout=30), (
+                    "Directory did not appear on slave"
+                )
+                assert slave_subdir.is_dir(), "Expected a directory on slave"
+                assert (slave_subdir / "file.txt").read_bytes() == b"inside\n"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_directory_deletion_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """rmdir on master → directory disappears from slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Pre-create directory on master before slave connects
+            master_subdir = Path(lan_master_dir) / "todel_dir"
+            master_subdir.mkdir()
+            (master_subdir / "f.txt").write_bytes(b"x\n")
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                slave_subdir = Path(lan_slave_dir) / "todel_dir"
+                assert _wait_for_file(str(slave_subdir), timeout=30), (
+                    "Directory did not appear on slave"
+                )
+
+                # Delete on master
+                import shutil
+
+                shutil.rmtree(str(master_subdir))
+
+                # Slave should remove it too
+                assert _wait_for_file_gone(str(slave_subdir), timeout=30), (
+                    "Deleted directory still present on slave"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_symlink_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Symlink created on master → appears on slave (in-bucket target)."""
+        import platform
+
+        if platform.system() == "Windows":
+            pytest.skip("Symlink test requires Unix")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Create target file inside the bucket
+            target = Path(lan_master_dir) / "real_file.txt"
+            target.write_bytes(b"symlink target\n")
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Create symlink on master pointing to in-bucket target
+                link_path = Path(lan_master_dir) / "link.txt"
+                link_path.symlink_to(target)
+
+                # Wait for symlink to appear on slave
+                slave_link = Path(lan_slave_dir) / "link.txt"
+                assert _wait_for_file(str(slave_link), timeout=30), (
+                    "Symlink did not appear on slave"
+                )
+                assert slave_link.is_symlink(), "Expected a symlink on slave"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# LAN key authentication
+# =============================================================================
+
+
+class TestLanKeyAuth:
+    def test_lan_key_mismatch_rejected(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Master with LAN key A, slave with LAN key B → connection refused."""
+        # Start master with LAN_KEY
+        env_master = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+            ],
+            env=env_master,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Start slave with a DIFFERENT LAN key
+            env_slave = {**os.environ, "HSYNC_LAN_KEY": "wrong-key-xxxxxxxx"}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                ],
+                env=env_slave,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Slave should be refused (401/403 or connection error)
+                # Look for authentication-related failure in stderr
+                auth_failed = (
+                    _wait_for_text_in_stderr(slave, "401", timeout=30)
+                    or _wait_for_text_in_stderr(slave, "403", timeout=5)
+                    or _wait_for_text_in_stderr(slave, "Unauthorized", timeout=5)
+                )
+                assert auth_failed, "Slave should have been rejected with wrong LAN key"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Directional sync
+# =============================================================================
+
+
+class TestLanSyncDirection:
+    def test_download_only_prevents_upload(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Slave with --sync-direction download-only: its files don't reach master."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--sync-direction",
+                    "download-only",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Master creates a file → appears on slave (download works)
+                (Path(lan_master_dir) / "from_master.txt").write_bytes(b"master\n")
+                assert _wait_for_file(str(Path(lan_slave_dir) / "from_master.txt"), timeout=30), (
+                    "Download did not work"
+                )
+
+                # Slave creates a file → must NOT appear on master (upload blocked)
+                (Path(lan_slave_dir) / "slave_only.txt").write_bytes(b"slave\n")
+                time.sleep(5)  # Give time for any potential upload
+                assert not (Path(lan_master_dir) / "slave_only.txt").exists(), (
+                    "Slave file leaked to master despite download-only mode"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_upload_only_prevents_download(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Slave with --sync-direction upload-only: master files don't reach slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--sync-direction",
+                    "upload-only",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Master creates a file → must NOT appear on slave (download blocked)
+                (Path(lan_master_dir) / "master_only.txt").write_bytes(b"master\n")
+                time.sleep(5)  # Give time for any potential download
+                assert not (Path(lan_slave_dir) / "master_only.txt").exists(), (
+                    "Master file leaked to slave despite upload-only mode"
+                )
+
+                # Slave creates a file → appears on master (upload works)
+                (Path(lan_slave_dir) / "from_slave.txt").write_bytes(b"slave\n")
+                assert _wait_for_file(str(Path(lan_master_dir) / "from_slave.txt"), timeout=30), (
+                    "Upload did not work"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Master restart resilience
+# =============================================================================
+
+
+class TestLanMasterRestart:
+    def test_master_restart_slave_recovers(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """After master crash + restart, slave rediscovers and resumes syncing."""
+        # First master session
+        master1 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master1, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
+
+            # Kill master
+            _terminate(master1)
+
+            # Wait for slave to detect disconnection and re-enter discovery
+            assert _wait_for_text_in_stderr(
+                slave, "discovery", timeout=30
+            ) or _wait_for_text_in_stderr(slave, "Waiting for peers", timeout=5), (
+                "Slave did not re-enter discovery after master crash"
+            )
+
+            # Restart master with same dir (same bucket, inherits existing files)
+            master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+            try:
+                assert _wait_for_text_in_stderr(master2, "MASTER", timeout=30), (
+                    "Restarted master did not become ready"
+                )
+
+                # Create a new file on restarted master
+                content = b"post-restart\n"
+                (Path(lan_master_dir) / "post_restart.txt").write_bytes(content)
+
+                # Slave should pick it up after rediscovery
+                assert _wait_for_file(str(Path(lan_slave_dir) / "post_restart.txt"), timeout=60), (
+                    "Slave did not receive file after master restart"
+                )
+                assert (Path(lan_slave_dir) / "post_restart.txt").read_bytes() == content
+            finally:
+                _terminate(master2)
+                _terminate(slave)
+        except Exception:
+            _terminate(master1)
+
+
+# =============================================================================
+# Concurrent writes on both peers
+# =============================================================================
+
+
+class TestLanConcurrency:
+    def test_concurrent_file_writes_on_both_peers(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Master and slave write different files concurrently → both converge."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Wait for initial sync
+                _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
+
+                # Write a file on each side simultaneously
+                master_content = b"master-side\n"
+                slave_content = b"slave-side\n"
+                (Path(lan_master_dir) / "master_file.txt").write_bytes(master_content)
+                (Path(lan_slave_dir) / "slave_file.txt").write_bytes(slave_content)
+
+                # Both files should appear on both sides
+                assert _wait_for_file(str(Path(lan_slave_dir) / "master_file.txt"), timeout=30), (
+                    "Master file did not reach slave"
+                )
+                assert _wait_for_file(str(Path(lan_master_dir) / "slave_file.txt"), timeout=30), (
+                    "Slave file did not reach master"
+                )
+
+                # Verify content
+                assert (Path(lan_slave_dir) / "master_file.txt").read_bytes() == master_content
+                assert (Path(lan_master_dir) / "slave_file.txt").read_bytes() == slave_content
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# LAN group filtering
+# =============================================================================
+
+
+class TestLanGroupFiltering:
+    def test_different_lan_groups_dont_discover(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Peers in different LAN groups do not discover each other."""
+        # Master in group "red"
+        env_red = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+                "--lan-group",
+                "red",
+            ],
+            env=env_red,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Slave in group "blue" — should NOT discover the red master
+            env_blue = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "10",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--lan-group",
+                    "blue",
+                ],
+                env=env_blue,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Slave should eventually warn that no peer was found (group mismatch)
+                no_peer = _wait_for_text_in_stderr(
+                    slave, "No master elected", timeout=30
+                ) or _wait_for_text_in_stderr(slave, "alone", timeout=5)
+                assert no_peer, "Slave should not have discovered the master in a different group"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
