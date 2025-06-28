@@ -1471,3 +1471,290 @@ class TestLanEdgeCases:
                 _terminate(slave)
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# Tombstone propagation (offline deletion catch-up)
+# =============================================================================
+
+
+class TestLanTombstone:
+    def test_tombstone_propagation_on_reconnect(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """File deleted while slave is offline → tombstone cleans it up on reconnect."""
+        # Create a file on master before anyone connects
+        (Path(lan_master_dir) / "pre_delete.txt").write_bytes(b"to-be-deleted\n")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # First slave session: sync the file, then disconnect
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            _wait_for_file(str(Path(lan_slave_dir) / "pre_delete.txt"), timeout=30)
+            _terminate(slave1)
+
+            # While slave is gone, delete the file on master
+            (Path(lan_master_dir) / "pre_delete.txt").unlink()
+
+            # Reconnect slave — it should see the tombstone and delete locally
+            slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_file_gone(
+                    str(Path(lan_slave_dir) / "pre_delete.txt"), timeout=30
+                ), "Deleted file still present on slave after reconnect (tombstone missed)"
+            finally:
+                _terminate(slave2)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Multi-slave topology (3 peers)
+# =============================================================================
+
+
+class TestLanMultiSlave:
+    def test_multiple_slaves_converge(self, lan_master_dir, lan_slave_dir, tmp_path, lan_bucket):
+        """Master + 2 slaves: file from slave1 appears on slave2 via master."""
+        slave2_dir = str(tmp_path / "slave2")
+        Path(slave2_dir).mkdir()
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            slave2 = _lan_start(slave2_dir, lan_bucket, never_master=True)
+            try:
+                # Wait for both to complete initial sync
+                _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
+                _wait_for_text_in_stderr(slave2, "Initial sync complete", timeout=30)
+
+                # Slave1 creates a file
+                (Path(lan_slave_dir) / "from_slave1.txt").write_bytes(b"via-master\n")
+
+                # It should appear on both master and slave2
+                assert _wait_for_file(str(Path(lan_master_dir) / "from_slave1.txt"), timeout=30), (
+                    "Slave1 file did not reach master"
+                )
+                assert _wait_for_file(str(Path(slave2_dir) / "from_slave1.txt"), timeout=30), (
+                    "Slave1 file did not reach slave2 via master"
+                )
+
+                assert (Path(slave2_dir) / "from_slave1.txt").read_bytes() == b"via-master\n"
+            finally:
+                _terminate(slave1)
+                _terminate(slave2)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Persistent mode control
+# =============================================================================
+
+
+class TestLanPersistent:
+    def test_no_lan_persistent_exits_when_alone(self, lan_master_dir, lan_bucket):
+        """--no-lan-persistent exits instead of waiting when no peers are found."""
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "5",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--no-lan-persistent",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            # Should exit (not hang) within ~15s when no peers found
+            try:
+                exit_code = proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                pytest.fail("--no-lan-persistent did not exit when no peers were found")
+            # Exit code 0 or 1 is acceptable (0 = clean exit, 1 = no peers found)
+            assert exit_code in (0, 1), f"Unexpected exit code: {exit_code}"
+        finally:
+            _terminate(proc)
+
+
+# =============================================================================
+# Port override
+# =============================================================================
+
+
+class TestLanPortOverride:
+    def test_lan_port_override(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--lan-port on master: slave connects on the specified port."""
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+                "--lan-port",
+                "12345",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+            # The master log should mention port 12345
+            stderr = _stderr_text(master)
+            assert "12345" in stderr, "Master did not use the specified port"
+
+            # Slave should still be able to sync
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                (Path(lan_master_dir) / "port_test.txt").write_bytes(b"custom port\n")
+                assert _wait_for_file(str(Path(lan_slave_dir) / "port_test.txt"), timeout=30), (
+                    "File did not sync with custom master port"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Filter path (subdirectory sync)
+# =============================================================================
+
+
+class TestLanFilterPath:
+    def test_filter_path_restricts_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--filter-path subdir/ restricts sync to that subdirectory only."""
+        # Pre-create two subdirectories on master
+        sub_a = Path(lan_master_dir) / "sub_a"
+        sub_a.mkdir()
+        (sub_a / "a.txt").write_bytes(b"in-a\n")
+
+        sub_b = Path(lan_master_dir) / "sub_b"
+        sub_b.mkdir()
+        (sub_b / "b.txt").write_bytes(b"in-b\n")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Start slave with --filter-path sub_a
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--filter-path",
+                    "sub_a",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # File in sub_a should appear on slave
+                assert _wait_for_file(str(Path(lan_slave_dir) / "sub_a" / "a.txt"), timeout=30), (
+                    "File in filtered subdirectory did not sync"
+                )
+                # File in sub_b should NOT appear on slave
+                time.sleep(5)
+                assert not (Path(lan_slave_dir) / "sub_b").exists(), (
+                    "File outside filter path was synced"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
