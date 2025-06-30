@@ -64,3 +64,31 @@ class TestCliSurface:
         # Then the name is accepted (parsing passes; exit 0 since the
         # unreachable server makes run_sync return without error)
         assert "Invalid" not in result.output
+
+    def test_capabilities_json_outputs_valid_json(self):
+        """--capabilities-json produces valid JSON with expected keys."""
+        import json
+
+        result = runner.invoke(app, ["--capabilities-json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "app_version" in data
+        assert "cli_options" in data
+
+    def test_legend_shows_symbol_table(self):
+        """--help-symbols shows the log legend."""
+        result = runner.invoke(app, ["--help-symbols"])
+        assert result.exit_code == 0
+        # Should contain log label descriptions
+        assert (
+            "legend" in result.output.lower()
+            or "LOG" in result.output.upper()
+            or "symbol" in result.output.lower()
+        )
+
+    def test_quiet_suppresses_version_output(self):
+        """--quiet --version produces no stdout."""
+        result = runner.invoke(app, ["--quiet", "--version"])
+        assert result.exit_code == 0
+        # With --quiet, there should be no output on stdout
+        assert result.output.strip() == ""

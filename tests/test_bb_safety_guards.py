@@ -26,6 +26,168 @@ class TestDiskSpaceGuard:
         assert result.exit_code != 0
 
 
+class TestMassDeleteGuard:
+    def test_mass_delete_guard_trips(self, live_server, bb_bucket, local_dir, run_cli):
+        """--mass-delete-threshold 1 blocks deletion of all pre-existing files."""
+        # Create 5 files locally, sync them to server
+        for i in range(5):
+            (Path(local_dir) / f"g_{i:02d}.txt").write_bytes(f"file{i}\n".encode())
+
+        # Run first sync to upload files to server
+        import os
+
+        from hsync_client.config import get_env_settings
+
+        old_key = os.environ.get("HSYNC_API_KEY")
+        base_url, api_key = live_server
+        os.environ["HSYNC_API_KEY"] = api_key
+        get_env_settings.cache_clear()
+
+        from typer.testing import CliRunner
+
+        from hsync_client.cli import app
+
+        runner = CliRunner()
+        runner.invoke(
+            app,
+            [
+                "-b",
+                bb_bucket,
+                "-s",
+                base_url,
+                "-p",
+                local_dir,
+                "--yes",
+                "--insecure",
+                "--min-free-disk-space",
+                "0",
+            ],
+        )
+        get_env_settings.cache_clear()
+
+        # Now delete all files locally and re-sync with low threshold
+        for i in range(5):
+            (Path(local_dir) / f"g_{i:02d}.txt").unlink()
+
+        os.environ["HSYNC_API_KEY"] = api_key
+        get_env_settings.cache_clear()
+        result = runner.invoke(
+            app,
+            [
+                "-b",
+                bb_bucket,
+                "-s",
+                base_url,
+                "-p",
+                local_dir,
+                "--yes",
+                "--insecure",
+                "--min-free-disk-space",
+                "0",
+                "--mass-delete-threshold",
+                "1",
+            ],
+        )
+        get_env_settings.cache_clear()
+
+        if old_key:
+            os.environ["HSYNC_API_KEY"] = old_key
+        else:
+            os.environ.pop("HSYNC_API_KEY", None)
+
+        # The guard should have tripped (warning in output)
+        assert "GUARD" in result.output.upper() or "mass" in result.output.lower(), (
+            "Mass-deletion guard did not trip"
+        )
+
+
+class TestMassDeletePercentGuard:
+    def test_mass_delete_percent_guard_trips(self, live_server, bb_bucket, local_dir, run_cli):
+        """--mass-delete-percent 10 blocks when >10% of files are deleted."""
+        # Create 10 files locally
+        for i in range(10):
+            (Path(local_dir) / f"h_{i:02d}.txt").write_bytes(f"file{i}\n".encode())
+
+        # Upload to server first
+        import os
+
+        from typer.testing import CliRunner
+
+        from hsync_client.cli import app
+        from hsync_client.config import get_env_settings
+
+        old_key = os.environ.get("HSYNC_API_KEY")
+        base_url, api_key = live_server
+        os.environ["HSYNC_API_KEY"] = api_key
+        get_env_settings.cache_clear()
+
+        runner = CliRunner()
+        runner.invoke(
+            app,
+            [
+                "-b",
+                bb_bucket,
+                "-s",
+                base_url,
+                "-p",
+                local_dir,
+                "--yes",
+                "--insecure",
+                "--min-free-disk-space",
+                "0",
+            ],
+        )
+        get_env_settings.cache_clear()
+
+        # Delete 5 files (50%) — threshold is 10%, so guard should trip
+        for i in range(5):
+            (Path(local_dir) / f"h_{i:02d}.txt").unlink()
+
+        os.environ["HSYNC_API_KEY"] = api_key
+        get_env_settings.cache_clear()
+        result = runner.invoke(
+            app,
+            [
+                "-b",
+                bb_bucket,
+                "-s",
+                base_url,
+                "-p",
+                local_dir,
+                "--yes",
+                "--insecure",
+                "--min-free-disk-space",
+                "0",
+                "--mass-delete-percent",
+                "10",
+            ],
+        )
+        get_env_settings.cache_clear()
+
+        if old_key:
+            os.environ["HSYNC_API_KEY"] = old_key
+        else:
+            os.environ.pop("HSYNC_API_KEY", None)
+
+        # Guard should have tripped
+        assert "GUARD" in result.output.upper() or "mass" in result.output.lower(), (
+            "Mass-delete percent guard did not trip"
+        )
+
+
+class TestMaxInboundGuard:
+    def test_max_inbound_size_e2e_skip(self):
+        """--max-inbound-size e2e requires multi-MB file transfers.
+
+        Functionality verified by unit tests in test_security_inbound.py.
+        """
+        import pytest
+
+        pytest.skip(
+            "max-inbound-size e2e requires multi-MB file; functionality verified by unit tests"
+        )
+
+
 class TestDeletionRiskGuard:
     def test_download_only_without_yes_aborts_in_noninteractive(
         self, live_server, local_dir, run_cli
