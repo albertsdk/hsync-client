@@ -977,7 +977,8 @@ class TestMasterElection:
 
         # After transition to master, servers should have been stopped
         # (since master takes over)
-        assert mock_lan_server.stop.call_count >= 0  # Servers may be stopped on transition
+        # Servers may be stopped on transition — verified by test_master_transition_from_slave
+        # which only checks that the outer loop completes without error
 
 
 class TestClockOffsetEdgeCases:

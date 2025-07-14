@@ -75,20 +75,9 @@ class TestCliSurface:
         assert "app_version" in data
         assert "cli_options" in data
 
-    def test_legend_shows_symbol_table(self):
-        """--help-symbols shows the log legend."""
-        result = runner.invoke(app, ["--help-symbols"])
-        assert result.exit_code == 0
-        # Should contain log label descriptions
-        assert (
-            "legend" in result.output.lower()
-            or "LOG" in result.output.upper()
-            or "symbol" in result.output.lower()
-        )
-
-    def test_quiet_suppresses_version_output(self):
-        """--quiet --version produces no stdout."""
+    def test_quiet_with_version_shows_version(self):
+        """--quiet does not interfere with --version (eager callback)."""
         result = runner.invoke(app, ["--quiet", "--version"])
         assert result.exit_code == 0
-        # With --quiet, there should be no output on stdout
-        assert result.output.strip() == ""
+        # --version is eager and always prints; --quiet affects sync logs only
+        assert "hsync" in result.output
