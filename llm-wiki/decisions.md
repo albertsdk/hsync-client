@@ -1,4 +1,4 @@
-# hsync-client — Decisions
+# HSYNC Client — Decisions
 
 Ecosystem ADRs are SSOT in `hsync-common`
 ([decisions index](https://github.com/albertobasso/hsync-common/blob/main/llm-wiki/decisions.md) →

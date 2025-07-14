@@ -1,4 +1,4 @@
-# hsync-client — LAN (P2P) mode
+# HSYNC Client — LAN (P2P) mode
 
 Server-less mode: peers discover each other on the LAN (mDNS), **elect a master**,
 and the master serves files over HTTPS/WSS while slaves sync to it. Security and

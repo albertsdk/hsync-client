@@ -1,4 +1,4 @@
-# hsync-client — LLM Wiki (Index)
+# HSYNC Client — LLM Wiki (Index)
 
 Agent-optimized knowledge base for `hsync-client`, the sync daemon/CLI. It runs in
 two mutually exclusive modes — **remote** (talks to an `hsync-server` over

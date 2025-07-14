@@ -1,4 +1,4 @@
-# hsync-client — Remote (server) mode
+# HSYNC Client — Remote (server) mode
 
 Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 (transfers) + WebSocket (event propagation). Server REST/WS contract:

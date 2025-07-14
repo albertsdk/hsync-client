@@ -1,4 +1,4 @@
-# hsync-client — CLI, config & orchestration
+# HSYNC Client — CLI, config & orchestration
 
 How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 
