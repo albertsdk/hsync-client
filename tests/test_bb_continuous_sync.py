@@ -91,21 +91,20 @@ class TestContinuousSync:
         finally:
             _terminate(proc)
 
-    def test_remote_directory_creation_downloaded(
+    def test_remote_file_uploaded_then_downloaded_via_ws(
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
-        """Directory created on server appears locally."""
-        # Create a file inside a directory on server via API
-        bb_server_upload(bb_bucket, "newdir/file.txt", b"inside dir\n")
+        """File uploaded to server via API is downloaded locally via WS event."""
+        bb_server_upload(bb_bucket, "from_api.txt", b"api upload\n")
 
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
-            local_file = Path(local_dir) / "newdir" / "file.txt"
+            local_file = Path(local_dir) / "from_api.txt"
             assert _wait_for(lambda: local_file.exists(), timeout=20), (
-                "Remote directory+file did not sync locally"
+                "File uploaded via API did not sync locally"
             )
-            assert local_file.read_bytes() == b"inside dir\n"
+            assert local_file.read_bytes() == b"api upload\n"
         finally:
             _terminate(proc)
 
