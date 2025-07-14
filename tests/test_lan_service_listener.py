@@ -188,7 +188,18 @@ class TestServiceCallbacks:
         assert "peer-cid-1" in pm._peers
 
     def test_remove_service_error_is_swallowed(self):
+        """Errors during peer removal must be logged, not propagated."""
+        from unittest.mock import patch
+
         listener, _pm = _listener_with_pm()
         listener._peer_manager = MagicMock()
         listener._peer_manager.remove_peer.side_effect = RuntimeError("boom")
-        listener.remove_service(MagicMock(), _TYPE, "photos-peer-cid-1." + _TYPE)
+
+        with patch("hsync_client.lan.log") as mock_log:
+            # Must not raise
+            listener.remove_service(MagicMock(), _TYPE, "photos-peer-cid-1." + _TYPE)
+
+        # The error must be logged at debug level (the only log call in the except handler)
+        assert mock_log.debug.called
+        # Verify remove_peer was attempted before the exception
+        listener._peer_manager.remove_peer.assert_called_once()
