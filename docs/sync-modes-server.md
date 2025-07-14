@@ -55,7 +55,7 @@ hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 Preview what would change without modifying files:
 
 ```bash
-hsync --preview -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync --dry-run -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
 
 ### Conflict Handling

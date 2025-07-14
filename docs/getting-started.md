@@ -41,17 +41,56 @@ HSYNC can run in two mutually exclusive modes, selected per invocation:
 
 | Mode | Topology | How to enable | Best for |
 |------|----------|---------------|----------|
-| **Server Mode** | Client ↔ central server | `-s/--server` (+ `HSYNC_API_KEY`) | Remote / internet sync, multiple sites |
 | **LAN Mode** | Peer-to-peer (no server) | `--lan-mode` | Devices on the same network, no server |
+| **Server Mode** | Client ↔ central server | `-s/--server` (+ `HSYNC_API_KEY`) | Remote / internet sync, multiple sites |
 
-See [Sync Modes — Server Mode](sync-modes-server.md) or [Sync Modes — LAN P2P Mode](sync-modes-lan.md) for a full comparison.
+See [Sync Modes](sync-modes.md) for a full comparison.
 
-### 3. Follow the guide for your mode
+### 3. Try it now (LAN Mode, no server needed)
 
-Choose your path:
+The fastest way to see HSYNC in action — no server, no API key, no configuration.
+Run these commands in two terminals on the same machine:
 
-- **[Getting Started — Server Mode](getting-started-server.md)** — connect to a central HSYNC server, with a step-by-step end-to-end walkthrough
-- **[Getting Started — LAN P2P Mode](getting-started-lan.md)** — peer-to-peer on your local network, with a step-by-step end-to-end walkthrough and deletion-risk explanation
+```bash
+# Terminal 1 — create two folders and a test file
+mkdir -p /tmp/hsync-a /tmp/hsync-b
+echo "hello hsync" > /tmp/hsync-a/hello.txt
+
+# Terminal 2 — start the first peer as master
+hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master
+
+# Terminal 3 — start a second peer; it discovers the master and downloads hello.txt
+hsync -b mybucket -p /tmp/hsync-b --lan-mode
+
+# Verify the file arrived
+cat /tmp/hsync-b/hello.txt   # → hello hsync
+```
+
+Edit or create a file in either folder — the change propagates to the other
+peer in real time.
+
+> [!TIP]
+> **Why `--force-master`?** The first peer already holds the test file, so
+> forcing it as master avoids the deletion-risk warning on a non-empty
+> directory. On a real LAN with multiple devices, omit `--force-master` and
+> let the election happen automatically.
+
+### 4. Or connect to a Server (Server Mode)
+
+If you have an [HSYNC Server](https://github.com/albertobasso/hsync-server)
+running, connect to it with:
+
+```bash
+hsync -s https://your-server:9753 -b mybucket -p /path/to/dir -w
+```
+
+> [!IMPORTANT]
+> The client refuses to send the API key over plain HTTP — use `https://`.
+> Add `--insecure` only for local development with a self-signed certificate.
+
+For detailed step-by-step walkthroughs of each mode:
+- **[Server Mode Guide](getting-started-server.md)** — complete end-to-end walkthrough
+- **[LAN P2P Mode Guide](getting-started-lan.md)** — complete end-to-end walkthrough with deletion-risk explanation
 
 ## Next Steps
 

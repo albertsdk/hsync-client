@@ -20,7 +20,7 @@ receives real-time file change events.
 HSYNC Client                        HSYNC Server
   │                                       │
   │── WSS connect ───────────────────────▶│
-  │     /api/v1/events/{cid}              │
+  │     /api/v1/buckets/{bucket}/events/{cid} │
   │                                       │
   │── {"type": "auth",                    │
   │    "token": "<HSYNC_API_KEY>",        │

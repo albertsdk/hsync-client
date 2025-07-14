@@ -78,7 +78,7 @@ Emitted during the full-scan/reconcile phase and by the transfer engine.
 
 ### Preview (dry-run)
 
-Appear only with `--preview` / dry-run. They describe what *would* happen.
+Appear only with `--dry-run` / `-n`. They describe what *would* happen.
 
 | Label | Category | Meaning |
 |-------|----------|---------|

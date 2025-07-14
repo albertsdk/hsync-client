@@ -21,7 +21,7 @@ It works in two ways:
 [![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_WD_My_Cloud-lightgrey.svg)]()
 
 **Quick navigation:**
-- **New to HSync?** Start with [Why HSYNC?](#why-hsync) and [Getting Started](docs/getting-started.md)
+- **New to HSYNC?** Start with [Why HSYNC?](#why-hsync) and [Getting Started](docs/getting-started.md)
 - **Looking for installation options?** Jump to [Installation](docs/installation.md) (prebuilt binaries, .deb, WD OS5 .bin, build from source)
 - **Want to contribute?** See [Contributing](CONTRIBUTING.md)
 - **Looking for detailed documentation?** Navigate to [docs/README.md](docs/README.md)

@@ -16,7 +16,7 @@ Shared configuration options that apply to both Server Mode and LAN P2P Mode.
 | `-i, --interval` | Force full sync every N seconds (requires `-w`) | — |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--ignore-delete` | Do not propagate file deletions (backup mode) | `false` |
-| `--preview` | Dry run: show what would change without applying | `false` |
+| `--dry-run` | Dry run: show what would change without applying | `false` |
 
 ## Mass-Deletion Guard
 
