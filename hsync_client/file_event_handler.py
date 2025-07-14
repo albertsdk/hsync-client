@@ -27,6 +27,7 @@ from __future__ import annotations
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hsync_common.labels import ActionLabel, resolve_label
 from hsync_common.models.dir import Dir, is_hidden_dir
@@ -40,6 +41,9 @@ from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHan
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.utils import ensure_str_path, is_same_paths
+
+if TYPE_CHECKING:
+    from watchdog.observers import Observer
 
 # on_closed is delivered by watchdog only on Linux (inotify).
 SUPPORTS_ON_CLOSED = sys.platform == "linux"
@@ -91,7 +95,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         cid = self._origin_cid(src_path, dst_path)
         return f" (CID: {cid})" if cid else ""
 
-    def __init__(self) -> None:
+    def __init__(self, observer: Observer | None = None) -> None:
         # Two-stage content dedup for file-ready events:
         # 1. stat pre-check (mtime, size): cheap filter that avoids re-hashing
         #    on no-op closes where the editor opened/closed without saving.
@@ -101,6 +105,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
         #    editor safe-save rename).
         self._last_broadcast_stat: dict[str, tuple[int, int]] = {}
         self._last_broadcast_hash: dict[str, str] = {}
+        # Optional observer reference: when set, newly created directories are
+        # watched recursively so files inside them are picked up immediately
+        # instead of waiting for the next full sync cycle.
+        self._observer: Observer | None = observer
 
     # ----- subclass hooks -----
 
@@ -221,6 +229,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     ),
                     src_abs_path=src_path,
                 )
+            # Start watching the new directory recursively so files created
+            # inside it are picked up immediately rather than waiting for the
+            # next periodic resync to discover them.
+            if self._observer is not None:
+                self._observer.schedule(self, src_path, recursive=True)
 
     def on_modified(self, event) -> None:
         src_path = ensure_str_path(event.src_path)

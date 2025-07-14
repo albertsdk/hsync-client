@@ -169,9 +169,9 @@ async def remote_events() -> None:
         queue_task = create_task(event_queue.process())
 
         # Set up local file system watcher with event queue
-        event_handler = RemoteFileEventHandler(websocket, loop, event_queue)
-        warn_if_inotify_watch_limit_low(CONFIG["LOCAL_BUCKET"])
         observer = Observer()
+        event_handler = RemoteFileEventHandler(websocket, loop, event_queue, observer)
+        warn_if_inotify_watch_limit_low(CONFIG["LOCAL_BUCKET"])
         observer.schedule(event_handler, CONFIG["LOCAL_BUCKET"], recursive=True)
         observer.start()
 
@@ -387,14 +387,17 @@ class RemoteFileEventHandler(BaseFileEventHandler):
     to the central server via HTTP.
     """
 
-    def __init__(self, websocket, loop, event_queue: EventQueue | None = None) -> None:
+    def __init__(
+        self, websocket, loop, event_queue: EventQueue | None = None, observer=None
+    ) -> None:
         """
         Args:
             websocket: Active WebSocket connection to the server.
             loop: Running asyncio event loop for thread-safe operations.
             event_queue: Optional event queue for reliable message delivery.
+            observer: Optional watchdog Observer for dynamic subdirectory watching.
         """
-        super().__init__()
+        super().__init__(observer=observer)
         self.websocket = websocket
         self.loop = loop
         self.event_queue = event_queue

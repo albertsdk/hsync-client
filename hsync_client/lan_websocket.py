@@ -409,9 +409,9 @@ class LANWebSocketServer:
             log.warning(f"Watch path '{watch_path}' does not exist, creating it")
             Path(watch_path).mkdir(parents=True, exist_ok=True)
 
-        self._event_handler = LANMasterFileEventHandler(self)
-        warn_if_inotify_watch_limit_low(watch_path)
         observer = Observer()
+        self._event_handler = LANMasterFileEventHandler(self, observer)
+        warn_if_inotify_watch_limit_low(watch_path)
         observer.schedule(self._event_handler, watch_path, recursive=True)
         observer.start()
         self._observer = observer
@@ -459,12 +459,13 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
     ``_on_file_ready`` emits a ``modified`` event instead of uploading bytes.
     """
 
-    def __init__(self, ws_server: LANWebSocketServer) -> None:
+    def __init__(self, ws_server: LANWebSocketServer, observer=None) -> None:
         """
         Args:
             ws_server: WebSocket server for broadcasting events.
+            observer: Optional watchdog Observer for dynamic subdirectory watching.
         """
-        super().__init__()
+        super().__init__(observer=observer)
         self._ws_server = ws_server
 
     def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
