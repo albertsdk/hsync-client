@@ -42,13 +42,24 @@ When `--watch` is enabled:
 hsync --watch -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
 
-### Single Sync
+### Single Sync (one-shot)
 
-Without `--watch`, the client performs one sync cycle and exits:
+One-shot mode is the **default** — when you omit `-w` / `--watch`, the client
+runs **one full sync cycle** and exits. It compares local and remote files,
+uploads changes, downloads updates, deletes obsolete files (unless
+`--ignore-delete` is set), then shuts down.
+
+This is ideal for:
+- **Cron jobs** — schedule periodic sync with `cron` or systemd timers
+- **CI/CD pipelines** — sync build artifacts after a deployment
+- **Manual "sync now"** — run on demand without a persistent process
 
 ```bash
 hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
+
+To keep the client running and reacting to changes in real time, add `-w` /
+`--watch`.
 
 ### Dry Run
 

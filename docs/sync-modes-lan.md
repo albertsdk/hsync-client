@@ -48,13 +48,18 @@ In LAN mode, watch mode is **always active** — there is no `--watch` flag.
 Once a peer connects, it continuously monitors the local folder and the
 master's event stream.
 
-### Single Sync
+### Single Sync (one-shot)
 
-Without `--watch`, the client performs one sync cycle and exits:
+In LAN Mode, the client is **persistent by default**: it stays connected and
+reacts to changes continuously (watch mode is implicit). To run a **single
+sync cycle and exit**, use `--no-lan-persistent`:
 
 ```bash
-hsync -b mybucket -p ~/Sync --lan-mode
+hsync -b mybucket -p ~/Sync --lan-mode --no-lan-persistent
 ```
+
+This compares local and remote files, syncs changes, and shuts down — useful
+for cron jobs or manual "sync now" operations on a LAN.
 
 ### Dry Run
 
