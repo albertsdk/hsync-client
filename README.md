@@ -12,7 +12,8 @@ It works in two ways:
 
 
 > [!NOTE]
->  👉 **Remember:**  keep verified backups of your data when trying new synchronization tools. 😉
+>  👉 **Remember:** keep verified backups of your data before trying new
+> synchronization tools. 😉
 
 ---
 
