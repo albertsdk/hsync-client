@@ -50,13 +50,20 @@ class TestContinuousSyncMore:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
         """File modified on server is re-downloaded locally via WS event."""
-        bb_server_upload(bb_bucket, "update_me.txt", b"v1\n")
-
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+
+            # Upload the file while the client is watching — the server
+            # broadcasts an "added" event via WebSocket which triggers a
+            # download.  (Uploading before watch_sync relies on the initial
+            # full sync, which is slow and not the behaviour this test
+            # exercises.)
+            bb_server_upload(bb_bucket, "update_me.txt", b"v1\n")
             local_file = Path(local_dir) / "update_me.txt"
-            assert _wait_for(lambda: local_file.exists())
+            assert _wait_for(lambda: local_file.exists(), timeout=20), (
+                "File uploaded via API did not sync locally"
+            )
             assert local_file.read_bytes() == b"v1\n"
 
             # Modify on server (re-upload with new content)
