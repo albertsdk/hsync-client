@@ -15,6 +15,8 @@ from pathlib import Path
 
 import requests
 
+from tests.conftest import BB_CLIENT_CID
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -25,7 +27,7 @@ def _server_delete(live_server, bucket: str, filename: str) -> None:
     base, api_key = live_server
     r = requests.delete(
         f"{base}/api/v1/buckets/{bucket}/files",
-        data={"cid": "TestClientX0987654321", "filename": filename},
+        data={"cid": BB_CLIENT_CID, "filename": filename},
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=15.0,
         verify=False,

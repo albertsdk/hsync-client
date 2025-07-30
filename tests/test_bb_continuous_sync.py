@@ -15,6 +15,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from tests.conftest import BB_CLIENT_CID
+
 
 def _wait_for(predicate, timeout=20.0, interval=0.3):
     deadline = time.time() + timeout
@@ -129,7 +131,7 @@ class TestContinuousSync:
             r = requests.patch(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",
                 data={
-                    "cid": "TestClientX0987654321",
+                    "cid": BB_CLIENT_CID,
                     "filename": "oldname.txt",
                     "newname": "newname.txt",
                 },
@@ -253,7 +255,7 @@ class TestContinuousSync:
             base, api_key = live_server
             r = requests.delete(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",
-                data={"cid": "TestClientX0987654321", "filename": "todie.txt"},
+                data={"cid": BB_CLIENT_CID, "filename": "todie.txt"},
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=15.0,
                 verify=False,
