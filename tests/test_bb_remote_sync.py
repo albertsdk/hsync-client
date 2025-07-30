@@ -25,7 +25,7 @@ def _server_delete(live_server, bucket: str, filename: str) -> None:
     base, api_key = live_server
     r = requests.delete(
         f"{base}/api/v1/buckets/{bucket}/files",
-        data={"cid": "bbserver", "filename": filename},
+        data={"cid": "TestClientX0987654321", "filename": filename},
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=15.0,
         verify=False,

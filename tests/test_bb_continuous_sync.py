@@ -128,7 +128,11 @@ class TestContinuousSync:
             base, api_key = live_server
             r = requests.patch(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",
-                data={"cid": "bbserver", "filename": "oldname.txt", "newname": "newname.txt"},
+                data={
+                    "cid": "TestClientX0987654321",
+                    "filename": "oldname.txt",
+                    "newname": "newname.txt",
+                },
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=15.0,
                 verify=False,
@@ -249,7 +253,7 @@ class TestContinuousSync:
             base, api_key = live_server
             r = requests.delete(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",
-                data={"cid": "bbserver", "filename": "todie.txt"},
+                data={"cid": "TestClientX0987654321", "filename": "todie.txt"},
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=15.0,
                 verify=False,

@@ -272,7 +272,7 @@ def bb_server_upload(live_server):
         r = requests.post(
             f"{base}/api/v1/buckets/{bucket}/files",
             data={
-                "cid": "bbserver",
+                "cid": "TestClientX1234567890",
                 "path": "",
                 "sha256sum": hashlib.sha256(content).hexdigest(),
                 "permissions": "644",
