@@ -102,11 +102,13 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
         """File uploaded to server via API is downloaded locally via WS event."""
-        bb_server_upload(bb_bucket, "from_api.txt", b"api upload\n")
-
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+
+            # Upload while the client is watching — the server broadcasts an
+            # "added" event via WebSocket which triggers a download.
+            bb_server_upload(bb_bucket, "from_api.txt", b"api upload\n")
             local_file = Path(local_dir) / "from_api.txt"
             assert _wait_for(lambda: local_file.exists(), timeout=20), (
                 "File uploaded via API did not sync locally"
@@ -119,11 +121,13 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
         """File renamed on server propagates to local via WS event."""
-        bb_server_upload(bb_bucket, "oldname.txt", b"rename-me\n")
-
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+
+            # Upload while the client is watching so the initial download is
+            # triggered by the WebSocket "added" event.
+            bb_server_upload(bb_bucket, "oldname.txt", b"rename-me\n")
             old_file = Path(local_dir) / "oldname.txt"
             assert _wait_for(lambda: old_file.exists())
 
@@ -172,13 +176,13 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
         """File modified locally is re-uploaded to the server."""
-        # Pre-upload a file via server API so it exists on both sides
-        bb_server_upload(bb_bucket, "mod.txt", b"v1\n")
-
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
-            # Wait for initial download
+
+            # Upload while watching so the file reaches the client via
+            # WebSocket "added" event (not via initial full sync).
+            bb_server_upload(bb_bucket, "mod.txt", b"v1\n")
             assert _wait_for(lambda: (Path(local_dir) / "mod.txt").exists())
 
             # Modify locally
@@ -195,11 +199,13 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload, bb_server_files
     ):
         """File deleted locally is removed from the server."""
-        bb_server_upload(bb_bucket, "bye.txt", b"goodbye\n")
-
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+
+            # Upload while watching so the file reaches the client via
+            # WebSocket "added" event (not via initial full sync).
+            bb_server_upload(bb_bucket, "bye.txt", b"goodbye\n")
             assert _wait_for(lambda: (Path(local_dir) / "bye.txt").exists())
 
             # Delete locally
@@ -236,11 +242,13 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
         """File deleted on server (via API) is removed locally."""
-        bb_server_upload(bb_bucket, "todie.txt", b"ephemeral\n")
-
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+
+            # Upload while watching so the file reaches the client via
+            # WebSocket "added" event (not via initial full sync).
+            bb_server_upload(bb_bucket, "todie.txt", b"ephemeral\n")
             local_file = Path(local_dir) / "todie.txt"
             assert _wait_for(lambda: local_file.exists())
 
@@ -266,9 +274,6 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
         """Watch mode with --ignore-delete preserves locally-deleted files on server."""
-        # Pre-create a file on server
-        bb_server_upload(bb_bucket, "keep_server.txt", b"keep\n")
-
         import os
         import sys
 
@@ -298,6 +303,10 @@ class TestContinuousSync:
         )
         try:
             assert _wait_for_subprocess_ready(proc)
+
+            # Upload while watching so the file reaches the client via
+            # WebSocket "added" event (not via initial full sync).
+            bb_server_upload(bb_bucket, "keep_server.txt", b"keep\n")
 
             # Delete locally
             local_file = Path(local_dir) / "keep_server.txt"
