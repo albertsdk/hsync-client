@@ -109,6 +109,12 @@ Diff inspection and executed checks are required; stating that the implementatio
 
 Every bug fix must include a regression test that fails against the faulty behavior and passes after the fix. New behavior must cover its success path and relevant failure or boundary cases. Changes to shared or external contracts must update and test the `hsync-common` SSOT, committed fixtures/schemas, and affected consumers. A test may be omitted only when genuinely impractical, with the reason and alternative verification reported.
 
+**Black-box tests (`test_bb_*`)** must verify the public contract, never the implementation. Every new `test_bb_*` test must be able to answer **YES** to all of these questions:
+
+* Does the test use only public REST endpoints, documented CLI commands, or protocol WebSocket frames?
+* If the internal implementation were completely rewritten while keeping the same contract, would the test still pass?
+* Does the test verify a behavior that the end user or a remote client can actually observe?
+
 ### 5. Bounded Correction Cycle
 
 Fix issues found during verification and repeat the relevant checks, for at most two review-and-correction cycles unless the user requests more. Do not finalize with known failures. If blocked by dependencies, credentials, external services, platform tooling, or pre-existing failures, report the blocker precisely. Never claim a check passed unless it completed successfully.
