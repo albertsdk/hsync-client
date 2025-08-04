@@ -35,6 +35,36 @@ def _server_delete(live_server, bucket: str, filename: str) -> None:
     assert r.status_code in (200, 204), f"Server delete failed: {r.status_code} {r.text}"
 
 
+def _server_download(live_server, bucket: str, filename: str) -> bytes:
+    """Download a file's content from the server via REST API."""
+    base, api_key = live_server
+    r = requests.get(
+        f"{base}/api/v1/buckets/{bucket}/files/download",
+        params={"filename": filename, "cid": BB_CLIENT_CID},
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=15.0,
+        verify=False,
+    )
+    assert r.status_code == 200, f"Server download failed: {r.status_code} {r.text}"
+    return r.content
+
+
+def _server_file_metadata(live_server, bucket: str, filename: str) -> dict:
+    """Return the server-side metadata dict for a single file."""
+    base, api_key = live_server
+    r = requests.get(
+        f"{base}/api/v1/buckets/{bucket}/files",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=15.0,
+        verify=False,
+    )
+    assert r.status_code == 200, r.text
+    for f in r.json():
+        if f["filepath"] == filename:
+            return f
+    raise AssertionError(f"{filename} not found on server (bucket={bucket})")
+
+
 # =============================================================================
 # Happy path — core sync operations
 # =============================================================================
@@ -85,6 +115,9 @@ class TestRemoteFileOperations:
         (Path(local_dir) / "mod.txt").write_bytes(b"v2-updated\n")
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
+
+        # The updated content must actually be on the server
+        assert _server_download(live_server, bb_bucket, "mod.txt") == b"v2-updated\n"
 
     def test_file_deletion_propagates_to_server(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
@@ -204,6 +237,10 @@ class TestRemotePermissions:
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
 
+        # The server must record the restrictive permissions
+        meta = _server_file_metadata(live_server, bb_bucket, "perms.txt")
+        assert meta["permissions"] == "600"
+
 
 # =============================================================================
 # Bulk / Unicode / pre-existing
@@ -307,13 +344,29 @@ class TestRemoteSyncDryRun:
 
 
 class TestRemoteEdgeCases:
-    def test_hidden_file_not_synced(
+    def test_default_ignored_file_not_synced(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
-        (Path(local_dir) / ".secret").write_bytes(b"hidden\n")
+        """Files matching DEFAULT_IGNORE_PATTERNS (OS/editor temp files) are not synced."""
+        (Path(local_dir) / ".DS_Store").write_bytes(b"macos cache\n")
+        (Path(local_dir) / "draft.txt~").write_bytes(b"editor backup\n")
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
-        assert ".secret" not in bb_server_files(bb_bucket)
+        assert ".DS_Store" not in bb_server_files(bb_bucket)
+        assert "draft.txt~" not in bb_server_files(bb_bucket)
+
+    def test_generic_dotfile_is_synced(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """Generic dotfiles (.env, .config, …) ARE synced by design.
+
+        Following Syncthing/rsync/Nextcloud, only OS cache and editor temp
+        files are excluded by default; user dotfiles carry real data.
+        """
+        (Path(local_dir) / ".env").write_bytes(b"SECRET=1\n")
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert ".env" in bb_server_files(bb_bucket)
 
     def test_ignore_patterns_flag_respected(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
@@ -426,7 +479,9 @@ class TestRemoteSyncNegative:
             ],
         )
         get_env_settings.cache_clear()
-        assert result.exit_code == 0
+        # A wrong API key is an authentication failure: the CLI must exit
+        # non-zero and must not touch the local directory.
+        assert result.exit_code != 0
         local_files = list(Path(local_dir).iterdir())
         assert local_files == [] or all(p.name.startswith(".hsync") for p in local_files)
 
@@ -452,4 +507,5 @@ class TestRemoteSyncNegative:
             ],
             env={"HSYNC_API_KEY": "some-key-1234567890"},
         )
-        assert result.exit_code == 0
+        # An unreachable server is a sync failure: the CLI must exit non-zero.
+        assert result.exit_code != 0

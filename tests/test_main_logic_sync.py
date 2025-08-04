@@ -478,19 +478,21 @@ class TestRunSync:
     """Tests for run_sync function."""
 
     def test_returns_early_if_local_path_missing(self, tmp_path):
-        """run_sync returns immediately when the local directory doesn't exist."""
+        """run_sync exits non-zero when the local directory doesn't exist."""
         bad_path = str(tmp_path / "nonexistent")
         kwargs = _default_run_sync_kwargs(tmp_path, local_path=bad_path)
 
         with patch("hsync_client.main_logic.setup_logging") as mock_log_setup:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
             mock_logger.error.assert_called()
             assert any("does not exist" in str(c) for c in mock_logger.error.call_args_list)
 
     def test_returns_early_if_no_server_url(self, tmp_path):
-        """run_sync returns when no server URL and not in LAN mode."""
+        """run_sync exits non-zero when no server URL and not in LAN mode."""
         kwargs = _default_run_sync_kwargs(tmp_path, server_url=None)
 
         with (
@@ -499,7 +501,9 @@ class TestRunSync:
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
             mock_logger.error.assert_called()
             assert any("Server URL is required" in str(c) for c in mock_logger.error.call_args_list)
 
@@ -573,18 +577,20 @@ class TestRunSync:
         assert config_arg["DISCOVERY_TIMEOUT"] == 0
 
     def test_invalid_logfile_returns_early(self, tmp_path):
-        """run_sync returns when logfile path is invalid."""
+        """run_sync exits non-zero when the logfile path is invalid."""
         kwargs = _default_run_sync_kwargs(tmp_path, logfile="CON")
 
         with patch("hsync_client.main_logic.setup_logging") as mock_log_setup:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
             mock_logger.error.assert_called()
             assert any("Invalid output file" in str(c) for c in mock_logger.error.call_args_list)
 
     def test_server_connectivity_failure_returns(self, tmp_path):
-        """run_sync returns when server connectivity check fails."""
+        """run_sync exits non-zero when the server connectivity check fails."""
         kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
 
         with (
@@ -596,7 +602,9 @@ class TestRunSync:
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
             # Should not call sync since connectivity failed
 
     def test_single_sync_mode(self, tmp_path):
@@ -685,7 +693,9 @@ class TestRunSync:
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
             # Aborted before configuring: set_config is never called
             mock_set_cfg.assert_not_called()
             assert any("not HTTPS" in str(c) for c in mock_logger.error.call_args_list)
@@ -703,7 +713,9 @@ class TestRunSync:
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
             # Aborted before configuring or contacting the server.
             mock_set_cfg.assert_not_called()
             mock_check.assert_not_called()

@@ -745,12 +745,12 @@ def run_sync(
     if not Path(local_path).exists():
         log.error(f"Directory '{local_path}' does not exist")
         emit_event(UiEventName.path_not_found, path=local_path)
-        return
+        sys.exit(1)
 
     # Validate log file path
     if logfile and not is_valid_logfile(logfile):
         log.error(f"Invalid output file '{logfile}'")
-        return
+        sys.exit(1)
 
     # Determine server URL (CLI argument takes precedence over env var)
     effective_server_url = server_url or get_server_url()
@@ -763,7 +763,7 @@ def run_sync(
     # Validate server URL is provided (not required in LAN mode)
     if not effective_server_url and not lan_mode:
         log.error("Server URL is required (use -s or set HSYNC_SERVER, or use --lan-mode)")
-        return
+        sys.exit(1)
 
     # In LAN mode without server URL, use placeholder
     if lan_mode and not effective_server_url:
@@ -797,7 +797,7 @@ def run_sync(
             "No API key configured. Set HSYNC_API_KEY (or pass it via "
             "--api-key-fd) to authenticate with the server."
         )
-        return
+        sys.exit(1)
 
     # Security gate: never transmit the API key over an unencrypted channel.
     # The rule keys on the URL scheme the client connects to, so an HTTPS
@@ -809,7 +809,7 @@ def run_sync(
             "Refusing to send credentials over an unencrypted connection. "
             "Use an https:// URL (a reverse proxy terminating TLS is supported)."
         )
-        return
+        sys.exit(1)
 
     # Populate global configuration dictionary
 
@@ -994,7 +994,7 @@ def run_sync(
     # Check if local directory exists at startup
     if not Path(local_path).exists():
         log.error(f"Local directory '{local_path}' does not exist")
-        return
+        sys.exit(1)
 
     # Check for file deletion risk before syncing
     if not dryrun and Path(local_path).exists():
@@ -1087,7 +1087,9 @@ def run_sync(
         verify_ssl=not config["NO_VERIFY_SSL"],
         logger=log,
     ):
-        return
+        # An unreachable server is a failed run: exit non-zero instead of
+        # returning silently with a success exit code.
+        sys.exit(1)
 
     # Diagnostic clock-skew check (server mode). LAN mode performs its own
     # measurement against the elected master after discovery.
@@ -1119,6 +1121,10 @@ def run_sync(
         run(_run_with_stdin_commands(log))
     elif not config["DRYRUN"] and continuous:
         run(_run_with_stdin_commands(log))
+    elif config["DRYRUN"]:
+        # One-shot dry-run: show the preview only — running sync() here would
+        # perform real transfers despite --dry-run.
+        _run_preview(log)
     else:
         run(sync())
 
