@@ -12,6 +12,20 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def reset_sync_state_stores() -> None:
+    """Reset the global sync-state store cache before each test.
+
+    ``hsync_client.sync_state._stores`` is a module-level dict keyed by the
+    configured ``LOCAL_BUCKET``.  Tests that patch ``CONFIG`` to a temp dir
+    populate entries that survive into later, unrelated tests that also import
+    ``sync_state``.  Clearing it here gives every test a clean slate.
+    """
+    from hsync_client import sync_state
+
+    sync_state._stores.clear()
+
+
+@pytest.fixture(autouse=True)
 def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Force plain, uncolored CLI output for every test.

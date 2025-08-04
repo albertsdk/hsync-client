@@ -275,7 +275,7 @@ def apply_handler(tmp_path):
 
 def _valid_metadata(base: bytes, new: bytes, ops: list[dict] | None = None) -> dict:
     return {
-        "cid": "slave-1",
+        "cid": "SlaveCid1234567890abc",
         "base_sha256": sha256(base).hexdigest(),
         "new_sha256": sha256(new).hexdigest(),
         "new_size": len(new),
@@ -488,13 +488,13 @@ class TestApplyValidation:
         )
 
         meta = _valid_metadata(base, bytes(new), ops=[op.to_dict() for op in ops])
-        meta["cid"] = "slavecid1"
+        meta["cid"] = "PeerCID1234567890abcd"
         meta["mtime"] = 1_600_000_000.0
         meta["permissions"] = "0o644"
         _apply(apply_handler, meta, literals)
         status, _body = apply_handler.sent[0]
         assert status == 200
-        assert marked == [(str(target), "slavecid1")]
+        assert marked == [(str(target), "PeerCID1234567890abcd")]
         assert perms == [(str(target), "0o644")]
         assert abs(target.stat().st_mtime - 1_600_000_000.0) < 2
 

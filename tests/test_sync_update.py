@@ -220,6 +220,7 @@ class TestSync:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get_files_remote", return_value=remote_files),
             patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+            patch("hsync_client.sync.push_tombstones_remote"),
             patch("hsync_client.sync.ensure_hsynckeep_files"),
             patch("hsync_client.transfer.download_file") as mock_download,
             patch("hsync_client.transfer.upload_file") as mock_upload,
@@ -245,6 +246,7 @@ class TestSync:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get_files_remote", return_value=[]),
             patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+            patch("hsync_client.sync.push_tombstones_remote"),
             patch("hsync_client.transfer.download_file") as mock_download,
             patch("hsync_client.transfer.upload_file") as mock_upload,
         ):

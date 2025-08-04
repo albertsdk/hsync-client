@@ -631,7 +631,7 @@ class TestLANRequestHandlerInboundOriginMarking:
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
-                "cid": "peer1",
+                "cid": "PeerCID0123456789abcd",
                 "path": "",
                 "mtime": "",
                 "ctime": "",
@@ -641,7 +641,7 @@ class TestLANRequestHandlerInboundOriginMarking:
             headers = {"Authorization": f"Bearer {self._KEY}"}
             response = requests.post(url, data=data, files=files, headers=headers, timeout=5)
             assert response.status_code == 201
-            assert consume_inbound_origin(str(tmp_path / "inbound.txt")) == "peer1"
+            assert consume_inbound_origin(str(tmp_path / "inbound.txt")) == "PeerCID0123456789abcd"
 
     def test_delete_marks_inbound_origin(self, server, tmp_path):
         import requests
@@ -661,10 +661,13 @@ class TestLANRequestHandlerInboundOriginMarking:
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             headers = {"Authorization": f"Bearer {self._KEY}"}
             response = requests.delete(
-                url, params={"path": "gone.txt", "cid": "peer2"}, headers=headers, timeout=5
+                url,
+                params={"path": "gone.txt", "cid": "PeerCID1123456789abcd"},
+                headers=headers,
+                timeout=5,
             )
             assert response.status_code == 200
-            assert consume_inbound_origin(str(target)) == "peer2"
+            assert consume_inbound_origin(str(target)) == "PeerCID1123456789abcd"
 
     def test_rename_marks_inbound_origin_for_both_paths(self, server, tmp_path):
         import requests
@@ -686,13 +689,13 @@ class TestLANRequestHandlerInboundOriginMarking:
             headers = {"Authorization": f"Bearer {self._KEY}"}
             response = requests.patch(
                 url,
-                params={"src": "src.txt", "dst": "dst.txt", "cid": "peer3"},
+                params={"src": "src.txt", "dst": "dst.txt", "cid": "PeerCID2123456789abcd"},
                 headers=headers,
                 timeout=5,
             )
             assert response.status_code == 200
-            assert consume_inbound_origin(str(src)) == "peer3"
-            assert consume_inbound_origin(str(dst)) == "peer3"
+            assert consume_inbound_origin(str(src)) == "PeerCID2123456789abcd"
+            assert consume_inbound_origin(str(dst)) == "PeerCID2123456789abcd"
 
     def test_upload_ignores_cid_when_unauthenticated(self, server, tmp_path):
         """Without LAN_KEY the CID is untrusted: the upload still succeeds but

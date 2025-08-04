@@ -147,7 +147,9 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.return_value = json.dumps({"type": "auth", "token": "secret", "cid": "slaveTest"})
+        ws.recv.return_value = json.dumps(
+            {"type": "auth", "token": "secret", "cid": "ValidClientId12345678"}
+        )
 
         # Proper async iterator that yields nothing (immediate disconnect)
         async def _empty_aiter(self_ws):
@@ -173,7 +175,9 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.return_value = json.dumps({"type": "auth", "token": "wrong", "cid": "slaveBad"})
+        ws.recv.return_value = json.dumps(
+            {"type": "auth", "token": "wrong", "cid": "BadClientId1234567890"}
+        )
 
         config = {"LAN_KEY": "secret"}
         with patch("hsync_client.lan_websocket.CONFIG", config):
@@ -220,7 +224,7 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.return_value = json.dumps({"type": "hello", "cid": "slaveTest"})
+        ws.recv.return_value = json.dumps({"type": "hello", "cid": "ValidClientId12345678"})
 
         async def _empty_aiter(self_ws):
             return
