@@ -10,6 +10,8 @@ Shared pytest fixtures for the hsync-client test suite.
 
 import pytest
 
+from .lan_helpers import lan_bucket, lan_master_dir, lan_slave_dir  # noqa: F401
+
 
 @pytest.fixture(autouse=True)
 def reset_sync_state_stores() -> None:
