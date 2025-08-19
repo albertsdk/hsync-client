@@ -76,8 +76,8 @@ def _lan_start(
     return subprocess.Popen(
         args,
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
 
 
@@ -92,20 +92,22 @@ def _terminate(proc: subprocess.Popen) -> None:
     # Drain pipes to avoid ResourceWarning
     if proc.stdout:
         proc.stdout.close()
-    if proc.stderr:
-        proc.stderr.close()
+    # stderr is merged into stdout (PIPE → STDOUT), so no separate pipe to drain.
 
 
 def _stderr_text(proc: subprocess.Popen) -> str:
-    """Return captured stderr text (non-blocking, best-effort)."""
-    if proc.stderr is None:
+    """Return captured output text (non-blocking, best-effort).
+
+    Reads from stdout since stderr is merged into it (loguru logs to stdout).
+    """
+    if proc.stdout is None:
         return ""
     try:
         import os as _os
 
-        fd = proc.stderr.fileno()
+        fd = proc.stdout.fileno()
         _os.set_blocking(fd, False)
-        data = proc.stderr.read()
+        data = proc.stdout.read()
         return data.decode("utf-8", errors="replace") if data else ""
     except (OSError, ValueError, AttributeError):
         return ""

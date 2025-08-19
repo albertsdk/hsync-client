@@ -42,26 +42,46 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 
 
 class TestLanTombstone:
-    def test_tombstone_propagation_on_reconnect(self, lan_master_dir, lan_slave_dir, lan_bucket):
+    def test_tombstone_propagation_on_reconnect(
+        self, lan_master_dir, lan_slave_dir, tmp_path, lan_bucket
+    ):
         """File deleted while slave is offline → tombstone cleans it up on reconnect."""
+        bridge_dir = str(tmp_path / "bridge")
+        Path(bridge_dir).mkdir()
+
         # Create a file on master before anyone connects
         (Path(lan_master_dir) / "pre_delete.txt").write_bytes(b"to-be-deleted\n")
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
-
-            # First slave session: sync the file, then disconnect
+            # Phase 1: first slave syncs the file, then disconnects
             slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
-            _wait_for_file(str(Path(lan_slave_dir) / "pre_delete.txt"), timeout=30)
-            _terminate(slave1)
+            try:
+                assert _wait_for_file(str(Path(lan_slave_dir) / "pre_delete.txt"), timeout=30), (
+                    "File did not sync from master to slave during initial sync"
+                )
+            finally:
+                _terminate(slave1)
 
-            # While slave is gone, delete the file on master
-            (Path(lan_master_dir) / "pre_delete.txt").unlink()
+            # Phase 2: start a bridge peer so the master becomes the active
+            # master and starts its file watcher. Wait for the watcher to be
+            # running before deleting.
+            bridge = _lan_start(bridge_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_text_in_stderr(master, "File watcher started", timeout=30), (
+                    "Master file watcher did not start"
+                )
+                # Delete the file on master — the watcher detects it and
+                # records a tombstone
+                (Path(lan_master_dir) / "pre_delete.txt").unlink()
+                assert _wait_for_text_in_stderr(master, "LOCAL_DELETE", timeout=15), (
+                    "Master did not detect the deletion and record a tombstone"
+                )
+            finally:
+                _terminate(bridge)
 
-            # Reconnect slave — it should see the tombstone and delete locally
+            # Phase 3: reconnect slave — the initial sync reconciliation
+            # serves the tombstone and deletes the stale file locally
             slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_file_gone(
