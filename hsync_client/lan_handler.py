@@ -38,6 +38,7 @@ from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
+from hsync_client.main_logic import _run_preview
 from hsync_client.pinning import default_pin_store
 from hsync_client.sync import sync
 
@@ -159,17 +160,6 @@ def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
     log.info(
         f"autotune (LAN): rtt={rtt_ms:.1f}ms net={net_class.value} -> {safe_json_for_log(updates)}"
     )
-
-
-def _run_preview(log) -> None:
-    """Run a preview (dry-run) showing pending sync actions."""
-    from hsync_client.main_logic import _run_preview as run_preview_impl
-
-    run_preview_impl(log)
-
-
-if TYPE_CHECKING:
-    from hsync_client.config import HsyncConfig
 
 
 def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901

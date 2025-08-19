@@ -26,6 +26,3 @@ from hsync_common.compression import (  # noqa: F401
     decompress_stream,
     should_compress,
 )
-from loguru import logger as log
-
-log.debug(f"Module {__name__} loaded")

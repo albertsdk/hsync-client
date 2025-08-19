@@ -286,21 +286,46 @@ async def sync(lan_mode: bool = False) -> None:
         for file in nothing:
             nothing_to_do(file)
 
+        # Split local deletions into tombstone-confirmed (backed by a deletion
+        # marker proving the file was removed elsewhere) and unconfirmed. The
+        # mass-deletion guard must never block a tombstone-confirmed deletion:
+        # a tombstone is positive proof the removal is intentional, so an empty
+        # master bucket is the expected outcome, not a suspect transient state.
+        # Only unconfirmed deletions are subject to the guard.
+        tombstone_deletes = [
+            a.file
+            for a in sync_actions
+            if a.name == SyncActionName.delete and getattr(a, "tombstone_confirmed", False)
+        ]
+        guarded_deletes = [
+            a.file
+            for a in sync_actions
+            if a.name == SyncActionName.delete and not getattr(a, "tombstone_confirmed", False)
+        ]
+
         # Mass-deletion guard: a master that transiently exposes an empty or
-        # wrong bucket must not wipe valid local data in one cycle.
-        blocked, reason = _mass_deletion_blocked(len(deletes), len(local_files), len(remote_files))
+        # wrong bucket must not wipe valid local data in one cycle. Applies
+        # only to unconfirmed deletions; tombstone-confirmed deletions are
+        # already split out and proceed unconditionally.
+        blocked, reason = _mass_deletion_blocked(
+            len(guarded_deletes), len(local_files), len(remote_files)
+        )
         if blocked:
             log.warning(
                 f"{ActionLabel.GUARD} Mass-deletion guard tripped ({reason}); "
-                f"skipping {len(deletes)} deletion(s) this cycle"
+                f"skipping {len(guarded_deletes)} unconfirmed deletion(s) this cycle "
+                f"({len(tombstone_deletes)} tombstone-confirmed deletion(s) still applied)"
             )
             emit_event(
                 UiEventName.sync_paused,
                 reason=reason,
-                deletes=len(deletes),
+                deletes=len(guarded_deletes),
                 local=len(local_files),
             )
-            deletes = []
+            guarded_deletes = []
+
+        # Merge the surviving deletions back for execution
+        deletes = tombstone_deletes + guarded_deletes
 
         # Handle deletions (files that exist only locally in LAN mode)
         for file in deletes:
@@ -749,10 +774,7 @@ def get_files_remote() -> list[dict]:
             timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
 
-        if response.status_code == 401:
-            raise AuthenticationError(message="Invalid API key")
-        if response.status_code == 403:
-            raise AuthenticationError(message="API key required")
+        _check_auth_status(response.status_code)
         if response.status_code != 200:
             raise ServerError(
                 message=f"Server returned status {response.status_code}",
@@ -797,10 +819,7 @@ def get_tombstones_remote() -> dict[str, dict]:
             timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
 
-        if response.status_code == 401:
-            raise AuthenticationError(message="Invalid API key")
-        if response.status_code == 403:
-            raise AuthenticationError(message="API key required")
+        _check_auth_status(response.status_code)
         if response.status_code != 200:
             log.debug(
                 f"Tombstones unavailable (status {response.status_code}); "
@@ -853,6 +872,14 @@ def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
 # Tolerance threshold in seconds for mtime comparison.
 # Handles FAT32 filesystem precision (2s) and minor clock skew.
 MTIME_TOLERANCE = 2
+
+
+def _check_auth_status(status_code: int) -> None:
+    """Raise AuthenticationError on 401/403, shared by all HTTP call sites."""
+    if status_code == 401:
+        raise AuthenticationError(message="Invalid API key")
+    if status_code == 403:
+        raise AuthenticationError(message="API key required")
 
 
 def _tombstone_deletes_local(entry: dict, local_mtime: int, local_sha256: str) -> bool:
@@ -1045,7 +1072,9 @@ def get_sync_actions(
                         f'{ActionLabel.TOMBSTONE} "{file.filepath}" deleted remotely while offline; '
                         "removing local copy"
                     )
-                    sync_actions.append(SyncAction(file, SyncActionName.delete))
+                    sync_actions.append(
+                        SyncAction(file, SyncActionName.delete, tombstone_confirmed=True)
+                    )
                 else:
                     # Default: upload local-only files (server mode and LAN
                     # bidirectional/upload-only converge toward shared state)
