@@ -6,6 +6,7 @@ import os
 import tempfile
 
 from hsync_common.models.dir import Dir, is_hidden_dir
+from hsync_common.permissions import get_permissions
 
 
 class TestIsHiddenDir:
@@ -97,9 +98,9 @@ class TestDirModel:
         assert d.path == "/bucket/subdir"
 
     def test_get_permissions(self):
-        """Test _get_permissions with real directory."""
+        """Test get_permissions with real directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            perms = Dir._get_permissions(temp_dir)
+            perms = get_permissions(temp_dir)
             assert perms.isdigit()
             assert len(perms) == 3
 

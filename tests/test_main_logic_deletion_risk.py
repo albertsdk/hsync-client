@@ -492,7 +492,7 @@ class TestWithStdinCommands:
         async def quick_coro():
             pass
 
-        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
+        with patch("hsync_client.preview.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -513,7 +513,7 @@ class TestWithStdinCommands:
         async def failing_coro():
             raise RuntimeError("boom")
 
-        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
+        with patch("hsync_client.preview.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -529,7 +529,7 @@ class TestWithStdinCommands:
         async def noop():
             pass
 
-        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
+        with patch("hsync_client.preview.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -555,7 +555,7 @@ class TestStdinCommandHandlers:
         async def noop():
             pass
 
-        with patch("hsync_client.main_logic.StdinCommandHandler", return_value=handler_inst):
+        with patch("hsync_client.preview.StdinCommandHandler", return_value=handler_inst):
             await _with_stdin_commands(MagicMock(), noop())
         return registered
 
@@ -564,8 +564,8 @@ class TestStdinCommandHandlers:
         """The SYNC handler syncs with the configured LAN_MODE flag."""
         registered = await self._register_and_capture()
         with (
-            patch("hsync_client.main_logic.CONFIG", {"LAN_MODE": True}),
-            patch("hsync_client.main_logic.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview.CONFIG", {"LAN_MODE": True}),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
         ):
             await registered["SYNC"]()
         mock_sync.assert_awaited_once_with(lan_mode=True)
@@ -576,8 +576,8 @@ class TestStdinCommandHandlers:
         registered = await self._register_and_capture()
         cfg = {"LAN_MODE": False, "SYNC_DIRECTION": "bidirectional"}
         with (
-            patch("hsync_client.main_logic.CONFIG", cfg),
-            patch("hsync_client.main_logic.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview.CONFIG", cfg),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
         ):
             await registered["SET_SYNC_DIRECTION"](direction="upload-only")
             assert cfg["SYNC_DIRECTION"] == "upload-only"
@@ -594,8 +594,8 @@ class TestStdinCommandHandlers:
         registered = await self._register_and_capture()
         cfg = {"MAX_BANDWIDTH_UPLOAD": None, "MAX_BANDWIDTH_DOWNLOAD": None}
         with (
-            patch("hsync_client.main_logic.CONFIG", cfg),
-            patch("hsync_client.main_logic.reset_bandwidth_throttle") as mock_reset,
+            patch("hsync_client.preview.CONFIG", cfg),
+            patch("hsync_client.preview.reset_bandwidth_throttle") as mock_reset,
         ):
             # int upload, string download
             await registered["SET_BANDWIDTH"](upload=2048, download="4096")
@@ -620,9 +620,9 @@ class TestStdinCommandHandlers:
 
         cfg = {"LAN_MODE": False, "DRYRUN": True}
         with (
-            patch("hsync_client.main_logic.StdinCommandHandler", return_value=handler_inst),
-            patch("hsync_client.main_logic.CONFIG", cfg),
-            patch("hsync_client.main_logic.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview.StdinCommandHandler", return_value=handler_inst),
+            patch("hsync_client.preview.CONFIG", cfg),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
         ):
             await _run_stdin_wait(MagicMock())
             await registered["SYNC"]()
@@ -640,7 +640,7 @@ class TestRunStdinWait:
         """_run_stdin_wait registers PREVIEW and SYNC commands."""
         mock_log = MagicMock()
 
-        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
+        with patch("hsync_client.preview.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -656,7 +656,7 @@ class TestRunStdinWait:
         """_run_stdin_wait calls handler.run() to read stdin."""
         mock_log = MagicMock()
 
-        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
+        with patch("hsync_client.preview.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst

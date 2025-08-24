@@ -21,12 +21,12 @@ class TestRunPreview:
         }
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=[]),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[]),
         ):
             _run_preview(mock_logger)
 
@@ -50,12 +50,12 @@ class TestRunPreview:
         download_action = SyncAction(file_obj, SyncActionName.download)
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=[download_action]),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[download_action]),
         ):
             _run_preview(mock_logger)
 
@@ -79,12 +79,12 @@ class TestRunPreview:
         upload_action = SyncAction(file_obj, SyncActionName.upload)
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=[upload_action]),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[upload_action]),
         ):
             _run_preview(mock_logger)
 
@@ -108,12 +108,12 @@ class TestRunPreview:
         delete_action = SyncAction(file_obj, SyncActionName.delete)
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=[delete_action]),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[delete_action]),
         ):
             _run_preview(mock_logger)
 
@@ -137,12 +137,12 @@ class TestRunPreview:
         synced_action = SyncAction(file_obj, SyncActionName.nothing)
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=[synced_action]),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[synced_action]),
         ):
             _run_preview(mock_logger)
 
@@ -172,13 +172,13 @@ class TestRunPreview:
         download_action = SyncAction(new_file, SyncActionName.download)
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
             patch(
-                "hsync_client.main_logic.get_sync_actions",
+                "hsync_client.preview.get_sync_actions",
                 return_value=[delete_action, download_action],
             ),
         ):
@@ -204,12 +204,12 @@ class TestRunPreview:
         sentinel_action = SyncAction(sentinel_file, SyncActionName.upload)
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=[sentinel_action]),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[sentinel_action]),
         ):
             _run_preview(mock_logger)
 
@@ -228,9 +228,9 @@ class TestRunPreview:
         }
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.preview.CONFIG", config),
             patch(
-                "hsync_client.main_logic.ensure_hsynckeep_files",
+                "hsync_client.preview.ensure_hsynckeep_files",
                 side_effect=Exception("Test error"),
             ),
         ):
@@ -261,12 +261,12 @@ class TestRunPreview:
             action.file.size = 100
 
         with (
-            patch("hsync_client.main_logic.CONFIG", config),
-            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
-            patch("hsync_client.main_logic.get_files_local", return_value=[]),
-            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
-            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
-            patch("hsync_client.main_logic.get_sync_actions", return_value=actions),
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=actions),
         ):
             _run_preview(mock_logger)
 
