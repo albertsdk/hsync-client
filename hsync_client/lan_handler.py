@@ -38,8 +38,8 @@ from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
-from hsync_client.main_logic import _run_preview
 from hsync_client.pinning import default_pin_store
+from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.sync import sync
 
 if TYPE_CHECKING:
@@ -531,69 +531,3 @@ def _run_as_slave(
         else:
             log.warning("No master elected - this client is alone, nothing to sync")
             return False
-
-
-async def _with_stdin_commands(log, coro) -> None:
-    """Run coro with a background stdin command reader."""
-    import asyncio
-    from asyncio import create_task
-
-    from hsync_client.config import CONFIG
-    from hsync_client.stdin_commands import StdinCommandHandler
-
-    handler = StdinCommandHandler(log)
-    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
-
-    async def _handle_sync(**_kw: object) -> None:
-        lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
-
-    handler.register("SYNC", _handle_sync)
-
-    async def _handle_set_sync_direction(**kw: object) -> None:
-        direction = str(kw.get("direction", "bidirectional"))
-        valid = ("bidirectional", "upload-only", "download-only")
-        if direction not in valid:
-            log.warning(f"Invalid sync direction: {direction!r}. Must be one of {valid}.")
-            return
-        old = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-        if direction == old:
-            log.debug(f"Sync direction already set to {direction!r}, no change.")
-            return
-        CONFIG["SYNC_DIRECTION"] = direction
-        log.info(f"Sync direction changed: {old!r} → {direction!r}")
-        # Trigger an immediate resync with the new direction
-        lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
-
-    handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
-
-    stdin_task = create_task(handler.run())
-
-    try:
-        await coro
-    finally:
-        stdin_task.cancel()
-        try:
-            await stdin_task
-        except asyncio.CancelledError:
-            pass
-
-
-async def _run_stdin_wait(log) -> None:
-    """Block reading stdin commands until EOF or SYNC."""
-
-    from hsync_client.config import CONFIG
-    from hsync_client.stdin_commands import StdinCommandHandler
-
-    handler = StdinCommandHandler(log)
-    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
-
-    async def _handle_sync(**_kw: object) -> None:
-        CONFIG["DRYRUN"] = False
-        lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
-        handler.stop()
-
-    handler.register("SYNC", _handle_sync)
-    await handler.run()
