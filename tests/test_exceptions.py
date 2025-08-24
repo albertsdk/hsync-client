@@ -10,9 +10,9 @@ from hsync_client.exceptions import (
     ConnectionError,
     DownloadError,
     FileOperationError,
+    FilePermissionError,
     HSyncClientError,
     NetworkError,
-    PermissionError,
     ServerError,
     SyncError,
 )
@@ -116,8 +116,8 @@ class TestSyncErrors:
         assert isinstance(exc, HSyncClientError)
 
     def test_permission_error(self):
-        """Test PermissionError."""
-        exc = PermissionError()
+        """Test FilePermissionError."""
+        exc = FilePermissionError()
         assert exc.error_code == "HSYNC-C4003"
         assert exc.message == "Permission denied"
         assert isinstance(exc, FileOperationError)
@@ -137,7 +137,7 @@ class TestExceptionHierarchy:
             SyncError,
             DownloadError,
             FileOperationError,
-            PermissionError,
+            FilePermissionError,
         ]
         for exc_class in exceptions:
             assert issubclass(exc_class, HSyncClientError)
@@ -154,7 +154,7 @@ class TestExceptionHierarchy:
 
         # Catch FileOperationError subclasses
         with pytest.raises(FileOperationError):
-            raise PermissionError()
+            raise FilePermissionError()
 
         # Catch all by base class
         with pytest.raises(HSyncClientError):

@@ -343,8 +343,10 @@ class TestMeasureBandwidthActive:
     """Active bandwidth probe: failure → None."""
 
     def test_returns_none_on_request_failure(self, monkeypatch):
+        from requests.exceptions import RequestException
+
         def _fail(*_args, **_kw):
-            raise Exception("network error")
+            raise RequestException("network error")
 
         monkeypatch.setattr("requests.get", _fail)
         assert measure_bandwidth_active("http://localhost:9999") is None

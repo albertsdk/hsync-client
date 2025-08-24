@@ -141,7 +141,7 @@ class FileOperationError(HSyncClientError):
     default_message = "File operation failed"
 
 
-class PermissionError(FileOperationError):
+class FilePermissionError(FileOperationError):
     """Permission denied for file operation."""
 
     error_code = "HSYNC-C4003"
