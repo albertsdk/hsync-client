@@ -9,13 +9,23 @@
 Drives the real client as a subprocess in watch mode against the real
 in-process server. Verifies observable filesystem convergence — no internals
 are imported or mocked.
+
+Requires HSYNC_BB_SERVER=1 to run.
 """
 
+import os
 import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 from tests.conftest import BB_CLIENT_CID
+
+_BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
+_BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
+
+pytestmark = pytest.mark.skipif(not _BB_SERVER_ENABLED, reason=_BB_SERVER_REASON)
 
 
 def _wait_for(predicate, timeout=20.0, interval=0.3):
