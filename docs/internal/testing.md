@@ -57,10 +57,10 @@ tests/
 │                                           live_server, ClientGlobalsGuard, …)
 ├── lan_helpers.py                      # Shared LAN test helpers
 ├── test_autotune.py                    # Autotune concurrency heuristics
-├── test_bb_remote_sync.py              # Black‑Box: client‑server sync
-├── test_bb_continuous_sync.py          # Black‑Box: continuous (watch) sync
-├── test_bb_safety_guards.py            # Black‑Box: mass‑delete guard, disk‑space
-├── test_bb_cli_surface.py              # Black‑Box: CLI help / error messages
+├── test_bb_server_remote_sync.py       # Black‑Box: client‑server sync
+├── test_bb_server_continuous_sync.py   # Black‑Box: continuous (watch) sync
+├── test_bb_server_safety_guards.py     # Black‑Box: mass‑delete guard, disk‑space
+├── test_bb_server_cli_surface.py       # Black‑Box: CLI help / error messages
 ├── test_bb_lan_advanced.py             # Black‑Box: LAN advanced scenarios
 ├── test_bb_lan_auth_direction.py       # Black‑Box: LAN auth and sync direction
 ├── test_bb_lan_core.py                 # Black‑Box: LAN core sync cycle
@@ -142,8 +142,8 @@ tests/
 
 ### Black‑Box harness fixtures (server‑mode)
 
-Used by `test_bb_remote_sync.py`, `test_bb_continuous_sync.py`,
-`test_bb_safety_guards.py` and `test_bb_cli_surface.py`.
+Used by `test_bb_server_remote_sync.py`, `test_bb_server_continuous_sync.py`,
+`test_bb_server_safety_guards.py` and `test_bb_server_cli_surface.py`.
 
 | Fixture | Scope | Purpose |
 |---------|-------|---------|
@@ -302,16 +302,22 @@ directories) and the API key are test fixtures.
 
 ### Server‑mode Black‑Box tests
 
+The server‑mode black‑box tests exercise the client against a real
+`hsync-server` subprocess over loopback HTTPS. **They are disabled by
+default** (opt‑in via ``HSYNC_BB_SERVER=1``), because they spin up a
+live server and require a sibling ``hsync-server`` installation.
+
 | File | What it covers |
 |------|---------------|
-| `test_bb_remote_sync.py` | Full sync cycle: upload, download, deletion, rename, directory sync, Unicode filenames, feature flags (compression, delta, autotune), dry‑run, ignore patterns. |
-| `test_bb_continuous_sync.py` | Watch‑mode (`--watch`): file creation, modification, and deletion are propagated while the client runs continuously. |
-| `test_bb_safety_guards.py` | Mass‑deletion guard, mass‑deletion percent guard, insufficient disk‑space abort, download‑only interactive prompts. |
-| `test_bb_cli_surface.py` | CLI help output, error messages, and surface‑level argument validation. |
+| `test_bb_server_remote_sync.py` | Full sync cycle: upload, download, deletion, rename, directory sync, Unicode filenames, feature flags (compression, delta, autotune), dry‑run, ignore patterns. |
+| `test_bb_server_continuous_sync.py` | Watch‑mode (`--watch`): file creation, modification, and deletion are propagated while the client runs continuously. |
+| `test_bb_server_safety_guards.py` | Mass‑deletion guard, mass‑deletion percent guard, insufficient disk‑space abort, download‑only interactive prompts. |
+| `test_bb_server_cli_surface.py` | CLI help output, error messages, and surface‑level argument validation. |
 
-These tests use the `live_server` session fixture (real `hsync-server`
-via uvicorn on loopback HTTPS). They require **no external services**
-and run in every CI / local environment.
+To opt in:
+```bash
+HSYNC_BB_SERVER=1 .venv/bin/python -m pytest tests/test_bb_server_*
+```
 
 ### LAN‑mode Black‑Box tests
 
@@ -335,10 +341,7 @@ generation, election timing, multi‑process coordination).
 
 To opt in:
 ```bash
-HSYNC_BB_LAN=1 .venv/bin/python -m pytest --maxfail=3 \
-  tests/test_bb_lan_core.py tests/test_bb_lan_advanced.py \
-  tests/test_bb_lan_auth_direction.py tests/test_bb_lan_features.py \
-  tests/test_bb_lan_files.py tests/test_bb_lan_security.py
+HSYNC_BB_LAN=1 .venv/bin/python -m pytest --maxfail=3 tests/test_bb_lan_*
 ```
 
 Run the LAN group **isolated** from the remote/server black-box suite: do not
