@@ -145,6 +145,27 @@ def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:
     return False
 
 
+def _wait_for_master(
+    master: subprocess.Popen, slave_dir: str, bucket: str, timeout: float = 30
+) -> None:
+    """Start a temporary slave so the master discovers it and runs the election.
+
+    The master only emits ``"MASTER"`` after ``add_peer`` triggers
+    ``_elect_master``, so we must have at least one slave running before
+    waiting for the log line.
+
+    Returns once the master logs ``"MASTER"``, or raises ``AssertionError``.
+    The temporary slave is terminated before returning.
+    """
+    slave = _lan_start(slave_dir, bucket, never_master=True)
+    try:
+        assert _wait_for_text_in_stderr(master, "MASTER", timeout=timeout), (
+            "Master did not become ready"
+        )
+    finally:
+        _terminate(slave)
+
+
 @pytest.fixture
 def lan_master_dir(tmp_path):
     """Temp directory for the LAN master."""
