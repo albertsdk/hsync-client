@@ -69,7 +69,7 @@ def get_base_hash(abs_path: str) -> str | None:
 def record_base(
     abs_path: str,
     base_hash: str,
-    change_id: str | None = None,
+    version_id: str | None = None,
     origin_cid: str | None = None,
 ) -> None:
     """Record (in memory) the agreed base version for an absolute path.
@@ -81,7 +81,7 @@ def record_base(
     if not relpath or not base_hash:
         return
     with _lock:
-        get_sync_state_store().record(relpath, base_hash, change_id, origin_cid)
+        get_sync_state_store().record(relpath, base_hash, version_id, origin_cid)
 
 
 def clear_base(abs_path: str) -> None:
