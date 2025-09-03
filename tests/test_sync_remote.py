@@ -272,3 +272,158 @@ class TestExecuteParallelTransfers:
 
         # Should complete without error
         await _execute_parallel_transfers([], [])
+
+
+# ---------------------------------------------------------------------------
+# Realistic server-response tests — mock responses that mirror the actual
+# server contract to catch regressions in client-side error handling and
+# header parsing.
+# ---------------------------------------------------------------------------
+
+
+class TestGetFilesRemoteErrorPropagation:
+    """Tests that verify server errors are correctly propagated to the caller.
+
+    The real server returns well-defined HTTP status codes for specific error
+    conditions (401 invalid key, 404 missing bucket, 426 protocol mismatch,
+    409 file conflict). The client must raise the appropriate exception.
+    """
+
+    def test_401_raises_authentication_error(self):
+        """401 Unauthorized raises AuthenticationError (real server contract)."""
+        from hsync_client.exceptions import AuthenticationError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+
+        config = {
+            "API": {"buckets": "http://localhost/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+            pytest.raises(AuthenticationError),
+        ):
+            get_files_remote()
+
+    def test_404_raises_server_error(self):
+        """404 Not Found raises ServerError (real server contract)."""
+        from hsync_client.exceptions import ServerError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = "Bucket not found"
+
+        config = {
+            "API": {"buckets": "http://localhost/api/v1/buckets"},
+            "REMOTE_BUCKET": "nonexistent",
+            "REQUEST_HEADERS": {},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+            pytest.raises(ServerError),
+        ):
+            get_files_remote()
+
+    def test_non_200_status_raises_server_error(self):
+        """Any non-200 status (that isn't 401/403) raises ServerError."""
+        from hsync_client.exceptions import ServerError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.text = "Too Many Requests"
+
+        config = {
+            "API": {"buckets": "http://localhost/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+            pytest.raises(ServerError),
+        ):
+            get_files_remote()
+
+
+class TestSyncActionsWithRealisticServerData:
+    """Tests that sync actions work correctly with realistic server payloads."""
+
+    def test_server_listing_with_checksum_is_processed(self):
+        """Files from server with sha256sum produce valid sync actions."""
+        from hsync_client.sync import get_sync_actions
+
+        remote = [
+            {
+                "filepath": "docs/report.txt",
+                "name": "report.txt",
+                "sha256sum": "abc123",
+                "size": 100,
+                "mtime": 1000,
+                "permissions": "644",
+            }
+        ]
+        local: list[dict] = []
+
+        config = {"LOCAL_BUCKET": "/tmp/test-local"}
+
+        with patch("hsync_client.sync.CONFIG", config):
+            actions = get_sync_actions(remote, local)
+
+        # File exists remotely but not locally — at least one action produced
+        assert len(actions) >= 1
+        download_actions = [a for a in actions if a.name == "download"]
+        assert len(download_actions) == 1
+
+    def test_server_listing_with_zstd_content_encoding_is_processed(self):
+        """Files from compressed server responses are processed correctly."""
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {
+                "filepath": "large.dat",
+                "name": "large.dat",
+                "sha256sum": "def456",
+                "size": 50000,
+                "mtime": 2000,
+                "permissions": "644",
+            }
+        ]
+        # Server advertises compression capability
+        mock_response.headers = {"Content-Encoding": "zstd"}
+
+        config = {
+            "API": {"buckets": "http://localhost/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
+            result = get_files_remote()
+
+        # The client correctly returns the listing even when compression is
+        # advertised (it does not need to decompress the listing itself).
+        assert len(result) == 1
+        assert result[0]["sha256sum"] == "def456"
