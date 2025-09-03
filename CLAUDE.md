@@ -68,6 +68,17 @@ index `README.md` honest about what actually exists.
 
   Keep flags, key whitelists, and i18n strings strictly aligned across all five languages (EN, IT, DE, ES, FR).
 
+* **Debian Man Page**
+  Any change to CLI flags, environment variables (`HSYNC_*`), option defaults,
+  sync directions, or command-line syntax **REQUIRES** a synchronous update to
+  `packaging/deb/usr/share/man/man1/hsync.1`:
+  * Option names, metavars, and defaults in the `OPTIONS` section
+  * Environment variable list in the `ENVIRONMENT` section
+  * Sync directions in `SYNCHRONISATION DIRECTIONS`
+  * Examples in the `EXAMPLES` section
+  * File paths in the `FILES` section
+  * Date and version in the `.TH` header (when the content changes)
+
 ---
 
 ## 🚀 Evolution & Breaking Changes
