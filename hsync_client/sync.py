@@ -15,7 +15,6 @@ import asyncio
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from os import cpu_count, remove, walk
 from pathlib import Path
 from shutil import copy2
@@ -1227,7 +1226,9 @@ def _save_conflict_copy(file: File) -> str | None:
     """
     if not (file.filepath and Path(file.filepath).exists()):
         return None
-    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
+    from hsync_common.time_utils import conflict_timestamp
+
+    ts = conflict_timestamp()
     cid = CONFIG.get("CID", "") or "unknown"
     safe_cid = "".join(c for c in cid if c.isalnum() or c in "-_.")[:32]
     stem = Path(file.filepath).stem
