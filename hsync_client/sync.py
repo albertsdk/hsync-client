@@ -12,13 +12,13 @@ file comparison, action determination, and sync execution.
 """
 
 import asyncio
+import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from os import cpu_count, remove, walk
 from pathlib import Path
 from shutil import copy2
-from socket import gethostname
 from sys import exc_info
 from time import monotonic
 from traceback import print_tb
@@ -60,6 +60,25 @@ from hsync_client.utils import (
     get_ssl_verify,
     set_permissions,
 )
+
+# ── Sync-cycle coordination flag ──────────────────────────────────────────
+# A threading.Event (not a Lock) because the watcher must NOT be blocked:
+# it still broadcasts events during a sync cycle. The flag only lets the
+# periodic resync skip a redundant cycle when one is already in progress.
+# See ADR 0006 / llm-wiki/decisions.md.
+_sync_cycle_active = threading.Event()
+
+
+def is_sync_cycle_active() -> bool:
+    """Return True while a full sync() cycle is in progress.
+
+    The periodic resync task consults this to avoid scheduling a
+    second concurrent sync() cycle. The flag is advisory (non-blocking):
+    callers never wait on it.
+    """
+    return _sync_cycle_active.is_set()
+
+
 from hsync_client.utils import (
     http_get as get,
 )
@@ -193,6 +212,7 @@ async def sync(lan_mode: bool = False) -> None:
         log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
         return
 
+    _sync_cycle_active.set()
     try:
         # Clear SHA-256 cache so every file is re-hashed with fresh content
         clear_sha256_cache()
@@ -391,6 +411,8 @@ async def sync(lan_mode: bool = False) -> None:
             if exc_tb:
                 print_tb(exc_tb)
         raise
+    finally:
+        _sync_cycle_active.clear()
 
 
 def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) -> None:
@@ -1192,8 +1214,10 @@ def _save_conflict_copy(file: File) -> str | None:
 
     Invoked when local and remote content differ but share an identical mtime,
     so no winner can be determined automatically and the remote version is taken.
-    The local content is copied to ``<filepath>.conflict-<host>-<timestamp>`` so
-    the user can recover it.
+    The local content is copied to
+    ``<stem>_conflicted_copy_<ISO8601-UTC>_<cid>.<ext>`` — the same naming
+    convention the server uses (``upload.py``) so conflict copies are
+    consistent regardless of which side detected the divergence.
 
     Args:
         file: The file whose local content is about to be overwritten.
@@ -1203,24 +1227,29 @@ def _save_conflict_copy(file: File) -> str | None:
     """
     if not (file.filepath and Path(file.filepath).exists()):
         return None
-    host = gethostname() or "unknown"
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    conflict_path = f"{file.filepath}.conflict-{host}-{stamp}"
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
+    cid = CONFIG.get("CID", "") or "unknown"
+    safe_cid = "".join(c for c in cid if c.isalnum() or c in "-_.")[:32]
+    stem = Path(file.filepath).stem
+    suffix = Path(file.filepath).suffix
+    parent = str(Path(file.filepath).parent)
+    conflict_path = f"{parent}/{stem}_conflicted_copy_{ts}_{safe_cid}{suffix}"
     try:
         copy2(file.filepath, conflict_path)
         log.warning(
             f'{ActionLabel.CONFLICT} "{file.filepath}" differs from remote at identical '
             f'mtime; local copy saved as "{conflict_path}"'
         )
+        emit_event(
+            UiEventName.conflict_resolved,
+            file=file.filepath,
+            conflict_copy=conflict_path,
+            winner="remote",
+        )
         return conflict_path
     except OSError as e:
         log.error(f'Could not save conflict copy for "{file.filepath}": {e}')
         return None
-
-
-# =============================================================================
-# Directory and File Updates
-# =============================================================================
 
 
 def update_dir(data: dict) -> Dir | None:

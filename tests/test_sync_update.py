@@ -111,7 +111,7 @@ class TestUpdateFile:
             update_file(data)
             mock_download.assert_called_once()
             # Local copy was older, so no conflict copy should be created.
-            assert list(tmp_path.glob("file.txt.conflict-*")) == []
+            assert list(tmp_path.glob("file_conflicted_copy_*.txt")) == []
 
     def test_saves_conflict_copy_when_local_not_older(self, tmp_path):
         """A conflicting inbound event preserves the local copy before overwriting."""
@@ -138,7 +138,7 @@ class TestUpdateFile:
         ):
             update_file(data)
             mock_download.assert_called_once()
-            conflict_copies = list(tmp_path.glob("file.txt.conflict-*"))
+            conflict_copies = list(tmp_path.glob("file_conflicted_copy_*.txt"))
             assert len(conflict_copies) == 1
             assert conflict_copies[0].read_text() == "local change"
 

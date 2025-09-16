@@ -53,10 +53,13 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 filterwarnings = [
+    "error::DeprecationWarning:hsync_client.*",
+    "error::DeprecationWarning:tests.*",
     "default::Warning:hsync_client.*",
     "default::Warning:tests.*",
     "ignore::urllib3.exceptions.InsecureRequestWarning",
-    "ignore::Warning",
+    "ignore::DeprecationWarning:pathspec.*",
+    "ignore::DeprecationWarning:watchdog.*",
 ]
 
 [tool.ruff]

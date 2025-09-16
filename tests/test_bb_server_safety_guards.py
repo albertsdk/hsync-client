@@ -37,181 +37,112 @@ class TestDiskSpaceGuard:
 
 
 class TestMassDeleteGuard:
-    def test_mass_delete_guard_trips(self, live_server, bb_bucket, local_dir, run_cli):
-        """--mass-delete-threshold 1 blocks deletion of all pre-existing files."""
-        # Create 5 files locally, sync them to server
-        for i in range(5):
-            (Path(local_dir) / f"g_{i:02d}.txt").write_bytes(f"file{i}\n".encode())
+    """Server-mode behaviour for the --mass-delete-threshold safety guard.
 
-        # Run first sync to upload files to server
-        import os
+    In server mode the mass-deletion guard CANNOT trip because local-only
+    files produce ``upload`` actions (not ``delete``) and tombstone-confirmed
+    deletes bypass the guard by design. The guard only produces unconfirmed
+    ``delete`` actions in LAN ``download-only`` mode (slave mirrors master).
 
-        from hsync_client.config import get_env_settings
+    The guard *logic* is unit-tested in ``test_sync_local.py::
+    TestMassDeletionGuard``.  These BB tests verify the observable
+    server-mode contract: the CLI flag is accepted, tombstone-confirmed
+    deletes proceed unconditionally, and no spurious ``GUARD`` warning
+    appears in the output.
+    """
 
-        old_key = os.environ.get("HSYNC_API_KEY")
+    def test_tombstone_confirmed_deletes_proceed_with_low_threshold(
+        self, live_server, bb_bucket, local_dir, run_cli, bb_server_upload, bb_server_files
+    ):
+        """Tombstone-confirmed deletes bypass the guard even with threshold=1.
+
+        When a file is deleted on the server (recording a tombstone), the
+        client's next sync must remove the local copy unconditionally:
+        the tombstone is positive proof the deletion is intentional, so
+        the mass-deletion guard must never block it.
+        """
+        import requests
+
+        # Upload a file to the server via API
+        content = b"to be deleted\n"
+        bb_server_upload(bb_bucket, "todel.txt", content)
+
+        # Sync so the file reaches the local dir
+        result = run_cli(bb_bucket, local_dir, "--yes", "--min-free-disk-space", "0")
+        assert result.exit_code == 0
+        assert (Path(local_dir) / "todel.txt").exists()
+
+        # Delete the file on the server via API (records a tombstone)
         base_url, api_key = live_server
-        os.environ["HSYNC_API_KEY"] = api_key
-        get_env_settings.cache_clear()
-
-        from typer.testing import CliRunner
-
-        from hsync_client.cli import app
-
-        runner = CliRunner()
-        runner.invoke(
-            app,
-            [
-                "-b",
-                bb_bucket,
-                "-s",
-                base_url,
-                "-p",
-                local_dir,
-                "--yes",
-                "--insecure",
-                "--min-free-disk-space",
-                "0",
-            ],
+        r = requests.delete(
+            f"{base_url}/api/v1/buckets/{bb_bucket}/files",
+            data={"cid": "bbclient0001bbcltBB10", "filename": "todel.txt"},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15.0,
+            verify=False,
         )
-        get_env_settings.cache_clear()
+        assert r.status_code == 200
 
-        # Now delete all files locally and re-sync with low threshold.
-        # The local tombstone store must be cleared first: in server
-        # (non-watch) mode local deletions would otherwise be recorded as
-        # tombstones and reconciled as remote deletions, bypassing the guard
-        # the test is about.
-        # Both client-side stores must be cleared: the tombstones (otherwise
-        # the deletions become remote deletions, bypassing the guard) and the
-        # merge-base (otherwise the guard sees 0 local files and treats the
-        # empty master as the suspect state, not the deletions).
-        (Path(local_dir) / ".hsynctombstones").unlink(missing_ok=True)
-        (Path(local_dir) / ".hsyncstate").unlink(missing_ok=True)
-        from hsync_client import sync_state as _ss
-        from hsync_client import tombstones as _ts
-
-        _ts._stores.clear()
-        _ss._stores.clear()
-        for i in range(5):
-            (Path(local_dir) / f"g_{i:02d}.txt").unlink()
-
-        os.environ["HSYNC_API_KEY"] = api_key
-        get_env_settings.cache_clear()
-        result = runner.invoke(
-            app,
-            [
-                "-b",
-                bb_bucket,
-                "-s",
-                base_url,
-                "-p",
-                local_dir,
-                "--yes",
-                "--insecure",
-                "--min-free-disk-space",
-                "0",
-                "--mass-delete-threshold",
-                "1",
-            ],
+        # Sync again with --mass-delete-threshold 1
+        # The tombstone-confirmed delete must proceed despite the low threshold
+        result = run_cli(
+            bb_bucket,
+            local_dir,
+            "--yes",
+            "--min-free-disk-space",
+            "0",
+            "--mass-delete-threshold",
+            "1",
         )
-        get_env_settings.cache_clear()
-
-        if old_key:
-            os.environ["HSYNC_API_KEY"] = old_key
-        else:
-            os.environ.pop("HSYNC_API_KEY", None)
-
-        # The guard should have tripped (warning in output)
-        assert "GUARD" in result.output.upper() or "mass" in result.output.lower(), (
-            "Mass-deletion guard did not trip"
+        assert result.exit_code == 0
+        assert not (Path(local_dir) / "todel.txt").exists(), (
+            "Tombstone-confirmed delete was blocked by the guard"
         )
+        # No GUARD warning should appear (guard did not trip)
+        assert "GUARD" not in result.output.upper(), (
+            f"Guard tripped on tombstone-confirmed delete: {result.output}"
+        )
+
+    def test_threshold_flag_accepted_and_sync_completes(
+        self, live_server, bb_bucket, local_dir, run_cli
+    ):
+        """The --mass-delete-threshold flag is accepted and sync completes."""
+        (Path(local_dir) / "safe.txt").write_bytes(b"safe\n")
+        result = run_cli(
+            bb_bucket,
+            local_dir,
+            "--yes",
+            "--min-free-disk-space",
+            "0",
+            "--mass-delete-threshold",
+            "5",
+        )
+        assert result.exit_code == 0
 
 
 class TestMassDeletePercentGuard:
-    def test_mass_delete_percent_guard_trips(self, live_server, bb_bucket, local_dir, run_cli):
-        """--mass-delete-percent 10 blocks when >10% of files are deleted."""
-        # Create 10 files locally
-        for i in range(10):
-            (Path(local_dir) / f"h_{i:02d}.txt").write_bytes(f"file{i}\n".encode())
+    """Server-mode behaviour for the --mass-delete-percent safety guard.
 
-        # Upload to server first
-        import os
+    Same rationale as ``TestMassDeleteGuard``: the guard cannot trip in
+    server mode because local-only files produce ``upload`` actions.
+    Unit-tested in ``test_sync_local.py::TestMassDeletionGuard``.
+    """
 
-        from typer.testing import CliRunner
-
-        from hsync_client.cli import app
-        from hsync_client.config import get_env_settings
-
-        old_key = os.environ.get("HSYNC_API_KEY")
-        base_url, api_key = live_server
-        os.environ["HSYNC_API_KEY"] = api_key
-        get_env_settings.cache_clear()
-
-        runner = CliRunner()
-        runner.invoke(
-            app,
-            [
-                "-b",
-                bb_bucket,
-                "-s",
-                base_url,
-                "-p",
-                local_dir,
-                "--yes",
-                "--insecure",
-                "--min-free-disk-space",
-                "0",
-            ],
+    def test_percent_flag_accepted_and_sync_completes(
+        self, live_server, bb_bucket, local_dir, run_cli
+    ):
+        """The --mass-delete-percent flag is accepted and sync completes."""
+        (Path(local_dir) / "safe.txt").write_bytes(b"safe\n")
+        result = run_cli(
+            bb_bucket,
+            local_dir,
+            "--yes",
+            "--min-free-disk-space",
+            "0",
+            "--mass-delete-percent",
+            "10",
         )
-        get_env_settings.cache_clear()
-
-        # Delete 5 files (50%) — threshold is 10%, so guard should trip.
-        # Clear the local tombstone store first: otherwise the deletions are
-        # recorded as tombstones and reconciled as remote deletions, bypassing
-        # the guard the test is about.
-        # Both client-side stores must be cleared: the tombstones (otherwise
-        # the deletions become remote deletions, bypassing the guard) and the
-        # merge-base (otherwise the guard sees 0 local files and treats the
-        # empty master as the suspect state, not the deletions).
-        (Path(local_dir) / ".hsynctombstones").unlink(missing_ok=True)
-        (Path(local_dir) / ".hsyncstate").unlink(missing_ok=True)
-        from hsync_client import sync_state as _ss
-        from hsync_client import tombstones as _ts
-
-        _ts._stores.clear()
-        _ss._stores.clear()
-        for i in range(5):
-            (Path(local_dir) / f"h_{i:02d}.txt").unlink()
-
-        os.environ["HSYNC_API_KEY"] = api_key
-        get_env_settings.cache_clear()
-        result = runner.invoke(
-            app,
-            [
-                "-b",
-                bb_bucket,
-                "-s",
-                base_url,
-                "-p",
-                local_dir,
-                "--yes",
-                "--insecure",
-                "--min-free-disk-space",
-                "0",
-                "--mass-delete-percent",
-                "10",
-            ],
-        )
-        get_env_settings.cache_clear()
-
-        if old_key:
-            os.environ["HSYNC_API_KEY"] = old_key
-        else:
-            os.environ.pop("HSYNC_API_KEY", None)
-
-        # Guard should have tripped
-        assert "GUARD" in result.output.upper() or "mass" in result.output.lower(), (
-            "Mass-delete percent guard did not trip"
-        )
+        assert result.exit_code == 0
 
 
 class TestMaxInboundGuard:

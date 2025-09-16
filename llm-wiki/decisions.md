@@ -14,7 +14,7 @@ implements it, plus client-only operational rules.
 | [0003 tombstone-gossip](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
 | [0004 desktop-subprocess-contract](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:76`) |
 | [0005 protocol-versioning](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:275`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
-| [0006 master-authoritative-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:905`) |
+| [0006 master-authoritative-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:1189`) — unified `<stem>_conflicted_copy_<UTC>_<cid>.<ext>` naming, emits `conflict_resolved` UI event |
 | [0017 lan-slave-outbound-event-reliability](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is

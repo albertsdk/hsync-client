@@ -152,9 +152,10 @@ sequenceDiagram
             C->>S: ⑥ GET file
             C->>SS: ⑦ record_base(relpath, downloaded_hash)
         else conflict
-            C->>FS: ⑥ Rename local to .conflict
+            C->>FS: ⑥ Copy local to _conflicted_copy_
             C->>S: ⑦ Download remote version
             C->>SS: ⑦ record_base(relpath, remote_hash)
+            C->>GUI: ⑦ Emit conflict_resolved event
         end
     end
 
@@ -168,15 +169,49 @@ sequenceDiagram
 
 When `resolve_three_way` returns `conflict`:
 
-1. The **local file is renamed** to `<filename>.hsyncconflict-<date>` in the
-   same directory — preserving the user's local changes.
+1. The **local file is copied** to `<stem>_conflicted_copy_<ISO8601-UTC>_<cid>.<ext>`
+   in the same directory — preserving the user's local changes.
 2. The **remote version is downloaded** — the master (server or LAN master) wins.
 3. The **base is updated** to the downloaded remote hash, so subsequent syncs
    don't re-trigger the conflict.
+4. A **`conflict_resolved` UI event** is emitted (via the `--events-json-fd`
+   channel) so the Desktop GUI can show a notification to the user.
 
-This is a **last-writer-wins with preservation** strategy. No data is ever
-silently discarded: the losing version is always kept as a conflict file for
-manual review.
+### Naming convention
+
+The conflicted-copy naming is **unified** between client and server:
+
+```
+<stem>_conflicted_copy_<YYYY-MM-DDTHHMMSSZ>_<cid>.<ext>
+```
+
+- Timestamps are always **UTC** (not local time) to avoid ambiguity across
+  devices in different time zones.
+- `<cid>` is the client ID that authored the losing version, truncated to 32
+  alphanumeric characters.
+- The same format is used whether the conflict is detected client-side
+  (`_save_conflict_copy` in `sync.py`) or server-side (overwrite in
+  `upload.py`).
+
+### Last-writer-wins with preservation (no auto-merge)
+
+HSYNC uses a **last-writer-wins (LWW) with preservation** strategy. This is
+the same approach used by Dropbox and OneDrive: when both sides diverge, the
+master version wins and the local version is preserved as a conflicted copy.
+
+**HSYNC does not perform automatic content merging** (unlike `git merge` or
+Syncthing's optional text-merge). Rationale:
+
+- Most synced files are binary (images, archives, databases) where text-merge
+  is meaningless.
+- A three-way text merge can silently produce semantically broken files
+  (e.g. merging two edits to the same code block).
+- LWW + conflicted copy is predictable: the user always knows what happened
+  and can merge manually with their tool of choice.
+
+The `conflict_resolved` event lets the GUI surface conflicts immediately
+rather than requiring the user to discover `_conflicted_copy_` files by
+browsing the file system.
 
 > HSYNC is master-authoritative, not a CRDT. The master (server or elected LAN
 > master) is always the source of truth. The conflict file preserves the local
