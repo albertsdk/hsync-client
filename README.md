@@ -33,21 +33,14 @@ HSYNC is designed to synchronize files **in real-time** using **only the HTTP/HT
 
 Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
 
-| Tool | Required Protocol | Default Port(s) | Works over HTTP only? |
-|------|-------------------|------------------|-----------------------|
-| **HSYNC** | HTTP / HTTPS | 9753 / custom | ✅ **Yes** |
-| **rsync** | SSH or rsync daemon | 22 / 873 | ❌ No |
-| **scp / sftp** | SSH | 22 | ❌ No |
-| **Unison** | SSH or direct socket | 22 / custom | ❌ No |
-| **Syncthing** | BEP (custom protocol) | 22000 | ❌ No |
-| **FTP / FTPS** | FTP | 20–21 / 990 | ❌ No |
-| **Rclone** | Varies (S3, SFTP, etc.) | Varies | ⚠️ Partial (backend-dependent) |
-
-> **Note on ports:** HSYNC's default server port is **9753** (configurable via
-> the server URL, e.g. `-s https://host:9753`). Ports **80** (HTTP) and **443**
-> (HTTPS) are not used by default but are fully supported by placing a reverse
-> proxy / load balancer in front of the server — a common setup in corporate and
-> cloud environments where only standard web ports are exposed.
+| Tool | Protocol | HTTP | Real-Time | Architecture |
+|------|----------|:---:|:---:|------|
+| **HSYNC** | HTTP / HTTPS | ✅ | ✅ | Server + P2P |
+| rsync | SSH or rsync daemon | ❌ | ❌ | Client-Server |
+| Syncthing | BEP (custom) | ❌ | ✅ | P2P |
+| scp / sftp | SSH | ❌ | ❌ | Client-Server |
+| Unison | SSH or direct socket | ❌ | ❌ | P2P |
+| Rclone | S3, SFTP, etc. | ⚠️ Partial | ❌ | Client-Server |
 
 **When to choose HSYNC:**
 
