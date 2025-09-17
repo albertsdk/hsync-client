@@ -35,7 +35,7 @@ Most traditional file synchronization tools rely on protocols that are often blo
 
 | Tool | Protocol | HTTP | Real-Time | Architecture |
 |------|----------|:---:|:---:|------|
-| **HSYNC** | HTTP / HTTPS | ✅ | ✅ | Server + P2P |
+| **HSYNC** | HTTP / HTTPS | ✅ | ✅ | Client-Server + P2P |
 | rsync | SSH or rsync daemon | ❌ | ❌ | Client-Server |
 | Syncthing | BEP (custom) | ❌ | ✅ | P2P |
 | scp / sftp | SSH | ❌ | ❌ | Client-Server |
