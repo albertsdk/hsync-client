@@ -207,7 +207,8 @@ class TestSHA256Performance:
         # Verify correctness
         import hashlib
 
-        expected = hashlib.sha256(open(test_file, "rb").read()).hexdigest()
+        with open(test_file, "rb") as f:
+            expected = hashlib.sha256(f.read()).hexdigest()
         assert sha256sum == expected
 
     def test_sha256_small_file(self, tmp_path):
