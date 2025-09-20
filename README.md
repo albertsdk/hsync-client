@@ -43,7 +43,6 @@ Most traditional file synchronization tools rely on protocols that are often blo
 | Rclone | S3, SFTP, etc. | ⚠️ Partial | ❌ | ⚠️ ³ | Client-Server |
 
 > ¹ Local filesystem monitoring via desktop client; no native push notifications (WebSocket) like HSYNC.
->
 > ² Seafile uses a proprietary block-based internal storage format; files are not directly accessible from the filesystem without the Seafile server.
 > ³ Rclone with the `crypt` backend stores files in an opaque encrypted format; with other backends (e.g., SFTP, local) files remain in their original format.
 
