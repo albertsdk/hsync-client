@@ -20,6 +20,7 @@ import pytest
 from .lan_helpers import (
     _HSYNC_COMMON_DIR,
     _LAN_KEY,
+    _lan_ready_path,
     _lan_start,
     _terminate,
     _wait_for_file,
@@ -45,7 +46,12 @@ class TestLanDryRun:
         """--dry-run prevents any file transfer."""
         (Path(lan_master_dir) / "dry_test.txt").write_bytes(b"dry\n")
 
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -178,7 +184,12 @@ class TestLanMassDelete:
         for i in range(20):
             (Path(lan_master_dir) / f"md{i:02d}.txt").write_bytes(b"mass-delete\n")
 
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -269,7 +280,12 @@ class TestLanIgnorePatterns:
         (Path(lan_master_dir) / "keep.me").write_bytes(b"keep\n")
         (Path(lan_master_dir) / "drop.tmp").write_bytes(b"drop\n")
 
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -328,7 +344,12 @@ class TestLanLogfile:
         """--logfile writes the session log to a file."""
         logfile = Path(lan_master_dir) / "session.log"
 
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = subprocess.Popen(
             [
                 sys.executable,

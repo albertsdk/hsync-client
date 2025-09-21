@@ -11,6 +11,7 @@ This module provides common utility functions for path handling,
 file operations, and data formatting.
 """
 
+import atexit
 import os
 import secrets
 import threading
@@ -480,6 +481,41 @@ def get_cid(length: int = CID_LENGTH) -> str:
 # =============================================================================
 # Data Formatting
 # =============================================================================
+
+
+# =============================================================================
+# Ready File (test harness signalling)
+# =============================================================================
+
+_HSYNC_READY_FILE_PATH: str | None = None
+
+
+def _write_ready_file() -> None:
+    """Signal that this client is ready (initial sync complete and serving).
+
+    Only writes when ``HSYNC_READY_FILE`` is set in the environment (test
+    harness). The file contains the process PID so the test can verify
+    liveness with ``os.kill(pid, 0)`` instead of trusting a stale file left
+    by a killed predecessor.
+    """
+    import os as _os
+
+    ready_path = _os.environ.get("HSYNC_READY_FILE")
+    if not ready_path:
+        return
+    global _HSYNC_READY_FILE_PATH
+    _HSYNC_READY_FILE_PATH = ready_path
+    Path(ready_path).write_text(str(_os.getpid()))
+    atexit.register(_remove_ready_file)
+
+
+def _remove_ready_file() -> None:
+    """Remove the ready file (atexit handler).  Idempotent."""
+    if _HSYNC_READY_FILE_PATH:
+        try:
+            Path(_HSYNC_READY_FILE_PATH).unlink(missing_ok=True)
+        except OSError:
+            pass  # best-effort
 
 
 # =============================================================================

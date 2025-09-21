@@ -145,19 +145,6 @@ class TestMassDeletePercentGuard:
         assert result.exit_code == 0
 
 
-class TestMaxInboundGuard:
-    def test_max_inbound_size_e2e_skip(self):
-        """--max-inbound-size e2e requires multi-MB file transfers.
-
-        Functionality verified by unit tests in test_security_inbound.py.
-        """
-        import pytest
-
-        pytest.skip(
-            "max-inbound-size e2e requires multi-MB file; functionality verified by unit tests"
-        )
-
-
 class TestDeletionRiskGuard:
     def test_download_only_without_yes_aborts_in_noninteractive(
         self, live_server, local_dir, run_cli

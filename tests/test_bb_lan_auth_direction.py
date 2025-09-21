@@ -20,6 +20,7 @@ import pytest
 from .lan_helpers import (
     _HSYNC_COMMON_DIR,
     _LAN_KEY,
+    _lan_ready_path,
     _lan_start,
     _terminate,
     _wait_for_file,
@@ -44,7 +45,12 @@ class TestLanKeyAuth:
     def test_lan_key_mismatch_rejected(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Master with LAN key A, slave with LAN key B → connection refused."""
         # Start master with LAN_KEY
-        env_master = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env_master = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -81,6 +87,7 @@ class TestLanKeyAuth:
                 **os.environ,
                 "HSYNC_LAN_KEY": "wrong-key-xxxxxxxx",
                 "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
             }
             slave = subprocess.Popen(
                 [
@@ -134,7 +141,12 @@ class TestLanSyncDirection:
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+            env = {
+                **os.environ,
+                "HSYNC_LAN_KEY": _LAN_KEY,
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -189,7 +201,12 @@ class TestLanSyncDirection:
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+            env = {
+                **os.environ,
+                "HSYNC_LAN_KEY": _LAN_KEY,
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,

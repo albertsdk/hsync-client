@@ -20,6 +20,7 @@ import pytest
 from .lan_helpers import (
     _HSYNC_COMMON_DIR,
     _LAN_KEY,
+    _lan_ready_path,
     _lan_start,
     _stderr_text,
     _terminate,
@@ -146,7 +147,12 @@ class TestLanMultiSlave:
 class TestLanPersistent:
     def test_no_lan_persistent_exits_when_alone(self, lan_master_dir, lan_bucket):
         """--no-lan-persistent exits instead of waiting when no peers are found."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -241,7 +247,12 @@ class TestLanFilterPath:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with --filter-path sub_a
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+            env = {
+                **os.environ,
+                "HSYNC_LAN_KEY": _LAN_KEY,
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -296,13 +307,18 @@ class TestLanFilterPath:
 class TestLanBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--max-bandwidth-download with a generous limit still allows sync."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with bandwidth limit (10 MB/s — generous enough)
+            env = {
+                **os.environ,
+                "HSYNC_LAN_KEY": _LAN_KEY,
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,

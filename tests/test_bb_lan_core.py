@@ -12,7 +12,6 @@ Requires HSYNC_BB_LAN=1 to run.
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -20,6 +19,7 @@ import pytest
 from .lan_helpers import (
     _HSYNC_COMMON_DIR,
     _LAN_KEY,
+    _lan_ready_path,
     _lan_start,
     _stderr_text,
     _terminate,
@@ -40,8 +40,13 @@ class TestLanElection:
         """A force-master client becomes master; a never-master slave syncs to it."""
         # Start both peers — election needs at least two participants
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
-        time.sleep(2)  # let master register mDNS before slave discovers
         try:
+            # Wait for the master to register its mDNS service before
+            # starting the slave, so the election can proceed immediately
+            # when both peers are discovered.
+            assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
+                "Master mDNS service did not register"
+            )
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 # Wait for "MASTER" in either peer's logs (election needs both running)
@@ -257,7 +262,12 @@ class TestLanStrictPairing:
             )
 
             # Start slave with --require-pairing (no prior pin exists)
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+            env = {
+                **os.environ,
+                "HSYNC_LAN_KEY": _LAN_KEY,
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,
