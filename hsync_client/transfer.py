@@ -501,25 +501,25 @@ def _download_file_attempt(file: File) -> None:
                 resume_offset = 0
                 if Path(partial_file_path).exists():
                     remove(partial_file_path)
-                # Compressed response — stream-decompress straight to disk with a
-                # hard output cap (anti decompression-bomb): the payload comes
-                # from a remote peer, so neither the compressed body nor the
-                # expanded content is ever fully buffered in memory. The cap is
-                # min(declared size, MAX_INBOUND_SIZE): the real content must
-                # match the declared size exactly (the SHA-256 check below
-                # verifies integrity against the listing), and the absolute cap
-                # keeps a hostile peer from expanding a bomb up to an arbitrarily
-                # large declaration.
-                response.raw.decode_content = False
-                with _open_partial_no_follow(partial_file_path, "wb") as f:
-                    write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_INBOUND_SIZE", 0))
-                    for chunk in decompress_stream(
-                        response.raw, max_output_size=write_cap if write_cap is not None else 0
-                    ):
-                        f.write(chunk)
-                    # Flush OS buffers to disk before the file is considered written
-                    f.flush()
-                    fsync(f.fileno())
+            # Compressed response — stream-decompress straight to disk with a
+            # hard output cap (anti decompression-bomb): the payload comes
+            # from a remote peer, so neither the compressed body nor the
+            # expanded content is ever fully buffered in memory. The cap is
+            # min(declared size, MAX_INBOUND_SIZE): the real content must
+            # match the declared size exactly (the SHA-256 check below
+            # verifies integrity against the listing), and the absolute cap
+            # keeps a hostile peer from expanding a bomb up to an arbitrarily
+            # large declaration.
+            response.raw.decode_content = False
+            with _open_partial_no_follow(partial_file_path, "wb") as f:
+                write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_INBOUND_SIZE", 0))
+                for chunk in decompress_stream(
+                    response.raw, max_output_size=write_cap if write_cap is not None else 0
+                ):
+                    f.write(chunk)
+                # Flush OS buffers to disk before the file is considered written
+                f.flush()
+                fsync(f.fileno())
         else:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"

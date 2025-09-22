@@ -430,6 +430,53 @@ class TestDownloadFileResume:
 class TestDownloadCompressed:
     """Tests for compressed download."""
 
+    def test_fresh_compressed_download_writes_content(self, tmp_path):
+        """Regression: a fresh (non-resumed) compressed download must write the file.
+
+        The decompression body was once nested under the resume-offset branch,
+        so a first-attempt compressed download wrote nothing and the checksum
+        read then failed with ENOENT on the ``.part`` file (surfaced by the
+        LAN black-box large-file test). Unlike ``test_download_compressed_response``
+        this keeps the real filesystem — no ``compute_sha256``/``replace``
+        mocks — so the write path is exercised end to end.
+        """
+        import hashlib
+
+        import zstandard as zstd
+
+        content = b"fresh compressed download content" * 100
+        compressed = zstd.ZstdCompressor().compress(content)
+
+        file = File(
+            filepath="file.txt",
+            sha256sum=hashlib.sha256(content).hexdigest(),
+            size=len(content),
+            mtime=1000,
+            ctime=1000,
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"Content-Encoding": "zstd"}
+        mock_response.raw = io.BytesIO(compressed)
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            download_file(file)
+
+        assert (tmp_path / "file.txt").read_bytes() == content
+
     def test_download_compressed_response(self, tmp_path):
         """Test download handles compressed response."""
         import zstandard as zstd
