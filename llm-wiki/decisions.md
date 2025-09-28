@@ -23,6 +23,16 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
 
 ## Client-only operational rules
 
+- **One device identity per installation (Syncthing model)**: LAN mode identifies
+  with the persistent device ID from `identity.py` (anchored in
+  `HSYNC_DEVICE_DIR`), never a per-session random CID; remote mode keeps random
+  session CIDs (echo suppression only — the API key is the identity there).
+  Consequence: two instances on one host syncing the same bucket are the *same
+  device* and cannot discover each other — distinct devices need distinct
+  `HSYNC_DEVICE_DIR`s.
+- **One process per synced directory**: `InstanceLock` (`identity.py`) refuses a
+  second process on the same local path (side-car corruption otherwise); the
+  flock lives outside the bucket and can never go stale.
 - **No protocol forking**: never redefine versions/constants/models locally;
   import from `hsync_common.*`. New wire fields land in common first.
 - **No wall-clock trust for direction**: reconciliation uses the persisted

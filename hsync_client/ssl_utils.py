@@ -44,14 +44,13 @@ RSA_KEY_SIZE = DEFAULT_KEY_SIZE
 # only avoids the operational nuisance of regenerating an expired identity.
 MASTER_CERT_VALIDITY_DAYS = 3650  # ~10 years
 
-# Override for the directory holding the persistent LAN master keypair.
-MASTER_CERT_DIR_ENV = "HSYNC_LAN_CERT_DIR"
-
+# The keypair lives in the device identity directory; see
+# :func:`hsync_client.identity.default_device_dir` (``HSYNC_DEVICE_DIR``).
 _MASTER_CERT_FILENAME = "lan_master_cert.pem"
 _MASTER_KEY_FILENAME = "lan_master_key.pem"
 
+
 __all__ = [
-    "MASTER_CERT_DIR_ENV",
     "MASTER_CERT_VALIDITY_DAYS",
     "RSA_KEY_SIZE",
     "CertificateInfo",
@@ -83,24 +82,24 @@ class CertificateInfo:
 
 
 def default_master_cert_dir() -> Path:
-    """Resolve the LAN master cert dir: ``$HSYNC_LAN_CERT_DIR`` or an OS state dir.
+    """Resolve the LAN master cert dir — delegates to the device identity dir.
 
-    Mirrors :func:`hsync_client.pinning.default_pin_store_path` so the master's
-    identity lives outside the synced bucket and survives restarts.
+    The keypair lives in the device directory (``$HSYNC_DEVICE_DIR``, else an
+    OS state dir): see :func:`hsync_client.identity.default_device_dir`, the
+    single source of truth. Imported lazily to keep the module graph acyclic
+    (``identity`` imports this module).
     """
-    override = os.environ.get(MASTER_CERT_DIR_ENV)
-    if override:
-        return Path(override)
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
-    return Path(base) / "hsync" / "lan_cert"
+    from hsync_client.identity import default_device_dir
+
+    return default_device_dir()
 
 
 def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInfo:
     """Load the persistent LAN master keypair, generating it on first use.
 
-    The keypair lives in an OS state directory (overridable via
-    ``$HSYNC_LAN_CERT_DIR``) so the master's fingerprint stays stable across
-    restarts: pinned peers keep trusting it (TOFU) instead of seeing a
+    The keypair lives in the device identity directory (``$HSYNC_DEVICE_DIR``,
+    else an OS state directory) so the master's fingerprint stays stable
+    across restarts: pinned peers keep trusting it (TOFU) instead of seeing a
     ``[FINGERPRINT CHANGED]`` mismatch every time the master restarts.
 
     The private key is written unencrypted and protected by filesystem

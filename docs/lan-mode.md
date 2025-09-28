@@ -16,7 +16,7 @@ same local network, without requiring a centralized HSYNC server.
 
 ```mermaid
 flowchart TB
-    subgraph "① Traditional Mode"
+    subgraph "① Client-Server Mode"
         C1A[Client A] -->|"sync"| S[Server]
         C1B[Client B] -->|"sync"| S
         C1C[Client C] -->|"sync"| S
@@ -151,7 +151,7 @@ $ hsync -b photos -p ~/Pictures --lan-mode
 
 All LAN command-line options and `HSYNC_*` environment variables — including the
 master-election flags `--force-master`/`--never-master`, the discovery/heartbeat
-timeouts, `HSYNC_LAN_KEY`, `HSYNC_LAN_CERT_DIR` and persistence — are documented
+timeouts, `HSYNC_LAN_KEY`, `HSYNC_DEVICE_DIR` and persistence — are documented
 in the single reference:
 [Configuration → LAN Mode Options](configuration.md#lan-mode-options).
 
@@ -186,6 +186,51 @@ connection that carries the data.
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
 > [LAN Internals → Transport Security](internal/lan-internals.md#transport-security-internals).
+
+## Device Identity
+
+Every hsync installation owns **one persistent device identity** (the same
+model as Syncthing's device IDs): a stable 21-character **device ID** plus the
+TLS keypair used for the LAN transport. Both live in the device directory
+(`HSYNC_DEVICE_DIR`, default `~/.local/state/hsync/device/`):
+
+| File | Content | Permissions |
+|------|---------|-------------|
+| `device_id` | The device ID (identity anchor for TOFU pins) | `0600` |
+| `lan_master_cert.pem` / `lan_master_key.pem` | The LAN keypair (may be rotated) | `0600` |
+
+Consequences:
+
+- **Pins survive restarts** — TOFU pins are keyed on `(device_id, bucket)`, so
+  a restarted master is recognised by its peers instead of being re-pinned
+  silently.
+- **Key rotation is detectable** — deleting only the `*.pem` files regenerates
+  the keypair while the device ID stays; peers then see a changed fingerprint
+  for a known device and refuse the connection (`[FINGERPRINT CHANGED]`).
+- **Copying the device directory clones the device** — keep it private.
+
+### Multiple instances on one host
+
+- **Different buckets** — works out of the box: the mDNS service name is
+  `{bucket}-{device_id}`, so instances never clash.
+- **Same bucket** — not possible with one device identity (the instances are
+  the *same device* and ignore each other in discovery; the second mDNS
+  registration fails with a clear error). Give the second instance its own
+  identity:
+
+  ```bash
+  HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync -b photos -p ~/Other --lan-mode
+  ```
+
+### One process per directory
+
+Two hsync processes can never sync the **same local directory** at the same
+time (regardless of buckets): they would corrupt each other's `.hsyncstate` /
+`.hsynctombstones` side-cars. The client enforces this with a cross-process
+`flock` (per-directory, in `$XDG_RUNTIME_DIR/hsync/locks/` or
+`HSYNC_LOCKS_DIR`) and refuses to start with an error naming the conflicting
+directory and PID. The lock is released by the kernel even if the process is
+killed, so it can never go stale.
 
 ## Group Filtering
 

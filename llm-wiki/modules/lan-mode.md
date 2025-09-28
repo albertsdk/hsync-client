@@ -90,8 +90,10 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | ------- | ---- | ----- |
 | Pin store | `pinning.py:56` (`PinStore`) | disk-backed, `0o600` (`_PIN_FILE_MODE:39`); key `_pin_key:51`; path `default_pin_store_path:42` / `PIN_FILE_ENV:35` |
 | Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed`/`pairing_needed` |
-| Master identity | `ssl_utils.py:98` (`load_or_create_master_cert`) | persistent cert/key (`MASTER_CERT_VALIDITY_DAYS:45`) → stable fp across restarts |
-| Connection pinning | `ssl_utils.py:171`/`:194`/`:228` | `create_fingerprint_ssl_context`, `FingerprintHTTPAdapter`, `verify_peer_cert_fingerprint` (no TOCTOU) |
+| Device identity | `identity.py` (`load_or_create_device_identity`) | Syncthing-style: one identity per installation — stable device ID (`device_id` file, CID_PATTERN-valid) + keypair in `HSYNC_DEVICE_DIR` (`default_device_dir`); cached process-wide. The device ID **is** the LAN `cid` (resolved in `main_logic.run_sync`), so pins survive restarts and cert rotation (delete `*.pem`, keep `device_id`) is detected as `[FINGERPRINT CHANGED]`. Keypair itself: `ssl_utils.load_or_create_master_cert` (dir delegates to `identity.default_device_dir`) |
+| Instance lock | `identity.py` (`InstanceLock`) | cross-process `flock` per synced dir (key = sha256 of realpath) in `HSYNC_LOCKS_DIR` / `$XDG_RUNTIME_DIR/hsync/locks`; kernel-released on death (never stale); second process on the same dir is refused with the holder PID in the message. Acquired for the whole run in `main_logic.run_sync`; same-process re-entry is a no-op (CliRunner tests) |
+| mDNS name clash | `lan.py` (`_register_service`) | `NonUniqueNameException` → clear `RuntimeError`: same device identity + same bucket already announced on this host → use a separate `HSYNC_DEVICE_DIR` (different buckets on one host share the identity fine: service name is `{bucket}-{device_id}`) |
+| Connection pinning | `ssl_utils.py` | `create_fingerprint_ssl_context`, `FingerprintHTTPAdapter`, `verify_peer_cert_fingerprint` (no TOCTOU) |
 
 HTTPS/WSS is mandatory in LAN mode (no plaintext fallback). Write-capable sync in
 non-interactive mode requires a LAN key (`main_logic._check_lan_write_policy`).

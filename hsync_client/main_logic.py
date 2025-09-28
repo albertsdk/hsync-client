@@ -638,10 +638,22 @@ def run_sync(
     ws_url = sub(r"^http:", "ws:", effective_server_url)
     ws_url = sub(r"^https:", "wss:", ws_url)
 
-    # Generate unique client ID for this session
-    cid = get_cid()
-    set_client_id(cid)
-    log.info(f"Session CID: {cid}")
+    # Client identity. LAN mode presents the persistent device identity
+    # (Syncthing-style: one device ID per installation, anchored in
+    # $HSYNC_DEVICE_DIR) so TOFU pins survive restarts and a changed
+    # certificate for the same device ID is detectable. Remote mode keeps a
+    # per-session random CID: it only feeds echo suppression — the API key
+    # is the identity there.
+    if lan_mode:
+        from hsync_client.identity import load_or_create_device_identity
+
+        cid = load_or_create_device_identity().device_id
+        set_client_id(cid)
+        log.info(f"Device ID: {cid}")
+    else:
+        cid = get_cid()
+        set_client_id(cid)
+        log.info(f"Session CID: {cid}")
     emit_event(UiEventName.session, cid=cid)
 
     # Resolve API key once: FD-pipe value takes precedence over env var
@@ -933,59 +945,84 @@ def run_sync(
         for label, description in log_labels.items():
             log.info(f"  {label} {description}")
 
-    # LAN Mode: Peer Discovery and Master Election
-    if config["LAN_MODE"]:
-        _warn_if_lan_in_container(log)
-        run_lan_mode(config, log)
-        return
+    # Cross-process instance lock: two hsync processes must never sync the
+    # same local directory — they would corrupt each other's .hsyncstate /
+    # .hsynctombstones side-cars and echo each other's watcher events. The
+    # flock is held for the whole run (LAN or remote) and is released by the
+    # kernel even on SIGKILL; see hsync_client.identity.InstanceLock.
+    instance_lock = _acquire_instance_lock(local_path, log)
+    try:
+        # LAN Mode: Peer Discovery and Master Election
+        if config["LAN_MODE"]:
+            _warn_if_lan_in_container(log)
+            run_lan_mode(config, log)
+            return
 
-    # Server Connectivity Check with retry
-    if not _check_server_connectivity(
-        server_url=effective_server_url,
-        timeout=min(config["HTTP_TIMEOUT"], 10),
-        verify_ssl=not config["NO_VERIFY_SSL"],
-        logger=log,
-    ):
-        # An unreachable server is a failed run: exit non-zero instead of
-        # returning silently with a success exit code.
-        sys.exit(1)
-
-    # Diagnostic clock-skew check (server mode). LAN mode performs its own
-    # measurement against the elected master after discovery.
-    if not lan_mode:
-        _warn_on_clock_skew(
+        # Server Connectivity Check with retry
+        if not _check_server_connectivity(
             server_url=effective_server_url,
             timeout=min(config["HTTP_TIMEOUT"], 10),
             verify_ssl=not config["NO_VERIFY_SSL"],
-            headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
             logger=log,
-        )
+        ):
+            # An unreachable server is a failed run: exit non-zero instead of
+            # returning silently with a success exit code.
+            sys.exit(1)
 
-    # Reset bandwidth throttle state for this session
-    reset_bandwidth_throttle()
+        # Diagnostic clock-skew check (server mode). LAN mode performs its own
+        # measurement against the elected master after discovery.
+        if not lan_mode:
+            _warn_on_clock_skew(
+                server_url=effective_server_url,
+                timeout=min(config["HTTP_TIMEOUT"], 10),
+                verify_ssl=not config["NO_VERIFY_SSL"],
+                headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
+                logger=log,
+            )
 
-    # Log bandwidth limits if configured
-    if (upload_limit := config.get("MAX_BANDWIDTH_UPLOAD")) is not None:
-        log.info(f"Upload bandwidth limit: {format_bytes(float(upload_limit))}/s")
-    if (download_limit := config.get("MAX_BANDWIDTH_DOWNLOAD")) is not None:
-        log.info(f"Download bandwidth limit: {format_bytes(float(download_limit))}/s")
+        # Reset bandwidth throttle state for this session
+        reset_bandwidth_throttle()
 
-    # Execute Sync
-    if config["DRYRUN"] and continuous:
-        # Dry-run + continuous: show preview, wait for SYNC command,
-        # then switch to continuous sync.
-        _run_preview(log)
-        run(_run_stdin_wait(log))
-        # After SYNC command: DRYRUN is now False, run continuous sync
-        run(_run_with_stdin_commands(log))
-    elif not config["DRYRUN"] and continuous:
-        run(_run_with_stdin_commands(log))
-    elif config["DRYRUN"]:
-        # One-shot dry-run: show the preview only — running sync() here would
-        # perform real transfers despite --dry-run.
-        _run_preview(log)
-    else:
-        run(sync())
+        # Log bandwidth limits if configured
+        if (upload_limit := config.get("MAX_BANDWIDTH_UPLOAD")) is not None:
+            log.info(f"Upload bandwidth limit: {format_bytes(float(upload_limit))}/s")
+        if (download_limit := config.get("MAX_BANDWIDTH_DOWNLOAD")) is not None:
+            log.info(f"Download bandwidth limit: {format_bytes(float(download_limit))}/s")
+
+        # Execute Sync
+        if config["DRYRUN"] and continuous:
+            # Dry-run + continuous: show preview, wait for SYNC command,
+            # then switch to continuous sync.
+            _run_preview(log)
+            run(_run_stdin_wait(log))
+            # After SYNC command: DRYRUN is now False, run continuous sync
+            run(_run_with_stdin_commands(log))
+        elif not config["DRYRUN"] and continuous:
+            run(_run_with_stdin_commands(log))
+        elif config["DRYRUN"]:
+            # One-shot dry-run: show the preview only — running sync() here would
+            # perform real transfers despite --dry-run.
+            _run_preview(log)
+        else:
+            run(sync())
+    finally:
+        instance_lock.release()
+
+
+def _acquire_instance_lock(local_path: str, log) -> "Any":
+    """Acquire the per-directory instance lock, failing fast with a clear error.
+
+    Two live hsync processes on the same synced directory would corrupt each
+    other's engine side-cars; the lock holder's PID (when readable) is included
+    in the message so the conflicting process is easy to find.
+    """
+    from hsync_client.identity import InstanceLock, InstanceLockError
+
+    try:
+        return InstanceLock.acquire(local_path)
+    except InstanceLockError as e:
+        log.error(str(e))
+        sys.exit(1)
 
 
 async def _run_with_stdin_commands(log) -> None:

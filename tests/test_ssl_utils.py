@@ -25,10 +25,13 @@ from hsync_client.ssl_utils import (
 
 @pytest.fixture
 def cert_dir(tmp_path, monkeypatch):
-    """Point the persistent master cert dir at an isolated temp directory."""
-    from hsync_client.ssl_utils import MASTER_CERT_DIR_ENV
+    """Point the persistent master cert dir at an isolated temp directory.
 
-    monkeypatch.setenv(MASTER_CERT_DIR_ENV, str(tmp_path))
+    The keypair lives in the device identity directory (``HSYNC_DEVICE_DIR``);
+    the conftest isolation fixture already points it at ``tmp_path /
+    "hsync_device"`` — redirect it to *tmp_path* itself for these tests.
+    """
+    monkeypatch.setenv("HSYNC_DEVICE_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -138,29 +141,23 @@ class TestDefaultMasterCertDir:
     """Tests for default_master_cert_dir function."""
 
     def test_env_override(self, monkeypatch):
-        """HSYNC_LAN_CERT_DIR overrides the resolved directory."""
-        from hsync_client.ssl_utils import MASTER_CERT_DIR_ENV
-
-        monkeypatch.setenv(MASTER_CERT_DIR_ENV, "/custom/cert/dir")
+        """HSYNC_DEVICE_DIR overrides the resolved directory."""
+        monkeypatch.setenv("HSYNC_DEVICE_DIR", "/custom/cert/dir")
         assert str(default_master_cert_dir()) == "/custom/cert/dir"
 
     def test_xdg_state_home(self, monkeypatch):
         """Falls back to $XDG_STATE_HOME when no override is set."""
-        from hsync_client.ssl_utils import MASTER_CERT_DIR_ENV
-
-        monkeypatch.delenv(MASTER_CERT_DIR_ENV, raising=False)
+        monkeypatch.delenv("HSYNC_DEVICE_DIR", raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", "/xdg/state")
         result = default_master_cert_dir()
-        assert str(result) == os.path.join("/xdg/state", "hsync", "lan_cert")
+        assert str(result) == os.path.join("/xdg/state", "hsync", "device")
 
     def test_default_local_state(self, monkeypatch):
         """Falls back to ~/.local/state when nothing else is set."""
-        from hsync_client.ssl_utils import MASTER_CERT_DIR_ENV
-
-        monkeypatch.delenv(MASTER_CERT_DIR_ENV, raising=False)
+        monkeypatch.delenv("HSYNC_DEVICE_DIR", raising=False)
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         result = default_master_cert_dir()
-        assert result.name == "lan_cert"
+        assert result.name == "device"
         assert "hsync" in result.parts
 
 

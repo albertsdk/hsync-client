@@ -33,7 +33,7 @@ from hsync_common.protocol.lan import (
     election_sort_key,
 )
 from loguru import logger as log
-from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
+from zeroconf import NonUniqueNameException, ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
@@ -886,7 +886,21 @@ class LANSync:
         )
 
         # Register the service
-        self._zeroconf.register_service(self._service_info)
+        try:
+            self._zeroconf.register_service(self._service_info)
+        except NonUniqueNameException:
+            # The service name is "{bucket}-{device_id}": a clash means another
+            # process presenting THIS device identity already announces THIS
+            # bucket on the network — almost always a second instance on this
+            # host sharing the same device directory.
+            raise RuntimeError(
+                f"mDNS name clash: another hsync instance with the same device "
+                f"identity already announces bucket '{self._bucket}' on this host. "
+                "Instances syncing the same bucket on one host must run as distinct "
+                "devices: set HSYNC_DEVICE_DIR to a separate directory for this "
+                "instance. (Instances syncing different buckets can share one "
+                "device identity.)"
+            ) from None
         log.info(f"Registered mDNS service: {service_name} at {local_ip}:{self._port}")
 
     def _get_local_ip(self) -> str:
