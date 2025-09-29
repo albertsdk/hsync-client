@@ -40,8 +40,16 @@ pytest-cov = "^7.0.0"
 ruff = "^0.15.0"
 mypy = "^2.1.0"
 pre-commit = "^4.0.1"
-# Black-box behavioural tests run the real hsync-server in-process (loopback
-# uvicorn) so the client can be driven end-to-end through its public CLI.
+
+# hsync-server is only required by the opt-in black-box test suite
+# (test_bb_*, gated behind HSYNC_BB_SERVER=1 / HSYNC_BB_LAN=1), which spins up
+# the real server as a loopback subprocess. It is an optional sibling repo that
+# is not present in CI (where test_bb_* is excluded), so it lives in an optional
+# group: `poetry install` skips it; install it with `poetry install --with blackbox`.
+[tool.poetry.group.blackbox]
+optional = true
+
+[tool.poetry.group.blackbox.dependencies]
 hsync-server = {path = "../hsync-server", develop = true}
 
 [tool.pytest.ini_options]

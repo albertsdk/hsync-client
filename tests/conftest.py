@@ -166,8 +166,9 @@ def _kill_orphan_hsync_processes() -> None:
 # Behavioural, use-case-driven tests drive the *real* client through its public
 # Typer CLI against a *real* hsync-server running as a separate subprocess
 # (loopback HTTPS). No internal logic is mocked: only the filesystem (temp
-# dirs) and the API key are test fixtures. The client venv has hsync-server as
-# a dev dependency.
+# dirs) and the API key are test fixtures. hsync-server is an optional sibling
+# Poetry group (`blackbox`): install it with `poetry install --with blackbox`
+# before running this suite.
 # =============================================================================
 
 BB_API_KEY = "test-bb-api-key-0123456789abcdef"

@@ -55,7 +55,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: hsync-client
-        run: poetry install --no-interaction
+        # Skip the optional `blackbox` group: it pulls in the sibling
+        # hsync-server repo (not checked out here) and is only needed by the
+        # opt-in test_bb_* suite, which is excluded below.
+        run: poetry install --no-interaction --without blackbox
 
       - name: Ruff (lint)
         working-directory: hsync-client

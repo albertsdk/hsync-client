@@ -307,6 +307,15 @@ The server‑mode black‑box tests exercise the client against a real
 default** (opt‑in via ``HSYNC_BB_SERVER=1``), because they spin up a
 live server and require a sibling ``hsync-server`` installation.
 
+`hsync-server` is an **optional** Poetry group (`blackbox`) — it is not
+installed by `poetry install` (which keeps CI, where the sibling repo is
+absent, working). Install it before running the server‑mode black‑box
+suite:
+
+```bash
+poetry install --with blackbox
+```
+
 | File | What it covers |
 |------|---------------|
 | `test_bb_server_remote_sync.py` | Full sync cycle: upload, download, deletion, rename, directory sync, Unicode filenames, feature flags (compression, delta, autotune), dry‑run, ignore patterns. |
