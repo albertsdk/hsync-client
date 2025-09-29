@@ -783,6 +783,7 @@ class TestFileEventHandler:
         with (
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
             patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.is_symlink", return_value=False),
             patch("pathlib.Path.stat", return_value=mock_stat),
             patch("hsync_client.file_event_handler.File.get") as mock_get,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
@@ -1097,6 +1098,7 @@ class TestFileEventHandler:
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
             patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.is_symlink", return_value=False),
             patch("pathlib.Path.stat", return_value=mock_stat),
             patch("hsync_client.file_event_handler.File.get") as mock_get,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
