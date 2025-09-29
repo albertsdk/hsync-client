@@ -208,16 +208,17 @@ Test the three-way merge with known hash inputs:
 def test_resolve_three_way_conflict():
     # Both changed since base
     result = resolve_three_way(
-        local_hash="abc123",   # local changed
+        local_hash="abc123",  # local changed
         remote_hash="def456",  # remote changed
-        base_hash="xyz000",    # base is different from both
+        base_hash="xyz000",  # base is different from both
     )
     assert result == SyncDecision.conflict
+
 
 def test_resolve_three_way_upload():
     # Only local changed
     result = resolve_three_way(
-        local_hash="abc123",   # local changed
+        local_hash="abc123",  # local changed
         remote_hash="xyz000",  # remote unchanged (same as base)
         base_hash="xyz000",
     )
@@ -247,6 +248,7 @@ Most client tests should **not** require a running HSYNC Server. Use mocks:
 ```python
 import responses
 
+
 @responses.activate
 def test_fetch_remote_files():
     responses.add(
@@ -263,6 +265,7 @@ def test_fetch_remote_files():
 
 ```python
 from unittest.mock import AsyncMock, patch
+
 
 @patch("hsync_client.websocket_handler.WebSocketHandler")
 async def test_websocket_event(mock_ws):
