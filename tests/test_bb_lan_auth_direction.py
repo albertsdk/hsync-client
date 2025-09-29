@@ -10,19 +10,16 @@ Requires HSYNC_BB_LAN=1 to run.
 """
 
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from .lan_helpers import (
-    _HSYNC_COMMON_DIR,
-    _LAN_KEY,
     _lan_ready_path,
     _lan_start,
     _terminate,
+    _wait_for_client_ready,
     _wait_for_file,
     _wait_for_master,
     _wait_for_text_in_stderr,
@@ -45,83 +42,24 @@ class TestLanKeyAuth:
     def test_lan_key_mismatch_rejected(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Master with LAN key A, slave with LAN key B → connection refused."""
         # Start master with LAN_KEY
-        env_master = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-            ],
-            env=env_master,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with a DIFFERENT LAN key
-            env_slave = {
-                **os.environ,
-                "HSYNC_LAN_KEY": "wrong-key-xxxxxxxx",
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env_slave,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_env={"HSYNC_LAN_KEY": "wrong-key-xxxxxxxx"},
             )
             try:
-                # Slave should be rejected (auth error in master or disconnect)
-                auth_failed = _wait_for_text_in_stderr(
-                    master, "Unauthorized", timeout=15
-                ) or _wait_for_text_in_stderr(slave, "Unauthorized", timeout=5)
+                # The master answers 401 (response body only, never logged);
+                # the observable rejection is on the slave: the initial sync
+                # aborts with AuthenticationError ("Sync failed: Invalid API
+                # key") and the slave exits. The helper drains final output
+                # even after process exit.
+                auth_failed = _wait_for_text_in_stderr(slave, "Invalid API key", timeout=20)
                 assert auth_failed, "Slave should have been rejected with wrong LAN key"
             finally:
                 _terminate(slave)
@@ -141,41 +79,11 @@ class TestLanSyncDirection:
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {
-                **os.environ,
-                "HSYNC_LAN_KEY": _LAN_KEY,
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                    "--sync-direction",
-                    "download-only",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--sync-direction", "download-only"),
             )
             try:
                 # Master creates a file → appears on slave (download works)
@@ -201,41 +109,11 @@ class TestLanSyncDirection:
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {
-                **os.environ,
-                "HSYNC_LAN_KEY": _LAN_KEY,
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                    "--sync-direction",
-                    "upload-only",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--sync-direction", "upload-only"),
             )
             try:
                 # Master creates a file → must NOT appear on slave (download blocked)
@@ -285,7 +163,11 @@ class TestLanMasterRestart:
             # Restart master with same dir (same bucket, inherits existing files)
             master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
             try:
-                _wait_for_master(master2, lan_slave_dir, lan_bucket)
+                # The already-running slave triggers the election; wait for the
+                # restarted master to finish startup (ready file carries its PID).
+                assert _wait_for_client_ready(
+                    master2, _lan_ready_path(lan_master_dir), timeout=60
+                ), "Restarted master did not become ready"
 
                 # Create a new file on restarted master
                 content = b"post-restart\n"

@@ -147,8 +147,8 @@ Used by `test_bb_server_remote_sync.py`, `test_bb_server_continuous_sync.py`,
 
 | Fixture | Scope | Purpose |
 |---------|-------|---------|
-| `live_server` | session | Starts the **real `hsync-server`** in‑process via uvicorn on loopback HTTPS with a self‑signed certificate. Yields `(base_url, api_key)`. Disables rate‑limiting and docs. |
-| `bb_bucket` | function | Creates a uniquely‑named bucket on the live server for one test. |
+| `live_server` | module | Starts the **real `hsync-server`** as a separate subprocess on loopback HTTPS with a self‑signed certificate; readiness is probed via `GET /health`. Yields `(base_url, api_key)`. Disables rate‑limiting and docs. |
+| `bb_bucket` | function | Creates a uniquely‑named bucket on the live server for one test and deletes it afterwards. |
 | `local_dir` | function | Creates a temp directory used as the client's local sync path. |
 | `run_sync_once` | function | Returns a callable that runs a **one‑shot** client sync via `CliRunner` (Typer) with `--yes --insecure --min-free-disk-space 0`. Wraps the invocation in `_ClientGlobalsGuard`. |
 | `run_cli` | function | Like `run_sync_once` but adds no safety flags of its own — used by tests that must control `--yes` / `--sync-direction` / `--min-free-disk-space` precisely. |
@@ -350,24 +350,62 @@ timeout will abort the stable remote suite. `--maxfail` keeps one flaky LAN
 file from masking the others.
 
 The LAN tests start two subprocesses with `--lan-mode` (and
-`--force-master` / `--never-master`). They use the `_HSYNC_COMMON_DIR`
+`--force-master` / `--never-master`) via the `_lan_start` helper in
+`tests/lan_helpers.py`. They use the `_HSYNC_COMMON_DIR`
 constant to inject the `hsync-common` source directory into
 `PYTHONPATH` so the subprocess can import shared models.
 
+**Readiness contract** (how the harness knows a process is ready):
+
+| Process | Readiness signal |
+|---------|------------------|
+| `hsync-server` subprocess | Poll `GET /health` until 200 (real readiness probe). |
+| Client in watch mode (`-w`) | `HSYNC_READY_FILE` PID file, written after the first completed sync cycle. |
+| LAN master | `HSYNC_READY_FILE` PID file, written once its HTTP+WSS servers are up. |
+| LAN slave | `HSYNC_READY_FILE` PID file, written after the initial sync. |
+
+The ready file is written **atomically** (temp + rename) by the client and
+is accepted by `_wait_for_client_ready` **only when its content equals the
+expected subprocess PID** — stale files, PID reuse and foreign content are
+never trusted, and the harness never deletes the file (the right process
+overwrites it). Each instance gets its own ready file as a *sibling* of its
+synced directory: a file inside the bucket would be synced to the peer
+(`.hsync_ready` is not an engine-internal name and dotfiles are synced by
+design).
+
+**Isolation contract** (no dirty data across tests or on the host):
+
+- Every LAN subprocess gets its own `HSYNC_DEVICE_DIR` (device ID + keypair)
+  and `HSYNC_LAN_PIN_FILE` (TOFU pins) under the test's `tmp_path` — nothing
+  ever touches the developer's real `~/.local/state/hsync`. Two peers in one
+  test are *distinct devices* by construction (same host + same bucket +
+  same device ID would be ignored as "self" in discovery). Restarting a peer
+  on the same directory reuses its identity; deleting the `*.pem` files
+  rotates the certificate while keeping the device ID (used by the
+  fingerprint-changed test).
+- Subprocess environments are scrubbed of every pre-existing `HSYNC_*`
+  variable before test overrides are applied (`_lan_env`, `watch_sync`).
+- The per-directory instance lock (`hsync_client.identity.InstanceLock`)
+  makes two live clients on one synced directory impossible; its lock files
+  live in a per-test `HSYNC_LOCKS_DIR`.
+- `bb_bucket` deletes its bucket after each test, so the module-scoped
+  server never accumulates stale buckets.
+- The `tests/conftest.py` autouse fixture `_kill_orphan_hsync_processes`
+  terminates orphaned `hsync_client` subprocesses (direct children of the
+  pytest PID, via `pgrep -P`) after each test, preventing stale mDNS peers
+  from cascading into subsequent tests.
+
 **Known limitations**:
-- The tests are flaky by design (multi‑process + mDNS + election
+- The tests are timing-sensitive by design (multi‑process + mDNS + election
   handshake). A single timeout or port conflict can cause a cascade of
   failures.
-- stdout is piped to `subprocess.DEVNULL` to avoid deadlock; stderr is
-  polled for log markers (`MASTER`, `Pinned LAN master certificate`,
-  etc.).
+- Subprocess stdout is captured via `subprocess.PIPE` (stderr merged into
+  it; loguru logs to stdout) and polled for log markers (`MASTER`,
+  `Pinned LAN master certificate`, etc.) with `_wait_for_text_in_stderr`,
+  which also drains the final output of fast-exiting processes.
 - Do **not** combine LAN and remote/server black-box tests in the same
   `pytest` invocation with `-x`: a LAN timeout will abort the stable
   remote suite. Run the two groups separately, or use `--maxfail`.
-- The `tests/conftest.py` autouse fixture `_kill_orphan_hsync_processes`
-  terminates orphaned `hsync_client`/`hsync_server` subprocesses
-  (direct children of the pytest PID, via `pgrep -P`) after each test,
-  preventing stale mDNS peers from cascading into subsequent tests.
 
 ### Shared Black‑Box constants
 

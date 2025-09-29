@@ -10,19 +10,17 @@ Requires HSYNC_BB_LAN=1 to run.
 """
 
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from .lan_helpers import (
-    _HSYNC_COMMON_DIR,
-    _LAN_KEY,
     _lan_ready_path,
     _lan_start,
+    _stderr_text,
     _terminate,
+    _wait_for_client_ready,
     _wait_for_file,
     _wait_for_master,
     _wait_for_text_in_stderr,
@@ -46,44 +44,15 @@ class TestLanDryRun:
         """--dry-run prevents any file transfer."""
         (Path(lan_master_dir) / "dry_test.txt").write_bytes(b"dry\n")
 
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--dry-run",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--dry-run",),
             )
             try:
                 time.sleep(5)
@@ -180,57 +149,54 @@ class TestLanDeepPath:
 
 class TestLanMassDelete:
     def test_mass_delete_guard_trips(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Deleting many files on master with a low guard threshold trips the guard."""
+        """Mass deletion reconciled by a full sync trips the slave's guard.
+
+        Real-time WS ``deleted`` events are applied one by one by design; the
+        guard lives in the full-sync reconciliation. The scenario therefore
+        takes the slave offline (master stop), deletes the files, and restarts
+        the master: the slave rediscovers it and reconciles — 20 deletions
+        reach the threshold of 2 and the guard trips.
+
+        The slave runs ``--sync-direction download-only`` so it *mirrors* the
+        master: a bidirectional slave would instead re-upload local-only files
+        to an emptied master and no deletion would ever be computed.
+        """
         for i in range(20):
             (Path(lan_master_dir) / f"md{i:02d}.txt").write_bytes(b"mass-delete\n")
 
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--mass-delete-threshold",
-                    "2",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--mass-delete-threshold", "2", "--sync-direction", "download-only"),
             )
             try:
-                _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=60)
+                assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=60), (
+                    "Slave did not complete the initial sync"
+                )
+
+                # Slave goes "offline": master stops; the deletions become
+                # visible only at the next full reconciliation.
+                _terminate(master)
                 for i in range(20):
                     (Path(lan_master_dir) / f"md{i:02d}.txt").unlink()
-                assert _wait_for_text_in_stderr(slave, "mass delete", timeout=30), (
-                    "Mass-delete guard did not trip"
-                )
+
+                # Master restarts with the same identity (same device dir), so
+                # the slave's TOFU pin stays valid and it reconnects.
+                master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+                try:
+                    assert _wait_for_text_in_stderr(
+                        slave, "Mass-deletion guard tripped", timeout=90
+                    ), (
+                        "Mass-delete guard did not trip on reconcile after reconnect"
+                        f"\n--- slave log tail ---\n{_stderr_text(slave)[-3000:]}"
+                    )
+                finally:
+                    _terminate(master2)
             finally:
                 _terminate(slave)
         finally:
@@ -280,45 +246,15 @@ class TestLanIgnorePatterns:
         (Path(lan_master_dir) / "keep.me").write_bytes(b"keep\n")
         (Path(lan_master_dir) / "drop.tmp").write_bytes(b"drop\n")
 
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--ignore",
-                    "*.tmp",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--ignore-patterns", "*.tmp"),
             )
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "keep.me"), timeout=30), (
@@ -341,47 +277,28 @@ class TestLanIgnorePatterns:
 
 class TestLanLogfile:
     def test_logfile_writes_output(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--logfile writes the session log to a file."""
+        """--output writes the session log to a file.
+
+        With an output file the log sink moves off stdout, so readiness cannot
+        be parsed from the process output: wait on the master's ready file
+        instead (a temporary slave still triggers the election).
+        """
         logfile = Path(lan_master_dir) / "session.log"
 
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--logfile",
-                str(logfile),
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--output", str(logfile)),
         )
         try:
-            _wait_for_master(master, lan_slave_dir, lan_bucket)
+            temp_slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_client_ready(
+                    master, _lan_ready_path(lan_master_dir), timeout=60
+                ), "Master did not become ready"
+            finally:
+                _terminate(temp_slave)
 
             assert logfile.exists(), "Logfile was not created"
             log_content = logfile.read_text()

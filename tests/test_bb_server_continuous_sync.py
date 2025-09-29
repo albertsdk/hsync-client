@@ -299,11 +299,16 @@ class TestContinuousSync:
         import sys
 
         base_url, api_key = live_server
-        env = {
-            **os.environ,
-            "HSYNC_API_KEY": api_key,
-            "HSYNC_READY_FILE": _ready_path(local_dir),
-        }
+        # Scrub pre-existing HSYNC_* variables and keep the instance-lock dir
+        # per-test (see the watch_sync fixture in conftest.py).
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+        env.update(
+            {
+                "HSYNC_API_KEY": api_key,
+                "HSYNC_READY_FILE": _ready_path(local_dir),
+                "HSYNC_LOCKS_DIR": str(Path(local_dir).parent / "locks"),
+            }
+        )
         proc = subprocess.Popen(
             [
                 sys.executable,

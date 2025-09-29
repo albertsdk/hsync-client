@@ -10,18 +10,14 @@ Requires HSYNC_BB_LAN=1 to run.
 """
 
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from .lan_helpers import (
-    _HSYNC_COMMON_DIR,
-    _LAN_KEY,
-    _lan_ready_path,
     _lan_start,
+    _stderr_text,
     _terminate,
     _wait_for_file,
     _wait_for_master,
@@ -44,75 +40,24 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 class TestLanGroupFiltering:
     def test_different_lan_groups_dont_discover(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Peers in different LAN groups should not discover each other."""
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-                "--lan-group",
-                "group-alpha",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--lan-group", "group-alpha"),
         )
         try:
-            _wait_for_master(master, lan_slave_dir, lan_bucket)
+            # The temp slave must join the master's group or it is invisible.
+            _wait_for_master(
+                master, lan_slave_dir, lan_bucket, slave_extra_args=("--lan-group", "group-alpha")
+            )
 
             # Slave in different group — it won't connect, so file won't sync
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                    "--lan-group",
-                    "group-beta",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--lan-group", "group-beta"),
             )
             try:
                 (Path(lan_master_dir) / "group_test.txt").write_bytes(b"group\n")
@@ -134,72 +79,16 @@ class TestLanGroupFiltering:
 class TestLanCompression:
     def test_compression_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-compression master: sync still works, compression just disabled."""
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-                "--no-compression",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--no-compression",),
         )
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 content = b"no-compression\n"
                 (Path(lan_master_dir) / "nocmp.txt").write_bytes(content)
@@ -216,72 +105,16 @@ class TestLanCompression:
 class TestLanDelta:
     def test_delta_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-delta master: sync still works, delta just disabled."""
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-                "--no-delta",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--no-delta",),
         )
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 content = b"no-delta\n"
                 (Path(lan_master_dir) / "nodlt.txt").write_bytes(content)
@@ -297,42 +130,12 @@ class TestLanDelta:
 
 class TestLanPeriodicResync:
     def test_periodic_resync_fires(self, lan_master_dir, lan_bucket):
-        """Master with --resync-interval triggers periodic full sync."""
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-                "--resync-interval",
-                "15",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        """Master with --interval triggers periodic full sync."""
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--interval", "20"),  # 20s is the minimum accepted interval
         )
         try:
             # Only check that the master stays alive and logs the resync
@@ -349,22 +152,31 @@ class TestLanPeriodicResync:
 
 
 class TestLanHiddenFiles:
-    def test_hidden_file_not_synced(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Hidden files (starting with dot) are not synced by default."""
+    def test_default_ignored_files_not_synced(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Files matched by the built-in default ignore patterns never sync.
+
+        Plain dotfiles (``.env``-style) are synced by design (industry
+        standard: Syncthing, rsync, Nextcloud) — only the built-in patterns
+        (OS caches, editor/office temp files, ``*.tmp`` …) are filtered. See
+        ``hsync_common.constants.DEFAULT_IGNORE_PATTERNS``.
+        """
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Create a hidden file on master
-            (Path(lan_master_dir) / ".hidden_file").write_bytes(b"hidden\n")
+            # One file per default-ignored family: OS cache, editor temp.
+            (Path(lan_master_dir) / ".DS_Store").write_bytes(b"macos\n")
+            (Path(lan_master_dir) / "Thumbs.db").write_bytes(b"windows\n")
+            (Path(lan_master_dir) / "notes.tmp").write_bytes(b"temp\n")
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
                 time.sleep(5)
-                assert not (Path(lan_slave_dir) / ".hidden_file").exists(), (
-                    "Hidden file was synced (should be ignored by default)"
-                )
+                for name in (".DS_Store", "Thumbs.db", "notes.tmp"):
+                    assert not (Path(lan_slave_dir) / name).exists(), (
+                        f"Default-ignored file {name} was synced (should be ignored)"
+                    )
             finally:
                 _terminate(slave)
         finally:
@@ -372,83 +184,51 @@ class TestLanHiddenFiles:
 
 
 class TestLanKeyless:
-    def test_lan_without_key_still_works(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """LAN sync without HSYNC_LAN_KEY still works (trust LAN mode)."""
-        env = {
-            **os.environ,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
-        env.pop("HSYNC_LAN_KEY", None)
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+    def test_keyless_unattended_write_is_refused(self, lan_master_dir, lan_bucket):
+        """Keyless + write-capable + non-interactive is refused at startup.
+
+        The write policy (``lan_write_requires_key``) requires a shared
+        ``HSYNC_LAN_KEY`` whenever an unattended run may upload to a master
+        whose identity cannot be vouched for out of band. A ``--yes`` LAN run
+        without a key must therefore exit immediately with the policy error —
+        trust-LAN keyless mode remains available to *interactive* operators
+        only (unit-tested in hsync_common.protocol.pairing).
+        """
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_env={"HSYNC_LAN_KEY": None},
         )
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
-
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            try:
-                content = b"keyless\n"
-                (Path(lan_master_dir) / "keyless.txt").write_bytes(content)
-                assert _wait_for_file(str(Path(lan_slave_dir) / "keyless.txt"), timeout=30), (
-                    "File did not sync without LAN key"
-                )
-                assert (Path(lan_slave_dir) / "keyless.txt").read_bytes() == content
-            finally:
-                _terminate(slave)
+            refused = _wait_for_text_in_stderr(master, "requires authentication", timeout=15)
+            assert refused, "Keyless unattended write-capable run should hit the write policy"
+            # The error line can be drained before the process finishes exiting.
+            master.wait(timeout=5)
+            assert master.returncode == 1, "Policy refusal must exit non-zero"
         finally:
             _terminate(master)
+
+    def test_keyless_download_only_node_is_allowed(self, lan_slave_dir, lan_bucket):
+        """A keyless download-only node passes the write policy (nothing to upload).
+
+        The node starts, runs discovery and keeps waiting for peers — the
+        point is that the run is *allowed* without HSYNC_LAN_KEY (no
+        write-policy error) and stays alive instead of being refused.
+        """
+        node = _lan_start(
+            lan_slave_dir,
+            lan_bucket,
+            never_master=True,
+            extra_args=("--sync-direction", "download-only"),
+            extra_env={"HSYNC_LAN_KEY": None},
+        )
+        try:
+            alone = _wait_for_text_in_stderr(node, "No other peers discovered", timeout=30)
+            assert alone, "Download-only keyless node should complete a discovery round"
+            assert "requires authentication" not in _stderr_text(node), (
+                "Download-only keyless run must not trip the write policy"
+            )
+            assert node.poll() is None, "The node should still be alive, waiting for peers"
+        finally:
+            _terminate(node)

@@ -177,3 +177,37 @@ class TestDeletionRiskGuard:
 
         # Then the guard is bypassed and the sync proceeds
         assert result.exit_code == 0
+
+
+class TestInstanceLock:
+    """Two live clients must never sync the same local directory.
+
+    The second run on an already-locked directory refuses to start with a
+    clear, actionable error (see ``hsync_client.identity.InstanceLock``).
+    """
+
+    def test_second_process_on_same_directory_refused(
+        self, live_server, bb_bucket, local_dir, watch_sync, run_cli, monkeypatch
+    ):
+        from tests.lan_helpers import _terminate, _wait_for_client_ready
+
+        # The in-process run must resolve the same locks dir as the watch
+        # subprocess (the watch_sync fixture uses <tmp_path>/locks).
+        monkeypatch.setenv("HSYNC_LOCKS_DIR", str(Path(local_dir).parent / "locks"))
+
+        # Given a watch-mode client already syncing local_dir
+        proc = watch_sync(bb_bucket, local_dir)
+        try:
+            ready = str(Path(local_dir).parent / "client.ready")
+            assert _wait_for_client_ready(proc, ready), "watch client did not become ready"
+
+            # When a second client targets the same directory
+            result = run_cli(bb_bucket, local_dir, "--yes", "--min-free-disk-space", "0")
+
+            # Then it refuses to start: non-zero exit and a clear message
+            # naming the conflicting directory.
+            assert result.exit_code != 0
+            assert "already syncing" in result.output
+            assert str(Path(local_dir).resolve()) in result.output
+        finally:
+            _terminate(proc)

@@ -18,9 +18,7 @@ from pathlib import Path
 import pytest
 
 from .lan_helpers import (
-    _HSYNC_COMMON_DIR,
-    _LAN_KEY,
-    _lan_ready_path,
+    _lan_env,
     _lan_start,
     _stderr_text,
     _terminate,
@@ -147,12 +145,7 @@ class TestLanMultiSlave:
 class TestLanPersistent:
     def test_no_lan_persistent_exits_when_alone(self, lan_master_dir, lan_bucket):
         """--no-lan-persistent exits instead of waiting when no peers are found."""
-        env = {
-            **os.environ,
-            "HSYNC_LAN_KEY": _LAN_KEY,
-            "PYTHONPATH": _HSYNC_COMMON_DIR,
-            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-        }
+        env = _lan_env(lan_master_dir)
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -176,8 +169,8 @@ class TestLanPersistent:
                 "--no-lan-persistent",
             ],
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
         try:
             # Should exit (not hang) within ~15s when no peers found
@@ -247,41 +240,11 @@ class TestLanFilterPath:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with --filter-path sub_a
-            env = {
-                **os.environ,
-                "HSYNC_LAN_KEY": _LAN_KEY,
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                    "--filter-path",
-                    "sub_a",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--filter-path", "sub_a"),
             )
             try:
                 # File in sub_a should appear on slave
@@ -313,43 +276,16 @@ class TestLanBandwidthThrottle:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with bandwidth limit (10 MB/s — generous enough)
-            env = {
-                **os.environ,
-                "HSYNC_LAN_KEY": _LAN_KEY,
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=(
                     "--max-bandwidth-download",
                     "10MB",
                     "--max-bandwidth-upload",
                     "10MB",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                ),
             )
             try:
                 # Create a moderately sized file on master
