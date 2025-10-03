@@ -243,11 +243,14 @@ flowchart LR
 
 **LAN Mode Flow:**
 1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
-2. **② Elect Master** — One device becomes the master (source of truth)
+2. **② Elect Master** — One device becomes the master (transport hub: it serves
+   and relays files, but never decides conflicts by role)
 3. **③ Sync Files** — Client downloads from master via HTTPS
 4. **④ Sync Files** — Master uploads changes to client
 
-In LAN mode, the master is the source of truth and slaves sync from it. Both directions are supported for bidirectional sync peers.
+In LAN mode, the master relays files between peers. Conflicts are resolved
+causally on every node (vector clocks + deterministic SHA-256 tie-break); both
+directions are supported for bidirectional sync peers.
 
 ## Documentation
 

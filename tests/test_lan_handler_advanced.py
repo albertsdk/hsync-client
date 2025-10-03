@@ -634,7 +634,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
@@ -664,7 +663,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
@@ -694,7 +692,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler.sync", new=mock_sync),
             patch("asyncio.run") as mock_run,
         ):
@@ -725,7 +722,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
@@ -749,7 +745,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
@@ -792,7 +787,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
@@ -816,7 +810,6 @@ class TestRunAsSlave:
         # First run() is the initial sync (ok); second is the WebSocket (boom).
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
@@ -838,7 +831,6 @@ class TestRunAsSlave:
 
         with (
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler._run_preview") as mock_preview,
             patch("hsync_client.lan_handler._run_stdin_wait", new=MagicMock()),
@@ -971,7 +963,6 @@ class TestMasterElection:
                 ),
             ),
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
@@ -983,68 +974,3 @@ class TestMasterElection:
         # (since master takes over)
         # Servers may be stopped on transition — verified by test_master_transition_from_slave
         # which only checks that the outer loop completes without error
-
-
-class TestClockOffsetEdgeCases:
-    """Additional edge case tests for clock offset measurement."""
-
-    def test_measure_clock_offset_invalid_json_response(self):
-        """Test _measure_clock_offset with invalid JSON in response."""
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        # json() raises ValueError on invalid JSON
-        mock_response.json.side_effect = ValueError("Invalid JSON")
-
-        with patch("requests.get", return_value=mock_response):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Should log debug message about invalid response
-        assert mock_log.debug.call_count >= 1
-
-    def test_measure_clock_offset_with_small_rtt(self):
-        """Test clock offset calculation with very small RTT."""
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        # Simulate response with minimal RTT (nearly instant)
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"timestamp": 1000.0}
-
-        with patch("requests.get", return_value=mock_response):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                with patch("time.time") as mock_time:
-                    # t1=1000, t3=1000.001 (1ms RTT)
-                    mock_time.side_effect = [1000.0, 1000.001]
-                    _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Verify clock_offset was set (value should be nearly 0)
-        assert hasattr(mock_master, "clock_offset")
-        # Should log debug (not warning) for small offset
-        assert mock_log.debug.call_count >= 1

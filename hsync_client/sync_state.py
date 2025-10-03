@@ -23,7 +23,7 @@ import threading
 
 from hsync_common.constants import HSYNCSTATE_FILENAME
 from hsync_common.models.tombstone import relpath_in_bucket
-from hsync_common.models.version import SyncStateStore
+from hsync_common.models.version import SyncStateStore, merge_vclocks, new_version_id, tick_vclock
 
 from hsync_client.config import CONFIG
 
@@ -71,6 +71,7 @@ def record_base(
     base_hash: str,
     version_id: str | None = None,
     origin_cid: str | None = None,
+    vclock: dict[str, int] | None = None,
 ) -> None:
     """Record (in memory) the agreed base version for an absolute path.
 
@@ -81,7 +82,7 @@ def record_base(
     if not relpath or not base_hash:
         return
     with _lock:
-        get_sync_state_store().record(relpath, base_hash, version_id, origin_cid)
+        get_sync_state_store().record(relpath, base_hash, version_id, origin_cid, vclock=vclock)
 
 
 def clear_base(abs_path: str) -> None:
@@ -122,3 +123,126 @@ def flush() -> None:
     """Persist the local bucket's sync-state to its side-car file."""
     with _lock:
         get_sync_state_store().save()
+
+
+def _local_cid() -> str:
+    """Return this node's cid (the author for self-recorded edits)."""
+    return str(CONFIG.get("CID", "") or "")
+
+
+def local_version_for_compare(abs_path: str, current_hash: str | None):
+    """Return the *effective* version for comparison without persisting (pure).
+
+    If the current content hash differs from the stored base, a ticked copy is
+    returned (clock advanced by this node's cid) — the "would-be" version the
+    reconcile would record. Used by dry-run preview so it never mutates the
+    store but still computes accurate decisions (ADR-0022 §3.4.7).
+    """
+    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    if not relpath:
+        return None
+    with _lock:
+        entry = get_sync_state_store().get(relpath)
+        if entry is None:
+            # No recorded history: a never-synced file with content gets a
+            # fresh tick so its provenance is honest.
+            if current_hash:
+                cid = _local_cid()
+                if cid:
+                    return {
+                        "base_hash": current_hash,
+                        "version_id": "",
+                        "origin_cid": cid,
+                        "ts": 0,
+                        "vclock": tick_vclock(None, cid),
+                    }
+            return None
+        if current_hash and entry["base_hash"] != current_hash:
+            cid = _local_cid()
+            if cid:
+                return {
+                    "base_hash": current_hash,
+                    "version_id": entry["version_id"],
+                    "origin_cid": cid,
+                    "ts": entry["ts"],
+                    "vclock": tick_vclock(entry["vclock"], cid),
+                }
+        return entry
+
+
+def note_local_edit(abs_path: str, current_hash: str) -> None:
+    """Persist a self-recorded local edit (anti-aliasing invariant, ADR-0022).
+
+    If the current content hash differs from the stored base, the store entry
+    is advanced: clock ticked by this node's cid, new version_id, origin_cid
+    set to self. Idempotent between the watcher and reconcile (a second call
+    with the same hash is a no-op since base_hash now matches).
+    """
+    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    if not relpath or not current_hash:
+        return
+    cid = _local_cid()
+    if not cid:
+        return
+    with _lock:
+        store = get_sync_state_store()
+        entry = store.get(relpath)
+        if entry is not None and entry["base_hash"] == current_hash:
+            return  # already current — no-op
+        store.record(
+            relpath,
+            base_hash=current_hash,
+            vclock=tick_vclock(entry["vclock"] if entry else None, cid),
+            version_id=new_version_id(),
+            origin_cid=cid,
+        )
+
+
+def get_vclock(abs_path: str) -> dict[str, int] | None:
+    """Return the stored vclock for a path, or None if unrecorded."""
+    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    if not relpath:
+        return None
+    with _lock:
+        entry = get_sync_state_store().get(relpath)
+        return entry["vclock"] if entry else None
+
+
+def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str, str]:
+    """Return ``(vclock_json, version_id)`` wire form values for an upload.
+
+    Shared by the full-upload (``transfer.py``) and delta-apply
+    (``delta_transfer.py``) paths so both advertise the same effective causal
+    version. Returns ``("{}", "")`` when no version is recorded and the content
+    is absent (the server treats an empty clock natively).
+    """
+    from json import dumps
+
+    eff = local_version_for_compare(abs_path, current_hash)
+    if eff is not None:
+        return dumps(eff["vclock"]), eff.get("version_id", "") or ""
+    return "{}", ""
+
+
+def merge_and_record(abs_path: str, base_hash: str, remote_vclock: dict[str, int] | None) -> None:
+    """Record the agreed version with a merged clock (convergence invariant D11).
+
+    The recorded clock is ``merge(local_effective, remote_advertised)``: in
+    dominance it equals the dominant clock, in conflict it includes both
+    histories so third nodes recognise either side as an ancestor.
+    """
+    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    if not relpath or not base_hash:
+        return
+    with _lock:
+        store = get_sync_state_store()
+        entry = store.get(relpath)
+        local_vclock = entry["vclock"] if entry else {}
+        merged = merge_vclocks(local_vclock, remote_vclock)
+        store.record(
+            relpath,
+            base_hash=base_hash,
+            vclock=merged,
+            version_id=entry["version_id"] if entry else new_version_id(),
+            origin_cid=entry["origin_cid"] if entry else None,
+        )

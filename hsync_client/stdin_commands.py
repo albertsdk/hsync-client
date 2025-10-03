@@ -61,6 +61,7 @@ async def _readline_bounded(reader: asyncio.StreamReader, max_bytes: int) -> byt
         byte = await reader.read(1)
         if not byte or byte == b"\n":
             break
+    return b""
 
 
 class StdinCommandHandler:

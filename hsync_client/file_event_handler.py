@@ -43,7 +43,7 @@ from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.utils import ensure_str_path, is_same_paths
 
 if TYPE_CHECKING:
-    from watchdog.observers import Observer
+    from watchdog.observers.api import BaseObserver as Observer
 
 # on_closed is delivered by watchdog only on Linux (inotify).
 SUPPORTS_ON_CLOSED = sys.platform == "linux"

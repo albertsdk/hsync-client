@@ -34,7 +34,7 @@ from hsync_common.models.file import (
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
-from hsync_common.models.version import SyncDecision, resolve_three_way
+from hsync_common.models.version import SyncDecision, parse_version_info, resolve_three_way
 from hsync_common.path_validation import (
     is_safe_symlink_target,
     resolve_within,
@@ -902,8 +902,10 @@ def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
 # Sync Action Determination
 # =============================================================================
 
-# Tolerance threshold in seconds for mtime comparison.
-# Handles FAT32 filesystem precision (2s) and minor clock skew.
+# Tolerance threshold in seconds for tombstone-vs-local mtime comparison
+# (deletion resurrection guard, _tombstone_deletes_local). Not used by
+# content comparison, which is causal (vector clocks) — kept only for the
+# tombstone path. Handles FAT32 filesystem precision (2s) and minor skew.
 MTIME_TOLERANCE = 2
 
 
@@ -951,18 +953,15 @@ def get_sync_actions(
     local_files: list[dict] | None = None,
     lan_mode: bool = False,
     tombstones: dict[str, dict] | None = None,
+    persist_state: bool = True,
 ) -> list[SyncAction]:
     """
     Determine sync actions by comparing local and remote file lists.
 
-    Uses an intelligent comparison strategy:
-    1. If mtime difference > MTIME_TOLERANCE (2s): use mtime to decide direction.
-    2. If mtime difference <= MTIME_TOLERANCE: fall back to SHA-256 checksum.
-       - If SHA-256 differs: use mtime as tiebreaker; if equal, prefer remote.
-       - If SHA-256 matches: no action needed (files are identical).
-
-    This handles clock skew, FAT32 timestamp precision (2s), and cases
-    where mtime is equal but content differs (copy/restore scenarios).
+    Uses the causal vector-clock matrix (ADR-0022): content identity is
+    checked first (hash), then causal dominance via the vector clocks, then a
+    deterministic SHA-256 tie-break on true divergence. The wall clock is
+    never consulted, so clock skew cannot cause an incorrect direction.
 
     Args:
         remote_files: List of file metadata from server.
@@ -974,6 +973,10 @@ def get_sync_actions(
             hashed bucket-relative path. When a file exists only locally and a
             matching tombstone shows it was deleted elsewhere, the local copy
             is removed instead of being re-uploaded (resurrection guard).
+        persist_state: When False (preview/dry-run), the store is never
+            mutated — ``merge_and_record`` on in-sync files is skipped so the
+            ``.hsyncstate`` side-car stays unchanged. Comparison is always pure
+            via ``local_version_for_compare``.
 
     Returns:
         List of SyncAction objects describing required operations.
@@ -1023,31 +1026,42 @@ def get_sync_actions(
         if remote_file.filepath:
             remote_filepaths.add(remote_file.filepath)
 
-        # Get mtime values with defaults for comparison
-        remote_mtime = remote_file.mtime or 0
-        local_mtime = local_file.mtime if local_file and local_file.mtime else 0
-
         if local_file:
-            base_hash = sync_state.get_base_hash(local_file.filepath or "")
+            abs_local = local_file.filepath or ""
+            # Compute the effective version for comparison (pure: no store
+            # mutation). The tick is applied in-memory when the local content
+            # differs from the stored base, so the advertised version is
+            # causally honest without destroying the recorded common ancestor.
+            # Persistence happens only after a successful sync (merge_and_record).
+            eff = sync_state.local_version_for_compare(abs_local, local_file.sha256sum)
+            local_vclock = eff["vclock"] if eff else None
+            base_hash = sync_state.get_base_hash(abs_local)
+            # Extract the remote advertised version (absent ⇒ empty clock).
+            remote_version = remote_file_info.get("version")
+            if isinstance(remote_version, dict):
+                parsed = parse_version_info(remote_version)
+                remote_vclock = parsed["vclock"] if parsed else None
+            else:
+                remote_vclock = None
             action, timedelta = _compare_files(
                 remote_file,
                 local_file,
-                remote_mtime,
-                local_mtime,
-                lan_mode,
+                local_vclock,
+                remote_vclock,
                 base_hash,
             )
 
-            # A download with timedelta == 0 in this branch is a conflict: either
-            # the unconvincing legacy tie (same mtime, different content) or a
-            # three-way divergence. The remote wins but the local copy must be
-            # preserved before being overwritten.
+            # A download with timedelta == 0 is a conflict_download: the remote
+            # won the tie-break, so the local copy must be preserved before
+            # being overwritten.
             is_conflict = action == SyncActionName.download and timedelta == 0
 
-            # Files already in sync: refresh the merge base to the shared hash so
-            # a later one-sided edit resolves cleanly via the three-way merge.
-            if action == SyncActionName.nothing and local_file.sha256sum:
-                sync_state.record_base(local_file.filepath or "", local_file.sha256sum)
+            # Files already in sync: refresh the merge base with a merged clock
+            # so a later one-sided edit resolves cleanly (convergence D11).
+            # Skipped in preview mode (persist_state=False) so a dry-run never
+            # mutates the persisted .hsyncstate side-car.
+            if action == SyncActionName.nothing and local_file.sha256sum and persist_state:
+                sync_state.merge_and_record(abs_local, local_file.sha256sum, remote_vclock)
 
             sync_actions.append(
                 SyncAction(
@@ -1137,97 +1151,61 @@ def get_sync_actions(
 def _compare_files(
     remote_file: File,
     local_file: File,
-    remote_mtime: int,
-    local_mtime: int,
-    lan_mode: bool,
+    local_vclock: dict[str, int] | None,
+    remote_vclock: dict[str, int] | None,
     base_hash: str | None = None,
 ) -> tuple[SyncActionName, int]:
     """
-    Compare two files, preferring a clock-independent three-way merge.
+    Compare two files using the causal vector-clock matrix (ADR-0022).
 
-    When a common-ancestor ``base_hash`` is recorded, the direction is
-    decided from content hashes alone: if only one side changed since the base it
-    wins, and if both changed it is a genuine conflict (remote wins, local copy
-    preserved). Without a recorded base the legacy mtime + SHA-256 heuristic is
-    used so first-ever syncs and upgraded peers behave exactly as before.
+    Content identity is checked first (hash), then causal dominance, then a
+    deterministic SHA-256 tie-break on true divergence. The wall clock is
+    never consulted.
 
     Args:
         remote_file: File metadata from remote/server.
         local_file: File metadata from local filesystem.
-        remote_mtime: Remote file modification time.
-        local_mtime: Local file modification time.
-        lan_mode: Whether running in LAN mode.
+        local_vclock: Stored local clock (honest via self-record, §3.4.7).
+        remote_vclock: Advertised remote clock (None ⇒ empty).
         base_hash: Last-synced common-ancestor content hash, if known.
 
     Returns:
-        Tuple of (action, timedelta). A download with ``timedelta == 0`` flags a
-        conflict to the caller.
+        Tuple of (action, timedelta). ``timedelta == 0`` flags a conflict
+        (``conflict_download``: preserve local + download remote).
     """
     decision = resolve_three_way(
         local_file.sha256sum or None,
+        local_vclock,
         remote_file.sha256sum or None,
+        remote_vclock,
         base_hash,
     )
     if decision is SyncDecision.in_sync:
         return SyncActionName.nothing, 0
     if decision is SyncDecision.download:
-        # Only the remote changed since base: take it (clock-independent, so the
-        # timedelta is forced positive to never be mistaken for a conflict tie).
-        return SyncActionName.download, max(remote_mtime - local_mtime, 1)
+        return SyncActionName.download, 1
     if decision is SyncDecision.upload:
-        # Only the local side changed since base: push it.
-        return SyncActionName.upload, max(local_mtime - remote_mtime, 1)
-    if decision is SyncDecision.conflict:
-        # Both sides diverged from the base: remote wins, local copy preserved.
-        log.debug(
-            f'Three-way conflict for "{remote_file.filepath}": '
-            "both local and remote changed since the last sync"
-        )
-        return SyncActionName.download, 0
-
-    # decision is unknown_base -> fall back to the legacy mtime/SHA-256 heuristic.
-    mtime_diff = abs(remote_mtime - local_mtime)
-
-    if mtime_diff > MTIME_TOLERANCE:
-        # Clear mtime difference - trust timestamps
-        if remote_mtime > local_mtime:
-            return SyncActionName.download, remote_mtime - local_mtime
-        else:
-            return SyncActionName.upload, local_mtime - remote_mtime
-
-    # mtime within tolerance - fall back to SHA-256 checksum
-    remote_sha256 = remote_file.sha256sum or ""
-    local_sha256 = local_file.sha256sum or ""
-
-    if remote_sha256 == local_sha256:
-        # Content is identical - no action needed
-        return SyncActionName.nothing, 0
-
-    # Content differs despite similar mtime - need to pick a direction
+        return SyncActionName.upload, 1
+    if decision is SyncDecision.conflict_upload:
+        # Local wins tie-break: upload; the receiver preserves its losing copy.
+        return SyncActionName.upload, 1
+    # conflict_download: remote wins tie-break, preserve local + download.
     log.debug(
-        f'SHA-256 mismatch within mtime tolerance for "{remote_file.filepath}": '
-        f"remote_sha256={remote_sha256[:8]}... local_sha256={local_sha256[:8]}... "
-        f"mtime_diff={mtime_diff}s"
+        f'Causal conflict for "{remote_file.filepath}": '
+        "both local and remote changed since the last sync (tie-break: remote wins)"
     )
-    if remote_mtime > local_mtime:
-        return SyncActionName.download, remote_mtime - local_mtime
-    elif remote_mtime < local_mtime:
-        return SyncActionName.upload, local_mtime - remote_mtime
-    else:
-        # Exact same mtime but different content - prefer remote
-        # (server/master is authoritative for conflict resolution)
-        return SyncActionName.download, 0
+    return SyncActionName.download, 0
 
 
 def _save_conflict_copy(file: File) -> str | None:
     """
     Preserve a locally-modified file before a conflicting download overwrites it.
 
-    Invoked when local and remote content differ but share an identical mtime,
-    so no winner can be determined automatically and the remote version is taken.
-    The local content is copied to
+    Invoked on ``conflict_download`` (the remote won the causal tie-break):
+    local and remote diverged concurrently and the remote content is taken, so
+    the local content is copied to
     ``<stem>_conflicted_copy_<ISO8601-UTC>_<cid>.<ext>`` — the same naming
-    convention the server uses (``upload.py``) so conflict copies are
+    convention the server uses (``arbitration.py``) so conflict copies are
     consistent regardless of which side detected the divergence.
 
     Args:
@@ -1236,32 +1214,55 @@ def _save_conflict_copy(file: File) -> str | None:
     Returns:
         The path of the conflict copy, or None if nothing was saved.
     """
-    if not (file.filepath and Path(file.filepath).exists()):
+    if not file.filepath:
+        return None
+
+    # ``file.filepath`` may be bucket-relative (files parsed from a remote
+    # listing in get_sync_actions) or absolute (real-time events). The guard
+    # and the copy below must operate on the *actual local file*, so a
+    # relative path is resolved against LOCAL_BUCKET first — a raw relative
+    # path would be evaluated against the process cwd and silently skip the
+    # preservation, losing the divergent local content.
+    raw = Path(file.filepath)
+    if raw.is_absolute():
+        src_path = raw
+    else:
+        from hsync_client.transfer import _local_dest_path
+
+        resolved = _local_dest_path(file)
+        if resolved is None:
+            log.warning(
+                f"{ActionLabel.SECURITY} Refusing to preserve unsafe conflict path "
+                f'"{file.filepath}"'
+            )
+            return None
+        src_path = Path(resolved)
+
+    if not src_path.exists():
         return None
     from hsync_common.time_utils import conflict_timestamp
 
     ts = conflict_timestamp()
     cid = CONFIG.get("CID", "") or "unknown"
     safe_cid = "".join(c for c in cid if c.isalnum() or c in "-_.")[:32]
-    stem = Path(file.filepath).stem
-    suffix = Path(file.filepath).suffix
-    parent = str(Path(file.filepath).parent)
-    conflict_path = f"{parent}/{stem}_conflicted_copy_{ts}_{safe_cid}{suffix}"
+    conflict_path = (
+        f"{src_path.parent}/{src_path.stem}_conflicted_copy_{ts}_{safe_cid}{src_path.suffix}"
+    )
     try:
-        copy2(file.filepath, conflict_path)
+        copy2(str(src_path), conflict_path)
         log.warning(
-            f'{ActionLabel.CONFLICT} "{file.filepath}" differs from remote at identical '
-            f'mtime; local copy saved as "{conflict_path}"'
+            f'{ActionLabel.CONFLICT} "{src_path}" lost the causal tie-break; '
+            f'local copy saved as "{conflict_path}"'
         )
         emit_event(
             UiEventName.conflict_resolved,
-            file=file.filepath,
+            file=str(src_path),
             conflict_copy=conflict_path,
             winner="remote",
         )
         return conflict_path
     except OSError as e:
-        log.error(f'Could not save conflict copy for "{file.filepath}": {e}')
+        log.error(f'Could not save conflict copy for "{src_path}": {e}')
         return None
 
 
@@ -1349,17 +1350,42 @@ def update_file(data: dict) -> None:
         file = File.get(file_data.filepath)
 
         if file and file.sha256sum != file_data.sha256sum:
-            # Content differs - download new version. Preserve the local copy
-            # first when it is as-new-or-newer than the incoming version: an
-            # inbound event always overwrites, so a concurrent local edit would
-            # be lost silently (same protection get_sync_actions applies to
-            # mtime-tie conflicts during full reconciliation).
-            if (
-                file.mtime is not None
-                and file_data.mtime is not None
-                and file.mtime >= file_data.mtime
-            ):
+            # Content differs: decide via the causal matrix (ADR-0022). The
+            # remote side is the advertised version (if any) on the event's
+            # src File; the local side is the effective stored version. The
+            # wall clock is never consulted.
+            remote_version = data.get("version")
+            remote_vclock = None
+            if isinstance(remote_version, dict):
+                parsed = parse_version_info(remote_version)
+                remote_vclock = parsed["vclock"] if parsed else None
+            local_vclock = None
+            base_hash = None
+            if file.filepath:
+                eff = sync_state.local_version_for_compare(file.filepath, file.sha256sum)
+                local_vclock = eff["vclock"] if eff else None
+                base_hash = sync_state.get_base_hash(file.filepath)
+            decision = resolve_three_way(
+                file.sha256sum or None,
+                local_vclock,
+                file_data.sha256sum or None,
+                remote_vclock,
+                base_hash,
+            )
+            # conflict_upload: local wins tie-break — skip the download; the
+            # local change is uploaded on the next reconcile. No conflict copy
+            # is saved (the local version is the winner).
+            if decision is SyncDecision.conflict_upload:
+                log.debug(
+                    f'Causal conflict for "{file_data.filepath}": '
+                    "local wins tie-break, skipping download (will upload on next reconcile)"
+                )
+                return
+            # conflict_download: remote wins tie-break — preserve the local
+            # copy before overwriting it.
+            if decision is SyncDecision.conflict_download:
                 _save_conflict_copy(file)
+            # download / dominance: take the remote version silently.
             file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
             # Skip if this exact file already failed permanently in this
             # cycle (realtime event re-queuing while the full sync runs).

@@ -85,12 +85,32 @@ class TestUpdateFile:
             update_file(data)
             mock_download.assert_called_once()
 
-    def test_downloads_file_with_different_sha256(self, tmp_path):
-        """File with different SHA-256 (older locally) triggers download, no conflict copy."""
+    def test_downloads_when_remote_dominates(self, tmp_path):
+        """Remote is causally ahead (local at base) → download, no conflict copy.
+
+        With a recorded merge base equal to the local content, the remote has
+        moved on: the causal matrix resolves to ``download`` (dominance), so
+        the local copy is overwritten silently — no conflict copy.
+        """
         local_file = tmp_path / "file.txt"
-        local_file.write_text("old content")
-        # Local file is clearly older than the incoming event - normal update.
+        local_file.write_text("base content")
         os.utime(local_file, (1000, 1000))
+
+        from hsync_common.hashing import compute_sha256
+
+        local_sha = compute_sha256(str(local_file))
+
+        # Record the merge base so the local side is "at base" and the remote
+        # is causally ahead (dominance → download).
+        from hsync_client import sync_state
+
+        with patch(
+            "hsync_client.sync_state.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
+        ):
+            sync_state.record_base(str(local_file), local_sha)
+            sync_state.flush()
+            sync_state._stores.clear()  # force reload from disk in update_file
 
         data = {
             "filepath": "file.txt",
@@ -105,20 +125,51 @@ class TestUpdateFile:
 
         mock_download = MagicMock()
         with (
-            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch(
+                "hsync_client.sync.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
+            ),
+            patch(
+                "hsync_client.sync_state.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
+            ),
             patch("hsync_client.transfer.download_file", mock_download),
         ):
             update_file(data)
             mock_download.assert_called_once()
-            # Local copy was older, so no conflict copy should be created.
+            # Dominance: no conflict copy should be created.
             assert list(tmp_path.glob("file_conflicted_copy_*.txt")) == []
 
-    def test_saves_conflict_copy_when_local_not_older(self, tmp_path):
-        """A conflicting inbound event preserves the local copy before overwriting."""
+    def test_saves_conflict_copy_on_concurrent_edit(self, tmp_path):
+        """A true causal divergence (both sides changed since base) preserves
+        the local copy before overwriting when the remote wins the tie-break.
+
+        Both local and remote moved on from the recorded base with different
+        content and empty clocks: the tie-break is deterministic by hash. The
+        remote hash is chosen to be lexicographically higher so it wins and the
+        local copy is preserved as a conflicted copy.
+        """
         local_file = tmp_path / "file.txt"
         local_file.write_text("local change")
-        # Local mtime ties the incoming event mtime but content differs.
         os.utime(local_file, (2000, 2000))
+
+        from hsync_common.hashing import compute_sha256
+
+        # Record a base that differs from both sides so both have "moved on".
+        base_sha = "0" * 64
+        from hsync_client import sync_state
+
+        with patch(
+            "hsync_client.sync_state.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
+        ):
+            sync_state.record_base(str(local_file), base_sha)
+            sync_state.flush()
+            sync_state._stores.clear()  # force reload from disk in update_file
+
+        local_sha = compute_sha256(str(local_file))
+        # Remote hash lexicographically higher than local → remote wins.
+        remote_sha = "f" * 64 if local_sha < "f" * 64 else "z" * 64
 
         data = {
             "filepath": "file.txt",
@@ -127,13 +178,27 @@ class TestUpdateFile:
             "mtime": 2000,
             "ctime": 2000,
             "size": 12,
-            "sha256sum": "different_sha256_hash",
+            "sha256sum": remote_sha,
             "permissions": "644",
+            # Remote also moved on (concurrent edit) with its own clock tick.
+            "version": {
+                "vclock": {"remotecid000000000000": 1},
+                "version_id": "abc",
+                "origin_cid": "remotecid000000000000",
+                "ts": 0,
+            },
         }
 
         mock_download = MagicMock()
         with (
-            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch(
+                "hsync_client.sync.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
+            ),
+            patch(
+                "hsync_client.sync_state.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
+            ),
             patch("hsync_client.transfer.download_file", mock_download),
         ):
             update_file(data)

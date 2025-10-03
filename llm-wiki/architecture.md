@@ -39,7 +39,7 @@ defaults/bounds in `constants.py`.
 - `_check_lan_write_policy` (`main_logic.py:344`) — requires a LAN key for
   write-capable LAN sync in non-interactive mode.
 - `_check_disk_space` (`main_logic.py:388`), `_check_server_connectivity`
-  (`main_logic.py:954`), `_warn_on_clock_skew` (`main_logic.py:1004`).
+  (`main_logic.py:954`).
 - Runtime mass-deletion guard during sync: `_mass_deletion_blocked` (`sync.py:94`).
 
 ## Watcher + transfer core (shared by both modes)

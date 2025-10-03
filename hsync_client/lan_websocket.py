@@ -453,6 +453,32 @@ class LANWebSocketServer:
 # =============================================================================
 
 
+def _attach_effective_version(entity, abs_path: str) -> None:
+    """Attach the effective causal version to a File entity (in place).
+
+    Only File entities carry a ``version`` field; Dir/Symlink are skipped. The
+    version is resolved via ``sync_state.local_version_for_compare`` (pure: no
+    store mutation) so the broadcast advertises an honest clock (ADR-0022).
+    """
+    from hsync_common.models.file import File as _File
+
+    if not isinstance(entity, _File):
+        return
+    try:
+        from hsync_client.sync_state import local_version_for_compare
+
+        eff = local_version_for_compare(abs_path, entity.sha256sum)
+        if eff is not None:
+            entity.version = {
+                "vclock": eff["vclock"],
+                "version_id": eff.get("version_id", ""),
+                "origin_cid": eff.get("origin_cid"),
+                "ts": eff.get("ts", 0),
+            }
+    except Exception as e:  # pragma: no cover - bookkeeping must never break broadcast
+        log.debug(f"Could not attach version to broadcast for {abs_path}: {e}")
+
+
 class LANMasterFileEventHandler(BaseFileEventHandler):
     """Watchdog handler for LAN master: broadcasts file system events to all
     connected slaves via WebSocket. File contents are pulled by slaves, so
@@ -503,6 +529,13 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             log.debug("Download-only mode: master event not broadcast.")
             return
+        # Attach the effective causal version to File entities so slaves can
+        # run the causal matrix on realtime events (ADR-0022). The src/dst
+        # paths are still absolute here (Event.to_dict normalizes them after).
+        if src_abs_path:
+            _attach_effective_version(event.src, src_abs_path)
+        if event.dst and dst_abs_path:
+            _attach_effective_version(event.dst, dst_abs_path)
         event_dict = event.to_dict()
         origin_cid = None
         origin_source = "none"

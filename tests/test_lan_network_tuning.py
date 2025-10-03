@@ -218,9 +218,9 @@ class TestRefreshLanNetworkTuning:
 
 
 class TestSlaveTuningRefreshOrdering:
-    """_run_as_slave must refresh tuning after the pin check, before clock sync."""
+    """_run_as_slave must refresh tuning after the pin check."""
 
-    def test_refresh_runs_after_pin_and_before_clock_offset(self, tmp_path, monkeypatch):
+    def test_refresh_runs_after_pin(self, tmp_path, monkeypatch):
         from hsync_client.lan_handler import _run_as_slave
 
         monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(tmp_path / "pins.json"))
@@ -240,17 +240,13 @@ class TestSlaveTuningRefreshOrdering:
                 "hsync_client.lan_handler._refresh_lan_network_tuning",
                 side_effect=lambda *_a: calls.append("refresh"),
             ),
-            patch(
-                "hsync_client.lan_handler._measure_clock_offset",
-                side_effect=lambda *_a: calls.append("clock"),
-            ),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
         assert result is False
-        assert calls == ["pin", "refresh", "clock"]
+        assert calls == ["pin", "refresh"]
 
 
 class TestRefreshCheckOrdering:

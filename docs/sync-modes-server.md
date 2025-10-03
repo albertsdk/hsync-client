@@ -71,14 +71,20 @@ hsync --dry-run -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 
 ### Conflict Handling
 
-The server is the authoritative source. If a file was modified on both the
-client and the server since the last sync:
+The server is a **transport hub, not an authority**: it never decides conflicts
+by role. Every peer resolves causally with the same vector-clock matrix:
 
-1. A three-way merge is attempted.
-2. If automatic merge fails, the **server version wins**.
-3. The local version is renamed to `filename.hsyncconflict`.
+1. Content identity (SHA-256) is checked first; causal dominance then decides
+   the direction.
+2. On a true concurrent divergence, the content with the highest SHA-256 wins
+   deterministically (impartial to any node).
+3. The losing content is preserved as
+   `filename_conflicted_copy_<timestamp>_<cid>.<ext>`, by whichever side lost
+   (the reconciling client or the upload arbitration on the server).
 
-See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
+Stale uploads (causally dominated) are rejected with `409` and no copy is
+created — nothing is lost. See [Conflict Resolution](conflict-resolution.md)
+for the full algorithm.
 
 ### Further Reading
 

@@ -68,7 +68,7 @@ from hsync_client.config import (
 )
 from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
 from hsync_client.exceptions import ServerError
-from hsync_client.sync_state import get_base_hash
+from hsync_client.sync_state import get_base_hash, upload_version_fields
 from hsync_client.utils import (
     get_ssl_verify,
     inbound_size_cap,
@@ -79,6 +79,26 @@ from hsync_client.utils import (
 from hsync_client.utils import (
     http_post as post,
 )
+
+
+def _resolve_delta_version_fields(file: File) -> tuple[str, str]:
+    """Return ``(vclock_json, version_id)`` for the delta-apply metadata.
+
+    Delegates to :func:`sync_state.upload_version_fields` (the SSOT shared with
+    the full-upload path) so both transfer channels advertise the same
+    effective causal version.
+    """
+    try:
+        if file.filepath:
+            abs_path = (
+                file.filepath
+                if Path(file.filepath).is_absolute()
+                else str(Path(CONFIG["LOCAL_BUCKET"]) / file.filepath)
+            )
+            return upload_version_fields(abs_path, file.sha256sum)
+    except Exception as e:  # pragma: no cover - bookkeeping must never break delta
+        log.debug(f'Could not resolve delta version for "{file.filepath}": {e}')
+    return "{}", ""
 
 
 class DeltaTransferError(Exception):
@@ -261,6 +281,11 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         payload = compress_data(literals)
         compressed = True
 
+    # Attach the effective causal version (vclock + version_id) so the
+    # server/master can arbitrate the delta-apply against its stored version
+    # (ADR-0022). The server's delta/apply.py reads meta["vclock"] /
+    # meta["version_id"].
+    vclock_json, version_id = _resolve_delta_version_fields(file)
     metadata = {
         "cid": CONFIG["CID"],
         "base_sha256": ctx.base_hash,
@@ -271,6 +296,8 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         "mtime": file.mtime,
         "permissions": file.permissions,
         "ops": [op.to_dict() for op in ops],
+        "vclock": vclock_json,
+        "version_id": version_id,
     }
     apply_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/apply"
     response = post(

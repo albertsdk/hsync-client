@@ -27,8 +27,10 @@ your use case.
 - SHA-256 verification ensures files are not corrupted in transit.
 
 **Q: What happens if two clients modify the same file simultaneously?**
-The server is the authoritative source. The last upload to arrive wins.
-The older version is renamed to `filename.hsyncconflict` so no data is lost.
+The server is a transport hub, not an authority. Concurrent edits are
+resolved causally (ADR-0022): the deterministic SHA-256 tie-break picks the
+winner, and the losing version is preserved as a `_conflicted_copy_`. See
+[Conflict Resolution](conflict-resolution.md).
 
 **Q: Can I recover accidentally deleted files?**
 Yes. The server keeps tombstone records for deleted files (configurable

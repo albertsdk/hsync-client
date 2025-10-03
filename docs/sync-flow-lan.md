@@ -84,12 +84,16 @@ for echo suppression — the master's own CID is used instead.
 ## 6. Periodic Resync
 
 As a safety net against missed inotify events, the slave runs a full resync at
-the configured `HSYNC_RESYNC` interval. The master is the source of truth.
+the configured `HSYNC_RESYNC` interval.
 
 ## 7. Conflict Handling
 
-The master is the **authoritative source** in LAN mode, equivalent to the
-central server in Server Mode. Conflicts are resolved by the master's version
-winning, with the slave's version renamed to `.hsyncconflict`.
+The master is a **transport hub, not an authority**: it relays bytes and
+metadata but never decides conflicts by role. Every peer applies the same
+causal vector-clock matrix (content identity → causal dominance → deterministic
+SHA-256 tie-break). On a true concurrent divergence, the losing content is
+preserved as `_conflicted_copy_<ts>_<cid>` — by the uploader if its upload loses
+the arbitration, or by the reconciling peer if its local content loses the
+tie-break.
 
 See [Conflict Resolution](conflict-resolution.md) for details.

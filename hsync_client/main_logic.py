@@ -296,7 +296,9 @@ def _check_deletion_risk(
     if sync_direction == "upload-only":
         return
 
-    # force_master in LAN mode means this client is authoritative – safe
+    # force_master in LAN mode means this peer serves files to slaves — the
+    # deletion-risk guard concerns serving, not authority (no peer is
+    # authoritative under the causal model).
     if lan_mode and force_master:
         return
 
@@ -969,17 +971,6 @@ def run_sync(
             # returning silently with a success exit code.
             sys.exit(1)
 
-        # Diagnostic clock-skew check (server mode). LAN mode performs its own
-        # measurement against the elected master after discovery.
-        if not lan_mode:
-            _warn_on_clock_skew(
-                server_url=effective_server_url,
-                timeout=min(config["HTTP_TIMEOUT"], 10),
-                verify_ssl=not config["NO_VERIFY_SSL"],
-                headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
-                logger=log,
-            )
-
         # Reset bandwidth throttle state for this session
         reset_bandwidth_throttle()
 
@@ -1078,50 +1069,3 @@ def _check_server_connectivity(
         else:
             logger.error(f"Cannot connect to server after retries: {server_url} ({e})")
         return False
-
-
-def _warn_on_clock_skew(
-    server_url: str,
-    timeout: float,
-    verify_ssl: bool,
-    headers: dict[str, str],
-    logger,
-) -> None:
-    """
-    Emit a one-shot warning if the local clock is skewed from the server.
-
-    Performs an NTP-like round-trip against ``/api/v1/time``. HSYNC relies on
-    OS-level time synchronisation (NTP); a large offset can cause an incorrect
-    sync direction for files modified close in time on different peers. This is
-    purely diagnostic: timestamps are never silently rewritten.
-    """
-    from hsync_common.clock import CLOCK_SKEW_THRESHOLD, measure_clock_offset
-    from requests import RequestException
-    from requests import get as http_get
-
-    try:
-        result = measure_clock_offset(
-            f"{server_url}/api/v1/time",
-            http_get=http_get,
-            headers=headers,
-            verify=verify_ssl,
-            timeout=timeout,
-        )
-        if result is None:
-            logger.debug("Clock sync: /api/v1/time unavailable or missing timestamp, skipping")
-            return
-
-        offset, rtt = result
-        if abs(offset) > CLOCK_SKEW_THRESHOLD:
-            logger.warning(
-                f"Clock skew detected with server: offset={offset:.1f}s, "
-                f"RTT={rtt * 1000:.1f}ms. Synchronise the system clock (NTP); "
-                f"large skew can cause an incorrect sync direction for files "
-                f"modified close in time on different peers."
-            )
-        else:
-            logger.debug(f"Clock sync with server: offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms")
-    except RequestException as e:
-        logger.debug(f"Clock sync failed: {e}")
-    except (ValueError, KeyError) as e:
-        logger.debug(f"Clock sync: invalid response: {e}")

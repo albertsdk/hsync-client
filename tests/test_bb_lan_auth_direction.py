@@ -18,6 +18,7 @@ import pytest
 from .lan_helpers import (
     _lan_ready_path,
     _lan_start,
+    _stderr_text,
     _terminate,
     _wait_for_client_ready,
     _wait_for_file,
@@ -183,6 +184,158 @@ class TestLanMasterRestart:
                 _terminate(slave)
         except BaseException:
             _terminate(master1)
+            raise
+
+
+# =============================================================================
+# Slave restart resilience
+# =============================================================================
+
+
+class TestLanSlaveRestart:
+    def test_slave_restart_recovers_and_resyncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """After the slave process is terminated and restarted on the same dir,
+        it re-discovers the master, reconnects with its persistent device
+        identity and TOFU pin, and resumes syncing."""
+
+        # Given a master and a live slave that have completed their initial sync
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
+
+                # Sanity check: a file written on the master reaches the slave
+                (Path(lan_master_dir) / "pre_restart.txt").write_bytes(b"pre\n")
+                assert _wait_for_file(str(Path(lan_slave_dir) / "pre_restart.txt"), timeout=30), (
+                    "Pre-restart sync did not work"
+                )
+
+                # When the slave is terminated and restarted on the same dir
+                # (same device identity + same pinned master fingerprint)
+                _terminate(slave1)
+                slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+                try:
+                    # Then the restarted slave reconnects and resumes syncing:
+                    # a new file on the master is pulled after rediscovery
+                    content = b"post-restart\n"
+                    (Path(lan_master_dir) / "post_restart.txt").write_bytes(content)
+                    assert _wait_for_file(
+                        str(Path(lan_slave_dir) / "post_restart.txt"), timeout=60
+                    ), "Restarted slave did not receive file after recovery"
+                    assert (Path(lan_slave_dir) / "post_restart.txt").read_bytes() == content
+                    # The process should survive without crashing
+                    assert slave2.poll() is None
+                finally:
+                    _terminate(slave2)
+            finally:
+                _terminate(slave1)
+        except BaseException:
+            _terminate(master)
+            raise
+
+
+# =============================================================================
+# Conflicting edits of the same file on both peers
+# =============================================================================
+
+
+class TestLanConflict:
+    def test_same_file_conflict_on_both_peers(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """When both peers diverge on the same path while disconnected, the
+        causal tie-break picks the winner deterministically (highest SHA-256)
+        and the loser's version is preserved as a Dropbox-style conflicted
+        copy — no silent data loss.
+
+        The shared file is synced *before* the slave starts, so the slave's
+        initial full sync records the common ancestor (merge base) in its
+        persisted sync-state side-car. Diverging both copies while the slave
+        is offline makes the next reconciliation a genuine three-way conflict
+        (both sides changed since the base): the higher hash wins and the
+        losing version is saved as
+        ``<stem>_conflicted_copy_<ts>_<cid>.<ext>``.
+
+        The master is a transport coordinator, not an authority (ADR-0022):
+        the winner is decided purely by content hash, not by role.
+        """
+
+        # Given a shared file both peers already agreed on, synced before the
+        # slave session starts
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            (Path(lan_master_dir) / "shared.txt").write_bytes(b"base\n")
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # The slave's initial full sync must complete (ready file) — the
+                # merge-base side-car is persisted only at the end of the cycle,
+                # and without it the three-way merge can never flag a conflict.
+                assert _wait_for_client_ready(slave1, _lan_ready_path(lan_slave_dir), timeout=30), (
+                    "Slave did not finish its initial sync"
+                )
+                assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == b"base\n"
+
+                # When the slave goes offline and both peers edit the same
+                # path with different content. The deterministic tie-break is
+                # by highest SHA-256: the winner is decided purely by content,
+                # not by role.
+                _terminate(slave1)
+                master_bytes = b"master-v2\n"
+                slave_bytes = b"slave-v2\n"
+                (Path(lan_master_dir) / "shared.txt").write_bytes(master_bytes)
+                (Path(lan_slave_dir) / "shared.txt").write_bytes(slave_bytes)
+                shared_ts = 1_700_000_000
+                os.utime(str(Path(lan_master_dir) / "shared.txt"), (shared_ts, shared_ts))
+                os.utime(str(Path(lan_slave_dir) / "shared.txt"), (shared_ts, shared_ts))
+
+                # Pre-compute the deterministic winner (highest SHA-256).
+                import hashlib
+
+                master_hash = hashlib.sha256(master_bytes).hexdigest()
+                slave_hash = hashlib.sha256(slave_bytes).hexdigest()
+                winner_bytes = master_bytes if master_hash > slave_hash else slave_bytes
+                loser_bytes = slave_bytes if winner_bytes is master_bytes else master_bytes
+
+                # Then, on reconnect, the winner takes the original path on the
+                # slave and the loser survives as a conflicted copy
+                slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+                try:
+                    assert _wait_for_text_in_stderr(slave2, "Initial sync complete", timeout=30), (
+                        "Restarted slave did not complete its initial sync"
+                    )
+
+                    deadline = time.time() + 30
+                    conflict_path = None
+                    while time.time() < deadline:
+                        candidates = [
+                            p
+                            for p in Path(lan_slave_dir).iterdir()
+                            if p.name.startswith("shared_conflicted_copy_")
+                        ]
+                        if candidates:
+                            conflict_path = candidates[0]
+                            break
+                        time.sleep(0.5)
+                    assert conflict_path is not None, (
+                        "The loser's divergent version was not preserved as a "
+                        "conflicted copy after reconnection.\n"
+                        f"--- slave2 log ---\n{_stderr_text(slave2)}"
+                    )
+                    assert conflict_path.read_bytes() == loser_bytes
+                    assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == winner_bytes, (
+                        "The deterministic hash winner did not take the original path "
+                        "after reconnect"
+                    )
+                    assert slave2.poll() is None, "Restarted slave exited unexpectedly"
+                finally:
+                    _terminate(slave2)
+            finally:
+                _terminate(slave1)
+        except BaseException:
+            _terminate(master)
             raise
 
 

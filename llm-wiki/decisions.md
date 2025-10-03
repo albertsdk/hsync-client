@@ -14,7 +14,7 @@ implements it, plus client-only operational rules.
 | [0003 tombstone-gossip](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
 | [0004 desktop-subprocess-contract](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:76`) |
 | [0005 protocol-versioning](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:275`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
-| [0006 master-authoritative-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:1189`) — unified `<stem>_conflicted_copy_<UTC>_<cid>.<ext>` naming, emits `conflict_resolved` UI event |
+| [0006 master-authoritative-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0006-master-authoritative-conflict-model.md) | **Superseded by ADR-0022** (causal vector clocks). `_compare_files` (`sync.py:989`) now uses `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`) on `conflict_download`. Upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server). |
 | [0017 lan-slave-outbound-event-reliability](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
@@ -35,9 +35,10 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
   flock lives outside the bucket and can never go stale.
 - **No protocol forking**: never redefine versions/constants/models locally;
   import from `hsync_common.*`. New wire fields land in common first.
-- **No wall-clock trust for direction**: reconciliation uses the persisted
-  `base_hash` (`sync_state.py`), not mtimes, to pick direction / detect conflict.
-  Mtime is only a tolerance hint (`MTIME_TOLERANCE`, `sync.py:650`).
+- **No wall-clock trust for direction**: reconciliation uses the causal
+  vector-clock matrix (`resolve_three_way`, `sync_state.py`), not mtimes, to
+  pick direction / detect conflict. Mtime tolerance (`MTIME_TOLERANCE`,
+  `sync.py:907`) is used **only** by the tombstone resurrection guard.
 - **Mandatory TLS in LAN mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
 - **Write-policy gate**: non-interactive write-capable LAN sync requires a LAN key

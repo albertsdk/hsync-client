@@ -100,7 +100,6 @@ class Peer:
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
     server_ready: bool = False  # True when HTTP server is listening
-    clock_offset: float = 0.0  # Estimated clock offset vs local (seconds)
     last_seen: float = field(default_factory=time.time)
     force_master: bool = False  # True if peer wants to force master role
     never_master: bool = False  # True if peer refuses to ever be master
@@ -267,7 +266,6 @@ class PeerManager:
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
-                existing.clock_offset = peer.clock_offset
                 existing.force_master = peer.force_master
                 existing.never_master = peer.never_master
                 existing.startup_time = peer.startup_time

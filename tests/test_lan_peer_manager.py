@@ -550,7 +550,6 @@ class TestAddPeerUpdate:
                 compression_enabled=True,
                 delta_enabled=True,
                 server_ready=True,
-                clock_offset=1.5,
                 force_master=True,
                 never_master=False,
                 startup_time=42.0,
@@ -568,7 +567,6 @@ class TestAddPeerUpdate:
         assert peer.compression_enabled is True
         assert peer.delta_enabled is True
         assert peer.server_ready is True
-        assert peer.clock_offset == 1.5
         assert peer.force_master is True
         assert peer.startup_time == 42.0
         assert peer.sync_direction == "upload-only"

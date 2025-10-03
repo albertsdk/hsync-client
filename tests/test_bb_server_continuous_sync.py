@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import BB_CLIENT_CID
+from tests.conftest import BB_CLIENT_CID, _watch_client_log_tail
 from tests.lan_helpers import _wait_for_client_ready
 
 _BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
@@ -51,6 +51,60 @@ def _terminate(proc: subprocess.Popen) -> None:
 def _ready_path(local_dir: str) -> str:
     """Compute the ready-file path from the local dir (same tmp_path root)."""
     return str(Path(local_dir).parent / "client.ready")
+
+
+class TestContinuousSyncServerRestart:
+    def test_resync_after_server_restart(
+        self,
+        restartable_live_server,
+        bb_restartable_bucket,
+        local_dir,
+        watch_sync_restartable,
+        bb_restartable_server_files,
+    ):
+        """A client in watch mode must re-connect and re-converge after the
+        server process is restarted: changes made while the server was down
+        (and the WS disconnected) are reconciled by the periodic full sync.
+
+        The client runs with ``--interval 20`` (the CLI minimum) so the
+        periodic resync task converges local changes that were made while the
+        WS was disconnected and could not be broadcast as events.
+        """
+
+        # Given a client running in watch mode against a bucket (periodic
+        # full resync every 20s)
+        log_path = str(Path(local_dir).parent / "client.log")
+        proc = watch_sync_restartable(bb_restartable_bucket, local_dir, "--interval", "20")
+        try:
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
+
+            # Create a file locally so it is uploaded while the server is up
+            content = b"before restart\n"
+            (Path(local_dir) / "pre.txt").write_bytes(content)
+            assert _wait_for(
+                lambda: "pre.txt" in bb_restartable_server_files(bb_restartable_bucket)
+            )
+
+            # When the server is restarted while the client keeps watching
+            restartable_live_server.restart()
+
+            # Then a change made during the outage is still reconciled after
+            # the client reconnects (periodic full resync)
+            content2 = b"after restart\n"
+            (Path(local_dir) / "post.txt").write_bytes(content2)
+            assert _wait_for(
+                lambda: "post.txt" in bb_restartable_server_files(bb_restartable_bucket),
+                timeout=60,
+            ), (
+                "File created during the outage was not uploaded after restart.\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
+            # The process should survive the restart without crashing
+            assert proc.poll() is None
+        finally:
+            _terminate(proc)
 
 
 class TestContinuousSyncMore:

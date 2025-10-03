@@ -14,6 +14,7 @@ Requires HSYNC_BB_SERVER=1 to run.
 """
 
 import os
+import uuid
 from pathlib import Path
 
 import pytest
@@ -420,6 +421,68 @@ class TestRemoteSyncIgnoreDelete:
         result = run_sync_once(bb_bucket, local_dir, "--ignore-delete")
         assert result.exit_code == 0
         assert (Path(local_dir) / "keep.txt").read_bytes() == content
+
+
+# =============================================================================
+# Conflicted copies
+# =============================================================================
+
+
+class TestRemoteConflictedCopy:
+    def test_conflicted_copy_propagates_to_other_client(
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        run_sync_once,
+        bb_server_files,
+        bb_server_upload,
+    ):
+        """When two remote writers upload different content for the same path,
+        the server must preserve the overwritten version as a conflicted copy
+        and every other client must converge on both files.
+
+        The first writer is the real client (public CLI); the second writer is
+        driven through the documented REST upload API, simulating a second
+        remote client that diverged concurrently without reconciling in
+        between (every node resolves causally; a sequential CLI sync would
+        first adopt the base and therefore never diverge, so the concurrent
+        writer is emulated directly on the wire).
+        """
+
+        # Given a unique filename and version A already uploaded by client A
+        name = f"shared-{uuid.uuid4().hex}.txt"
+        version_a = b"version A content\n"
+        version_b = b"version B content\n"
+        (Path(local_dir) / name).write_bytes(version_a)
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        # When a second remote writer overrides the same path with different
+        # content via the public REST API
+        bb_server_upload(bb_bucket, name, version_b)
+
+        # Then the server keeps the winner at the original path and preserves
+        # the overwritten version as a conflicted copy in the listing
+        listing = bb_server_files(bb_bucket)
+        assert name in listing, f"Main path missing from listing: {listing}"
+        conflicts = [p for p in listing if "_conflicted_copy_" in p and name.split(".")[0] in p]
+        assert len(conflicts) == 1, (
+            f"Expected exactly 1 conflicted copy for {name}, found {len(conflicts)}: {conflicts}"
+        )
+        conflict_path = conflicts[0]
+        assert _server_download(live_server, bb_bucket, conflict_path) == version_a, (
+            f"Conflicted copy {conflict_path} does not preserve version A"
+        )
+
+        # And a re-sync of client A must converge on both the winner and the
+        # conflicted copy
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == version_b
+        conflict_local = Path(local_dir) / conflict_path.split("/")[-1]
+        assert conflict_local.read_bytes() == version_a, (
+            f"Local conflicted copy not synced: {conflict_local} missing version A"
+        )
 
 
 # =============================================================================

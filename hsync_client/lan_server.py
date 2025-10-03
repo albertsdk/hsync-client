@@ -43,6 +43,7 @@ from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
 from hsync_common.path_validation import resolve_within
 from loguru import logger as log
 
+from hsync_client.arbitration import conflicted_copy_name
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
     compress_data,
@@ -129,6 +130,7 @@ HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+HTTP_CONFLICT = 409
 HTTP_RANGE_NOT_SATISFIABLE = 416
 HTTP_INTERNAL_ERROR = 500
 HTTP_INSUFFICIENT_STORAGE = 507
@@ -830,6 +832,22 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     # Normalize path to be relative to bucket (like server does)
                     file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
 
+                    # Attach the effective causal version so slaves can run the
+                    # causal matrix on the listing (ADR-0022). For a file whose
+                    # content differs from the stored base (a dirty/edited file
+                    # not yet reconciled), the effective clock is ticked by the
+                    # master cid — honest without persisting.
+                    from hsync_client.sync_state import local_version_for_compare
+
+                    eff = local_version_for_compare(file_path, file_obj.sha256sum)
+                    if eff is not None:
+                        file_normalized["version"] = {
+                            "vclock": eff["vclock"],
+                            "version_id": eff.get("version_id", ""),
+                            "origin_cid": eff.get("origin_cid"),
+                            "ts": eff.get("ts", 0),
+                        }
+
                     # Apply path filter if specified
                     if filter_path:
                         rel_path = file_normalized.get("filepath", "")
@@ -1266,8 +1284,95 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 authenticated = bool(CONFIG.get("LAN_KEY"))
                 mark_inbound_origin(dest_path, cid, authenticated=authenticated)
 
+            # Causal arbitration (ADR-0022): the master is a transport hub,
+            # not an authority. Compare the incoming version against the stored
+            # version for this path and decide accept / supersede / conflict.
+            incoming_vclock_raw = form_fields.get("vclock", "")
+            incoming_version_id = form_fields.get("version_id", "")
+            try:
+                parsed_vclock = json.loads(incoming_vclock_raw) if incoming_vclock_raw else None
+            except (ValueError, TypeError):
+                parsed_vclock = None
+
+            disk_hash = compute_sha256(dest_path) if Path(dest_path).exists() else None
+
+            from hsync_client.arbitration import ArbitrationOutcome, arbitrate_upload
+
+            arb = arbitrate_upload(
+                abs_path=dest_path,
+                incoming_hash=expected_sha,
+                incoming_vclock_raw=parsed_vclock,
+                incoming_version_id=incoming_version_id,
+                incoming_origin_cid=cid if is_valid_cid(cid) else None,
+                disk_hash=disk_hash,
+            )
+
+            if arb.outcome is ArbitrationOutcome.superseded:
+                # Incoming is causally dominated (stale): reject, no copy.
+                log.info(
+                    f'{ActionLabel.CONFLICT} Upload of "{dest_path}" superseded '
+                    f"by a newer local version"
+                )
+                self._send_error_response(HTTP_CONFLICT, "superseded")
+                response_sent = True
+                return
+
+            if arb.outcome is ArbitrationOutcome.conflict_lost:
+                # Concurrent: incoming loses the tie-break. Preserve the
+                # incoming bytes as a conflicted copy, keep the local winner.
+                from hsync_common.time_utils import conflict_timestamp
+
+                ts = conflict_timestamp()
+                loser_cid = arb.loser_cid
+                conflict_path = conflicted_copy_name(dest_path, loser_cid, ts)
+                try:
+                    os.replace(tmp_path, conflict_path)
+                    tmp_path = None
+                    log.warning(
+                        f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
+                        f'incoming version saved as "{conflict_path}"'
+                    )
+                except OSError as e:
+                    log.error(f'Could not save conflict copy for "{dest_path}": {e}')
+                self._send_error_response(HTTP_CONFLICT, "conflict_lost")
+                response_sent = True
+                return
+
+            # accepted / accepted_conflict_won: commit the incoming bytes.
+            if arb.outcome is ArbitrationOutcome.accepted_conflict_won and disk_hash is not None:
+                # Preserve the displaced local content as a conflict copy
+                # before overwriting it with the incoming winner.
+                from hsync_common.time_utils import conflict_timestamp
+
+                ts = conflict_timestamp()
+                conflict_path = conflicted_copy_name(dest_path, arb.loser_cid, ts)
+                try:
+                    Path(conflict_path).parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(dest_path, conflict_path)
+                    log.warning(
+                        f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
+                        f'local version saved as "{conflict_path}"'
+                    )
+                except OSError as e:
+                    log.error(f'Could not save conflict copy for "{dest_path}": {e}')
+
             os.replace(tmp_path, dest_path)
             tmp_path = None
+
+            # Record the agreed version with the merged clock (D11).
+            from hsync_common.models.tombstone import relpath_in_bucket
+
+            rel = relpath_in_bucket(dest_path, str(CONFIG.get("LOCAL_BUCKET", "")))
+            if rel:
+                from hsync_client.sync_state import get_sync_state_store
+
+                get_sync_state_store().record(
+                    rel,
+                    base_hash=expected_sha,
+                    vclock=arb.record_vclock,
+                    version_id=incoming_version_id or None,
+                    origin_cid=cid if is_valid_cid(cid) else None,
+                )
 
             if mtime or ctime:
                 try:

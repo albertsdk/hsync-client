@@ -59,7 +59,11 @@ def _run_preview(log) -> None:
         tombstones = get_tombstones_remote()
         lan_mode = CONFIG.get("LAN_MODE", False)
         sync_actions = get_sync_actions(
-            remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
+            remote_files,
+            local_files,
+            lan_mode=lan_mode,
+            tombstones=tombstones,
+            persist_state=False,
         )
 
         def _is_sentinel(action) -> bool:

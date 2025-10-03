@@ -9,6 +9,7 @@ Shared pytest fixtures for the hsync-client test suite.
 """
 
 import os
+import subprocess
 from collections.abc import Generator
 from pathlib import Path
 
@@ -390,6 +391,156 @@ def live_server(tmp_path_factory):
         shutil.rmtree(buckets_dir, ignore_errors=True)
 
 
+class _RestartableServer:
+    """A real hsync-server subprocess that can be stopped and restarted.
+
+    The buckets dir and TLS material are created once per server and reused
+    across restarts so bucket data persists, exactly like a real deployment
+    whose server process is restarted. Exposes ``base_url`` / ``api_key`` /
+    ``restart()`` / ``stop()``.
+    """
+
+    def __init__(self, base_url: str, port: int, buckets_dir: str, cert_file: str, key_file: str):
+        self.base_url = base_url
+        self.api_key = BB_API_KEY
+        self._port = port
+        self._buckets_dir = buckets_dir
+        self._cert_file = cert_file
+        self._key_file = key_file
+        self._proc = _start_server_proc(port, buckets_dir, cert_file, key_file)
+        _wait_for_server_ready_https(base_url, self._proc)
+
+    def restart(self) -> None:
+        """Stop the current server and start a fresh one on the same state."""
+        _stop_proc(self._proc)
+        self._proc = _start_server_proc(
+            self._port, self._buckets_dir, self._cert_file, self._key_file
+        )
+        _wait_for_server_ready_https(self.base_url, self._proc)
+
+    def stop(self) -> None:
+        _stop_proc(self._proc)
+
+
+@pytest.fixture
+def restartable_live_server(tmp_path):
+    """A function-scoped, restartable real hsync-server over loopback HTTPS.
+
+    Yields a :class:`_RestartableServer` whose state (buckets dir + TLS cert)
+    survives calls to ``restart()``, so a test can simulate a server outage and
+    prove the client reconnects and re-converges.
+    """
+    import shutil
+    import tempfile
+
+    buckets_dir = tempfile.mkdtemp(prefix="hsync_bb_buckets_")
+    cert_dir = tmp_path / "bbssl"
+    cert_dir.mkdir()
+    cert_file, key_file = _self_signed_cert(cert_dir)
+    port = _free_port()
+    server = _RestartableServer(
+        f"https://127.0.0.1:{port}", port, buckets_dir, str(cert_file), str(key_file)
+    )
+    try:
+        yield server
+    finally:
+        server.stop()
+        shutil.rmtree(buckets_dir, ignore_errors=True)
+
+
+def _stop_proc(proc) -> None:
+    """Terminate and reap a server subprocess, killing if needed."""
+    import subprocess
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def _start_server_proc(port: int, buckets_dir: str, cert_file: str, key_file: str):
+    """Start a real hsync-server over loopback HTTPS with a scrubbed env.
+
+    The env is scrubbed of every pre-existing ``HSYNC_*`` variable so the
+    developer's own configuration can never leak into the test server; the
+    override set mirrors the one used by :func:`live_server`. The caller owns
+    termination via :func:`_stop_proc`.
+    """
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+    env.update(
+        {
+            "HSYNC_API_KEY": BB_API_KEY,
+            "HSYNC_BUCKETS": buckets_dir,
+            "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
+            "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
+            "HSYNC_RATE_LIMIT_DOWNLOAD": "1000000/minute",
+            "HSYNC_RATE_LIMIT_DELTA": "1000000/minute",
+            "HSYNC_RATE_LIMIT_WEBSOCKET": "1000000/minute",
+            "HSYNC_RATE_LIMIT_WS_MESSAGES": "1000000/second",
+            "HSYNC_WS_AUTH_TIMEOUT": "5",
+            "HSYNC_WS_HEARTBEAT_INTERVAL": "5",
+            "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
+            "HSYNC_MIN_FREE_DISK_SPACE": "0",
+            "HSYNC_ENABLE_DOCS": "false",
+            "HSYNC_SSL_KEYFILE_PASSWORD": BB_SSL_KEY_PASSWORD,
+        }
+    )
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "hsync_server",
+            "--port",
+            str(port),
+            "--ssl",
+            "--ssl-cert",
+            cert_file,
+            "--ssl-key",
+            key_file,
+            "--log-level",
+            "warning",
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _wait_for_server_ready_https(base_url: str, proc, timeout: float = 30.0) -> None:
+    """Poll the server's ``/health`` endpoint until it responds 200."""
+    import time
+    import warnings
+
+    import requests
+    from urllib3.exceptions import InsecureRequestWarning
+
+    warnings.simplefilter("ignore", InsecureRequestWarning)
+
+    deadline = time.time() + timeout
+    last_exc = None
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"hsync-server subprocess exited early with code {proc.returncode}")
+        try:
+            if requests.get(f"{base_url}/health", timeout=1.0, verify=False).status_code == 200:
+                return
+        except (
+            ConnectionError,
+            ConnectionRefusedError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as exc:
+            last_exc = exc
+        time.sleep(0.15)
+    raise RuntimeError(f"hsync-server did not become healthy: {last_exc}")
+
+
 @pytest.fixture
 def bb_bucket(live_server) -> Generator[str]:
     """Create a uniquely-named bucket on the live server for one test; delete it
@@ -476,6 +627,82 @@ def local_dir(tmp_path):
     return str(d)
 
 
+def _watch_client_log_tail(log_path: str, limit: int = 8192) -> str:
+    """Return the last ``limit`` bytes of a watch client's stderr log."""
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)  # SEEK_END
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return "<client log unavailable>"
+
+
+def _start_watch_client(
+    base_url: str,
+    api_key: str,
+    bucket: str,
+    local_path: str,
+    ready_file: str,
+    locks_dir: str,
+    log_path: str | None = None,
+    *extra: str,
+) -> "subprocess.Popen":
+    """Start the real client in watch mode as a subprocess (shared harness).
+
+    The env is scrubbed of every pre-existing ``HSYNC_*`` variable so the
+    developer's own configuration can never leak into the run; the instance-
+    lock dir is per-test so lock files never land in the real
+    ``$XDG_RUNTIME_DIR``. The caller receives the :class:`subprocess.Popen`
+    handle and must terminate it.
+
+    ``log_path`` (optional) directs stderr to a temp file instead of
+    ``DEVNULL`` so its tail can be included in failure reports — the log must
+    never go to a pipe that would block the subprocess once full.
+    """
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+    env.update(
+        {
+            "HSYNC_API_KEY": api_key,
+            "HSYNC_READY_FILE": ready_file,
+            "HSYNC_LOCKS_DIR": locks_dir,
+        }
+    )
+    args = [
+        sys.executable,
+        "-m",
+        "hsync_client",
+        "-b",
+        bucket,
+        "-s",
+        base_url,
+        "-p",
+        local_path,
+        "-w",
+        "--yes",
+        "--insecure",
+        "--min-free-disk-space",
+        "0",
+        *extra,
+    ]
+    stderr = open(log_path, "wb") if log_path else subprocess.DEVNULL
+    try:
+        return subprocess.Popen(
+            args,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+        )
+    finally:
+        if log_path:
+            stderr.close()
+
+
 @pytest.fixture
 def watch_sync(live_server, tmp_path):
     """Return a callable that starts the client in watch mode as a subprocess.
@@ -483,49 +710,91 @@ def watch_sync(live_server, tmp_path):
     The caller receives the :class:`subprocess.Popen` handle and must terminate
     it. Watch mode blocks forever, so it cannot be driven through CliRunner.
     """
-    import os
-    import subprocess
-    import sys
-
     base_url, api_key = live_server
 
     def _start(bucket: str, local_path: str, *extra: str) -> subprocess.Popen:
         # Ready file goes into tmp_path (NOT local_path) so it never
         # contaminates the synced directory. pytest destroys tmp_path
         # after the test, and atexit cleans it up on normal shutdown.
-        # The env is scrubbed of every pre-existing HSYNC_* variable so the
-        # developer's own configuration can never leak into the run; the
-        # instance-lock dir is per-test so lock files never land in the real
-        # $XDG_RUNTIME_DIR.
-        ready_file = str(tmp_path / "client.ready")
-        env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
-        env.update(
-            {
-                "HSYNC_API_KEY": api_key,
-                "HSYNC_READY_FILE": ready_file,
-                "HSYNC_LOCKS_DIR": str(tmp_path / "locks"),
-            }
-        )
-        args = [
-            sys.executable,
-            "-m",
-            "hsync_client",
-            "-b",
-            bucket,
-            "-s",
+        return _start_watch_client(
             base_url,
-            "-p",
+            api_key,
+            bucket,
             local_path,
-            "-w",
-            "--yes",
-            "--insecure",
-            "--min-free-disk-space",
-            "0",
+            str(tmp_path / "client.ready"),
+            str(tmp_path / "locks"),
+            str(tmp_path / "client.log"),
             *extra,
-        ]
-        return subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        )
 
     return _start
+
+
+@pytest.fixture
+def watch_sync_restartable(restartable_live_server, tmp_path):
+    """Like [watch_sync] but drives the client against the restartable server."""
+
+    def _start(bucket: str, local_path: str, *extra: str) -> subprocess.Popen:
+        return _start_watch_client(
+            restartable_live_server.base_url,
+            restartable_live_server.api_key,
+            bucket,
+            local_path,
+            str(tmp_path / "client.ready"),
+            str(tmp_path / "locks"),
+            str(tmp_path / "client.log"),
+            *extra,
+        )
+
+    return _start
+
+
+@pytest.fixture
+def bb_restartable_bucket(restartable_live_server) -> Generator[str]:
+    """Create a uniquely-named bucket on the restartable server; delete it after."""
+    import uuid
+
+    import requests
+
+    base = restartable_live_server.base_url
+    headers = {"Authorization": f"Bearer {restartable_live_server.api_key}"}
+    name = f"bb-rs-{uuid.uuid4().hex[:8]}"
+    r = requests.post(
+        f"{base}/api/v1/buckets",
+        params={"bucket": name},
+        headers=headers,
+        timeout=15.0,
+        verify=False,
+    )
+    assert r.status_code == 201, r.text
+    yield name
+    requests.delete(
+        f"{base}/api/v1/buckets/{name}",
+        headers=headers,
+        timeout=15.0,
+        verify=False,
+    )
+
+
+@pytest.fixture
+def bb_restartable_server_files(restartable_live_server):
+    """List files on the restartable server for a bucket, returning a set of names."""
+    import requests
+
+    base = restartable_live_server.base_url
+    headers = {"Authorization": f"Bearer {restartable_live_server.api_key}"}
+
+    def _list(bucket: str) -> set[str]:
+        r = requests.get(
+            f"{base}/api/v1/buckets/{bucket}/files",
+            headers=headers,
+            timeout=15.0,
+            verify=False,
+        )
+        assert r.status_code == 200, r.text
+        return {f["filepath"] for f in r.json()}
+
+    return _list
 
 
 @pytest.fixture

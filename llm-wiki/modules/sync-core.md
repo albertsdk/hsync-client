@@ -11,9 +11,9 @@ and LAN modes.
 | `get_files_local` | `sync.py:577` | scan local tree (parallel, adaptive workers `_get_optimal_workers:528`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed |
 | `get_files_remote` | `sync.py:661` | fetch remote file list |
 | `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:712` / `:761` | tombstone exchange |
-| `get_sync_actions` | `sync.py:830` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`) |
-| `_compare_files` | `sync.py:989` | per-file decision (hash/mtime + base via sync_state) |
-| `_save_conflict_copy` | `sync.py:1074` | write a conflict copy on three-way conflict |
+| `get_sync_actions` | `sync.py:830` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`); `persist_state=False` (preview/dry-run) skips `merge_and_record` so `.hsyncstate` is never mutated |
+| `_compare_files` | `sync.py:989` | per-file decision via the causal vector-clock matrix (ADR-0022): content identity (hash) → causal dominance (`compare_vclocks`) → deterministic SHA-256 tie-break on true divergence. The wall clock is never consulted |
+| `_save_conflict_copy` | `sync.py:1228` | write a conflict copy on `conflict_download` (remote won the causal tie-break); resolves bucket-relative action paths against `LOCAL_BUCKET` before reading/preserving the local file (raw relative paths were silently skipped) |
 | `_execute_parallel_transfers` | `sync.py:357` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` |
 | `_mass_deletion_blocked` | `sync.py:134` | §12 guard: pause when deletions exceed threshold/percent or empty master |
 | `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `sync.py:79` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
@@ -22,7 +22,34 @@ and LAN modes.
 | `_cleanup_partial_files` | `sync.py:102` | drop stale `.part` files |
 
 Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:799`,
-`MTIME_TOLERANCE` `:796`).
+`MTIME_TOLERANCE` `:796`). `MTIME_TOLERANCE` is used **only** by the
+tombstone resurrection guard — content comparison is causal (vector clocks)
+and never consults the wall clock.
+
+## Causal conflict resolution (ADR-0022)
+
+`_compare_files` calls `hsync_common.models.version.resolve_three_way` with
+`(local_hash, local_vclock, remote_hash, remote_vclock, base_hash)`:
+
+| Decision | Meaning | Action |
+| -------- | ------- | ------ |
+| `in_sync` | content identical | nothing |
+| `upload` | local causally ahead (or remote at base) | upload |
+| `download` | remote causally ahead (or local at base) | download |
+| `conflict_upload` | concurrent; local wins SHA-256 tie-break | upload (receiver preserves its loser) |
+| `conflict_download` | concurrent; remote wins tie-break | preserve local + download |
+
+The local vclock is resolved **purely** (no store mutation) via
+`sync_state.local_version_for_compare` (ticks the stored clock by this node's
+cid when the content differs from the recorded base). Persistence happens only
+after a successful sync (`merge_and_record` on `in_sync`, `_record_synced_base`
+on transfer). `get_sync_actions(persist_state=False)` skips the
+`merge_and_record` step so a dry-run/preview never mutates `.hsyncstate`.
+
+No node is authoritative: the server and the elected LAN master are transport
+hubs. Upload arbitration mirrors `hsync_server.arbitration` (client side in
+`hsync_client/arbitration.py`); the tie-break is deterministic by highest
+SHA-256 so every node converges without a central authority.
 
 ## delta_transfer.py — rsync-style block sync
 
@@ -54,14 +81,16 @@ caller falls back to a full transfer.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `download_file` / `_download_file_attempt` | `transfer.py:280` / `:326` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta` |
+| `download_file` / `_download_file_attempt` | `transfer.py:280` / `:326` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta`; the up-to-date shortcut is content-aware (equal/newer local mtime is trusted only when the expected hash matches — required to deliver the master's version after a preserved conflict) |
 | `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta` |
 | `_get_upload_status` | `transfer.py:680` | query server for resume offset |
 | `is_file_stable` / `_wait_for_stable_file` | `transfer.py:624` / `:728` | size+mtime stability gate; fast path on `from_closed` |
 | `_reschedule_upload` | `transfer.py:764` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:172` / `:149` | streaming multipart |
 | `_ThrottledFileReader` | `transfer.py:119` | bandwidth throttle on upload reads |
-| `_record_synced_base` | `transfer.py:98` | persist merge base after success (sync_state) |
+| `_record_synced_base` | `transfer.py:98` | persist merge base after success (sync_state); resolves relative action paths to absolute before recording (raw relative paths were silent no-ops that degraded every later cycle to the mtime heuristic); accepts the merged `vclock` to record (convergence D11) |
+| `_handle_upload_conflict_response` | `transfer.py` | handle 409 upload responses: `superseded`/`conflict_lost` → download needed (next cycle); legacy "already present" → record base as in-sync |
+| `_upload_version_fields` / `_resolve_local_vclock` | `transfer.py` | resolve the effective local `vclock`/`version_id` for the upload form and merge-base recording (delegates to `sync_state.upload_version_fields`) |
 | `_emit_transfer_failed` | `transfer.py:93` | emit `transfer_failed` UI event on exhaustion |
 | `_local_dest_path` | `transfer.py:265` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
 | `_open_partial_no_follow` | `utils.py:379` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |

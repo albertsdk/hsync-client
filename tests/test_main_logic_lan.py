@@ -116,7 +116,6 @@ class TestRunLanMode:
         with (
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
@@ -152,7 +151,6 @@ class TestRunLanMode:
         with (
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
@@ -187,7 +185,6 @@ class TestRunLanMode:
         with (
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler._run_preview") as mock_preview,
         ):
@@ -277,7 +274,6 @@ class TestRunLanMode:
         with (
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),

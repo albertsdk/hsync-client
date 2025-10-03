@@ -73,11 +73,11 @@ event (`main_logic.py:793`).
 
 ### LAN post-discovery refresh (`lan_handler._refresh_lan_network_tuning`)
 
-`lan_handler.py:107`, called from `_run_as_slave` (`lan_handler.py:493`) after
-the master is pinned and `set_config(config)` has run, **before**
-`_measure_clock_offset`. Measures the real RTT toward the elected master and
-re-derives `HTTP_TIMEOUT`, `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT`
-and `RECONNECT_DELAY` via `derive_timeout`/`derive_retry`. Only keys listed in
+`lan_handler.py:53`, called from `_run_as_slave` (`lan_handler.py:434`) after
+the master is pinned and `set_config(config)` has run. Measures the real RTT
+toward the elected master and re-derives `HTTP_TIMEOUT`,
+`TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT` and `RECONNECT_DELAY` via
+`derive_timeout`/`derive_retry`. Only keys listed in
 `CONFIG["AUTOTUNE_MANAGED_KEYS"]` are touched — keys set via CLI/env keep
 their values (provenance tagged by the `_get_*_value` resolvers themselves,
 `main_logic.py:295-364`; the managed check short-circuits before any probing).
@@ -127,6 +127,5 @@ thread-safety tests.
 
 `tests/test_lan_network_tuning.py` — LAN refresh (`_refresh_lan_network_tuning`
 derivation, managed-keys precedence, dual-write, no-op paths), slave call
-ordering (pin → refresh → clock offset), and `run_sync` LAN-placeholder
-behaviour (probe skipped, no placeholder `server` event, managed-keys
-provenance).
+ordering (pin → refresh), and `run_sync` LAN-placeholder behaviour (probe
+skipped, no placeholder `server` event, managed-keys provenance).

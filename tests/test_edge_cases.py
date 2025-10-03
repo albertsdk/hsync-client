@@ -288,36 +288,48 @@ class TestEdgeCasesFileOperations:
 
     def test_update_file_with_permissions(self, tmp_path):
         """Test updating file when only permissions differ."""
+        from hsync_client import sync_state
         from hsync_client.config import CONFIG
         from hsync_client.sync import update_file
 
-        # Create remote file data (wire paths are bucket-relative)
-        remote_data = {
-            "filepath": "test.txt",
-            "mtime": int(time.time()),
-            "size": 10,
-            "sha256sum": "abc123",
-            "permissions": "644",
-        }
-
-        # Create local file with different permissions
+        # Create remote file data (wire paths are bucket-relative). Use the
+        # local file's real hash and a recorded base equal to it so the causal
+        # matrix resolves to dominance (local at base, remote moved on) and the
+        # permissions-only branch is reached after the (mocked) download.
         local_file = tmp_path / "test.txt"
         local_file.write_text("content")
         local_file.chmod(stat.S_IRWXU)
 
+        from hsync_common.hashing import compute_sha256
+
+        local_sha = compute_sha256(str(local_file))
+
+        remote_data = {
+            "filepath": "test.txt",
+            "mtime": int(time.time()),
+            "size": 10,
+            "sha256sum": local_sha,
+            "permissions": "644",
+        }
+
         # Set up required CONFIG
         original_config = CONFIG.copy()
         CONFIG["LOCAL_BUCKET"] = str(tmp_path)
+        CONFIG["CID"] = "EdgeClient1234567890"
 
         try:
+            with patch("hsync_client.sync_state.CONFIG", CONFIG):
+                sync_state.record_base(str(local_file), "0" * 64)
+                sync_state.flush()
+                sync_state._stores.clear()
             # Mock download_file to avoid network calls
             with patch("hsync_client.transfer.download_file") as mock_download:
                 update_file(remote_data)
 
-                # Should not download since content matches (mock only checks sha256)
-                # but may set permissions
-                # The key is it shouldn't crash
-                mock_download.assert_called()
+                # Content matches the remote hash (both are local_sha), so no
+                # download is needed; permissions differ and are applied. The
+                # key is it shouldn't crash.
+                assert not mock_download.called
         finally:
             # Cast to dict to access clear/update methods (TypedDict doesn't have them)
             cast(dict, CONFIG).clear()
@@ -352,155 +364,6 @@ class TestConcurrency:
 
 class TestLANHandler:
     """Tests for LAN handler functions."""
-
-    def test_measure_clock_offset_success(self, tmp_path):
-        """Test _measure_clock_offset with successful response."""
-        from hsync_client.config import HsyncConfig
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-        mock_master.get_server_url.return_value = "http://192.168.1.1:9000"
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"timestamp": 1000.0}
-
-        with patch("hsync_client.utils.http_get", return_value=mock_response):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Verify clock_offset was set (MagicMock returns a MagicMock, check if assignment happened)
-        assert hasattr(mock_master, "clock_offset")
-
-    def test_measure_clock_offset_non_200_status(self, tmp_path):
-        """Test _measure_clock_offset with non-200 status code."""
-        from hsync_client.config import HsyncConfig
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-
-        with patch("hsync_client.utils.http_get", return_value=mock_response):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Should log debug message about non-200 status
-        assert mock_log.debug.call_count >= 1
-
-    def test_measure_clock_offset_no_timestamp(self, tmp_path):
-        """Test _measure_clock_offset when response has no timestamp."""
-        from hsync_client.config import HsyncConfig
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {}  # No timestamp
-
-        with patch("hsync_client.utils.http_get", return_value=mock_response):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Should log debug message about missing timestamp
-        assert mock_log.debug.call_count >= 1
-
-    def test_measure_clock_offset_request_exception(self, tmp_path):
-        """Test _measure_clock_offset when request fails."""
-        from requests import RequestException
-
-        from hsync_client.config import HsyncConfig
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        with patch(
-            "hsync_client.utils.http_get",
-            side_effect=RequestException("Connection failed"),
-        ):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Should log debug message about request failure
-        assert mock_log.debug.call_count >= 1
-
-    def test_measure_clock_offset_large_clock_skew(self, tmp_path):
-        """Test _measure_clock_offset logs warning on large clock skew."""
-        import time
-
-        from hsync_common.clock import CLOCK_SKEW_THRESHOLD
-
-        from hsync_client.config import HsyncConfig
-        from hsync_client.lan_handler import _measure_clock_offset
-
-        mock_master = MagicMock()
-        mock_master.cid = "master-1"
-
-        # Calculate a timestamp that will result in a large offset
-        # Large offset = timestamp - (t1 + rtt/2) > CLOCK_SKEW_THRESHOLD
-        large_timestamp = time.time() + CLOCK_SKEW_THRESHOLD * 10
-
-        mock_config: HsyncConfig = cast(
-            HsyncConfig,
-            {
-                "REQUEST_HEADERS": {"X-Client-Id": "test"},
-                "HTTP_TIMEOUT": 30,
-            },
-        )
-        mock_log = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"timestamp": large_timestamp}
-
-        with patch("hsync_client.utils.http_get", return_value=mock_response):
-            with patch("hsync_client.utils.get_ssl_verify", return_value=True):
-                _measure_clock_offset(mock_master, mock_config, mock_log)
-
-        # Should log a warning about clock skew
-        assert mock_log.warning.call_count == 1
 
     def test_run_preview_calls_preview_impl(self, tmp_path):
         """Test _run_preview calls the preview implementation."""

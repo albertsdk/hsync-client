@@ -1,8 +1,10 @@
 # HSYNC Client — LAN (P2P) mode
 
 Server-less mode: peers discover each other on the LAN (mDNS), **elect a master**,
-and the master serves files over HTTPS/WSS while slaves sync to it. Security and
-election rules are SSOT in `hsync-common`.
+and the master serves files over HTTPS/WSS while slaves sync to it. The master
+is a **transport coordinator**, not an authority: every node applies the same
+causal vector-clock arbitration (ADR-0022). Security and election rules are
+SSOT in `hsync-common`.
 
 > **Domain-critical**: before changing discovery/election/security, read
 > [`hsync-common/docs/lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/docs/lan-protocol.md).
@@ -11,12 +13,11 @@ election rules are SSOT in `hsync-common`.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_lan_mode` | `lan_handler.py:172` | start discovery, elect, branch to role |
+| `run_lan_mode` | `lan_handler.py:165` | start discovery, elect, branch to role |
 | `_run_as_master` | `:300` | start `LANServer` + `LANWebSocketServer` + watcher |
 | `_run_as_slave` | `:434` | TOFU-pin master, refresh tuning, then connect + sync |
 | `_evaluate_master_pin` | `:377` | apply pin decision before slave connect |
 | `_refresh_lan_network_tuning` | `:107` | re-derive autotune-managed keys from real master RTT (slave, post-discovery) |
-| `_measure_clock_offset` | `:53` | NTP-style skew vs master |
 | `NO_MASTER_WARNING_TIMEOUT` | `:50` | warn when no master appears |
 
 ## Discovery & election (`lan.py`)
@@ -37,6 +38,16 @@ records advertise `protocol`, `cert_fp`, `sync_direction`; protocol-mismatched
 peers are ignored.
 
 ## Master server (`lan_server.py`, `lan_websocket.py`)
+
+The LAN master mirrors the central server's causal upload arbitration via
+`hsync_client/arbitration.py` (parallel to `hsync_server.arbitration`, both
+built on `hsync_common` primitives + the local sync-state store). The
+`_handle_upload` endpoint arbitrate-then-commit: a stale upload is rejected
+(`409 superseded`), a tie-break loser is preserved as a conflicted copy
+(`409 conflict_lost`), and an accepted upload records the merged vclock
+(convergence D11). The `/files` listing and broadcast events attach the
+effective causal version to each `FileDict` so slaves run the same causal
+matrix on the wire data.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |

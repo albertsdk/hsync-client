@@ -15,6 +15,7 @@ import pytest
 from hsync_common.models.file import File, clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
 from hsync_common.models.tombstone import tombstone_key
+from hsync_common.models.version import merge_vclocks
 
 from hsync_client import sync_state as ss_mod
 from hsync_client import tombstones as ts_mod
@@ -230,27 +231,35 @@ class TestGetSyncActions:
             assert result[0].name == SyncActionName.nothing
 
     def test_download_action_for_newer_remote(self, tmp_path):
-        """Newer remote file triggers download."""
+        """Remote causally ahead (dominant clock) triggers download."""
         local_file = tmp_path / "file.txt"
         local_file.write_text("content")
-        local_mtime = int(os.path.getmtime(str(local_file)))
-
         local_file_obj = File.get(str(local_file))
         assert local_file_obj is not None
         local_file_dict = local_file_obj.to_dict()
+        # Remote has a vector clock that dominates the local (empty) clock.
         remote_files = [
             {
                 "filepath": "file.txt",
                 "name": "file.txt",
-                "mtime": local_mtime + 1000,  # Remote is newer
-                "ctime": local_mtime + 1000,
+                "mtime": 0,
+                "ctime": 0,
                 "size": 7,
                 "sha256sum": "different_sha256",
                 "permissions": "644",
+                "version": {
+                    "vclock": {"TestClientB1234567890": 1},
+                    "version_id": "vid",
+                    "origin_cid": "TestClientB1234567890",
+                    "ts": 0,
+                },
             }
         ]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch(
+            "hsync_client.sync.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
+        ):
             result = get_sync_actions(remote_files, [local_file_dict])
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
@@ -496,28 +505,37 @@ class TestConflictResolution:
             assert result[0].conflict is True
 
     def test_newer_remote_is_not_flagged_conflict(self, tmp_path):
-        """A clearly newer remote downloads without being flagged as conflict."""
+        """A remote with a dominant vector clock downloads without conflict."""
         local_file = tmp_path / "newer.txt"
         local_file.write_text("local content")
-        mtime = int(os.path.getmtime(str(local_file)))
 
         local_file_obj = File.get(str(local_file))
         assert local_file_obj is not None
         local_file_dict = local_file_obj.to_dict()
 
+        # Remote has a clock that dominates the local (empty) clock.
         remote_files = [
             {
                 "filepath": "newer.txt",
                 "name": "newer.txt",
-                "mtime": mtime + 100,
-                "ctime": mtime + 100,
+                "mtime": 0,
+                "ctime": 0,
                 "size": 99,
                 "sha256sum": "deadbeef" * 8,
                 "permissions": "644",
+                "version": {
+                    "vclock": {"TestClientB1234567890": 1},
+                    "version_id": "vid",
+                    "origin_cid": "TestClientB1234567890",
+                    "ts": 0,
+                },
             }
         ]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch(
+            "hsync_client.sync.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
+        ):
             result = get_sync_actions(remote_files, [local_file_dict])
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
@@ -590,6 +608,53 @@ class TestConflictResolution:
             r"tz_test_conflicted_copy_\d{8}T\d{6}Z_[a-zA-Z0-9\-_.]+\.bin",
             name,
         ), f"Filename {name!r} does not match the UTC ISO-8601 pattern"
+
+    def test_preview_does_not_mutate_sync_state(self, tmp_path):
+        """get_sync_actions(persist_state=False) must not mutate .hsyncstate.
+
+        A dry-run/preview computes the same causal decisions but must never
+        persist them: the merge base recorded before the preview must be
+        byte-identical after it (ADR-0022 §3.4.7).
+        """
+        local_file = tmp_path / "kept.txt"
+        local_file.write_text("synced content")
+        file_obj = File.get(str(local_file))
+        assert file_obj is not None
+
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": "PreviewClient12345678"}
+
+        # Record a base so the file is "in sync" — the path that previously
+        # mutated the store via merge_and_record.
+        with patch("hsync_client.sync_state.CONFIG", cfg):
+            ss_mod.record_base(str(local_file), file_obj.sha256sum)
+            ss_mod.flush()
+            ss_mod._stores.clear()
+
+        state_path = tmp_path / ".hsyncstate"
+        before = state_path.read_bytes()
+
+        remote_files = [
+            {
+                "filepath": "kept.txt",
+                "name": "kept.txt",
+                "path": "",
+                "mtime": file_obj.mtime,
+                "ctime": file_obj.ctime,
+                "size": file_obj.size,
+                "sha256sum": file_obj.sha256sum,
+                "permissions": file_obj.permissions,
+            }
+        ]
+
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [file_obj.to_dict()], persist_state=False)
+            assert all(a.name == SyncActionName.nothing for a in result)
+
+        # The persisted side-car must be unchanged.
+        assert state_path.read_bytes() == before
 
 
 class TestSyncCycleFlag:
@@ -976,16 +1041,29 @@ class TestThreeWayMerge:
             "permissions": "644",
         }
 
-    def _run(self, tmp_path, *, local_text, remote_sha, base_hash):
-        """Drive get_sync_actions with equal mtimes so only the base decides."""
+    def _run(self, tmp_path, *, local_text, remote_sha, base_hash, remote_vclock=None):
+        """Drive get_sync_actions with equal mtimes so only the base/vclock decides."""
         local_file = tmp_path / "f.txt"
         local_file.write_text(local_text)
         lf = File.get(str(local_file))
         assert lf is not None
         remote = self._remote("f.txt", remote_sha, lf.mtime or 0)
+        if remote_vclock is not None:
+            remote["version"] = {
+                "vclock": remote_vclock,
+                "version_id": "vid",
+                "origin_cid": "TestClientB1234567890",
+                "ts": 0,
+            }
         with (
-            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
-            patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch(
+                "hsync_client.sync.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
+            ),
+            patch(
+                "hsync_client.sync_state.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
+            ),
         ):
             if base_hash is not None:
                 ss_mod.record_base(str(local_file), base_hash)
@@ -1013,13 +1091,27 @@ class TestThreeWayMerge:
         assert getattr(result[0], "conflict", False) is False
 
     def test_both_changed_is_conflict(self, tmp_path):
-        """Both sides diverged from base: remote wins but local is preserved."""
+        """Both sides diverged from base with concurrent clocks: tie-break conflict.
+
+        The winner is decided by highest SHA-256; the loser is preserved. With
+        concurrent vclocks (neither dominates) this is always a conflict_*.
+        """
         _, result, _ = self._run(
-            tmp_path, local_text="LOCAL", remote_sha=_sha("REMOTE"), base_hash=_sha("BASE")
+            tmp_path,
+            local_text="LOCAL",
+            remote_sha=_sha("REMOTE"),
+            base_hash=_sha("BASE"),
+            remote_vclock={"TestClientB1234567890": 1},
         )
         assert len(result) == 1
-        assert result[0].name == SyncActionName.download
-        assert getattr(result[0], "conflict", False) is True
+        # Tie-break by hash: if local hash > remote hash -> upload; else download+conflict.
+        local_hash = _sha("LOCAL")
+        remote_hash = _sha("REMOTE")
+        if local_hash > remote_hash:
+            assert result[0].name == SyncActionName.upload
+        else:
+            assert result[0].name == SyncActionName.download
+            assert getattr(result[0], "conflict", False) is True
 
     def test_identical_content_is_in_sync_and_refreshes_base(self, tmp_path):
         """Equal content needs no action and refreshes the recorded base."""
@@ -1039,15 +1131,21 @@ class TestThreeWayMerge:
         assert result[0].name == SyncActionName.nothing
         assert base_after == lf.sha256sum
 
-    def test_unknown_base_falls_back_to_legacy_tie(self, tmp_path):
-        """With no recorded base, an equal-mtime content clash uses the legacy tie."""
+    def test_no_base_no_clocks_different_content_is_tie_break(self, tmp_path):
+        """With no recorded base and no clocks, differing content is a tie-break
+        (replaces the old legacy mtime tie). The winner is decided by hash."""
         _, result, _ = self._run(
             tmp_path, local_text="LOCAL", remote_sha=_sha("REMOTE"), base_hash=None
         )
-        # Legacy: same mtime, different content -> remote wins, marked conflict.
         assert len(result) == 1
-        assert result[0].name == SyncActionName.download
-        assert getattr(result[0], "conflict", False) is True
+        # Tie-break by hash: whichever content has the higher SHA-256 wins.
+        local_hash = _sha("LOCAL")
+        remote_hash = _sha("REMOTE")
+        if local_hash > remote_hash:
+            assert result[0].name == SyncActionName.upload
+        else:
+            assert result[0].name == SyncActionName.download
+            assert getattr(result[0], "conflict", False) is True
 
 
 class TestClientSyncStateModule:
@@ -1098,6 +1196,11 @@ class TestClientSyncStateModule:
 _E2E_MTIME = 1_000_000
 
 
+def _peer_cid(letter: str) -> str:
+    """Return a valid 21-char cid derived from a peer letter (is_valid_cid)."""
+    return f"Peer{letter}1234567890ABCDEF"
+
+
 class TestThreeWayMergeEndToEnd:
     """Full two-peer round-trip exercising the lifecycle on real on-disk state.
 
@@ -1120,7 +1223,13 @@ class TestThreeWayMergeEndToEnd:
 
     @staticmethod
     def _remote_list(server: dict) -> list[dict]:
-        """Render the shared server state as a list-files payload."""
+        """Render the shared server state as a list-files payload.
+
+        Each entry advertises the registered causal version, mirroring the
+        real ``version`` JOIN the server/master attaches to listings
+        (ADR-0022 §4.2). Unknown "version" keys are ignored by old-style
+        callers, so this stays wire-faithful.
+        """
         return [
             {
                 "filepath": rel,
@@ -1130,13 +1239,26 @@ class TestThreeWayMergeEndToEnd:
                 "ctime": _E2E_MTIME,
                 "size": len(entry["content"]),
                 "permissions": "644",
+                "version": {
+                    "vclock": entry.get("vclock", {}),
+                    "version_id": "",
+                    "origin_cid": entry.get("origin_cid"),
+                    "ts": 0,
+                },
             }
             for rel, entry in server.items()
         ]
 
     @staticmethod
     def _apply(action, bucket, server: dict) -> None:
-        """Mirror the sync loop's side effects for one decided action."""
+        """Mirror the sync loop's side effects for one decided action.
+
+        Clocks follow the real convergence rules: an upload registers
+        ``merge(incoming, stored)`` on the server (D11), a download records
+        ``merge_and_record`` locally, and a conflicting download first
+        preserves the losing bytes via ``_save_conflict_copy`` (exactly as
+        ``sync()`` does before the overwrite).
+        """
         # Uploads carry an absolute local path; downloads carry the bucket-
         # relative remote path. Normalize both to an absolute path in the bucket.
         fp = action.file.filepath or ""
@@ -1144,24 +1266,37 @@ class TestThreeWayMergeEndToEnd:
         rel = os.path.relpath(abs_path, str(bucket))
         if action.name == SyncActionName.upload:
             content = (bucket / rel).read_text()
-            server[rel] = {"content": content, "sha": _sha(content)}
-            ss_mod.record_base(abs_path, _sha(content))
+            sha = _sha(content)
+            eff = ss_mod.local_version_for_compare(abs_path, sha)
+            incoming_vclock = eff["vclock"] if eff else {}
+            stored_vclock = server[rel]["vclock"] if rel in server else {}
+            merged = merge_vclocks(incoming_vclock, stored_vclock)
+            server[rel] = {"content": content, "sha": sha, "vclock": merged}
+            ss_mod.record_base(abs_path, sha, vclock=merged)
         elif action.name == SyncActionName.download:
             # On a conflict the real loop first saves a conflict copy of the
-            # local file; here we just assert the flag and let the master win.
+            # local file; mirror that so the loser's content is preserved on
+            # disk and later propagates as a brand-new file.
             entry = server[rel]
+            if getattr(action, "conflict", False):
+                _save_conflict_copy(action.file)
             (bucket / rel).parent.mkdir(parents=True, exist_ok=True)
             (bucket / rel).write_text(entry["content"])
             os.utime(bucket / rel, (_E2E_MTIME, _E2E_MTIME))
-            ss_mod.record_base(abs_path, entry["sha"])
+            ss_mod.merge_and_record(abs_path, entry["sha"], entry.get("vclock"))
         # SyncActionName.nothing: get_sync_actions already refreshed the base.
 
-    def _round(self, bucket, server: dict) -> list:
+    def _round(self, bucket, server: dict, cid: str | None = None) -> list:
         """Run one full sync round for the peer rooted at *bucket*."""
         cfg = {"LOCAL_BUCKET": str(bucket)}
+        if cid:
+            cfg["CID"] = cid
         with (
             patch("hsync_client.sync.CONFIG", cfg),
             patch("hsync_client.sync_state.CONFIG", cfg),
+            # _save_conflict_copy resolves relative paths via transfer._local_dest_path,
+            # which reads its own CONFIG.
+            patch("hsync_client.transfer.CONFIG", cfg),
         ):
             # fresh process: base is loaded from .hsyncstate
             clear_sha256_cache()  # mtimes are pinned, so re-hash content each round
@@ -1209,21 +1344,157 @@ class TestThreeWayMergeEndToEnd:
         assert self._only(actions, SyncActionName.download).conflict is False
         assert (peer_b / "doc.txt").read_text() == "v2"
 
-        # Round 3 - concurrent divergence from the shared base v2.
-        self._touch(peer_a / "doc.txt", "vA")
-        self._touch(peer_b / "doc.txt", "vB")
+        # Round 3 - concurrent divergence from the shared base v2. The winner is
+        # decided deterministically by highest SHA-256 (ADR-0022 D3), so pick the
+        # two contents and compute which one wins up front.
+        content_a, content_b = sorted(("vA", "vB"), key=_sha, reverse=True)
+        # (reverse sort ⇒ content_a has the higher hash, i.e. would win a tie-break)
+        self._touch(peer_a / "doc.txt", content_a)
+        self._touch(peer_b / "doc.txt", content_b)
         # A wins the race and uploads first.
         actions = self._round(peer_a, server)
         self._only(actions, SyncActionName.upload)
-        assert server["doc.txt"]["sha"] == _sha("vA")
-        # B now sees both sides changed since base v2 -> conflict (remote wins,
-        # the local copy is preserved by the real loop). Every mtime is equal, so
-        # only the recorded base can produce this verdict.
+        assert server["doc.txt"]["sha"] == _sha(content_a)
+        # B now sees both sides changed since base v2. A's content has the
+        # higher hash, so B loses the tie-break: a conflicting download (the
+        # local copy is preserved by the real loop), then convergence to A's
+        # content. Every mtime is equal, so only the recorded base plus the
+        # hash tie-break can produce this verdict.
         actions = self._round(peer_b, server)
         assert self._only(actions, SyncActionName.download).conflict is True
-        assert (peer_b / "doc.txt").read_text() == "vA"
+        assert (peer_b / "doc.txt").read_text() == content_a
 
-        # Round 4 - both peers now agree on vA: nothing left to do.
+        # Round 4 - both peers now agree on A's content. Only the conflict copy
+        # B preserved may still propagate as a brand-new file.
         for peer in (peer_a, peer_b):
-            actions = self._round(peer, server)
-            assert all(a.name == SyncActionName.nothing for a in actions), [a.name for a in actions]
+            doc_actions = [
+                a
+                for a in self._round(peer, server)
+                if "conflicted_copy" not in (a.file.filepath or "")
+            ]
+            assert all(a.name == SyncActionName.nothing for a in doc_actions), [
+                (a.name, a.file.filepath) for a in doc_actions
+            ]
+            assert (peer / "doc.txt").read_text() == content_a
+
+    def test_relay_a_b_c_no_false_conflict(self, tmp_path):
+        """Relay A→B→C: A's full causal history reaches C through B.
+
+        C is offline while A authors v1/v2 and B builds vB on top of them;
+        when C rejoins it sees only the final aggregated state. The clock
+        (A's counters included, arrived via B's upload) makes the download
+        silent on every leg — no tie-break, no conflict copy (piano §6).
+        """
+        peer_a = tmp_path / "peerA"
+        peer_b = tmp_path / "peerB"
+        peer_c = tmp_path / "peerC"
+        for peer in (peer_a, peer_b, peer_c):
+            peer.mkdir()
+        server: dict = {}
+        cid_a, cid_b, cid_c = _peer_cid("A"), _peer_cid("B"), _peer_cid("C")
+
+        # A authors v1; B and C download it cleanly (shared base, clock {A:1}).
+        self._touch(peer_a / "doc.txt", "v1")
+        self._only(self._round(peer_a, server, cid=cid_a), SyncActionName.upload)
+        assert server["doc.txt"]["vclock"] == {cid_a: 1}
+        for peer, cid in ((peer_b, cid_b), (peer_c, cid_c)):
+            actions = self._round(peer, server, cid=cid)
+            assert self._only(actions, SyncActionName.download).conflict is False
+
+        # A edits to v2 and syncs; B and C catch up to the new base.
+        self._touch(peer_a / "doc.txt", "v2")
+        self._round(peer_a, server, cid=cid_a)
+        assert server["doc.txt"]["vclock"] == {cid_a: 2}
+        self._round(peer_b, server, cid=cid_b)
+        self._round(peer_c, server, cid=cid_c)
+
+        # B (now offline, on the v2 base) builds vB on top and uploads: the
+        # server holds A's and B's counters merged ({A:2, B:1}).
+        self._touch(peer_b / "doc.txt", "vB")
+        self._round(peer_b, server, cid=cid_b)
+        assert server["doc.txt"]["vclock"] == {cid_a: 2, cid_b: 1}
+
+        # C rejoins: it only ever sees the final aggregated state (it went
+        # offline after downloading v2) and never talked to B directly, yet
+        # the download is silent (no false conflict).
+        actions = self._round(peer_c, server, cid=cid_c)
+        assert self._only(actions, SyncActionName.download).conflict is False
+        assert (peer_c / "doc.txt").read_text() == "vB"
+
+        # A rejoins: still at its clean base v2, so vB arrives silently too.
+        actions = self._round(peer_a, server, cid=cid_a)
+        assert self._only(actions, SyncActionName.download).conflict is False
+        assert (peer_a / "doc.txt").read_text() == "vB"
+
+        # Full three-peer convergence to vB.
+        for peer, cid in ((peer_a, cid_a), (peer_b, cid_b), (peer_c, cid_c)):
+            actions = self._round(peer, server, cid=cid)
+            assert all(a.name == SyncActionName.nothing for a in actions), [
+                (a.name, a.file.filepath) for a in actions
+            ]
+
+    def test_offline_partition_tie_break_preserves_loser(self, tmp_path):
+        """Offline partition: both peers edit; the deterministic SHA-256
+        tie-break elects the same winner on every node and the loser's bytes
+        are preserved as a conflict copy (piano §6)."""
+        peer_a = tmp_path / "peerA"
+        peer_b = tmp_path / "peerB"
+        peer_c = tmp_path / "peerC"
+        for peer in (peer_a, peer_b, peer_c):
+            peer.mkdir()
+        server: dict = {}
+        cid_a, cid_b, cid_c = _peer_cid("A"), _peer_cid("B"), _peer_cid("C")
+
+        # Common base: A authors v1; everyone downloads it ({A:1} everywhere).
+        self._touch(peer_a / "doc.txt", "v1")
+        self._round(peer_a, server, cid=cid_a)
+        for peer, cid in ((peer_b, cid_b), (peer_c, cid_c)):
+            actions = self._round(peer, server, cid=cid)
+            assert self._only(actions, SyncActionName.download).conflict is False
+
+        # Decide the deterministic winner up front (highest SHA-256 wins,
+        # ADR-0022 D3) so assertions are stable regardless of content.
+        win_text, lose_text = sorted(
+            ("offline-winner", "offline-loser"),
+            key=_sha,
+            reverse=True,
+        )  # reverse ⇒ win_text has the higher hash (wins the tie-break)
+
+        # Offline partition: A and B diverge from the shared base without syncing.
+        self._touch(peer_a / "doc.txt", win_text)
+        self._touch(peer_b / "doc.txt", lose_text)
+
+        # A rejoins first: the remote still matches A's base → clean upload.
+        actions = self._round(peer_a, server, cid=cid_a)
+        self._only(actions, SyncActionName.upload)
+        assert server["doc.txt"]["sha"] == _sha(win_text)
+
+        # B rejoins: true divergence. The tie-break elects A's higher hash;
+        # B's losing bytes are preserved as a conflict copy (mirroring the
+        # real loop) and B converges to the winner. The preserved copy is
+        # also uploaded here as a brand-new file (propagation model).
+        actions = self._round(peer_b, server, cid=cid_b)
+        doc_actions = [a for a in actions if "conflicted_copy" not in (a.file.filepath or "")]
+        assert self._only(doc_actions, SyncActionName.download).conflict is True
+        assert (peer_b / "doc.txt").read_text() == win_text
+        copies = [p for p in peer_b.iterdir() if "conflicted_copy" in p.name]
+        assert len(copies) == 1
+        assert copies[0].read_text() == lose_text
+
+        # Post-conflict convergence: C (never involved) downloads the winner
+        # silently — the merged clock dominates its stored {A:1}.
+        actions = self._round(peer_c, server, cid=cid_c)
+        assert all(getattr(a, "conflict", False) is False for a in actions)
+        assert (peer_c / "doc.txt").read_text() == win_text
+
+        # No node ever re-flags doc.txt as a conflict: only the preserved
+        # copy propagates as a new file.
+        for peer, cid in ((peer_a, cid_a), (peer_b, cid_b), (peer_c, cid_c)):
+            doc_actions = [
+                a
+                for a in self._round(peer, server, cid=cid)
+                if "conflicted_copy" not in (a.file.filepath or "")
+            ]
+            assert all(a.name == SyncActionName.nothing for a in doc_actions), [
+                (a.name, a.file.filepath) for a in doc_actions
+            ]

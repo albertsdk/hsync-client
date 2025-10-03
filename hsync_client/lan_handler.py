@@ -15,7 +15,6 @@ import time
 from re import sub
 from typing import TYPE_CHECKING, Any, cast
 
-from hsync_common.clock import CLOCK_SKEW_THRESHOLD
 from hsync_common.protocol.pairing import (
     PinDecision,
     evaluate_pin,
@@ -27,7 +26,6 @@ from hsync_client.autotune import classify_network, derive_retry, derive_timeout
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     DISCOVERY_POLL_INTERVAL,
-    HTTP_TIMEOUT_DEFAULT,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
     RECONNECT_DELAY_MAX,
@@ -52,60 +50,6 @@ if TYPE_CHECKING:
 NO_MASTER_WARNING_TIMEOUT = 60.0
 
 
-def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
-    """
-    Measure clock offset between this client and the master using round-trip HTTP.
-
-    Uses an NTP-like round-trip measurement:
-        T1 = local time before request
-        T2 = master time (from /api/v1/time response)
-        T3 = local time after response
-        offset = T2 - (T1 + RTT/2), where RTT = T3 - T1
-
-    Args:
-        master: The master Peer object.
-        config: Current hsync configuration.
-    """
-    from hsync_common.clock import measure_clock_offset
-    from requests import RequestException
-
-    from hsync_client.utils import get_ssl_verify, http_get
-
-    time_url = f"{master.get_server_url()}/api/v1/time"
-
-    try:
-        result = measure_clock_offset(
-            time_url,
-            http_get=http_get,
-            headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
-            verify=get_ssl_verify(),
-            timeout=config.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
-        )
-        if result is None:
-            log.debug("Clock sync: /api/v1/time unavailable or missing timestamp, skipping")
-            return
-
-        offset, rtt = result
-        master.clock_offset = offset
-
-        if abs(offset) > CLOCK_SKEW_THRESHOLD:
-            log.warning(
-                f"Clock skew detected with master {master.cid}: "
-                f"offset={offset:.1f}s, RTT={rtt * 1000:.1f}ms. "
-                f"File comparison will use SHA-256 fallback for "
-                f"mtime differences within tolerance."
-            )
-        else:
-            log.debug(
-                f"Clock sync with master {master.cid}: offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms"
-            )
-
-    except RequestException as e:
-        log.debug(f"Clock sync failed: {e}")
-    except (ValueError, KeyError) as e:
-        log.debug(f"Clock sync: invalid response: {e}")
-
-
 def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
     """Re-derive autotune-managed network tuning from the real master RTT.
 
@@ -116,9 +60,8 @@ def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
     the CLI > env > autotune precedence.
 
     Updates are applied to both the global ``CONFIG`` and the local *config*
-    dict: they are distinct objects (``set_config`` copies values) and
-    ``_measure_clock_offset`` reads the local one. Callers must invoke this
-    after ``set_config(config)`` so the two dicts stay in sync.
+    dict: they are distinct objects (``set_config`` copies values) so callers
+    must invoke this after ``set_config(config)`` to keep them in sync.
     """
     if not config.get("AUTOTUNE_ENABLED"):
         return
@@ -490,9 +433,6 @@ def _run_as_slave(
         # startup probe is skipped when only the placeholder URL is known)
         _refresh_lan_network_tuning(master, config, log)
 
-        # Measure clock offset vs master using round-trip HTTP
-        _measure_clock_offset(master, config, log)
-
         # Check if dry-run mode is enabled
         if config["DRYRUN"]:
             # In dry-run mode, only show preview without syncing
@@ -503,7 +443,7 @@ def _run_as_slave(
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
             run(_run_stdin_wait(log))
         else:
-            # Perform initial sync (master is source of truth in LAN mode)
+            # Perform initial sync (the master is the transport coordinator)
             run(sync(lan_mode=True))
 
         if not persistent:

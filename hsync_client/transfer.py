@@ -95,7 +95,9 @@ def _emit_transfer_failed(op: str, filepath: str, message: str) -> None:
     emit_event(UiEventName.transfer_failed, op=op, file=filepath, message=message)
 
 
-def _record_synced_base(file: File) -> None:
+def _record_synced_base(
+    file: File, vclock: dict[str, int] | None = None, version_id: str | None = None
+) -> None:
     """Record the just-synced content hash as the new common-ancestor base.
 
     After a successful transfer (or a no-op because the server already held the
@@ -103,15 +105,35 @@ def _record_synced_base(file: File) -> None:
     next reconciliation use a clock-independent three-way merge.
     Bookkeeping failures are swallowed so they never abort a successful transfer.
 
+    ``file.filepath`` may be bucket-relative (files parsed from a remote listing)
+    or absolute (real-time events). ``record_base`` keys by absolute path, so a
+    relative path is resolved against ``LOCAL_BUCKET`` first — a raw relative
+    path would silently produce a no-op and the merge base would never exist,
+    degrading every later reconciliation to the legacy mtime heuristic.
+
+    ``vclock`` is the merged clock the receiver should record on accept
+    (convergence invariant D11). On download it is the remote-advertised clock;
+    on upload it is the local effective clock the client just pushed. When
+    absent, ``merge_and_record`` falls back to merging the stored clock.
+
     Persistence is deferred to the single ``sync_state.flush()`` at the end of
     the sync cycle (``sync.py``), avoiding redundant per-file rewrites of the
     entire ``.hsyncstate`` side-car.
     """
     try:
-        from hsync_client.sync_state import record_base
+        from hsync_client.sync_state import merge_and_record, record_base
 
         if file.filepath and file.sha256sum:
-            record_base(file.filepath, file.sha256sum)
+            if Path(file.filepath).is_absolute():
+                abs_path = file.filepath
+            else:
+                abs_path = _local_dest_path(file) or str(
+                    Path(CONFIG["LOCAL_BUCKET"]) / file.filepath
+                )
+            if vclock is not None:
+                merge_and_record(abs_path, file.sha256sum, vclock)
+            else:
+                record_base(abs_path, file.sha256sum, version_id=version_id)
     except Exception as e:  # pragma: no cover - bookkeeping must never break sync
         log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
 
@@ -356,12 +378,24 @@ def _download_file_attempt(file: File) -> None:
     Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
     partial_file_path = f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}"
 
-    # Check if local file is already up-to-date
+    # Check if local file is already up-to-date. The mtime shortcut alone is
+    # not enough: an equal (or newer) local mtime with *different* content is
+    # exactly the conflict case — the caller has already preserved the local
+    # copy, and skipping here would prevent the master's version from ever
+    # arriving. Skip only when the content is genuinely identical, or when no
+    # well-formed hash is available to disprove the mtime shortcut (legacy
+    # behaviour preserved for metadata without a valid expected digest).
     if Path(full_save_path).exists():
         local_mtime = Path(full_save_path).stat().st_mtime
         if file.mtime is not None and local_mtime >= file.mtime:
-            nothing_to_do(file)
-            return
+            expected = file.sha256sum or ""
+            if (
+                not expected
+                or not is_sha256_hex(expected)
+                or hmac.compare_digest(compute_sha256(full_save_path), expected)
+            ):
+                nothing_to_do(file)
+                return
 
     # Delta branch: when the local file IS the recorded base, only the changed
     # blocks need to cross the wire. Any recoverable failure falls through to
@@ -380,7 +414,7 @@ def _download_file_attempt(file: File) -> None:
                 utime(full_save_path, (file.mtime, file.mtime))
             if file.permissions:
                 set_permissions(full_save_path, file.permissions)
-            _record_synced_base(file)
+            _record_synced_base(file, vclock=_remote_vclock(file))
             return
         except (DeltaTransferError, OSError) as exc:
             log.warning(f'Delta download for "{file.filepath}" fell back to full transfer ({exc})')
@@ -600,7 +634,7 @@ def _download_file_attempt(file: File) -> None:
             set_permissions(full_save_path, file.permissions)
 
         # Local now matches the remote content: remember it as the merge base.
-        _record_synced_base(file)
+        _record_synced_base(file, vclock=_remote_vclock(file))
 
     except PermissionError as e:
         log.error(f'Permission denied saving "{file.filepath}": {e}')
@@ -952,6 +986,139 @@ def upload_file(
         _emit_transfer_failed("upload", file.filepath, str(exc))
 
 
+def _resolve_effective_version(file: File) -> dict | None:
+    """Return the effective local version dict for *file* (pure, no mutation).
+
+    Used to record the merge base after a successful transfer. Mirrors
+    ``sync_state.local_version_for_compare`` but returns ``None`` (rather than
+    a fresh tick) when no version is recorded, so callers can fall back to the
+    stored clock.
+    """
+    try:
+        from hsync_client.sync_state import get_sync_state_store, local_version_for_compare
+
+        if not file.filepath:
+            return None
+        abs_path = (
+            file.filepath
+            if Path(file.filepath).is_absolute()
+            else str(Path(CONFIG["LOCAL_BUCKET"]) / file.filepath)
+        )
+        eff = local_version_for_compare(abs_path, file.sha256sum)
+        if eff is not None:
+            return eff
+        from hsync_common.models.tombstone import relpath_in_bucket
+
+        relpath = relpath_in_bucket(abs_path, str(CONFIG["LOCAL_BUCKET"]))
+        if relpath:
+            return get_sync_state_store().get(relpath)
+    except Exception as e:  # pragma: no cover - bookkeeping must never break upload
+        log.debug(f'Could not resolve upload version for "{file.filepath}": {e}')
+    return None
+
+
+def _resolve_local_vclock(file: File) -> dict[str, int] | None:
+    """Return the effective local vclock for *file*, or ``None``."""
+    eff = _resolve_effective_version(file)
+    return eff["vclock"] if eff else None
+
+
+def _remote_vclock(file: File) -> dict[str, int] | None:
+    """Return the remote-advertised vclock attached to *file*, if any.
+
+    A downloaded ``File`` carries the version metadata from the remote listing
+    or event; recording it as the merge base keeps the clock honest on the
+    receiving side (convergence invariant D11).
+    """
+    version = getattr(file, "version", None)
+    if isinstance(version, dict):
+        vclock = version.get("vclock")
+        if isinstance(vclock, dict):
+            return vclock
+    return None
+
+
+def _upload_version_fields(file: File) -> tuple[str, str]:
+    """Return ``(vclock_json, version_id)`` form values for an upload.
+
+    The uploaded version is the *effective* local version: the stored clock
+    ticked by this node when the content differs from the recorded base (the
+    same honest value ``sync_state.local_version_for_compare`` produces). The
+    server arbitrates this against its stored version (ADR-0022).
+    """
+    try:
+        from hsync_client.sync_state import upload_version_fields
+
+        if file.filepath:
+            abs_path = (
+                file.filepath
+                if Path(file.filepath).is_absolute()
+                else str(Path(CONFIG["LOCAL_BUCKET"]) / file.filepath)
+            )
+            return upload_version_fields(abs_path, file.sha256sum)
+    except Exception as e:  # pragma: no cover - bookkeeping must never break upload
+        log.debug(f'Could not resolve upload version for "{file.filepath}": {e}')
+    return "{}", ""
+
+
+def _record_201_upload(file: File, response) -> None:
+    """Record the merge base after a 201 upload success.
+
+    The server's 201 may carry a ``resolution`` field with the merged vclock to
+    record (convergence invariant D11); when absent, the local effective clock
+    is recorded via ``merge_and_record``.
+    """
+    record_vclock: dict[str, int] | None = None
+    try:
+        payload = response.json() if response.text else None
+        if isinstance(payload, dict):
+            resolution = payload.get("resolution")
+            if isinstance(resolution, dict):
+                vclock_raw = resolution.get("vclock")
+                if isinstance(vclock_raw, dict):
+                    record_vclock = {
+                        str(k): int(v)
+                        for k, v in vclock_raw.items()
+                        if isinstance(v, int) and not isinstance(v, bool)
+                    }
+    except (ValueError, TypeError):
+        pass
+    if record_vclock is not None:
+        _record_synced_base(file, vclock=record_vclock)
+    else:
+        # Fall back to the local effective clock (merge with stored).
+        _record_synced_base(file, vclock=_resolve_local_vclock(file))
+
+
+def _handle_upload_conflict_response(file: File, response) -> bool:
+    """Handle a 409 upload response.
+
+    Returns ``True`` when the 409 is a causal supersede/conflict-lost signal
+    (the caller should trigger a download of the current remote version on the
+    next cycle); ``False`` when the 409 is the legacy "already present" no-op
+    (the base is recorded as in-sync).
+    """
+    body = (response.text or "")[:500]
+    lower = body.lower()
+    if "superseded" in lower or "conflict_lost" in lower:
+        log.info(
+            f'{ActionLabel.CONFLICT} Upload of "{file.filepath}" was '
+            f"superseded by a newer remote version; download needed ({body})"
+        )
+        emit_event(
+            UiEventName.transfer_failed,
+            op="upload",
+            file=file.filepath,
+            message=f"superseded by remote version: {body}",
+        )
+        return True
+    # Legacy / duplicate "already present": the server already holds this
+    # exact content, so local and remote agree — record the base.
+    log.debug(f'"{file.filepath}" (already present)')
+    _record_synced_base(file)
+    return False
+
+
 def _upload_file_attempt(file: File) -> None:
     """
     Perform a single upload attempt with resume support.
@@ -989,7 +1156,7 @@ def _upload_file_attempt(file: File) -> None:
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
-                _record_synced_base(file)
+                _record_synced_base(file, vclock=_resolve_local_vclock(file))
                 return
             except (DeltaTransferError, OSError) as exc:
                 log.warning(
@@ -1004,7 +1171,7 @@ def _upload_file_attempt(file: File) -> None:
 
         if status == "complete":
             log.debug(f'"{file.filepath}" (already present on server)')
-            _record_synced_base(file)
+            _record_synced_base(file, vclock=_resolve_local_vclock(file))
             return
 
         if status == "resumable" and offset > 0:
@@ -1014,6 +1181,7 @@ def _upload_file_attempt(file: File) -> None:
             )
 
         # Build form data with file metadata
+        vclock_json, version_id = _upload_version_fields(file)
         data = {
             "cid": CONFIG["CID"],
             "path": path,
@@ -1023,6 +1191,8 @@ def _upload_file_attempt(file: File) -> None:
             "sha256sum": file.sha256sum,
             "permissions": file.permissions,
             "offset": offset,
+            "vclock": vclock_json,
+            "version_id": version_id,
         }
 
         log.debug(f"Upload file: {file.filepath}")
@@ -1085,7 +1255,7 @@ def _upload_file_attempt(file: File) -> None:
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
-                _record_synced_base(file)
+                _record_201_upload(file, response)
             elif response.status_code == 401:
                 log.error(f'Authentication failed uploading "{file.filepath}"')
                 emit_event(
@@ -1095,8 +1265,7 @@ def _upload_file_attempt(file: File) -> None:
             elif response.status_code == 403:
                 log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
-                log.debug(f'"{file.filepath}" (already present)')
-                _record_synced_base(file)
+                _handle_upload_conflict_response(file, response)
             elif response.status_code >= 500:
                 # Transient server-side failure: raise so the wrapper backs off.
                 raise ServerError(
@@ -1149,7 +1318,7 @@ def _upload_file_attempt(file: File) -> None:
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
-                _record_synced_base(file)
+                _record_201_upload(file, response)
             elif response.status_code == 202:
                 # Partial upload received - file still incomplete
                 result = response.json()
@@ -1167,8 +1336,7 @@ def _upload_file_attempt(file: File) -> None:
             elif response.status_code == 403:
                 log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
-                log.debug(f'"{file.filepath}" (already present)')
-                _record_synced_base(file)
+                _handle_upload_conflict_response(file, response)
             elif response.status_code >= 500:
                 # Transient server-side failure: raise so the wrapper backs off.
                 raise ServerError(

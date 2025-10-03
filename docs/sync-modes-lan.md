@@ -71,9 +71,13 @@ hsync --dry-run -b mybucket -p ~/Sync --lan-mode
 
 ### Conflict Handling
 
-The master is the authoritative source. Conflicts are resolved identically to
-Server Mode: the master's version wins, the slave's version is renamed to
-`.hsyncconflict`.
+The elected master is a **transport hub, not an authority**: it serves bytes and
+relays events but never decides conflicts by role. Conflicts are resolved
+causally on every peer, identically to Server Mode — content identity first,
+then vector-clock dominance, then a deterministic SHA-256 tie-break on true
+concurrent divergence. The losing content is preserved as
+`_conflicted_copy_<timestamp>_<cid>`, by whichever side lost (the reconciling
+peer, or the upload arbitration on the master).
 
 See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
 

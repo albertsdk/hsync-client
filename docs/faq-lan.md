@@ -27,8 +27,11 @@ No. Each HSYNC instance operates in one mode at a time.
   see which device made a change, but there's no cryptographic guarantee.
 
 **Q: What happens if two devices modify the same file?**
-The master is the authoritative source. Conflicts are resolved by the master's
-version winning, with the other version renamed to `.hsyncconflict`.
+No device is authoritative: HSYNC resolves concurrent edits with a causal
+vector-clock model (ADR-0022). On a true divergence the deterministic,
+content-only tie-break (highest SHA-256) picks the winner, and the losing
+version is preserved as a `_conflicted_copy_` so nothing is lost. See
+[Conflict Resolution](conflict-resolution.md).
 
 ## LAN Mode
 

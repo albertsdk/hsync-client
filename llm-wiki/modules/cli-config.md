@@ -26,7 +26,6 @@ Flags map to env keys; capabilities JSON is built from
 | `_warn_if_lan_in_container` | `:441` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `:458` | min-free-disk guard |
 | `_check_server_connectivity` | `:1040` | fail fast on unreachable server |
-| `_warn_on_clock_skew` | `:1090` | warn on large clock offset |
 | `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `:215` / `:232` / `:249` | resolve CLI > env > default |
 | `_start_hsyncignore_watcher` | `:463` | hot-reload `.hsyncignore` matcher |
 | `_run_preview` | `:87` | dry-run action preview |

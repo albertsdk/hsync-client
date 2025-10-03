@@ -56,10 +56,12 @@ In plain terms, LAN mode works in three steps:
    peers find each other automatically with no IP addresses to configure.
 2. **Election** — the peers agree on a single **master** that coordinates sync.
    The choice is automatic (see [Master Election](#master-election)).
-3. **Sync** — peers connect to the master over an encrypted channel. The master's
-   files are the source of truth for the first sync; afterwards every change
+3. **Sync** — peers connect to the master over an encrypted channel. The master
+   coordinates sync as a transport hub; afterwards every change
    (create, modify, delete, rename) is propagated in real time, in both
-   directions, over a live WebSocket connection.
+   directions, over a live WebSocket connection. No peer is authoritative —
+   concurrent edits are resolved causally (see
+   [Conflict Resolution](conflict-resolution.md)).
 
 > **Important — deletions propagate.** During the first sync after a peer comes
 > online, files that exist **only** on that peer (and not on the master) are
@@ -346,7 +348,7 @@ one-shot sync, read-only slaves, isolated groups and fixed ports — live in
 
 ### Deletion Risk Warning
 
-When running in LAN mode **without `--force-master`** and the shared directory is non-empty, the client warns that local files could be deleted — because the master peer is the authoritative source of truth and files not present on the master will be removed during initial sync.
+When running in LAN mode **without `--force-master`** and the shared directory is non-empty, the client warns that local files could be deleted — because the elected master serves the file listing the slave converges on, and files not present on the master will be removed during initial sync. The master is a transport coordinator, not an authority (ADR-0022): concurrent edits are resolved causally by every node.
 
 ```bash
 # The client will show a warning and ask for confirmation
@@ -358,7 +360,7 @@ hsync -b photos -p ~/Pictures --lan-mode -y
 
 The warning is **not shown** when:
 - The shared directory is empty (nothing to lose)
-- `--force-master` is set (this peer is authoritative)
+- `--force-master` is set (this peer serves files — deletion risk is about the slave role)
 - `--sync-direction upload-only` is set (local files are never deleted)
 
 See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sync-safety-check-deletion-risk)
