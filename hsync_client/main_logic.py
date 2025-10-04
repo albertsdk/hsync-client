@@ -894,12 +894,11 @@ def run_sync(
     if not dryrun:
         _check_disk_space(local_path, min_free_disk_space, log)
 
-    # Mask sensitive values before logging
+    # Mask sensitive values before logging (shared helper, DRY with transfer.py)
+    from hsync_client.utils import redact_headers
+
     _safe_config = {**config}
-    _safe_headers = {**config["REQUEST_HEADERS"]}
-    auth = _safe_headers.get("Authorization", "")
-    _safe_headers["Authorization"] = "Bearer ****" if auth else ""
-    _safe_config["REQUEST_HEADERS"] = _safe_headers
+    _safe_config["REQUEST_HEADERS"] = redact_headers(config["REQUEST_HEADERS"])
     if _safe_config.get("LAN_KEY"):
         _safe_config["LAN_KEY"] = "****"
     log.debug("Local configuration:", extra={"json_data": _safe_config})

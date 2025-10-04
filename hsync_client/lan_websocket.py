@@ -1322,9 +1322,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             if Path(src_path).is_symlink():
                 # Symlink - skip if its target escapes the bucket (a
                 # file-symlink to /etc/passwd must never be dereferenced and
-                # exfiltrated); in-bucket symlinks keep their current semantic
-                # (uploaded as the link itself via File.get). The symlink is
-                # created in one atomic syscall, so no stability wait is needed.
+                # exfiltrated). An in-bucket symlink is replicated
+                # STRUCTURALLY: the (path, target) pair goes to the master,
+                # never the target content. The symlink is created in one
+                # atomic syscall, so no stability wait is needed.
                 from hsync_common.models.symlink import Symlink
                 from hsync_common.path_validation import is_safe_symlink_target
 
@@ -1340,8 +1341,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                         f'not uploading: "{src_path}" -> "{link.target}"'
                     )
                     return
-                # Symlink - upload immediately
-                self._handle_file_upload(src_path)
+                # Symlink - upload structurally (single atomic op, no wait).
+                if link is not None:
+                    from hsync_client.transfer import upload_symlink
+
+                    self._start_operation(
+                        target=upload_symlink,
+                        args=(link,),
+                        name=f"symlink-{src_path}",
+                    )
             else:
                 # Files placed via an atomic rename from outside the watched
                 # tree (e.g. file managers using `IN_MOVED_TO` without a

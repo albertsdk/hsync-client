@@ -53,7 +53,7 @@ matrix on the wire data.
 | ------ | ---- | ---- |
 | `LANServer` | `lan_server.py:1048` | HTTPS file server (REST mirror of hsync-server) |
 | `BoundedThreadingHTTPServer` | `:66` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap on concurrent request threads (H5, default `LAN_SERVER_MAX_THREADS=32`) |
-| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`) |
+| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`); `POST /symlinks` creates links STRUCTURALLY from slaves (`_handle_symlink` — mirror of the central server; an existing file/link is replaced, the target is validated with `is_safe_symlink_target`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); when no `LAN_KEY` is set, a lightweight `hello` handshake lets peers declare their CID for logging (qualified as `unauthenticated`) — CID format is validated in both paths |
@@ -65,8 +65,10 @@ prefix checks — sibling directories cannot bypass confinement). The `/files`
 listing and `/files/download` handlers additionally skip/refuse file-symlinks
 whose target escapes `LOCAL_BUCKET` (`is_safe_symlink_target`): a slave must
 never be able to dereference `secret -> /etc/passwd` through the master and
-learn its hash (listing) or content (download). In-bucket symlinks keep their
-current semantic (listed/downloaded as the link entry). Uploads require
+learn its hash (listing) or content (download). In-bucket symlinks are listed
+as STRUCTURAL entries (`type: "symlink"` with `(filepath, target)`, never a
+dereferenced File), so a full-sync download re-creates the LINK on the slave
+(`materialize_symlink_local`). Uploads require
 a matching `sha256sum` form field (format-validated with `is_sha256_hex`,
 verified with `hmac.compare_digest` before the atomic rename), clamp
 far-future mtimes (`MTIME_MAX_FUTURE_SKEW_SECONDS`), and cap the bytes landing
@@ -93,7 +95,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | inbound-delete echo | `event_dispatch._apply_delete` (dir `:293` / file `:312`) | a `deleted` event for a path already absent locally is a benign echo (originator removed it / peer delete converged / never existed here): logged at DEBUG, not WARNING. Echo suppression can miss when the master has no `LAN_KEY` (the `mark_inbound_origin` cid gate is a security measure) or when `rmtree` removes a directory's children without individually marking them |
 | create-upload deferral | `LANSlaveFileEventHandler._schedule_create_upload` / `_cancel_create_upload` / `cancel_all_create_timers` | an `on_created` upload for a non-empty regular file is deferred (`CREATE_UPLOAD_DEFER_S` = `STABILITY_DELAY_ON_CLOSED`) so `on_closed` (`IN_CLOSE_WRITE`, the reliable fd-closed trigger) can cancel it and take precedence with the fast stability re-check; the timer is the fallback for files that arrive already complete with no writer fd (atomic rename / hard-link / `mv` in). `on_deleted` / `on_moved(src)` / shutdown cancel pending timers so stale uploads never fire. Eliminates the duplicate upload-intent/`[UPLOAD]` pair (the intent line was later removed entirely — ADR 0018) and avoids uploading half-written files. |
 | sentinel never uploaded | `LANSlaveFileEventHandler._handle_file_upload` | a `.hsynckeep` basename is skipped before building the `File` and starting the upload. The sentinel is a per-peer local artifact: the periodic reconcile already excludes it from sync actions in both directions (`sync.py`), each peer maintains its own (`ensure_hsynckeep_files` / `_ensure_sentinel*`), and the directory itself is propagated by the directory event — uploading it only produced a 0-byte `[UPLOAD]` line and a broadcast round-trip. This is the single chokepoint covering every slave upload path (`on_created` deferred, `on_closed`, symlink, hidden→visible). |
-| escaping symlink refused (slave upload) | `LANSlaveFileEventHandler.on_created` (symlink branch) | a file-symlink inside the bucket whose target escapes `LOCAL_BUCKET` is skipped (logged `[SECURITY]`) instead of being dereferenced and exfiltrated. In-bucket symlinks keep their current semantic (uploaded as the link entry). Belt-and-braces: `transfer.upload_file` applies the same guard to every upload path (`_upload_to_master` → `upload_file`), and the shared watcher (`file_event_handler.BaseFileEventHandler.on_created`) refuses to broadcast a `symlink` event whose target escapes the bucket. |
+| escaping symlink refused (slave upload) | `LANSlaveFileEventHandler.on_created` (symlink branch) | a file-symlink inside the bucket whose target escapes `LOCAL_BUCKET` is skipped (logged `[SECURITY]`) instead of being dereferenced and exfiltrated. An in-bucket symlink is uploaded STRUCTURALLY via `transfer.upload_symlink` (the pair over `POST /symlinks`; the absolute local target is relativized by `hsync_common.wire_symlink_target` before it reaches the wire) — the content-upload path (`_upload_to_master` → `upload_file`) is never used for links. Belt-and-braces: `transfer.upload_file` refuses any symlink whose target escapes the bucket, and the shared watcher (`file_event_handler.BaseFileEventHandler.on_created`) refuses to broadcast a `symlink` event whose target escapes. |
 
 ## Security: TOFU pinning + persistent identity
 

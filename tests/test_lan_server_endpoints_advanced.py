@@ -137,7 +137,7 @@ class TestLANRequestHandlerInboundOriginMarking:
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
-                "cid": "spoofed",
+                "cid": "SpoofCid1234567890abc",
                 "path": "",
                 "mtime": "",
                 "ctime": "",
@@ -167,7 +167,7 @@ class TestLANRequestHandlerInboundOriginMarking:
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(
-                url, params={"path": "gone.txt", "cid": "spoofed"}, timeout=5
+                url, params={"path": "gone.txt", "cid": "SpoofCid1234567890abc"}, timeout=5
             )
             assert response.status_code == 200
             assert not target.exists()
@@ -193,7 +193,7 @@ class TestLANRequestHandlerInboundOriginMarking:
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url,
-                params={"src": "src.txt", "dst": "dst.txt", "cid": "spoofed"},
+                params={"src": "src.txt", "dst": "dst.txt", "cid": "SpoofCid1234567890abc"},
                 timeout=5,
             )
             assert response.status_code == 200

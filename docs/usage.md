@@ -111,6 +111,23 @@ documented in the single configuration reference:
 - [Configuration → Environment Variables](configuration.md#environment-variables)
 - [Configuration → Environment Files](configuration.md#environment-files)
 
+## Symlinks
+
+Symbolic links are **replicated structurally**, both on the first sync and
+during continuous watching, in server mode and LAN mode alike:
+
+- A symlink whose target stays inside the synced folder is copied **as a
+  link**: the target is not followed and its content is not transferred.
+  The target path is stored relative to the link, so every peer recreates a
+  valid link regardless of where the folder is mounted.
+- A symlink whose target points outside the synced folder is **never
+  replicated**: it is skipped and a `[SECURITY]` warning is logged.
+- Deleting or renaming a synced link removes/moves the **link**, never the
+  target it points to.
+
+> Technical readers: this is the same model as `rsync --links` with munched
+> symlinks, and `git`: the reference is synchronized, not the content.
+
 ## Examples
 
 End-user oriented examples have moved to a dedicated document:

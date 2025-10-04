@@ -114,6 +114,7 @@ ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
 ENDPOINT_DIRS_SUFFIX = "/dirs"
 ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
+ENDPOINT_SYMLINKS_SUFFIX = "/symlinks"
 ENDPOINT_DELTA_SIGNATURES_SUFFIX = "/files/delta/signatures"
 ENDPOINT_DELTA_APPLY_SUFFIX = "/files/delta/apply"
 ENDPOINT_DELTA_DATA_MARKER = "/files/delta/data/"
@@ -488,6 +489,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._handle_tombstones_merge()
             return
 
+        # Symlink creation (slave -> master): /api/v1/buckets/{bucket}/symlinks
+        if path.endswith(ENDPOINT_SYMLINKS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_symlink(parse_qs(urlparse(self.path).query))
+            return
+
         # Delta signatures (download delta): /api/v1/buckets/{bucket}/files/delta/signatures
         if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             from hsync_client.lan_delta import handle_delta_signatures_post
@@ -773,6 +779,83 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             log.error(f"Error creating directory {full_path}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Create dir error: {e}")
 
+    def _handle_symlink(self, query: dict) -> None:
+        """Handle symlink creation from a slave peer (structural replication).
+
+        The peer sends the (path, target) pair; the master materialises the
+        LINK itself — never the target content. A target escaping the bucket
+        is rejected; an existing file/link at the destination is replaced.
+        Mirrors the central server's ``POST /symlinks`` semantics so remote
+        mode and LAN mode behave identically.
+        """
+        from os import symlink as os_symlink
+
+        from hsync_common.path_validation import is_safe_symlink_target
+
+        rel_path = query.get("path", [None])[0]
+        target = query.get("target", [None])[0]
+
+        if not rel_path or not target:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' or 'target' parameter")
+            return
+
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+
+        # Peer-supplied link path is untrusted: validate and confine to the
+        # bucket WITHOUT dereferencing the final component — an existing link
+        # at the destination must be replaced as the LINK, never its target.
+        full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
+        if not full_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return
+
+        # The target must stay inside the bucket (an escaping target would
+        # plant a symlink to arbitrary local files on the master).
+        if not is_safe_symlink_target(full_path, target, local_bucket):
+            log.warning(
+                f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                f'not creating: "{full_path}" -> "{target}"'
+            )
+            self._send_error_response(HTTP_FORBIDDEN, "Target escapes bucket")
+            return
+
+        try:
+            # Mark the path as inbound so the master's watcher rebroadcasts
+            # the symlink event with the originator CID (echo suppression).
+            origin_cid = query.get("cid", [None])[0]
+            if origin_cid and is_valid_cid(origin_cid):
+                from hsync_client.lan_websocket import mark_inbound_origin
+
+                authenticated = bool(CONFIG.get("LAN_KEY"))
+                mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
+
+            parent = str(Path(full_path).parent)
+            if not Path(parent).exists():
+                Path(parent).mkdir(parents=True, exist_ok=True)
+            if Path(full_path).is_dir() and not Path(full_path).is_symlink():
+                try:
+                    Path(full_path).rmdir()
+                except OSError:
+                    log.warning(
+                        f"{ActionLabel.SECURITY} Refusing to replace non-empty directory "
+                        f'with symlink: "{full_path}"'
+                    )
+                    self._send_error_response(
+                        HTTP_BAD_REQUEST, "Cannot replace non-empty directory"
+                    )
+                    return
+            elif Path(full_path).is_symlink() or Path(full_path).exists():
+                os.remove(full_path)
+
+            os_symlink(target, full_path)
+            self._send_json_response(HTTP_CREATED, {"status": "created"})
+        except Exception as e:
+            log.error(f"Error creating symlink {full_path}: {e}")
+            self._send_error_response(HTTP_INTERNAL_ERROR, f"Symlink error: {e}")
+
     def _handle_health(self) -> None:
         """Handle health check endpoint."""
         self._send_json_response(HTTP_OK, {"status": "ok", "mode": "lan_master"})
@@ -808,10 +891,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     continue
 
                 file_path = str(Path(root) / file)
-                # A file-symlink whose target escapes the bucket must never be
-                # dereferenced: File.get() (exists/stat/sha256) would follow it
-                # and the listing would exfiltrate the out-of-bucket target to
-                # every slave (e.g. ``secret -> /etc/passwd``).
+                # Symlinks are emitted as structural entries (path + target),
+                # never dereferenced: File.get() (exists/stat/sha256) would
+                # follow the link and the listing would either exfiltrate an
+                # out-of-bucket target (e.g. ``secret -> /etc/passwd``) to every
+                # slave or advertise the target content instead of the link.
                 if Path(file_path).is_symlink():
                     from hsync_common.models.symlink import Symlink
                     from hsync_common.path_validation import is_safe_symlink_target
@@ -828,6 +912,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                             f'skipping: "{file_path}" -> "{link.target}"'
                         )
                         continue
+                    if link is not None:
+                        entry = link.to_dict()
+                        entry["filepath"] = str(Path(file_path).relative_to(local_bucket))
+                        file_list.append(entry)
+                    continue
 
                 file_obj = File.get(file_path)
                 if file_obj:

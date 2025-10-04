@@ -1197,7 +1197,11 @@ def _upload_file_attempt(file: File) -> None:
 
         log.debug(f"Upload file: {file.filepath}")
         log.debug(f"        URI: {uri}")
-        log.debug(f"     Header: {safe_json_for_log(CONFIG['REQUEST_HEADERS'])}")
+        # safe_json_for_log escapes loguru markup but does NOT redact secrets:
+        # the Authorization header (API key / HSYNC_LAN_KEY) must be masked.
+        from hsync_client.utils import redact_headers
+
+        log.debug(f"     Header: {safe_json_for_log(redact_headers(CONFIG['REQUEST_HEADERS']))}")
         log.debug(f"       data: {safe_json_for_log(data)}")
 
         # Determine if compression should be used
@@ -1374,3 +1378,152 @@ def nothing_to_do(file: File) -> None:
         file: File that is already synchronized.
     """
     log.debug(f'"{file.filepath}"')
+
+
+# =============================================================================
+# Symlink Structural Replication
+# =============================================================================
+#
+# Symlinks are replicated STRUCTURALLY: the (path, target) pair travels the
+# sync channel and the receiver recreates the link. Never the target content.
+# This is the reconcile (full-sync) counterpart of the realtime WS `symlink`
+# event. Both server mode and LAN mode use the same HTTP surface: the central
+# server exposes POST /symlinks; the LAN master exposes the same route
+# (lan_server.py) so the client code is transport-agnostic.
+
+
+def _local_symlink_relpath(link: Symlink) -> str | None:
+    """Return the bucket-relative path of *link*'s local filepath.
+
+    The link produced by the reconcile is already bucket-relative (built via
+    ``Symlink.from_dict`` with prefix strip); realtime watchers may pass an
+    absolute path. Both forms are normalized to the wire ``path`` parameter.
+    """
+    if not link.filepath:
+        return None
+    fp = str(link.filepath)
+    bucket = CONFIG.get("LOCAL_BUCKET", "")
+    if bucket and Path(fp).is_absolute():
+        try:
+            fp = str(Path(fp).relative_to(bucket))
+        except ValueError:
+            return None
+    return fp.lstrip("/") or None
+
+
+def materialize_symlink_local(link: Symlink) -> bool:
+    """Recreate *link* locally as a symlink; return True on success.
+
+    The link location is confined to LOCAL_BUCKET WITHOUT dereferencing the
+    final component; the target must stay inside the bucket (``is_safe_symlink_target``).
+    An existing file/link at the path is replaced; a non-empty directory is
+    refused. Mirrors the inbound-event materialisation (event_dispatch._apply_symlink).
+    """
+    bucket = CONFIG.get("LOCAL_BUCKET", "")
+    if not bucket or not link.filepath:
+        return False
+    local = resolve_within(bucket, link.filepath, resolve_final=False)
+    if local is None:
+        log.warning(f'{ActionLabel.SECURITY} Rejected unsafe symlink path: "{link.filepath}"')
+        return False
+    if not link.target:
+        log.warning(f'{ActionLabel.SECURITY} Refusing symlink with empty target: "{local}"')
+        return False
+    if not is_safe_symlink_target(local, link.target, bucket):
+        log.warning(
+            f"{ActionLabel.SECURITY} Symlink target escapes bucket, not creating: "
+            f'"{local}" -> "{link.target}"'
+        )
+        return False
+    parent = str(Path(local).parent)
+    if not Path(parent).exists():
+        Path(parent).mkdir(parents=True, exist_ok=True)
+    if Path(local).is_dir() and not Path(local).is_symlink():
+        try:
+            Path(local).rmdir()
+        except OSError:
+            log.warning(
+                f"{ActionLabel.SECURITY} Refusing to replace non-empty directory with "
+                f'symlink: "{local}"'
+            )
+            return False
+    elif Path(local).is_symlink() or Path(local).exists():
+        Path(local).unlink()
+    from os import symlink as os_symlink
+
+    os_symlink(link.target, local)
+    log.info(f'{ActionLabel.SYMLINK} Created symlink: "{local}" -> "{link.target}"')
+    return True
+
+
+def upload_symlink(link: Symlink) -> None:
+    """Upload a symlink structurally to the remote (server in remote mode,
+    LAN master in LAN mode — the same POST /symlinks surface)."""
+    rel = _local_symlink_relpath(link)
+    if rel is None or not link.target:
+        log.warning(
+            f"{ActionLabel.SECURITY} Cannot derive bucket-relative path for symlink "
+            f'"{link.filepath}"'
+        )
+        return
+    # An absolute target refers to THIS host's layout and is not portable:
+    # relativize it against the link's directory (rsync munge semantics) so
+    # every peer mounts the same reference. Escaping targets yield None.
+    # ``wire_symlink_target`` requires the link's ABSOLUTE path: the reconcile
+    # builds ``link.filepath`` bucket-relative, so resolve it first (a bare
+    # relative path would be resolved against the process cwd, producing a
+    # bogus ``../../…`` wire target).
+    from hsync_common.path_validation import wire_symlink_target
+
+    if Path(link.filepath).is_absolute():
+        abs_link_path = link.filepath
+    else:
+        abs_link_path = str(Path(CONFIG["LOCAL_BUCKET"]) / link.filepath)
+    wire_target = wire_symlink_target(abs_link_path, link.target, CONFIG["LOCAL_BUCKET"])
+    if wire_target is None:
+        log.warning(
+            f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+            f'not uploading: "{link.filepath}" -> "{link.target}"'
+        )
+        emit_event(
+            UiEventName.security_rejected,
+            op="upload_symlink",
+            path=rel,
+            message="symlink target escapes bucket",
+        )
+        return
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/symlinks"
+    params = {"path": rel, "target": wire_target, "cid": CONFIG.get("CID", "")}
+    try:
+        response = post(
+            uri,
+            params=params,
+            headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
+            verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
+        )
+    except RequestException as e:
+        log.error(f'Upload symlink failed for "{rel}": {e}')
+        emit_event(UiEventName.transfer_failed, op="upload_symlink", file=rel, message=str(e))
+        return
+    if response.status_code in (200, 201):
+        emit_event(UiEventName.transfer, op="upload_symlink", file=rel)
+    elif response.status_code in (400, 403):
+        log.warning(
+            f'{ActionLabel.SECURITY} Remote refused symlink "{rel}" -> '
+            f'"{wire_target}" (status {response.status_code})'
+        )
+        emit_event(
+            UiEventName.security_rejected,
+            op="upload_symlink",
+            path=rel,
+            message=f"remote refused symlink: {response.status_code}",
+        )
+    else:
+        log.error(f'Upload symlink "{rel}": unexpected status {response.status_code}')
+
+
+def download_symlink(link: Symlink) -> None:
+    """Materialise a remote symlink entry locally as a link."""
+    with path_lock(str(Path(CONFIG["LOCAL_BUCKET"]) / (link.filepath or ""))):
+        materialize_symlink_local(link)

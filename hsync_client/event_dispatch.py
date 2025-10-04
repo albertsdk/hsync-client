@@ -53,14 +53,26 @@ from hsync_client.transfer import download_file
 from hsync_client.utils import path_lock, safe_rmdir_if_empty
 
 
+def _path_present(filepath: str) -> bool:
+    """True when *filepath* exists as a file/dir/link (dangling links included).
+
+    ``Path.exists()`` follows symlinks: a dangling link reports ``False`` even
+    though the directory entry exists. Deletion/rename of an inbound link must
+    act on the entry, so both cases must be recognized.
+    """
+    p = Path(filepath)
+    return p.is_symlink() or p.exists()
+
+
 def _remove_locked(filepath: str) -> bool:
     """Remove *filepath* under its per-path lock; return True if removed.
 
     Re-checks existence inside the lock so a concurrent transfer that just
-    (re)wrote the same path is not torn by the delete.
+    (re)wrote the same path is not torn by the delete. A dangling symlink is
+    a real directory entry and is removed too.
     """
     with path_lock(filepath):
-        if Path(filepath).exists():
+        if _path_present(filepath):
             remove(filepath)
             return True
     return False
@@ -154,7 +166,13 @@ def _tag(name: str) -> str:
     return resolve_label(INBOUND_PREFIX, name)
 
 
-def _confined_local(rel: object, event_name: object, ctx: EventDispatchContext) -> str | None:
+def _confined_local(
+    rel: object,
+    event_name: object,
+    ctx: EventDispatchContext,
+    *,
+    resolve_final: bool = True,
+) -> str | None:
     """Resolve a wire path inside ``LOCAL_BUCKET``, rejecting symlink escapes.
 
     The inbound gate validates paths lexically, but lexical safety cannot stop
@@ -162,9 +180,17 @@ def _confined_local(rel: object, event_name: object, ctx: EventDispatchContext) 
     (e.g. the bucket legitimately contains ``docs -> /home/user`` and a
     hostile peer sends ``deleted`` for ``docs/passwd``). Returns the confined
     absolute path, or ``None`` after logging/emitting the rejection.
+
+    With *resolve_final=False* the final component is not dereferenced: used
+    by delete/rename so the operation acts on the LINK entry itself (a
+    dangling link must be removable), never on its target.
     """
     bucket = CONFIG.get("LOCAL_BUCKET", "")
-    local = resolve_within(bucket, rel) if isinstance(rel, str) and bucket else None
+    local = (
+        resolve_within(bucket, rel, resolve_final=resolve_final)
+        if isinstance(rel, str) and bucket
+        else None
+    )
     if local is None:
         _reject_unsafe(event_name, rel if isinstance(rel, str) else None, ctx)
     return local
@@ -328,7 +354,9 @@ async def _apply_rename(
             origin_cid=origin_cid,
         )
     elif "filepath" in src:
-        src_local = _confined_local(src.get("filepath"), EventName.renamed.value, ctx)
+        src_local = _confined_local(
+            src.get("filepath"), EventName.renamed.value, ctx, resolve_final=False
+        )
         dst_local = _confined_local(dst.get("filepath"), EventName.renamed.value, ctx)
         if src_local is None or dst_local is None:
             return
@@ -367,7 +395,7 @@ async def _rename_path(
     _mark(ctx, src_path)
     _mark(ctx, dst_path)
     try:
-        if Path(src_path).exists():
+        if _path_present(src_path):
             log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{_cid_suffix(origin_cid)}')
             emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             parent = str(Path(dst_path).parent)
@@ -401,10 +429,15 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
             ctx.dir_dedup.forget(local)
         _mark(ctx, local)
         try:
-            if Path(local).exists():
+            if _path_present(local):
                 log.info(f'{_tag("DELETE")} "{local}"{_cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
-                await asyncio.to_thread(rmtree, local, False)
+                if Path(local).is_symlink():
+                    # A symlinked directory arrives as a LINK entry: remove
+                    # the link, never descend into its target.
+                    await asyncio.to_thread(unlink, local)
+                else:
+                    await asyncio.to_thread(rmtree, local, False)
             else:
                 # The path is already absent locally: this is a benign echo
                 # (the originator deleted it, or a peer's delete converged
@@ -418,12 +451,14 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         finally:
             _unmark(ctx, local)
     elif "filepath" in src:
-        local = _confined_local(src.get("filepath"), EventName.deleted.value, ctx)
+        local = _confined_local(
+            src.get("filepath"), EventName.deleted.value, ctx, resolve_final=False
+        )
         if local is None:
             return
         _mark(ctx, local)
         try:
-            if Path(local).exists():
+            if _path_present(local):
                 log.info(f'{_tag("DELETE")} "{local}"{_cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(_remove_locked, local)
@@ -450,11 +485,13 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     if src.get("type") != "symlink":
         return
     link = Symlink.from_dict(src, strip_dir_prefix=False)
-    # The link location must be confined (a symlink *inside* the bucket
-    # could otherwise redirect the create/unlink outside it); the target
-    # must also stay inside the bucket, otherwise a hostile peer could
-    # plant a symlink to arbitrary local files (e.g. /etc/passwd).
-    local = _confined_local(link.filepath, EventName.symlink.value, ctx)
+    # The link location must be confined WITHOUT dereferencing the final
+    # component: if the path already exists as a link, the operation below
+    # unlinks/replaces the LINK entry — a full resolve would follow it and
+    # could delete or clobber the target file instead. The target must also
+    # stay inside the bucket, otherwise a hostile peer could plant a
+    # symlink to arbitrary local files (e.g. /etc/passwd).
+    local = _confined_local(link.filepath, EventName.symlink.value, ctx, resolve_final=False)
     if local is None:
         return
     target = link.target

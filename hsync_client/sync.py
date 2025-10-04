@@ -33,7 +33,7 @@ from hsync_common.models.file import (
 )
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.sync_action import SyncAction, SyncActionName
-from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
+from hsync_common.models.tombstone import TombstoneEntry, relpath_in_bucket, tombstone_key
 from hsync_common.models.version import (
     SyncDecision,
     VClockOrder,
@@ -42,6 +42,7 @@ from hsync_common.models.version import (
     resolve_three_way,
 )
 from hsync_common.path_validation import (
+    is_internal_name,
     is_safe_symlink_target,
     resolve_within,
     validate_remote_relpath,
@@ -258,10 +259,28 @@ async def sync(lan_mode: bool = False) -> None:
         # true deletion from a path that was merely renamed or moved.
         # Merge-base keys are hashed (tombstone_key), so compare them against
         # the hashed local paths — a raw relpath would never match and every
-        # tracked file would be mistaken for deleted.
-        local_keys = {tombstone_key(str(f.get("filepath", ""))) for f in local_files}
+        # tracked file would be mistaken for deleted. The existence snapshot
+        # deliberately ignores .hsyncignore rules: a file hidden by an ignore
+        # pattern is NOT deleted ("exclude protects, it does not delete"), so
+        # it must never mint a tombstone that would make peers remove their
+        # copies.
+        # get_files_local() yields *absolute* filepaths while the store keys
+        # hash *bucket-relative* paths: normalize through relpath_in_bucket
+        # (a raw path hash would never match, mistaking every visible file
+        # for a deletion).
+        local_keys = {
+            tombstone_key(rp)
+            for f in local_files
+            if (rp := relpath_in_bucket(str(f.get("filepath", "")), CONFIG["LOCAL_BUCKET"]))
+        }
+        existing_paths = _existing_file_paths(CONFIG["LOCAL_BUCKET"])
+        existing_keys = {
+            tombstone_key(rp)
+            for p in existing_paths
+            if (rp := relpath_in_bucket(p, CONFIG["LOCAL_BUCKET"]))
+        }
         for key, base_hash, vclock in list(sync_state.iter_merge_bases()):
-            if key and key not in local_keys:
+            if key and key not in local_keys and key not in existing_keys:
                 from hsync_client.tombstones import record_deletion_by_key
 
                 # Causal provenance (ADR-0003): the marker inherits the path's
@@ -294,20 +313,28 @@ async def sync(lan_mode: bool = False) -> None:
         # ``local_files`` entries carry bucket-relative paths, so resolve them
         # against LOCAL_BUCKET: ``retain`` expects absolute paths and a bare
         # relative path would never match a recorded entry, silently dropping
-        # every merge base at the end of each cycle.
-        sync_state.retain(
-            [
-                str(Path(CONFIG["LOCAL_BUCKET"]) / str(f.get("filepath", "")))
-                for f in local_files
-                if f.get("filepath")
-            ]
-        )
+        # every merge base at the end of each cycle. Files hidden by
+        # .hsyncignore are added back via the ignore-agnostic existence
+        # snapshot: "exclude protects" means their merge base also survives,
+        # so re-including them later does not degrade to a false conflict.
+        listed_abs = []
+        for file_info in local_files:
+            fp = str(file_info.get("filepath", ""))
+            if not fp:
+                continue
+            p = Path(fp)
+            listed_abs.append(str(p) if p.is_absolute() else str(Path(CONFIG["LOCAL_BUCKET"]) / fp))
+        sync_state.retain(listed_abs + existing_paths)
 
         # Separate actions by type
         downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
         uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload]
         deletes = [a.file for a in sync_actions if a.name == SyncActionName.delete]
         nothing = [a.file for a in sync_actions if a.name == SyncActionName.nothing]
+        symlink_uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload_symlink]
+        symlink_downloads = [
+            a.file for a in sync_actions if a.name == SyncActionName.download_symlink
+        ]
 
         # Drop downloads that already failed permanently earlier in this
         # same cycle (e.g. two sync_actions entries for the same file, or a
@@ -399,6 +426,25 @@ async def sync(lan_mode: bool = False) -> None:
         for action in sync_actions:
             if action.name == SyncActionName.download and getattr(action, "conflict", False):
                 _save_conflict_copy(action.file)
+
+        # ── Symlink structural replication ──────────────────────────────
+        # Uploads and downloads of symlinks run inline (they carry no payload:
+        # a single POST /symlinks or a local os.symlink each), so no thread
+        # pool is needed. Execution is sequential and best-effort: a failure
+        # leaves the action for the next cycle.
+        if symlink_uploads or symlink_downloads:
+            from hsync_client.transfer import download_symlink, upload_symlink
+
+            for link in symlink_uploads:
+                try:
+                    upload_symlink(link)
+                except Exception as e:  # pragma: no cover - best-effort
+                    log.error(f'Error uploading symlink "{link.filepath}": {e}')
+            for link in symlink_downloads:
+                try:
+                    download_symlink(link)
+                except Exception as e:  # pragma: no cover - best-effort
+                    log.error(f'Error downloading symlink "{link.filepath}": {e}')
 
         # Execute transfers in parallel using thread pool
         if downloads or uploads:
@@ -937,6 +983,34 @@ def _local_cid_or_none() -> str | None:
     return cid or None
 
 
+def _existing_file_paths(bucket_dir: str) -> list[str]:
+    """Absolute paths of every real file under ``bucket_dir``, ignore-agnostic.
+
+    Deliberately bypasses the active :class:`hsync_common.ignore.IgnoreMatcher`:
+    a file hidden by ``.hsyncignore`` still exists on disk and must never be
+    mistaken for an offline deletion — "exclude protects, it does not delete"
+    (rsync ``--exclude``, Syncthing ``.stignore`` semantics). Only internal
+    engine artifacts are filtered out: they never hold a sync merge base and
+    must never mint tombstones.
+
+    Returns:
+        Absolute paths of physically present, non-engine files.
+    """
+    paths: list[str] = []
+    try:
+        for root, dirs, files in walk(bucket_dir):
+            # is_internal_name() covers engine side-cars AND the .part suffix.
+            dirs[:] = [d for d in dirs if not is_internal_name(d)]
+            for name in files:
+                if is_internal_name(name):
+                    continue
+                paths.append(str(Path(root) / name))
+    except OSError:
+        # An unreadable bucket must not be treated as "everything deleted".
+        return []
+    return paths
+
+
 def _tombstone_deletes_local(entry: dict, local_vclock: dict[str, int] | None) -> bool:
     """
     Decide whether a tombstone causally justifies deleting a solo-local file.
@@ -1020,6 +1094,15 @@ def get_sync_actions(
                 f"{ActionLabel.SECURITY} Ignoring unsafe remote listing entry: "
                 f'"{remote_file_info.get("filepath")}"'
             )
+            continue
+        # Symlink entry: replicate STRUCTURALLY (the link, never the target
+        # content). The same code path serves remote (server listing) and LAN
+        # (master listing); the target containment is re-validated on receive.
+        if remote_file_info.get("type") == "symlink":
+            link = Symlink.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
+            if link.filepath:
+                remote_filepaths.add(str(link.filepath).lstrip("/"))
+            sync_actions.append(SyncAction(link, SyncActionName.download_symlink))
             continue
         # One malformed entry (bogus types for size/mtime, unreadable local
         # stat) must not stall the whole reconciliation cycle.
@@ -1118,6 +1201,14 @@ def get_sync_actions(
         # .hsynckeep is a per-peer local sentinel: never propagate to remote.
         if Path(str(local_file_dict.get("filepath", ""))).name == HSYNCKEEP_FILENAME:
             continue
+        # Symlink entry: replicate the LINK (pair path+target), never the bytes
+        # of its target. Escaping targets were already skipped by
+        # get_files_local; the upload path re-validates the target anyway.
+        if local_file_dict.get("type") == "symlink":
+            link = Symlink.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
+            if link.filepath and str(link.filepath).lstrip("/") not in remote_filepaths:
+                sync_actions.append(SyncAction(link, SyncActionName.upload_symlink))
+            continue
         local_file_info = File.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
             file = File.get(local_file_dict["filepath"])
@@ -1159,14 +1250,24 @@ def get_sync_actions(
             a
             for a in sync_actions
             if a.name
-            not in (SyncActionName.download, SyncActionName.delete, SyncActionName.delete_remote)
+            not in (
+                SyncActionName.download,
+                SyncActionName.download_symlink,
+                SyncActionName.delete,
+                SyncActionName.delete_remote,
+            )
         ]
     elif direction == "download-only":
         # Remove uploads and remote deletions; keep downloads, deletes and nothing
         sync_actions = [
             a
             for a in sync_actions
-            if a.name not in (SyncActionName.upload, SyncActionName.delete_remote)
+            if a.name
+            not in (
+                SyncActionName.upload,
+                SyncActionName.upload_symlink,
+                SyncActionName.delete_remote,
+            )
         ]
 
     return sync_actions

@@ -171,10 +171,15 @@ class TestFileEventHandler:
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_deleted(event)
-            # Message should be sent
+
+        # The visible-file deletion must actually reach the WS queue (the
+        # void version of this test passed even with an empty on_deleted).
+        mock_run.assert_called_once()
+        queued_event = mock_run.call_args.args[0]
+        assert queued_event is not None
 
     def test_on_moved_hidden_to_hidden_ignored(self):
         """on_moved ignores moves from hidden to hidden directory."""

@@ -11,7 +11,8 @@ and LAN modes.
 | `get_files_local` | `sync.py:577` | scan local tree (parallel, adaptive workers `_get_optimal_workers:528`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed |
 | `get_files_remote` | `sync.py:661` | fetch remote file list |
 | `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:712` / `:761` | tombstone exchange |
-| `get_sync_actions` | `sync.py:830` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`); `persist_state=False` (preview/dry-run) skips `merge_and_record` so `.hsyncstate` is never mutated |
+| offline-deletion tombstone minting | `sync.py`, within `sync()` | a merge-base entry missing from the local listing is tombstoned (deleted while offline). The comparison is ignore-agnostic: `_existing_file_paths` (`sync.py`) enumerates every real file bypassing the active `IgnoreMatcher`, so a file hidden by `.hsyncignore` is never mistaken for a deletion — "exclude protects, it does not delete" (rsync `--exclude`, Syncthing `.stignore`). The same snapshot keeps the merge base alive across `retain`, so re-including the file later reconciles with full causal history instead of a false conflict. Local listing paths are normalized via `relpath_in_bucket` before hashing (absolute-path hashes never match the relative-keyed store) |
+| `get_sync_actions` | `sync.py:830` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`); `persist_state=False` (preview/dry-run) skips `merge_and_record` so `.hsyncstate` is never mutated. **Symlink entries** (`"type": "symlink"`, local or remote listing) are routed to `SyncActionName.upload_symlink` / `download_symlink` — the pair (path,target) is replicated STRUCTURALLY, never as File content (regola 1); direction filters treat them as uploads/downloads |
 | `_compare_files` | `sync.py:989` | per-file decision via the causal vector-clock matrix (ADR-0022): content identity (hash) → causal dominance (`compare_vclocks`) → deterministic SHA-256 tie-break on true divergence. The wall clock is never consulted |
 | `_save_conflict_copy` | `sync.py:1228` | write a conflict copy on `conflict_download` (remote won the causal tie-break); resolves bucket-relative action paths against `LOCAL_BUCKET` before reading/preserving the local file (raw relative paths were silently skipped) |
 | `_execute_parallel_transfers` | `sync.py:357` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` |
@@ -94,7 +95,8 @@ caller falls back to a full transfer.
 | `_emit_transfer_failed` | `transfer.py:93` | emit `transfer_failed` UI event on exhaustion |
 | `_local_dest_path` | `transfer.py:265` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
 | `_open_partial_no_follow` | `utils.py:379` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
-| escaping-symlink upload guard | `upload_file` `transfer.py:804` | refuses (before any hashing/read) a symlink inside the bucket whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` — covers the realtime watch/LAN-slave upload path that builds the `File` without the `get_files_local` scan guard. In-bucket symlinks keep their current semantic (uploaded as the link entry). Emits `security_rejected` |
+| escaping-symlink upload guard | `upload_file` `transfer.py` | refuses (before any hashing/read) a symlink whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (realtime watch/LAN path; the reconcile routes links structurally instead — see symlink replication below). Emits `security_rejected` |
+| `upload_symlink` / `download_symlink` / `materialize_symlink_local` | `transfer.py` (symlink section) | **Structural replication**: `upload_symlink` POSTs `(path, target)` to `/symlinks` (central server AND LAN master — same surface, transport-agnostic); an ABSOLUTE local target is relativized against the link's parent via `hsync_common.wire_symlink_target` (rsync `munge` semantics: the sender's absolute paths must never reach peers; escaping targets → security_rejected). `download_symlink` → `materialize_symlink_local` recreates the LINK locally (confined `resolve_within(..., resolve_final=False)`, target validated `is_safe_symlink_target`), replacing an existing file/link but refusing a non-empty directory. `upload_file` is never used for links in the reconcile path |
 
 **Transfer duration logging**: every `[DOWNLOAD]`/`[UPLOAD]` success log
 includes the per-attempt wall-clock duration via
@@ -168,9 +170,13 @@ malicious second key cannot smuggle past the gate.
 Delete/rename/symlink targets are additionally **confined** with
 `resolve_within` (`_confined_local:161`): lexical safety alone cannot stop a
 symlink *inside* the bucket (e.g. `docs -> /home/user`) from redirecting the
-operation outside it. `_apply_symlink` also validates the link target with
+operation outside it. Delete/rename/symlink-materialisation use
+`resolve_final=False` (the final component is NOT dereferenced): deleting or
+replacing an existing link acts on the LINK entry — a dangling link is a real
+directory entry and must be removable (`_path_present` = `is_symlink() or
+exists()`). `_apply_symlink` also validates the link target with
 `is_safe_symlink_target`; `update_dir`/`update_file` (`sync.py`) apply the
-same confinement before mkdir/metadata writes.
+full-resolve confinement before mkdir/metadata writes.
 
 **Log labels** (`_tag:150`): every bracketed label in this module is resolved
 through `hsync_common.labels.resolve_label` (the SSOT shared with
@@ -267,6 +273,13 @@ file content changes.
 `EventQueue` (`event_queue.py:77`) buffers `QueuedEvent` (`:50`) and retries
 sending over the WS with exponential backoff (`MAX_RETRIES` `:43`, `INITIAL/MAX/_
 MULTIPLIER` `:44`–`:46`). `WebSocketProtocol` (`:31`) is the minimal send interface.
+
+`_send_event` (`event_queue.py:120`) serializes **before** sending: a payload
+that cannot be JSON-serialized (`TypeError`/`ValueError` from `dumps`) is a
+**permanent** failure — retries would re-serialize the same broken payload and
+stall the queue with head-of-line blocking — so the event is dropped immediately
+(terminal outcome) and the next event proceeds; the affected file is picked up
+by the next full sync. Transient `send` failures are retried as before.
 
 > Human-facing: event processing + stability + parallel transfers in
 > `../../docs/architecture.md`; modes in `../../docs/sync-modes-server.md` and `../../docs/sync-modes-lan.md`.

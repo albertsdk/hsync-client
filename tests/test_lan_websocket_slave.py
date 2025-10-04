@@ -502,7 +502,11 @@ class TestSlaveFileEventHandler:
                 outside.unlink()
 
     def test_on_created_in_bucket_symlink_uploaded(self, handler, tmp_path):
-        """A symlink whose target stays inside the bucket is still uploaded."""
+        """An in-bucket symlink is replicated STRUCTURALLY via upload_symlink.
+
+        The realtime watch path must send (path, target) to the master, never
+        dereference the target: `_handle_file_upload` (content upload) must not
+        be invoked for links."""
         target = tmp_path / "real.txt"
         target.write_text("inside")
         link = tmp_path / "alias"
@@ -512,9 +516,19 @@ class TestSlaveFileEventHandler:
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
             patch.object(handler, "_handle_file_upload") as mock_upload,
+            patch.object(handler, "_start_operation") as mock_start,
         ):
             handler.on_created(event)
-            mock_upload.assert_called_once_with(str(link))
+            # The link must NOT go through the content-upload path.
+            mock_upload.assert_not_called()
+            # A single background op is started; its target is upload_symlink
+            # (imported locally inside on_created).
+            mock_start.assert_called_once()
+            start_kwargs = mock_start.call_args.kwargs
+            assert start_kwargs.get("name") == f"symlink-{str(link)}"
+            from hsync_client.transfer import upload_symlink
+
+            assert start_kwargs.get("target") is upload_symlink
 
     def test_on_modified_temp_file_ignored(self, handler, tmp_path):
         """Test on_modified ignores temp files."""

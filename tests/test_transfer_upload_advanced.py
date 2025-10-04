@@ -558,13 +558,26 @@ class TestBuildMultipartStreaming:
             patch("hsync_client.transfer.post", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.emit_event") as mock_emit,
         ):
             upload_file(file, check_size=False)
 
-        # PermanentUploadError is caught by upload_file's except and surfaced
-        # as transfer_failed; verify the body is in the error message.
-        # (upload_file swallows the exception and logs it, so we verify via
-        #  the emitted event.)
+        # PermanentUploadError is swallowed by upload_file and surfaced as a
+        # transfer_failed UI event: assert the event AND the server body (the
+        # whole point of the fix — a bare `raise_for_status` discarded it).
+        from hsync_client.events import UiEventName
+
+        assert mock_emit.called
+        fail_calls = [
+            c
+            for c in mock_emit.call_args_list
+            if c.args and c.args[0] == UiEventName.transfer_failed
+        ]
+        assert fail_calls, "expected a transfer_failed event"
+        kwargs = fail_calls[0].kwargs
+        assert kwargs.get("op") == "upload"
+        assert str(kwargs.get("file")) == str(test_file)
+        assert "Checksum mismatch" in str(kwargs.get("message"))
 
     def test_400_not_retried(self, tmp_path):
         """A 4xx must not be retried: post is called exactly once.

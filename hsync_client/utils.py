@@ -15,12 +15,12 @@ import atexit
 import os
 import secrets
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from os import chmod, walk
 from os.path import abspath, normpath
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from requests import Response, Session
@@ -62,6 +62,22 @@ def _suppress_insecure_warning() -> None:
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         _insecure_warning_suppressed = True
+
+
+def redact_headers[T: Mapping[str, object]](headers: T) -> T:
+    """Return a copy of *headers* with the ``Authorization`` value masked.
+
+    ``safe_json_for_log`` escapes loguru markup but does NOT redact secrets:
+    every log/data path that serialises request headers must route through
+    here, otherwise the Bearer token (API key or ``HSYNC_LAN_KEY``) lands in
+    plaintext in the log file. Used by ``main_logic`` (config dump) and
+    ``transfer`` (per-request debug logging). Accepts any string-keyed mapping
+    (TypedDicts with optional keys included) and returns the same mapping type.
+    """
+    out: dict[str, object] = dict(headers)
+    if out.get("Authorization"):
+        out["Authorization"] = "Bearer ****"
+    return cast(T, out)
 
 
 def get_ssl_verify() -> bool | str:

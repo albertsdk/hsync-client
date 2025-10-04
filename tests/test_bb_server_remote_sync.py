@@ -211,6 +211,12 @@ class TestRemoteSymlinks:
     def test_in_bucket_symlink_syncs(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        """An in-bucket symlink must be replicated STRUCTURALLY (regola 1).
+
+        The server listing must advertise the LINK (``type == "symlink"`` +
+        its ``target``), not the bytes/content of the target file — the old
+        reconcile dereferenced the link and uploaded the target content as a
+        regular file, making this assertion fail."""
         target = Path(local_dir) / "real.txt"
         target.write_bytes(b"target\n")
         link = Path(local_dir) / "link.txt"
@@ -218,6 +224,27 @@ class TestRemoteSymlinks:
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
         assert "link.txt" in bb_server_files(bb_bucket)
+
+        # Structural check: the server listing must expose the symlink entry
+        # with its target string, not a regular-file entry with dereferenced
+        # metadata/hash.
+        base, api_key = live_server
+        listing = requests.get(
+            f"{base}/api/v1/buckets/{bb_bucket}/files",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15.0,
+            verify=False,
+        ).json()
+        link_entry = next(f for f in listing if f["filepath"] == "link.txt")
+        assert link_entry.get("type") == "symlink", (
+            f"expected structural symlink entry, got {link_entry!r}"
+        )
+        assert link_entry.get("target") == "real.txt", (
+            f"expected target 'real.txt', got {link_entry.get('target')!r}"
+        )
+        assert "sha256sum" not in link_entry or link_entry.get("sha256sum") is None, (
+            "a structural symlink entry must not carry a dereferenced content hash"
+        )
 
     def test_escaping_symlink_not_synced(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
