@@ -794,7 +794,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_NOT_FOUND, "Bucket not found")
             return
 
+        from hsync_client.sync_state import flush as _flush_state
+
         file_list = []
+        self_recorded = False
         for root, dirs, files in walk(local_bucket):
             # Skip hidden directories
             dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
@@ -833,12 +836,23 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
 
                     # Attach the effective causal version so slaves can run the
-                    # causal matrix on the listing (ADR-0022). For a file whose
-                    # content differs from the stored base (a dirty/edited file
-                    # not yet reconciled), the effective clock is ticked by the
-                    # master cid — honest without persisting.
-                    from hsync_client.sync_state import local_version_for_compare
+                    # causal matrix on the listing (ADR-0022). The listing is the
+                    # master's *publication point*: before advertising, persist
+                    # the self-record for a dirty/edited file (catch-all of the
+                    # anti-aliasing invariant, §3.4.7) so two distinct contents
+                    # can never share the same advertised clock — a pure tick
+                    # without persistence would alias {master:1} across edits,
+                    # letting a slave silently dominate a genuine divergence.
+                    from hsync_client.sync_state import (
+                        get_base_hash,
+                        local_version_for_compare,
+                        note_local_edit,
+                    )
 
+                    prev_hash = get_base_hash(file_path)
+                    note_local_edit(file_path, file_obj.sha256sum or "")
+                    if get_base_hash(file_path) != prev_hash:
+                        self_recorded = True
                     eff = local_version_for_compare(file_path, file_obj.sha256sum)
                     if eff is not None:
                         file_normalized["version"] = {
@@ -857,6 +871,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         # Sort by mtime ascending (oldest first) to prioritize updating older files
         file_list.sort(key=lambda x: x.get("mtime", 0))
+
+        # The master runs no sync cycle of its own, so any self-record made
+        # while publishing must be persisted immediately: the advertised clock
+        # has to survive a master restart (same guarantee as the server's
+        # arbitration self-record).
+        if self_recorded:
+            _flush_state()
 
         self._send_json_response(HTTP_OK, file_list)
 

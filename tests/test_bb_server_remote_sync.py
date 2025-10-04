@@ -13,6 +13,8 @@ internal modules are imported or mocked.
 Requires HSYNC_BB_SERVER=1 to run.
 """
 
+import hashlib
+import json
 import os
 import uuid
 from pathlib import Path
@@ -438,16 +440,17 @@ class TestRemoteConflictedCopy:
         bb_server_files,
         bb_server_upload,
     ):
-        """When two remote writers upload different content for the same path,
-        the server must preserve the overwritten version as a conflicted copy
-        and every other client must converge on both files.
+        """When two remote writers upload different content for the same path
+        with *concurrent* causal histories, the deterministic SHA-256 tie-break
+        selects the winner and the server preserves the loser as a conflicted
+        copy — every other client then converges on both files.
 
         The first writer is the real client (public CLI); the second writer is
-        driven through the documented REST upload API, simulating a second
-        remote client that diverged concurrently without reconciling in
-        between (every node resolves causally; a sequential CLI sync would
-        first adopt the base and therefore never diverge, so the concurrent
-        writer is emulated directly on the wire).
+        driven through the documented REST upload API with a concurrent vector
+        clock, simulating a second remote client that diverged without
+        reconciling in between (a sequential CLI sync would first adopt the
+        base and therefore never diverge, so the concurrent writer is emulated
+        directly on the wire).
         """
 
         # Given a unique filename and version A already uploaded by client A
@@ -457,12 +460,41 @@ class TestRemoteConflictedCopy:
         (Path(local_dir) / name).write_bytes(version_a)
         assert run_sync_once(bb_bucket, local_dir).exit_code == 0
 
-        # When a second remote writer overrides the same path with different
-        # content via the public REST API
-        bb_server_upload(bb_bucket, name, version_b)
+        # When a second remote writer uploads different content with a
+        # concurrent causal history (different author cid) via the public
+        # REST API
+        second_cid = "TestClientY1234567890"
+        second_vclock = json.dumps({second_cid: 1})
+        base, api_key = live_server
+        r = requests.post(
+            f"{base}/api/v1/buckets/{bb_bucket}/files",
+            data={
+                "cid": second_cid,
+                "path": "",
+                "sha256sum": hashlib.sha256(version_b).hexdigest(),
+                "permissions": "644",
+                "offset": "0",
+                "size": "0",
+                "compressed": "false",
+                "vclock": second_vclock,
+                "version_id": "",
+            },
+            files={"file": (name, version_b, "application/octet-stream")},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0,
+            verify=False,
+        )
+        # The concurrent upload is a *valid* arbitration outcome in both
+        # directions: accepted (201) when version B wins the tie-break,
+        # conflict_lost (409) when it loses — never a transport error.
+        assert r.status_code in (201, 409), f"unexpected upload outcome: {r.status_code} {r.text}"
 
-        # Then the server keeps the winner at the original path and preserves
-        # the overwritten version as a conflicted copy in the listing
+        # Then the deterministic tie-break picks the winner. The winner stays
+        # at the original path; the loser is preserved as a conflicted copy.
+        def sha256_of(content: bytes) -> str:
+            return hashlib.sha256(content).hexdigest()
+
+        winner, loser = sorted((version_a, version_b), key=sha256_of, reverse=True)
         listing = bb_server_files(bb_bucket)
         assert name in listing, f"Main path missing from listing: {listing}"
         conflicts = [p for p in listing if "_conflicted_copy_" in p and name.split(".")[0] in p]
@@ -470,18 +502,18 @@ class TestRemoteConflictedCopy:
             f"Expected exactly 1 conflicted copy for {name}, found {len(conflicts)}: {conflicts}"
         )
         conflict_path = conflicts[0]
-        assert _server_download(live_server, bb_bucket, conflict_path) == version_a, (
-            f"Conflicted copy {conflict_path} does not preserve version A"
+        assert _server_download(live_server, bb_bucket, conflict_path) == loser, (
+            f"Conflicted copy {conflict_path} does not preserve the losing content"
         )
 
-        # And a re-sync of client A must converge on both the winner and the
-        # conflicted copy
+        # And a re-sync of client A must converge on the winner at the main
+        # path and the loser at the conflicted copy
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
-        assert (Path(local_dir) / name).read_bytes() == version_b
+        assert (Path(local_dir) / name).read_bytes() == winner
         conflict_local = Path(local_dir) / conflict_path.split("/")[-1]
-        assert conflict_local.read_bytes() == version_a, (
-            f"Local conflicted copy not synced: {conflict_local} missing version A"
+        assert conflict_local.read_bytes() == loser, (
+            f"Local conflicted copy not synced: {conflict_local} missing loser content"
         )
 
 

@@ -577,17 +577,26 @@ def bb_server_upload(live_server):
 
     base, api_key = live_server
 
-    def _upload(bucket: str, filename: str, content: bytes) -> None:
+    def _upload(
+        bucket: str,
+        filename: str,
+        content: bytes,
+        cid: str = BB_CLIENT_CID,
+        vclock: str = "",
+        version_id: str = "",
+    ) -> None:
         r = requests.post(
             f"{base}/api/v1/buckets/{bucket}/files",
             data={
-                "cid": BB_CLIENT_CID,
+                "cid": cid,
                 "path": "",
                 "sha256sum": hashlib.sha256(content).hexdigest(),
                 "permissions": "644",
                 "offset": "0",
                 "size": "0",
                 "compressed": "false",
+                "vclock": vclock,
+                "version_id": version_id,
             },
             files={"file": (filename, content, "application/octet-stream")},
             headers={"Authorization": f"Bearer {api_key}"},

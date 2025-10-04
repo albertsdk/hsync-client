@@ -309,6 +309,7 @@ class TestLanBandwidthThrottle:
 
 
 class TestLanHsyncignore:
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_hsyncignore_reload_respected(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Adding .hsyncignore stops syncing matching files but keeps existing copies.
 

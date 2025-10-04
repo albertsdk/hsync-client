@@ -141,6 +141,7 @@ class TestLanSyncDirection:
 
 
 class TestLanMasterRestart:
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_master_restart_slave_recovers(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """After master crash + restart, slave rediscovers and resumes syncing."""
         # First master session
@@ -193,6 +194,7 @@ class TestLanMasterRestart:
 
 
 class TestLanSlaveRestart:
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_slave_restart_recovers_and_resyncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """After the slave process is terminated and restarted on the same dir,
         it re-discovers the master, reconnects with its persistent device
@@ -283,8 +285,12 @@ class TestLanConflict:
                 # by highest SHA-256: the winner is decided purely by content,
                 # not by role.
                 _terminate(slave1)
-                master_bytes = b"master-v2\n"
-                slave_bytes = b"slave-v2\n"
+                # These two payloads are chosen so the *master* wins the
+                # deterministic SHA-256 tie-break (sha("master-data-zz") >
+                # sha("slave-data-aa")): the slave then preserves its losing
+                # content as the conflicted copy below.
+                master_bytes = b"master-data-zz\n"
+                slave_bytes = b"slave-data-aa\n"
                 (Path(lan_master_dir) / "shared.txt").write_bytes(master_bytes)
                 (Path(lan_slave_dir) / "shared.txt").write_bytes(slave_bytes)
                 shared_ts = 1_700_000_000

@@ -595,6 +595,19 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
             clear_deletion(src_path)
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not clear tombstone for {src_path}: {e}")
+        # Anti-aliasing invariant (§3.4.7): persist the self-record for a
+        # *local* edit before broadcasting. Inbound edits (written on behalf
+        # of a peer via the HTTP API) are skipped — their clock was already
+        # registered with the merged history at upload acceptance (D11), and a
+        # tick here would mis-attribute the edit to the master.
+        try:
+            if peek_inbound_origin(src_path) is None and file.sha256sum:
+                from hsync_client.sync_state import flush, note_local_edit
+
+                note_local_edit(src_path, file.sha256sum)
+                flush()
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not self-record local edit for {src_path}: {e}")
         self._broadcast_event(
             Event(
                 CONFIG["CID"],
