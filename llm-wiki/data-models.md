@@ -53,17 +53,14 @@ switch `LOCAL_BUCKET` stay isolated.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `get_tombstone_store` | `tombstones.py:43` | cached store; `load()` + `prune()` on first use (TTL via `get_tombstone_ttl_days`) |
-| `record_deletion` | `:55` | add marker (path, sha256, ts) and persist |
-| `clear_deletion` | `:71` | remove a marker (resurrection) |
-| `merge_payload` | `:82` | LWW-merge master/peer markers (gossip) |
+| `record_deletion` | `:55` | add causal marker (path, sha256, origin cid, inherited vclock) and persist |
+| `clear_deletion` | `:71` | remove a marker (path re-created) |
+| `merge_payload` | `:82` | causal-merge master/peer markers (dominance + content tie-break, gossip) |
 | `get_payload` | `:92` | union to serve when this peer is master |
 
-Tombstone semantics (LWW merge, TTL, hashed keys) are SSOT in
+Tombstone semantics (causal merge, TTL storage GC, hashed keys) are SSOT in
 `hsync_common.models.tombstone` — see ADR 0003. The per-bucket store cache
 (`_stores`) is keyed by bucket dir, matching `sync_state`.
-
-Tombstone semantics (LWW merge, TTL, hashed keys) are SSOT in
-`hsync_common.models.tombstone` — see ADR 0003.
 
 ## Runtime config models
 

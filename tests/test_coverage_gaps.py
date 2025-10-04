@@ -306,7 +306,15 @@ class TestTombstonesCoverageGaps:
 
         from hsync_common.models.tombstone import tombstone_key
 
-        payload = {tombstone_key("merged.txt"): {"ts": int(time.time()), "sha256": "a" * 64}}
+        payload = {
+            tombstone_key("merged.txt"): {
+                "ts": int(time.time()),
+                "sha256": "a" * 64,
+                "version_id": "v1",
+                "origin_cid": None,
+                "vclock": {"TestClientA1234567890": 1},
+            }
+        }
         changed = merge_payload(payload)
         assert changed == 1
         assert tombstone_key("merged.txt") in get_payload()

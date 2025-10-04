@@ -533,7 +533,15 @@ class TestLANRequestHandlerTombstones:
 
             assert response.status == 200
             data = json.loads(response.read().decode())
-            assert data[tombstone_key("gone.txt")] == {"ts": ts, "sha256": "a" * 64}
+            entry = data[tombstone_key("gone.txt")]
+            # Causal shape (ADR-0003): hashed key -> {sha256, version_id,
+            # origin_cid, ts, vclock}. version_id is minted, so assert the
+            # deterministic fields and the presence of the causal ones.
+            assert entry["ts"] == ts
+            assert entry["sha256"] == "a" * 64
+            assert entry["origin_cid"] is None
+            assert entry["vclock"] == {}
+            assert set(entry) == {"sha256", "version_id", "origin_cid", "ts", "vclock"}
             conn.close()
 
     def test_post_merges_pushed_payload(self, server, tmp_path):
@@ -551,14 +559,25 @@ class TestLANRequestHandlerTombstones:
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
-            payload = {key: {"ts": ts, "sha256": "d" * 64}}
+            payload = {
+                key: {
+                    "ts": ts,
+                    "sha256": "d" * 64,
+                    "version_id": "v1",
+                    "origin_cid": None,
+                    "vclock": {"TestClientA1234567890": 1},
+                }
+            }
 
             response = requests.post(url, json=payload, timeout=5)
             assert response.status_code == 200
             assert response.json()["merged"] == 1
 
-            # The merged marker is now served back.
-            assert ts_mod.get_payload()[key] == {"ts": ts, "sha256": "d" * 64}
+            # The merged marker is now served back with its causal fields.
+            merged = ts_mod.get_payload()[key]
+            assert merged["ts"] == ts
+            assert merged["sha256"] == "d" * 64
+            assert merged["vclock"] == {"TestClientA1234567890": 1}
 
     def test_post_empty_body_merges_nothing(self, server, tmp_path):
         """An empty body is accepted and merges zero entries."""

@@ -24,5 +24,5 @@ community feedback and contributor availability.
 - **iOS app** — native iOS client (Swift)
 - **FUSE mount** — mount a bucket as a local read-only filesystem
 - **Snapshot export** — export a bucket at a point in time (read-only copy)
-- **Conflict resolution strategies** — configurable strategies beyond last-writer-wins (e.g., always keep local, always keep remote, manual merge tool)
+- **Conflict resolution strategies** — configurable strategies beyond the causal tie-break (e.g., always keep local, always keep remote, manual merge tool)
 - **GUI mode** — lightweight built-in TUI for headless servers

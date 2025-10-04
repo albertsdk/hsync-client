@@ -34,7 +34,13 @@ from hsync_common.models.file import (
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
-from hsync_common.models.version import SyncDecision, parse_version_info, resolve_three_way
+from hsync_common.models.version import (
+    SyncDecision,
+    VClockOrder,
+    compare_vclocks,
+    parse_version_info,
+    resolve_three_way,
+)
 from hsync_common.path_validation import (
     is_safe_symlink_target,
     resolve_within,
@@ -254,11 +260,18 @@ async def sync(lan_mode: bool = False) -> None:
         # the hashed local paths — a raw relpath would never match and every
         # tracked file would be mistaken for deleted.
         local_keys = {tombstone_key(str(f.get("filepath", ""))) for f in local_files}
-        for key, base_hash in list(sync_state.iter_merge_bases()):
+        for key, base_hash, vclock in list(sync_state.iter_merge_bases()):
             if key and key not in local_keys:
                 from hsync_client.tombstones import record_deletion_by_key
 
-                record_deletion_by_key(key, sha256sum=base_hash or None)
+                # Causal provenance (ADR-0003): the marker inherits the path's
+                # recorded clock and is ticked by this peer.
+                record_deletion_by_key(
+                    key,
+                    sha256sum=base_hash or None,
+                    origin_cid=_local_cid_or_none(),
+                    prev_vclock=vclock,
+                )
                 # Re-fetch the union now that we just added a marker.
                 union = get_payload()
                 push_tombstones_remote(union)
@@ -381,7 +394,8 @@ async def sync(lan_mode: bool = False) -> None:
                     log.error(f'Error deleting "{action.file.filepath}" on server: {e}')
 
         # Preserve locally-modified files before a conflicting download
-        # overwrites them (same mtime, different content - no automatic winner).
+        # overwrites them (concurrent clocks lost the causal tie-break —
+        # there is never a wall-clock winner).
         for action in sync_actions:
             if action.name == SyncActionName.download and getattr(action, "conflict", False):
                 _save_conflict_copy(action.file)
@@ -828,9 +842,11 @@ def get_tombstones_remote() -> dict[str, dict]:
     Get deletion markers (tombstones) from the server.
 
     Makes an HTTP GET request to retrieve the tombstone payload: a mapping
-    of hashed bucket-relative path to ``{"ts": <deletion timestamp>,
-    "sha256": <content hash of the deleted file>}``. Clients use these
-    markers to avoid resurrecting files deleted while they were offline.
+    of hashed bucket-relative path to the causal marker
+    ``{"sha256", "version_id", "origin_cid", "ts", "vclock"}`` (ADR-0003).
+    Clients use these markers to avoid resurrecting files deleted while
+    they were offline: a marker whose vector clock dominates the local
+    version is positive proof the deletion descends from the common history.
 
     Degrades gracefully: a server that does not expose the endpoint (older
     version) or any non-200 response yields an empty mapping, so the rest of
@@ -902,12 +918,6 @@ def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
 # Sync Action Determination
 # =============================================================================
 
-# Tolerance threshold in seconds for tombstone-vs-local mtime comparison
-# (deletion resurrection guard, _tombstone_deletes_local). Not used by
-# content comparison, which is causal (vector clocks) — kept only for the
-# tombstone path. Handles FAT32 filesystem precision (2s) and minor skew.
-MTIME_TOLERANCE = 2
-
 
 def _check_auth_status(status_code: int) -> None:
     """Raise AuthenticationError on 401/403, shared by all HTTP call sites."""
@@ -917,35 +927,41 @@ def _check_auth_status(status_code: int) -> None:
         raise AuthenticationError(message="API key required")
 
 
-def _tombstone_deletes_local(entry: dict, local_mtime: int, local_sha256: str) -> bool:
-    """
-    Decide whether a tombstone justifies deleting a solo-local file.
+def _local_cid_or_none() -> str | None:
+    """Return this node's cid if configured, else None.
 
-    The rule is intentionally data-safe: a local file that exists only on this
-    peer is removed *only* when it is byte-identical to the file that was
-    deleted elsewhere and was not (re-)created after that deletion. Any local
-    edit (different content) or a clearly newer mtime is treated as an
-    intentional re-creation and the file is kept (uploaded) instead.
+    Used as the author of deletion markers minted by the sync engine when the
+    only known identity for a path is its merge-base key (ADR-0003).
+    """
+    cid = str(CONFIG.get("CID", "") or "")
+    return cid or None
+
+
+def _tombstone_deletes_local(entry: dict, local_vclock: dict[str, int] | None) -> bool:
+    """
+    Decide whether a tombstone causally justifies deleting a solo-local file.
+
+    A local file that exists only on this peer is removed only when the
+    tombstone's vector clock **dominates** the local version clock: the
+    deletion provably descends from the common history (the local copy is a
+    stale ancestor). A local edit concurrent with (not dominated by) the
+    deletion is an intentional re-creation and the file is kept (uploaded).
+    The wall clock is never consulted (ADR-0003).
 
     Args:
-        entry: Tombstone entry ``{"ts": int, "sha256": str | None}``.
-        local_mtime: Modification time of the local file.
-        local_sha256: Content hash of the local file.
+        entry: Tombstone entry carrying the causal ``vclock``.
+        local_vclock: Effective local version clock for the file (None ⇒ empty).
 
     Returns:
         True if the local file should be deleted, False to keep/upload it.
     """
-    deleted_sha = entry.get("sha256")
-    ts = int(entry.get("ts", 0))
-
-    if deleted_sha and local_sha256:
-        # Same content as the deleted file: a stale copy unless re-created
-        # after the deletion (guards against path reuse).
-        return deleted_sha == local_sha256 and local_mtime <= ts + MTIME_TOLERANCE
-
-    # No content hash to compare (legacy marker): fall back to timestamps and
-    # delete only when the deletion is clearly newer than the local file.
-    return ts - local_mtime > MTIME_TOLERANCE
+    tomb_vclock = entry.get("vclock")
+    if not isinstance(tomb_vclock, dict):
+        # A marker without a valid causal clock carries no proof of deletion
+        # ancestry — never delete local data on its say-so.
+        return False
+    order = compare_vclocks(tomb_vclock, local_vclock)
+    return order is VClockOrder.dominates
 
 
 def get_sync_actions(
@@ -1109,19 +1125,27 @@ def get_sync_actions(
                 if lan_mode and CONFIG.get("SYNC_DIRECTION") == "download-only":
                     # LAN download-only slave mirrors master - delete local-only files
                     sync_actions.append(SyncAction(file, SyncActionName.delete))
-                elif (entry := tombstones.get(tombstone_key(local_file_info.filepath))) and (
-                    _tombstone_deletes_local(entry, file.mtime or 0, file.sha256sum or "")
-                ):
-                    # The file was deleted elsewhere while this peer was offline
-                    # and the local copy is unchanged: remove it instead of
-                    # resurrecting it on the master.
-                    log.info(
-                        f'{ActionLabel.TOMBSTONE} "{file.filepath}" deleted remotely while offline; '
-                        "removing local copy"
+                elif entry := tombstones.get(tombstone_key(local_file_info.filepath)):
+                    # Causal delete-vs-recreate (ADR-0003): compare the tombstone
+                    # clock against the *effective* local clock — ticked when the
+                    # current content differs from the recorded base, so a local
+                    # edit concurrent with the deletion is never mistaken for a
+                    # stale ancestor. The wall clock is never consulted.
+                    local_eff = sync_state.local_version_for_compare(
+                        file.filepath or "", file.sha256sum
                     )
-                    sync_actions.append(
-                        SyncAction(file, SyncActionName.delete, tombstone_confirmed=True)
-                    )
+                    if _tombstone_deletes_local(entry, local_eff["vclock"] if local_eff else None):
+                        # The deletion provably descends from the common history:
+                        # remove the local copy instead of resurrecting it.
+                        log.info(
+                            f'{ActionLabel.TOMBSTONE} "{file.filepath}" deleted remotely while offline; '
+                            "removing local copy"
+                        )
+                        sync_actions.append(
+                            SyncAction(file, SyncActionName.delete, tombstone_confirmed=True)
+                        )
+                    else:
+                        sync_actions.append(SyncAction(file, SyncActionName.upload))
                 else:
                     # Default: upload local-only files (server mode and LAN
                     # bidirectional/upload-only converge toward shared state)

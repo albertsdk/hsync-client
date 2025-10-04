@@ -705,7 +705,17 @@ class TestLANServerHardening:
             patch("hsync_client.tombstones.merge_payload", return_value=0) as mock_merge,
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
-            big = {f"{i:064x}": {"ts": int(time.time()), "sha256": None} for i in range(50)}
+            now = int(time.time())
+            big = {
+                f"{i:064x}": {
+                    "ts": now,
+                    "sha256": None,
+                    "version_id": "v1",
+                    "origin_cid": None,
+                    "vclock": {"TestClientA1234567890": 1},
+                }
+                for i in range(50)
+            }
             response = requests.post(url, json=big, timeout=5)
             assert response.status_code == 400
             mock_merge.assert_not_called()

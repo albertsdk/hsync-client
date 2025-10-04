@@ -22,8 +22,8 @@ your use case.
 **Q: How does HSYNC keep my files safe?**
 - All traffic uses HTTPS/WSS (TLS encrypted).
 - The API key authenticates each client to the server.
-- Files are never deleted immediately — they go through a tombstone retention
-  period (default 30 days).
+- Files are never deleted immediately — deletions are recorded as causal
+  tombstones with a retention window (default 90 days).
 - SHA-256 verification ensures files are not corrupted in transit.
 
 **Q: What happens if two clients modify the same file simultaneously?**
@@ -33,8 +33,9 @@ winner, and the losing version is preserved as a `_conflicted_copy_`. See
 [Conflict Resolution](conflict-resolution.md).
 
 **Q: Can I recover accidentally deleted files?**
-Yes. The server keeps tombstone records for deleted files (configurable
-retention, default 30 days). Files can be restored during that window.
+Yes. The server keeps causal tombstone records for deleted files
+(configurable retention, default 90 days). Files can be restored during that
+window.
 
 ## Sync Behavior
 

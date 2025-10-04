@@ -65,16 +65,29 @@ def get_tombstone_store() -> TombstoneStore:
 def record_deletion(
     abs_path: str,
     sha256sum: str | None = None,
+    origin_cid: str | None = None,
+    prev_vclock: dict[str, int] | None = None,
     timestamp: int | float | None = None,
 ) -> None:
-    """Record a deletion marker for an absolute path and persist the store."""
+    """Record a causal deletion marker for an absolute path and persist it.
+
+    The marker inherits the stored version clock for the path (``prev_vclock``)
+    and is ticked by ``origin_cid``, so delete-vs-recreate and delete-vs-delete
+    resolve causally (ADR-0003) — the deletion timestamp is informational only.
+    """
     bucket_dir = _bucket_dir()
     relpath = relpath_in_bucket(abs_path, bucket_dir)
     if not relpath:
         return
     with _lock:
         store = get_tombstone_store()
-        store.record(relpath, sha256sum=sha256sum, timestamp=timestamp)
+        store.record(
+            relpath,
+            sha256sum=sha256sum,
+            origin_cid=origin_cid,
+            prev_vclock=prev_vclock,
+            timestamp=timestamp,
+        )
         store.prune()
         store.save()
 
@@ -82,19 +95,29 @@ def record_deletion(
 def record_deletion_by_key(
     key: str,
     sha256sum: str | None = None,
+    origin_cid: str | None = None,
+    prev_vclock: dict[str, int] | None = None,
     timestamp: int | float | None = None,
 ) -> None:
-    """Record a deletion marker for an already-hashed path key and persist.
+    """Record a causal deletion marker for an already-hashed path key and persist.
 
     Used by the sync engine when the only available identity is the merge-base
     key (the store is keyed by ``tombstone_key`` and the raw path is not
-    recoverable from it).
+    recoverable from it). ``origin_cid``/``prev_vclock`` follow
+    :func:`record_deletion`; when only the key is known the clock is ticked by
+    the local cid so the marker still carries fresh causal provenance.
     """
     if not key:
         return
     with _lock:
         store = get_tombstone_store()
-        store.record_by_key(key, sha256sum=sha256sum, timestamp=timestamp)
+        store.record_by_key(
+            key,
+            sha256sum=sha256sum,
+            origin_cid=origin_cid,
+            prev_vclock=prev_vclock,
+            timestamp=timestamp,
+        )
         store.prune()
         store.save()
 
@@ -112,7 +135,7 @@ def clear_deletion(abs_path: str) -> None:
 
 
 def merge_payload(payload: dict[str, TombstoneEntry] | None) -> int:
-    """Merge a remote (master) payload using LWW; persist and return change count."""
+    """Merge a remote (master) payload causally; persist and return change count."""
     with _lock:
         store = get_tombstone_store()
         changed = store.merge(payload)

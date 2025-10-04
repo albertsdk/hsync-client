@@ -37,8 +37,10 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
   import from `hsync_common.*`. New wire fields land in common first.
 - **No wall-clock trust for direction**: reconciliation uses the causal
   vector-clock matrix (`resolve_three_way`, `sync_state.py`), not mtimes, to
-  pick direction / detect conflict. Mtime tolerance (`MTIME_TOLERANCE`,
-  `sync.py:907`) is used **only** by the tombstone resurrection guard.
+  pick direction / detect conflict. Deletion resurrection is causal too: a
+  tombstone whose clock **dominates** the local clock is proof the local copy
+  is a stale ancestor (ADR-0003); a concurrent local edit is an intentional
+  re-creation and is kept. The wall clock is never consulted.
 - **Mandatory TLS in LAN mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
 - **Write-policy gate**: non-interactive write-capable LAN sync requires a LAN key

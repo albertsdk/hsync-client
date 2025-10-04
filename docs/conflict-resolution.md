@@ -228,7 +228,7 @@ Dropbox/OneDrive.
 
 | Scenario | Behavior |
 |----------|----------|
-| **File deleted locally, changed remotely** | Tombstone logic (ADR-0019) handles the absent-file branch separately. |
+| **File deleted locally, changed remotely** | Tombstone logic (ADR-0003, causal) handles the absent-file branch separately. |
 | **File deleted remotely, changed locally** | Tombstone logic; local edit is uploaded if direction allows. |
 | **New file on both sides with same content** | `local == remote` → `in_sync` |
 | **New file on both sides, different content** | Both clocks empty → concurrent → deterministic hash tie-break. |

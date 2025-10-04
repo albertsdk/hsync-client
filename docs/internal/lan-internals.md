@@ -125,7 +125,8 @@ When a client reconnects after being offline:
 1. **Master state is authoritative** — the master's file list is the source of truth
 2. **Missing files are downloaded** — files on master but not on client are downloaded
 3. **Extra files are deleted** — files on client but not on master are deleted locally
-4. **Modified files are synced** — files with different mtimes are synced (newer wins)
+4. **Modified files are synced** — differences are reconciled causally via
+   the vector-clock matrix (ADR-0022 / ADR-0003), never by mtime "newer wins"
 
 This ensures consistent state across all peers, even after network interruptions.
 

@@ -618,9 +618,16 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         if is_directory:
             return
         try:
+            from hsync_client.sync_state import get_vclock
             from hsync_client.tombstones import record_deletion
 
-            record_deletion(src_path)
+            # Causal provenance (ADR-0003): the marker inherits the path's
+            # recorded clock and is ticked by this peer BEFORE the merge-base
+            # entry is cleared below.
+            prev_vclock = get_vclock(src_path)
+            record_deletion(
+                src_path, origin_cid=str(CONFIG.get("CID") or "") or None, prev_vclock=prev_vclock
+            )
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not record tombstone for {src_path}: {e}")
         # Drop the merge base too: a re-created path must start a fresh lineage.

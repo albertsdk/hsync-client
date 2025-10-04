@@ -729,32 +729,42 @@ class TestSyncCycleFlag:
 
 
 class TestTombstoneDecision:
-    """Unit tests for the _tombstone_deletes_local data-safe rule."""
+    """Unit tests for the causal _tombstone_deletes_local rule (ADR-0003)."""
 
-    def test_matching_content_and_older_local_deletes(self):
-        """Same content and a deletion newer than the local file: delete."""
-        entry = {"ts": 1000, "sha256": "abc"}
-        assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is True
+    def test_tombstone_dominates_deletes(self):
+        """A tombstone clock dominating the local clock is positive proof the
+        local copy is a stale ancestor: delete (wall clock never consulted)."""
+        entry = {"vclock": {"A": 3, "B": 1}, "ts": 1, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, {"A": 3}) is True
 
-    def test_matching_content_but_recreated_after_keeps(self):
-        """Same content but re-created clearly after the deletion: keep (upload)."""
-        entry = {"ts": 1000, "sha256": "abc"}
-        assert _tombstone_deletes_local(entry, local_mtime=2000, local_sha256="abc") is False
+    def test_equal_clock_keeps(self):
+        """An equal clock carries no descent proof: never delete on its say-so."""
+        entry = {"vclock": {"A": 3}, "ts": 999999, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, {"A": 3}) is False
 
-    def test_different_content_keeps(self):
-        """Different content is treated as a local edit/re-creation: keep."""
-        entry = {"ts": 5000, "sha256": "abc"}
-        assert _tombstone_deletes_local(entry, local_mtime=100, local_sha256="xyz") is False
+    def test_local_concurrent_edit_keeps(self):
+        """A local edit concurrent with the deletion is an intentional
+        re-creation: keep/upload regardless of timestamps."""
+        entry = {"vclock": {"A": 2}, "ts": 5000, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, {"B": 2}) is False
 
-    def test_legacy_marker_newer_deletion_deletes(self):
-        """No recorded hash falls back to timestamps: clearly newer deletion deletes."""
-        entry = {"ts": 1000, "sha256": None}
-        assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is True
+    def test_local_dominates_keeps(self):
+        """A local clock dominating the tombstone means the re-creation
+        happened after the deletion: keep."""
+        entry = {"vclock": {"A": 2}, "ts": 5000, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, {"A": 3, "B": 1}) is False
 
-    def test_legacy_marker_older_deletion_keeps(self):
-        """No recorded hash and an older deletion than the local file: keep."""
-        entry = {"ts": 800, "sha256": None}
-        assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is False
+    def test_missing_vclock_keeps(self):
+        """A marker without a valid causal clock carries no proof of deletion
+        ancestry — never delete local data on its say-so."""
+        entry = {"ts": 999999, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, None) is False
+
+    def test_empty_local_clock_is_dominated(self):
+        """A local file with no recorded history is an ancestor of any
+        non-empty tombstone clock: delete."""
+        entry = {"vclock": {"A": 1}, "ts": 1, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, None) is True
 
 
 class TestMassDeletionGuard:
@@ -811,62 +821,83 @@ class TestMassDeletionGuard:
 class TestGetSyncActionsTombstones:
     """Tests for the tombstone-driven branch in get_sync_actions."""
 
-    def test_solo_local_deleted_when_tombstone_matches(self, tmp_path):
-        """A solo-local file unchanged since a remote deletion is removed, not uploaded."""
+    @staticmethod
+    def _tomb_entry(sha256, vclock):
+        """Build a causal tombstone entry for the solo-local tests."""
+        return {
+            "ts": 1,
+            "sha256": sha256,
+            "version_id": "v1",
+            "origin_cid": _peer_cid("R"),
+            "vclock": vclock,
+        }
+
+    def test_solo_local_deleted_when_tombstone_dominates(self, tmp_path):
+        """A solo-local file whose local clock is causally dominated by a remote
+        deletion marker is removed, not uploaded (ADR-0003) — never by timestamps."""
         local_file = tmp_path / "gone.txt"
         local_file.write_text("content")
 
         file = File.get(str(local_file))
         assert file is not None
         local_files = [file.to_dict()]
-        tombstones = {
-            tombstone_key("gone.txt"): {
-                "ts": (file.mtime or 0) + 100,
-                "sha256": file.sha256sum,
-            }
-        }
+        cid_local = _peer_cid("L")
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(file.sha256sum, {cid_local: 2})}
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
             assert result[0].name == SyncActionName.delete
 
-    def test_solo_local_uploaded_when_content_differs(self, tmp_path):
-        """A tombstone for a different content hash never deletes: the file is uploaded."""
+    def test_solo_local_uploaded_when_local_edit_concurrent(self, tmp_path):
+        """A tombstone with a clock concurrent to the local edit never deletes:
+        the local change is an intentional re-creation (upload)."""
         local_file = tmp_path / "gone.txt"
         local_file.write_text("content")
 
         file = File.get(str(local_file))
         assert file is not None
         local_files = [file.to_dict()]
+        cid_local = _peer_cid("L")
         tombstones = {
-            tombstone_key("gone.txt"): {
-                "ts": (file.mtime or 0) + 100,
-                "sha256": "deadbeef" * 8,
-            }
+            tombstone_key("gone.txt"): self._tomb_entry("deadbeef" * 8, {_peer_cid("R"): 1})
         }
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
-    def test_solo_local_uploaded_when_recreated_after_deletion(self, tmp_path):
-        """A matching-content file re-created after the deletion is kept (uploaded)."""
+    def test_solo_local_uploaded_when_local_dominates(self, tmp_path):
+        """A local clock dominating the tombstone means the re-creation happened
+        after the deletion: keep/upload regardless of the deletion timestamp."""
         local_file = tmp_path / "gone.txt"
         local_file.write_text("content")
 
         file = File.get(str(local_file))
         assert file is not None
         local_files = [file.to_dict()]
-        tombstones = {
-            tombstone_key("gone.txt"): {
-                "ts": (file.mtime or 0) - 100,
-                "sha256": file.sha256sum,
-            }
-        }
+        cid_local = _peer_cid("L")
+        # Record a base so the local effective clock advances past the tombstone.
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with patch("hsync_client.sync_state.CONFIG", cfg):
+            ss_mod.record_base(str(local_file), file.sha256sum or "", vclock={cid_local: 1})
+            ss_mod.flush()
+            ss_mod._stores.clear()
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(file.sha256sum, {cid_local: 1})}
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
@@ -886,7 +917,7 @@ class TestGetSyncActionsTombstones:
             assert result[0].name == SyncActionName.upload
 
     def test_tombstone_delete_is_confirmed(self, tmp_path):
-        """A tombstone-driven delete carries ``tombstone_confirmed=True``.
+        """A causally-confirmed deletion carries ``tombstone_confirmed=True``.
 
         Regression test: the mass-deletion guard exempts tombstone-confirmed
         deletions from its empty-bucket block, so a solo-local file deleted
@@ -900,14 +931,14 @@ class TestGetSyncActionsTombstones:
         file = File.get(str(local_file))
         assert file is not None
         local_files = [file.to_dict()]
-        tombstones = {
-            tombstone_key("gone.txt"): {
-                "ts": (file.mtime or 0) + 100,
-                "sha256": file.sha256sum,
-            }
-        }
+        cid_local = _peer_cid("L")
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(file.sha256sum, {cid_local: 2})}
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
             assert result[0].name == SyncActionName.delete
@@ -918,15 +949,29 @@ class TestClientTombstonesModule:
     """Tests for the per-peer tombstone store (hsync_client.tombstones)."""
 
     def test_record_then_payload_uses_hashed_key(self, tmp_path):
-        """A recorded deletion appears in the payload under its hashed key."""
+        """A recorded causal deletion appears in the payload under its hashed key."""
         ts = int(time.time())
-        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
+        cid = _peer_cid("L")
+        with patch(
+            "hsync_client.tombstones.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": cid},
+        ):
+            ts_mod.record_deletion(
+                str(tmp_path / "gone.txt"),
+                sha256sum="a" * 64,
+                origin_cid=cid,
+                prev_vclock={_peer_cid("R"): 1},
+                timestamp=ts,
+            )
 
             payload = ts_mod.get_payload()
             key = tombstone_key("gone.txt")
             assert key in payload
-            assert payload[key] == {"ts": ts, "sha256": "a" * 64}
+            entry = payload[key]
+            assert entry["ts"] == ts
+            assert entry["sha256"] == "a" * 64
+            assert entry["origin_cid"] == cid
+            assert entry["vclock"] == {_peer_cid("R"): 1, cid: 1}
 
     def test_record_persists_and_reloads(self, tmp_path):
         """The marker survives a cache reset by being read back from the side-car."""
@@ -945,24 +990,57 @@ class TestClientTombstonesModule:
 
             assert ts_mod.get_payload() == {}
 
-    def test_merge_payload_lww(self, tmp_path):
-        """merge_payload adds newer remote markers and reports the change count."""
+    def test_merge_payload_causal(self, tmp_path):
+        """merge_payload adopts causally dominant markers and reports the change count."""
         now = int(time.time())
-        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            ts_mod.record_deletion(str(tmp_path / "a.txt"), sha256sum="a" * 64, timestamp=now)
+        cid_a = _peer_cid("A")
+        cid_b = _peer_cid("B")
+        with patch(
+            "hsync_client.tombstones.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": cid_a},
+        ):
+            ts_mod.record_deletion(
+                str(tmp_path / "a.txt"), sha256sum="a" * 64, origin_cid=cid_a, timestamp=now
+            )
 
             key_a = tombstone_key("a.txt")
             key_b = tombstone_key("b.txt")
             remote = {
-                key_a: {"ts": now + 60, "sha256": "b" * 64},  # newer wins
-                key_b: {"ts": now - 1000, "sha256": "c" * 64},  # new entry
+                # Dominates the local {A:1}: adopted even with an OLDER ts.
+                key_a: {
+                    "ts": now - 60,
+                    "sha256": "b" * 64,
+                    "version_id": "v1",
+                    "origin_cid": cid_a,
+                    "vclock": {cid_a: 2},
+                },
+                # New path: adopted.
+                key_b: {
+                    "ts": now - 1000,
+                    "sha256": "c" * 64,
+                    "version_id": "v1",
+                    "origin_cid": cid_b,
+                    "vclock": {cid_b: 1},
+                },
             }
             changed = ts_mod.merge_payload(remote)
 
             payload = ts_mod.get_payload()
             assert changed == 2
-            assert payload[key_a] == {"ts": now + 60, "sha256": "b" * 64}
-            assert payload[key_b] == {"ts": now - 1000, "sha256": "c" * 64}
+            assert payload[key_a]["sha256"] == "b" * 64
+            assert payload[key_b]["sha256"] == "c" * 64
+            # A stale (dominated) marker is kept out even with a newer ts.
+            stale = {
+                key_a: {
+                    "ts": now + 60,
+                    "sha256": "d" * 64,
+                    "version_id": "v1",
+                    "origin_cid": cid_a,
+                    "vclock": {cid_a: 1},
+                }
+            }
+            assert ts_mod.merge_payload(stale) == 0
+            assert ts_mod.get_payload()[key_a]["sha256"] == "b" * 64
 
     def test_record_outside_bucket_is_noop(self, tmp_path):
         """A path that does not resolve inside the bucket records nothing."""
