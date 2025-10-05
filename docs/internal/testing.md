@@ -105,7 +105,6 @@ tests/
 ├── test_config.py                      # Configuration loading and CLI arg parsing
 ├── test_compression.py                 # Zstandard compression/decompression
 ├── test_cli.py                         # CLI argument parsing
-├── test_validators.py                  # Config validators
 ├── test_exceptions.py                  # Exception hierarchy
 ├── test_main_logic_deletion_risk.py    # Core sync orchestration: deletion risk
 ├── test_main_logic_lan.py              # Core sync orchestration: LAN mode

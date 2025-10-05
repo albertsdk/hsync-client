@@ -150,22 +150,6 @@ class TestLanTofuPinning:
             raise
 
 
-class TestLanHttpsOnly:
-    def test_master_without_cert_fingerprint_refused(self):
-        """A slave refuses a master that does not advertise a cert fingerprint.
-
-        This is currently enforced unconditionally by the LAN handler:
-        there is no plain-HTTP downgrade path.
-        """
-        # This test is inherently satisfied by the protocol design:
-        # _run_as_slave (lan_handler.py:461) checks
-        # `not (master.use_https and master.cert_fingerprint)` and
-        # refuses.  An e2e verification would require a crafty master
-        # stub that advertises via mDNS without a fingerprint, which is
-        # not possible with the real client (it always generates one).
-        pytest.skip("HTTPS-only enforcement verified by unit tests in test_lan_handler_advanced.py")
-
-
 # =============================================================================
 # Additional e2e scenarios (HSYNC_BB_LAN=1 required)
 # =============================================================================

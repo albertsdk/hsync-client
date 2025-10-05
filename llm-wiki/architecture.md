@@ -28,8 +28,8 @@ LAN sub-roles: `_run_as_master` (`lan_handler.py:237`) starts `LANServer`
 CLI flags + `HSYNC_*` env (pydantic `EnvSettings` `config.py:47`) merge into the
 global `CONFIG: HsyncConfig` TypedDict (`config.py:294`/`:391`) via `set_config`
 (`config.py:397`); modules read it through `get_config` (`config.py:422`) and typed
-getters (`config.py:154`–`:265`). Input validation lives in `validators.py`;
-defaults/bounds in `constants.py`.
+getters (`config.py:154`–`:265`). Input validation is inline in `cli.py`
+(Typer); defaults/bounds in `constants.py`.
 
 ## Pre-sync safety
 
@@ -65,7 +65,7 @@ Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:324`) and
 ## Layering
 
 ```
-constants / validators / exceptions / logger / compression      (leaf)
+constants / exceptions / logger / compression                  (leaf)
         │
 utils (http session + pinning, path_lock, perms, bandwidth) / retry / ssl_utils
         │

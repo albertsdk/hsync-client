@@ -8,11 +8,11 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `remote_events` | `remote_websocket.py:58` | top-level: initial sync + WS connect + watcher |
-| `remote_connect` | `:275` | open WS, run auth handshake, then process loop |
-| `_process_remote_events` | `:212` | read inbound events, dispatch via `REMOTE_DISPATCH_CTX` (`:205`); per-message error isolation (one malformed event cannot kill the loop) |
-| `resync` | `:257` | periodic/triggered full re-reconcile |
-| `RemoteFileEventHandler` | `:324` | watchdog → `upload_file` (threads `from_closed`) |
+| `remote_events` | `remote_websocket.py:58` | WS connect + auth handshake + watchdog watcher, then the inbound processing loop |
+| `remote_connect` | `:347` | top-level: initial full sync + optional `resync` task + `remote_events`; reconnect loop with `RECONNECT_DELAY` |
+| `_process_remote_events` | `:216` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:211`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop |
+| `resync` | `:270` | periodic/triggered full re-reconcile |
+| `RemoteFileEventHandler` | `:399` | watchdog → `upload_file` (threads `from_closed`) |
 
 ## WS handshake (shared SSOT)
 

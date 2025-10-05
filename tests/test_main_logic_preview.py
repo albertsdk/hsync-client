@@ -270,8 +270,9 @@ class TestRunPreview:
         ):
             _run_preview(mock_logger)
 
-            # Should log summary with counts
+            # Should log the summary with the exact action counts.
             summary_calls = [
                 str(call) for call in mock_logger.info.call_args_list if "Preview:" in str(call)
             ]
-            assert len(summary_calls) > 0
+            assert len(summary_calls) == 1
+            assert "1 synced, 1 downloads, 1 uploads, 0 deletes, 0 renames" in summary_calls[0]

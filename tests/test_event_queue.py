@@ -119,6 +119,48 @@ class TestEventQueue:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_send_event_unserializable_is_dropped_without_send(self, mock_websocket):
+        """A permanently non-serializable event is dropped immediately and the
+        websocket is never contacted.
+
+        Regression for the retry storm: bytes (e.g. watchdog raw data) cannot
+        be JSON-serialized; retrying would fail identically every time and
+        stall the queue with head-of-line blocking. The queue must treat it
+        as a terminal outcome (True) instead of a transient failure (False).
+        """
+        queue = EventQueue(mock_websocket)
+        event = QueuedEvent(data={"name": "added", "src": b"binary\x00payload"})
+
+        result = await queue._send_event(event)
+
+        # Terminal outcome: no retry, no pending hold.
+        assert result is True
+        # The websocket was never asked to send the broken payload.
+        mock_websocket.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_does_not_hold_unserializable_event(self, mock_websocket):
+        """The process loop drains a non-serializable event without holding it
+        for retry: the next event must be delivered afterwards."""
+        queue = EventQueue(mock_websocket)
+        await queue.enqueue({"name": "poison", "src": b"binary"})
+        await queue.enqueue({"name": "healthy"})
+
+        async def run_and_stop():
+            await asyncio.sleep(0.1)
+            queue.stop()
+
+        await asyncio.gather(queue.process(), run_and_stop())
+
+        # Poison event was dropped, not held for retry.
+        assert queue._pending_retry is None
+        # The healthy event behind it was still delivered.
+        mock_websocket.send.assert_called()
+        sent_payloads = [call.args[0] for call in mock_websocket.send.call_args_list]
+        assert any('"healthy"' in payload for payload in sent_payloads)
+        assert all("binary" not in payload for payload in sent_payloads)
+
+    @pytest.mark.asyncio
     async def test_pending_retry_blocks_newer_events(self, mock_websocket):
         """A failed event held for retry blocks newer events until ready."""
         queue = EventQueue(mock_websocket)

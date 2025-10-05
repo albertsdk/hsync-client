@@ -652,7 +652,7 @@ class TestDownloadSizeCap:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
         ):
-            with pytest.raises(PermanentDownloadError):
+            with pytest.raises(PermanentDownloadError, match="exceeds the maximum download size"):
                 download_file(file)
 
         assert not (tmp_path / "big.txt").exists()

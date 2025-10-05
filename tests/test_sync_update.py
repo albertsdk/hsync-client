@@ -234,7 +234,7 @@ class TestUpdateFile:
             mock_set_perms.assert_called_once()
 
     def test_skips_file_with_no_changes(self, tmp_path):
-        """File with no changes is skipped."""
+        """File with no changes is skipped: no download, no permission churn."""
         local_file = tmp_path / "file.txt"
         local_file.write_text("content")
         file_obj = File.get(str(local_file))
@@ -251,9 +251,18 @@ class TestUpdateFile:
             "permissions": file_obj.permissions,
         }
 
-        # No download should occur - just check no exception is raised
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            update_file(data)  # Should complete without error
+        # download_file is imported locally inside update_file; patch it at
+        # its real home in transfer.py. set_permissions is patched at its
+        # module-level binding in sync.py.
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.download_file") as mock_download,
+            patch("hsync_client.sync.set_permissions") as mock_set_perms,
+        ):
+            update_file(data)
+
+        mock_download.assert_not_called()
+        mock_set_perms.assert_not_called()
 
 
 class TestSync:

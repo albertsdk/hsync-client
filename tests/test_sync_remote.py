@@ -84,7 +84,7 @@ class TestGetFilesRemote:
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
         ):
-            with pytest.raises(AuthenticationError):
+            with pytest.raises(AuthenticationError, match="Invalid API key"):
                 get_files_remote()
 
     def test_get_files_remote_403_raises_auth_error(self):
@@ -107,7 +107,7 @@ class TestGetFilesRemote:
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
         ):
-            with pytest.raises(AuthenticationError):
+            with pytest.raises(AuthenticationError, match="API key required"):
                 get_files_remote()
 
     def test_get_files_remote_500_raises_server_error(self):
@@ -130,7 +130,7 @@ class TestGetFilesRemote:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
-            pytest.raises(ServerError),
+            pytest.raises(ServerError, match="Server returned status 500"),
         ):
             get_files_remote()
 
@@ -153,7 +153,7 @@ class TestGetFilesRemote:
             patch("hsync_client.sync.get", side_effect=RequestException("Connection failed")),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
         ):
-            with pytest.raises(NetworkError):
+            with pytest.raises(NetworkError, match="Error downloading files list"):
                 get_files_remote()
 
 
@@ -308,7 +308,7 @@ class TestGetFilesRemoteErrorPropagation:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
-            pytest.raises(AuthenticationError),
+            pytest.raises(AuthenticationError, match="Invalid API key"),
         ):
             get_files_remote()
 
@@ -332,7 +332,7 @@ class TestGetFilesRemoteErrorPropagation:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
-            pytest.raises(ServerError),
+            pytest.raises(ServerError, match="Server returned status 404"),
         ):
             get_files_remote()
 
@@ -356,7 +356,7 @@ class TestGetFilesRemoteErrorPropagation:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
-            pytest.raises(ServerError),
+            pytest.raises(ServerError, match="Server returned status 429"),
         ):
             get_files_remote()
 
@@ -385,8 +385,8 @@ class TestSyncActionsWithRealisticServerData:
         with patch("hsync_client.sync.CONFIG", config):
             actions = get_sync_actions(remote, local)
 
-        # File exists remotely but not locally — at least one action produced
-        assert len(actions) >= 1
+        # File exists remotely but not locally: exactly one action, a download.
+        assert len(actions) == 1
         download_actions = [a for a in actions if a.name == "download"]
         assert len(download_actions) == 1
 

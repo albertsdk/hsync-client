@@ -818,6 +818,85 @@ class TestMassDeletionGuard:
         assert blocked is False
 
 
+class TestHsyncignoreDoesNotDelete:
+    """Regression: .hsyncignore must never mint offline-deletion tombstones.
+
+    "Exclude protects, it does not delete" (rsync --exclude, Syncthing
+    .stignore): a file hidden by .hsyncignore is still on disk, so the sync
+    engine must not record it as deleted-while-offline — otherwise every peer
+    would remove its copy through the gossiped tombstone.
+    """
+
+    def test_ignored_file_does_not_mint_tombstone(self, tmp_path):
+        """A merge-base-tracked file hidden by .hsyncignore neither mints a
+        tombstone nor loses its merge base through retain."""
+        import asyncio
+        from unittest.mock import patch
+
+        from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+
+        from hsync_client.sync import sync
+
+        # Track the file in the sync-state store: without the exclusion fix the
+        # offline-deletion loop would treat it as deleted because the local
+        # listing (filtered by the active matcher) no longer contains it.
+        f = tmp_path / "keep.txt"
+        f.write_text("content")
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"}
+        with patch("hsync_client.sync_state.CONFIG", cfg):
+            file_obj = File.get(str(f))
+            assert file_obj is not None
+            ss_mod.record_base(str(f), file_obj.sha256sum)
+            ss_mod.flush()
+            ss_mod._stores.clear()
+
+        # Install a real .hsyncignore matcher that hides the tracked file.
+        (tmp_path / ".hsyncignore").write_text("*.txt\n")
+        matcher = IgnoreMatcher(str(tmp_path))
+        set_active_matcher(matcher)
+        try:
+
+            async def _run():
+                with (
+                    patch("hsync_client.sync.CONFIG", cfg),
+                    patch("hsync_client.sync_state.CONFIG", cfg),
+                    patch("hsync_client.tombstones.CONFIG", cfg),
+                    patch("hsync_client.sync.get_files_remote", return_value=[]),
+                    patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                    patch("hsync_client.sync.push_tombstones_remote") as mock_push,
+                    patch("hsync_client.sync.get_sync_actions", return_value=[]),
+                ):
+                    await sync(lan_mode=True)
+                    return mock_push
+
+            mock_push = asyncio.run(_run())
+
+            pushed_keys: set[str] = set()
+            for call in mock_push.call_args_list:
+                if call.args:
+                    pushed_keys.update(call.args[0])
+
+            # The hidden file must never mint an offline-deletion tombstone.
+            assert tombstone_key("keep.txt") not in pushed_keys, (
+                "a file hidden by .hsyncignore minted an offline-deletion tombstone"
+            )
+
+            # The deletion store for this peer also never saw the marker.
+            with patch("hsync_client.tombstones.CONFIG", cfg):
+                ts_mod._stores.clear()
+                assert tombstone_key("keep.txt") not in ts_mod.get_payload()
+
+            # The merge base survives retain: re-including the file later
+            # reconciles with full causal history instead of a false conflict.
+            with patch("hsync_client.sync_state.CONFIG", cfg):
+                from hsync_client.sync_state import get_sync_state_store
+
+                ss_mod._stores.clear()
+                assert get_sync_state_store().base_hash("keep.txt") is not None
+        finally:
+            set_active_matcher(None)
+
+
 class TestGetSyncActionsTombstones:
     """Tests for the tombstone-driven branch in get_sync_actions."""
 

@@ -20,7 +20,7 @@ from asyncio import (
     sleep,
 )
 from contextlib import suppress
-from json import dumps, loads
+from json import JSONDecodeError, dumps, loads
 from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 
 from hsync_common.models.event import Event, EventName
@@ -223,7 +223,11 @@ async def _process_remote_events(websocket, bucket: str) -> None:
     """
     while True:
         data = await websocket.recv()
-        message = loads(data)
+        try:
+            message = loads(data)
+        except JSONDecodeError as e:
+            log.error(f"Malformed JSON frame dropped (connection kept alive): {e}")
+            continue
 
         log.debug(f"Received message for CID {CONFIG['CID']}: {safe_json_for_log(message)}")
 

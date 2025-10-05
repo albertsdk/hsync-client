@@ -81,7 +81,7 @@ area; each file name starts with `test_` and groups related functionality.
 | **WebSocket / events** | `test_websocket_events.py`, `test_events.py`, `test_event_queue.py`, `test_event_dispatch_*.py` | WS event processing, event queue, inbound dispatch (delete/rename/symlink) |
 | **LAN mode** | `test_lan_peer.py`, `test_lan_peer_manager.py`, `test_lan_handler_advanced.py`, `test_lan_sync.py`, `test_lan_server_*.py`, `test_lan_websocket_*.py`, `test_lan_utils.py` | Discovery, election, master server, slave client, WSS, security, thread cap |
 | **Security** | `test_security_inbound.py`, `test_pinning.py`, `test_ssl_utils.py` | Inbound path validation, TOFU pinning, SSL utils |
-| **Config / CLI** | `test_config.py`, `test_cli.py`, `test_validators.py`, `test_exceptions.py` | Config loading, CLI parsing, validators, exception hierarchy |
+| **Config / CLI** | `test_config.py`, `test_cli.py`, `test_exceptions.py` | Config loading, CLI parsing (inline Typer validation), exception hierarchy |
 | **Delta transfer** | `test_delta_transfer.py` | rsync-style block sync |
 | **Models** | `test_models_*.py` | Common model wrappers (file, dir, event, sync_action, symlink) |
 | **Other** | `test_compression.py`, `test_edge_cases.py`, `test_stdin_commands.py`, `test_logger.py`, `test_coverage_gaps.py`, `test_file_event_handler_base.py`, `test_main_logic_*.py`, `test_utils.py`, `test_retry.py` | Compression, edge cases, stdin protocol, logging, handler base, orchestrator, utils, retry |

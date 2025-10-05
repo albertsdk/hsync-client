@@ -73,6 +73,12 @@ See [Configuration — Server Mode](configuration-server.md) and
 
 Create a `.hsyncignore` file in your bucket directory using standard gitignore syntax.
 
+Ignored files stop propagating from the next sync onward, but existing copies
+on other devices are **never deleted** by an ignore rule — excluding protects,
+it does not remove (the same contract as rsync ``--exclude`` without
+``--delete-excluded`` and Syncthing ``.stignore``). Remove the pattern to start
+syncing the file again.
+
 ## Periodic Resync
 
 | Variable | Description | Default |

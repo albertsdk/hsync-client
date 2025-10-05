@@ -53,10 +53,9 @@ Flags map to env keys; capabilities JSON is built from
   `CONFIG["MAX_INBOUND_SIZE"]` in bytes), inotify (`:176`/`:178`); visual
    `ActionLabel` enum (`:195`); delta transfer (`:185`–`:189`: `DELTA_ENABLED`,
    `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_LAN` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB).
-- `validators.py` — range validators via `create_int_range_validator` (`:33`):
-  `valid_reconnect_delay` (`:72`), `valid_resync` (`:96`), `valid_bucket` (`:120`),
-  `valid_stability_delay` (`:144`), `valid_http_timeout` (`:168`),
-  `valid_max_wait_timeout` (`:192`), `valid_bucket_path` (`:216`).
+- Range and bucket validation is inline in `cli.py` (Typer) — e.g.
+  `resync`/`reconnect_delay` bounds raise `typer.BadParameter`; bucket naming
+  via `_validate_bucket` (`cli.py:88`). There is no separate validators module.
 
 ## UI events (`events.py`)
 

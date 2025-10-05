@@ -121,14 +121,33 @@ class EventQueue:
         """
         Attempt to send an event via WebSocket.
 
+        Serialization is attempted first so that a permanently
+        non-serializable payload is dropped immediately instead of being
+        retried like a transient network failure (retries re-serialize the
+        same broken payload and would fail identically every time, stalling
+        the queue with head-of-line blocking).
+
         Args:
             event: The queued event to send.
 
         Returns:
-            True if sent successfully, False otherwise.
+            True if the event reached a terminal outcome (sent, or dropped
+            because it can never be serialized), False if the send failed
+            transiently and should be retried.
         """
         try:
-            await self.websocket.send(dumps(event.data))
+            payload = dumps(event.data)
+        except (TypeError, ValueError) as e:
+            # Permanent failure: no retry can ever serialize this payload.
+            # Drop it and keep the queue moving; the affected file will be
+            # picked up again by the next full sync cycle.
+            log.error(
+                f"Event dropped (unserializable, permanent): {e} "
+                f"({event.data.get('name', 'unknown')})"
+            )
+            return True
+        try:
+            await self.websocket.send(payload)
             log.debug(f"Event sent: {event.data.get('name', 'unknown')}")
             return True
         except Exception as e:

@@ -81,6 +81,6 @@ class TestPinStore:
     def test_check_and_record_missing_fingerprint_raises(self, tmp_path):
         """A missing fingerprint violates the HTTPS-only LAN contract."""
         store = PinStore(tmp_path / "pins.json")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="fingerprint is mandatory"):
             store.check_and_record("cid-1", "bucket", None)
         assert store.get("cid-1", "bucket") is None

@@ -2,7 +2,6 @@
 Tests targeting coverage gaps identified by pytest-cov for hsync-client.
 
 Covers edge-case branches in:
-- validators.py: range validators, bucket_path
 - pinning.py: PinStore load/save/check_and_record edge cases
 - sync_state.py: empty relpath, empty base_hash, retain, flush
 - tombstones.py: empty relpath, merge_payload, get_payload
@@ -11,7 +10,6 @@ Covers edge-case branches in:
 """
 
 import threading
-from argparse import ArgumentTypeError
 from unittest.mock import patch
 
 import pytest
@@ -38,90 +36,6 @@ from hsync_client.utils import (
     safe_rmdir_if_empty,
     set_permissions,
 )
-from hsync_client.validators import (
-    create_int_range_validator,
-    valid_bucket,
-    valid_bucket_path,
-    valid_http_timeout,
-    valid_max_wait_timeout,
-    valid_reconnect_delay,
-    valid_resync,
-    valid_stability_delay,
-)
-
-# ---------------------------------------------------------------------------
-# validators.py
-# ---------------------------------------------------------------------------
-
-
-class TestValidatorsCoverageGaps:
-    """Cover range validators and bucket_path validation."""
-
-    def test_create_int_range_validator_non_integer(self):
-        validator = create_int_range_validator(0, 100, "test")
-        with pytest.raises(ArgumentTypeError):
-            validator("not-a-number")
-
-    def test_create_int_range_validator_out_of_range(self):
-        validator = create_int_range_validator(0, 100, "test")
-        with pytest.raises(ArgumentTypeError):
-            validator("0")  # <= min (exclusive)
-        with pytest.raises(ArgumentTypeError):
-            validator("100")  # >= max (exclusive)
-
-    def test_create_int_range_validator_valid(self):
-        validator = create_int_range_validator(0, 100, "test")
-        assert validator("50") == 50
-
-    def test_valid_reconnect_delay_valid(self):
-        assert valid_reconnect_delay("5") == 5
-
-    def test_valid_reconnect_delay_invalid(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_reconnect_delay("not-a-number")
-
-    def test_valid_resync_valid(self):
-        assert valid_resync("300") == 300
-
-    def test_valid_resync_invalid(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_resync("not-a-number")
-
-    def test_valid_bucket_valid(self):
-        assert valid_bucket("my-bucket") == "my-bucket"
-
-    def test_valid_bucket_invalid(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_bucket(".invalid")
-
-    def test_valid_stability_delay_valid(self):
-        assert valid_stability_delay("5") == 5
-
-    def test_valid_stability_delay_invalid(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_stability_delay("not-a-number")
-
-    def test_valid_http_timeout_valid(self):
-        assert valid_http_timeout("30") == 30
-
-    def test_valid_http_timeout_invalid(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_http_timeout("not-a-number")
-
-    def test_valid_max_wait_timeout_valid(self):
-        assert valid_max_wait_timeout("60") == 60
-
-    def test_valid_max_wait_timeout_invalid(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_max_wait_timeout("not-a-number")
-
-    def test_valid_bucket_path_valid(self, tmp_path):
-        assert valid_bucket_path(str(tmp_path)) == str(tmp_path)
-
-    def test_valid_bucket_path_traversal(self):
-        with pytest.raises(ArgumentTypeError):
-            valid_bucket_path("../../../etc/passwd")
-
 
 # ---------------------------------------------------------------------------
 # pinning.py
@@ -339,7 +253,7 @@ class TestUtilsCoverageGaps:
         assert parse_bandwidth(1024) == 1024
 
     def test_parse_bandwidth_negative_int(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="must be positive"):
             parse_bandwidth(-1)
 
     def test_parse_bandwidth_str_kb(self):
@@ -362,11 +276,11 @@ class TestUtilsCoverageGaps:
         assert parse_bandwidth("12345") == 12345
 
     def test_parse_bandwidth_str_invalid(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Invalid bandwidth value"):
             parse_bandwidth("invalid")
 
     def test_parse_bandwidth_invalid_type(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Invalid bandwidth type"):
             parse_bandwidth(3.14)
 
     def test_get_throttle_delay_no_limit(self):

@@ -374,6 +374,48 @@ class TestProcessWebsocketEvents:
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_malformed_json_frame_does_not_kill_loop(self):
+        """A non-JSON frame is dropped and the loop keeps processing events.
+
+        Regression: ``loads`` used to run outside the per-message try, so one
+        malformed frame killed the whole connection loop (teardown +
+        reconnect) instead of being isolated per message.
+        """
+        from json import dumps
+
+        from hsync_client.remote_websocket import _process_remote_events
+
+        message = {
+            "name": "added",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "newdir", "permissions": "755"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(
+            side_effect=[
+                "this is not json at all {",
+                dumps(message),
+                _StopLoop("Stop"),
+            ]
+        )
+
+        config = {"CID": "my_client"}
+
+        with (
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
+        ):
+            with contextlib.suppress(_StopLoop):
+                await _process_remote_events(websocket, "testbucket")
+
+            # The malformed frame was skipped and the subsequent valid event
+            # was still processed: the loop survived.
+            mock_update.assert_called_once_with(message["src"])
+
 
 class TestResync:
     """Tests for resync function."""

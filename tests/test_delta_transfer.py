@@ -221,7 +221,7 @@ class TestUploadDelta:
         monkeypatch.setattr(dt, "get", lambda *a, **k: _response(404, {"detail": "Not Found"}))
         f = File(filepath=abs_path, size=50000, sha256sum=sha256(b"y").hexdigest())
         ctx = dt.DeltaUploadContext(relpath="big.bin", base_hash=sha256(b"x").hexdigest())
-        with pytest.raises(DeltaTransferError):
+        with pytest.raises(DeltaTransferError, match="signatures unavailable"):
             upload_file_delta(f, ctx)
 
     def test_remote_base_changed_aborts(self, client_config, tmp_path, monkeypatch):
@@ -273,7 +273,7 @@ class TestUploadDelta:
         )
         f = File(filepath=abs_path, size=len(base), sha256sum=base_hash)
         ctx = dt.DeltaUploadContext(relpath="big.bin", base_hash=base_hash)
-        with pytest.raises(DeltaTransferError):
+        with pytest.raises(DeltaTransferError, match="apply rejected"):
             upload_file_delta(f, ctx)
 
     def test_apply_5xx_raises_server_error(self, client_config, tmp_path, monkeypatch):
@@ -301,7 +301,7 @@ class TestUploadDelta:
         monkeypatch.setattr(dt, "post", lambda *a, **k: _response(503))
         f = File(filepath=abs_path, size=len(base), sha256sum=base_hash)
         ctx = dt.DeltaUploadContext(relpath="big.bin", base_hash=base_hash)
-        with pytest.raises(ServerError):
+        with pytest.raises(ServerError, match="Server error on delta apply"):
             upload_file_delta(f, ctx)
 
 
@@ -431,7 +431,7 @@ class TestDownloadDelta:
             local_path=abs_path,
             local_sha256=sha256(base).hexdigest(),
         )
-        with pytest.raises(DeltaTransferError):
+        with pytest.raises(DeltaTransferError, match="payload unavailable"):
             download_file_delta(f, ctx)
 
     def test_hostile_data_url_rejected(self, client_config, tmp_path, monkeypatch):
