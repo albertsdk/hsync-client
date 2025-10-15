@@ -336,6 +336,136 @@ class TestLanConflict:
                         "after reconnect"
                     )
                     assert slave2.poll() is None, "Restarted slave exited unexpectedly"
+
+                    # ── Post-conflict convergence ────────────────────────────
+                    # Once the conflict is resolved, a follow-up one-sided edit
+                    # must propagate as a plain update: the merged history makes
+                    # it causally dominant, so the slave adopts it silently and
+                    # the existing conflicted copy is neither duplicated nor
+                    # re-flagged.
+                    follow_up = b"follow-up v3\n"
+                    (Path(lan_master_dir) / "shared.txt").write_bytes(follow_up)
+                    os.utime(str(Path(lan_master_dir) / "shared.txt"), (shared_ts, shared_ts))
+
+                    deadline = time.time() + 30
+                    while time.time() < deadline:
+                        if (Path(lan_slave_dir) / "shared.txt").read_bytes() == follow_up:
+                            break
+                        time.sleep(0.5)
+                    assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == follow_up, (
+                        "The follow-up edit did not reach the slave after the conflict"
+                    )
+                    copies_after = [
+                        p
+                        for p in Path(lan_slave_dir).iterdir()
+                        if p.name.startswith("shared_conflicted_copy_")
+                    ]
+                    assert len(copies_after) == 1, (
+                        "Post-conflict convergence must not duplicate the conflicted "
+                        f"copy; found {len(copies_after)}: {copies_after}"
+                    )
+                finally:
+                    _terminate(slave2)
+            finally:
+                _terminate(slave1)
+        except BaseException:
+            _terminate(master)
+            raise
+
+    def test_same_file_conflict_slave_wins_master_preserves_copy(
+        self, lan_master_dir, lan_slave_dir, lan_bucket
+    ):
+        """Mirror of :meth:`test_same_file_conflict_on_both_peers` with the
+        tie-break going the other way: the *slave's* content has the higher
+        SHA-256, so the master — a transport hub, not an authority — adopts
+        the slave's version at the original path and preserves its own losing
+        content as a conflicted copy of its own. The slave, being the winner,
+        never creates a local copy.
+
+        The merge base is established exactly as in the sibling test: the
+        shared file must be synced *before* the divergence (otherwise there is
+        no common ancestor and the reconciliation is a plain adoption, not a
+        true three-way conflict).
+        """
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            (Path(lan_master_dir) / "shared.txt").write_bytes(b"base\n")
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # The slave's initial full sync must complete so the common
+                # ancestor (merge base) is persisted in its sync-state.
+                assert _wait_for_client_ready(slave1, _lan_ready_path(lan_slave_dir), timeout=30), (
+                    "Slave did not finish its initial sync"
+                )
+                assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == b"base\n"
+
+                # Both peers diverge while the slave is offline. The payloads
+                # are chosen so the *slave* wins the deterministic SHA-256
+                # tie-break (sha("slave-wins-v2") > sha("master-loses-v2")).
+                _terminate(slave1)
+                master_bytes = b"master-loses-v2\n"
+                slave_bytes = b"slave-wins-v2\n"
+                (Path(lan_master_dir) / "shared.txt").write_bytes(master_bytes)
+                (Path(lan_slave_dir) / "shared.txt").write_bytes(slave_bytes)
+                shared_ts = 1_700_000_000
+                os.utime(str(Path(lan_master_dir) / "shared.txt"), (shared_ts, shared_ts))
+                os.utime(str(Path(lan_slave_dir) / "shared.txt"), (shared_ts, shared_ts))
+
+                # On reconnect, the slave reconciles its divergence: the master
+                # must adopt the slave's content at the shared path and keep
+                # its own losing version beside it as a conflicted copy.
+                slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+                try:
+                    assert _wait_for_text_in_stderr(slave2, "Initial sync complete", timeout=30), (
+                        "Restarted slave did not complete its initial sync"
+                    )
+
+                    deadline = time.time() + 30
+                    while time.time() < deadline:
+                        if (Path(lan_master_dir) / "shared.txt").read_bytes() == slave_bytes:
+                            break
+                        time.sleep(0.5)
+                    assert (Path(lan_master_dir) / "shared.txt").read_bytes() == slave_bytes, (
+                        "The winner (slave) content did not take the original path "
+                        f"on the master.\n--- master log ---\n{_stderr_text(master)}"
+                    )
+
+                    deadline = time.time() + 30
+                    conflict_path = None
+                    while time.time() < deadline:
+                        candidates = [
+                            p
+                            for p in Path(lan_master_dir).iterdir()
+                            if p.name.startswith("shared_conflicted_copy_")
+                        ]
+                        if candidates:
+                            conflict_path = candidates[0]
+                            break
+                        time.sleep(0.5)
+                    assert conflict_path is not None, (
+                        "The losing (master) version was not preserved as a "
+                        "conflicted copy on the master.\n"
+                        f"--- master log ---\n{_stderr_text(master)}"
+                    )
+                    assert conflict_path.read_bytes() == master_bytes
+
+                    # The winning slave keeps its own content at the original
+                    # path and never preserves a local copy for its win.
+                    assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == slave_bytes, (
+                        "The slave's winning version did not stay on the original path"
+                    )
+                    slave_copies = [
+                        p
+                        for p in Path(lan_slave_dir).iterdir()
+                        if p.name.startswith("shared_conflicted_copy_")
+                    ]
+                    assert len(slave_copies) <= 1, (
+                        "The slave wins the tie-break: at most the master's "
+                        f"propagated copy may appear, got {len(slave_copies)}: {slave_copies}"
+                    )
+                    assert slave2.poll() is None, "Restarted slave exited unexpectedly"
                 finally:
                     _terminate(slave2)
             finally:

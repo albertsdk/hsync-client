@@ -77,6 +77,19 @@ def _server_file_metadata(live_server, bucket: str, filename: str) -> dict:
     raise AssertionError(f"{filename} not found on server (bucket={bucket})")
 
 
+def _server_vclock(live_server, bucket: str, filename: str) -> dict:
+    """Return the causal version clock a file advertises on the server.
+
+    Reads the public REST listing — exactly what any real client would see —
+    and returns the ``version.vclock`` dict (empty when the server has no
+    recorded version for the path).
+    """
+    meta = _server_file_metadata(live_server, bucket, filename)
+    version = meta.get("version") or {}
+    vclock = version.get("vclock")
+    return dict(vclock) if isinstance(vclock, dict) else {}
+
+
 # =============================================================================
 # Happy path — core sync operations
 # =============================================================================
@@ -541,6 +554,293 @@ class TestRemoteConflictedCopy:
         conflict_local = Path(local_dir) / conflict_path.split("/")[-1]
         assert conflict_local.read_bytes() == loser, (
             f"Local conflicted copy not synced: {conflict_local} missing loser content"
+        )
+
+
+# =============================================================================
+# Causal conflict handling between two writers of the same file
+# =============================================================================
+
+
+class TestRemoteCausalConflict:
+    """Divergence between this user and another remote writer on one file.
+
+    The other writer is emulated through the public REST upload API (exactly
+    what a real second client sends on the wire): a remote edit that descends
+    from the agreed version is uploaded with a *dominant* clock, while edits
+    that never saw the other side carry independent clocks. The payload bytes
+    are chosen in advance so the deterministic tie-break winner (highest
+    SHA-256) is known. Black-box: only exit codes, the local filesystem and
+    the public REST listing are observed.
+    """
+
+    @staticmethod
+    def _remote_upload(live_server, bucket, name, content, cid, vclock) -> requests.Response:
+        """Upload content for a path as if it were another real client."""
+        base, api_key = live_server
+        return requests.post(
+            f"{base}/api/v1/buckets/{bucket}/files",
+            data={
+                "cid": cid,
+                "path": "",
+                "sha256sum": hashlib.sha256(content).hexdigest(),
+                "permissions": "644",
+                "offset": "0",
+                "size": "0",
+                "compressed": "false",
+                "vclock": json.dumps(vclock),
+                "version_id": "",
+            },
+            files={"file": (name, content, "application/octet-stream")},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0,
+            verify=False,
+        )
+
+    @staticmethod
+    def _local_copies(local_dir: str, stem: str) -> list[Path]:
+        return [
+            p for p in Path(local_dir).iterdir() if p.name.startswith(f"{stem}_conflicted_copy_")
+        ]
+
+    @staticmethod
+    def _server_copies(listing: set[str], stem: str) -> list[str]:
+        return [p for p in listing if "_conflicted_copy_" in p and stem in p]
+
+    def test_remote_change_downloads_silently_without_conflict_copy(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """My file untouched, changed by someone else → I just adopt it.
+
+        No conflict copy must ever appear: neither locally (the engine must
+        not preserve a file that has not diverged) nor on the server.
+        """
+        name = f"silent-{uuid.uuid4().hex}.txt"
+        stem = name.split(".")[0]
+        base_content = b"shared base v1\n"
+        remote_new = b"remote v2 zz\n"
+
+        (Path(local_dir) / name).write_bytes(base_content)
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        # Another user edits the file while I am offline: their version
+        # descends from what we agreed on, so the server accepts it plainly.
+        second_cid = "TestClientY1234567890"
+        dominant = dict(_server_vclock(live_server, bb_bucket, name))
+        dominant[second_cid] = dominant.get(second_cid, 0) + 1
+        r = self._remote_upload(live_server, bb_bucket, name, remote_new, second_cid, dominant)
+        assert r.status_code == 201, f"remote edit rejected: {r.status_code} {r.text}"
+
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == remote_new, (
+            "The remote version was not adopted silently"
+        )
+        assert self._local_copies(local_dir, stem) == [], (
+            "A silent download must never produce a local conflict copy"
+        )
+        listing = bb_server_files(bb_bucket)
+        assert name in listing
+        assert self._server_copies(listing, stem) == [], (
+            "A non-divergent update must never produce a server conflict copy"
+        )
+
+    def test_client_loses_local_copy_preserved_and_propagated(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """I edit offline, the other side wins the hash tie-break: my version
+        is preserved as a *_conflicted_copy_* next to the file, the other side
+        takes the path, and my preserved copy is later synced back to the
+        server — no data loss."""
+        name = f"lose-{uuid.uuid4().hex}.txt"
+        stem = name.split(".")[0]
+        base_content = b"shared base v1\n"
+        remote_content = b"remote v2 zz\n"
+        local_edit = b"local v2 aa\n"
+
+        (Path(local_dir) / name).write_bytes(base_content)
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        # The other writer changes the file while I am offline.
+        second_cid = "TestClientY1234567890"
+        dominant = dict(_server_vclock(live_server, bb_bucket, name))
+        dominant[second_cid] = dominant.get(second_cid, 0) + 1
+        r = self._remote_upload(live_server, bb_bucket, name, remote_content, second_cid, dominant)
+        assert r.status_code == 201, f"remote edit rejected: {r.status_code} {r.text}"
+
+        # I also edit it, with different content (lower hash: I lose the
+        # tie-break).
+        assert hashlib.sha256(remote_content).hexdigest() > hashlib.sha256(local_edit).hexdigest()
+        (Path(local_dir) / name).write_bytes(local_edit)
+
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == remote_content, (
+            "The winner must take the original path"
+        )
+        copies = self._local_copies(local_dir, stem)
+        assert len(copies) == 1, f"expected 1 local conflict copy, got {copies}"
+        assert copies[0].read_bytes() == local_edit, (
+            "The conflict copy must preserve my losing content"
+        )
+
+        # My preserved copy is a brand-new path: the next sync propagates it
+        # to the server without re-flagging the original file.
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        listing = bb_server_files(bb_bucket)
+        conflicts = self._server_copies(listing, stem)
+        assert len(conflicts) == 1, f"expected 1 server conflict copy, got {conflicts}"
+        assert _server_download(live_server, bb_bucket, conflicts[0]) == local_edit, (
+            "The server copy must carry my losing content"
+        )
+
+    def test_client_wins_server_preserves_remote(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """I edit offline and my version wins the hash tie-break: my file keeps
+        the original path (no local copy), and the *server* preserves the other
+        side's version as a conflicted copy."""
+        name = f"win-{uuid.uuid4().hex}.txt"
+        stem = name.split(".")[0]
+        base_content = b"shared base v1\n"
+        remote_content = b"remote v2 aa\n"
+        local_edit = b"local v2 zz\n"
+
+        (Path(local_dir) / name).write_bytes(base_content)
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        second_cid = "TestClientY1234567890"
+        dominant = dict(_server_vclock(live_server, bb_bucket, name))
+        dominant[second_cid] = dominant.get(second_cid, 0) + 1
+        r = self._remote_upload(live_server, bb_bucket, name, remote_content, second_cid, dominant)
+        assert r.status_code == 201, f"remote edit rejected: {r.status_code} {r.text}"
+
+        # My edit has the higher hash: I win the tie-break.
+        assert hashlib.sha256(local_edit).hexdigest() > hashlib.sha256(remote_content).hexdigest()
+        (Path(local_dir) / name).write_bytes(local_edit)
+
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == local_edit, (
+            "My winning version must keep the original path"
+        )
+        assert self._local_copies(local_dir, stem) == [], (
+            "The winning side must never create a local conflict copy"
+        )
+
+        listing = bb_server_files(bb_bucket)
+        assert name in listing
+        assert _server_download(live_server, bb_bucket, name) == local_edit, (
+            "The server must adopt my winning content"
+        )
+        conflicts = self._server_copies(listing, stem)
+        assert len(conflicts) == 1, f"expected 1 server conflict copy, got {conflicts}"
+        assert _server_download(live_server, bb_bucket, conflicts[0]) == remote_content, (
+            "The server conflict copy must preserve the losing remote content"
+        )
+
+    def test_new_file_both_sides_client_wins(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """A brand-new file was created independently on both sides (no shared
+        ancestor): my content has the higher hash, so my file wins the path and
+        the server preserves the other side's as a conflicted copy."""
+        name = f"newwin-{uuid.uuid4().hex}.txt"
+        stem = name.split(".")[0]
+        remote_content = b"remote new aa\n"
+        local_content = b"local new zz\n"
+
+        second_cid = "TestClientY1234567890"
+        r = self._remote_upload(
+            live_server, bb_bucket, name, remote_content, second_cid, {second_cid: 1}
+        )
+        assert r.status_code == 201, f"remote upload rejected: {r.status_code} {r.text}"
+
+        # Independent creation on my side too (higher hash: I win).
+        assert (
+            hashlib.sha256(local_content).hexdigest() > hashlib.sha256(remote_content).hexdigest()
+        )
+        (Path(local_dir) / name).write_bytes(local_content)
+
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == local_content
+        assert self._local_copies(local_dir, stem) == [], (
+            "The winning side never runs a conflict download"
+        )
+
+        listing = bb_server_files(bb_bucket)
+        assert _server_download(live_server, bb_bucket, name) == local_content
+        conflicts = self._server_copies(listing, stem)
+        assert len(conflicts) == 1, f"expected 1 server conflict copy, got {conflicts}"
+        assert _server_download(live_server, bb_bucket, conflicts[0]) == remote_content, (
+            "The server conflict copy must preserve the losing remote content"
+        )
+
+    def test_new_file_both_sides_client_loses(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """Independent creation of the same new path, my hash loses the
+        tie-break: the other side takes the path and my version is preserved
+        as a local conflicted copy."""
+        name = f"newlose-{uuid.uuid4().hex}.txt"
+        stem = name.split(".")[0]
+        remote_content = b"remote new oops\n"
+        local_content = b"local new aa\n"
+
+        second_cid = "TestClientY1234567890"
+        r = self._remote_upload(
+            live_server, bb_bucket, name, remote_content, second_cid, {second_cid: 1}
+        )
+        assert r.status_code == 201, f"remote upload rejected: {r.status_code} {r.text}"
+
+        assert (
+            hashlib.sha256(remote_content).hexdigest() > hashlib.sha256(local_content).hexdigest()
+        )
+        (Path(local_dir) / name).write_bytes(local_content)
+
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == remote_content, (
+            "The higher-hash remote content must take the original path"
+        )
+        copies = self._local_copies(local_dir, stem)
+        assert len(copies) == 1, f"expected 1 local conflict copy, got {copies}"
+        assert copies[0].read_bytes() == local_content, (
+            "The conflict copy must preserve my losing content"
+        )
+        listing = bb_server_files(bb_bucket)
+        assert self._server_copies(listing, stem) == [], (
+            "The server never sees the losing local content before it is re-uploaded"
+        )
+        assert _server_download(live_server, bb_bucket, name) == remote_content
+
+    def test_identical_new_file_both_sides_no_conflict(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        """Both sides independently create the same path with the same bytes:
+        they are already in sync — no transfer, no conflicted copy anywhere."""
+        name = f"same-{uuid.uuid4().hex}.txt"
+        stem = name.split(".")[0]
+        content = b"identical fresh content\n"
+
+        second_cid = "TestClientY1234567890"
+        r = self._remote_upload(live_server, bb_bucket, name, content, second_cid, {second_cid: 1})
+        assert r.status_code == 201, f"remote upload rejected: {r.status_code} {r.text}"
+
+        (Path(local_dir) / name).write_bytes(content)
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / name).read_bytes() == content
+        assert self._local_copies(local_dir, stem) == [], (
+            "Identical content is not a divergence: no local copy"
+        )
+
+        listing = bb_server_files(bb_bucket)
+        assert name in listing
+        assert self._server_copies(listing, stem) == [], (
+            "Identical content is not a divergence: no server copy"
         )
 
 
