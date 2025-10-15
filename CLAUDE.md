@@ -176,6 +176,16 @@ For authentication, secrets, LAN trust/pinning, protocol/API contracts, destruct
 
 ---
 
+## 💬 Language Policy
+
+* **English-only**: commit messages (subject and body), the internal agent wiki
+  (`llm-wiki/`), and the user documentation (`docs/`) MUST be written in
+  English, regardless of the language used in the task.
+* Commit messages follow Conventional Commits: `type(scope): description`
+  (feat, fix, docs, style, refactor, test, chore, perf, ci, build).
+
+---
+
 ## 📝 Changelog Maintenance
 
 Before completing any task that introduces a user-facing change, bug fix, or
