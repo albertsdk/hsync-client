@@ -965,6 +965,12 @@ class TestMasterElection:
             patch("hsync_client.lan_handler.set_config"),
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            # Mocked asyncio.run must not receive real coroutines: the
+            # persistent slave path would create un-awaited _with_stdin_commands
+            # / lan_websocket_client coroutine objects that trigger
+            # "coroutine was never awaited" RuntimeWarnings at GC time.
+            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
+            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
             patch("asyncio.run"),
             patch("time.sleep", side_effect=KeyboardInterrupt),
         ):
