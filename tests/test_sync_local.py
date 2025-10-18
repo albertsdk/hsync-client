@@ -1411,7 +1411,8 @@ class TestThreeWayMergeEndToEnd:
         """Mirror the sync loop's side effects for one decided action.
 
         Clocks follow the real convergence rules: an upload registers
-        ``merge(incoming, stored)`` on the server (D11), a download records
+        ``merge_vclocks(incoming_vclock, stored_vclock)`` on the server (D11),
+        a download records
         ``merge_and_record`` locally, and a conflicting download first
         preserves the losing bytes via ``_save_conflict_copy`` (exactly as
         ``sync()`` does before the overwrite).

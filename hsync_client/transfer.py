@@ -797,12 +797,14 @@ def _wait_for_stable_file(file: File, from_closed: bool = False) -> bool:
 
 def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
     """
-    Defer an upload whose file never stabilized within MAX_WAIT_TIMEOUT.
+    Defer an upload whose file never stabilized within the configured
+    "MAX_WAIT_TIMEOUT".
 
     A file still being written is not uploaded ("torn" upload); instead a new
-    attempt is scheduled after ``UPLOAD_RESCHEDULE_DELAY`` seconds via a daemon
-    ``threading.Timer``, which keeps the worker/observer thread free. The number
-    of deferrals is bounded by ``UPLOAD_MAX_RESCHEDULES``: once exhausted the
+    attempt is scheduled after the configured "UPLOAD_RESCHEDULE_DELAY" seconds
+    via a daemon ``threading.Timer``, which keeps the worker/observer thread
+    free. The number of deferrals is bounded by the configured
+    "UPLOAD_MAX_RESCHEDULES": once exhausted the
     file is skipped and left to the next file-system event (``on_closed``) or the
     periodic resync.
 
@@ -898,9 +900,10 @@ def upload_file(
     (4xx) are never retried. When every attempt is exhausted the failure is
     surfaced as a ``transfer_failed`` event.
 
-    A file that does not stabilize within ``MAX_WAIT_TIMEOUT`` is not uploaded in
-    a half-written ("torn") state: the upload is rescheduled for a later attempt
-    via :func:`_reschedule_upload`, bounded by ``UPLOAD_MAX_RESCHEDULES``.
+    A file that does not stabilize within the configured "MAX_WAIT_TIMEOUT" is
+    not uploaded in a half-written ("torn") state: the upload is rescheduled for
+    a later attempt via :func:`_reschedule_upload`, bounded by the configured
+    "UPLOAD_MAX_RESCHEDULES".
 
     If a previous upload was interrupted, resumes from where it left off.
 

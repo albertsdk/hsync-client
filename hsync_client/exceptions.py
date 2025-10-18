@@ -153,11 +153,3 @@ class InsufficientDiskSpaceError(FileOperationError):
 
     error_code = "HSYNC-C4004"
     default_message = "Insufficient disk space"
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-#
-# The generic ``format_exception`` / ``log_exception`` helpers live in
-# ``hsync_common.exceptions``; import them from there when needed.

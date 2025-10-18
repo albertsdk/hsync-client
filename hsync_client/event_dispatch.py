@@ -507,7 +507,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     if not Path(parent).exists():
         Path(parent).mkdir(parents=True, exist_ok=True)
     # Existing-path cleanup: unlink a file/link, rmdir an empty directory,
-    # refuse a non-empty directory (mirrors _create_symlink_local).
+    # refuse a non-empty directory (mirrors materialize_symlink_local in transfer.py).
     if Path(local).is_dir() and not Path(local).is_symlink():
         try:
             Path(local).rmdir()
