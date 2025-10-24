@@ -42,7 +42,7 @@
     "mode.lan": "LAN (pair-à-pair)",
     "mode.server": "Serveur (serveur HSYNC centralisé)",
     "role.auto":   "Auto (bidirectionnel, élection automatique)",
-    "role.master": "Maître (le NAS détient la copie de référence)",
+    "role.master": "Maître (le NAS coordonne le groupe de synchronisation)",
     "role.slave":  "Esclave (le NAS est une réplique en lecture seule)",
     "role.never_master": "Jamais maître (synchronise dans les deux sens mais ne devient jamais maître)",
 

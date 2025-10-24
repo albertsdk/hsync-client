@@ -43,11 +43,14 @@ Remote WS event (server)
 
 ## 3. Conflict Handling
 
-The server is the **authoritative source**. When a conflict occurs:
+The server is a **transport hub**, not an authority. No node decides conflicts
+by role: every peer resolves them causally with the same algorithm.
 
-1. A three-way merge is attempted using the stored base state.
-2. If the merge cannot resolve automatically, the **server version wins**.
-3. The conflict is logged so the user can manually resolve it.
+1. A three-way merge compares the local hash/clock, the remote hash/clock and
+   the recorded base state.
+2. On a true concurrent divergence, a deterministic **SHA-256 tie-break** picks
+   the winner and the losing content is preserved as a `_conflicted_copy_`.
+3. The conflict is logged so the user can review the preserved copy.
 
 See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
 

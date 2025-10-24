@@ -35,7 +35,7 @@ flowchart TB
 
 | Feature | Description |
 |---------|-------------|
-| **Central Hub** | One server, many clients; the server is the source of truth |
+| **Central Hub** | One server, many clients; the server relays sync (transport hub, not an authority) |
 | **Real-Time Sync** | WebSocket-based instant event propagation in watch mode (`-w`) |
 | **Delta Transfer** | Rsync-style block sync for large files with small changes |
 | **Compression** | Automatic zstd compression (skips already-compressed formats) |
@@ -249,7 +249,7 @@ remote bucket is **always blocked**, regardless of thresholds.
 > threshold rules.
 
 ```bash
-# Disable the guard (when confident the server is authoritative)
+# Disable the guard (when confident deletions observed by the server are safe)
 hsync -s https://server:9753 -b mybucket --no-mass-delete-guard
 
 # Tighter guard: pause deletions at 10 files or 10% of the tree

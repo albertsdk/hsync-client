@@ -75,9 +75,10 @@ if [ ! -f "${HSYNC_ENV_FILE}" ]; then
 # HSYNC configuration — edited from the web UI at http://<NAS>/${APKG_NAME}/
 # Values follow the .env convention; quoted strings are recommended.
 
-# Defaults tuned for using the NAS as a BACKUP target: it is the authoritative
-# LAN master and never loses files when a client deletes them
-# (HSYNC_IGNORE_DELETE=true). Adjust from the web UI for other use cases.
+# Defaults tuned for using the NAS as a BACKUP target: it runs as the LAN
+# master (coordinating the sync group) and never loses files when a client
+# deletes them (HSYNC_IGNORE_DELETE=true). Adjust from the web UI for other
+# use cases.
 
 # Mode: lan | server
 HSYNC_MODE="lan"

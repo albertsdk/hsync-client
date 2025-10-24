@@ -89,8 +89,8 @@ sequenceDiagram
 
 ## Synchronization Flow
 
-During initial sync (when a client connects or reconnects), the **master is the
-source of truth**:
+During initial sync (when a client connects or reconnects), the **master serves
+as the reconciliation reference**:
 
 ```mermaid
 sequenceDiagram
@@ -104,13 +104,13 @@ sequenceDiagram
     Note over C,M: Compare with Local
     C->>C: Determine sync actions
 
-    Note over C,M: Download Files (remote newer or remote-only)
+    Note over C,M: Download Files (remote causally ahead or remote-only)
     C->>M: GET /api/v1/buckets/{bucket}/files/download?filename=doc.txt
     M->>C: [file content]
 
     Note over C,M: Delete Local Files (not on master)
     C->>C: Remove files that exist only locally
-    Note right of C: Master is source of truth<br/>Local-only files are deleted
+    Note right of C: Master is the initial reference<br/>Local-only files are deleted
 ```
 
 > **Important**: In LAN mode, files that exist only on the client (not on master)
@@ -122,11 +122,13 @@ sequenceDiagram
 
 When a client reconnects after being offline:
 
-1. **Master state is authoritative** — the master's file list is the source of truth
+1. **Master state is the starting reference** — the master's file list drives
+   the initial reconciliation
 2. **Missing files are downloaded** — files on master but not on client are downloaded
 3. **Extra files are deleted** — files on client but not on master are deleted locally
 4. **Modified files are synced** — differences are reconciled causally via
-   the vector-clock matrix (ADR-0022 / ADR-0003), never by mtime "newer wins"
+   the vector-clock matrix (ADR-0022 / ADR-0003), never by mtime "newer wins";
+   the master never decides content by role
 
 This ensures consistent state across all peers, even after network interruptions.
 

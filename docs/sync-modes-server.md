@@ -6,7 +6,8 @@ HSYNC supports two operating topologies. This page covers **Server Mode**.
 
 ## Server Mode
 
-In Server Mode, a central HSYNC Server holds the canonical copy of each bucket.
+In Server Mode, a central HSYNC Server relays sync between devices and keeps a
+copy of each bucket's content on disk.
 Every client connects to the server, authenticates with an API key, and
 synchronizes files through it.
 

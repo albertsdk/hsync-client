@@ -120,10 +120,11 @@ and firmware upgrades.
 ## Configuration
 
 The web UI exposes the following options (all map 1:1 to `hsync` CLI flags).
-The shipped defaults are tuned for using the NAS as a **backup target**: it is
-the authoritative LAN **master** and **ignores client-side deletions**, so the
-backup never loses files because a source host removed them. Adjust from the UI
-for other use cases.
+The shipped defaults are tuned for using the NAS as a **backup target**: it
+runs as the LAN **master** (it coordinates the sync group; the master is a
+transport hub, not a conflict authority) and **ignores client-side
+deletions**, so the backup never loses files because a source host removed
+them. Adjust from the UI for other use cases.
 
 The LAN transport is **HTTPS/WSS-only** (protocol `lan/1`): the master serves
 over TLS with a persistent self-signed identity and advertises its certificate
@@ -134,7 +135,7 @@ option to configure.
 | ------------------- | ---------------------------------------------- | -------------------------------- |
 | Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
 | Mode                | `--lan-mode` vs `-s / --server`                | LAN                              |
-| Role                | `--force-master` + `--sync-direction`          | Master (NAS authoritative)       |
+| Role                | `--force-master` + `--sync-direction`          | Master (NAS coordinates the group) |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
 | Strict pairing      | `--require-pairing`                            | off                              |
@@ -164,7 +165,7 @@ The role selector maps to the existing CLI primitives:
 | Role        | Flags                                           | Meaning                              |
 | ----------- | ----------------------------------------------- | ------------------------------------ |
 | Auto        | _(none)_                                        | Bidirectional, automatic election    |
-| Master      | `--force-master`                                | NAS holds the authoritative copy     |
+| Master      | `--force-master`                                | NAS coordinates the sync group       |
 | Slave       | `--sync-direction download-only`                | NAS is a read-only replica           |
 | Never master| `--never-master`                                | Syncs both ways but never becomes master |
 

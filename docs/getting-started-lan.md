@@ -28,7 +28,7 @@ mkdir -p /tmp/hsync-lan-a /tmp/hsync-lan-b
 # 2. Put a file in the first folder
 echo "hello hsync lan" > /tmp/hsync-lan-a/hello.txt
 
-# 3. Terminal 1 — force this peer to be the master (it holds the canonical data,
+# 3. Terminal 1 — force this peer to be the master (it already holds the file,
 #    so no deletion-risk warning is shown) and start LAN Mode
 hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master
 
@@ -44,10 +44,12 @@ Watch mode is **implicit** in LAN Mode: edit or create a file in either folder
 and the change propagates to the other peer in real time. Press `Ctrl+C` in
 both terminals to stop.
 
-> **Why `--force-master` here?** The first peer holds the file, so it is the
-> authoritative source. Forcing it to be master avoids the initial
-> deletion-risk warning on a non-empty directory. On a real LAN with multiple
-> devices, omit `--force-master` and let master election happen automatically
+> **Why `--force-master` here?** The first peer already holds the file, so
+> electing it as master avoids the initial
+> deletion-risk warning on a non-empty directory. The master is only the
+> transport hub — it holds no special authority over file contents. On a real
+> LAN with multiple devices, omit `--force-master` and let master election
+> happen automatically
 > (see [LAN Mode → Master Election](lan-mode.md#master-election)).
 
 ## What to expect in LAN Mode
@@ -59,7 +61,7 @@ This is intentional — it lets deletions made on the master reach offline peers
 
 - Use `-y` to skip the prompt in scripts/services.
 - Use `--sync-direction upload-only` if you never want local files deleted.
-- Use `--force-master` on the device that holds the canonical copy.
+- Use `--force-master` on the device that already holds the data.
 
 See [LAN Mode → Deletion Risk Warning](lan-mode.md#deletion-risk-warning) for
 the full explanation.

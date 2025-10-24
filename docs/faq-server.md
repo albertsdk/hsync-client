@@ -5,8 +5,10 @@
 ## General
 
 **Q: What is HSYNC Server Mode?**
-Server mode is where a central HSYNC Server holds the canonical copy of your
-files. All devices sync through it — the server is the authoritative source.
+Server mode is where a central HSYNC Server relays files between your devices
+and keeps a copy of the synced content. The server is a **transport hub**, not
+an authority: conflicts are resolved causally by every client with the same
+algorithm, and no node's copy wins by role.
 
 **Q: Is the server required for HSYNC to work?**
 No. You can use LAN P2P Mode without a server. The server is only needed if

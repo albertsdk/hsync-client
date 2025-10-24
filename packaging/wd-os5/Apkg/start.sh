@@ -59,10 +59,10 @@ if [ -f "${HSYNC_ENV_FILE}" ]; then
     . "${HSYNC_ENV_FILE}"
 fi
 
-# Backup-oriented defaults: the NAS is the authoritative master that keeps a
-# safe copy of the clients' data. Deletions on the clients are NOT propagated
-# (HSYNC_IGNORE_DELETE=true), so the backup never loses files because a source
-# host removed them.
+# Backup-oriented defaults: the NAS runs as the master (it coordinates the
+# sync group) and keeps a safe copy of the clients' data. Deletions on the
+# clients are NOT propagated (HSYNC_IGNORE_DELETE=true), so the backup never
+# loses files because a source host removed them.
 : "${HSYNC_MODE:=lan}"
 : "${HSYNC_PATH:=${HSYNC_DATA_DIR}}"
 : "${HSYNC_BUCKET:=hsync}"
