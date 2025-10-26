@@ -83,7 +83,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | Document | What it covers |
 | -------- | -------------- |
 | [internal/architecture.md](internal/architecture.md) | How the client is structured internally. |
-| [conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling. |
+| [conflict-resolution.md](conflict-resolution.md) | Causal conflict model (ADR-0022): decision tree of all cases, version store, conflicted-copy handling, upload arbitration on server/LAN master, and causal tombstones (ADR-0003) — with diagrams. |
 | [internal/lan-internals.md](internal/lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
 | [internal/developer.md](internal/developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
 | [internal/testing.md](internal/testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |

@@ -9,24 +9,47 @@ tell whether only one side moved on (dominance) or both did (true concurrency)
 the false conflicts that arise when files relay through intermediate nodes.
 
 On a true divergence (concurrent clocks) a **deterministic, content-only
-tie-break** picks the winner (highest SHA-256 lexicographically) and the losing
-content is preserved as a `_conflicted_copy_` (extrema ratio). **No node is
-authoritative**: the server and the elected LAN master are transport hubs only;
-every node applies the same algorithm.
+tie-break** picks the winner (highest SHA-256, compared lexicographically) and
+the losing content is preserved as a `_conflicted_copy_` (extrema ratio).
+**No node is authoritative**: the server and the elected LAN master are
+transport hubs only; every node applies the same algorithm, and uploads
+arriving at the server/master are arbitrated with the *same* matrix.
 
 ## Table of Contents
 
 - [How it works](#how-it-works)
+- [Decision tree (all cases)](#decision-tree-all-cases)
 - [The version (`FileVersion`)](#the-version-fileversion)
 - [The decision (`resolve_three_way`)](#the-decision-resolve_three_way)
 - [The store (`SyncStateStore`)](#the-store-syncstatestore)
 - [Lifecycle in a sync cycle](#lifecycle-in-a-sync-cycle)
-- [Conflict handling](#conflict-handling)
+- [Conflict handling on the pulling side](#conflict-handling-on-the-pulling-side)
+- [Upload arbitration on the server / LAN master](#upload-arbitration-on-the-server--lan-master)
+- [Deletions and tombstones (ADR-0003)](#deletions-and-tombstones-adr-0003)
 - [Boundary cases](#boundary-cases)
 
 ---
 
 ## How it works
+
+Each file has a causal identity made of three pieces:
+
+1. **Content hash** — SHA-256 of the bytes (`base_hash` for the agreed version,
+   `sha256sum` for the versions being compared).
+2. **Vector clock** — a map `peer cid → logical counter`. Every node ticks *its
+   own* counter by one for each local edit it authors or observes
+   (`tick_vclock`), so clocks grow monotonically and two distinct versions can
+   never alias the same clock (the anti-aliasing invariant).
+3. **Common ancestor** — the `base_hash` recorded after the last successful
+   sync. The base is what makes a three-way merge possible without trusting
+   timestamps.
+
+Comparing two clocks componentwise (`compare_vclocks`) yields `equal`,
+`dominates`, `dominated`, or `concurrent`. After every successful sync the
+agreed clock is the componentwise maximum of the two sides (`merge_vclocks`):
+in dominance it equals the dominant clock; in a conflict it includes *both*
+histories, so third nodes recognise either side as an ancestor and no false
+conflict propagates downstream (convergence invariant D11).
 
 ```
         ┌─────────────┐
@@ -52,22 +75,55 @@ every node applies the same algorithm.
 └─────────────┘  └─────────────┘
 ```
 
-On every sync cycle, for each file that appears on both sides:
+The wall clock is never consulted for the direction of a transfer. The
+algorithm lives in `hsync_common.models.version.resolve_three_way()` and is
+consumed by the client's `get_sync_actions()`, by the real-time inbound-event
+path, and by the upload arbitration on both the central server and the LAN
+master.
 
-1. Content identity: if `local_hash == remote_hash` → `in_sync` (nothing to do).
-2. If a **base** is recorded and `local_hash == base_hash` → the remote moved
-   on → **download**.
-3. If a **base** is recorded and `remote_hash == base_hash` → the local moved
-   on → **upload**.
-4. Otherwise compare the **vector clocks**:
-   - local dominates → **upload**
-   - remote dominates → **download**
-   - concurrent (neither dominates) → **true conflict**: deterministic
-     SHA-256 tie-break picks the winner, the loser is preserved.
+---
 
-The wall clock is never consulted. This algorithm is implemented in
-`hsync_common.models.version.resolve_three_way()` and consumed by the client's
-`get_sync_actions()` and the upload arbitration on both server and LAN master.
+## Decision tree (all cases)
+
+```mermaid
+flowchart TD
+    S["For each file present on BOTH sides"]
+    S --> ID{"local_hash == remote_hash ?"}
+    ID -->|yes| INS["in_sync — nothing to do"]
+    ID -->|no| BASE{"base_hash recorded ?"}
+    BASE -->|yes| LEB{"local_hash == base_hash ?"}
+    LEB -->|yes| DL1["download<br/>(remote moved on)"]
+    LEB -->|no| REB{"remote_hash == base_hash ?"}
+    REB -->|yes| UL1["upload<br/>(local moved on)"]
+    REB -->|no| CMP["compare vector clocks"]
+    BASE -->|no| CMP
+    CMP --> DOM{"local clock dominates ?"}
+    DOM -->|yes| UL2["upload"]
+    DOM -->|no| DMB{"remote clock dominates ?"}
+    DMB -->|yes| DL2["download"]
+    DMB -->|no| TIE["true concurrency (or no causal info)<br/>deterministic tie-break"]
+    TIE --> WIN{"local_hash > remote_hash ?"}
+    WIN -->|yes| CU["conflict_upload<br/>upload; receiver preserves its loser"]
+    WIN -->|no| CD["conflict_download<br/>preserve local copy + download"]
+
+    style INS fill:#e8f5e9,stroke:#2e7d32
+    style UL1 fill:#e3f2fd,stroke:#1565c0
+    style UL2 fill:#e3f2fd,stroke:#1565c0
+    style DL1 fill:#e3f2fd,stroke:#1565c0
+    style DL2 fill:#e3f2fd,stroke:#1565c0
+    style CU fill:#f3e5f5,stroke:#7b1fa2
+    style CD fill:#f3e5f5,stroke:#7b1fa2
+```
+
+Every possible outcome falls into one of five decisions:
+
+| Decision | Meaning | Loser preservation |
+|----------|---------|--------------------|
+| `in_sync` | Contents identical; nothing to transfer | — |
+| `upload` | Local causally ahead (or remote at base) | — |
+| `download` | Remote causally ahead (or local at base) | — |
+| `conflict_upload` | Concurrent; local wins the hash tie-break | **Remote side** preserves its losing copy when the upload is arbitrated |
+| `conflict_download` | Concurrent; remote wins the hash tie-break | **Local side** preserves its losing copy as `_conflicted_copy_` |
 
 ---
 
@@ -107,15 +163,24 @@ def resolve_three_way(
 ) -> SyncDecision:
 ```
 
-| Condition | Decision | Action |
-|-----------|----------|--------|
-| `local == remote` | `in_sync` | Nothing to do |
-| `local == base` | `download` | Pull remote version |
-| `remote == base` | `upload` | Push local version |
-| local clock dominates | `upload` | Push local version |
-| remote clock dominates | `download` | Pull remote version |
-| concurrent, local hash > remote hash | `conflict_upload` | Upload (receiver preserves its loser) |
-| concurrent, remote hash ≥ local hash | `conflict_download` | Preserve local + download |
+The full matrix, in evaluation order:
+
+| # | Condition | Decision |
+|---|-----------|----------|
+| 1 | `local_hash == remote_hash` | `in_sync` |
+| 2 | `base_hash` set and `local_hash == base_hash` | `download` |
+| 3 | `base_hash` set and `remote_hash == base_hash` | `upload` |
+| 4 | local clock **dominates** remote clock | `upload` |
+| 5 | remote clock **dominates** local clock | `download` |
+| 6 | concurrent (or both empty / equal-clock anomaly) **and** `local_hash > remote_hash` | `conflict_upload` |
+| 7 | concurrent (or both empty / equal-clock anomaly) **and** `remote_hash >= local_hash` | `conflict_download` |
+
+Rules 2–3 are the **base fast paths**: knowing the common ancestor decides the
+direction immediately, whatever the clocks say. Rules 4–5 handle the case
+where the base is unknown or neither side matches it: causal dominance alone
+decides. Rules 6–7 are the **true conflict**: the deterministic content
+tie-break elects the winner so every node converges on the same content
+without coordination, and the loser is preserved.
 
 ---
 
@@ -135,6 +200,15 @@ The recorded clock after a sync is `merge(local_effective, remote_advertised)`
 (`merge_and_record`): in dominance it equals the dominant clock, in conflict it
 includes both histories so third nodes recognise either side as an ancestor
 (the convergence invariant D11).
+
+A **dry-run/preview** (`get_sync_actions(persist_state=False)`) never mutates
+the store: the causal decisions are still accurate (the local clock is read
+through the pure `local_version_for_compare`), but nothing is persisted.
+
+The local clock used for comparison is the **effective honest version**: when
+the current content differs from the recorded base, the stored clock is ticked
+by this node's cid **purely** (no store mutation) before comparing — the same
+anti-aliasing self-record the server arbitration performs out-of-band.
 
 ---
 
@@ -163,23 +237,22 @@ sequenceDiagram
         else conflict_download
             C->>FS: ⑥ Copy local to _conflicted_copy_
             C->>S: ⑦ Download remote version
-            C->>SS: ⑦ record merged base
-            C->>GUI: ⑦ Emit conflict_resolved event
+            C->>SS: ⑧ record merged base
+            C->>GUI: ⑧ Emit conflict_resolved event
         end
     end
 
-    C->>SS: ⑧ retain(files still in bucket)
-    C->>SS: ⑨ flush() → .hsyncstate
+    C->>SS: ⑨ retain(files still in bucket)
+    C->>SS: ⑩ flush() → .hsyncstate
 ```
 
-A dry-run/preview (`get_sync_actions(persist_state=False)`) never mutates the
-store: `merge_and_record` is skipped so `.hsyncstate` stays byte-identical,
-while the causal decisions are still computed accurately via the pure
-`local_version_for_compare`.
+The same matrix also runs on the **real-time** path: an inbound WS "modified"
+event for an existing file re-checks the causal relationship before applying,
+so a stale echo can never overwrite a newer local edit.
 
 ---
 
-## Conflict handling
+## Conflict handling on the pulling side
 
 When `resolve_three_way` returns `conflict_download` (the remote won the
 deterministic hash tie-break):
@@ -209,9 +282,9 @@ losing copy — no conflict copy is made on the client side.
 ### Deterministic tie-break (no auto-merge)
 
 HSYNC uses a **deterministic content-only tie-break with preservation**. When
-both sides diverge concurrently, the higher SHA-256 hash wins and the loser is
-preserved as a conflicted copy. This is the same "keep both" approach as
-Dropbox/OneDrive.
+both sides diverge concurrently, the higher SHA-256 hash (lexicographic) wins
+and the loser is preserved as a conflicted copy. This is the same "keep both"
+approach as Dropbox/OneDrive.
 
 **HSYNC does not perform automatic content merging.** Rationale:
 
@@ -224,17 +297,95 @@ Dropbox/OneDrive.
 
 ---
 
+## Upload arbitration on the server / LAN master
+
+The server and the LAN master are transport hubs, but every upload landing on
+them is **arbitrated** with the same causal matrix (`arbitrate_upload`),
+mirrored on the client side for the LAN master. Four outcomes exist:
+
+| Outcome | Condition | Action taken |
+|---------|-----------|--------------|
+| `accepted` | incoming is causally ahead (or at parity) | Write incoming content; record merged clock |
+| `accepted_conflict_won` | concurrent; incoming wins the hash tie-break | Write incoming content; preserve previous stored content as `_conflicted_copy_` |
+| `superseded` | incoming is causally dominated (stale ancestor) | Reject (`409`); **no copy** — the ancestor's bytes are in the winner |
+| `conflict_lost` | concurrent; incoming loses the hash tie-break | Reject (`409`); preserve incoming bytes as `_conflicted_copy_`; keep stored winner |
+
+Out-of-band edits are self-recorded first: if the file on disk differs from
+the stored `base_hash` (a write the hub did not observe), the stored clock is
+ticked by the hub's own cid before comparing — the receiver's clock is always
+honest.
+
+```mermaid
+sequenceDiagram
+    participant C as Uploader
+    participant A as Arbitrator<br/>(server / LAN master)
+    participant F as Hub storage
+
+    C->>A: POST file (hash, vclock, version_id)
+    A->>A: self-record if disk ≠ stored base
+    A->>A: resolve_three_way(incoming, stored)  [no base]
+    alt accepted
+        A->>F: write incoming
+        A->>C: 201 + merged vclock
+    else accepted_conflict_won
+        A->>F: preserve stored → _conflicted_copy_
+        A->>F: write incoming
+        A->>C: 201 + merged vclock
+    else superseded
+        A->>C: 409 superseded
+        Note over C: next cycle: download current remote version
+    else conflict_lost
+        A->>F: preserve incoming → _conflicted_copy_
+        A->>C: 409 conflict_lost
+        Note over C: next cycle: download winning version
+    end
+```
+
+The uploader handles the `409` responses through
+`_handle_upload_conflict_response`: `superseded`/`conflict_lost` mark the file
+for download on the next cycle; a legacy "already present" response records
+the base as in-sync.
+
+---
+
+## Deletions and tombstones (ADR-0003)
+
+Deletions are causal too. When a file is deleted on a peer, a **tombstone**
+marker is recorded: `(hashed path, SHA-256 of the deleted content, vclock)`,
+with the clock ticked by the deleting peer. Markers are gossiped between peers
+and merged by **vector-clock dominance** — a marker whose clock dominates the
+effective local clock is positive proof that the local copy is a stale
+ancestor, so the file is deleted instead of being resurrected. The deletion
+**timestamp is never consulted** for the decision.
+
+| Case | Causal verdict | Action |
+|------|----------------|--------|
+| Tombstone clock **dominates** local clock | Local copy is a stale ancestor | Delete locally (even with an older timestamp) |
+| Tombstone clock **equal** to local clock | No descent proof | Keep (never delete on equal clocks) |
+| Tombstone and local clocks **concurrent** | Local edit is an intentional re-creation | Keep / upload |
+| Local clock **dominates** tombstone | Re-creation happened after the deletion | Keep |
+
+The tombstone exemption also plugs into the mass-deletion guard: deletions
+backed by a matching tombstone are never blocked, because the marker is
+positive proof the removal was intentional.
+
+---
+
 ## Boundary cases
 
 | Scenario | Behavior |
 |----------|----------|
-| **File deleted locally, changed remotely** | Tombstone logic (ADR-0003, causal) handles the absent-file branch separately. |
+| **File deleted locally, changed remotely** | Tombstone logic (ADR-0003, causal) handles the absent-file branch. |
 | **File deleted remotely, changed locally** | Tombstone logic; local edit is uploaded if direction allows. |
 | **New file on both sides with same content** | `local == remote` → `in_sync` |
 | **New file on both sides, different content** | Both clocks empty → concurrent → deterministic hash tie-break. |
+| **Base unknown, both clocks empty, differing content** | Equal-clock anomaly → concurrent → hash tie-break (the old mtime heuristic is gone). |
 | **File replaced with empty content** | Hash `""` is treated as absent by `record_base()` — a no-op guard prevents corrupting the store. |
-| **Upload superseded** | The server/master arbitrates: a causally-dominated upload is rejected (`409 superseded`) and the client downloads the current remote version on the next cycle. |
+| **Upload superseded** | The hub arbitrates: a causally-dominated upload is rejected (`409 superseded`) and the client downloads the current remote version on the next cycle. |
 | **Upload loses tie-break** | The incoming bytes are preserved as a conflicted copy (`409 conflict_lost`); the stored winner is kept. |
+| **Malformed wire `version` / vclock** | Tolerantly parsed as absent (empty clock); the causal matrix handles it. A malformed stored side-car entry is dropped rather than masked. |
+| **Concurrent uploads of the same path** | Serialized per path (file lock); the second sees the version the first registered. |
+| **Relay A → B → C** | No false conflict: merged clocks carry the full causal history through the relay. |
 
 ## See also
 
