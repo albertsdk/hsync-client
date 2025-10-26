@@ -37,6 +37,54 @@ from typing import Any
 _MAX_STDIN_LINE_BYTES = 1 * 1024 * 1024
 
 
+class _BoundedLineReader:
+    """Chunked, capped stdin line reader (same wire contract as the legacy
+    byte-at-a-time loop, without one await per byte).
+
+    Semantics preserved exactly:
+
+    - returns the line **including** the trailing newline;
+    - a line whose total length (newline included) is exactly *max_bytes*
+      is accepted; anything longer is rejected and drained;
+    - on EOF, a partial line without a trailing newline is returned as-is,
+      and a clean EOF yields ``b""``;
+    - after a rejected over-cap line the reader is drained up to the next
+      newline and ``b""`` is returned, so subsequent reads are not poisoned.
+    """
+
+    _READ_CHUNK = 64 * 1024
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+
+    async def readline(self, reader: asyncio.StreamReader, max_bytes: int) -> bytes:
+        while True:
+            nl = self._buf.find(b"\n")
+            if nl != -1 and nl < max_bytes:
+                line = bytes(self._buf[: nl + 1])
+                del self._buf[: nl + 1]
+                return line
+            if len(self._buf) >= max_bytes:
+                # Over-cap line without a newline inside the cap: drain up
+                # to (and including) the next newline, keeping any trailing
+                # bytes that belong to the following line.
+                self._buf.clear()
+                while True:
+                    chunk = await reader.read(self._READ_CHUNK)
+                    if not chunk:
+                        return b""
+                    nl = chunk.find(b"\n")
+                    if nl != -1:
+                        self._buf.extend(chunk[nl + 1 :])
+                        return b""
+            chunk = await reader.read(self._READ_CHUNK)
+            if not chunk:
+                line = bytes(self._buf)
+                self._buf.clear()
+                return line  # EOF (b"" when no partial line was buffered)
+            self._buf.extend(chunk)
+
+
 async def _readline_bounded(reader: asyncio.StreamReader, max_bytes: int) -> bytes:
     """Read a newline-terminated line with a hard size cap.
 
@@ -45,23 +93,7 @@ async def _readline_bounded(reader: asyncio.StreamReader, max_bytes: int) -> byt
     to the cap and an empty line is returned (treated as a malformed
     message by the caller).
     """
-    buf = bytearray()
-    total = 0
-    while total < max_bytes:
-        byte = await reader.read(1)
-        if not byte:
-            return bytes(buf)  # EOF
-        buf.append(byte[0])
-        total += 1
-        if byte == b"\n":
-            return bytes(buf)
-    # Cap exceeded: drain the rest of the (giant) line so subsequent reads
-    # are not poisoned, then return empty to signal a skipped message.
-    while True:
-        byte = await reader.read(1)
-        if not byte or byte == b"\n":
-            break
-    return b""
+    return await _BoundedLineReader().readline(reader, max_bytes)
 
 
 class StdinCommandHandler:
@@ -114,9 +146,11 @@ class StdinCommandHandler:
 
         self._log.debug("stdin command reader started")
 
+        line_reader = _BoundedLineReader()
+
         while True:
             try:
-                line = await _readline_bounded(reader, _MAX_STDIN_LINE_BYTES)
+                line = await line_reader.readline(reader, _MAX_STDIN_LINE_BYTES)
                 if not line:  # EOF
                     break
 

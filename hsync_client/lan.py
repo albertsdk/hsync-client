@@ -252,8 +252,21 @@ class PeerManager:
             return
 
         with self._lock:
-            if peer.cid in self._peers:
-                existing = self._peers[peer.cid]
+            existing = self._peers.get(peer.cid)
+            if existing is not None:
+                # Only an election-relevant change can alter the master choice;
+                # a pure mDNS heartbeat refresh (last_seen bump) must not pay
+                # for a full candidate scan + sort on every ~5s update. An
+                # expired peer is still excluded on the next election-triggering
+                # event (remove_service or a relevant field change) — identical
+                # master outcome, far less work.
+                election_changed = (
+                    existing.server_ready != peer.server_ready
+                    or existing.force_master != peer.force_master
+                    or existing.never_master != peer.never_master
+                    or existing.startup_time != peer.startup_time
+                    or existing.sync_direction != peer.sync_direction
+                )
                 # Update all properties from the new peer object
                 existing.address = peer.address
                 existing.port = peer.port
@@ -275,8 +288,14 @@ class PeerManager:
             else:
                 self._peers[peer.cid] = peer
                 log.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")
+                election_changed = True
 
-            self._elect_master()
+            # Re-run the election on a first discovery or a relevant field
+            # change. The expired-peer check also covers the original
+            # behaviour where a stale peer (whose heartbeat stop arriving)
+            # was excluded from the candidate list at the next update.
+            if election_changed or any(not p.is_alive() for p in self._peers.values()):
+                self._elect_master()
 
     def remove_peer(self, cid: str) -> None:
         """Remove a peer by CID."""

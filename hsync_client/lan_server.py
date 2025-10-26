@@ -205,7 +205,14 @@ class _StreamingMultipartParser:
         self._remaining = content_length
         # Boundary lines in multipart are prefixed with "--"
         self._boundary = b"--" + boundary
-        self._buf = b""
+        # Mutable buffer: ``del buf[:emit]`` trims consumed bytes in-place
+        # (O(1) amortized) instead of re-copying the whole tail per flush.
+        self._buf = bytearray()
+        # Scan restart offset after a flush. A terminator can straddle the
+        # flush cut; because the kept safety window (tlen+2 bytes) is larger
+        # than a terminator, only the last tlen-1 kept bytes can ever complete
+        # a straddling match, so the scan restarts there instead of at 0.
+        self._search_from = 0
 
     def _read_more(self, n: int = _READ_CHUNK) -> bytes:
         n = min(n, self._remaining)
@@ -223,7 +230,12 @@ class _StreamingMultipartParser:
         Returns the line without the trailing CRLF, or None on EOF.
         Raises ValueError if the line grows past the header-line cap.
         """
-        while b"\r\n" not in self._buf:
+        while True:
+            idx = self._buf.find(b"\r\n")
+            if idx != -1:
+                line = bytes(self._buf[:idx])
+                del self._buf[: idx + 2]
+                return line
             # No CRLF in the buffer yet: if the accumulated bytes (which form
             # a single unterminated line) exceed the cap, reject. Only check
             # when there is no CRLF, because a buffer WITH a CRLF contains a
@@ -232,15 +244,12 @@ class _StreamingMultipartParser:
                 log.warning(
                     f"multipart header line too long ({len(self._buf)} bytes, "
                     f"cap {MAX_PART_HEADER_LINE_BYTES}): "
-                    f"buf_head={self._buf[:256]!r}"
+                    f"buf_head={bytes(self._buf[:256])!r}"
                 )
                 raise ValueError("multipart header line too long")
             if not self._read_more():
                 break
-        if b"\r\n" not in self._buf:
-            return None
-        line, self._buf = self._buf.split(b"\r\n", 1)
-        return line
+        return None
 
     def _read_until_boundary(self, writer) -> str:
         """Write body bytes to ``writer`` until the next boundary line.
@@ -256,40 +265,42 @@ class _StreamingMultipartParser:
         safety = tlen + 2
 
         while True:
-            idx = self._buf.find(terminator)
+            idx = self._buf.find(terminator, self._search_from)
             if idx != -1:
                 if writer is not None and idx > 0:
-                    writer(self._buf[:idx])
+                    writer(bytes(self._buf[:idx]))
                 # Consume up to and including the boundary line
                 after_boundary = idx + tlen
                 # The two bytes after the boundary are either b"\r\n" (next
                 # part) or b"--" (final boundary).
                 while len(self._buf) < after_boundary + 2 and self._read_more():
                     pass
-                marker = self._buf[after_boundary : after_boundary + 2]
+                marker = bytes(self._buf[after_boundary : after_boundary + 2])
+                del self._buf[: after_boundary + 2]
+                self._search_from = 0
                 if marker == b"--":
-                    # Final boundary; advance past trailing CRLF too
-                    self._buf = self._buf[after_boundary + 2 :]
-                    # Discard the optional epilogue CRLF
+                    # Final boundary; discard the optional epilogue CRLF
                     if self._buf.startswith(b"\r\n"):
-                        self._buf = self._buf[2:]
+                        del self._buf[:2]
                     return "end"
-                # Next part: advance past CRLF
-                self._buf = self._buf[after_boundary + 2 :]
+                # Next part: consume past CRLF
                 return "next"
 
             # No boundary yet: flush everything except the trailing safety window
             if len(self._buf) > safety:
                 emit = len(self._buf) - safety
                 if writer is not None:
-                    writer(self._buf[:emit])
-                self._buf = self._buf[emit:]
+                    writer(bytes(self._buf[:emit]))
+                del self._buf[:emit]
+                # A terminator may straddle the flush cut: restart the scan at
+                # most tlen-1 bytes from the end (the kept window is >= that).
+                self._search_from = max(0, len(self._buf) - (tlen - 1))
 
             if not self._read_more():
                 # EOF: flush whatever remains
                 if writer is not None and self._buf:
-                    writer(self._buf)
-                self._buf = b""
+                    writer(bytes(self._buf))
+                self._buf.clear()
                 return "eof"
 
     def parse(self, file_open) -> tuple[dict[str, str], tuple[str, str] | None]:

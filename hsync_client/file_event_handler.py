@@ -60,6 +60,12 @@ DEDUP_MAX_ENTRIES: int = 10_000
 class BaseFileEventHandler(FileSystemEventHandler):
     """Common watchdog handler shared by Remote sync and LAN master."""
 
+    # Cache of resolved ``(prefix, name) -> label`` pairs. ``resolve_label``
+    # is deterministic and the key space is tiny (both prefixes × a handful
+    # of event names), so a per-instance cache saves the enum lookup and
+    # bracket formatting on every watchdog event (the hottest path).
+    _label_cache: dict[tuple[str, str], str] = {}
+
     def _label(
         self,
         name: str,
@@ -77,7 +83,12 @@ class BaseFileEventHandler(FileSystemEventHandler):
         tag-formatting logic).
         """
         prefix = "REMOTE " if self._origin_cid(src_path, dst_path) else "LOCAL "
-        return resolve_label(prefix, name)
+        key = (prefix, name)
+        cached = self._label_cache.get(key)
+        if cached is None:
+            cached = resolve_label(prefix, name)
+            self._label_cache[key] = cached
+        return cached
 
     def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
         """Return the originator CID for a filesystem event, if known.

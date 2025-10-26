@@ -20,7 +20,7 @@ Features:
   resurrect the file).
 """
 
-from asyncio import Queue, sleep
+from asyncio import Event, Queue, ensure_future, wait, wait_for
 from dataclasses import dataclass, field
 from json import dumps
 from logging import getLogger
@@ -105,6 +105,9 @@ class EventQueue:
         # A single failed event awaiting retry. While set, it blocks newer
         # events from being processed, guaranteeing in-order delivery.
         self._pending_retry: QueuedEvent | None = None
+        # Set by stop(): wakes a loop that is idle-blocked on queue.get() or
+        # sleeping until a retry deadline, so process() exits promptly.
+        self._stop_event = Event()
 
     async def enqueue(self, event_data: dict[str, Any]) -> None:
         """
@@ -155,8 +158,7 @@ class EventQueue:
             return False
 
     async def _next_event(self) -> QueuedEvent | None:
-        """
-        Return the next event to process, preserving strict FIFO order.
+        """Return the next event to process, preserving strict FIFO order.
 
         A failed event held in ``_pending_retry`` takes precedence and blocks
         newer events until its backoff has elapsed and it is re-attempted
@@ -180,21 +182,59 @@ class EventQueue:
 
         return None
 
+    async def _await_event(self) -> QueuedEvent | None:
+        """Block for the next queued event, or return None on ``stop()``.
+
+        The loop idles here instead of polling: ``enqueue()`` wakes it
+        immediately (zero latency), and ``stop()`` wakes it through
+        ``_stop_event`` so the task never hangs on an empty queue.
+        """
+        get_task = ensure_future(self.queue.get())
+        stop_task = ensure_future(self._stop_event.wait())
+        done, _ = await wait((get_task, stop_task), return_when="FIRST_COMPLETED")
+        if get_task in done:
+            stop_task.cancel()
+            return get_task.result()
+        get_task.cancel()
+        return None
+
     async def process(self) -> None:
         """
         Main event processing loop.
 
         Continuously processes events in strict FIFO order, holding a failed
         event for retry with exponential backoff before any newer event is
-        sent.
+        sent (head-of-line blocking: a retried "added" can never overtake a
+        later "deleted" on the same file).
+
+        Idle performance: the loop blocks on ``queue.get()`` (woken the
+        instant an event is enqueued) instead of the old fixed
+        ``sleep(0.01)`` poll, which burned ~100 wakeups/second on an idle
+        queue and added up to 10 ms of latency to every event dispatch.
+        While a failed event awaits retry, the loop sleeps exactly until its
+        backoff deadline; ``stop()`` interrupts both waits immediately.
         """
         self._running = True
         while self._running:
-            event = await self._next_event()
-            if event is None:
-                # Nothing ready (empty queue or pending retry still waiting).
-                await sleep(0.01)
-                continue
+            event: QueuedEvent | None
+            if self._pending_retry is not None:
+                # A failed event is blocking the queue: sleep until its
+                # backoff elapses (stop() wakes this early), then retry it
+                # before anything newer.
+                wait_sec = self._pending_retry.next_retry_time - time()
+                if wait_sec > 0:
+                    try:
+                        await wait_for(self._stop_event.wait(), wait_sec)
+                    except TimeoutError:
+                        pass
+                    continue
+                event = self._pending_retry
+                self._pending_retry = None
+            else:
+                # Idle point: block until an event arrives or stop() wakes us.
+                event = await self._await_event()
+                if event is None:  # stop() won the race on an empty queue
+                    continue
 
             # Each event corresponds to exactly one queue.get(); task_done()
             # is therefore called once, on the terminal outcome (sent/dropped).
@@ -218,10 +258,8 @@ class EventQueue:
                     )
                     self.queue.task_done()
 
-            # Small delay to prevent busy loop
-            await sleep(0.01)
-
     def stop(self) -> None:
         """Stop the event processing loop."""
         self._running = False
+        self._stop_event.set()
         log.debug("Event queue stopped")

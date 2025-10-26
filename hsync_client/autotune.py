@@ -131,18 +131,36 @@ _BW_EMA_ALPHA = 0.3
 # =============================================================================
 
 
+def _rtt_probe_once(host: str, port: int, timeout: float) -> float:
+    """Return one TCP-connect RTT sample in milliseconds (raises ``OSError``)."""
+    t0 = monotonic()
+    with create_connection((host, port), timeout=timeout):
+        return (monotonic() - t0) * 1000
+
+
 def measure_rtt(host: str, port: int, samples: int = 3) -> float | None:
-    """Median TCP-connect RTT in milliseconds.  ``None`` if not measurable."""
+    """Median TCP-connect RTT in milliseconds.  ``None`` if not measurable.
+
+    The three samples run in parallel: they are independent measurements of
+    the same endpoint, so the median over concurrent attempts is the same
+    value the sequential loop produced, while the worst-case blocking
+    startup cost drops from ``3 × timeout`` to ``1 × timeout``. Any failure
+    still yields ``None`` immediately (safe default, unchanged).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(samples, 3)) as executor:
+        futures = [
+            executor.submit(_rtt_probe_once, host, port, 2.0) for _ in range(max(1, samples))
+        ]
     times: list[float] = []
-    for _ in range(samples):
+    for future in futures:
         try:
-            t0 = monotonic()
-            with create_connection((host, port), timeout=2.0):
-                times.append((monotonic() - t0) * 1000)
+            times.append(future.result())
         except OSError as e:
             log.warning(f"autotune: RTT probe failed ({e}); using safe default")
             return None
-    return _median(times)
+    return _median(times) if times else None
 
 
 def classify_network(rtt_ms: float | None, is_mobile: bool = False) -> NetClass:
@@ -276,19 +294,32 @@ def _reduce_to_base_device(dev_name: str) -> str:
 
 
 def profile_transfer_queue(files: "list[File]") -> QueueProfile:
-    """Classify the transfer queue shape (``MANY_SMALL`` / ``FEW_LARGE`` / ``MIXED``)."""
-    from statistics import mean
+    """Classify the transfer queue shape (``MANY_SMALL`` / ``FEW_LARGE`` / ``MIXED``).
 
-    sizes = [f.size or 0 for f in files]
-    if not sizes:
+    Single pass with running counters: the fractions are simple averages, so
+    two ``statistics.mean()`` passes over a materialized sizes list are
+    replaced by one iteration without any intermediate list.
+    """
+    total = 0
+    small_count = 0
+    large_count = 0
+    for f in files:
+        size = f.size or 0
+        total += 1
+        if size < 1_000_000:  # < 1 MB
+            small_count += 1
+        if size > 256_000_000:  # > 256 MB
+            large_count += 1
+
+    if total == 0:
         return QueueProfile.MIXED
 
-    small_frac = mean(s < 1_000_000 for s in sizes)  # < 1 MB
-    large_frac = mean(s > 256_000_000 for s in sizes)  # > 256 MB
+    small_frac = small_count / total
+    large_frac = large_count / total
 
-    if len(sizes) >= 100 and small_frac >= 0.7:
+    if total >= 100 and small_frac >= 0.7:
         return QueueProfile.MANY_SMALL
-    if len(sizes) <= 20 and large_frac >= 0.5:
+    if total <= 20 and large_frac >= 0.5:
         return QueueProfile.FEW_LARGE
     return QueueProfile.MIXED
 

@@ -279,22 +279,28 @@ async def sync(lan_mode: bool = False) -> None:
             for p in existing_paths
             if (rp := relpath_in_bucket(p, CONFIG["LOCAL_BUCKET"]))
         }
+        # Causal provenance (ADR-0003): the marker inherits the path's
+        # recorded clock and is ticked by this peer.
+        minted = False
         for key, base_hash, vclock in list(sync_state.iter_merge_bases()):
             if key and key not in local_keys and key not in existing_keys:
                 from hsync_client.tombstones import record_deletion_by_key
 
-                # Causal provenance (ADR-0003): the marker inherits the path's
-                # recorded clock and is ticked by this peer.
                 record_deletion_by_key(
                     key,
                     sha256sum=base_hash or None,
                     origin_cid=_local_cid_or_none(),
                     prev_vclock=vclock,
                 )
-                # Re-fetch the union now that we just added a marker.
-                union = get_payload()
-                push_tombstones_remote(union)
-                tombstones = cast("dict[str, dict]", union)
+                minted = True
+        # Push the union once after all offline-deletion markers are minted:
+        # the intermediate per-marker pushes were redundant (the master only
+        # ever consumes the final union, and the push is best-effort by
+        # contract), and each push is a full HTTP round-trip.
+        if minted:
+            union = get_payload()
+            push_tombstones_remote(union)
+            tombstones = cast("dict[str, dict]", union)
 
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(
@@ -326,15 +332,34 @@ async def sync(lan_mode: bool = False) -> None:
             listed_abs.append(str(p) if p.is_absolute() else str(Path(CONFIG["LOCAL_BUCKET"]) / fp))
         sync_state.retain(listed_abs + existing_paths)
 
-        # Separate actions by type
-        downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
-        uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload]
-        deletes = [a.file for a in sync_actions if a.name == SyncActionName.delete]
-        nothing = [a.file for a in sync_actions if a.name == SyncActionName.nothing]
-        symlink_uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload_symlink]
-        symlink_downloads = [
-            a.file for a in sync_actions if a.name == SyncActionName.download_symlink
-        ]
+        # Partition actions by type in a single pass (one O(n) scan replaces
+        # eight separate list comprehensions over the same list).
+        downloads: list = []
+        uploads: list = []
+        deletes: list = []
+        nothing: list = []
+        symlink_uploads: list = []
+        symlink_downloads: list = []
+        tombstone_deletes: list = []
+        guarded_deletes: list = []
+        for a in sync_actions:
+            name = a.name
+            if name == SyncActionName.download:
+                downloads.append(a.file)
+            elif name == SyncActionName.upload:
+                uploads.append(a.file)
+            elif name == SyncActionName.delete:
+                deletes.append(a.file)
+                if getattr(a, "tombstone_confirmed", False):
+                    tombstone_deletes.append(a.file)
+                else:
+                    guarded_deletes.append(a.file)
+            elif name == SyncActionName.nothing:
+                nothing.append(a.file)
+            elif name == SyncActionName.upload_symlink:
+                symlink_uploads.append(a.file)
+            elif name == SyncActionName.download_symlink:
+                symlink_downloads.append(a.file)
 
         # Drop downloads that already failed permanently earlier in this
         # same cycle (e.g. two sync_actions entries for the same file, or a
@@ -345,27 +370,13 @@ async def sync(lan_mode: bool = False) -> None:
         for file in nothing:
             nothing_to_do(file)
 
-        # Split local deletions into tombstone-confirmed (backed by a deletion
-        # marker proving the file was removed elsewhere) and unconfirmed. The
-        # mass-deletion guard must never block a tombstone-confirmed deletion:
-        # a tombstone is positive proof the removal is intentional, so an empty
-        # master bucket is the expected outcome, not a suspect transient state.
+        # Deletions were already split into tombstone-confirmed (backed by a
+        # deletion marker proving the file was removed elsewhere) and
+        # unconfirmed in the single partition pass above. The mass-deletion
+        # guard must never block a tombstone-confirmed deletion: a tombstone
+        # is positive proof the removal is intentional, so an empty master
+        # bucket is the expected outcome, not a suspect transient state.
         # Only unconfirmed deletions are subject to the guard.
-        tombstone_deletes = [
-            a.file
-            for a in sync_actions
-            if a.name == SyncActionName.delete and getattr(a, "tombstone_confirmed", False)
-        ]
-        guarded_deletes = [
-            a.file
-            for a in sync_actions
-            if a.name == SyncActionName.delete and not getattr(a, "tombstone_confirmed", False)
-        ]
-
-        # Mass-deletion guard: a master that transiently exposes an empty or
-        # wrong bucket must not wipe valid local data in one cycle. Applies
-        # only to unconfirmed deletions; tombstone-confirmed deletions are
-        # already split out and proceed unconditionally.
         blocked, reason = _mass_deletion_blocked(
             len(guarded_deletes), len(local_files), len(remote_files)
         )
@@ -766,7 +777,7 @@ def get_files_local() -> list[dict]:
     Returns:
         List of file metadata dictionaries.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Check if local directory exists before walking
     if not Path(CONFIG["LOCAL_BUCKET"]).exists():
@@ -820,10 +831,13 @@ def get_files_local() -> list[dict]:
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all file metadata fetches in parallel
-        futures = {executor.submit(_get_single_file_metadata, fp): fp for fp in file_paths}
+        futures = [executor.submit(_get_single_file_metadata, fp) for fp in file_paths]
 
-        # Collect results as they complete
-        for future in futures:
+        # Collect results as they complete: as_completed avoids head-of-line
+        # blocking on the first submitted (and potentially slowest) hash and
+        # keeps every worker busy for the whole batch. The dict key in the old
+        # future->path mapping was never read.
+        for future in as_completed(futures):
             result = future.result()
             if result:
                 file_list.append(result)
