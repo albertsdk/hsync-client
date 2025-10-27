@@ -434,6 +434,11 @@
             <span data-i18n="field.retry_max_wait">Retry max wait (s, empty = auto)</span>
             <input type="number" name="HSYNC_TRANSFER_RETRY_MAX_WAIT" id="HSYNC_TRANSFER_RETRY_MAX_WAIT" min="0.1" step="0.1">
         </label>
+        <label class="hsync-label">
+            <span data-i18n="field.ntp_hosts">NTP hosts (comma-separated; used for LAN time synchronisation)</span>
+            <input type="text" name="HSYNC_NTP_HOSTS" id="HSYNC_NTP_HOSTS"
+                   placeholder="pool.ntp.org,time.cloudflare.com,time.google.com">
+        </label>
     </div>
 
     <!-- Actions ---------------------------------------------------- -->

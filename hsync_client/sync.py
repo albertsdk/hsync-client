@@ -23,6 +23,7 @@ from time import monotonic
 from traceback import print_tb
 from typing import cast
 
+from hsync_common.clock import clamp_incoming_corrected_mtime
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.file import (
     File,
@@ -1063,9 +1064,10 @@ def get_sync_actions(
     Determine sync actions by comparing local and remote file lists.
 
     Uses the causal vector-clock matrix (ADR-0022): content identity is
-    checked first (hash), then causal dominance via the vector clocks, then a
-    deterministic SHA-256 tie-break on true divergence. The wall clock is
-    never consulted, so clock skew cannot cause an incorrect direction.
+    checked first (hash), then causal dominance via the vector clocks, then
+    the corrected-mtime tie-break on true divergence (ADR-0023) with the
+    deterministic SHA-256 fallback. The raw wall clock is never consulted,
+    so clock skew cannot cause an incorrect direction.
 
     Args:
         remote_files: List of file metadata from server.
@@ -1148,20 +1150,29 @@ def get_sync_actions(
             # Persistence happens only after a successful sync (merge_and_record).
             eff = sync_state.local_version_for_compare(abs_local, local_file.sha256sum)
             local_vclock = eff["vclock"] if eff else None
+            local_corrected = eff.get("corrected_mtime", 0) if eff else 0
             base_hash = sync_state.get_base_hash(abs_local)
             # Extract the remote advertised version (absent ⇒ empty clock).
             remote_version = remote_file_info.get("version")
             if isinstance(remote_version, dict):
                 parsed = parse_version_info(remote_version)
                 remote_vclock = parsed["vclock"] if parsed else None
+                remote_corrected = (
+                    int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
+                    if parsed
+                    else 0
+                )
             else:
                 remote_vclock = None
+                remote_corrected = 0
             action, timedelta = _compare_files(
                 remote_file,
                 local_file,
                 local_vclock,
                 remote_vclock,
                 base_hash,
+                local_corrected_mtime=int(local_corrected),
+                remote_corrected_mtime=int(remote_corrected),
             )
 
             # A download with timedelta == 0 is a conflict_download: the remote
@@ -1293,13 +1304,16 @@ def _compare_files(
     local_vclock: dict[str, int] | None,
     remote_vclock: dict[str, int] | None,
     base_hash: str | None = None,
+    local_corrected_mtime: int = 0,
+    remote_corrected_mtime: int = 0,
 ) -> tuple[SyncActionName, int]:
     """
     Compare two files using the causal vector-clock matrix (ADR-0022).
 
-    Content identity is checked first (hash), then causal dominance, then a
-    deterministic SHA-256 tie-break on true divergence. The wall clock is
-    never consulted.
+    Content identity is checked first (hash), then causal dominance, then the
+    corrected-mtime tie-break on true divergence (ADR-0023), with the
+    deterministic SHA-256 fallback when either corrected mtime is unknown or
+    the two tie. The raw wall clock is never consulted.
 
     Args:
         remote_file: File metadata from remote/server.
@@ -1307,6 +1321,8 @@ def _compare_files(
         local_vclock: Stored local clock (honest via self-record, §3.4.7).
         remote_vclock: Advertised remote clock (None ⇒ empty).
         base_hash: Last-synced common-ancestor content hash, if known.
+        local_corrected_mtime: Corrected mtime of the local version (0 ⇒ unknown).
+        remote_corrected_mtime: Corrected mtime of the remote version (0 ⇒ unknown).
 
     Returns:
         Tuple of (action, timedelta). ``timedelta == 0`` flags a conflict
@@ -1318,6 +1334,8 @@ def _compare_files(
         remote_file.sha256sum or None,
         remote_vclock,
         base_hash,
+        local_corrected_mtime=local_corrected_mtime,
+        remote_corrected_mtime=remote_corrected_mtime,
     )
     if decision is SyncDecision.in_sync:
         return SyncActionName.nothing, 0
@@ -1495,14 +1513,22 @@ def update_file(data: dict) -> None:
             # wall clock is never consulted.
             remote_version = data.get("version")
             remote_vclock = None
+            remote_corrected = 0
             if isinstance(remote_version, dict):
                 parsed = parse_version_info(remote_version)
                 remote_vclock = parsed["vclock"] if parsed else None
+                remote_corrected = (
+                    int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
+                    if parsed
+                    else 0
+                )
             local_vclock = None
+            local_corrected = 0
             base_hash = None
             if file.filepath:
                 eff = sync_state.local_version_for_compare(file.filepath, file.sha256sum)
                 local_vclock = eff["vclock"] if eff else None
+                local_corrected = eff.get("corrected_mtime", 0) if eff else 0
                 base_hash = sync_state.get_base_hash(file.filepath)
             decision = resolve_three_way(
                 file.sha256sum or None,
@@ -1510,6 +1536,8 @@ def update_file(data: dict) -> None:
                 file_data.sha256sum or None,
                 remote_vclock,
                 base_hash,
+                local_corrected_mtime=int(local_corrected),
+                remote_corrected_mtime=int(remote_corrected),
             )
             # conflict_upload: local wins tie-break — skip the download; the
             # local change is uploaded on the next reconcile. No conflict copy

@@ -81,12 +81,12 @@ from hsync_client.utils import (
 )
 
 
-def _resolve_delta_version_fields(file: File) -> tuple[str, str]:
-    """Return ``(vclock_json, version_id)`` for the delta-apply metadata.
+def _resolve_delta_version_fields(file: File) -> tuple[str, str, int]:
+    """Return ``(vclock_json, version_id, corrected_mtime)`` delta-apply fields.
 
     Delegates to :func:`sync_state.upload_version_fields` (the SSOT shared with
     the full-upload path) so both transfer channels advertise the same
-    effective causal version.
+    effective causal version and the ADR-0023 corrected mtime.
     """
     try:
         if file.filepath:
@@ -98,7 +98,7 @@ def _resolve_delta_version_fields(file: File) -> tuple[str, str]:
             return upload_version_fields(abs_path, file.sha256sum)
     except Exception as e:  # pragma: no cover - bookkeeping must never break delta
         log.debug(f'Could not resolve delta version for "{file.filepath}": {e}')
-    return "{}", ""
+    return "{}", "", 0
 
 
 class DeltaTransferError(Exception):
@@ -274,11 +274,12 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         payload = compress_data(literals)
         compressed = True
 
-    # Attach the effective causal version (vclock + version_id) so the
-    # server/master can arbitrate the delta-apply against its stored version
-    # (ADR-0022). The server's delta/apply.py reads meta["vclock"] /
-    # meta["version_id"].
-    vclock_json, version_id = _resolve_delta_version_fields(file)
+    # Attach the effective causal version (vclock + version_id + the ADR-0023
+    # corrected mtime) so the server/master can arbitrate the delta-apply
+    # against its stored version (ADR-0022/ADR-0023). The server's
+    # delta/apply.py reads meta["vclock"] / meta["version_id"] /
+    # meta["corrected_mtime"].
+    vclock_json, version_id, corrected_mtime = _resolve_delta_version_fields(file)
     metadata = {
         "cid": CONFIG["CID"],
         "base_sha256": ctx.base_hash,
@@ -291,6 +292,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         "ops": [op.to_dict() for op in ops],
         "vclock": vclock_json,
         "version_id": version_id,
+        "corrected_mtime": corrected_mtime,
     }
     apply_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/apply"
     response = post(

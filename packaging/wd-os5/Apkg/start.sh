@@ -91,6 +91,7 @@ fi
 : "${HSYNC_RECONNECT_DELAY:=}"
 : "${HSYNC_TRANSFER_RETRY_MIN_WAIT:=}"
 : "${HSYNC_TRANSFER_RETRY_MAX_WAIT:=}"
+: "${HSYNC_NTP_HOSTS:=}"
 
 mkdir -p "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}" "${HSYNC_PATH}"
 
@@ -149,10 +150,17 @@ esac
 # ---------------------------------------------------------------------------
 # Launch under nohup. Secrets are exported (not passed as flags) so the binary
 # picks them up via HSYNC_API_KEY / HSYNC_LAN_KEY without leaking them through
-# ``ps``.
+# ``ps``. HSYNC_NTP_HOSTS is exported too because it is read from the process
+# environment (never a CLI flag) by the client's SNTP probe (ADR-0023).
+#
+# NOTE: start.sh is deliberately "allexport-free": every variable the daemon
+# must see is exported *explicitly* here. If you add an env-driven feature,
+# add its export below as well — a sourced variable that is never exported is
+# invisible to the nohup'd binary.
 # ---------------------------------------------------------------------------
 export HSYNC_API_KEY
 export HSYNC_LAN_KEY
+export HSYNC_NTP_HOSTS
 
 cd "${APKG_PATH}"
 nohup "${HSYNC_BIN}" "$@" >> "${HSYNC_LOG_FILE}" 2>&1 &

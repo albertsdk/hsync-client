@@ -19,8 +19,10 @@ synced base from the parallel transfer thread pool; persistence is decoupled
 from mutation so a full sync flushes once instead of per file.
 """
 
+import os
 import threading
 
+from hsync_common.clock import correct_mtime
 from hsync_common.constants import HSYNCSTATE_FILENAME
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.models.version import SyncStateStore, merge_vclocks, new_version_id, tick_vclock
@@ -72,17 +74,30 @@ def record_base(
     version_id: str | None = None,
     origin_cid: str | None = None,
     vclock: dict[str, int] | None = None,
+    corrected_mtime: int | None = None,
 ) -> None:
     """Record (in memory) the agreed base version for an absolute path.
 
     Call :func:`flush` to persist. Recording is a no-op for an empty path or
-    hash so a failed hash computation never poisons the store.
+    hash so a failed hash computation never poisons the store. When
+    ``corrected_mtime`` is ``None``/``0`` it falls back to the corrected mtime
+    of the file currently on disk.
     """
     relpath = relpath_in_bucket(abs_path, _bucket_dir())
     if not relpath or not base_hash:
         return
+    resolved_corrected = corrected_mtime
+    if not resolved_corrected:
+        resolved_corrected = _corrected_mtime_of(abs_path)
     with _lock:
-        get_sync_state_store().record(relpath, base_hash, version_id, origin_cid, vclock=vclock)
+        get_sync_state_store().record(
+            relpath,
+            base_hash,
+            version_id,
+            origin_cid,
+            vclock=vclock,
+            corrected_mtime=resolved_corrected or 0,
+        )
 
 
 def clear_base(abs_path: str) -> None:
@@ -131,6 +146,14 @@ def _local_cid() -> str:
     return str(CONFIG.get("CID", "") or "")
 
 
+def _corrected_mtime_of(abs_path: str) -> int:
+    """Corrected mtime of the file on disk, or 0 when unreadable/absent."""
+    try:
+        return correct_mtime(int(os.stat(abs_path).st_mtime))
+    except OSError:
+        return 0
+
+
 def local_version_for_compare(abs_path: str, current_hash: str | None):
     """Return the *effective* version for comparison without persisting (pure).
 
@@ -156,6 +179,7 @@ def local_version_for_compare(abs_path: str, current_hash: str | None):
                         "origin_cid": cid,
                         "ts": 0,
                         "vclock": tick_vclock(None, cid),
+                        "corrected_mtime": _corrected_mtime_of(abs_path),
                     }
             return None
         if current_hash and entry["base_hash"] != current_hash:
@@ -167,6 +191,7 @@ def local_version_for_compare(abs_path: str, current_hash: str | None):
                     "origin_cid": cid,
                     "ts": entry["ts"],
                     "vclock": tick_vclock(entry["vclock"], cid),
+                    "corrected_mtime": _corrected_mtime_of(abs_path),
                 }
         return entry
 
@@ -196,6 +221,7 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
             vclock=tick_vclock(entry["vclock"] if entry else None, cid),
             version_id=new_version_id(),
             origin_cid=cid,
+            corrected_mtime=_corrected_mtime_of(abs_path),
         )
 
 
@@ -209,28 +235,40 @@ def get_vclock(abs_path: str) -> dict[str, int] | None:
         return entry["vclock"] if entry else None
 
 
-def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str, str]:
-    """Return ``(vclock_json, version_id)`` wire form values for an upload.
+def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str, str, int]:
+    """Return ``(vclock_json, version_id, corrected_mtime)`` upload form values.
 
     Shared by the full-upload (``transfer.py``) and delta-apply
     (``delta_transfer.py``) paths so both advertise the same effective causal
-    version. Returns ``("{}", "")`` when no version is recorded and the content
-    is absent (the server treats an empty clock natively).
+    version and the ADR-0023 corrected mtime. Returns ``("{}", "", 0)`` when
+    no version is recorded and the content is absent (the server treats an
+    empty clock and a 0 mtime natively).
     """
     from json import dumps
 
     eff = local_version_for_compare(abs_path, current_hash)
     if eff is not None:
-        return dumps(eff["vclock"]), eff.get("version_id", "") or ""
-    return "{}", ""
+        return (
+            dumps(eff["vclock"]),
+            eff.get("version_id", "") or "",
+            int(eff.get("corrected_mtime", 0) or 0),
+        )
+    return "{}", "", 0
 
 
-def merge_and_record(abs_path: str, base_hash: str, remote_vclock: dict[str, int] | None) -> None:
+def merge_and_record(
+    abs_path: str,
+    base_hash: str,
+    remote_vclock: dict[str, int] | None,
+    remote_corrected_mtime: int = 0,
+) -> None:
     """Record the agreed version with a merged clock (convergence invariant D11).
 
     The recorded clock is ``merge(local_effective, remote_advertised)``: in
     dominance it equals the dominant clock, in conflict it includes both
-    histories so third nodes recognise either side as an ancestor.
+    histories so third nodes recognise either side as an ancestor. When
+    ``remote_corrected_mtime`` is unknown (0) the agreed version falls back to
+    the corrected mtime of the file now on disk.
     """
     relpath = relpath_in_bucket(abs_path, _bucket_dir())
     if not relpath or not base_hash:
@@ -240,10 +278,16 @@ def merge_and_record(abs_path: str, base_hash: str, remote_vclock: dict[str, int
         entry = store.get(relpath)
         local_vclock = entry["vclock"] if entry else {}
         merged = merge_vclocks(local_vclock, remote_vclock)
+        corrected = remote_corrected_mtime
+        if corrected <= 0:
+            # Unknown remote corrected time: the file now on disk holds the
+            # agreed content, so its corrected mtime is the honest record.
+            corrected = _corrected_mtime_of(abs_path)
         store.record(
             relpath,
             base_hash=base_hash,
             vclock=merged,
             version_id=entry["version_id"] if entry else new_version_id(),
             origin_cid=entry["origin_cid"] if entry else None,
+            corrected_mtime=corrected,
         )

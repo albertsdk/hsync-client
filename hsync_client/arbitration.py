@@ -50,11 +50,15 @@ class ArbitrationResult:
     ``record_vclock`` is the clock the master should record on accept
     (``merge_vclocks(incoming_vclock, stored_vclock)`` per the convergence
     invariant D11).
+    ``record_corrected_mtime`` is the corrected mtime (ADR-0023) the master
+    records alongside: the incoming value on accept, the stored value on
+    reject, 0 when unknown.
     ``loser_cid`` is the author of the losing content for conflict-copy naming.
     """
 
     outcome: ArbitrationOutcome
     record_vclock: dict[str, int]
+    record_corrected_mtime: int = 0
     loser_cid: str | None = None
 
 
@@ -69,6 +73,7 @@ def arbitrate_upload(
     incoming_version_id: str,
     incoming_origin_cid: str | None,
     disk_hash: str | None,
+    incoming_corrected_mtime: int = 0,
 ) -> ArbitrationResult:
     """Arbitrate an incoming slave upload against the stored version.
 
@@ -79,6 +84,8 @@ def arbitrate_upload(
         incoming_version_id: Version id from the uploader.
         incoming_origin_cid: Origin cid from the uploader (may be None).
         disk_hash: SHA-256 of the current file on disk (None if no file).
+        incoming_corrected_mtime: ADR-0023 corrected mtime advertised by the
+            uploader (0 ⇒ unknown ⇒ the hash fallback applies).
 
     Returns:
         The :class:`ArbitrationResult`; the caller writes the file / copy /
@@ -122,28 +129,34 @@ def arbitrate_upload(
     incoming_vclock = incoming_info["vclock"] if incoming_info else {}
     effective_origin = incoming_info["origin_cid"] if incoming_info else incoming_origin_cid
 
+    stored_corrected_mtime = int(stored.get("corrected_mtime", 0) or 0) if stored else 0
     decision = resolve_three_way(
         incoming_hash,
         incoming_vclock,
         stored_hash,
         stored_vclock,
         None,
+        local_corrected_mtime=incoming_corrected_mtime,
+        remote_corrected_mtime=stored_corrected_mtime,
     )
 
     if decision is SyncDecision.in_sync:
         return ArbitrationResult(
             outcome=ArbitrationOutcome.accepted,
             record_vclock=merge_vclocks(incoming_vclock, stored_vclock),
+            record_corrected_mtime=incoming_corrected_mtime or stored_corrected_mtime,
         )
     if decision is SyncDecision.upload:
         return ArbitrationResult(
             outcome=ArbitrationOutcome.accepted,
             record_vclock=merge_vclocks(incoming_vclock, stored_vclock),
+            record_corrected_mtime=incoming_corrected_mtime,
         )
     if decision is SyncDecision.download:
         return ArbitrationResult(
             outcome=ArbitrationOutcome.superseded,
             record_vclock=stored_vclock or {},
+            record_corrected_mtime=stored_corrected_mtime,
             loser_cid=None,
         )
     # conflict_upload: incoming wins tie-break ⇒ accept, preserve stored loser.
@@ -152,12 +165,14 @@ def arbitrate_upload(
         return ArbitrationResult(
             outcome=ArbitrationOutcome.accepted_conflict_won,
             record_vclock=merge_vclocks(incoming_vclock, stored_vclock),
+            record_corrected_mtime=incoming_corrected_mtime,
             loser_cid=loser_cid,
         )
     # conflict_download
     return ArbitrationResult(
         outcome=ArbitrationOutcome.conflict_lost,
         record_vclock=stored_vclock or {},
+        record_corrected_mtime=stored_corrected_mtime,
         loser_cid=effective_origin,
     )
 

@@ -50,6 +50,7 @@ const KEYS = [
     'HSYNC_MAX_INBOUND_SIZE_MB', 'HSYNC_VERBOSE',
     'HSYNC_AUTOTUNE', 'HSYNC_HTTP_TIMEOUT', 'HSYNC_RECONNECT_DELAY',
     'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
+    'HSYNC_NTP_HOSTS',
 ];
 
 $lines = ['# HSYNC configuration — written by config_set.php on ' . gmdate('Y-m-d\TH:i:s\Z')];

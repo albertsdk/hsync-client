@@ -110,6 +110,20 @@ When file logging is enabled with `-o/--output`:
 Use `--no-autotune` or `HSYNC_AUTOTUNE=false` to disable auto-tuning and use
 built-in static defaults.
 
+## Clock synchronisation (NTP)
+
+In LAN mode there is no server at startup, so the client measures its clock
+offset against public SNTP servers. The offset powers the chronological
+conflict tie-break (`corrected_mtime`, see
+[Conflict Resolution](conflict-resolution.md)): the most recent
+offset-corrected edit keeps the original path. When every probe fails the
+client records offset 0 (raw local time) and synchronisation proceeds
+normally.
+
+| Variable | Description | Default |
+|---|---|---|
+| `HSYNC_NTP_HOSTS` | Comma-separated SNTP servers, tried in order; entries may carry a port override (`host:port`) | `pool.ntp.org,time.cloudflare.com,time.google.com` |
+
 ## Tuning for containers and VMs
 
 | Variable | Description | Default |

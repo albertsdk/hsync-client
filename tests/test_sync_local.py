@@ -9,6 +9,7 @@
 import hashlib
 import os
 import time
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -1182,6 +1183,11 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _ordered_texts(a: str, b: str) -> tuple[str, str]:
+    """Return ``(lower_hash_text, higher_hash_text)`` for two payloads."""
+    return (a, b) if _sha(a) < _sha(b) else (b, a)
+
+
 class TestThreeWayMerge:
     """get_sync_actions resolves direction from a recorded base, clock-independently."""
 
@@ -1198,21 +1204,40 @@ class TestThreeWayMerge:
             "permissions": "644",
         }
 
-    def _run(self, tmp_path, *, local_text, remote_sha, base_hash, remote_vclock=None):
-        """Drive get_sync_actions with equal mtimes so only the base/vclock decides."""
+    def _run(
+        self,
+        tmp_path,
+        *,
+        local_text,
+        remote_sha,
+        base_hash,
+        remote_vclock=None,
+        local_corrected_mtime=None,
+        remote_corrected_mtime=None,
+    ):
+        """Drive get_sync_actions with equal mtimes so only the base/vclock decides.
+
+        ``local_corrected_mtime``/``remote_corrected_mtime`` inject the ADR-0023
+        corrected values (local via the sync_state helper, remote via the
+        advertised ``version`` payload) so the chronological tie-break can be
+        exercised deterministically without touching the real clock.
+        """
         local_file = tmp_path / "f.txt"
         local_file.write_text(local_text)
         lf = File.get(str(local_file))
         assert lf is not None
         remote = self._remote("f.txt", remote_sha, lf.mtime or 0)
+        version: dict = {}
         if remote_vclock is not None:
-            remote["version"] = {
-                "vclock": remote_vclock,
-                "version_id": "vid",
-                "origin_cid": "TestClientB1234567890",
-                "ts": 0,
-            }
-        with (
+            version["vclock"] = remote_vclock
+            version["version_id"] = "vid"
+            version["origin_cid"] = "TestClientB1234567890"
+            version["ts"] = 0
+        if remote_corrected_mtime is not None:
+            version["corrected_mtime"] = remote_corrected_mtime
+        if version:
+            remote["version"] = version
+        patches = [
             patch(
                 "hsync_client.sync.CONFIG",
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
@@ -1221,7 +1246,17 @@ class TestThreeWayMerge:
                 "hsync_client.sync_state.CONFIG",
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
             ),
-        ):
+        ]
+        if local_corrected_mtime is not None:
+            patches.append(
+                patch(
+                    "hsync_client.sync_state._corrected_mtime_of",
+                    return_value=local_corrected_mtime,
+                )
+            )
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
             if base_hash is not None:
                 ss_mod.record_base(str(local_file), base_hash)
             result = get_sync_actions([remote], [lf.to_dict()], tombstones={})
@@ -1303,6 +1338,67 @@ class TestThreeWayMerge:
         else:
             assert result[0].name == SyncActionName.download
             assert getattr(result[0], "conflict", False) is True
+
+    def test_corrected_mtime_local_newer_wins_despite_lower_hash(self, tmp_path):
+        """ADR-0023: a newer corrected mtime beats the hash fallback.
+
+        The local content is chosen so its SHA-256 sorts LOWER than the
+        remote's (the hash fallback alone would make the remote win), yet the
+        local side wins the original path because its corrected mtime is the
+        highest — the matrix never consults the raw wall clock.
+        """
+        low_text, high_text = _ordered_texts("alpha", "omega")
+        _, result, _ = self._run(
+            tmp_path,
+            local_text=low_text,
+            remote_sha=_sha(high_text),
+            base_hash=_sha("BASE"),
+            remote_vclock={"TestClientB1234567890": 1},
+            local_corrected_mtime=200,
+            remote_corrected_mtime=100,
+        )
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.upload
+        assert getattr(result[0], "conflict", False) is False
+
+    def test_corrected_mtime_remote_newer_wins_despite_lower_hash(self, tmp_path):
+        """ADR-0023: the newer remote corrected mtime wins the path (conflict copy).
+
+        The remote content's hash sorts LOWER, so the hash fallback alone
+        would make the local side win; the newer remote corrected mtime
+        overrides it.
+        """
+        low_text, high_text = _ordered_texts("alpha", "omega")
+        _, result, _ = self._run(
+            tmp_path,
+            local_text=high_text,
+            remote_sha=_sha(low_text),
+            base_hash=_sha("BASE"),
+            remote_vclock={"TestClientB1234567890": 1},
+            local_corrected_mtime=100,
+            remote_corrected_mtime=200,
+        )
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
+        assert getattr(result[0], "conflict", False) is True
+
+    def test_missing_local_corrected_mtime_falls_back_to_hash(self, tmp_path):
+        """One side without a corrected mtime degrades to the hash fallback."""
+        low_text, high_text = _ordered_texts("alpha", "omega")
+        _, result, _ = self._run(
+            tmp_path,
+            local_text=high_text,  # higher hash ⇒ hash fallback would upload
+            remote_sha=_sha(low_text),
+            base_hash=_sha("BASE"),
+            remote_vclock={"TestClientB1234567890": 1},
+            local_corrected_mtime=0,  # known-zero on the wire ⇒ fallback
+            remote_corrected_mtime=200,
+        )
+        assert len(result) == 1
+        # The remote corrected mtime is known but the local one is not: the
+        # deterministic hash fallback decides, never the partial mtime.
+        assert result[0].name == SyncActionName.upload
+        assert getattr(result[0], "conflict", False) is False
 
 
 class TestClientSyncStateModule:

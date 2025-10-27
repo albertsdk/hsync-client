@@ -22,6 +22,7 @@ from time import sleep as time_sleep
 from typing import cast
 
 import zstandard as zstd
+from hsync_common.clock import clamp_incoming_corrected_mtime
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
@@ -96,7 +97,10 @@ def _emit_transfer_failed(op: str, filepath: str, message: str) -> None:
 
 
 def _record_synced_base(
-    file: File, vclock: dict[str, int] | None = None, version_id: str | None = None
+    file: File,
+    vclock: dict[str, int] | None = None,
+    version_id: str | None = None,
+    corrected_mtime: int = 0,
 ) -> None:
     """Record the just-synced content hash as the new common-ancestor base.
 
@@ -131,9 +135,16 @@ def _record_synced_base(
                     Path(CONFIG["LOCAL_BUCKET"]) / file.filepath
                 )
             if vclock is not None:
-                merge_and_record(abs_path, file.sha256sum, vclock)
+                merge_and_record(
+                    abs_path, file.sha256sum, vclock, remote_corrected_mtime=corrected_mtime
+                )
             else:
-                record_base(abs_path, file.sha256sum, version_id=version_id)
+                record_base(
+                    abs_path,
+                    file.sha256sum,
+                    version_id=version_id,
+                    corrected_mtime=corrected_mtime,
+                )
     except Exception as e:  # pragma: no cover - bookkeeping must never break sync
         log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
 
@@ -414,7 +425,11 @@ def _download_file_attempt(file: File) -> None:
                 utime(full_save_path, (file.mtime, file.mtime))
             if file.permissions:
                 set_permissions(full_save_path, file.permissions)
-            _record_synced_base(file, vclock=_remote_vclock(file))
+            _record_synced_base(
+                file,
+                vclock=_remote_vclock(file),
+                corrected_mtime=_remote_corrected_mtime(file),
+            )
             return
         except (DeltaTransferError, OSError) as exc:
             log.warning(f'Delta download for "{file.filepath}" fell back to full transfer ({exc})')
@@ -634,7 +649,11 @@ def _download_file_attempt(file: File) -> None:
             set_permissions(full_save_path, file.permissions)
 
         # Local now matches the remote content: remember it as the merge base.
-        _record_synced_base(file, vclock=_remote_vclock(file))
+        _record_synced_base(
+            file,
+            vclock=_remote_vclock(file),
+            corrected_mtime=_remote_corrected_mtime(file),
+        )
 
     except PermissionError as e:
         log.error(f'Permission denied saving "{file.filepath}": {e}')
@@ -1026,6 +1045,12 @@ def _resolve_local_vclock(file: File) -> dict[str, int] | None:
     return eff["vclock"] if eff else None
 
 
+def _resolve_local_corrected_mtime(file: File) -> int:
+    """Return the effective local corrected mtime for *file*, or 0."""
+    eff = _resolve_effective_version(file)
+    return int(eff.get("corrected_mtime", 0) or 0) if eff else 0
+
+
 def _remote_vclock(file: File) -> dict[str, int] | None:
     """Return the remote-advertised vclock attached to *file*, if any.
 
@@ -1041,13 +1066,29 @@ def _remote_vclock(file: File) -> dict[str, int] | None:
     return None
 
 
-def _upload_version_fields(file: File) -> tuple[str, str]:
-    """Return ``(vclock_json, version_id)`` form values for an upload.
+def _remote_corrected_mtime(file: File) -> int:
+    """Return the remote-advertised corrected mtime for *file*, or 0.
+
+    The receiver-side guard of ADR-0023 applies: a far-future peer value is
+    clamped against this process's corrected clock, so a malicious peer cannot
+    win every tie-break (conflict engineering).
+    """
+    version = getattr(file, "version", None)
+    if isinstance(version, dict):
+        raw = version.get("corrected_mtime")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+            return int(clamp_incoming_corrected_mtime(float(raw)))
+    return 0
+
+
+def _upload_version_fields(file: File) -> tuple[str, str, int]:
+    """Return ``(vclock_json, version_id, corrected_mtime)`` upload form values.
 
     The uploaded version is the *effective* local version: the stored clock
     ticked by this node when the content differs from the recorded base (the
-    same honest value ``sync_state.local_version_for_compare`` produces). The
-    server arbitrates this against its stored version (ADR-0022).
+    same honest value ``sync_state.local_version_for_compare`` produces), plus
+    the ADR-0023 corrected mtime. The server arbitrates this against its stored
+    version (ADR-0022).
     """
     try:
         from hsync_client.sync_state import upload_version_fields
@@ -1061,36 +1102,54 @@ def _upload_version_fields(file: File) -> tuple[str, str]:
             return upload_version_fields(abs_path, file.sha256sum)
     except Exception as e:  # pragma: no cover - bookkeeping must never break upload
         log.debug(f'Could not resolve upload version for "{file.filepath}": {e}')
-    return "{}", ""
+    return "{}", "", 0
 
 
 def _record_201_upload(file: File, response) -> None:
     """Record the merge base after a 201 upload success.
 
-    The server's 201 may carry a ``resolution`` field with the merged vclock to
-    record (convergence invariant D11); when absent, the local effective clock
-    is recorded via ``merge_and_record``.
+    The server's 201 may carry a ``version`` field with the recorded causal
+    version (merged vclock + ADR-0023 corrected mtime) to mirror locally
+    (convergence invariant D11); when absent, the local effective clock is
+    recorded via ``merge_and_record``.
     """
     record_vclock: dict[str, int] | None = None
+    record_corrected: int = 0
     try:
         payload = response.json() if response.text else None
         if isinstance(payload, dict):
+            # Both shapes are accepted: the canonical "version" object, and the
+            # legacy "resolution" dict some hubs used to return.
+            version = payload.get("version")
             resolution = payload.get("resolution")
-            if isinstance(resolution, dict):
-                vclock_raw = resolution.get("vclock")
-                if isinstance(vclock_raw, dict):
+            for container in (version, resolution):
+                if not isinstance(container, dict):
+                    continue
+                vclock_raw = container.get("vclock")
+                if isinstance(vclock_raw, dict) and record_vclock is None:
                     record_vclock = {
                         str(k): int(v)
                         for k, v in vclock_raw.items()
                         if isinstance(v, int) and not isinstance(v, bool)
                     }
+                raw_corrected = container.get("corrected_mtime")
+                if (
+                    isinstance(raw_corrected, int)
+                    and not isinstance(raw_corrected, bool)
+                    and not record_corrected
+                ):
+                    record_corrected = raw_corrected
     except (ValueError, TypeError):
         pass
     if record_vclock is not None:
-        _record_synced_base(file, vclock=record_vclock)
+        _record_synced_base(file, vclock=record_vclock, corrected_mtime=record_corrected)
     else:
         # Fall back to the local effective clock (merge with stored).
-        _record_synced_base(file, vclock=_resolve_local_vclock(file))
+        _record_synced_base(
+            file,
+            vclock=_resolve_local_vclock(file),
+            corrected_mtime=_resolve_local_corrected_mtime(file),
+        )
 
 
 def _handle_upload_conflict_response(file: File, response) -> bool:
@@ -1159,7 +1218,11 @@ def _upload_file_attempt(file: File) -> None:
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
-                _record_synced_base(file, vclock=_resolve_local_vclock(file))
+                _record_synced_base(
+                    file,
+                    vclock=_resolve_local_vclock(file),
+                    corrected_mtime=_resolve_local_corrected_mtime(file),
+                )
                 return
             except (DeltaTransferError, OSError) as exc:
                 log.warning(
@@ -1184,7 +1247,7 @@ def _upload_file_attempt(file: File) -> None:
             )
 
         # Build form data with file metadata
-        vclock_json, version_id = _upload_version_fields(file)
+        vclock_json, version_id, corrected_mtime = _upload_version_fields(file)
         data = {
             "cid": CONFIG["CID"],
             "path": path,
@@ -1196,6 +1259,7 @@ def _upload_file_attempt(file: File) -> None:
             "offset": offset,
             "vclock": vclock_json,
             "version_id": version_id,
+            "corrected_mtime": corrected_mtime,
         }
 
         log.debug(f"Upload file: {file.filepath}")

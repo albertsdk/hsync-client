@@ -34,6 +34,7 @@ from shutil import disk_usage
 from typing import IO
 from urllib.parse import parse_qs, urlparse
 
+from hsync_common.clock import clamp_incoming_corrected_mtime
 from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.models.dir import is_hidden_dir
@@ -960,6 +961,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                             "version_id": eff.get("version_id", ""),
                             "origin_cid": eff.get("origin_cid"),
                             "ts": eff.get("ts", 0),
+                            "corrected_mtime": eff.get("corrected_mtime", 0),
                         }
 
                     # Apply path filter if specified
@@ -1414,6 +1416,19 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 parsed_vclock = json.loads(incoming_vclock_raw) if incoming_vclock_raw else None
             except (ValueError, TypeError):
                 parsed_vclock = None
+            # ADR-0023: the uploader's corrected mtime (0 ⇒ unknown ⇒ hash
+            # fallback). Receiver-side guard: a far-future peer value is
+            # clamped against the master's corrected clock so no device can
+            # win every tie-break (conflict engineering).
+            raw_corrected = form_fields.get("corrected_mtime", "0")
+            try:
+                incoming_corrected = int(raw_corrected)
+                if incoming_corrected < 0:
+                    incoming_corrected = 0
+            except (ValueError, TypeError):
+                incoming_corrected = 0
+            if incoming_corrected > 0:
+                incoming_corrected = int(clamp_incoming_corrected_mtime(float(incoming_corrected)))
 
             disk_hash = compute_sha256(dest_path) if Path(dest_path).exists() else None
 
@@ -1426,6 +1441,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 incoming_version_id=incoming_version_id,
                 incoming_origin_cid=cid if is_valid_cid(cid) else None,
                 disk_hash=disk_hash,
+                incoming_corrected_mtime=incoming_corrected,
             )
 
             if arb.outcome is ArbitrationOutcome.superseded:
@@ -1493,6 +1509,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     vclock=arb.record_vclock,
                     version_id=incoming_version_id or None,
                     origin_cid=cid if is_valid_cid(cid) else None,
+                    corrected_mtime=arb.record_corrected_mtime,
                 )
 
             if mtime or ctime:

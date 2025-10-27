@@ -34,10 +34,11 @@ to keep tests isolated.
 | `get_sync_state_store` | `sync_state.py:48` | cached per-bucket store (`_stores`, `_lock` RLock) |
 | `get_base_hash` | `:60` | read agreed base hash for a path |
 | `record_base` | `:69` | persist base after a successful sync |
-| `local_version_for_compare` | `:133` | pure (no mutation) effective version for the causal matrix: ticks the stored clock by this node's cid when content differs from the recorded base |
-| `merge_and_record` | `:211` | record agreed version with a merged clock (convergence D11) |
-| `upload_version_fields` | `:202` | SSOT `(vclock_json, version_id)` wire form for upload + delta-apply, shared by `transfer.py` and `delta_transfer.py` |
-| `note_local_edit` | `:173` | persist a self-recorded local edit (anti-aliasing invariant). **Deliberately NOT wired into the watcher**: a persistent pre-broadcast self-record would advance `base_hash` to the just-edited content, and if the subsequent upload fails the next reconcile would hit the base fast-path (`local == base` ⇒ download) and silently overwrite the local edit. The anti-aliasing guarantee is delivered by the **pure** `local_version_for_compare` tick at compare/upload time plus the post-success `record_base`/`merge_and_record` (upload accepted ⇒ store reflects the advertised clock) |
+| `_corrected_mtime_of` | `:170` | corrected mtime of the on-disk file through `hsync_common.clock.correct_mtime` (ADR-0023); 0 when unreadable |
+| `local_version_for_compare` | `:133` | pure (no mutation) effective version for the causal matrix: ticks the stored clock by this node's cid when content differs from the recorded base; carries `corrected_mtime` on the fresh/ticked copy |
+| `merge_and_record` | `:211` | record agreed version with a merged clock (convergence D11); records the remote corrected mtime, falling back to the disk file's when unknown |
+| `upload_version_fields` | `:202` | SSOT `(vclock_json, version_id, corrected_mtime)` 3-tuple wire form for upload + delta-apply, shared by `transfer.py` and `delta_transfer.py` |
+| `note_local_edit` | `:173` | persist a self-recorded local edit (anti-aliasing invariant), including the corrected mtime. **Deliberately NOT wired into the watcher**: a persistent pre-broadcast self-record would advance `base_hash` to the just-edited content, and if the subsequent upload fails the next reconcile would hit the base fast-path (`local == base` ⇒ download) and silently overwrite the local edit. The anti-aliasing guarantee is delivered by the **pure** `local_version_for_compare` tick at compare/upload time plus the post-success `record_base`/`merge_and_record` (upload accepted ⇒ store reflects the advertised clock) |
 | `get_vclock` | `:201` | read the stored vclock for a path |
 | `clear_base` | `:88` | drop base on delete |
 | `retain` | `:96` | GC bases not in the current path set |

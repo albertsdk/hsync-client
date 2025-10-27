@@ -38,6 +38,7 @@
     "field.reconnect_delay": "Ritardo riconnessione (s, 1-60, vuoto = auto)",
     "field.retry_min_wait": "Attesa minima retry (s, vuoto = auto)",
     "field.retry_max_wait": "Attesa massima retry (s, vuoto = auto)",
+    "field.ntp_hosts": "Server NTP (separati da virgola; usati per la sincronizzazione oraria in LAN)",
 
     "mode.lan": "LAN (peer-to-peer)",
     "mode.server": "Server (server HSYNC centrale)",

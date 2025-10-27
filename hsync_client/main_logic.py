@@ -970,6 +970,12 @@ def run_sync(
             # returning silently with a success exit code.
             sys.exit(1)
 
+        # Clock offset (ADR-0023): the server is the time authority; failures
+        # degrade to offset 0 and never block the run.
+        from hsync_client.timesync import probe_server_clock_offset
+
+        probe_server_clock_offset(effective_server_url, logger=log)
+
         # Reset bandwidth throttle state for this session
         reset_bandwidth_throttle()
 

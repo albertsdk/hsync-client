@@ -360,6 +360,15 @@ API key for authenticating with the server.
 .B HSYNC_LAN_KEY
 Shared secret for LAN mode peer authentication.
 .TP
+.B HSYNC_NTP_HOSTS
+Comma-separated list of SNTP servers, tried in order, used in LAN mode
+(no server at startup) to measure the clock offset for chronological
+conflict resolution with
+.IR corrected_mtime
+(default: pool.ntp.org,time.cloudflare.com,time.google.com). Entries may
+carry a port override (
+.IR host:port ).
+.TP
 .B HSYNC_MAX_CONCURRENT_TRANSFERS
 Maximum number of concurrent file transfers (default:
 .BR 5 ;
