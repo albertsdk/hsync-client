@@ -93,6 +93,40 @@ Yes. Delta transfer (rsync-style block sync) works in LAN mode when the
 master supports it. The slave sends block signatures and the master replies
 with only the changed blocks.
 
+## Device Identity
+
+**Q: What is the device ID and what is `HSYNC_DEVICE_DIR` for?**
+Every installation owns one persistent **device identity** (the same model as
+Syncthing's device IDs): a stable 21-character device ID plus the TLS keypair
+used for the LAN transport. Both live in the device directory, which defaults
+to `~/.local/state/hsync/device/` and can be overridden with
+`HSYNC_DEVICE_DIR`. The device ID is the anchor for TOFU fingerprint pins, so
+pins survive restarts, and a changed certificate for the same device ID is
+detected and refused. See
+[LAN Mode → Device Identity](lan-mode.md#device-identity).
+
+**Q: Do I need to set `HSYNC_DEVICE_DIR` on every device?**
+No. On a normal setup — one hsync installation per device — the default
+location is correct and you never set the variable. You only need it when:
+
+- you run **multiple instances on the same host** that must count as distinct
+  devices (e.g. two peers for the same bucket on one machine), or
+- you want to keep hsync state outside the default OS state directory.
+
+**Q: Why don't two instances on the same machine discover each other?**
+Because they share one device identity: the device ID is used both as the
+discovery CID and in the mDNS service name (`{bucket}-{device_id}`), so a
+second instance with the same bucket is ignored as "self" during discovery
+(or fails mDNS registration with a name clash). Give each instance its own
+device directory:
+
+```bash
+HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
+  hsync -b photos -p ~/Other --lan-mode
+```
+
+Different buckets need no change — they share the identity but never clash.
+
 ## Files & Performance
 
 **Q: Is there a file size limit in LAN mode?**

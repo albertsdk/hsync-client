@@ -29,12 +29,16 @@ mkdir -p /tmp/hsync-lan-a /tmp/hsync-lan-b
 echo "hello hsync lan" > /tmp/hsync-lan-a/hello.txt
 
 # 3. Terminal 1 — force this peer to be the master (it already holds the file,
-#    so no deletion-risk warning is shown) and start LAN Mode
-hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master
+#    so no deletion-risk warning is shown) and start LAN Mode. Give it its own
+#    device identity: the two peers run on the same machine but must be two
+#    distinct devices, or discovery would ignore them as "self".
+HSYNC_DEVICE_DIR=/tmp/hsync-lan-a-device \
+  hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master
 
-# 4. Terminal 2 — start a second peer; it discovers the master via mDNS and
-#    downloads hello.txt
-hsync -b demo-lan -p /tmp/hsync-lan-b --lan-mode
+# 4. Terminal 2 — start a second peer with its own device identity; it
+#    discovers the master via mDNS and downloads hello.txt
+HSYNC_DEVICE_DIR=/tmp/hsync-lan-b-device \
+  hsync -b demo-lan -p /tmp/hsync-lan-b --lan-mode
 
 # 5. Verify the file arrived
 cat /tmp/hsync-lan-b/hello.txt   # → hello hsync lan
@@ -51,6 +55,14 @@ both terminals to stop.
 > LAN with multiple devices, omit `--force-master` and let master election
 > happen automatically
 > (see [LAN Mode → Master Election](lan-mode.md#master-election)).
+>
+> **Why the `HSYNC_DEVICE_DIR` lines?** Every installation owns one persistent
+> device identity (a stable device ID) stored in `~/.local/state/hsync/device/`.
+> With two peers on the *same* machine, both terminals would otherwise share one
+> identity and ignore each other as "self" during mDNS discovery — so each
+> terminal gets its own device directory here. On real devices this is not
+> needed: omit the variable and the default is used. See
+> [LAN Mode → Device Identity](lan-mode.md#device-identity).
 
 ## What to expect in LAN Mode
 

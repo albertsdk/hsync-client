@@ -10,6 +10,19 @@ All examples assume the binary has been built (`./compile.sh`) and the
 `hsync` executable is on your `$PATH`. No server or API key is needed — peers
 discover each other automatically via mDNS on the local network.
 
+> **Note — same-machine experiments:** the examples below assume *distinct
+> devices* on the LAN, each with its own installation (and therefore its own
+> device identity — see [LAN Mode → Device Identity](lan-mode.md#device-identity)).
+> To simulate two peers on **one** machine, give each process its own device
+> directory, e.g.:
+>
+> ```bash
+> HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync -b shared -p ~/Other --lan-mode
+> ```
+>
+> Otherwise the two instances share one device ID and ignore each other during
+> discovery.
+
 ## 2.1 Sync a folder between two devices on the same Wi-Fi
 
 On device A (the master):

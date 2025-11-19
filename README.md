@@ -114,11 +114,13 @@ echo "hello hsync" > /tmp/hsync-a/hello.txt
 
 # 2. Terminal 1 — start the first peer (force it as master since it holds
 #    the canonical data, avoiding the deletion-risk warning)
-hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master
+HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
+  hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master
 
 # 3. Terminal 2 — start a second peer; it discovers the master via mDNS
 #    and downloads hello.txt automatically
-hsync -b mybucket -p /tmp/hsync-b --lan-mode
+HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
+  hsync -b mybucket -p /tmp/hsync-b --lan-mode
 
 # 4. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
@@ -126,6 +128,15 @@ cat /tmp/hsync-b/hello.txt   # → hello hsync
 
 Watch mode is implicit in LAN Mode: edit or create a file in either folder
 and the change propagates to the other peer in real time.
+
+> [!NOTE]
+> **Why the `HSYNC_DEVICE_DIR` lines?** Every installation owns one
+> persistent device identity (a stable device ID). Two processes simulating
+> two devices on the *same* machine would otherwise share that identity and
+> ignore each other during discovery, so each terminal gets its own device
+> directory. On real devices this is unnecessary — omit the variable and the
+> client uses the default (`~/.local/state/hsync/device/`). See
+> [LAN Mode → Device Identity](docs/lan-mode.md#device-identity).
 
 > [!TIP]
 > **Why `--force-master`?** The first peer already holds the test file, so

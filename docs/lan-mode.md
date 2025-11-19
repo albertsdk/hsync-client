@@ -196,6 +196,9 @@ model as Syncthing's device IDs): a stable 21-character **device ID** plus the
 TLS keypair used for the LAN transport. Both live in the device directory
 (`HSYNC_DEVICE_DIR`, default `~/.local/state/hsync/device/`):
 
+> Frequently asked questions about the device ID and `HSYNC_DEVICE_DIR` are
+> answered in [FAQ — LAN P2P Mode → Device Identity](faq-lan.md#device-identity).
+
 | File | Content | Permissions |
 |------|---------|-------------|
 | `device_id` | The device ID (identity anchor for TOFU pins) | `0600` |
