@@ -23,6 +23,7 @@ from .lan_helpers import (
     _wait_for_client_ready,
     _wait_for_file,
     _wait_for_master,
+    _wait_for_slave_events,
     _wait_for_text_in_stderr,
 )
 
@@ -210,6 +211,8 @@ class TestLanSlaveRestart:
                 _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
 
                 # Sanity check: a file written on the master reaches the slave
+                # (event channel must be live first — see _wait_for_slave_events)
+                assert _wait_for_slave_events(slave1), "Slave is not listening for master events"
                 (Path(lan_master_dir) / "pre_restart.txt").write_bytes(b"pre\n")
                 assert _wait_for_file(str(Path(lan_slave_dir) / "pre_restart.txt"), timeout=30), (
                     "Pre-restart sync did not work"
@@ -342,7 +345,11 @@ class TestLanConflict:
                     # must propagate as a plain update: the merged history makes
                     # it causally dominant, so the slave adopts it silently and
                     # the existing conflicted copy is neither duplicated nor
-                    # re-flagged.
+                    # re-flagged. The edit travels on the event channel: gate
+                    # on it (see _wait_for_slave_events).
+                    assert _wait_for_slave_events(slave2), (
+                        "Slave is not listening for master events"
+                    )
                     follow_up = b"follow-up v3\n"
                     (Path(lan_master_dir) / "shared.txt").write_bytes(follow_up)
                     os.utime(str(Path(lan_master_dir) / "shared.txt"), (shared_ts, shared_ts))
@@ -489,8 +496,9 @@ class TestLanConcurrency:
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                # Wait for initial sync
-                _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
+                # Wait for the event channel (implies initial sync done and the
+                # slave-side watcher started — both directions need them).
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
 
                 # Both peers write files at the same time
                 (Path(lan_master_dir) / "from_master.txt").write_bytes(b"master-data\n")

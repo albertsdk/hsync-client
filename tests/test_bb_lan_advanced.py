@@ -25,6 +25,7 @@ from .lan_helpers import (
     _wait_for_file,
     _wait_for_file_gone,
     _wait_for_master,
+    _wait_for_slave_events,
     _wait_for_text_in_stderr,
 )
 
@@ -114,9 +115,11 @@ class TestLanMultiSlave:
                 "Master did not become ready"
             )
             try:
-                # Wait for both to complete initial sync
-                _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
-                _wait_for_text_in_stderr(slave2, "Initial sync complete", timeout=30)
+                # Wait for both event channels: slave1's watcher must be live
+                # to upload and slave2 must be listening to receive the
+                # broadcast (see _wait_for_slave_events).
+                assert _wait_for_slave_events(slave1), "Slave1 is not listening for events"
+                assert _wait_for_slave_events(slave2), "Slave2 is not listening for events"
 
                 # Slave1 creates a file
                 (Path(lan_slave_dir) / "from_slave1.txt").write_bytes(b"via-master\n")

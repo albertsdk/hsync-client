@@ -21,6 +21,7 @@ from .lan_helpers import (
     _terminate,
     _wait_for_file,
     _wait_for_master,
+    _wait_for_slave_events,
     _wait_for_text_in_stderr,
 )
 
@@ -95,13 +96,12 @@ class TestLanTofuPinning:
                 ), "Slave did not TOFU-pin the master"
 
                 # Wait for the event channel before writing: a file created
-                # after the initial-sync listing but before the slave is
-                # listening on the WebSocket falls into a blind spot and is
-                # only recovered by the periodic resync (RESYNC=300s), far
+                # in the post-initial-sync blind spot (see _wait_for_slave_events)
+                # is only recovered by the periodic resync (RESYNC=300s), far
                 # beyond the sync timeout below.
-                assert _wait_for_text_in_stderr(
-                    slave, "Listening for events from master", timeout=30
-                ), "Slave did not connect to the master event channel"
+                assert _wait_for_slave_events(slave), (
+                    "Slave did not connect to the master event channel"
+                )
 
                 # File sync as smoke test
                 content = b"tofu-test\n"

@@ -21,6 +21,7 @@ from .lan_helpers import (
     _wait_for_file,
     _wait_for_file_gone,
     _wait_for_master,
+    _wait_for_slave_events,
 )
 
 _LAN_ENABLED = os.environ.get("HSYNC_BB_LAN") == "1"
@@ -49,6 +50,9 @@ class TestLanFileDeletion:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "to_delete.txt"), timeout=30), (
                     "File did not sync before deletion"
                 )
+                # The deletion propagates over the event channel: wait for it
+                # or the unlink falls into the post-initial-sync blind spot.
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
                 (Path(lan_master_dir) / "to_delete.txt").unlink()
                 assert _wait_for_file_gone(
                     str(Path(lan_slave_dir) / "to_delete.txt"), timeout=30
@@ -75,6 +79,9 @@ class TestLanIgnoreDelete:
             )
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "keep_me.txt"), timeout=30)
+                # Gate on the event channel: without it a missed broadcast
+                # would make the "file preserved" assertion pass vacuously.
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
                 (Path(lan_master_dir) / "keep_me.txt").unlink()
                 time.sleep(5)
                 assert (Path(lan_slave_dir) / "keep_me.txt").exists(), (
@@ -97,6 +104,9 @@ class TestLanFileRename:
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "old_name.txt"), timeout=30)
+                # The rename propagates over the event channel: wait for it
+                # or the rename falls into the post-initial-sync blind spot.
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
                 (Path(lan_master_dir) / "old_name.txt").rename(
                     Path(lan_master_dir) / "new_name.txt"
                 )
@@ -228,6 +238,9 @@ class TestLanFileModification:
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "mod.txt"), timeout=30)
                 assert (Path(lan_slave_dir) / "mod.txt").read_bytes() == b"v1\n"
+                # The edit propagates over the event channel: wait for it
+                # or the write falls into the post-initial-sync blind spot.
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
                 (Path(lan_master_dir) / "mod.txt").write_bytes(b"v2-updated\n")
                 time.sleep(3)
                 # Re-read: modification should sync within the watch window
