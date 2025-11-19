@@ -55,6 +55,8 @@ matrix on the wire data.
 | `BoundedThreadingHTTPServer` | `:66` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap on concurrent request threads (H5, default `LAN_SERVER_MAX_THREADS=32`) |
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`); `POST /symlinks` creates links STRUCTURALLY from slaves (`_handle_symlink` — mirror of the central server; an existing file/link is replaced, the target is validated with `is_safe_symlink_target`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
+| `_handle_upload_status` | `lan_server.py:1238` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
+| `_handle_upload` (offset) | `:1328` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); **`lan/1` capability exchange (ADR-0024)** — greeting/hello/auth frames carry `protocol_version` + `capabilities` (master advertise, slave reply); a protocol mismatch on the auth path is a hard fail (`reason: protocol_incompatible`); when no `LAN_KEY` is set, the `hello` handshake exchanges capabilities for coherence only (logged `unauthenticated`) — CID format is validated in both paths |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
@@ -76,7 +78,11 @@ on disk at `min(declared size, MAX_INBOUND_SIZE)` — the declared size alone is
 not a safe bound against a hostile peer, and uploads with no declared size are
 capped at `MAX_INBOUND_SIZE` outright. The `.part` temp file is opened with
 `O_NOFOLLOW` (`utils.open_partial_no_follow`), so a raced symlink cannot
-redirect the streamed write. Multipart form fields (64 KiB) and part-header
+redirect the streamed write. Resumable uploads open the `.part` in `"ab"`
+(append) mode when `offset > 0`; the existing size must match the declared
+offset or the upload is rejected. Incomplete uploads (total bytes < declared
+size) return `202 Accepted` with the new offset so the client can resume;
+complete uploads proceed to SHA-256 verification and atomic rename. Multipart form fields (64 KiB) and part-header
 lines (8 KiB) are memory-capped; only the file part streams. Tombstone gossip
 POST bodies are size-capped (`MAX_TOMBSTONE_PAYLOAD_BYTES`). The
 echo-suppression `cid` on upload/delete/rename is honoured only when it passes

@@ -113,6 +113,7 @@ ENDPOINT_TIME = f"{API_PREFIX}/time"
 ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
 ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
+ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX = "/files/upload-status"
 ENDPOINT_DIRS_SUFFIX = "/dirs"
 ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
 ENDPOINT_SYMLINKS_SUFFIX = "/symlinks"
@@ -127,6 +128,7 @@ CONTENT_TYPE_OCTET_STREAM = "application/octet-stream"
 # HTTP Status Codes
 HTTP_OK = 200
 HTTP_CREATED = 201
+HTTP_ACCEPTED = 202
 HTTP_PARTIAL_CONTENT = 206
 HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
@@ -463,6 +465,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # Download file: /api/v1/buckets/{bucket}/files/download
         if path.endswith(ENDPOINT_FILES_DOWNLOAD_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_download(query)
+            return
+
+        # Upload status: /api/v1/buckets/{bucket}/files/upload-status
+        if path.endswith(ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_upload_status(query)
             return
 
         # Delta signatures: /api/v1/buckets/{bucket}/files/delta/signatures
@@ -1228,6 +1235,92 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             log.error(f"Error reading file {filepath}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 
+    def _handle_upload_status(self, query: dict) -> None:
+        """Handle GET /api/v1/buckets/{bucket}/files/upload-status.
+
+        Reports whether an interrupted upload can be resumed from a partial
+        ``.part`` file, mirroring the central server's endpoint so the same
+        client resume logic works in LAN P2P mode.
+
+        Query params:
+            filename:  Path to the file within the bucket.
+            sha256sum: Expected SHA-256 of the complete file (optional).
+            size:      Expected total size in bytes (optional).
+        """
+        filename = query.get("filename", [""])[0]
+        if not filename:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' parameter")
+            return
+
+        sha256sum = query.get("sha256sum", [""])[0]
+        try:
+            size = int(query.get("size", ["0"])[0])
+        except (TypeError, ValueError):
+            size = 0
+
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+
+        file_path = resolve_within(local_bucket, filename)
+        if file_path is None:
+            self._send_error_response(HTTP_FORBIDDEN, "Access denied")
+            return
+
+        partial_path = f"{file_path}{PARTIAL_DOWNLOAD_SUFFIX}"
+
+        # Check if complete file already exists with same SHA-256
+        if sha256sum and is_sha256_hex(sha256sum) and Path(file_path).exists():
+            actual_sha = compute_sha256(file_path)
+            if hmac.compare_digest(actual_sha, sha256sum):
+                self._send_json_response(
+                    HTTP_OK,
+                    {
+                        "status": "complete",
+                        "offset": 0,
+                        "message": "File already exists with same checksum",
+                    },
+                )
+                return
+
+        # Check for partial file
+        if Path(partial_path).exists():
+            partial_size = Path(partial_path).stat().st_size
+            if size > 0 and partial_size >= size:
+                # Partial file is invalid, remove it
+                try:
+                    os.remove(partial_path)
+                except OSError:
+                    pass
+                self._send_json_response(
+                    HTTP_OK,
+                    {
+                        "status": "new",
+                        "offset": 0,
+                        "message": "Previous partial file was invalid, starting fresh",
+                    },
+                )
+                return
+            self._send_json_response(
+                HTTP_OK,
+                {
+                    "status": "resumable",
+                    "offset": partial_size,
+                    "message": f"Can resume from byte {partial_size}",
+                },
+            )
+            return
+
+        self._send_json_response(
+            HTTP_OK,
+            {
+                "status": "new",
+                "offset": 0,
+                "message": "No partial file exists",
+            },
+        )
+
     def _handle_upload(self) -> None:
         """Handle file upload endpoint (streaming).
 
@@ -1235,7 +1328,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         can be received without buffering them entirely in RAM. The file part
         is written directly to a temporary ``.part`` file and atomically
         renamed on success.
+
+        Supports resumable uploads: if the ``offset`` form field is > 0, the
+        incoming data is appended to an existing ``.part`` file whose size
+        must match the declared offset. Compressed uploads are not resumable.
         """
+
         import re
 
         content_type = self.headers.get("Content-Type", "")
@@ -1312,9 +1410,29 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             dest_path = dest_path_local
             tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
-            # O_NOFOLLOW where supported: a pre-existing/raced .part symlink
-            # must not redirect the streamed write outside the bucket.
-            raw = open_partial_no_follow(tmp_path, "wb")
+
+            # Resumable upload: if offset > 0, append to an existing
+            # .part file whose size must match the declared offset.
+            # Compressed uploads are not resumable (the resumable path
+            # never decompresses, mirroring the central server).
+            try:
+                offset_val = int(form_fields.get("offset", "0") or "0")
+            except (TypeError, ValueError):
+                offset_val = 0
+            is_resumable = offset_val > 0
+            if is_resumable and is_compressed_local:
+                raise ValueError("Compressed uploads are not resumable")
+            if is_resumable:
+                if not Path(tmp_path).exists():
+                    raise ValueError("Cannot resume: partial file not found")
+                current_size = Path(tmp_path).stat().st_size
+                if current_size != offset_val:
+                    raise ValueError(f"Offset mismatch: expected {current_size}, got {offset_val}")
+                raw = open_partial_no_follow(tmp_path, "ab")
+            else:
+                # O_NOFOLLOW where supported: a pre-existing/raced .part symlink
+                # must not redirect the streamed write outside the bucket.
+                raw = open_partial_no_follow(tmp_path, "wb")
             raw_file = raw
             # Cap the bytes landing on disk (decompression bomb containment
             # on the receiving side). The peer-declared size alone is not a
@@ -1372,6 +1490,30 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     raw_file.close()
             out_file = None
             raw_file = None
+
+            # Resumable upload: check if the file is complete. If the
+            # declared size has not been reached, keep the .part file and
+            # return 202 so the client can resume from the new offset.
+            try:
+                declared_size = int(form_fields.get("size", "0") or "0")
+            except (TypeError, ValueError):
+                declared_size = 0
+            if declared_size > 0:
+                written_bytes = Path(tmp_path).stat().st_size
+                if written_bytes < declared_size:
+                    self._send_json_response(
+                        HTTP_ACCEPTED,
+                        {
+                            "info": "Partial upload received",
+                            "offset": written_bytes,
+                            "remaining": declared_size - written_bytes,
+                        },
+                    )
+                    response_sent = True
+                    # Prevent the finally block from deleting the .part
+                    # file (it is needed for the next resume attempt).
+                    tmp_path = None
+                    return
 
             cid = form_fields.get("cid", "")
             mtime = form_fields.get("mtime", "")
