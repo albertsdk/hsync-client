@@ -27,7 +27,6 @@ from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File
 from hsync_common.protocol.handshake import (
     PROTOCOL_VERSION_WS,
-    Capability,
     build_ws_auth_request,
     decode_capabilities,
 )
@@ -36,6 +35,7 @@ from loguru import logger as log
 from watchdog.observers import Observer
 from websockets import ConnectionClosed, connect
 
+from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG, get_api_key
 from hsync_client.constants import HSYNC_VERSION, WS_MAX_MESSAGE_BYTES
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
@@ -107,16 +107,13 @@ async def remote_events() -> None:
         emit_event(UiEventName.status, status="connected")
 
         # Authenticate via first message (more secure than URL token). The frame
-        # follows the shared handshake contract (hsync_common.protocol.handshake).
-        client_caps: set[Capability] = set()
-        if CONFIG.get("COMPRESSION_ENABLED", False):
-            client_caps.add(Capability.compression)
-        if CONFIG.get("DELTA_ENABLED", False):
-            client_caps.add(Capability.delta)
+        # follows the shared handshake contract (hsync_common.protocol.handshake);
+        # the advertised capabilities are the shared runtime-derived set
+        # (ADR-0024), identical to the one the LAN handshake announces.
         auth_message = build_ws_auth_request(
             token=CONFIG.get("API_KEY") or get_api_key(),
             app_version=HSYNC_VERSION,
-            capabilities=client_caps,
+            capabilities=local_capabilities(),
         )
         await websocket.send(dumps(auth_message))
 
@@ -144,12 +141,12 @@ async def remote_events() -> None:
             emit_event(UiEventName.auth_error, message="WebSocket protocol incompatible")
             return
 
-        # Parse the server's advertised capabilities for this session.
+        # Parse the server's advertised capabilities for this session and adopt
+        # them as the transfer gates (shared helper, same semantics as the LAN
+        # handshake — ADR-0024).
         server_caps = decode_capabilities(auth_result.get("capabilities"))
-        server_compression = Capability.compression in server_caps
-        CONFIG["SERVER_COMPRESSION_ENABLED"] = server_compression
-        CONFIG["SERVER_DELTA_ENABLED"] = Capability.delta in server_caps
-        compression_status = "enabled" if server_compression else "disabled"
+        adopt_remote_capabilities(server_caps)
+        compression_status = "enabled" if CONFIG["SERVER_COMPRESSION_ENABLED"] else "disabled"
         log.info(
             f"WebSocket authenticated successfully "
             f"(server: {auth_result.get('app_version') or 'unknown'}, "

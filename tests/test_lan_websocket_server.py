@@ -143,12 +143,20 @@ class TestLANWebSocketServer:
 
     @pytest.mark.asyncio
     async def test_handle_client_auth_required_success(self):
-        """Test _handle_client with successful auth."""
+        """Test _handle_client with successful auth (capability exchange)."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
         ws.recv.return_value = json.dumps(
-            {"type": "auth", "token": "secret", "cid": "ValidClientId12345678"}
+            {
+                "type": "auth",
+                "token": "secret",
+                "cid": "ValidClientId12345678",
+                "protocol_version": PROTOCOL_VERSION_LAN,
+                "capabilities": ["compression"],
+            }
         )
 
         # Proper async iterator that yields nothing (immediate disconnect)
@@ -162,21 +170,37 @@ class TestLANWebSocketServer:
         with patch("hsync_client.lan_websocket.CONFIG", config):
             await server._handle_client(ws)
 
-        # Should have sent auth_required and then auth ok
+        # Should have sent auth_required (with caps) and then auth ok (with caps)
         calls = [c.args[0] for c in ws.send.call_args_list]
-        assert json.loads(calls[0])["type"] == "auth_required"
-        assert json.loads(calls[1]) == {"type": "auth", "status": "ok"}
+        greeting = json.loads(calls[0])
+        assert greeting["type"] == "auth_required"
+        assert greeting["protocol_version"] == PROTOCOL_VERSION_LAN
+        assert greeting["capabilities"] == ["tombstones", "vector_clocks"]
+        assert json.loads(calls[1]) == {
+            "type": "auth",
+            "status": "ok",
+            "protocol_version": PROTOCOL_VERSION_LAN,
+            "capabilities": ["tombstones", "vector_clocks"],
+        }
         # Client is discarded in the finally block after the async-for exits
         assert ws not in server._clients
 
     @pytest.mark.asyncio
     async def test_handle_client_auth_failed(self):
-        """Test _handle_client with wrong auth token."""
+        """Test _handle_client with wrong auth token (failed frame)."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
         ws.recv.return_value = json.dumps(
-            {"type": "auth", "token": "wrong", "cid": "BadClientId1234567890"}
+            {
+                "type": "auth",
+                "token": "wrong",
+                "cid": "BadClientId1234567890",
+                "protocol_version": PROTOCOL_VERSION_LAN,
+                "capabilities": [],
+            }
         )
 
         config = {"LAN_KEY": "secret"}
@@ -184,7 +208,44 @@ class TestLANWebSocketServer:
             await server._handle_client(ws)
 
         calls = [c.args[0] for c in ws.send.call_args_list]
-        assert json.loads(calls[1]) == {"type": "auth", "status": "failed"}
+        assert json.loads(calls[1]) == {
+            "type": "auth",
+            "status": "failed",
+            "protocol_version": PROTOCOL_VERSION_LAN,
+            "reason": "invalid_token",
+        }
+        ws.close.assert_called_once()
+        assert ws not in server._clients
+
+    @pytest.mark.asyncio
+    async def test_handle_client_auth_protocol_mismatch(self):
+        """A slave speaking a different LAN protocol is refused (hard fail)."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
+        server = LANWebSocketServer(port=9999)
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.2", 5555)
+        ws.recv.return_value = json.dumps(
+            {
+                "type": "auth",
+                "token": "secret",
+                "cid": "ValidClientId12345678",
+                "protocol_version": "lan/9",
+                "capabilities": [],
+            }
+        )
+
+        config = {"LAN_KEY": "secret"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[1]) == {
+            "type": "auth",
+            "status": "failed",
+            "protocol_version": PROTOCOL_VERSION_LAN,
+            "reason": "protocol_incompatible",
+        }
         ws.close.assert_called_once()
         assert ws not in server._clients
 
@@ -221,10 +282,19 @@ class TestLANWebSocketServer:
     @pytest.mark.asyncio
     async def test_handle_client_no_auth_hello_valid_cid(self):
         """Test _handle_client with hello handshake and a valid CID."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
-        ws.recv.return_value = json.dumps({"type": "hello", "cid": "ValidClientId12345678"})
+        ws.recv.return_value = json.dumps(
+            {
+                "type": "hello",
+                "cid": "ValidClientId12345678",
+                "protocol_version": PROTOCOL_VERSION_LAN,
+                "capabilities": ["compression"],
+            }
+        )
 
         async def _empty_aiter(self_ws):
             return
@@ -237,7 +307,9 @@ class TestLANWebSocketServer:
             await server._handle_client(ws)
 
         calls = [c.args[0] for c in ws.send.call_args_list]
-        assert json.loads(calls[0])["type"] == "hello"
+        greeting = json.loads(calls[0])
+        assert greeting["type"] == "hello"
+        assert greeting["protocol_version"] == PROTOCOL_VERSION_LAN
         # Client is discarded in the finally block after the async-for exits
         assert ws not in server._clients
 
@@ -288,6 +360,8 @@ class TestLANWebSocketServer:
     @pytest.mark.asyncio
     async def test_handle_client_auth_invalid_cid(self):
         """Test _handle_client rejects auth with invalid CID format."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
         server = LANWebSocketServer(port=9999)
         ws = AsyncMock()
         ws.remote_address = ("192.168.1.2", 5555)
@@ -301,6 +375,7 @@ class TestLANWebSocketServer:
         assert json.loads(calls[1]) == {
             "type": "auth",
             "status": "failed",
+            "protocol_version": PROTOCOL_VERSION_LAN,
             "reason": "invalid_cid",
         }
         ws.close.assert_called_once()
@@ -523,3 +598,53 @@ class TestLanWebsocketClientResyncWiring:
             await ws.lan_websocket_client("master.local", 9000)
 
         mock_resync.assert_not_called()
+
+
+class TestLanWebsocketClientGreetingValidation:
+    """The slave refuses connection on a protocol-violating greeting.
+
+    The LAN handshake contract knows exactly two greeting frames:
+    ``auth_required`` (with a LAN key) and ``hello`` (without). Any other
+    greeting type is a protocol violation and must NOT degrade to a silent
+    unauthenticated session.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unexpected_greeting_refuses_connection(self, tmp_path):
+        import hsync_client.lan_websocket as ws
+
+        sent: list[str] = []
+
+        class _UnexpectedGreetingSocket:
+            async def recv(self) -> str:
+                return json.dumps({"type": "not-a-greeting"})
+
+            async def send(self, message: str) -> None:
+                sent.append(message)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+        with (
+            patch.dict(
+                ws.CONFIG,
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "RESYNC": 0,
+                    "CID": "ValidClientId12345678",
+                },
+                clear=False,
+            ),
+            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
+            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
+            patch("websockets.connect", return_value=_UnexpectedGreetingSocket()),
+        ):
+            await ws.lan_websocket_client("master.local", 9000)
+
+        # No frame is sent back: the connection is refused outright instead of
+        # falling through to an unauthenticated session.
+        assert sent == []

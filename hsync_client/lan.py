@@ -99,6 +99,8 @@ class Peer:
     cert_fingerprint: str | None = None
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
+    vector_clocks: bool = False  # causal version metadata support (ADR-0022)
+    tombstones_enabled: bool = False  # deletion-marker gossip support (ADR-0003)
     server_ready: bool = False  # True when HTTP server is listening
     last_seen: float = field(default_factory=time.time)
     force_master: bool = False  # True if peer wants to force master role
@@ -276,6 +278,8 @@ class PeerManager:
                 existing.cert_fingerprint = peer.cert_fingerprint
                 existing.compression_enabled = peer.compression_enabled
                 existing.delta_enabled = peer.delta_enabled
+                existing.vector_clocks = peer.vector_clocks
+                existing.tombstones_enabled = peer.tombstones_enabled
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
@@ -550,6 +554,18 @@ class HsyncServiceListener(ServiceListener):
             # Delta transfer capability is optional
             delta_bytes = properties.get(b"delta", b"")
             delta_enabled = delta_bytes.decode("utf-8").lower() == "true" if delta_bytes else False
+            # Vector-clock causal version metadata (ADR-0022); absent ⇒ false.
+            vector_clocks_bytes = properties.get(b"vector_clocks", b"")
+            vector_clocks = (
+                vector_clocks_bytes.decode("utf-8").lower() == "true"
+                if vector_clocks_bytes
+                else False
+            )
+            # Tombstone gossip capability (ADR-0003); absent ⇒ false.
+            tombstones_bytes = properties.get(b"tombstones", b"")
+            tombstones_enabled = (
+                tombstones_bytes.decode("utf-8").lower() == "true" if tombstones_bytes else False
+            )
             # Server ready flag (indicates HTTP server is listening)
             server_ready_bytes = properties.get(b"server_ready", b"")
             server_ready = (
@@ -616,6 +632,8 @@ class HsyncServiceListener(ServiceListener):
                 cert_fingerprint=cert_fingerprint,
                 compression_enabled=compression_enabled,
                 delta_enabled=delta_enabled,
+                vector_clocks=vector_clocks,
+                tombstones_enabled=tombstones_enabled,
                 server_ready=server_ready,
                 force_master=force_master,
                 never_master=never_master,
@@ -879,6 +897,12 @@ class LANSync:
         # Add delta transfer capability
         if CONFIG.get("DELTA_ENABLED", False):
             properties["delta"] = "true"
+        # Causal version metadata is a hard dependency of the conflict model
+        # (ADR-0022): every build supports it, so it is always advertised.
+        properties["vector_clocks"] = "true"
+        # Deletion-marker gossip is always implemented by this client
+        # (ADR-0003): the LAN master serves /tombstones unconditionally.
+        properties["tombstones"] = "true"
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"

@@ -43,12 +43,22 @@ from hsync_common.models.file import (
     is_hidden_file,
     is_partial_file,
 )
+from hsync_common.protocol.handshake import (
+    PROTOCOL_VERSION_LAN,
+    build_lan_auth,
+    build_lan_auth_failed,
+    build_lan_auth_ok,
+    build_lan_auth_required,
+    build_lan_hello,
+    decode_capabilities,
+)
 from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
+from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
@@ -223,10 +233,14 @@ class LANWebSocketServer:
         client_cid = "unknown"
         log.info(f"WebSocket client connected (pre-auth): {client_addr}")
 
-        # Send greeting: tell the client whether authentication is required
+        # Send greeting: tell the client whether authentication is required.
+        # Both paths carry the LAN protocol version and this master's
+        # capabilities (ADR-0024): the authenticated path's reply is the
+        # capability source of truth; the hello path is at least consistent.
+        master_caps = local_capabilities()
         lan_key = CONFIG.get("LAN_KEY")
         if lan_key:
-            await websocket.send(json.dumps({"type": "auth_required"}))
+            await websocket.send(json.dumps(build_lan_auth_required(capabilities=master_caps)))
             try:
                 # Wait for auth message
                 auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
@@ -238,24 +252,40 @@ class LANWebSocketServer:
                         f"WebSocket auth rejected – invalid CID from {client_addr}: "
                         f"{declared_cid!r}"
                     )
-                    await websocket.send(
-                        json.dumps({"type": "auth", "status": "failed", "reason": "invalid_cid"})
-                    )
+                    await websocket.send(json.dumps(build_lan_auth_failed(reason="invalid_cid")))
                     await websocket.close()
                     return
                 client_cid = declared_cid
+                # Protocol is a hard gate inside the auth contract: a slave
+                # speaking a different LAN protocol must never authenticate.
+                if auth_data.get("protocol_version") != PROTOCOL_VERSION_LAN:
+                    log.warning(
+                        f"WebSocket auth rejected – incompatible LAN protocol from "
+                        f"{client_addr} (CID: {client_cid}): "
+                        f"{auth_data.get('protocol_version')!r}"
+                    )
+                    await websocket.send(
+                        json.dumps(build_lan_auth_failed(reason="protocol_incompatible"))
+                    )
+                    await websocket.close()
+                    return
                 if auth_data.get("type") != "auth" or not (
                     isinstance(token, str) and hmac.compare_digest(token, str(lan_key))
                 ):
                     log.warning(f"WebSocket auth failed from {client_addr} (CID: {client_cid})")
-                    await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
+                    await websocket.send(json.dumps(build_lan_auth_failed(reason="invalid_token")))
                     await websocket.close()
                     return
-                await websocket.send(json.dumps({"type": "auth", "status": "ok"}))
+                slave_caps = decode_capabilities(auth_data.get("capabilities"))
+                log.debug(
+                    f"WebSocket slave {client_cid} capabilities: "
+                    f"{sorted(c.value for c in slave_caps) or 'none'}"
+                )
+                await websocket.send(json.dumps(build_lan_auth_ok(capabilities=master_caps)))
                 log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
             except TimeoutError:
                 log.warning(f"WebSocket auth timeout from {client_addr} (CID: {client_cid})")
-                await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
+                await websocket.send(json.dumps(build_lan_auth_failed(reason="timeout")))
                 await websocket.close()
                 return
             except Exception as e:
@@ -267,25 +297,29 @@ class LANWebSocketServer:
             # hello handshake so the operator can distinguish peers in logs.
             # The CID is NOT authenticated (no LAN_KEY), so every log line
             # carries an explicit "(unauthenticated)" qualifier.
-            await websocket.send(json.dumps({"type": "hello"}))
+            await websocket.send(json.dumps(build_lan_hello(capabilities=master_caps)))
             try:
                 hello_msg = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                 hello_data = json.loads(hello_msg)
                 declared_cid = hello_data.get("cid")
                 if (
                     hello_data.get("type") == "hello"
+                    and hello_data.get("protocol_version") == PROTOCOL_VERSION_LAN
                     and isinstance(declared_cid, str)
                     and is_valid_cid(declared_cid)
                 ):
                     client_cid = declared_cid
+                    slave_caps = decode_capabilities(hello_data.get("capabilities"))
                     log.info(
                         f"WebSocket client connected (no auth): {client_addr} "
-                        f"(CID: {client_cid}, unauthenticated)"
+                        f"(CID: {client_cid}, unauthenticated, capabilities: "
+                        f"{sorted(c.value for c in slave_caps) or 'none'})"
                     )
                 else:
                     log.warning(
                         f"WebSocket hello invalid from {client_addr}: "
-                        f"type={hello_data.get('type')!r} cid={declared_cid!r}"
+                        f"type={hello_data.get('type')!r} cid={declared_cid!r} "
+                        f"protocol={hello_data.get('protocol_version')!r}"
                     )
             except TimeoutError:
                 log.warning(f"WebSocket hello timeout from {client_addr}")
@@ -748,33 +782,60 @@ async def lan_websocket_client(
 
             log.info("WebSocket connected to master")
 
-            # Read server greeting to determine if auth is required
+            # Read server greeting to determine if auth is required.
+            # The greeting carries the LAN protocol version and the master's
+            # capabilities (ADR-0024): hard-fail on a protocol mismatch and,
+            # on the authenticated path, adopt the master's advertised
+            # capability set as the session's capability source of truth.
             greeting = await asyncio.wait_for(websocket.recv(), timeout=10.0)
             greeting_data = json.loads(greeting)
 
             if greeting_data.get("type") == "auth_required":
+                # Protocol gate first: a greeting we do not speak must never
+                # proceed to authentication.
+                if greeting_data.get("protocol_version") != PROTOCOL_VERSION_LAN:
+                    log.error(
+                        "Master LAN protocol mismatch "
+                        f"({greeting_data.get('protocol_version')!r} vs "
+                        f"{PROTOCOL_VERSION_LAN}); refusing connection"
+                    )
+                    return
                 lan_key = CONFIG.get("LAN_KEY")
                 if not lan_key:
                     log.error("WebSocket authentication failed – server requires LAN key")
                     return
-                auth_msg = json.dumps({"type": "auth", "token": lan_key, "cid": CONFIG["CID"]})
+                auth_msg = json.dumps(
+                    build_lan_auth(
+                        token=lan_key, cid=CONFIG["CID"], capabilities=local_capabilities()
+                    )
+                )
                 await websocket.send(auth_msg)
 
                 response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_result = json.loads(response)
                 if auth_result.get("status") != "ok":
-                    log.error("WebSocket authentication failed")
+                    reason = auth_result.get("reason") or "unknown"
+                    log.error(f"WebSocket authentication failed ({reason})")
                     return
+                adopt_remote_capabilities(decode_capabilities(auth_result.get("capabilities")))
                 log.info("WebSocket authenticated with master")
             elif greeting_data.get("type") == "hello":
                 # Lightweight hello handshake: the master has no LAN_KEY
                 # but still wants to know our CID for log attribution.
                 # The CID is sent unauthenticated (the master logs it
-                # with an "(unauthenticated)" qualifier).
-                await websocket.send(json.dumps({"type": "hello", "cid": CONFIG["CID"]}))
+                # with an "(unauthenticated)" qualifier). Capabilities are
+                # exchanged for coherence, not trusted (no shared secret).
+                await websocket.send(
+                    json.dumps(
+                        build_lan_hello(capabilities=local_capabilities(), cid=CONFIG["CID"])
+                    )
+                )
                 log.info("WebSocket hello sent to master (no auth)")
             else:
-                log.info("No WebSocket authentication required")
+                log.error(
+                    f"Unexpected master greeting {greeting_data.get('type')!r}; refusing connection"
+                )
+                return
 
             log.info("Listening for events from master...")
 

@@ -56,7 +56,7 @@ matrix on the wire data.
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`); `POST /symlinks` creates links STRUCTURALLY from slaves (`_handle_symlink` — mirror of the central server; an existing file/link is replaced, the target is validated with `is_safe_symlink_target`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
-| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); when no `LAN_KEY` is set, a lightweight `hello` handshake lets peers declare their CID for logging (qualified as `unauthenticated`) — CID format is validated in both paths |
+| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); **`lan/1` capability exchange (ADR-0024)** — greeting/hello/auth frames carry `protocol_version` + `capabilities` (master advertise, slave reply); a protocol mismatch on the auth path is a hard fail (`reason: protocol_incompatible`); when no `LAN_KEY` is set, the `hello` handshake exchanges capabilities for coherence only (logged `unauthenticated`) — CID format is validated in both paths |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
 
 Peer-supplied paths on download/delete/rename/upload are validated with
@@ -86,7 +86,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `lan_websocket_client` | `lan_websocket.py:468` | connect to master WSS, verify cert fp, auth (includes CID), sync |
+| `lan_websocket_client` | `lan_websocket.py:468` | connect to master WSS, verify cert fp, **`lan/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates) |
 | `_handle_lan_event` | `:636` | apply inbound master events locally |
 | `LANSlaveFileEventHandler` | `:667` | slave-local FS changes → upload to master |
 | `_lan_periodic_resync` | `:616` | periodic full reconcile (§13) |
@@ -96,6 +96,13 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | create-upload deferral | `LANSlaveFileEventHandler._schedule_create_upload` / `_cancel_create_upload` / `cancel_all_create_timers` | an `on_created` upload for a non-empty regular file is deferred (`CREATE_UPLOAD_DEFER_S` = `STABILITY_DELAY_ON_CLOSED`) so `on_closed` (`IN_CLOSE_WRITE`, the reliable fd-closed trigger) can cancel it and take precedence with the fast stability re-check; the timer is the fallback for files that arrive already complete with no writer fd (atomic rename / hard-link / `mv` in). `on_deleted` / `on_moved(src)` / shutdown cancel pending timers so stale uploads never fire. Eliminates the duplicate upload-intent/`[UPLOAD]` pair (the intent line was later removed entirely — ADR 0018) and avoids uploading half-written files. |
 | sentinel never uploaded | `LANSlaveFileEventHandler._handle_file_upload` | a `.hsynckeep` basename is skipped before building the `File` and starting the upload. The sentinel is a per-peer local artifact: the periodic reconcile already excludes it from sync actions in both directions (`sync.py`), each peer maintains its own (`ensure_hsynckeep_files` / `_ensure_sentinel*`), and the directory itself is propagated by the directory event — uploading it only produced a 0-byte `[UPLOAD]` line and a broadcast round-trip. This is the single chokepoint covering every slave upload path (`on_created` deferred, `on_closed`, symlink, hidden→visible). |
 | escaping symlink refused (slave upload) | `LANSlaveFileEventHandler.on_created` (symlink branch) | a file-symlink inside the bucket whose target escapes `LOCAL_BUCKET` is skipped (logged `[SECURITY]`) instead of being dereferenced and exfiltrated. An in-bucket symlink is uploaded STRUCTURALLY via `transfer.upload_symlink` (the pair over `POST /symlinks`; the absolute local target is relativized by `hsync_common.wire_symlink_target` before it reaches the wire) — the content-upload path (`_upload_to_master` → `upload_file`) is never used for links. Belt-and-braces: `transfer.upload_file` refuses any symlink whose target escapes the bucket, and the shared watcher (`file_event_handler.BaseFileEventHandler.on_created`) refuses to broadcast a `symlink` event whose target escapes. |
+
+## Local capabilities (`capabilities.py`)
+
+| Symbol | Purpose |
+| ------ | ------- |
+| `local_capabilities` | runtime-derived capability set advertised on every handshake (always `vector_clocks` + `tombstones`; `compression`/`delta` when enabled) — shared by remote and LAN transports (ADR-0024) |
+| `adopt_remote_capabilities` | adopts the authenticated peer's capabilities as the session transfer gates (`SERVER_COMPRESSION_ENABLED`/`SERVER_DELTA_ENABLED`) |
 
 ## Security: TOFU pinning + persistent identity
 
