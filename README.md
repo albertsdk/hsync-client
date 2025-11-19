@@ -74,7 +74,7 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 
 ### Server Mode
 - 📡 WebSocket connection for remote events
-- 🔐 API Key authentication (secure first-message auth)
+- 🔐 API Key authentication (Bearer token for REST, first-frame for WebSocket)
 - 🔒 SSL/TLS support
 - 💓 WebSocket heartbeat for reliable connections
 - � Event queue with exponential backoff retry
@@ -149,8 +149,21 @@ and the change propagates to the other peer in real time.
 > to use Server Mode. Deploy one in seconds with Docker:
 >
 > ```bash
-> docker run -p 9753:9753 -e HSYNC_API_KEY=your-secret-key ghcr.io/albertobasso/hsync-server
+> docker run -p 9753:9753 \
+>   -e HSYNC_API_KEY=your-secret-key \
+>   -e HSYNC_SSL_ENABLED=true \
+>   -e HSYNC_SSL_KEYFILE_PASSWORD=$(openssl rand -hex 32) \
+>   -e HSYNC_SSL_CERTFILE=/certs/cert.pem \
+>   -e HSYNC_SSL_KEYFILE=/certs/key.pem \
+>   -v hsync-certs:/certs \
+>   ghcr.io/albertobasso/hsync-server
 > ```
+>
+> The server listens on **9753** with TLS enabled (HTTPS/WSS). The client
+> refuses to send the API key over plain HTTP, so TLS is required. For a
+> fully managed setup that generates secrets and certificates for you, use
+> the [Getting Started guide](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started.md)
+> (`./install.sh`) instead of the manual one-liner above.
 >
 > If you prefer to go serverless, jump back to
 > [Step 2](#step-2--your-first-sync-lan-mode-no-server-needed) — LAN Mode works

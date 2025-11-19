@@ -893,22 +893,28 @@ class TestRemoteSyncNegative:
 
         from hsync_client.cli import app
 
+        from .conftest import _ClientGlobalsGuard
+
         base_url, _ = live_server
-        result = CliRunner().invoke(
-            app,
-            [
-                "-b",
-                bb_bucket,
-                "-s",
-                base_url,
-                "-p",
-                local_dir,
-                "--yes",
-                "--insecure",
-                "--min-free-disk-space",
-                "0",
-            ],
-        )
+        # In-process CLI runs must stay inside the globals guard: run_sync
+        # mutates the process-wide CONFIG in-place and an unguarded run leaks
+        # it into later tests (harness contract, see conftest).
+        with _ClientGlobalsGuard():
+            result = CliRunner().invoke(
+                app,
+                [
+                    "-b",
+                    bb_bucket,
+                    "-s",
+                    base_url,
+                    "-p",
+                    local_dir,
+                    "--yes",
+                    "--insecure",
+                    "--min-free-disk-space",
+                    "0",
+                ],
+            )
         get_env_settings.cache_clear()
         # A wrong API key is an authentication failure: the CLI must exit
         # non-zero and must not touch the local directory.
@@ -921,22 +927,27 @@ class TestRemoteSyncNegative:
 
         from hsync_client.cli import app
 
+        from .conftest import _ClientGlobalsGuard
+
         local = tmp_path / "local"
         local.mkdir()
-        result = CliRunner().invoke(
-            app,
-            [
-                "-b",
-                "anybucket",
-                "-s",
-                "http://127.0.0.1:1",
-                "-p",
-                str(local),
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-            ],
-            env={"HSYNC_API_KEY": "some-key-1234567890"},
-        )
+        # Guarded like every other in-process run (see test_wrong_api_key_aborts):
+        # the CLI aborts after set_config has already mutated the global CONFIG.
+        with _ClientGlobalsGuard():
+            result = CliRunner().invoke(
+                app,
+                [
+                    "-b",
+                    "anybucket",
+                    "-s",
+                    "http://127.0.0.1:1",
+                    "-p",
+                    str(local),
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                ],
+                env={"HSYNC_API_KEY": "some-key-1234567890"},
+            )
         # An unreachable server is a sync failure: the CLI must exit non-zero.
         assert result.exit_code != 0

@@ -94,6 +94,15 @@ class TestLanTofuPinning:
                     slave, "Pinned LAN master certificate", timeout=30
                 ), "Slave did not TOFU-pin the master"
 
+                # Wait for the event channel before writing: a file created
+                # after the initial-sync listing but before the slave is
+                # listening on the WebSocket falls into a blind spot and is
+                # only recovered by the periodic resync (RESYNC=300s), far
+                # beyond the sync timeout below.
+                assert _wait_for_text_in_stderr(
+                    slave, "Listening for events from master", timeout=30
+                ), "Slave did not connect to the master event channel"
+
                 # File sync as smoke test
                 content = b"tofu-test\n"
                 (Path(lan_master_dir) / "tofu.txt").write_bytes(content)
