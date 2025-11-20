@@ -589,13 +589,19 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # Peer-supplied paths are untrusted: validate the relative form and
         # confine both endpoints to the bucket (rejects traversal, absolute
         # paths, backslashes, sibling-prefix confusion and engine artifacts).
-        src_path = resolve_within(local_bucket, src_rel)
-        dst_path = resolve_within(local_bucket, dst_rel)
+        # resolve_final=False on BOTH endpoints: renaming a link must move the
+        # LINK entry — the default full resolve dereferences it and would
+        # rename the target file instead.
+        src_path = resolve_within(local_bucket, src_rel, resolve_final=False)
+        dst_path = resolve_within(local_bucket, dst_rel, resolve_final=False)
         if not src_path or not dst_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
-        if not Path(src_path).exists():
+        # Dangling links are real entries: Path.exists() follows the link and
+        # would report a dangling rename source as missing. Recognize both.
+        src = Path(src_path)
+        if not (src.is_symlink() or src.exists()):
             self._send_error_response(HTTP_NOT_FOUND, "Source not found")
             return
 
@@ -644,12 +650,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         # Peer-supplied path is untrusted: validate and confine to the bucket
         # (rejects traversal, absolute paths and sibling-prefix confusion).
-        full_path = resolve_within(local_bucket, rel_path)
+        # resolve_final=False: a symlink AT this path must be deleted as the
+        # LINK entry — the default full resolve dereferences it and turns
+        # "delete the link" into "delete the target file" (data loss that
+        # propagates to every peer).
+        full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
         if not full_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
-        if not Path(full_path).exists():
+        if not (Path(full_path).is_symlink() or Path(full_path).exists()):
             # Already deleted, return success. No mark_inbound_origin is
             # recorded here, so if another concurrent request's rmtree fires
             # a `deleted` event for this path it will broadcast with the
@@ -679,7 +689,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            if is_dir:
+            if Path(full_path).is_symlink():
+                # Remove the LINK entry, never its target: the is_dir branch's
+                # rmtree would dereference a dir-symlink and destroy the target
+                # tree. A file-symlink is structurally a link too.
+                os.remove(full_path)
+            elif is_dir:
                 rmtree(full_path, ignore_errors=False)
             else:
                 os.remove(full_path)
@@ -842,6 +857,22 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            # Idempotency: a link already present with the SAME target is a
+            # converged echo (the master's own broadcast looped back). Do not
+            # unlink + recreate it: every mutation emits a deleted+created
+            # pair on the master's watcher, and the single inbound-origin mark
+            # would be consumed by the first event — the second would be
+            # rebroadcast with the master CID and re-trigger the whole cycle
+            # on every peer (infinite SYMLINK/DELETE oscillation).
+            link_path = Path(full_path)
+            if link_path.is_symlink():
+                try:
+                    if os.readlink(link_path) == target:
+                        self._send_json_response(HTTP_OK, {"status": "already exists"})
+                        return
+                except OSError:
+                    pass
+
             # Mark the path as inbound so the master's watcher rebroadcasts
             # the symlink event with the originator CID (echo suppression).
             origin_cid = query.get("cid", [None])[0]
@@ -854,9 +885,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             parent = str(Path(full_path).parent)
             if not Path(parent).exists():
                 Path(parent).mkdir(parents=True, exist_ok=True)
-            if Path(full_path).is_dir() and not Path(full_path).is_symlink():
+            if link_path.is_dir() and not link_path.is_symlink():
                 try:
-                    Path(full_path).rmdir()
+                    link_path.rmdir()
                 except OSError:
                     log.warning(
                         f"{ActionLabel.SECURITY} Refusing to replace non-empty directory "
@@ -866,7 +897,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                         HTTP_BAD_REQUEST, "Cannot replace non-empty directory"
                     )
                     return
-            elif Path(full_path).is_symlink() or Path(full_path).exists():
+            elif link_path.is_symlink() or link_path.exists():
                 os.remove(full_path)
 
             os_symlink(target, full_path)

@@ -317,19 +317,24 @@ class TestProcessWebsocketEvents:
             mock_update.assert_called_once_with(message["src"])
 
     @pytest.mark.asyncio
-    async def test_skips_symlink_event(self):
-        """Skips symlink events (not in valid event types)."""
+    async def test_processes_symlink_event(self):
+        """Processes symlink events received from the server.
+
+        The server materialises the link and rebroadcasts the ``symlink``
+        event to every peer except the sender, so remote-mode clients must
+        apply it for real-time symlink replication (parity with LAN mode).
+        Regression: the event used to be dropped as an invalid type, so
+        symlinks only converged on the next full sync.
+        """
         from json import dumps
 
         from hsync_client.remote_websocket import _process_remote_events
 
-        # Note: symlink events are not in the valid event types list
-        # They are handled locally but not received via WebSocket
         message = {
             "name": "symlink",
             "cid": "other_client",
             "bucket": "testbucket",
-            "src": {"path": "link.txt", "target": "target.txt", "permissions": "777"},
+            "src": {"type": "symlink", "filepath": "link.txt", "target": "target.txt"},
         }
 
         websocket = AsyncMock()
@@ -344,7 +349,8 @@ class TestProcessWebsocketEvents:
         ):
             with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
-            mock_symlink.assert_not_called()
+            mock_symlink.assert_called_once()
+            assert mock_symlink.call_args.args[0] == message["src"]
 
     @pytest.mark.asyncio
     async def test_skips_event_in_upload_only_mode(self):

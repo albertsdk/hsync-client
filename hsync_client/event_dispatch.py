@@ -27,7 +27,7 @@ import asyncio
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from os import remove, rename, unlink
+from os import readlink, remove, rename, unlink
 from os import symlink as os_symlink
 from pathlib import Path
 from shutil import rmtree
@@ -500,23 +500,46 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     if not is_safe_symlink_target(local, target, CONFIG["LOCAL_BUCKET"]):
         _reject_unsafe(EventName.symlink.value, target, ctx)
         return
+    # Idempotency: a link already present with the SAME target is a converged
+    # echo (this node applied the very same event before, or its own re-upload
+    # looped back). Skipping the mutation produces no watcher events at all,
+    # which breaks the echo feedback loop even when the mark/unmark window
+    # below misses a watchdog event (inotify often delivers the deleted/
+    # created pair after the unmark). Missing the link means a real change.
+    if Path(local).is_symlink():
+        try:
+            if readlink(local) == target:
+                log.debug(f'{_tag("SYMLINK")} Already exists with same target: "{local}"')
+                return
+        except OSError:
+            pass
     log.info(
         f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{_cid_suffix(origin_cid)}'
     )
     parent = str(Path(local).parent)
     if not Path(parent).exists():
         Path(parent).mkdir(parents=True, exist_ok=True)
-    # Existing-path cleanup: unlink a file/link, rmdir an empty directory,
-    # refuse a non-empty directory (mirrors materialize_symlink_local in transfer.py).
-    if Path(local).is_dir() and not Path(local).is_symlink():
-        try:
-            Path(local).rmdir()
-        except OSError:
-            log.warning(
-                f"{_tag('SECURITY')} Refusing to replace non-empty directory with symlink: "
-                f'"{local}"{_cid_suffix(origin_cid)}'
-            )
-            return
-    elif Path(local).is_symlink() or Path(local).exists():
-        unlink(local)
-    await asyncio.to_thread(os_symlink, target, local)
+    # Mark the path as being mutated on behalf of a peer so the local
+    # watcher can suppress the resulting deleted/created events instead of
+    # rebroadcasting them as fresh local changes (echo suppression). Without
+    # this mark a LAN peer that materialises an inbound link re-uploads it to
+    # the master, which broadcasts it back: an infinite ping-pong loop. Every
+    # validation has passed by this point, so a rejected path is never marked.
+    _mark(ctx, local)
+    try:
+        # Existing-path cleanup: unlink a file/link, rmdir an empty directory,
+        # refuse a non-empty directory (mirrors materialize_symlink_local in transfer.py).
+        if Path(local).is_dir() and not Path(local).is_symlink():
+            try:
+                Path(local).rmdir()
+            except OSError:
+                log.warning(
+                    f"{_tag('SECURITY')} Refusing to replace non-empty directory with symlink: "
+                    f'"{local}"{_cid_suffix(origin_cid)}'
+                )
+                return
+        elif Path(local).is_symlink() or Path(local).exists():
+            unlink(local)
+        await asyncio.to_thread(os_symlink, target, local)
+    finally:
+        _unmark(ctx, local)

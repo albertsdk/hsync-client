@@ -126,12 +126,12 @@ from `constants.py:99`–`:101`.
 
 ## event_dispatch.py — apply inbound events
 
-`apply_inbound_event` (`event_dispatch.py:198`) routes a remote event dict to
+`apply_inbound_event` (`event_dispatch.py:220`) routes a remote event dict to
 `_apply_add_or_modify` (`:244`, also receives `event_name` to log `[REMOTE CREATE]` vs
 `[REMOTE MODIFY]` for the directory branch — the log is gated on `update_dir` returning
 non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:314`), `_apply_delete` (`:392`,
-locked via `_remove_locked:55`), `_apply_symlink` (`:452`). Echo suppression uses
-the per-event `EventDispatchContext` (`:68`) marking (`_mark:188`/`_unmark:193`).
+locked via `_remove_locked:55`), `_apply_symlink` (`:483`). Echo suppression uses
+the per-event `EventDispatchContext` (`:68`) marking (`_mark:210`/`_unmark:215`).
 Path resolution: `_resolve_local_path` (`:304`).
 
 **Inbound directory dedup** (`_apply_add_or_modify` + `_DirDedup`): the master
@@ -147,6 +147,24 @@ caught, and is invalidated on `deleted` (`_apply_delete`) and `renamed`
 (`_rename_path`) so a re-created directory with the same permissions is applied
 fresh. A genuine change carries different permissions and is never skipped; a
 security-rejected path (`update_dir` → `None`) is never recorded.
+
+**Symlink echo marking + idempotency** (`_apply_symlink`,
+`event_dispatch.py:483`): the mutation section (unlink/rmdir cleanup +
+`os_symlink`) is wrapped in `_mark(ctx, local)`/`finally: _unmark(ctx, local)`
+— placed *after* mkdir of the parent and *after* all validations, so a rejected
+(unsafe) path is never marked. Without the mark, a LAN peer materialising an
+inbound link re-broadcasts its own `deleted`/`created` watcher events to the
+master (its `_receiving_files` echo filter never sees the path), which
+broadcasts back: an infinite ping-pong loop across peers. On top of the mark,
+the function is **idempotent**: a link already present with the SAME target
+(`readlink == target`) is a converged echo and is skipped before any mutation,
+so no watcher events fire at all. This breaks the loop even when inotify
+delivers the `deleted`/`created` pair after the mark/unmark window (the window
+only covers the instant syscall, while watchdog events arrive later). A
+different target — or a missing link — is a real change and goes through. In
+remote mode the `REMOTE_DISPATCH_CTX` has no marking callbacks, so
+`_mark`/`_unmark` are no-ops (the central server never echoes an event back to
+its sender via `ConnectionManager.send_message`).
 
 **Benign-echo degradation** (`_apply_delete`, dir branch `:398` / file branch
 `:424`): when an inbound `deleted` event targets a path already absent locally,

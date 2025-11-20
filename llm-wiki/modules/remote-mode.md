@@ -10,7 +10,7 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 | ------ | ---- | ---- |
 | `remote_events` | `remote_websocket.py:58` | WS connect + auth handshake + watchdog watcher, then the inbound processing loop |
 | `remote_connect` | `:347` | top-level: initial full sync + optional `resync` task + `remote_events`; reconnect loop with `RECONNECT_DELAY` |
-| `_process_remote_events` | `:216` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:211`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop |
+| `_process_remote_events` | `:213` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:211`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop. Accepts `added`/`modified`/`renamed`/`deleted`/`symlink`: symlink events are propagated by the server (`handle_symlink_event` returns the Event and `ConnectionManager.send_message` broadcasts it to every peer except the sender), so remote-mode clients now replicate symlinks in real time (parity with LAN mode) instead of waiting for the next full sync |
 | `resync` | `:270` | periodic/triggered full re-reconcile |
 | `RemoteFileEventHandler` | `:399` | watchdog → `upload_file` (threads `from_closed`) |
 

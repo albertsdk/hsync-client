@@ -234,12 +234,17 @@ async def _process_remote_events(websocket, bucket: str) -> None:
             log.debug("Received ping, sent pong")
             continue
 
-        # Validate event type (symlink events are not propagated by the server)
+        # Validate event type. Symlink events ARE propagated by the server
+        # (handle_symlink_event materialises the link and returns the Event,
+        # and ConnectionManager.send_message broadcasts it to every peer
+        # except the sender): applying them here gives real-time symlink
+        # replication between clients in remote mode, matching LAN mode.
         if message.get("name") not in {
             EventName.added.value,
             EventName.modified.value,
             EventName.renamed.value,
             EventName.deleted.value,
+            EventName.symlink.value,
         }:
             log.error(f"Invalid event: {message.get('name')}")
             continue

@@ -53,7 +53,7 @@ matrix on the wire data.
 | ------ | ---- | ---- |
 | `LANServer` | `lan_server.py:1048` | HTTPS file server (REST mirror of hsync-server) |
 | `BoundedThreadingHTTPServer` | `:66` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap on concurrent request threads (H5, default `LAN_SERVER_MAX_THREADS=32`) |
-| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`); `POST /symlinks` creates links STRUCTURALLY from slaves (`_handle_symlink` — mirror of the central server; an existing file/link is replaced, the target is validated with `is_safe_symlink_target`) |
+| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`); `POST /symlinks` creates links STRUCTURALLY from slaves (`_handle_symlink` — mirror of the central server; an existing file/link is replaced, the target is validated with `is_safe_symlink_target`). **Idempotent**: a link already present with the SAME target is a converged echo and returns 200 without touching the filesystem (unlink+recreate on every echo was what kept the SYMLINK/DELETE oscillation alive: each mutation emitted a `deleted`+`created` pair, the single inbound-origin mark was consumed by the first, and the second was rebroadcast with the master CID) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_handle_upload_status` | `lan_server.py:1238` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
 | `_handle_upload` (offset) | `:1328` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected |
@@ -63,8 +63,14 @@ matrix on the wire data.
 
 Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`
-prefix checks — sibling directories cannot bypass confinement). The `/files`
-listing and `/files/download` handlers additionally skip/refuse file-symlinks
+prefix checks — sibling directories cannot bypass confinement).
+**Delete/rename/symlink endpoints use `resolve_final=False`**: the final
+component is never dereferenced, so deleting/renaming/replacing a link acts on
+the LINK entry, never on its target (with the default full resolve, deleting a
+link deleted the target file on the master and the broadcast propagated the
+data loss to every peer). Presence checks are dangling-aware
+(`is_symlink() or exists()`): a dangling link is a real directory entry. The
+`/files` listing and `/files/download` handlers additionally skip/refuse file-symlinks
 whose target escapes `LOCAL_BUCKET` (`is_safe_symlink_target`): a slave must
 never be able to dereference `secret -> /etc/passwd` through the master and
 learn its hash (listing) or content (download). In-bucket symlinks are listed

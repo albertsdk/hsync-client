@@ -213,3 +213,179 @@ class TestLANRequestHandlerPATCH:
             response = requests.patch(url, timeout=5)
 
             assert response.status_code == 400
+
+    def test_rename_symlink_moves_link_not_target(self, server, tmp_path):
+        """PATCH on a symlink moves the LINK entry, never the target file.
+
+        Regression: ``resolve_within`` with the default ``resolve_final=True``
+        dereferenced the link, so renaming a link renamed the TARGET instead,
+        losing the link and moving the pointed file away from its path on the
+        master (and then on every peer via the event broadcast).
+        """
+        import requests
+
+        srv, port = server
+
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+        link.symlink_to("target.txt")
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.patch(
+                url, params={"src": "link.txt", "dst": "renamed-link.txt"}, timeout=5
+            )
+
+            assert response.status_code == 200
+            assert not link.is_symlink()
+            assert (tmp_path / "renamed-link.txt").is_symlink()
+            # The target file must have stayed at its original path.
+            assert target.exists()
+            assert target.read_text() == "content"
+
+
+class TestLANRequestHandlerSymlink:
+    """Tests for the POST /symlinks endpoint (structural replication)."""
+
+    @pytest.fixture
+    def server(self):
+        """Create and start a test server."""
+        port = get_free_port()
+        server = LANServer(port=port)
+        server.start()
+        time.sleep(0.1)
+        yield server, port
+        server.stop()
+
+    def test_delete_symlink_keeps_target(self, server, tmp_path):
+        """DELETE on a symlink removes the LINK, never the target file.
+
+        Regression: ``_handle_delete`` resolved the incoming path with the
+        default ``resolve_final=True``, which dereferenced the link and
+        deleted the TARGET file — the data loss observed on every peer after
+        a slave deleted a synced link.
+        """
+        import requests
+
+        srv, port = server
+
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+        link.symlink_to("target.txt")
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.delete(url, params={"path": "link.txt"}, timeout=5)
+
+            assert response.status_code == 200
+            assert not link.is_symlink()
+            # The target file must have survived.
+            assert target.exists()
+            assert target.read_text() == "content"
+
+    def test_delete_dir_symlink_keeps_target_tree(self, server, tmp_path):
+        """DELETE is_dir=true on a dir-symlink removes the LINK, never rmtree's
+        the pointed directory."""
+        import requests
+
+        srv, port = server
+
+        target_dir = tmp_path / "real-dir"
+        target_dir.mkdir()
+        (target_dir / "file.txt").write_text("content")
+        link = tmp_path / "dir-link"
+        link.symlink_to("real-dir", target_is_directory=True)
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.delete(
+                url, params={"path": "dir-link", "is_dir": "true"}, timeout=5
+            )
+
+            assert response.status_code == 200
+            assert not link.is_symlink()
+            assert target_dir.exists()
+            assert (target_dir / "file.txt").exists()
+
+    def test_symlink_idempotent_same_target(self, server, tmp_path):
+        """POST /symlinks with an already-existing identical link is a NO-OP.
+
+        Regression: unconditional unlink+recreate made the master's watcher
+        emit a deleted+created pair on every harmless echo; the single
+        inbound-origin mark was consumed by the first event and the second
+        was rebroadcast with the master CID, re-triggering the whole
+        SYMLINK/DELETE oscillation on every peer forever.
+        """
+        import os
+
+        import requests
+
+        srv, port = server
+
+        link = tmp_path / "link.txt"
+        link.symlink_to("target.txt")
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/symlinks"
+            inode_before = os.stat(link, follow_symlinks=False).st_ino
+            response = requests.post(
+                url, params={"path": "link.txt", "target": "target.txt"}, timeout=5
+            )
+
+            assert response.status_code == 200
+            # The link entry must not have been recreated: same inode.
+            assert link.is_symlink()
+            assert os.stat(link, follow_symlinks=False).st_ino == inode_before
+
+    def test_symlink_replaces_link_with_different_target(self, server, tmp_path):
+        """POST /symlinks with a DIFFERENT target is a real change: replaced."""
+        import os
+
+        import requests
+
+        srv, port = server
+
+        link = tmp_path / "link.txt"
+        link.symlink_to("old-target.txt")
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/symlinks"
+            response = requests.post(
+                url, params={"path": "link.txt", "target": "new-target.txt"}, timeout=5
+            )
+
+            assert response.status_code == 201
+            assert link.is_symlink()
+            assert os.readlink(link) == "new-target.txt"

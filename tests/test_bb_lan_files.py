@@ -17,6 +17,7 @@ import pytest
 
 from .lan_helpers import (
     _lan_start,
+    _stderr_text,
     _terminate,
     _wait_for_file,
     _wait_for_file_gone,
@@ -220,6 +221,86 @@ class TestLanSymlink:
                     "Symlinked file did not sync"
                 )
                 assert (Path(lan_slave_dir) / "link.txt").read_bytes() == b"symlink-target\n"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_symlink_delete_keeps_target(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Deleting a synced link removes the LINK on every peer, never the
+        target file it points to.
+
+        Regression: the master's DELETE endpoint resolved the incoming path
+        with full dereference, so deleting a link deleted the TARGET on the
+        master and the event broadcast propagated the data loss to every
+        peer.
+        """
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            target = Path(lan_master_dir) / "target.txt"
+            target.write_bytes(b"symlink-target\n")
+            link = Path(lan_master_dir) / "link.txt"
+            link.symlink_to("target.txt")
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_file(str(Path(lan_slave_dir) / "link.txt"), timeout=30), (
+                    "Symlink did not sync before deletion"
+                )
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
+                link.unlink()
+                assert _wait_for_file_gone(str(Path(lan_slave_dir) / "link.txt"), timeout=30), (
+                    "Deleted link still present on slave"
+                )
+                # The target file must survive on BOTH peers.
+                assert target.exists(), "Target file was deleted on the master"
+                assert (Path(lan_slave_dir) / "target.txt").exists(), (
+                    "Target file was deleted on the slave"
+                )
+                assert (Path(lan_slave_dir) / "target.txt").read_bytes() == b"symlink-target\n"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_symlink_converges_without_oscillation(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """A synced link converges exactly once: no SYMLINK/DELETE oscillation.
+
+        Regression: every re-emitted echo used to unlink+recreate the link on
+        the master, whose watcher rebroadcast a delete+create pair for each
+        application — a never-ending ping-pong between peers (visible as an
+        unbounded stream of ``[REMOTE SYMLINK]``/``[REMOTE DELETE]`` lines).
+        """
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            target = Path(lan_master_dir) / "target.txt"
+            target.write_bytes(b"symlink-target\n")
+            link = Path(lan_master_dir) / "link.txt"
+            link.symlink_to("target.txt")
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_file(str(Path(lan_slave_dir) / "link.txt"), timeout=30), (
+                    "Symlink did not sync"
+                )
+                assert _wait_for_slave_events(slave), "Slave is not listening for master events"
+                # Let any residual echoes settle: after convergence the link
+                # must still exist and no further symlink application may
+                # occur. Record the slave-side count of inward symlink
+                # applications, then sample again after a quiet window.
+                _ = _stderr_text(slave)
+                count_before = _stderr_text(slave).count("Creating symlink")
+                time.sleep(5)
+                count_after = _stderr_text(slave).count("Creating symlink")
+                assert (Path(lan_slave_dir) / "link.txt").is_symlink(), (
+                    "Slave link disappeared during convergence"
+                )
+                assert count_after == count_before, (
+                    f"Symlink oscillation detected: {count_before} -> {count_after} "
+                    "inbound applications without any local change"
+                )
             finally:
                 _terminate(slave)
         finally:
