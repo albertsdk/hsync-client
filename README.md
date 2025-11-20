@@ -145,10 +145,13 @@ and the change propagates to the other peer in real time.
 > let the election happen automatically.
 
 > [!CAUTION]
-> **First run logic:** The node started with `--force-master` becomes the
-> absolute Source of Truth. Any conflicting files on the second node will be
-> **overwritten or deleted**. Always start the master on the machine holding
-> your canonical data.
+> **First run logic:** The node started with `--force-master` serves the file
+> listing that every other peer converges on. Files present locally but absent
+> from the master will be **removed** during the initial sync. The master is a
+> transport coordinator, not an authority: true conflicts are resolved causally
+> on every node (vector clocks + deterministic tie-break), and the losing side
+> is preserved as a `_conflicted_copy_` file. Always start the master on the
+> machine holding your canonical data.
 
 > For the full P2P setup (master election, pairing, `HSYNC_LAN_KEY`, group
 > filtering with `--lan-group`), see [LAN Mode](docs/lan-mode.md).
