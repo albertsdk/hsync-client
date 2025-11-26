@@ -185,11 +185,11 @@ class TestTombstonesCoverageGaps:
     def test_record_deletion_path_outside_bucket(self, tmp_path):
         """record_deletion is a no-op (empty relpath) when the path is the bucket root."""
         CONFIG["LOCAL_BUCKET"] = str(tmp_path)
-        # abs_path == bucket_dir → relpath_in_bucket() yields "" → no marker,
-        # no side-car write.
+        # abs_path == bucket_dir → relpath_in_bucket() yields "" → no marker.
         record_deletion(str(tmp_path))
         assert len(get_payload()) == 0
         assert not (tmp_path / ".hsynctombstones").exists()
+        assert not (tmp_path / ".hsyncstate").exists()
 
     def test_clear_deletion_path_outside_bucket(self, tmp_path):
         """clear_deletion is a no-op (empty relpath) when the path is the bucket root."""

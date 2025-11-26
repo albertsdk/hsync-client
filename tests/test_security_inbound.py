@@ -67,7 +67,14 @@ class TestInboundEventPathValidation:
         assert (tmp_path).exists()
 
     @pytest.mark.parametrize(
-        "internal", [".hsyncignore", ".hsyncstate", ".hsynctombstones", "sub/.hsyncignore"]
+        "internal",
+        [
+            ".hsyncignore",
+            ".hsyncfolder",
+            ".hsyncstate",
+            ".hsynctombstones",
+            "sub/.hsyncignore",
+        ],
     )
     async def test_internal_engine_files_rejected(self, tmp_path, internal):
         """Engine state files must never be written via the sync channel."""

@@ -32,6 +32,7 @@ class TestIsHiddenDir:
     def test_internal_dir_is_hidden(self):
         """Engine-owned directories are always hidden."""
         assert is_hidden_dir(".hsyncignore") is True
+        assert is_hidden_dir(".hsyncfolder") is True
         assert is_hidden_dir(".hsyncstate") is True
         assert is_hidden_dir(".hsynctombstones") is True
 

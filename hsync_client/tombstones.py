@@ -7,13 +7,14 @@
 """
 Per-peer tombstone management for HSYNC Client (LAN P2P mode).
 
-Every peer keeps its own persistent :class:`TombstoneStore`, backed by a hidden
-side-car file at the local bucket root (``.hsynctombstones``). Because the LAN
-master is elected and can change over time, knowledge of deletions must not live
-only on the current master: each peer records the deletions it observes, merges
-the master's markers on every sync (gossip), and serves the accumulated union if
-it later becomes master. This way a deletion is never lost across a mastership
-change and an offline peer does not resurrect a file on its next reconciliation.
+Every peer keeps its own persistent :class:`TombstoneStore`, backed by the
+installation ``syncstate.db`` and keyed by the ``.hsyncfolder`` UUID
+(ADR-0025). Because the LAN master is elected and can change over time,
+knowledge of deletions must not live only on the current master: each peer
+records the deletions it observes, merges the master's markers on every sync
+(gossip), and serves the accumulated union if it later becomes master. This
+way a deletion is never lost across a mastership change and an offline peer
+does not resurrect a file on its next reconciliation.
 
 Writes are serialized with a re-entrant lock because the sync engine records
 deletions from the parallel transfer thread pool; persistence is decoupled from
@@ -22,7 +23,6 @@ mutation so a full sync flushes once instead of per file.
 
 import threading
 
-from hsync_common.constants import HSYNCTOMBSTONES_FILENAME
 from hsync_common.models.tombstone import (
     TombstoneEntry,
     TombstoneStore,
@@ -30,9 +30,9 @@ from hsync_common.models.tombstone import (
 )
 
 from hsync_client.config import CONFIG, get_tombstone_ttl_days
+from hsync_client.state_backend import resolve_bucket_folder
 
-# Cache of per-bucket stores, keyed by the bucket directory path. Keying by path
-# (not a singleton) keeps tests that switch LOCAL_BUCKET isolated.
+# Cache of per-folder stores, keyed by folder UUID.
 _stores: dict[str, TombstoneStore] = {}
 
 # Re-entrant: the public helpers call get_tombstone_store() while holding it.
@@ -44,21 +44,24 @@ def _bucket_dir() -> str:
     return str(CONFIG.get("LOCAL_BUCKET", "") or "")
 
 
-def _store_path(bucket_dir: str) -> str:
-    """Return the side-car file path for the peer's tombstones."""
-    return f"{bucket_dir}/{HSYNCTOMBSTONES_FILENAME}"
-
-
 def get_tombstone_store() -> TombstoneStore:
     """Return the cached store for the local bucket, loading/pruning on first use."""
     with _lock:
-        bucket_dir = _bucket_dir()
-        store = _stores.get(bucket_dir)
+        resolved = resolve_bucket_folder(_bucket_dir())
+        if resolved is None:
+            return TombstoneStore(ttl_days=get_tombstone_ttl_days())
+        folder_id, db_path = resolved
+        store = _stores.get(folder_id)
         if store is None:
-            store = TombstoneStore(path=_store_path(bucket_dir), ttl_days=get_tombstone_ttl_days())
+            store = TombstoneStore(
+                db_path=db_path,
+                folder_id=folder_id,
+                ttl_days=get_tombstone_ttl_days(),
+                canonical_path=_bucket_dir(),
+            )
             store.load()
             store.prune()
-            _stores[bucket_dir] = store
+            _stores[folder_id] = store
         return store
 
 

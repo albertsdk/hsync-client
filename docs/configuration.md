@@ -124,6 +124,16 @@ normally.
 |---|---|---|
 | `HSYNC_NTP_HOSTS` | Comma-separated SNTP servers, tried in order; entries may carry a port override (`host:port`) | `pool.ntp.org,time.cloudflare.com,time.google.com` |
 
+## State directory
+
+Causal versions and deletion markers live in a single SQLite database
+**outside** the synced folder (`syncstate.db`). The folder itself only holds
+a small `.hsyncfolder` identity marker.
+
+| Variable | Description | Default |
+|---|---|---|
+| `HSYNC_STATE_DIR` | Directory that holds `syncstate.db` | `$XDG_STATE_HOME/hsync` or `~/.local/state/hsync` |
+
 ## Tuning for containers and VMs
 
 | Variable | Description | Default |

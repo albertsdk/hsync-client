@@ -333,7 +333,8 @@ Authorization: Bearer mySecretKey123
 > All peer-supplied paths (download `filename`, delete `path`, rename
 > `src`/`dst`, upload `path` + filename) are validated and confined to the
 > bucket root; traversal (`..`), absolute paths, backslashes and internal
-> engine files (`.hsyncignore`, `.hsyncstate`, `.hsynctombstones`, `*.part`)
+> engine files (`.hsyncignore`, `.hsyncfolder`, leftover `.hsyncstate` /
+> `.hsynctombstones`, `*.part`)
 > are rejected.
 
 ### Upload File

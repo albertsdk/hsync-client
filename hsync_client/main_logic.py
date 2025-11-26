@@ -947,8 +947,8 @@ def run_sync(
             log.info(f"  {label} {description}")
 
     # Cross-process instance lock: two hsync processes must never sync the
-    # same local directory — they would corrupt each other's .hsyncstate /
-    # .hsynctombstones side-cars and echo each other's watcher events. The
+    # same local directory — they would race the same folder UUID in
+    # syncstate.db and echo each other's watcher events. The
     # flock is held for the whole run (LAN or remote) and is released by the
     # kernel even on SIGKILL; see hsync_client.identity.InstanceLock.
     instance_lock = _acquire_instance_lock(local_path, log)
@@ -1009,7 +1009,7 @@ def _acquire_instance_lock(local_path: str, log) -> "Any":
     """Acquire the per-directory instance lock, failing fast with a clear error.
 
     Two live hsync processes on the same synced directory would corrupt each
-    other's engine side-cars; the lock holder's PID (when readable) is included
+    other's folder state; the lock holder's PID (when readable) is included
     in the message so the conflicting process is easy to find.
     """
     from hsync_client.identity import InstanceLock, InstanceLockError

@@ -24,7 +24,7 @@ A few concepts appear throughout the docs; here is a one-line reference:
 | **LAN Mode** | Serverless topology where peers discover each other via mDNS and elect a **master** that coordinates the sync group; all other peers are **slaves** that sync with the master. Enabled with `--lan-mode`. |
 | **Master / Slave** | LAN Mode roles: the master serves files over HTTPS/WSS and coordinates sync; slaves connect to the master. The master is elected automatically (see [LAN Mode](lan-mode.md#master-election)). |
 | **Watch mode** | Continuous real-time sync enabled with `-w` (implicit in LAN Mode). A periodic full resync acts as a safety net for missed events. |
-| **Side-cars** | Internal files (`.hsyncstate`, `.hsynctombstones`) the client creates at the bucket root to track sync state. Safe to ignore. |
+| **Folder marker** | Hidden `.hsyncfolder` file at the bucket root. Identifies the folder so sync state stored outside the bucket can follow a rename or move. Safe to ignore. |
 
 ## Quick Start
 

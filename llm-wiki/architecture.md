@@ -78,12 +78,13 @@ remote_websocket | lan.py + lan_server + lan_websocket + lan_handler   (modes)
 main_logic (orchestration) ← cli ← main
 ```
 
-## State persistence (side-cars)
+## State persistence (external SQLite, ADR-0025)
 
 | Store | Module | File | Purpose |
 | ----- | ------ | ---- | ------- |
-| Sync base versions | `sync_state.py:48` | `.hsyncstate` | three-way merge base (§7) |
-| Tombstones | `tombstones.py:43` | `.hsynctombstones` | deletion propagation |
+| Sync base versions | `sync_state.py` | `$HSYNC_STATE_DIR/syncstate.db` (folder UUID) | three-way merge base (§7) |
+| Tombstones | `tombstones.py` | same DB, `tombstones` table | deletion propagation |
+| Folder identity | `state_backend.py` | `.hsyncfolder` at bucket root | UUIDv4 re-anchor |
 | TOFU pins | `pinning.py:56` | pin store (0o600) | LAN master fingerprint trust |
 | LAN master identity | `ssl_utils.py:98` | persistent cert/key (0o600) | stable fingerprint across restarts |
 

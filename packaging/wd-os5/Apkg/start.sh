@@ -161,6 +161,10 @@ esac
 export HSYNC_API_KEY
 export HSYNC_LAN_KEY
 export HSYNC_NTP_HOSTS
+# Causal state lives outside the synced folder (ADR-0025). Default next to
+# the NAS config/log tree so it survives package upgrades.
+HSYNC_STATE_DIR="${HSYNC_STATE_DIR:-/mnt/HD/HD_a2/hsync/state}"
+export HSYNC_STATE_DIR
 
 cd "${APKG_PATH}"
 nohup "${HSYNC_BIN}" "$@" >> "${HSYNC_LOG_FILE}" 2>&1 &

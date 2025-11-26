@@ -49,6 +49,7 @@ def _isolate_device_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Ge
     """
     monkeypatch.setenv("HSYNC_DEVICE_DIR", str(tmp_path / "hsync_device"))
     monkeypatch.setenv("HSYNC_LOCKS_DIR", str(tmp_path / "hsync_locks"))
+    monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "hsync_state"))
     from hsync_client.identity import InstanceLock, reset_device_identity_cache
 
     reset_device_identity_cache()
@@ -66,9 +67,13 @@ def reset_sync_state_stores() -> None:
     populate entries that survive into later, unrelated tests that also import
     ``sync_state``.  Clearing it here gives every test a clean slate.
     """
-    from hsync_client import sync_state
+    from hsync_common.models.sqlstore import reset_state_db_cache
+
+    from hsync_client import sync_state, tombstones
 
     sync_state._stores.clear()
+    tombstones._stores.clear()
+    reset_state_db_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -680,6 +685,7 @@ def _start_watch_client(
             "HSYNC_API_KEY": api_key,
             "HSYNC_READY_FILE": ready_file,
             "HSYNC_LOCKS_DIR": locks_dir,
+            "HSYNC_STATE_DIR": str(Path(local_path).parent / "hsync_state"),
         }
     )
     args = [

@@ -238,7 +238,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
 
     # TOCTOU: snapshot before the rolling scan, re-check after — a file that
     # changes mid-scan would produce a delta describing a torn read whose
-    # server-side hash check would still pass, poisoning .hsyncstate.
+    # server-side hash check would still pass, poisoning the merge base.
     pre_stat = Path(file.filepath).stat()
     ops, literals = find_matches_file(file.filepath, sigs, block_size)
     post_stat = Path(file.filepath).stat()

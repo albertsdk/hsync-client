@@ -8,11 +8,12 @@
 Per-peer sync-state (version) management for HSYNC Client.
 
 Wraps :class:`hsync_common.models.version.SyncStateStore` with one persisted
-store per local bucket, backed by a hidden ``.hsyncstate`` side-car at the bucket
-root. The store records, per path, the content hash this peer last agreed on with
-the master (``base_hash``) plus its version lineage. Comparing local, remote and
-base lets reconciliation pick the right direction — or flag a true conflict —
-without trusting wall-clock timestamps.
+store per local bucket, backed by the installation ``syncstate.db`` and keyed
+by the ``.hsyncfolder`` UUID (ADR-0025). The store records, per path, the
+content hash this peer last agreed on with the master (``base_hash``) plus its
+version lineage. Comparing local, remote and base lets reconciliation pick the
+right direction — or flag a true conflict — without trusting wall-clock
+timestamps.
 
 Writes are serialized with a re-entrant lock because transfers record their
 synced base from the parallel transfer thread pool; persistence is decoupled
@@ -23,14 +24,14 @@ import os
 import threading
 
 from hsync_common.clock import correct_mtime
-from hsync_common.constants import HSYNCSTATE_FILENAME
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.models.version import SyncStateStore, merge_vclocks, new_version_id, tick_vclock
 
 from hsync_client.config import CONFIG
+from hsync_client.state_backend import resolve_bucket_folder
 
-# Cache of per-bucket stores, keyed by the bucket directory path. Keying by path
-# (not a singleton) keeps tests that switch LOCAL_BUCKET isolated.
+# Cache of per-folder stores, keyed by folder UUID. Tests that switch
+# LOCAL_BUCKET stay isolated because a new directory gets a new marker.
 _stores: dict[str, SyncStateStore] = {}
 
 # Re-entrant: the public helpers call get_sync_state_store() while holding it.
@@ -42,20 +43,22 @@ def _bucket_dir() -> str:
     return str(CONFIG.get("LOCAL_BUCKET", "") or "")
 
 
-def _store_path(bucket_dir: str) -> str:
-    """Return the side-car file path for the peer's sync-state."""
-    return f"{bucket_dir}/{HSYNCSTATE_FILENAME}"
-
-
 def get_sync_state_store() -> SyncStateStore:
     """Return the cached store for the local bucket, loading on first use."""
     with _lock:
-        bucket_dir = _bucket_dir()
-        store = _stores.get(bucket_dir)
+        resolved = resolve_bucket_folder(_bucket_dir())
+        if resolved is None:
+            return SyncStateStore()
+        folder_id, db_path = resolved
+        store = _stores.get(folder_id)
         if store is None:
-            store = SyncStateStore(path=_store_path(bucket_dir))
+            store = SyncStateStore(
+                db_path=db_path,
+                folder_id=folder_id,
+                canonical_path=_bucket_dir(),
+            )
             store.load()
-            _stores[bucket_dir] = store
+            _stores[folder_id] = store
         return store
 
 
@@ -136,7 +139,7 @@ def iter_merge_bases():
 
 
 def flush() -> None:
-    """Persist the local bucket's sync-state to its side-car file."""
+    """Persist the local bucket's sync-state (one SQLite transaction)."""
     with _lock:
         get_sync_state_store().save()
 

@@ -110,6 +110,7 @@ def _lan_env(local_path: str, extra: dict[str, str | None] | None = None) -> dic
             "HSYNC_DEVICE_DIR": _lan_device_dir(local_path),
             "HSYNC_LAN_PIN_FILE": _lan_pin_file(local_path),
             "HSYNC_LOCKS_DIR": str(path.parent / "locks"),
+            "HSYNC_STATE_DIR": str(path.parent / f"{path.name}_state"),
             # Deterministic offline clock probing for tests (ADR-0023): a dead
             # loopback endpoint keeps the NTP probe fast and internet-free, so
             # no test ever depends on a reachable public NTP server. Tests that

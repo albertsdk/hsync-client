@@ -230,8 +230,8 @@ Consequences:
 ### One process per directory
 
 Two hsync processes can never sync the **same local directory** at the same
-time (regardless of buckets): they would corrupt each other's `.hsyncstate` /
-`.hsynctombstones` side-cars. The client enforces this with a cross-process
+time (regardless of buckets): they would race the same folder UUID in
+`syncstate.db`. The client enforces this with a cross-process
 `flock` (per-directory, in `$XDG_RUNTIME_DIR/hsync/locks/` or
 `HSYNC_LOCKS_DIR`) and refuses to start with an error naming the conflicting
 directory and PID. The lock is released by the kernel even if the process is

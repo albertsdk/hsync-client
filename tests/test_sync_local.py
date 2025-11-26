@@ -611,11 +611,11 @@ class TestConflictResolution:
         ), f"Filename {name!r} does not match the UTC ISO-8601 pattern"
 
     def test_preview_does_not_mutate_sync_state(self, tmp_path):
-        """get_sync_actions(persist_state=False) must not mutate .hsyncstate.
+        """get_sync_actions(persist_state=False) must not mutate syncstate.db.
 
         A dry-run/preview computes the same causal decisions but must never
         persist them: the merge base recorded before the preview must be
-        byte-identical after it (ADR-0022 §3.4.7).
+        identical after it (ADR-0022 §3.4.7).
         """
         local_file = tmp_path / "kept.txt"
         local_file.write_text("synced content")
@@ -629,10 +629,8 @@ class TestConflictResolution:
         with patch("hsync_client.sync_state.CONFIG", cfg):
             ss_mod.record_base(str(local_file), file_obj.sha256sum)
             ss_mod.flush()
+            before = dict(ss_mod.get_sync_state_store()._data)
             ss_mod._stores.clear()
-
-        state_path = tmp_path / ".hsyncstate"
-        before = state_path.read_bytes()
 
         remote_files = [
             {
@@ -653,9 +651,10 @@ class TestConflictResolution:
         ):
             result = get_sync_actions(remote_files, [file_obj.to_dict()], persist_state=False)
             assert all(a.name == SyncActionName.nothing for a in result)
+            after = dict(ss_mod.get_sync_state_store()._data)
 
-        # The persisted side-car must be unchanged.
-        assert state_path.read_bytes() == before
+        assert after == before
+        assert not (tmp_path / ".hsyncstate").exists()
 
 
 class TestSyncCycleFlag:
@@ -1458,7 +1457,7 @@ class TestThreeWayMergeEndToEnd:
     """Full two-peer round-trip exercising the lifecycle on real on-disk state.
 
     A shared in-memory ``server`` stands in for the master; two peers each own a
-    bucket directory and a persistent ``.hsyncstate`` side-car. Every round runs
+    bucket directory and a persistent ``syncstate.db`` row. Every round runs
     the real :func:`get_sync_actions` and then applies the decided transfers
     exactly as the sync loop does (writing content and recording the synced
     base), flushing and dropping the in-memory cache between rounds to simulate a
@@ -1552,7 +1551,7 @@ class TestThreeWayMergeEndToEnd:
             # which reads its own CONFIG.
             patch("hsync_client.transfer.CONFIG", cfg),
         ):
-            # fresh process: base is loaded from .hsyncstate
+            # fresh process: base is loaded from syncstate.db
             clear_sha256_cache()  # mtimes are pinned, so re-hash content each round
             actions = get_sync_actions(self._remote_list(server), get_files_local(), tombstones={})
             for action in actions:

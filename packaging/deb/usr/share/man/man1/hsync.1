@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-08-11" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-08-18" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -498,6 +498,13 @@ the LAN keypair (default:
 .IR ~/.local/state/hsync/device
 ).
 .TP
+.B HSYNC_STATE_DIR
+Directory holding the installation causal-state database
+.I syncstate.db
+(default:
+.IR ~/.local/state/hsync
+).
+.TP
 .B HSYNC_LAN_PIN_FILE
 File storing the pinned fingerprints of known LAN peers (default:
 .I ~/.local/state/hsync/lan_known_peers.json
@@ -520,6 +527,12 @@ Placed in the root of the synced directory.
 .I .hsynckeep
 Marker file that forces a directory to be kept even if it would otherwise
 be empty after synchronization.
+.TP
+.I .hsyncfolder
+Folder-identity marker (UUIDv4). Causal versions and deletion markers live
+in
+.I $HSYNC_STATE_DIR/syncstate.db
+, not inside the synced directory.
 .
 .\" ---------------------------------------------------------------------
 .SH EXAMPLES

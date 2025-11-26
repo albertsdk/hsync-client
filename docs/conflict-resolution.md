@@ -204,12 +204,13 @@ and the loser is preserved.
 
 ## The store (`SyncStateStore`)
 
-The store is an in-memory `dict[relpath, FileVersion]` persisted to a
-**`.hsyncstate`** side-car file at the bucket root. Properties:
+The store is an in-memory `dict[relpath, FileVersion]` persisted in the
+installation **`syncstate.db`**, keyed by the `.hsyncfolder` UUID. Properties:
 
 - **Private to each peer** — never exchanged with the server or other peers
   (the wire form `VersionInfo` carries the clock inside the listing/event).
-- **Atomic writes** — written to a `.tmp` file first, then renamed.
+- **Outside the bucket** — WAL/FULL SQLite on the system state directory;
+  the bucket only holds the `.hsyncfolder` marker.
 - **Garbage collected** — entries for files no longer in the bucket are pruned.
 - **Thread-safe** — wrapped by a re-entrant lock in `hsync_client.sync_state`
   because transfers record their base from the parallel transfer thread pool.
@@ -239,7 +240,7 @@ sequenceDiagram
     participant S as Server/Master
     participant FS as Local FS
 
-    C->>SS: ① load() from .hsyncstate
+    C->>SS: ① load() from syncstate.db
     C->>S: ② GET remote file list (with version/vclock)
     C->>FS: ③ Scan local files
 
@@ -261,7 +262,7 @@ sequenceDiagram
     end
 
     C->>SS: ⑨ retain(files still in bucket)
-    C->>SS: ⑩ flush() → .hsyncstate
+    C->>SS: ⑩ flush() → syncstate.db
 ```
 
 The same matrix also runs on the **real-time** path: an inbound WS "modified"
@@ -407,7 +408,7 @@ positive proof the removal was intentional.
 | **File replaced with empty content** | Hash `""` is treated as absent by `record_base()` — a no-op guard prevents corrupting the store. |
 | **Upload superseded** | The hub arbitrates: a causally-dominated upload is rejected (`409 superseded`) and the client downloads the current remote version on the next cycle. |
 | **Upload loses tie-break** | The incoming bytes are preserved as a conflicted copy (`409 conflict_lost`); the stored winner is kept. |
-| **Malformed wire `version` / vclock** | Tolerantly parsed as absent (empty clock); the causal matrix handles it. A malformed stored side-car entry is dropped rather than masked. |
+| **Malformed wire `version` / vclock** | Tolerantly parsed as absent (empty clock); the causal matrix handles it. A malformed stored row is dropped rather than masked. |
 | **Concurrent uploads of the same path** | Serialized per path (file lock); the second sees the version the first registered. |
 | **Relay A → B → C** | No false conflict: merged clocks carry the full causal history through the relay. |
 

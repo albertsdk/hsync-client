@@ -122,7 +122,7 @@ def _record_synced_base(
 
     Persistence is deferred to the single ``sync_state.flush()`` at the end of
     the sync cycle (``sync.py``), avoiding redundant per-file rewrites of the
-    entire ``.hsyncstate`` side-car.
+    entire version map.
     """
     try:
         from hsync_client.sync_state import merge_and_record, record_base

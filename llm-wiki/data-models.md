@@ -17,21 +17,23 @@ the *client-local* persisted state and how it wraps the common stores.
 | `FileVersion` / `VersionInfo` / `SyncDecision` / `resolve_three_way` / `parse_version_info` / `merge_vclocks` / `tick_vclock` | `hsync_common.models.version` | `sync.py`, `transfer.py`, `arbitration.py` (causal three-way merge) |
 | `relpath_in_bucket` | `hsync_common.models.tombstone` | `sync_state.py`, `tombstones.py` |
 
-## Client-local persisted state (per bucket)
+## Client-local persisted state (per folder UUID)
 
-Two hidden side-cars at the bucket root; both keyed by bucket dir (not singletons)
-to keep tests isolated.
+Causal versions and tombstones live in the installation `syncstate.db`
+(`HSYNC_STATE_DIR` / XDG state dir), keyed by the `.hsyncfolder` UUID
+(ADR-0025). The marker is the only engine file at the bucket root.
 
-| Side-car | Filename const | Wrapper | Purpose |
-| -------- | -------------- | ------- | ------- |
-| Sync state | `HSYNCSTATE_FILENAME` (`.hsyncstate`) | `sync_state.py` → `SyncStateStore` | per-path `base_hash` + vector-clock lineage for causal three-way merge (ADR-0022; no wall-clock trust) |
-| Tombstones | `HSYNCTOMBSTONES_FILENAME` (`.hsynctombstones`) | `tombstones.py` → `TombstoneStore` | per-peer deletion markers, gossiped across mastership changes |
+| Store | Location | Wrapper | Purpose |
+| ----- | -------- | ------- | ------- |
+| Sync state | `syncstate.db` table `versions` | `sync_state.py` → `SyncStateStore` | per-path `base_hash` + vector-clock lineage for causal three-way merge (ADR-0022; no wall-clock trust) |
+| Tombstones | `syncstate.db` table `tombstones` | `tombstones.py` → `TombstoneStore` | per-peer deletion markers, gossiped across mastership changes |
+| Folder id | `.hsyncfolder` at bucket root | `state_backend.resolve_bucket_folder` | UUIDv4 that re-anchors state across rename/move |
 
 ### sync_state.py (merge base)
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `get_sync_state_store` | `sync_state.py:48` | cached per-bucket store (`_stores`, `_lock` RLock) |
+| `get_sync_state_store` | `sync_state.py` | cached per-folder-id store (`_stores`, `_lock` RLock) |
 | `get_base_hash` | `:60` | read agreed base hash for a path |
 | `record_base` | `:69` | persist base after a successful sync |
 | `_corrected_mtime_of` | `:170` | corrected mtime of the on-disk file through `hsync_common.clock.correct_mtime` (ADR-0023); 0 when unreadable |
@@ -42,12 +44,12 @@ to keep tests isolated.
 | `get_vclock` | `:201` | read the stored vclock for a path |
 | `clear_base` | `:88` | drop base on delete |
 | `retain` | `:96` | GC bases not in the current path set |
-| `flush` | `:122` | single flush per sync (writes `.hsyncstate` atomically); test reset via `_stores.clear()` |
+| `flush` | `sync_state.py` | single flush per sync (one SQLite transaction); test reset via `_stores.clear()` |
 
 Writes are RLock-guarded because transfers record their base from the parallel
 transfer pool; persistence is decoupled from mutation (one flush per sync).
-The per-bucket store cache (`_stores`) is keyed by bucket dir so tests that
-switch `LOCAL_BUCKET` stay isolated.
+The store cache (`_stores`) is keyed by folder UUID so tests that switch
+`LOCAL_BUCKET` stay isolated (a new directory gets a new marker).
 
 ### tombstones.py (deletion markers)
 
@@ -60,8 +62,8 @@ switch `LOCAL_BUCKET` stay isolated.
 | `get_payload` | `:92` | union to serve when this peer is master |
 
 Tombstone semantics (causal merge, TTL storage GC, hashed keys) are SSOT in
-`hsync_common.models.tombstone` — see ADR 0003. The per-bucket store cache
-(`_stores`) is keyed by bucket dir, matching `sync_state`.
+`hsync_common.models.tombstone` — see ADR 0003. The store cache (`_stores`)
+is keyed by folder UUID, matching `sync_state`.
 
 ## Runtime config models
 

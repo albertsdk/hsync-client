@@ -28,7 +28,7 @@ if ! id "${HSYNC_USER}" >/dev/null 2>&1; then
 fi
 
 # ── Directories ──────────────────────────────────────────────────────────
-mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}" "${DATA_DIR}/device"
+mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}" "${DATA_DIR}/device" "${DATA_DIR}/state"
 chown root:root "${CONFIG_DIR}" 2>/dev/null || true
 chmod 0750 "${CONFIG_DIR}"
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${LOG_DIR}" 2>/dev/null || true
@@ -41,6 +41,9 @@ chmod 0750 "${DATA_DIR}"
 # home directory, so the cert must live here under the data dir.
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/device" 2>/dev/null || true
 chmod 0700 "${DATA_DIR}/device"
+# Causal-state database (HSYNC_STATE_DIR / syncstate.db).
+chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/state" 2>/dev/null || true
+chmod 0750 "${DATA_DIR}/state"
 
 # ── Config file permissions (conffile) ────────────────────────────────────
 # dpkg marks /etc/hsync/hsync.conf as a conffile, so its contents are

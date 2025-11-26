@@ -316,7 +316,7 @@ async def sync(lan_mode: bool = False) -> None:
         log.info(f"Sync actions: {len(sync_actions)} files to process")
 
         # Drop merge-base records for files that no longer exist locally so the
-        # sync-state side-car stays bounded (downloads re-record after transfer).
+        # version store stays bounded (downloads re-record after transfer).
         # ``local_files`` entries carry bucket-relative paths, so resolve them
         # against LOCAL_BUCKET: ``retain`` expects absolute paths and a bare
         # relative path would never match a recorded entry, silently dropping
@@ -467,7 +467,7 @@ async def sync(lan_mode: bool = False) -> None:
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
         # and every _record_synced_base() from completed transfers) in a single
         # atomic write at the end of the cycle, avoiding redundant per-file
-        # rewrites of the entire .hsyncstate side-car.
+        # rewrites of the entire version map.
         sync_state.flush()
 
         log.info("Sync completed successfully")
@@ -1081,7 +1081,7 @@ def get_sync_actions(
             is removed instead of being re-uploaded (resurrection guard).
         persist_state: When False (preview/dry-run), the store is never
             mutated — ``merge_and_record`` on in-sync files is skipped so the
-            ``.hsyncstate`` side-car stays unchanged. Comparison is always pure
+            installation ``syncstate.db`` stays unchanged. Comparison is always pure
             via ``local_version_for_compare``.
 
     Returns:
@@ -1183,7 +1183,7 @@ def get_sync_actions(
             # Files already in sync: refresh the merge base with a merged clock
             # so a later one-sided edit resolves cleanly (convergence D11).
             # Skipped in preview mode (persist_state=False) so a dry-run never
-            # mutates the persisted .hsyncstate side-car.
+            # mutates the persisted installation store.
             if action == SyncActionName.nothing and local_file.sha256sum and persist_state:
                 sync_state.merge_and_record(abs_local, local_file.sha256sum, remote_vclock)
 
