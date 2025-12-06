@@ -245,7 +245,7 @@ class TestSlaveTuningRefreshOrdering:
         ):
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
-        assert result is False
+        assert result == (False, 0)
         assert calls == ["pin", "refresh"]
 
 
@@ -279,7 +279,10 @@ class TestRunSyncLanPlaceholder:
             patch("hsync_client.main_logic.emit_event") as mock_emit,
             patch("hsync_client.autotune.measure_rtt") as mock_rtt,
         ):
-            run_sync(**kwargs)
+            mock_lan.return_value = 0
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
         return mock_lan, mock_emit, mock_rtt
 
     def test_placeholder_skips_rtt_probe_and_server_event(self, tmp_path):

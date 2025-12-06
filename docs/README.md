@@ -64,6 +64,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | [examples.md](examples.md) | Index: practical usage recipes (split by mode). |
 | [examples-server.md](examples-server.md) | Server Mode examples: sync, backup, multi-device, bandwidth-limited. |
 | [examples-lan.md](examples-lan.md) | LAN P2P examples: Wi-Fi sync, NAS backup, groups, fixed ports. |
+| [scheduling.md](scheduling.md) | Schedule one-shot syncs with cron or systemd timers: exit codes, env-file secrets, alerting, examples. |
 | [log-labels.md](log-labels.md) | Every action label that can appear in the logs and what it means. |
 
 ### How It Works

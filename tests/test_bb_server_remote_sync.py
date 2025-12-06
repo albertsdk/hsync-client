@@ -547,7 +547,10 @@ class TestRemoteConflictedCopy:
         )
 
         # And a re-sync of client A must converge on the winner at the main
-        # path and the loser at the conflicted copy
+        # path and the loser at the conflicted copy. The arbitration already
+        # happened server-side (the concurrent upload resolved the tie-break
+        # there), so for client A both files are plain downloads with no
+        # local divergence: the cycle exits clean (0).
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
         assert (Path(local_dir) / name).read_bytes() == winner
@@ -674,7 +677,9 @@ class TestRemoteCausalConflict:
         (Path(local_dir) / name).write_bytes(local_edit)
 
         result = run_sync_once(bb_bucket, local_dir)
-        assert result.exit_code == 0
+        # The conflicting download preserves my losing copy: the cycle
+        # reports the resolved conflict via exit code 4 (CONFLICTS).
+        assert result.exit_code == 4
         assert (Path(local_dir) / name).read_bytes() == remote_content, (
             "The winner must take the original path"
         )
@@ -801,7 +806,8 @@ class TestRemoteCausalConflict:
         (Path(local_dir) / name).write_bytes(local_content)
 
         result = run_sync_once(bb_bucket, local_dir)
-        assert result.exit_code == 0
+        # A conflict_download preserved my losing copy: exit code 4 (CONFLICTS).
+        assert result.exit_code == 4
         assert (Path(local_dir) / name).read_bytes() == remote_content, (
             "The higher-hash remote content must take the original path"
         )

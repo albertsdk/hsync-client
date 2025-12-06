@@ -112,6 +112,29 @@ class TestTyperCli:
         assert call_kwargs["continuous"] is True
 
     @patch("hsync_client.main_logic.run_sync")
+    def test_once_flag(self, mock_run_sync):
+        """CLI accepts --once as the explicit one-shot form."""
+        result = runner.invoke(app, ["-b", "test", "--once", "-s", "http://test:8000"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["once"] is True
+        assert call_kwargs["continuous"] is False
+
+    def test_once_and_watch_are_mutually_exclusive(self):
+        """--once is the explicit default behaviour and cannot combine with -w."""
+        result = runner.invoke(app, ["-b", "test", "--once", "-w", "-s", "http://test:8000"])
+        assert result.exit_code != 0
+        assert "--once" in result.output
+
+    def test_once_and_lan_persistent_are_mutually_exclusive(self):
+        """In LAN mode the one-shot form is --no-lan-persistent, not --once."""
+        result = runner.invoke(
+            app, ["-b", "test", "--once", "--lan-mode", "--lan-persistent", "-s", "http://t:8000"]
+        )
+        assert result.exit_code != 0
+        assert "--once" in result.output
+
+    @patch("hsync_client.main_logic.run_sync")
     def test_verbose_flag(self, mock_run_sync):
         """CLI accepts -v/--verbose flag."""
         result = runner.invoke(app, ["-b", "test", "-v", "-s", "http://test:8000"])

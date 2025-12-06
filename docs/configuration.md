@@ -13,6 +13,7 @@ Shared configuration options that apply to both Server Mode and LAN P2P Mode.
 | `-b, --bucket` | Bucket name | (required) |
 | `-p, --path` | Local directory path | cwd |
 | `-w, --watch` | Watch for changes and sync continuously (implicit in LAN mode) | `false` |
+| `--once` | Run a single sync cycle and exit (explicit form of the default). Incompatible with `-w`; in LAN mode use `--no-lan-persistent` | `false` |
 | `-i, --interval` | Force full sync every N seconds (requires `-w`) | — |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--ignore-delete` | Do not propagate file deletions (backup mode) | `false` |

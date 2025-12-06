@@ -66,6 +66,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event, init_emitter
+from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan_handler import run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
@@ -529,6 +530,7 @@ def run_sync(
     logfile: str | None,
     no_color: bool,
     legend: bool,
+    once: bool = False,
     lan_require_pairing: bool = False,
     api_key_fd: int | None = None,
     lan_key_fd: int | None = None,
@@ -554,7 +556,13 @@ def run_sync(
     - Setting up logging
     - Validating configuration
     - Running sync (single or continuous)
+
+    ``once`` is an explicit alias for the default one-shot behaviour (omit
+    ``-w``). It carries no additional logic: one-shot is already the
+    default. The parameter exists so the CLI surface can advertise the
+    intent through a dedicated flag and scripts can state it explicitly.
     """
+    del once  # documented alias only - one-shot is the default without -w
     # Read secrets from file descriptors if provided (secure passing from parent)
     api_key_from_fd = _read_secret_from_fd(api_key_fd)
     lan_key_from_fd = _read_secret_from_fd(lan_key_fd)
@@ -956,8 +964,7 @@ def run_sync(
         # LAN Mode: Peer Discovery and Master Election
         if config["LAN_MODE"]:
             _warn_if_lan_in_container(log)
-            run_lan_mode(config, log)
-            return
+            sys.exit(run_lan_mode(config, log))
 
         # Server Connectivity Check with retry
         if not _check_server_connectivity(
@@ -1000,7 +1007,27 @@ def run_sync(
             # perform real transfers despite --dry-run.
             _run_preview(log)
         else:
-            run(sync())
+            # One-shot sync. The exit code feeds the shell from here on: a
+            # completed cycle maps its verdict (transfer errors, deletion
+            # guard, conflicts) through the documented code table, while
+            # fatal failures already logged by sync() become FATAL (1)
+            # without a raw traceback on stderr.
+            try:
+                result = run(sync())
+            except SystemExit:
+                raise
+            except Exception:
+                # sync() already logged the error and emitted the structured
+                # event (or the debug traceback when verbose). A bare
+                # exception here must simply fail the run.
+                sys.exit(int(ExitCode.FATAL))
+            sys.exit(
+                exit_code_for_result(
+                    failed_transfers=result.failed,
+                    guard_tripped=result.guard_tripped,
+                    conflicts=result.conflicts,
+                )
+            )
     finally:
         instance_lock.release()
 

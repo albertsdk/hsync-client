@@ -15,7 +15,7 @@ community feedback and contributor availability.
 - **Encrypted buckets** — client-side encryption before upload (server never sees plaintext)
 - **File versioning on client** — keep N previous versions locally (`.hsyncversions` directory)
 - **Proxy support** — HTTP/HTTPS/SOCKS5 proxy for corporate environments
-- **One-shot mode improvements** — exit codes for scripting, JSON output mode
+- **One-shot mode improvements** — JSON output mode
 - **Windows service** — run as a Windows service (in addition to systemd on Linux)
 - **macOS launchd plist** — official launchd service definition
 

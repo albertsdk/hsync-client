@@ -15,6 +15,7 @@ import asyncio
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from os import cpu_count, remove, walk
 from pathlib import Path
 from shutil import copy2
@@ -195,7 +196,24 @@ def _mass_deletion_blocked(
     return False, ""
 
 
-async def sync(lan_mode: bool = False) -> None:
+@dataclass(frozen=True)
+class SyncCycleResult:
+    """Outcome of a single sync cycle, for exit-status derivation.
+
+    Populated by :func:`sync` on the one-shot path and mapped to a process
+    exit code by :func:`hsync_client.exitcodes.exit_code_for_result`. The
+    continuous paths (watcher and periodic-resync loops) call ``sync()``
+    too but ignore the result, which keeps the API backward compatible.
+    """
+
+    completed: bool
+    transfers: int
+    failed: int
+    conflicts: int
+    guard_tripped: bool
+
+
+async def sync(lan_mode: bool = False) -> SyncCycleResult:
     """
     Perform a full synchronization between local and remote files.
 
@@ -210,6 +228,11 @@ async def sync(lan_mode: bool = False) -> None:
             Local-only files are uploaded to the master in bidirectional and
             upload-only modes; they are deleted only in download-only mode
             (slave mirrors the master).
+
+    Returns:
+        The cycle outcome. Fatal failures (authentication, network, server
+        or unexpected errors) are raised, not returned, so the caller can
+        map them to a distinct exit status.
     """
     # Import here to avoid circular import
     from hsync_client.transfer import nothing_to_do
@@ -217,7 +240,9 @@ async def sync(lan_mode: bool = False) -> None:
     # Check if local directory exists before starting sync
     if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
-        return
+        return SyncCycleResult(
+            completed=False, transfers=0, failed=0, conflicts=0, guard_tripped=False
+        )
 
     _sync_cycle_active.set()
     try:
@@ -381,6 +406,7 @@ async def sync(lan_mode: bool = False) -> None:
         blocked, reason = _mass_deletion_blocked(
             len(guarded_deletes), len(local_files), len(remote_files)
         )
+        guard_tripped = blocked
         if blocked:
             log.warning(
                 f"{ActionLabel.GUARD} Mass-deletion guard tripped ({reason}); "
@@ -435,8 +461,10 @@ async def sync(lan_mode: bool = False) -> None:
         # Preserve locally-modified files before a conflicting download
         # overwrites them (concurrent clocks lost the causal tie-break —
         # there is never a wall-clock winner).
+        conflicts = 0
         for action in sync_actions:
             if action.name == SyncActionName.download and getattr(action, "conflict", False):
+                conflicts += 1
                 _save_conflict_copy(action.file)
 
         # ── Symlink structural replication ──────────────────────────────
@@ -459,10 +487,11 @@ async def sync(lan_mode: bool = False) -> None:
                     log.error(f'Error downloading symlink "{link.filepath}": {e}')
 
         # Execute transfers in parallel using thread pool
+        transfer_counters: dict[str, int] = {"failed": 0}
         if downloads or uploads:
             # Re-derive concurrency from the live transfer queue profile
             _refresh_concurrency_from_queue(downloads, uploads)
-            await _execute_parallel_transfers(downloads, uploads)
+            await _execute_parallel_transfers(downloads, uploads, transfer_counters)
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
         # and every _record_synced_base() from completed transfers) in a single
@@ -475,6 +504,13 @@ async def sync(lan_mode: bool = False) -> None:
         from hsync_client.utils import _write_ready_file as _signal_ready
 
         _signal_ready()
+        return SyncCycleResult(
+            completed=True,
+            transfers=len(downloads) + len(uploads),
+            failed=transfer_counters["failed"],
+            conflicts=conflicts,
+            guard_tripped=guard_tripped,
+        )
 
     except (AuthenticationError, NetworkError, ServerError) as e:
         log.error(f"Sync failed: {e}")
@@ -536,9 +572,16 @@ def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) 
         CONFIG["MAX_CONCURRENT_TRANSFERS"] = concurrency
 
 
+def _count_transfer_failure(counters: dict[str, int] | None) -> None:
+    """Record one failed transfer in *counters* when statistics are collected."""
+    if counters is not None:
+        counters["failed"] = counters.get("failed", 0) + 1
+
+
 async def _execute_parallel_transfers(
     downloads: list[File],
     uploads: list[File],
+    counters: dict[str, int] | None = None,
 ) -> None:
     """
     Execute file transfers in parallel using a thread pool.
@@ -549,6 +592,10 @@ async def _execute_parallel_transfers(
     Args:
         downloads: List of files to download from remote.
         uploads: List of files to upload to remote.
+        counters: Optional mutable mapping collecting per-cycle stats. When
+            provided, the ``"failed"`` key is incremented for every transfer
+            that raises (permanent or transient). Callers that do not need
+            the stats (continuous loops) can omit it.
     """
     from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
     from hsync_client.transfer import download_file, upload_file
@@ -581,6 +628,7 @@ async def _execute_parallel_transfers(
                     # the file is not retried on every resync tick, and notify
                     # the UI. The partial file is already dropped in transfer.py.
                     _permanent_download_failures.add(_permanent_skip_key(file))
+                    _count_transfer_failure(counters)
                     log.warning(
                         f'Permanent download failure for "{file.filepath}" '
                         f"(skipped for this cycle): {e}"
@@ -591,6 +639,7 @@ async def _execute_parallel_transfers(
                         reason=str(e),
                     )
                 except Exception as e:
+                    _count_transfer_failure(counters)
                     log.error(f"Transfer error for {file.filepath}: {e}")
                 else:
                     file_size = file.size or 0

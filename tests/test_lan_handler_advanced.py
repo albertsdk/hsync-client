@@ -545,9 +545,9 @@ class TestRunLanModeNoMasterWarning:
         # the test terminates deterministically.
         slave_calls: list[int] = []
 
-        def _slave(**_kw: Any) -> bool:
+        def _slave(**_kw: Any) -> tuple[bool, int]:
             slave_calls.append(1)
-            return len(slave_calls) < 2
+            return len(slave_calls) < 2, 0
 
         # time.time advances past the warning threshold between iterations.
         times = iter([100.0, 100.0 + NO_MASTER_WARNING_TIMEOUT + 1.0])
@@ -643,7 +643,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
-        assert result is False
+        assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] == "f" * 40
         assert config["REQUEST_HEADERS"]["Authorization"] == "Bearer secret"
         assert config["SERVER_COMPRESSION_ENABLED"] is True
@@ -701,7 +701,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
 
-        assert result is False
+        assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] is None
         mock_run.assert_not_called()
         assert any("FINGERPRINT CHANGED" in str(c) for c in mock_log.error.call_args_list)
@@ -731,7 +731,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
 
-        assert result is False
+        assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] is None
         mock_run.assert_not_called()
         assert PinStore(pin_file).get("master-1", "test-bucket") is None
@@ -754,7 +754,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
 
-        assert result is False
+        assert result == (False, 0)
         assert "Authorization" not in config["REQUEST_HEADERS"]
         mock_run.assert_not_called()
         assert any("INSECURE MASTER" in str(c) for c in mock_log.warning.call_args_list)
@@ -778,7 +778,7 @@ class TestRunAsSlave:
             wait_indefinitely_for_peer=True,
         )
 
-        assert result is True
+        assert result[0] is True
         assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
 
     def test_persistent_connects_websocket(self, tmp_path):
@@ -799,7 +799,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
-        assert result is True
+        assert result[0] is True
         mock_wsc.assert_called_once()
 
     def test_persistent_websocket_error_is_swallowed(self, tmp_path):
@@ -822,7 +822,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
 
-        assert result is True
+        assert result[0] is True
         assert any("WebSocket connection ended" in str(c) for c in mock_log.warning.call_args_list)
 
     def test_dryrun_persistent_runs_preview_and_stdin_wait(self, tmp_path):
@@ -844,7 +844,7 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
-        assert result is True
+        assert result[0] is True
         mock_preview.assert_called_once()
 
     def test_no_master_persistent_waits(self, tmp_path):
@@ -858,7 +858,7 @@ class TestRunAsSlave:
 
         result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
 
-        assert result is True
+        assert result[0] is True
         assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
 
 

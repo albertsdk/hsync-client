@@ -26,6 +26,7 @@ from hsync_client.main_logic import (
     _warn_if_lan_in_container,
     run_sync,
 )
+from hsync_client.sync import SyncCycleResult
 
 
 class TestGetStabilityDelayValue:
@@ -523,9 +524,12 @@ class TestRunSync:
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
+            mock_lan.return_value = 0
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
             # run_lan_mode should have been called
             mock_lan.assert_called_once()
 
@@ -547,8 +551,11 @@ class TestRunSync:
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
+            mock_lan.return_value = 0
             mock_log_setup.return_value = MagicMock()
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
 
         config_arg = mock_lan.call_args.args[0]
         assert config_arg["DISCOVERY_TIMEOUT"] == DISCOVERY_TIMEOUT_DEFAULT
@@ -570,8 +577,11 @@ class TestRunSync:
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
+            mock_lan.return_value = 0
             mock_log_setup.return_value = MagicMock()
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
 
         config_arg = mock_lan.call_args.args[0]
         assert config_arg["DISCOVERY_TIMEOUT"] == 0
@@ -624,7 +634,12 @@ class TestRunSync:
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            mock_run.return_value = SyncCycleResult(
+                completed=True, transfers=1, failed=0, conflicts=0, guard_tripped=False
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
             mock_run.assert_called_once()
 
     def test_legend_display(self, tmp_path):
@@ -640,11 +655,18 @@ class TestRunSync:
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.sync", new=MagicMock()),
-            patch("hsync_client.main_logic.run"),
+            patch(
+                "hsync_client.main_logic.run",
+                return_value=SyncCycleResult(
+                    completed=True, transfers=0, failed=0, conflicts=0, guard_tripped=False
+                ),
+            ),
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
             assert any("Log legend" in str(c) for c in mock_logger.info.call_args_list)
 
     def test_api_key_from_fd(self, tmp_path):
@@ -664,11 +686,18 @@ class TestRunSync:
             patch("hsync_client.main_logic.set_config") as mock_set_cfg,
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.sync", new=MagicMock()),
-            patch("hsync_client.main_logic.run"),
+            patch(
+                "hsync_client.main_logic.run",
+                return_value=SyncCycleResult(
+                    completed=True, transfers=1, failed=0, conflicts=0, guard_tripped=False
+                ),
+            ),
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            run_sync(**kwargs)
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
             # set_config should have been called with config containing the key
             config_arg = mock_set_cfg.call_args[0][0]
             assert "my-secret-key" in config_arg["REQUEST_HEADERS"]["Authorization"]

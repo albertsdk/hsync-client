@@ -208,7 +208,10 @@ class TestBlackBoxCorrectedMtimeServer:
         os.utime(p, (base_time + 120, base_time + 120))
 
         result = run_sync_once(bb_bucket, local_dir)
-        assert result.exit_code == 0
+        # The cycle resolves a causal conflict and preserves the losing
+        # local edit: the one-shot exit contract reports this as 4
+        # (CONFLICTS, see docs/scheduling.md).
+        assert result.exit_code == 4
         canonical = _server_listing(live_server, bb_bucket)
         entry = next(f for f in canonical if f["filepath"] == name)
         assert entry["sha256sum"] == _sha(remote_edit), (

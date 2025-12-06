@@ -33,12 +33,13 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
-from hsync_client.sync import sync
+from hsync_client.sync import SyncCycleResult, sync
 
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
@@ -105,7 +106,7 @@ def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
     )
 
 
-def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
+def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     """
     Handle LAN P2P mode synchronization.
 
@@ -115,6 +116,12 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
     Args:
         config: The hsync configuration dictionary.
         log: Logger instance for messages.
+
+    Returns:
+        The process exit code for the run: a completed one-shot slave
+        sync maps its verdict through the documented code table, no
+        discovered peer yields LAN_NO_PEER, and an interrupted run
+        yields OK.
     """
     log.info("LAN P2P mode enabled")
 
@@ -160,6 +167,8 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
 
     lan_server = None
     lan_ws_server = None
+
+    last_exit = int(ExitCode.OK)
 
     # Track how long the group has been without an elected master so we can warn
     # once after NO_MASTER_WARNING_TIMEOUT (e.g. when every peer is never-master).
@@ -221,7 +230,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                     no_master_since = None
                     no_master_warned = False
 
-                should_continue = _run_as_slave(
+                should_continue, exit_code = _run_as_slave(
                     config=config,
                     log=log,
                     lan_sync=lan_sync,
@@ -230,6 +239,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                     peer_manager=peer_manager,
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
                 )
+                last_exit = exit_code
                 if not should_continue:
                     break
 
@@ -241,6 +251,8 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
         if lan_ws_server:
             lan_ws_server.stop()
         lan_sync.stop()
+
+    return last_exit
 
 
 def _run_as_master(
@@ -388,8 +400,13 @@ def _run_as_slave(
     persistent: bool,
     peer_manager,
     wait_indefinitely_for_peer: bool = False,
-) -> bool:
-    """Run as client (connect to master). Returns True to continue loop, False to break."""
+) -> tuple[bool, int]:
+    """Run as client (connect to master).
+
+    Returns a ``(continue_loop, exit_code)`` tuple: ``continue_loop`` tells
+    the discovery loop whether to keep running, ``exit_code`` is the process
+    exit status to report when the loop terminates.
+    """
     from asyncio import run
 
     master = peer_manager.get_master()
@@ -397,7 +414,7 @@ def _run_as_slave(
         # Wait for master to be ready (server_ready=true in mDNS)
         if not master.server_ready:
             log.info(f"Waiting for master {master.cid} to start server...")
-            return True  # Continue discovery loop
+            return True, int(ExitCode.OK)  # Continue discovery loop
 
         # Secure-only LAN: a master must serve over HTTPS and advertise a
         # certificate fingerprint we can pin. Anything else is refused; there is
@@ -410,7 +427,7 @@ def _run_as_slave(
                 f"endpoint with a certificate fingerprint. Refusing to connect "
                 f"(LAN transport is HTTPS-only)."
             )
-            return persistent or wait_indefinitely_for_peer
+            return persistent or wait_indefinitely_for_peer, int(ExitCode.OK)
 
         master_url = master.get_server_url()
         log.info(f"Connecting to master: {master.cid} at {master_url}")
@@ -420,7 +437,7 @@ def _run_as_slave(
             # Stay in the discovery loop (persistent) rather than connecting to
             # a master whose identity can no longer be verified or which has not
             # yet been paired out of band.
-            return persistent or wait_indefinitely_for_peer
+            return persistent or wait_indefinitely_for_peer, int(ExitCode.OK)
         log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
         config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
@@ -442,20 +459,36 @@ def _run_as_slave(
         _refresh_lan_network_tuning(master, config, log)
 
         # Check if dry-run mode is enabled
+        exit_code = int(ExitCode.OK)
         if config["DRYRUN"]:
             # In dry-run mode, only show preview without syncing
             _run_preview(log)
             if not persistent:
-                return False
+                return False, exit_code
             # In persistent mode with dry-run, wait for SYNC/PREVIEW commands
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
             run(_run_stdin_wait(log))
         else:
             # Perform initial sync (the master is the transport coordinator)
-            run(sync(lan_mode=True))
+            try:
+                result = run(sync(lan_mode=True))
+            except Exception:
+                # sync() already logged the fatal error and emitted the
+                # structured event; fail the run without a raw traceback.
+                return False, int(ExitCode.FATAL)
+            if isinstance(result, SyncCycleResult):
+                exit_code = exit_code_for_result(
+                    failed_transfers=result.failed,
+                    guard_tripped=result.guard_tripped,
+                    conflicts=result.conflicts,
+                )
+            else:
+                # A caller that stubbed `run()` without a cycle result (test
+                # doubles, defensive paths) reports a clean exit.
+                exit_code = int(ExitCode.OK)
 
         if not persistent:
-            return False
+            return False, exit_code
 
         # In persistent mode, connect via WebSocket for real-time events
         log.info("Initial sync complete, connecting to WebSocket for real-time events...")
@@ -475,12 +508,12 @@ def _run_as_slave(
             log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
         # If WebSocket disconnects, re-enter discovery loop
         log.info("WebSocket disconnected, re-entering discovery loop...")
-        return True
+        return True, int(ExitCode.OK)
     else:
         # No master and no peers
         if persistent or wait_indefinitely_for_peer:
             log.info("Waiting for peers to join...")
-            return True  # Continue the discovery loop
+            return True, int(ExitCode.OK)  # Continue the discovery loop
         else:
             log.warning("No master elected - this client is alone, nothing to sync")
-            return False
+            return False, int(ExitCode.LAN_NO_PEER)

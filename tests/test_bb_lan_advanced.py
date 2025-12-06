@@ -183,8 +183,9 @@ class TestLanPersistent:
                 proc.kill()
                 proc.wait()
                 pytest.fail("--no-lan-persistent did not exit when no peers were found")
-            # Exit code 0 or 1 is acceptable (0 = clean exit, 1 = no peers found)
-            assert exit_code in (0, 1), f"Unexpected exit code: {exit_code}"
+            # Exit code 0 or 5 is acceptable (0 = clean exit, 5 = no peers found;
+            # see hsync_client.exitcodes.ExitCode.LAN_NO_PEER)
+            assert exit_code in (0, 5), f"Unexpected exit code: {exit_code}"
         finally:
             _terminate(proc)
 

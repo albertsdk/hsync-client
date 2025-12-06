@@ -213,6 +213,14 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = False,
+    once: Annotated[
+        bool,
+        typer.Option(
+            "--once",
+            help="Run a single sync cycle and exit (explicit form of the default behaviour).",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
     resync: Annotated[
         int | None,
         typer.Option(
@@ -605,6 +613,9 @@ def main(
         [dim]# Continuous sync (watch for changes)[/dim]
         $ hsync -b projects -s https://server.example.com -w
 
+        [dim]# Explicit one-shot sync (the default behaviour)[/dim]
+        $ hsync -b projects -s https://server.example.com --once
+
         [dim]# Dry run to see what would be synced[/dim]
         $ hsync -b backup -s https://server.example.com -n
 
@@ -673,6 +684,19 @@ def main(
         raise typer.BadParameter(
             "--force-master and --never-master are mutually exclusive: a client "
             "cannot be forced to be master and forbidden from being master at once."
+        )
+
+    # --once is the explicit form of the default one-shot behaviour and is
+    # therefore incompatible with continuous watch and LAN persistence.
+    if once and continuous:
+        raise typer.BadParameter(
+            "--once and --watch are mutually exclusive: --once is the explicit "
+            "form of the default one-shot behaviour (omit -w)."
+        )
+    if once and lan_persistent:
+        raise typer.BadParameter(
+            "--once is incompatible with --lan-persistent: in LAN mode a "
+            "one-shot run is expressed with --no-lan-persistent."
         )
     if (
         min_free_disk_space < MIN_FREE_DISK_SPACE_MB_MIN
@@ -755,6 +779,7 @@ def main(
         events_json_fd=events_json_fd,
         local_path=local_path,
         continuous=continuous,
+        once=once,
         resync=resync,
         reconnect_delay=reconnect_delay,
         stability_delay=stability_delay,
