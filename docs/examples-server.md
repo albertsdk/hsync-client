@@ -8,7 +8,8 @@ Real-world usage examples for the `hsync` binary in **server-based** deployments
 
 All examples assume the binary has been built (`./compile.sh`) and the
 `hsync` executable is on your `$PATH`. Server-based examples require an
-`HSYNC_API_KEY` matching the one configured on the server.
+`HSYNC_API_KEY` holding an account token (`hs_<id>_<secret>`) issued by the
+server.
 
 ### Configuration via `.env` file
 

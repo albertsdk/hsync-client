@@ -287,8 +287,9 @@ for the full comparison table.
 
 ### 401 / 403 Authentication Errors
 
-- **Check the API key**: ensure `HSYNC_API_KEY` is set and matches the server's
-  configured key exactly.
+- **Check the token**: ensure `HSYNC_API_KEY` is set to a valid account token
+  (`hs_<id>_<secret>`) issued by the server, and that the account is active and
+  not expired.
 - **Check the URL scheme**: the client refuses to send the API key over
   `http://` — always use `https://`.
 - **Reverse proxy**: if a reverse proxy terminates TLS, point the client at the

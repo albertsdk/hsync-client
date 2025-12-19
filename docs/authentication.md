@@ -40,7 +40,8 @@ HSYNC Client                        HSYNC Server
 
 ### Key points
 
-- **API key via `HSYNC_API_KEY`** environment variable, sent as the `token` field
+- **Account token via `HSYNC_API_KEY`** environment variable, sent as the `token` field
+  (the value is an `hs_<id>_<secret>` account token issued by the server)
 - **CID is in the URL path** and in the auth frame — validated by the server
 - **Protocol version** (`ws/1`) is mandatory; mismatch closes the connection
 - **Capabilities** are negotiated: the server advertises `compression` and `delta`;
@@ -183,7 +184,7 @@ Slave                                Master
 
 | Variable | Mode | Purpose |
 |---|---|---|
-| `HSYNC_API_KEY` | Server | API key for central server authentication |
+| `HSYNC_API_KEY` | Server | Account token (`hs_<id>_<secret>`) for central server authentication |
 | `HSYNC_LAN_KEY` | LAN P2P | Shared secret for LAN peer authentication (optional) |
 | `HSYNC_CID` | Both | Client ID (auto-generated if not set) |
 
