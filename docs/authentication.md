@@ -25,16 +25,16 @@ HSYNC Client                        HSYNC Server
   │── {"type": "auth",                    │
   │    "token": "<HSYNC_API_KEY>",        │
   │    "app_version": "1.2.3",            │
-  │    "protocol_version": "ws/2",        │
+  │    "protocol_version": "ws/1",        │
   │    "capabilities": ["compression",    │
   │                     "delta"]} ───────▶│
   │                                       │── validate protocol, CID, API key
   │                                       │
   │◀── {"type": "auth",                   │
   │     "status": "ok",                   │
-  │     "capabilities": [...]} ──────────│
+  │     "capabilities": [...]} ───────────│
   │                                       │
-  │◀── file change events ───────────────│
+  │◀── file change events ────────────────│
   │── upload/delete/rename (HTTP) ───────▶│
 ```
 
@@ -42,7 +42,7 @@ HSYNC Client                        HSYNC Server
 
 - **API key via `HSYNC_API_KEY`** environment variable, sent as the `token` field
 - **CID is in the URL path** and in the auth frame — validated by the server
-- **Protocol version** (`ws/2`) is mandatory; mismatch closes the connection
+- **Protocol version** (`ws/1`) is mandatory; mismatch closes the connection
 - **Capabilities** are negotiated: the server advertises `compression` and `delta`;
   the client adapts accordingly
 
@@ -67,11 +67,11 @@ Slave                                Master
   │                                       │
   │── WSS connect ───────────────────────▶│
   │                                       │
-  │◀── {"type": "auth_required"} ────────│
+  │◀── {"type": "auth_required"} ─────────│
   │                                       │
   │── {"type": "auth",                    │
   │    "token": "<LAN_KEY>",              │
-  │    "cid": "<CID>"} ─────────────────▶│
+  │    "cid": "<CID>"} ─────────────v────▶│
   │                                       │── is_valid_cid(CID)?
   │                                       │   ├── ❌ → {"status": "failed",
   │                                       │   │          "reason": "invalid_cid"}
@@ -83,9 +83,9 @@ Slave                                Master
   │                                       │   └── ✅ → {"status": "ok"}
   │                                       │
   │◀── {"type": "auth",                   │
-  │     "status": "ok"} ─────────────────│
+  │     "status": "ok"} ──────────────────│
   │                                       │
-  │◀── file change events ───────────────│  Log: (CID: <CID>)
+  │◀── file change events ────────────────│  Log: (CID: <CID>)
   │── upload/delete/rename (HTTPS) ──────▶│  CID used for echo suppression
 ```
 
@@ -131,17 +131,17 @@ Slave                                Master
   │                                       │
   │── WSS connect ───────────────────────▶│
   │                                       │
-  │◀── {"type": "hello"} ────────────────│
+  │◀── {"type": "hello"} ─────────────────│
   │                                       │
   │── {"type": "hello",                   │
-  │    "cid": "<CID>"} ─────────────────▶│
+  │    "cid": "<CID>"} ──────────────────▶│
   │                                       │── is_valid_cid(CID)?
   │                                       │   ├── ❌ → log warning, stay "unknown"
   │                                       │   └── ✅ → CID = declared CID
   │                                       │            Log: (CID: <CID>,
   │                                       │                  unauthenticated)
   │                                       │
-  │◀── file change events ───────────────│  (echo suppression uses master CID)
+  │◀── file change events ────────────────│  (echo suppression uses master CID)
   │── upload/delete/rename (HTTPS) ──────▶│
 ```
 

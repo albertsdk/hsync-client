@@ -996,6 +996,12 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # with no writer fd to close (atomic rename / hard-link / mv-in).
         self._pending_create_timers: dict[str, threading.Timer] = {}
         self._pending_create_timers_lock = threading.Lock()
+        # Delete coalescing: buffered (path, is_directory) pairs pending a
+        # flush guarded by _delete_lock; _delete_timer is the pending Timer.
+        self._pending_deletes: list[tuple[str, bool]] = []
+        self._delete_timer: threading.Timer | None = None
+        self._delete_lock = threading.Lock()
+        self._DELETE_COALESCE_WINDOW_S: float = 0.2
 
     def mark_receiving(self, filepath: str) -> None:
         """Mark a file as being received from master (to avoid upload echo)."""
@@ -1249,6 +1255,38 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         except Exception as e:
             log.error(f"Failed to create dir on master: {e}")
+
+    def _flush_pending_deletes(self) -> None:
+        """Flush the coalesced delete buffer at most once per window.
+
+        inotify emits the per-descendant delete events before the directory
+        event itself, so a removed tree produces one ``deleted`` per entry.
+        Any path covered by a deleted ancestor directory is folded into that
+        ancestor's single ``DELETE`` request (``is_dir=true`` → the master
+        applies ``rmtree``), so a whole tree removal costs ONE message.
+        """
+        with self._delete_lock:
+            pending = self._pending_deletes
+            self._pending_deletes = []
+            self._delete_timer = None
+        if not pending:
+            return
+
+        deleted_dirs = [p for p, is_dir in pending if is_dir]
+
+        def covered_by_deleted_ancestor(path: str) -> bool:
+            prefix = path.rstrip("/") + "/"
+            return any(prefix.startswith(d.rstrip("/") + "/") and d != path for d in deleted_dirs)
+
+        for src_path, is_directory in pending:
+            if covered_by_deleted_ancestor(src_path):
+                log.debug(f'Folded into ancestor delete (slave): "{src_path}"')
+                continue
+            self._start_operation(
+                target=self._delete_on_master,
+                args=(src_path, is_directory),
+                name=f"delete-{src_path}",
+            )
 
     def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
         """Notify master about a file/directory deletion."""
@@ -1638,12 +1676,17 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             log.debug(f"{ActionLabel.LOCAL_IGNORE_DEL} Deletion ignored (ignore-delete mode)")
             return
 
-        # Notify master about deletion
-        self._start_operation(
-            target=self._delete_on_master,
-            args=(src_path, event.is_directory),
-            name=f"delete-{src_path}",
-        )
+        # Buffer the deletion instead of notifying immediately: the sibling
+        # descendant events (and the directory event itself) arrive within
+        # the coalescing window and fold into a single recursive DELETE.
+        with self._delete_lock:
+            self._pending_deletes.append((src_path, event.is_directory))
+            if self._delete_timer is None:
+                self._delete_timer = threading.Timer(
+                    self._DELETE_COALESCE_WINDOW_S, self._flush_pending_deletes
+                )
+                self._delete_timer.daemon = True
+                self._delete_timer.start()
 
     def on_moved(self, event) -> None:
         """Handle file/directory move/rename events."""

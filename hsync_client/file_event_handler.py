@@ -25,6 +25,7 @@ points so each transport plugs in its own behaviour:
 from __future__ import annotations
 
 import sys
+import threading
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -50,6 +51,13 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 
 # Debounce interval for on_modified fallback on platforms without on_closed.
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
+
+# Coalescing window for `deleted` events. inotify emits one delete event per
+# child BEFORE the directory event (bottom-up), so a `rm -rf` on a tree with
+# thousands of entries produced thousands of WS messages. Deletes are buffered
+# for this window and then flushed as a single recursive `deleted` event for
+# the topmost deleted directory(s); descendants are folded away.
+DELETE_COALESCE_WINDOW = 0.2
 
 # Maximum entries kept in the broadcast dedup dicts (_last_broadcast_stat /
 # _last_broadcast_hash). Mirrors SHA256_CACHE_MAX_SIZE so memory stays bounded
@@ -107,6 +115,12 @@ class BaseFileEventHandler(FileSystemEventHandler):
         return f" (CID: {cid})" if cid else ""
 
     def __init__(self, observer: Observer | None = None) -> None:
+        # Delete coalescing: buffered (path, is_directory) pairs pending a flush.
+        # Guarded by _delete_lock; _delete_timer is the pending threading.Timer.
+        self._pending_deletes: list[tuple[str, bool]] = []
+        self._delete_timer: threading.Timer | None = None
+        self._delete_lock = threading.Lock()
+
         # Two-stage content dedup for file-ready events:
         # 1. stat pre-check (mtime, size): cheap filter that avoids re-hashing
         #    on no-op closes where the editor opened/closed without saving.
@@ -491,6 +505,72 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if message:
             self._broadcast_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
 
+    def _flush_pending_deletes(self) -> None:
+        """Flush the coalesced delete buffer at most once per window.
+
+        inotify emits the per-descendant delete events before the directory
+        event itself, so by the time the timer fires every path under a
+        removed directory is present in the buffer. Any path covered by a
+        deleted ancestor directory is folded into that ancestor's single
+        recursive ``deleted`` event (one message instead of N+1). Folded
+        FILE paths still pass through :meth:`_on_deleted` so the LAN master
+        records their tombstones; folded directory paths need no marker
+        (directories never carry tombstones).
+        """
+        with self._delete_lock:
+            pending = self._pending_deletes
+            self._pending_deletes = []
+            self._delete_timer = None
+        if not pending:
+            return
+
+        # Pre-computed ancestor prefixes so a huge delete burst (thousands of
+        # descendants) folds in O(n) instead of O(n·m) string scans.
+        deleted_dir_prefixes = [p.rstrip("/") + "/" for p, is_dir in pending if is_dir]
+
+        def covered_by_deleted_ancestor(path: str) -> bool:
+            prefix = path.rstrip("/") + "/"
+            return any(prefix.startswith(d) and d != prefix for d in deleted_dir_prefixes)
+
+        for src_path, is_directory in pending:
+            # Invalidate the content-dedup cache for this path: a re-created
+            # file must be re-evaluated against a fresh stat/hash, not skipped
+            # because it happens to share mtime+size (stage 1) or sha256
+            # (stage 2) with the pre-deletion version. Without this,
+            # create -> delete -> re-create of the same file (same content,
+            # preserved mtime) silently drops the third event as
+            # "Skip unchanged (stat)".
+            self._last_broadcast_stat.pop(src_path, None)
+            self._last_broadcast_hash.pop(src_path, None)
+
+            if covered_by_deleted_ancestor(src_path):
+                log.debug(f'Folded into ancestor delete: "{src_path}"')
+                if not is_directory:
+                    self._on_deleted(src_path, False)
+                continue
+
+            log.info(f'{self._label("DELETE", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
+            obj: Dir | File
+            if is_directory:
+                dir_obj = Dir(src_path)
+                # A directory `deleted` event is recursive (single message per tree) —
+                # every descendant is removed along with the directory itself.
+                dir_obj.recursive = True
+                obj = dir_obj
+            else:
+                obj = File(src_path)
+            self._broadcast_event(
+                Event(
+                    CONFIG["CID"],
+                    CONFIG["LOCAL_BUCKET"],
+                    CONFIG["REMOTE_BUCKET"],
+                    EventName.deleted,
+                    obj,
+                ),
+                src_abs_path=src_path,
+            )
+            self._on_deleted(src_path, is_directory)
+
     def on_deleted(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
 
@@ -503,27 +583,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
             log.debug(f'{self._label("IGNORE DEL", src_path)} "{src_path}" (ignore-delete mode)')
             return
 
-        log.info(f'{self._label("DELETE", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
-
-        obj = Dir(src_path) if event.is_directory else File(src_path)
-        self._broadcast_event(
-            Event(
-                CONFIG["CID"],
-                CONFIG["LOCAL_BUCKET"],
-                CONFIG["REMOTE_BUCKET"],
-                EventName.deleted,
-                obj,
-            ),
-            src_abs_path=src_path,
-        )
-
-        # Invalidate the content-dedup cache for this path: a re-created file
-        # must be re-evaluated against a fresh stat/hash, not skipped because it
-        # happens to share mtime+size (stage 1) or sha256 (stage 2) with the
-        # pre-deletion version. Without this, create -> delete -> re-create of
-        # the same file (same content, preserved mtime) silently drops the
-        # third event as "Skip unchanged (stat)".
-        self._last_broadcast_stat.pop(src_path, None)
-        self._last_broadcast_hash.pop(src_path, None)
-
-        self._on_deleted(src_path, event.is_directory)
+        # Buffer the event instead of broadcasting immediately: the sibling
+        # descendent events (and the directory event itself) arrive within
+        # the coalescing window and fold into a single recursive message.
+        with self._delete_lock:
+            self._pending_deletes.append((src_path, event.is_directory))
+            if self._delete_timer is None:
+                self._delete_timer = threading.Timer(
+                    DELETE_COALESCE_WINDOW, self._flush_pending_deletes
+                )
+                self._delete_timer.daemon = True
+                self._delete_timer.start()

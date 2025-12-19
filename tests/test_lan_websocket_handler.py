@@ -288,8 +288,10 @@ class TestLANFileEventHandler:
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.log") as mock_log,
+            patch("hsync_client.file_event_handler.threading.Timer"),
         ):
             handler.on_deleted(event)
+            handler._flush_pending_deletes()
 
             msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
             assert any("[REMOTE DELETE]" in m for m in msgs), msgs
@@ -344,8 +346,13 @@ class TestLANFileEventHandler:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.file_event_handler.CONFIG", config):
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+        ):
             handler.on_deleted(event)
+            # Deletes are coalesced: the broadcast happens on flush.
+            handler._flush_pending_deletes()
 
             # Should broadcast the event
             ws_server.broadcast_sync.assert_called_once()
@@ -658,8 +665,13 @@ class TestLANFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
             "IGNORE_DELETE": False,
         }
-        with patch("hsync_client.file_event_handler.CONFIG", config):
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+        ):
+            # visible->hidden synthesizes on_deleted (now coalesced): flush first.
             handler.on_moved(event)
+            handler._flush_pending_deletes()
             ws_server.broadcast_sync.assert_called_once()
 
     def test_on_moved_dir_rename_dir_get_none(self, handler, ws_server, tmp_path):
@@ -776,6 +788,10 @@ class TestLANFileEventHandler:
             "SYNC_DIRECTION": "bidirectional",
             "IGNORE_DELETE": False,
         }
-        with patch("hsync_client.file_event_handler.CONFIG", config):
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+        ):
             handler.on_deleted(event)
+            handler._flush_pending_deletes()
             ws_server.broadcast_sync.assert_called_once()

@@ -171,9 +171,12 @@ class TestFileEventHandler:
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_deleted(event)
+            # Deletes are coalesced: the broadcast happens on flush.
+            self.handler._flush_pending_deletes()
 
         # The visible-file deletion must actually reach the WS queue (the
         # void version of this test passed even with an empty on_deleted).
@@ -600,6 +603,7 @@ class TestFileEventHandler:
             patch.object(self.handler, "_on_file_ready") as mock_ready,
             patch.object(self.handler, "_broadcast_event"),
             patch.object(self.handler, "_on_deleted"),
+            patch("hsync_client.file_event_handler.threading.Timer"),
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
             mock_path_cls.return_value.exists.return_value = True
@@ -610,8 +614,9 @@ class TestFileEventHandler:
             self.handler._last_broadcast_stat[path] = (100, 42)
             self.handler._last_broadcast_hash[path] = "abc123"
 
-            # 1) Delete the path → cache must be invalidated.
+            # 1) Delete the path → flush → cache must be invalidated.
             self.handler.on_deleted(delete_event)
+            self.handler._flush_pending_deletes()
             assert path not in self.handler._last_broadcast_stat
             assert path not in self.handler._last_broadcast_hash
 
@@ -731,7 +736,7 @@ class TestFileEventHandler:
             mock_run.assert_not_called()
 
     def test_on_deleted_broadcasts_visible_dir(self):
-        """on_deleted broadcasts event for visible directory deletion."""
+        """on_deleted broadcasts a recursive event for visible directory deletion."""
         event = MagicMock()
         event.is_directory = True
         event.src_path = "/bucket/subdir"
@@ -746,10 +751,122 @@ class TestFileEventHandler:
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             self.handler.on_deleted(event)
-            mock_run.assert_called_once()
+            self.handler._flush_pending_deletes()
+
+        mock_run.assert_called_once()
+
+    def test_on_deleted_dir_folds_descendants_into_single_recursive_event(self):
+        """A directory deletion folds every descendant into one recursive event.
+
+        Simulates the inotify burst of a ``rm -rf`` (children first, then the
+        directory): after the flush exactly ONE ``deleted`` event must be
+        broadcast — for the directory, with ``recursive=True`` — and the
+        descendants must not be broadcast.
+        """
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        child_file = MagicMock()
+        child_file.is_directory = False
+        child_file.src_path = "/bucket/subdir/a.txt"
+        child_dir = MagicMock()
+        child_dir.is_directory = True
+        child_dir.src_path = "/bucket/subdir/deep"
+        root_dir = MagicMock()
+        root_dir.is_directory = True
+        root_dir.src_path = "/bucket/subdir"
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            self.handler.on_deleted(child_file)
+            self.handler.on_deleted(child_dir)
+            self.handler.on_deleted(root_dir)
+            self.handler._flush_pending_deletes()
+
+        # Exactly one broadcast: the root directory with the recursive flag.
+        # The Event constructor strips LOCAL_BUCKET, so the wire path is the
+        # bucket-relative "subdir".
+        mock_broadcast.assert_called_once()
+        event = mock_broadcast.call_args.args[0]
+        assert event.name == "deleted"
+        assert event.src.path == "subdir"
+        assert event.src.recursive is True
+
+    def test_on_deleted_two_sibling_files_broadcast_individually(self):
+        """Two unrelated file deletions still broadcast two separate events."""
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        file_a = MagicMock()
+        file_a.is_directory = False
+        file_a.src_path = "/bucket/one.txt"
+        file_b = MagicMock()
+        file_b.is_directory = False
+        file_b.src_path = "/bucket/two.txt"
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            self.handler.on_deleted(file_a)
+            self.handler.on_deleted(file_b)
+            self.handler._flush_pending_deletes()
+
+        assert mock_broadcast.call_count == 2
+
+    def test_on_deleted_folded_file_still_records_lan_tombstone(self):
+        """Descendant files folded into a dir delete still pass _on_deleted."""
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        child_file = MagicMock()
+        child_file.is_directory = False
+        child_file.src_path = "/bucket/subdir/a.txt"
+        root_dir = MagicMock()
+        root_dir.is_directory = True
+        root_dir.src_path = "/bucket/subdir"
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event"),
+            patch.object(self.handler, "_on_deleted") as mock_on_deleted,
+        ):
+            self.handler.on_deleted(child_file)
+            self.handler.on_deleted(root_dir)
+            self.handler._flush_pending_deletes()
+
+        # The folded FILE hits _on_deleted (LAN master tombstone chokepoint);
+        # the directory itself too (once, after its broadcast).
+        mock_on_deleted.assert_any_call("/bucket/subdir/a.txt", False)
+        mock_on_deleted.assert_any_call("/bucket/subdir", True)
 
     def test_on_closed_skips_directories(self):
         """on_closed skips directory events."""
@@ -1268,8 +1385,10 @@ class TestRemoteModeOriginLabels:
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.log") as mock_log,
+            patch("hsync_client.file_event_handler.threading.Timer"),
             patch.object(self.handler, "_broadcast_event"),
         ):
             self.handler.on_deleted(event)
+            self.handler._flush_pending_deletes()
             msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
             assert any("[LOCAL DELETE]" in m for m in msgs), msgs

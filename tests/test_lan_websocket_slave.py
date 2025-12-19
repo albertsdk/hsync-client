@@ -710,8 +710,11 @@ class TestSlaveFileEventHandler:
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
             patch.object(handler, "_delete_on_master"),
+            patch("hsync_client.lan_websocket.threading.Timer"),
         ):
             handler.on_deleted(event)
+            # Deletes are coalesced: _delete_on_master fires on flush.
+            handler._flush_pending_deletes()
         assert len(handler._pending_ops) >= 1
 
     def test_on_deleted_temp_file_ignored(self, handler, tmp_path):
