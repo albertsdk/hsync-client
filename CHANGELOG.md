@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- WD OS5 `.bin` installers are now produced with a clean, deterministic
+  name (`<MODEL>_hsync_<version>.bin`). The build-date suffix appended by
+  `mksapkg-OS5` (e.g. `.bin(08192026)`) is stripped at packaging time; the
+  dashboard validates the signed payload, not the file name.
 - LAN one-shot without peers now exits with code `5` (previously `0`/`1`
   depending on the path).
 - A cycle that resolved causal conflicts (created `*_conflicted_copy_*`

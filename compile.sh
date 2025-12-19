@@ -1133,14 +1133,19 @@ build_wd_os5() {
     rm -f "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin*
     _wdos5_run_mksapkg "${stage_abs}" "${WDOS5_MODEL}"
 
-    local produced_bin bin_path
+    local produced_bin bin_name bin_path
     produced_bin="$(ls -t "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
     if [[ -z "${produced_bin}" || ! -f "${produced_bin}" ]]; then
         log_error "mksapkg-OS5 did not produce a .bin in ${stage_parent}/"
         exit 1
     fi
-    mv -f "${produced_bin}" "${out_abs}/"
-    bin_path="${out_abs}/$(basename "${produced_bin}")"
+    # mksapkg-OS5 appends the build date (MMDDYYYY) to the file name:
+    # <MODEL>_hsync_<ver>.bin(08192026). Normalise it to a clean, deterministic
+    # name; the OS5 dashboard validates the signed payload (apkg.sign), not
+    # the file name.
+    bin_name="${WDOS5_MODEL}_${APP_NAME}_${version}.bin"
+    mv -f "${produced_bin}" "${out_abs}/${bin_name}"
+    bin_path="${out_abs}/${bin_name}"
 
     local size bin_abs
     size="$(du -h "${bin_path}" | cut -f1)"
@@ -1215,14 +1220,18 @@ _wdos5_package_model() {
     rm -f "${stage_parent}/${model}_${APP_NAME}_"*.bin*
     _wdos5_run_mksapkg "${stage_abs}" "${model}"
 
-    local produced
+    local produced bin_name
     produced="$(ls -t "${stage_parent}/${model}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
     if [[ -z "${produced}" || ! -f "${produced}" ]]; then
         log_error "mksapkg-OS5 did not produce a .bin for ${model}"
         return 1
     fi
-    mv -f "${produced}" "${out_abs}/"
-    log_ok "  → $(basename "${produced}")"
+    # Normalise the mksapkg-OS5 name (it appends the build date, MMDDYYYY,
+    # after the .bin extension) to a clean, deterministic one; the dashboard
+    # validates the signed payload, not the file name.
+    bin_name="${model}_${APP_NAME}_${version}.bin"
+    mv -f "${produced}" "${out_abs}/${bin_name}"
+    log_ok "  → ${bin_name}"
 }
 
 # Build .bin installers for every WD My Cloud OS5 model (10 total).
