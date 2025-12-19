@@ -277,6 +277,11 @@ def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:
     return False
 
 
+def _conflict_copies(directory: str, stem: str) -> list[Path]:
+    """Conflict copies present in *directory* for a given file stem."""
+    return [p for p in Path(directory).iterdir() if p.name.startswith(f"{stem}_conflicted_copy_")]
+
+
 def _wait_for_lan_server_ready(master: subprocess.Popen, port: int, timeout: float = 30.0) -> bool:
     """Poll the LAN master's health endpoint until it responds 200.
 

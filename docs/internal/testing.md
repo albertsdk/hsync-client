@@ -61,12 +61,14 @@ tests/
 ├── test_bb_server_continuous_sync.py   # Black‑Box: continuous (watch) sync
 ├── test_bb_server_safety_guards.py     # Black‑Box: mass‑delete guard, disk‑space
 ├── test_bb_server_cli_surface.py       # Black‑Box: CLI help / error messages
+├── test_bb_server_corrected_mtime.py   # Black‑Box: ADR-0023 tie‑break (server mode)
 ├── test_bb_lan_advanced.py             # Black‑Box: LAN advanced scenarios
 ├── test_bb_lan_auth_direction.py       # Black‑Box: LAN auth and sync direction
 ├── test_bb_lan_core.py                 # Black‑Box: LAN core sync cycle
 ├── test_bb_lan_features.py             # Black‑Box: LAN feature flags
 ├── test_bb_lan_files.py                # Black‑Box: LAN file operations
 ├── test_bb_lan_security.py             # Black‑Box: LAN security (TOFU, certs)
+├── test_bb_lan_corrected_mtime.py      # Black‑Box: ADR-0023 tie‑break (LAN mode)
 ├── test_sync_local.py                  # Local file comparison and action generation
 ├── test_sync_remote.py                 # Remote file comparison
 ├── test_sync_update.py                 # File update detection
@@ -324,6 +326,7 @@ poetry install --with blackbox
 | `test_bb_server_continuous_sync.py` | Watch‑mode (`--watch`): file creation, modification, and deletion are propagated while the client runs continuously. |
 | `test_bb_server_safety_guards.py` | Mass‑deletion guard, mass‑deletion percent guard, insufficient disk‑space abort, download‑only interactive prompts. |
 | `test_bb_server_cli_surface.py` | CLI help output, error messages, and surface‑level argument validation. |
+| `test_bb_server_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break: the corrected mtime decides conflicts, never the raw clock; the losing content is preserved as a conflicted copy. |
 
 To opt in:
 ```bash
@@ -334,7 +337,7 @@ HSYNC_BB_SERVER=1 .venv/bin/python -m pytest tests/test_bb_server_*
 
 Tests the LAN peer‑to‑peer sync use case: two real client instances that
 discover each other via mDNS/zeroconf, elect a master, and sync over
-HTTPS/WSS with TOFU certificate pinning. The suite is split across six
+HTTPS/WSS with TOFU certificate pinning. The suite is split across seven
 files:
 
 | File | What it covers |
@@ -345,6 +348,7 @@ files:
 | `test_bb_lan_features.py` | LAN feature flags (compression, delta, autotune). |
 | `test_bb_lan_files.py` | LAN file operations (create, modify, delete, rename). |
 | `test_bb_lan_security.py` | LAN security (TOFU pinning, certificate validation). |
+| `test_bb_lan_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break in LAN mode: divergent edits converge on the newer corrected mtime with loser preservation; sync completes when NTP is unreachable. |
 
 **These tests are disabled by default** because they are inherently
 environment‑sensitive (multicast on loopback, self‑signed certificate
