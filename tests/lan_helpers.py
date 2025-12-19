@@ -41,7 +41,8 @@ _LAN_REASON = (
     "LAN e2e needs loopback mDNS + two live client instances; set HSYNC_BB_LAN=1 to enable"
 )
 
-BB_API_KEY = "test-bb-api-key-0123456789abcdef"
+BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
+BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
 _LAN_KEY = "test-lan-shared-secret"
 _HSYNC_COMMON_DIR = str(Path(__file__).resolve().parent.parent.parent / "hsync-common")
 

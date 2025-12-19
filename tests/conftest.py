@@ -177,7 +177,8 @@ def _kill_orphan_hsync_processes() -> None:
 # before running this suite.
 # =============================================================================
 
-BB_API_KEY = "test-bb-api-key-0123456789abcdef"
+BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
+BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
 BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
 
 
@@ -324,7 +325,9 @@ def live_server(tmp_path_factory):
     env = os.environ.copy()
     env.update(
         {
-            "HSYNC_API_KEY": BB_API_KEY,
+            "HSYNC_ADMIN_KEY": BB_ADMIN_SECRET,
+            "HSYNC_SCRYPT_N": "16",
+            "HSYNC_SCRYPT_MAXMEM": "33554432",
             "HSYNC_BUCKETS": buckets_dir,
             "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
             "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
@@ -480,7 +483,9 @@ def _start_server_proc(port: int, buckets_dir: str, cert_file: str, key_file: st
     env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
     env.update(
         {
-            "HSYNC_API_KEY": BB_API_KEY,
+            "HSYNC_ADMIN_KEY": BB_ADMIN_SECRET,
+            "HSYNC_SCRYPT_N": "16",
+            "HSYNC_SCRYPT_MAXMEM": "33554432",
             "HSYNC_BUCKETS": buckets_dir,
             "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
             "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
