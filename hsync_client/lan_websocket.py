@@ -30,6 +30,7 @@ import hmac
 import json
 import ssl
 import threading
+from collections.abc import Callable
 from os import listdir
 from pathlib import Path
 from time import time
@@ -218,6 +219,8 @@ class LANWebSocketServer:
         self._running = False
         self._observer: BaseObserver | None = None
         self._event_handler: LANMasterFileEventHandler | None = None
+        self._clients_lock = threading.Lock()
+        self._on_clients_changed: Callable[[int], None] | None = None
 
         if use_https and (not cert_file or not key_file):
             raise ValueError("cert_file and key_file are required when use_https=True")
@@ -226,6 +229,31 @@ class LANWebSocketServer:
     def port(self) -> int:
         """Get the WebSocket server port."""
         return self._port
+
+    @property
+    def connected_clients(self) -> int:
+        """Number of WebSocket clients currently connected."""
+        with self._clients_lock:
+            return len(self._clients)
+
+    def set_clients_changed_callback(self, callback: Callable[[int], None] | None) -> None:
+        """Install (or clear) the callback invoked with the new client count.
+
+        The callback fires from the asyncio loop thread on every connect and
+        disconnect; it must be non-blocking (the master re-registers its mDNS
+        record with the updated ``connected`` count).
+        """
+        self._on_clients_changed = callback
+
+    def _notify_clients_changed(self) -> None:
+        """Invoke the count-change callback with the current client count."""
+        callback = self._on_clients_changed
+        if callback is None:
+            return
+        try:
+            callback(self.connected_clients)
+        except Exception:
+            log.exception("Connected-clients callback failed")
 
     async def _handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection."""
@@ -328,6 +356,7 @@ class LANWebSocketServer:
 
         # Add client to set
         self._clients.add(websocket)
+        self._notify_clients_changed()
 
         try:
             # Keep connection alive and handle incoming messages
@@ -341,6 +370,7 @@ class LANWebSocketServer:
             log.debug(f"WebSocket client {client_addr} (CID: {client_cid}) disconnected: {e}")
         finally:
             self._clients.discard(websocket)
+            self._notify_clients_changed()
             log.info(f"WebSocket client disconnected: {client_addr} (CID: {client_cid})")
 
     async def broadcast(self, event_dict: dict) -> None:

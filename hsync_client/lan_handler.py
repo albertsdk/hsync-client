@@ -192,6 +192,18 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     lan_server=lan_server,
                     lan_ws_server=lan_ws_server,
                 )
+                # Wire the master's live WebSocket client count into discovery
+                # presence: the provider feeds wait_for_discovery (the single
+                # owner of the peers event), and the callback refreshes this
+                # node's mDNS ``connected`` TXT value on every join/leave.
+                if lan_ws_server is not None:
+                    ws_server = lan_ws_server
+                    lan_sync.set_connected_clients_provider(
+                        lambda ws=ws_server: ws.connected_clients
+                    )
+                    lan_ws_server.set_clients_changed_callback(lan_sync.set_connected_clients)
+                else:
+                    lan_sync.set_connected_clients_provider(None)
                 # Check if we're still master after _run_as_master returns
                 if not peer_manager.is_master():
                     if lan_server:
@@ -200,6 +212,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     if lan_ws_server:
                         lan_ws_server.stop()
                         lan_ws_server = None
+                    lan_sync.set_connected_clients_provider(None)
                 # NOTE: the master role is inherently continuous: it must
                 # stay available to serve peers regardless of the
                 # ``persistent`` flag (which only applies to slaves).  The

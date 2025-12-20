@@ -42,6 +42,7 @@ from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_even
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
+from hsync_client.presence import record_presence
 from hsync_client.sync import sync
 from hsync_client.transfer import upload_file
 from hsync_client.utils import warn_if_inotify_watch_limit_low
@@ -232,6 +233,22 @@ async def _process_remote_events(websocket, bucket: str) -> None:
         if message.get("type") == "ping":
             await websocket.send(dumps({"type": "pong"}))
             log.debug("Received ping, sent pong")
+            continue
+
+        # Presence frame (broadcast on every join/leave): refresh the peers
+        # event. Malformed values are dropped as unknown presence.
+        if message.get("type") == "presence":
+            try:
+                connected = int(message.get("connected", -1))
+                total = int(message.get("total", -1))
+            except (TypeError, ValueError):
+                log.debug("Malformed presence frame dropped")
+                continue
+            if connected < 0 or total < 0:
+                log.debug("Malformed presence frame dropped")
+                continue
+            record_presence(connected, total)
+            log.debug(f"Presence update: {connected}/{total} connected")
             continue
 
         # Validate event type. Symlink events ARE propagated by the server

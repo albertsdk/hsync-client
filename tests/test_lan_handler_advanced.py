@@ -891,7 +891,13 @@ class TestStdinCommands:
         ):
             asyncio.run(_with_stdin_commands(MagicMock(), _coro()))
 
-            assert set(registered) == {"PREVIEW", "SYNC", "SET_SYNC_DIRECTION", "SET_BANDWIDTH"}
+            assert set(registered) == {
+                "PREVIEW",
+                "PEERS",
+                "SYNC",
+                "SET_SYNC_DIRECTION",
+                "SET_BANDWIDTH",
+            }
 
             # PREVIEW delegates to _run_preview.
             registered["PREVIEW"]()
@@ -922,7 +928,7 @@ class TestStdinCommands:
         ):
             asyncio.run(_run_stdin_wait(MagicMock()))
 
-            assert set(registered) == {"PREVIEW", "SYNC"}
+            assert set(registered) == {"PREVIEW", "PEERS", "SYNC"}
             asyncio.run(registered["SYNC"]())
 
         assert fake_config["DRYRUN"] is False

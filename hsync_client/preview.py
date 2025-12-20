@@ -20,6 +20,7 @@ from hsync_common.models.sync_action import SyncActionName
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.presence import reemit_presence
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
     ensure_hsynckeep_files,
@@ -163,6 +164,7 @@ async def _with_stdin_commands(log, coro) -> None:
 
     handler = StdinCommandHandler(log)
     handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+    handler.register("PEERS", lambda **_kw: reemit_presence())
 
     async def _handle_sync(**_kw: object) -> None:
         lan = CONFIG.get("LAN_MODE", False)
@@ -258,6 +260,7 @@ async def _run_stdin_wait(log) -> None:
     """
     handler = StdinCommandHandler(log)
     handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+    handler.register("PEERS", lambda **_kw: reemit_presence())
 
     async def _handle_sync(**_kw: object) -> None:
         CONFIG["DRYRUN"] = False

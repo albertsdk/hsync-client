@@ -27,7 +27,7 @@ SSOT in `hsync-common`.
 | `LANSync` | `lan.py:654` | top-level LAN coordinator |
 | `PeerManager` | `:129` | tracks peers, runs election, heartbeats |
 | `Peer` | `:90` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
-| `HsyncServiceListener` | `:501` | Zeroconf callbacks (add/update/remove) |
+| `HsyncServiceListener` | `:501` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value) |
 | `get_free_port` | `:68` | bind an ephemeral serving port |
 | `HSYNC_SERVICE_TYPE` | `:47` | `_hsync._tcp.local.` mDNS type |
 
@@ -36,6 +36,17 @@ Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 (bidirectional peers preferred; `--force-master`/`--never-master` honored). TXT
 records advertise `protocol`, `cert_fp`, `sync_direction`; protocol-mismatched
 peers are ignored.
+
+`LANSync.wait_for_discovery` is the single owner of the display-ready presence
+pair (`hsync_client/presence.py`): `total = 1 + alive mDNS peers`, `connected =
+1 + WS clients connected` (as master, via the WS-server provider wired by
+`lan_handler.run_lan_mode`; as slave, from the master's advertised
+`connected` TXT value). The pair is emitted as the `peers` UI event (schema v2)
+on change, and the operator-facing status log uses three states: `Discovered N
+peer(s)`, `No other peers discovered - N client(s) connected`, or `No other
+peers discovered - this client is alone`. The master re-registers its mDNS
+record whenever the WS count changes (`LANSync.set_connected_clients`), so
+slaves observe presence without a server round-trip.
 
 ## Master server (`lan_server.py`, `lan_websocket.py`)
 

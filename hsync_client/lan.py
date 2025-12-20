@@ -43,6 +43,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.presence import record_presence
 
 # =============================================================================
 # Constants
@@ -102,6 +103,7 @@ class Peer:
     vector_clocks: bool = False  # causal version metadata support (ADR-0022)
     tombstones_enabled: bool = False  # deletion-marker gossip support (ADR-0003)
     server_ready: bool = False  # True when HTTP server is listening
+    connected: int = 0  # slaves currently connected to the master's WebSocket
     last_seen: float = field(default_factory=time.time)
     force_master: bool = False  # True if peer wants to force master role
     never_master: bool = False  # True if peer refuses to ever be master
@@ -283,6 +285,7 @@ class PeerManager:
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
+                existing.connected = peer.connected
                 existing.force_master = peer.force_master
                 existing.never_master = peer.never_master
                 existing.startup_time = peer.startup_time
@@ -476,12 +479,9 @@ class PeerManager:
                     master_peer = self._peers.get(new_master_cid)
                 self._on_master_change(master_peer)
 
-        # Surface the current alive-peer count (excludes this node) so the GUI
-        # tracks topology without scraping the discovery log line.
-        emit_event(
-            UiEventName.peers,
-            count=sum(1 for p in self._peers.values() if p.is_alive()),
-        )
+        # NOTE: the ``peers`` event is emitted from the discovery loop
+        # (``LANSync.wait_for_discovery``), the single owner of the
+        # display-ready connected/total pair for both roles.
 
     def is_master(self) -> bool:
         """Check if this client is the current master."""
@@ -595,6 +595,16 @@ class HsyncServiceListener(ServiceListener):
             sync_direction = (
                 sync_direction_bytes.decode("utf-8") if sync_direction_bytes else "bidirectional"
             )
+            # Connected-clients count advertised by a serving master.
+            # Diagnostic only: used for presence display, never by the
+            # election. A malformed/absent value degrades to 0 (unknown).
+            connected_bytes = properties.get(b"connected", b"")
+            try:
+                connected = int(connected_bytes.decode("utf-8")) if connected_bytes else 0
+            except ValueError:
+                connected = 0
+            if connected < 0:
+                connected = 0
 
             if not cid or not bucket:
                 log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -635,6 +645,7 @@ class HsyncServiceListener(ServiceListener):
                 vector_clocks=vector_clocks,
                 tombstones_enabled=tombstones_enabled,
                 server_ready=server_ready,
+                connected=connected,
                 force_master=force_master,
                 never_master=never_master,
                 startup_time=startup_time,
@@ -736,7 +747,14 @@ class LANSync:
         # these guards keep the "waiting"/result messages from being repeated
         # on every iteration once nothing relevant changes.
         self._discovery_announced = False
-        self._last_peer_count: int | None = None
+        self._last_discovery_state: tuple[int, int] | None = None
+
+        # Presence state: the number of WebSocket clients currently connected
+        # to this node (only meaningful while it serves as master) and the
+        # provider that exposes it (installed by the LAN handler once the
+        # WebSocket server is running).
+        self._connected_clients: int = 0
+        self._connected_clients_provider: Callable[[], int] | None = None
 
     @property
     def port(self) -> int:
@@ -826,6 +844,17 @@ class LANSync:
         Call this after starting the HTTP server when becoming master.
         This re-registers the service with server_ready=true.
         """
+        self._refresh_service(server_ready=True)
+        log.info("Updated mDNS service: server_ready=true")
+
+    def _refresh_service(self, server_ready: bool) -> None:
+        """Unregister and re-register the mDNS service with fresh TXT data.
+
+        Shared by :meth:`update_server_ready` (server just started) and
+        :meth:`set_connected_clients` (presence count changed). Re-registration
+        also marks this node as the incumbent master so the election never
+        hands the role to a newcomer (prevents takeover/split-brain).
+        """
         if not self._zeroconf or not self._service_info:
             log.warning("Cannot update service: not registered")
             return
@@ -834,13 +863,37 @@ class LANSync:
         self._zeroconf.unregister_service(self._service_info)
         self._service_info = None
 
-        # Re-register with server_ready=true
-        self._register_service(server_ready=True)
-        # Mark ourselves as incumbent so the election won't hand the master
-        # role to a newcomer (prevents takeover/split-brain on this bucket).
+        # Re-register with the fresh record.
+        self._register_service(server_ready=server_ready)
         if self._peer_manager:
-            self._peer_manager.set_local_server_ready(True)
-        log.info("Updated mDNS service: server_ready=true")
+            self._peer_manager.set_local_server_ready(server_ready)
+
+    def set_connected_clients(self, count: int) -> None:
+        """Record how many WebSocket clients are connected to this master.
+
+        The count feeds two consumers: the ``connected`` value advertised in
+        the mDNS TXT record (so slaves can display group presence without a
+        server round-trip) and the discovery status log line. A serving master
+        re-registers its record so peers observe the new value on their next
+        mDNS heartbeat.
+        """
+        if count < 0:
+            count = 0
+        if count == self._connected_clients:
+            return
+        self._connected_clients = count
+        if self._service_info is not None:
+            self._refresh_service(server_ready=True)
+
+    def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
+        """Install (or clear) the callable that returns the live connected count.
+
+        The LAN handler installs the master WebSocket server's counter while
+        this node serves as master, and clears it when the role is lost, so
+        :meth:`wait_for_discovery` always reads the count from the correct
+        source for the current role.
+        """
+        self._connected_clients_provider = provider
 
     def stop(self) -> None:
         """Stop LAN discovery and unregister service."""
@@ -916,6 +969,11 @@ class LANSync:
         properties["startup_time"] = str(self._startup_time)
         # Add sync direction for master election (bidirectional preferred)
         properties["sync_direction"] = self._sync_direction
+        # Add the connected-clients count once this node serves as master.
+        # Diagnostic only: slaves mirror it for presence display, it never
+        # participates in the election.
+        if server_ready:
+            properties["connected"] = str(self._connected_clients)
 
         # Create service info
         self._service_info = ServiceInfo(
@@ -985,13 +1043,37 @@ class LANSync:
 
         if self._peer_manager:
             peers = self._peer_manager.get_alive_peers()
-            peer_count = len(peers)
-            changed = peer_count != self._last_peer_count
-            self._last_peer_count = peer_count
+            total = 1 + len(peers)
+
+            # Connected count: while this node serves as master, the provider
+            # installed by the LAN handler gives the live WebSocket client
+            # count. As a slave, the master's published count (or the local
+            # snapshot) is the shared group value.
+            if self._connected_clients_provider is not None:
+                self._connected_clients = max(self._connected_clients_provider(), 0)
+            elif self._peer_manager.get_master_cid() != self._cid:
+                master_peer = self._peer_manager.get_master()
+                if master_peer is not None:
+                    self._connected_clients = master_peer.connected
+            connected = 1 + self._connected_clients
+            # Guard the display invariant: a stale mDNS count can exceed the
+            # currently-known total, so connected is clamped to total.
+            connected = min(connected, total)
+
+            changed = (self._connected_clients, total) != self._last_discovery_state
+            self._last_discovery_state = (self._connected_clients, total)
+
+            record_presence(connected, total)
+
             if peers:
                 if changed:
-                    log.info(f"Discovered {peer_count} peer(s)")
+                    log.info(f"Discovered {len(peers)} peer(s)")
                 for peer in peers:
                     log.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
             elif changed:
-                log.info("No other peers discovered - this client is alone")
+                if self._connected_clients > 0:
+                    log.info(
+                        f"No other peers discovered - {self._connected_clients} client(s) connected"
+                    )
+                else:
+                    log.info("No other peers discovered - this client is alone")
