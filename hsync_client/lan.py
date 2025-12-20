@@ -59,6 +59,12 @@ HSYNC_LAN_PORT = 0
 # Discovery timeout in seconds
 DISCOVERY_TIMEOUT = DISCOVERY_TIMEOUT_DEFAULT
 
+# Join/leave events can arrive in bursts (e.g. a slave reconnecting): instead
+# of re-registering the mDNS TXT record per event, a single refresh runs this
+# many seconds after the last change, so peers see a converged ``connected``
+# count without mDNS churn.
+PRESENCE_REFRESH_COALESCE_S = 2.0
+
 
 # =============================================================================
 # Helper Functions
@@ -756,6 +762,12 @@ class LANSync:
         self._connected_clients: int = 0
         self._connected_clients_provider: Callable[[], int] | None = None
 
+        # Debounced record refresh: the TXT ``connected`` count changes on
+        # every slave join/leave, which can happen in bursts. Only the last
+        # change per coalescing window re-registers the record.
+        self._refresh_lock = threading.Lock()
+        self._refresh_timer: threading.Timer | None = None
+
     @property
     def port(self) -> int:
         """Get the port being used (useful when random port was requested)."""
@@ -882,8 +894,29 @@ class LANSync:
         if count == self._connected_clients:
             return
         self._connected_clients = count
-        if self._service_info is not None:
-            self._refresh_service(server_ready=True)
+        # Schedule one record refresh for the burst: rapid join/leave sequences
+        # coalesce into a single mDNS re-registration instead of flooding the
+        # network with one TXT update per event. The discovery loop always
+        # reads the live count immediately, so the delay only affects the
+        # record consumers on other peers (who poll mDNS anyway).
+        with self._refresh_lock:
+            if self._refresh_timer is not None:
+                self._refresh_timer.cancel()
+            if self._service_info is None:
+                self._refresh_timer = None
+                return
+            timer = threading.Timer(PRESENCE_REFRESH_COALESCE_S, self._refresh_after_coalesce)
+            self._refresh_timer = timer
+            timer.daemon = True
+            timer.start()
+
+    def _refresh_after_coalesce(self) -> None:
+        """Run the record refresh once the join/leave burst window elapsed."""
+        with self._refresh_lock:
+            self._refresh_timer = None
+            if self._service_info is None:
+                return
+        self._refresh_service(server_ready=True)
 
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install (or clear) the callable that returns the live connected count.
@@ -901,6 +934,12 @@ class LANSync:
             return
 
         log.info("Stopping LAN mode")
+
+        # Cancel any pending debounced refresh before touching Zeroconf.
+        with self._refresh_lock:
+            if self._refresh_timer is not None:
+                self._refresh_timer.cancel()
+                self._refresh_timer = None
 
         # Unregister our service
         if self._zeroconf and self._service_info:

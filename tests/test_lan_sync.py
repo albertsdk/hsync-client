@@ -162,6 +162,56 @@ class TestLANSync:
         assert len(connected_msgs) == 1, "the connected count must log once, not on every poll"
         assert len(alone_msgs) == 0, "a master with connected clients is not alone"
 
+    def test_connected_clients_coalesces_record_refresh(self):
+        """A join/leave burst triggers one debounced mDNS re-registration.
+
+        The record update must not flood the network with one re-registration
+        per event: only the last change within the coalescing window refreshes
+        the record.
+        """
+        from unittest.mock import patch
+
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan._service_info = MagicMock()  # a serving registered master
+        lan._refresh_lock = type(lan._refresh_lock)()  # real lock, no timer
+        lan._refresh_timer = None
+
+        # Cancel every timer the debounce schedules: the test simulates the
+        # single firing that would happen after the last change.
+        with patch("hsync_client.lan.threading.Timer") as mock_timer_cls:
+            mock_timer_cls.side_effect = lambda *a, **k: MagicMock(name="timer", **k)
+            lan.set_connected_clients(1)
+            lan.set_connected_clients(2)
+            lan.set_connected_clients(1)
+            assert mock_timer_cls.call_count == 3, "one cancelled timer per change"
+
+        # Simulate the last timer's callback firing once.
+        lan._refresh_timer = None
+        with patch.object(lan, "_refresh_service") as mock_service:
+            lan._refresh_after_coalesce()
+            assert mock_service.call_count == 1, "exactly one record refresh"
+        lan._refresh_timer = None
+
+    def test_stop_cancels_pending_refresh(self):
+        """stop() cancels a pending debounced refresh before touching Zeroconf."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan._service_info = MagicMock()
+        lan._running = True
+
+        lan.set_connected_clients(2)
+        timer = lan._refresh_timer
+        assert timer is not None
+
+        timer.cancel()  # keep the pending timer from firing after the test
+        with patch.object(lan, "_refresh_service") as mock_service:
+            lan.stop()
+            mock_service.assert_not_called()
+        assert lan._refresh_timer is None
+
 
 class TestGetFreePort:
     """Tests for the get_free_port helper."""
