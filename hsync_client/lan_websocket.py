@@ -955,6 +955,7 @@ async def _handle_lan_event(
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
         unmark_receiving=slave_handler.unmark_receiving if slave_handler else None,
         record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
+        record_inbound_delete=(slave_handler.record_inbound_delete if slave_handler else None),
         recover_on_missing_rename_src=False,
     )
     await apply_inbound_event(event_data, ctx)
@@ -1012,6 +1013,16 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._outbound_dir_renames: dict[tuple[str, str], float] = {}
         self._outbound_dir_renames_lock = threading.Lock()
         self._OUTBOUND_DIR_RENAME_TTL_S: float = 10.0
+        # Track inbound directory deletes this slave just applied on behalf of
+        # the master (recursive `deleted` → `rmtree`). The `rmtree` only
+        # marks the tree root for echo suppression, so the slave's own
+        # watcher fires `deleted` events for every descendant: those echoes
+        # must not be re-sent to the master. A path equal to, or under, a
+        # cached directory delete is recognised as a benign echo (same
+        # `/`-suffix guard as the rename descendant match).
+        self._inbound_deletes: dict[str, float] = {}
+        self._inbound_deletes_lock = threading.Lock()
+        self._INBOUND_DELETE_TTL_S: float = 10.0
         # Track pending operations (rename, upload, delete) for graceful
         # shutdown.  Each entry is ``(thread, bytes_estimate)`` so that
         # ``wait_pending`` can derive a timeout proportional to the volume
@@ -1095,6 +1106,43 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     suffix = dst[len(r_dst) :]
                     if (not suffix or suffix.startswith("/")) and src == r_src + suffix:
                         return True
+            return False
+
+    def record_inbound_delete(self, path: str) -> None:
+        """Record a directory delete applied locally on behalf of an inbound event.
+
+        Cached for a short TTL so the watchdog echo of the resulting
+        ``rmtree`` (one ``deleted`` event per descendant, fired by our own
+        watcher outside the mark/unmark window of the tree root) is
+        recognised as benign and not re-sent to the master.
+        """
+        now = time()
+        with self._inbound_deletes_lock:
+            self._inbound_deletes[path] = now
+            cutoff = now - self._INBOUND_DELETE_TTL_S
+            for key in [k for k, ts in self._inbound_deletes.items() if ts < cutoff]:
+                del self._inbound_deletes[key]
+
+    def is_inbound_delete_echo(self, path: str) -> bool:
+        """Return True if *path* is an echo of a recent inbound directory delete.
+
+        Matches the exact cached root or a descendant: ``rmtree(root)`` makes
+        the slave's own watcher report every removed child as a local delete.
+        A descendant is recognised only when the trailing suffix is empty or
+        starts with ``/``, so a genuine deletion that merely shares a path
+        prefix (``ABC -> ABC-1``) is never suppressed.
+        """
+        with self._inbound_deletes_lock:
+            now = time()
+            for root, ts in list(self._inbound_deletes.items()):
+                if now - ts > self._INBOUND_DELETE_TTL_S:
+                    del self._inbound_deletes[root]
+                    continue
+                if path == root:
+                    return True
+                suffix = path.removeprefix(root)
+                if suffix != path and (suffix.startswith("/") or not suffix):
+                    return True
             return False
 
     def _record_outbound_dir_rename(self, src: str, dst: str) -> None:
@@ -1691,6 +1739,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if self.is_receiving(src_path):
             return
 
+        # Skip the echo of an inbound recursive delete: `apply_inbound_event`
+        # marks only the tree root (target of `rmtree`), so the slave's own
+        # watcher still fires `deleted` per descendant. Sending them back to
+        # the master is redundant noise (the master already deleted the whole
+        # tree; each request would just 404 as benign).
+        if self.is_inbound_delete_echo(src_path):
+            log.debug(f'Delete echo of inbound recursive delete skipped: "{src_path}"')
+            return
+
         # Skip in download-only mode (don't propagate local deletions)
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
@@ -1709,8 +1766,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # Buffer the deletion instead of notifying immediately: the sibling
         # descendant events (and the directory event itself) arrive within
         # the coalescing window and fold into a single recursive DELETE.
+        # An identical buffered pair is a duplicate (a directory with its own
+        # watch fires both IN_DELETE, from the parent's watch, and
+        # IN_DELETE_SELF, from its own watch on the same path).
         with self._delete_lock:
-            self._pending_deletes.append((src_path, event.is_directory))
+            entry = (src_path, event.is_directory)
+            if entry in self._pending_deletes:
+                log.debug(f'Duplicate delete skipped (slave): "{src_path}"')
+            else:
+                self._pending_deletes.append(entry)
             if self._delete_timer is None:
                 self._delete_timer = threading.Timer(
                     self._DELETE_COALESCE_WINDOW_S, self._flush_pending_deletes

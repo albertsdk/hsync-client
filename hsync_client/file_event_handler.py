@@ -172,6 +172,24 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """
         return None
 
+    def _is_covered_by_pending_delete(self, path: str) -> bool:
+        """Return True when *path* equals or descends from a buffered dir delete.
+
+        inotify fires ``IN_ATTRIB`` on a directory whenever a child entry is
+        removed, so an ``rmtree`` of a deep tree produces one spurious
+        directory MODIFY per removed child before the tree's own ``deleted``
+        events are coalesced. Those modifies are noise, not metadata changes:
+        a path equal to, or under, a directory already buffered for deletion
+        is skipped by ``on_modified``. A snapshot is taken under the buffer's
+        lock (the flush timer drains it from another thread).
+        """
+        prefix = path.rstrip("/") + "/"
+        with self._delete_lock:
+            pending = list(self._pending_deletes)
+        return any(
+            is_dir and prefix.startswith(rec_path.rstrip("/") + "/") for rec_path, is_dir in pending
+        )
+
     def _record_broadcast(self, src_path: str, stat: tuple[int, int], sha256: str) -> None:
         """Record a broadcast for content dedup, evicting oldest if at capacity.
 
@@ -291,6 +309,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
         if event.is_directory:
             if not is_hidden_dir(src_path) and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path):
+                # Suppress the IN_ATTRIB burst of a recursive delete: inotify
+                # fires IN_ATTRIB on a directory whenever a child entry is
+                # removed, so an rmtree of a deep tree emits one spurious
+                # directory MODIFY per removed child before the tree's deleted
+                # events are coalesced. A path already covered by a pending
+                # delete — or no longer present on disk — is noise, not a
+                # metadata change, and must not be logged or broadcast.
+                if self._is_covered_by_pending_delete(src_path):
+                    log.debug(f'Skip dir modify, pending delete: "{src_path}"')
+                    return
                 # Dedup directory modify events the same way as files: inotify
                 # fires IN_ATTRIB on a directory whenever a child is created,
                 # written, renamed or removed, so a single file save can emit
@@ -303,10 +331,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     file_stat = Path(src_path).stat()
                 except OSError:
                     file_stat = None
-                current_stat = (file_stat.st_mtime_ns, file_stat.st_size) if file_stat else None
-                if current_stat is not None and current_stat == self._last_broadcast_stat.get(
-                    src_path
-                ):
+                if file_stat is None:
+                    log.debug(f'Skip dir modify, directory gone: "{src_path}"')
+                    return
+                current_stat = (file_stat.st_mtime_ns, file_stat.st_size)
+                if current_stat == self._last_broadcast_stat.get(src_path):
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
                     return
                 # Record the stat *before* logging/broadcasting: mkdir emits a
@@ -315,8 +344,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 # completed. Recording up front lets the dedup pre-check catch
                 # that sibling immediately; a later genuine content change
                 # updates the directory mtime and is never skipped.
-                if current_stat is not None:
-                    self._record_broadcast(src_path, current_stat, "")
+                self._record_broadcast(src_path, current_stat, "")
                 log.info(
                     f'{self._label("MODIFY", src_path)} "{src_path}" (dir)'
                     f"{self._cid_suffix(src_path)}"
@@ -586,8 +614,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # Buffer the event instead of broadcasting immediately: the sibling
         # descendent events (and the directory event itself) arrive within
         # the coalescing window and fold into a single recursive message.
+        # An identical buffered pair is a duplicate (a directory with its own
+        # watch fires both IN_DELETE, from the parent's watch, and
+        # IN_DELETE_SELF, from its own watch on the same path) and would emit
+        # two identical [LOCAL DELETE] lines and two identical broadcasts.
         with self._delete_lock:
-            self._pending_deletes.append((src_path, event.is_directory))
+            entry = (src_path, event.is_directory)
+            if entry in self._pending_deletes:
+                log.debug(f'Duplicate delete skipped: "{src_path}"')
+            else:
+                self._pending_deletes.append(entry)
             if self._delete_timer is None:
                 self._delete_timer = threading.Timer(
                     DELETE_COALESCE_WINDOW, self._flush_pending_deletes

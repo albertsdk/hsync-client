@@ -477,6 +477,34 @@ class TestHandleLanEvent:
         assert handler.is_inbound_rename_echo(src_abs, dst_abs)
 
     @pytest.mark.asyncio
+    async def test_handle_deleted_dir_records_inbound_delete(self, tmp_path):
+        """An inbound deleted dir event must record the tree root on the slave
+        handler so the rmtree echo it produces locally is recognised.
+
+        The structural integration: ``_apply_delete`` passes the confined
+        root path to ``context.record_inbound_delete`` before ``rmtree``.
+        """
+        target = tmp_path / "deldir"
+        target.mkdir()
+        (target / "file.txt").write_text("x")
+
+        event_data = {
+            "name": "deleted",
+            "src": {"path": "deldir", "permissions": "755"},
+        }
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        handler = LANSlaveFileEventHandler("host", 9753, use_https=False)
+        with patch("hsync_client.event_dispatch.CONFIG", config):
+            await _handle_lan_event(event_data, slave_handler=handler)
+
+        root_abs = str(tmp_path / "deldir")
+        assert handler.is_inbound_delete_echo(root_abs)
+
+    @pytest.mark.asyncio
     async def test_handle_deleted_file_not_exists(self, tmp_path):
         """Test deleted file event when file doesn't exist (no crash)."""
         event_data = {

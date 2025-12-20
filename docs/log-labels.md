@@ -37,9 +37,9 @@ Emitted while the client watches its bucket or applies inbound peer events.
 | Label | Category | Meaning |
 |-------|----------|---------|
 | `[LOCAL CREATE]` | create | Local watcher: file/directory created. On a slave, a directory create logs a debug line with a `(dir)` suffix; a file arriving already complete logs `(N bytes, deferred to on_closed)` (debug) |
-| `[LOCAL MODIFY]` | modify | Local watcher: file/directory content modified. Trigger `(closed)`/`(modified)` = `IN_CLOSE_WRITE` (reliable) vs `on_modified` debounce fallback; `(dir)` = directory metadata event (stat-deduplicated) |
+| `[LOCAL MODIFY]` | modify | Local watcher: file/directory content modified. Trigger `(closed)`/`(modified)` = `IN_CLOSE_WRITE` (reliable) vs `on_modified` debounce fallback; `(dir)` = directory metadata event (stat-deduplicated). Directory modifies caused by a recursive delete (`rm -rf`) are suppressed and never logged |
 | `[LOCAL RENAME]` | rename | Local watcher: file/directory renamed (on a slave, also the rename pushed to the master) |
-| `[LOCAL DELETE]` | delete | Local watcher: file/directory deleted (on a slave, also the delete pushed to the master) |
+| `[LOCAL DELETE]` | delete | Local watcher: file/directory deleted (on a slave, also the delete pushed to the master). Deletes of a whole tree are coalesced into the topmost directory (one line); identical duplicate events for the same path are not re-logged |
 | `[LOCAL SYMLINK]` | create | Local watcher: symbolic link created |
 | `[LOCAL SECURITY]` | security | Local watcher: unsafe local path rejected (escaping symlink, traversal) |
 | `[LOCAL IGNORE DEL]` | warning | Local watcher: deletion skipped (ignore-delete / backup mode) |

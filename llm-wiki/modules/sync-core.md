@@ -177,6 +177,18 @@ when the master has no `LAN_KEY` set (the `mark_inbound_origin` cid gate is a
 security measure) or when a directory's children are removed by `rmtree` without
 being individually marked.
 
+**Recursive inbound delete echo** (`_apply_delete` dir branch,
+`event_dispatch.py`): before `rmtree`, the confined absolute root path is
+passed to `EventDispatchContext.record_inbound_delete` (new callback; `None`
+in remote mode). `_mark`/`_unmark` only cover the tree root, so the applying
+node's own watcher still fires `deleted` per descendant removed by `rmtree`:
+the LAN slave caches the root with a 10 s TTL (`record_inbound_delete` /
+`is_inbound_delete_echo` in `lan_websocket.py`, exact + descendant match with
+the same `/`-suffix guard as the rename echo) and its `on_deleted` drops those
+echoes instead of re-sending them to the master (where each would 404 as a
+benign echo). Remote mode never installs the callback — the central server
+never echoes an event back to its sender.
+
 **Inbound path security gate** (`:228`): every src/dst path is validated with
 `hsync_common.path_validation.validate_remote_relpath` before dispatch —
 traversal, absolute paths, backslashes and internal engine files
@@ -272,6 +284,15 @@ this, a file later re-created at the original source path with identical
 stat+hash would be skipped at stage 1 the same way as the delete case.
 Directories carry no content hash so the invalidation is file-only.
 
+**Delete buffering dedup** (`on_deleted`, `file_event_handler.py`): the
+coalescing buffer rejects an identical `(path, is_directory)` pair already
+pending in the same window. A directory with its own watch reports its
+deletion twice (`IN_DELETE` from the parent's watch and `IN_DELETE_SELF` from
+its own watch on the same path); before this guard the flush emitted two
+identical `[LOCAL DELETE]` lines and two identical `deleted` broadcasts. The
+LAN slave's own buffer (`lan_websocket.py`) applies the same dedup before
+sending the single recursive DELETE to the master.
+
 **Directory modify dedup** (`on_modified`, directory branch,
 `file_event_handler.py`): inotify fires `IN_ATTRIB` on a directory whenever a
 child is created, written, renamed or removed, so a single file save can
@@ -285,6 +306,18 @@ lets the pre-check catch the sibling immediately. A later genuine content
 change updates the directory mtime and is never skipped. The log carries a
 `(dir)` annotation to distinguish these directory-level metadata events from
 file content changes.
+
+**Recursive-delete MODIFY suppression** (same branch): before the stat
+pre-check, two guard clauses drop the `IN_ATTRIB` noise of an `rmtree` —
+(a) `_is_covered_by_pending_delete` (`file_event_handler.py`): the path
+equals or descends from a directory already buffered in `_pending_deletes`
+(snapshot under `_delete_lock`, because the flush timer drains it from
+another thread); (b) `stat()` raising OSError: the directory is already gone.
+During `rm -rf` the removed ancestors are buffered before the surrounding
+MODIFY burst is delivered, so both guards suppress the spurious per-child
+MODIFY lines that mtime changes would otherwise keep "fresh". A path inside
+the coalescing window but NOT covered by a delete (e.g. a sibling dir) still
+broadcasts normally.
 
 ## event_queue.py — outbound WS event retries
 

@@ -470,12 +470,19 @@ class TestSlaveFileEventHandler:
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
             patch("hsync_client.lan_websocket.File") as F,
+            patch("hsync_client.transfer.upload_symlink") as mock_upload_symlink,
             patch.object(handler, "_upload_to_master"),
         ):
             F.get.return_value = MagicMock()
             handler.on_created(event)
-            # _handle_file_upload should have been called (starts operation)
+            # The symlink branch starts a background op targeting
+            # upload_symlink. With it mocked the thread is harmless, but it
+            # must be joined INSIDE the patch context: outside it, a lingering
+            # thread would run the real upload_symlink against the unpatched
+            # CONFIG and raise KeyError (PytestUnhandledThreadExceptionWarning).
             assert len(handler._pending_ops) >= 1
+            handler.wait_pending(timeout=2.0)
+            mock_upload_symlink.assert_called_once()
 
     def test_on_created_escaping_symlink_not_uploaded(self, handler, tmp_path):
         """A symlink whose target escapes the bucket must not be uploaded.
@@ -1074,3 +1081,117 @@ class TestSlaveFileEventHandler:
             handler._rename_on_master("/bucket/a.txt", "/bucket/b.txt")
             kwargs = mock_patch.call_args.kwargs
             assert kwargs["params"]["cid"] == "slave-xyz"
+
+    def test_on_deleted_inbound_delete_echo_skipped(self, handler, tmp_path):
+        """A delete echoing a recent inbound recursive delete is not re-sent.
+
+        When the slave applies an inbound recursive delete, ``rmtree`` fires
+        a ``deleted`` per descendant. Only the tree root is marked for echo
+        suppression, so the descendants reach ``on_deleted``: they must be
+        recognised via the inbound-delete echo cache (exact + descendant)
+        and dropped without deleting anything on the master.
+        """
+        root = str(tmp_path / "a")
+        handler.record_inbound_delete(root)
+        event = FileDeletedEvent(str(tmp_path / "a" / "b"))
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master") as mock_delete,
+        ):
+            handler.on_deleted(event)
+            handler._flush_pending_deletes()
+        mock_delete.assert_not_called()
+
+    def test_on_deleted_inbound_root_echo_skipped(self, handler, tmp_path):
+        """A delete on the exact cached inbound root is also an echo."""
+        root = str(tmp_path / "a")
+        handler.record_inbound_delete(root)
+        event = DirDeletedEvent(root)
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master") as mock_delete,
+        ):
+            handler.on_deleted(event)
+            handler._flush_pending_deletes()
+        mock_delete.assert_not_called()
+
+    def test_on_deleted_prefix_collision_not_suppressed(self, handler, tmp_path):
+        """A sibling path sharing only a prefix is a genuine delete.
+
+        Cached inbound delete ``/a`` must not suppress a user deletion of
+        ``/abc`` (the trailing suffix must be empty or start with ``/``).
+        """
+        handler.record_inbound_delete(str(tmp_path / "a"))
+        event = FileDeletedEvent(str(tmp_path / "abc"))
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master") as mock_delete,
+            patch("hsync_client.lan_websocket.threading.Timer"),
+        ):
+            handler.on_deleted(event)
+            handler._flush_pending_deletes()
+        mock_delete.assert_called_once()
+
+    def test_on_deleted_inbound_echo_expired_goes_through(self, handler, tmp_path):
+        """After the TTL expires, a delete on the same path propagates."""
+        root = str(tmp_path / "a")
+        handler.record_inbound_delete(root)
+        # Expire the cache entry (recorded `now`); simulate an old timestamp.
+        handler._inbound_deletes[root] = time.time() - (handler._INBOUND_DELETE_TTL_S + 1)
+
+        event = DirDeletedEvent(root)
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master") as mock_delete,
+        ):
+            handler.on_deleted(event)
+            handler._flush_pending_deletes()
+        mock_delete.assert_called_once()
+
+    def test_duplicate_delete_buffered_once(self, handler, tmp_path):
+        """An identical delete pair buffered twice is flushed once, not twice.
+
+        A directory reports both ``IN_DELETE`` (parent's watch) and
+        ``IN_DELETE_SELF`` (its own watch): the flux must push a single
+        DELETE to the master, taking only one op slot.
+        """
+        event = DirDeletedEvent(str(tmp_path / "a"))
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master"),
+            patch("hsync_client.lan_websocket.threading.Timer"),
+        ):
+            handler.on_deleted(event)
+            handler.on_deleted(event)
+            handler._flush_pending_deletes()
+        # One delete request slot, not two (the duplicate pair was folded).
+        assert len(handler._pending_ops) == 1
+        assert len(handler._pending_deletes) == 0

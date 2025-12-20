@@ -130,6 +130,13 @@ class EventDispatchContext:
             rename with the exact ``(src_path, dst_path)`` pair, so a
             later watchdog echo returning a 404 from the master can be
             recognised as benign rather than a real divergence.
+        record_inbound_delete: Optional callback invoked with the confined
+            absolute directory path before a recursive delete is applied on
+            behalf of an inbound event. ``rmtree`` marks only the tree root
+            for echo suppression, so the applying node's own watcher fires
+            ``deleted`` events for every descendant; the callback lets the
+            caller recognise those echoes as benign (same pattern as the
+            inbound-rename echo cache).
         recover_on_missing_rename_src: If ``True`` and a rename's source
             does not exist locally, the destination is materialised
             (downloaded or resynced) instead of being silently dropped.
@@ -145,6 +152,7 @@ class EventDispatchContext:
     mark_receiving: Callable[[str], None] | None = None
     unmark_receiving: Callable[[str], None] | None = None
     record_inbound_rename: Callable[[str, str], None] | None = None
+    record_inbound_delete: Callable[[str], None] | None = None
     recover_on_missing_rename_src: bool = False
     dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
 
@@ -427,6 +435,13 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         # later with the same permissions would be wrongly skipped as a no-op.
         if ctx.dir_dedup is not None:
             ctx.dir_dedup.forget(local)
+        # Record the recursive delete BEFORE rmtree: the mark above only
+        # covers the tree root, so the applying node's own watcher will still
+        # fire `deleted` events for every descendant removed by rmtree. The
+        # callback lets the caller (LAN slave) recognise those descendant
+        # events as echoes and not re-send them to the master.
+        if ctx.record_inbound_delete is not None:
+            ctx.record_inbound_delete(local)
         _mark(ctx, local)
         try:
             if _path_present(local):

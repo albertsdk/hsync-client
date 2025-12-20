@@ -1040,15 +1040,21 @@ class TestFileEventHandler:
             "REMOTE_BUCKET": "mybucket",
         }
 
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 4096
+
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
             patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
             patch("hsync_client.file_event_handler.Dir.get") as mock_get,
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             mock_dir = MagicMock()
             mock_get.return_value = mock_dir
+            mock_path_cls.return_value.stat.return_value = mock_stat
             self.handler.on_modified(event)
             mock_get.assert_called_once_with("/bucket/subdir")
             mock_run.assert_called_once()
@@ -1326,6 +1332,185 @@ class TestFileEventHandler:
         ):
             self.handler.on_closed(event)
             assert mock_log.error.called
+
+    # -- rm -rf directory deletion (MODIFY burst + duplicate DELETEs) --
+
+    def test_duplicate_dir_delete_event_broadcasts_once(self):
+        """Two identical delete events for the same directory broadcast once.
+
+        A directory with its own recursive watch reports a deletion twice:
+        ``IN_DELETE`` (from its parent's watch) and ``IN_DELETE_SELF`` (from
+        its own watch on the same path). Both arrive within the coalescing
+        window and must result in a single broadcast, not two identical
+        ``[LOCAL DELETE]`` lines and two identical ``deleted`` messages.
+        """
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = "/bucket/a"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            self.handler.on_deleted(event)
+            self.handler.on_deleted(event)
+            self.handler._flush_pending_deletes()
+
+        # Exactly one broadcast overall, and it is the recursive dir delete.
+        mock_broadcast.assert_called_once()
+        broadcast_event = mock_broadcast.call_args.args[0]
+        assert broadcast_event.name == "deleted"
+        assert broadcast_event.src.path == "a"
+        assert broadcast_event.src.recursive is True
+
+    def test_rmtree_dir_modify_burst_suppressed_by_pending_delete(self):
+        """Dir MODIFY events covered by a buffered delete are suppressed.
+
+        During ``rm -rf``, inotify fires ``IN_ATTRIB`` on a directory whenever
+        a child entry is removed, so a deep tree produces one directory MODIFY
+        per removed child *before* the tree's delete events are coalesced.
+        A MODIFY whose path equals — or descends from — a buffered directory
+        delete must be skipped entirely (no log, no broadcast), because the
+        directory is being removed, not genuinely modified.
+        """
+        modify_event = MagicMock()
+        modify_event.is_directory = True
+        modify_event.src_path = "/bucket/a/b/c"
+
+        delete_event = MagicMock()
+        delete_event.is_directory = True
+        delete_event.src_path = "/bucket/a"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            # The delete of the tree root is buffered first...
+            self.handler.on_deleted(delete_event)
+            # ...then the directory MODIFY burst for its descendants arrives.
+            self.handler.on_modified(modify_event)
+            self.handler._flush_pending_deletes()
+
+        # No MODIFY broadcast: the only broadcast is the recursive delete.
+        mock_broadcast.assert_called_once()
+        broadcast_event = mock_broadcast.call_args.args[0]
+        assert broadcast_event.name == "deleted"
+        assert broadcast_event.src.path == "a"
+
+    def test_rmtree_delete_dir_modify_of_root_suppressed(self):
+        """A MODIFY of the deleted directory itself is also suppressed."""
+        path = "/bucket/a"
+        modify_event = MagicMock()
+        modify_event.is_directory = True
+        modify_event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            self.handler.on_deleted(modify_event)
+            # Second delete event for the same path is counted as the pending
+            # delete (dedup), and the MODIFY for the same path is suppressed.
+            self.handler.on_deleted(modify_event)
+            self.handler.on_modified(modify_event)
+            self.handler._flush_pending_deletes()
+
+        mock_broadcast.assert_called_once()
+        broadcast_event = mock_broadcast.call_args.args[0]
+        assert broadcast_event.name == "deleted"
+        assert broadcast_event.src.path == "a"
+
+    def test_dir_modify_of_gone_directory_suppressed(self):
+        """A directory MODIFY for a path that no longer exists is suppressed.
+
+        After the last ``IN_ATTRIB`` of an rmtree the directory is already
+        gone (``stat()`` raises): the event is noise, not a metadata change,
+        and must not be logged or broadcast.
+        """
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = "/bucket/gone"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.stat.side_effect = OSError("gone")
+            self.handler.on_modified(event)
+
+        mock_broadcast.assert_not_called()
+
+    def test_dir_modify_not_suppressed_without_pending_delete(self):
+        """A genuine dir MODIFY without any pending delete still broadcasts."""
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = "/bucket/freshdir"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 4096
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.stat.return_value = mock_stat
+            self.handler.on_modified(event)
+
+        mock_broadcast.assert_called_once()
 
 
 class TestRemoteModeOriginLabels:
