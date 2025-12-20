@@ -198,9 +198,11 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                 # node's mDNS ``connected`` TXT value on every join/leave.
                 if lan_ws_server is not None:
                     ws_server = lan_ws_server
-                    lan_sync.set_connected_clients_provider(
-                        lambda ws=ws_server: ws.connected_clients
-                    )
+
+                    def ws_connected_count(server: LANWebSocketServer = ws_server) -> int:
+                        return server.connected_clients
+
+                    lan_sync.set_connected_clients_provider(ws_connected_count)
                     lan_ws_server.set_clients_changed_callback(lan_sync.set_connected_clients)
                 else:
                     lan_sync.set_connected_clients_provider(None)

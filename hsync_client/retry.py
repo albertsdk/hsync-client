@@ -24,16 +24,21 @@ from tenacity import (
     wait_exponential,
 )
 
+from hsync_client.constants import (
+    TRANSFER_RETRY_ATTEMPTS_DEFAULT,
+    TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+    TRANSFER_RETRY_MIN_WAIT_DEFAULT,
+)
 from hsync_client.exceptions import NetworkError, ServerError
 
 # =============================================================================
 # Retry Configuration
 # =============================================================================
 
-# Default retry settings
-DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_MIN_WAIT = 1  # seconds
-DEFAULT_MAX_WAIT = 10  # seconds
+# Default retry settings (single source: hsync_client.constants).
+DEFAULT_MAX_ATTEMPTS = TRANSFER_RETRY_ATTEMPTS_DEFAULT
+DEFAULT_MIN_WAIT = TRANSFER_RETRY_MIN_WAIT_DEFAULT
+DEFAULT_MAX_WAIT = TRANSFER_RETRY_MAX_WAIT_DEFAULT
 
 # Route tenacity's before-sleep logs through the stdlib logger so they pass
 # the InterceptHandler, which neutralizes loguru markup (tenacity messages

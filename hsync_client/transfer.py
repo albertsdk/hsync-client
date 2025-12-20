@@ -491,7 +491,7 @@ def _download_file_attempt(file: File) -> None:
         params=params,
         stream=True,
         verify=get_ssl_verify(),
-        timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+        timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
     )
 
     log.debug(f"Request URI: {uri}")
@@ -883,7 +883,7 @@ def delete_file_remote(file: File) -> None:
         data={"cid": CONFIG["CID"], "filename": filename},
         headers=dict(CONFIG["REQUEST_HEADERS"]),
         verify=get_ssl_verify(),
-        timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+        timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
     )
     if response.status_code == 404:
         log.debug(f'"{filename}" already absent on server')

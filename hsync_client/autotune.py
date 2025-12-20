@@ -31,6 +31,13 @@ from typing import TYPE_CHECKING
 
 from loguru import logger as log
 
+from hsync_client.constants import (
+    HTTP_TIMEOUT_DEFAULT,
+    MAX_CONCURRENT_TRANSFERS_DEFAULT,
+    RECONNECT_DELAY_DEFAULT,
+    TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+)
+
 if TYPE_CHECKING:
     from hsync_common.models.file import File
 
@@ -109,11 +116,13 @@ class TuningProfile:
 # =============================================================================
 
 SAFE = TuningProfile(
-    http_timeout=30,
+    http_timeout=HTTP_TIMEOUT_DEFAULT,
+    # Deliberately above TRANSFER_RETRY_MIN_WAIT_DEFAULT (1): the safe profile
+    # is already the conservative fallback, so its first retry waits longer.
     retry_min_wait=5,
-    retry_max_wait=10,
-    reconnect_delay=5,
-    concurrency=5,
+    retry_max_wait=TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+    reconnect_delay=RECONNECT_DELAY_DEFAULT,
+    concurrency=MAX_CONCURRENT_TRANSFERS_DEFAULT,
     storage_type=StorageType.UNKNOWN,
     notes="autotune disabled or all probes failed — safe defaults",
 )
