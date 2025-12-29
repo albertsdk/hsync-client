@@ -282,6 +282,25 @@ async def _apply_add_or_modify(
         # suppressed. ``target`` separately stays gated on mark_receiving.
         abs_local = _resolve_local_path(src, "path")
         target = abs_local if ctx.mark_receiving else None
+        # Key on the absolute path so it matches the delete/rename
+        # invalidation (which uses the confined absolute path); fall back
+        # to the wire path only if resolution failed.
+        path_key = abs_local or str(src.get("path") or "")
+        permissions = src.get("permissions")
+        # Snapshot BEFORE the apply so a converged no-op can be recognised
+        # after update_dir: a directory that already exists with the same
+        # permissions this event carries is NOT a change — it is the echo of
+        # an inbound event looping back (typically the master broadcasting
+        # the very directory this node asked it to create, when no LAN key
+        # enables CID echo suppression). Presenting it as INFO + a transfer
+        # UI event would fake an operation that never happened locally; it
+        # degrades to DEBUG below (same pattern as the inbound-delete
+        # benign echo). update_dir still runs first: it owns the security
+        # confinement, so a rejected path returns None and never reaches
+        # the classification.
+        pre_dir = await asyncio.to_thread(
+            Dir.get, str(src.get("path") or ""), CONFIG.get("LOCAL_BUCKET")
+        )
         _mark(ctx, target) if target else None
         try:
             # Directories carry no content hash, so update_dir only ever
@@ -298,11 +317,17 @@ async def _apply_add_or_modify(
                 _unmark(ctx, target)
         if result is not None:
             label = "CREATE" if event_name == EventName.added.value else "MODIFY"
-            # Key on the absolute path so it matches the delete/rename
-            # invalidation (which uses the confined absolute path); fall back
-            # to the wire path only if resolution failed.
-            path_key = abs_local or str(src.get("path") or "")
-            permissions = src.get("permissions")
+            # Already-converged no-op: the directory existed before the apply
+            # and either the event carries no permissions (nothing to adjust)
+            # or the permissions it carries already match — the apply mutated
+            # nothing. Log at DEBUG and record the path in the dedup cache so
+            # a concurrent duplicate burst stays suppressed. A directory that
+            # did NOT exist before is a real creation and stays INFO.
+            if pre_dir is not None and (not permissions or permissions == pre_dir.permissions):
+                if ctx.dir_dedup is not None and path_key:
+                    ctx.dir_dedup.record(path_key, permissions)
+                log.debug(f'{_tag(label)} Already converged: "{path_key}"')
+                return
             # Suppress the duplicate added/modified burst a single mkdir
             # produces (the master's watcher emits several IN_ATTRIB-driven
             # events ~1ms apart for the same directory). Record *before*

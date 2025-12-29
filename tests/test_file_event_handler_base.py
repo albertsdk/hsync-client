@@ -107,15 +107,18 @@ class TestFileEventHandler:
         # Should not send any message
         assert not self.event_queue.enqueue.called
 
-    def test_on_created_broadcasts_visible_directory(self):
+    def test_on_created_broadcasts_visible_directory(self, tmp_path):
         """on_created broadcasts event for visible directories."""
+        test_dir = tmp_path / "visible"
+        test_dir.mkdir()
+
         event = MagicMock()
         event.is_directory = True
-        event.src_path = "/bucket/visible"
+        event.src_path = str(test_dir)
 
         config = {
             "CID": "testcid",
-            "LOCAL_BUCKET": "/bucket",
+            "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "mybucket",
         }
 
@@ -130,7 +133,7 @@ class TestFileEventHandler:
 
             self.handler.on_created(event)
 
-            mock_get.assert_called_once_with("/bucket/visible")
+            mock_get.assert_called_once_with(str(test_dir))
 
     def test_on_deleted_skips_hidden_directory(self):
         """on_deleted skips hidden directories."""

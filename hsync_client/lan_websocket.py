@@ -869,11 +869,18 @@ async def lan_websocket_client(
 
             log.info("Listening for events from master...")
 
+            # One dispatch context per connection: the inbound directory
+            # dedup cache must persist across events (a per-event context
+            # would reset the cache each time and the duplicate added/
+            # modified burst a single mkdir broadcast produces could
+            # never be suppressed).
+            ctx = _build_lan_dispatch_ctx(_slave_event_handler)
+
             # Process incoming events
             async for message in websocket:
                 try:
                     event_data = json.loads(message)
-                    await _handle_lan_event(event_data, _slave_event_handler)
+                    await _handle_lan_event(event_data, _slave_event_handler, ctx)
                 except json.JSONDecodeError as e:
                     log.warning(f"Invalid JSON from master: {e}")
                 except Exception as e:
@@ -935,29 +942,49 @@ async def _lan_periodic_resync() -> None:
         log.debug(f"LAN resync task stopped: {e}")
 
 
-async def _handle_lan_event(
-    event_data: dict,
-    slave_handler: LANSlaveFileEventHandler | None = None,
-) -> None:
-    """Apply an event received from the LAN master to the local file system.
+def _build_lan_dispatch_ctx(
+    slave_handler: LANSlaveFileEventHandler | None,
+) -> EventDispatchContext:
+    """Build the LAN slave's inbound event dispatch context.
 
-    Builds a LAN-specific :class:`EventDispatchContext` (echo suppression
-    via ``slave_handler.mark_receiving``/``unmark_receiving``, no symlink
-    materialisation, no rename-source recovery) and delegates to the
-    unified :func:`apply_inbound_event` dispatcher.
-
-    Args:
-        event_data: Event dictionary from the master.
-        slave_handler: Optional client event handler for marking files
-            as receiving (suppresses the slave's own watchdog echo).
+    A LAN-specific :class:`EventDispatchContext` with echo suppression via
+    ``slave_handler.mark_receiving``/``unmark_receiving``, no symlink
+    materialisation and no rename-source recovery. One context is built
+    per WebSocket connection: the ``dir_dedup`` cache (default factory)
+    must survive across events, otherwise every event starts with an empty
+    cache and the duplicate added/modified burst a single directory
+    broadcast produces is re-logged as a fresh change.
     """
-    ctx = EventDispatchContext(
+    return EventDispatchContext(
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
         unmark_receiving=slave_handler.unmark_receiving if slave_handler else None,
         record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
         record_inbound_delete=(slave_handler.record_inbound_delete if slave_handler else None),
         recover_on_missing_rename_src=False,
     )
+
+
+async def _handle_lan_event(
+    event_data: dict,
+    slave_handler: LANSlaveFileEventHandler | None = None,
+    ctx: EventDispatchContext | None = None,
+) -> None:
+    """Apply an event received from the LAN master to the local file system.
+
+    Delegates to the unified :func:`apply_inbound_event` dispatcher with a
+    LAN-specific :class:`EventDispatchContext`.
+
+    Args:
+        event_data: Event dictionary from the master.
+        slave_handler: Optional client event handler for marking files
+            as receiving (suppresses the slave's own watchdog echo).
+        ctx: Optional per-connection dispatch context. The WebSocket loop
+            passes the connection-scoped context so the inbound directory
+            dedup cache persists across events; when omitted (one-off
+            callers, tests) a fresh context is built.
+    """
+    if ctx is None:
+        ctx = _build_lan_dispatch_ctx(slave_handler)
     await apply_inbound_event(event_data, ctx)
 
 

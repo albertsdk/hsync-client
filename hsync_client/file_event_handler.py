@@ -279,6 +279,29 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
 
         if event.is_directory and not is_hidden_dir(src_path):
+            # Dedup directory create events the same way directory modifies
+            # are: watchdog emits a synthetic DirCreatedEvent for children
+            # already present whenever a watch is scheduled on a fresh
+            # directory (the observer.schedule below), so a chain of mkdirs
+            # can fire two DirCreatedEvent for the same directory within
+            # milliseconds. Directories carry no content hash, so a stat
+            # pre-check (mtime_ns + size) against the last broadcast is
+            # sufficient and cheap (one stat()). The stat is recorded
+            # *before* logging/broadcasting: recording up front lets the
+            # pre-check catch the sibling immediately (same pattern as the
+            # directory-modify dedup); a later delete invalidates the entry
+            # (_flush_pending_deletes), so a re-created directory with the
+            # same stat is never skipped.
+            try:
+                file_stat = Path(src_path).stat()
+            except OSError:
+                log.debug(f'Skip dir create, directory gone: "{src_path}"')
+                return
+            current_stat = (file_stat.st_mtime_ns, file_stat.st_size)
+            if current_stat == self._last_broadcast_stat.get(src_path):
+                log.debug(f'Skip duplicate create (stat): "{src_path}" (dir)')
+                return
+            self._record_broadcast(src_path, current_stat, "")
             log.info(f'{self._label("CREATE", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
             dir_obj = Dir.get(src_path)
             if dir_obj:
@@ -476,6 +499,15 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if is_hidden_dir(dest_path):
                 self.on_deleted(DirDeletedEvent(src_path))
                 return
+
+            # A renamed directory vacates its source path: invalidate the
+            # dedup entry so a later re-create at that path is re-evaluated.
+            # Renaming preserves the directory's mtime, so an undone rename
+            # (dir back to its old path) would otherwise be stat-suppressed
+            # by the directory-create dedup. Mirrors the file-branch
+            # invalidation below and the delete-flush invalidation.
+            self._last_broadcast_stat.pop(src_path, None)
+            self._last_broadcast_hash.pop(src_path, None)
 
             log.info(
                 f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'

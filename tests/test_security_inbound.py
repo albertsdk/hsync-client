@@ -199,10 +199,10 @@ class TestInboundEventPathValidation:
 
         mkdir on a peer produces several near-identical added/modified
         directory events ~1ms apart (inotify fires several IN_ATTRIB per
-        operation). Before the dedup, each one was re-logged as a fresh
-        [REMOTE CREATE]/[REMOTE MODIFY] line. The second identical event must
-        be suppressed (DEBUG), while a genuine change (different permissions)
-        must still be logged.
+        operation). The second identical event degrades to the converged
+        no-op DEBUG line (the directory already exists with the same
+        permissions), while a genuine change (different permissions) must
+        still be logged at INFO.
         """
         from loguru import logger
 
@@ -223,7 +223,7 @@ class TestInboundEventPathValidation:
             ):
                 event = {"name": "modified", "src": {"path": "d", "permissions": "755"}}
                 await apply_inbound_event(event, ctx)  # first: applied + logged
-                await apply_inbound_event(event, ctx)  # duplicate: suppressed
+                await apply_inbound_event(event, ctx)  # converged echo: suppressed
                 # A genuine change (different permissions) must still log.
                 changed = {"name": "modified", "src": {"path": "d", "permissions": "700"}}
                 await apply_inbound_event(changed, ctx)
@@ -233,7 +233,7 @@ class TestInboundEventPathValidation:
         info_modify = [m for m in captured if "[REMOTE MODIFY]" in m and "INFO" in m]
         # exactly two INFO lines: the first apply and the permission change
         assert len(info_modify) == 2, captured
-        assert any("[REMOTE MODIFY]" in m and "Duplicate" in m for m in captured)
+        assert any("[REMOTE MODIFY]" in m and "Already converged" in m for m in captured)
 
     async def test_dir_dedup_invalidated_on_delete(self, tmp_path):
         """A deleted directory must not stay in the dedup cache: re-creating it

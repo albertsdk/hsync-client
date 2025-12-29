@@ -113,6 +113,130 @@ class TestLANFileEventHandler:
             # Should not broadcast
             ws_server.broadcast_sync.assert_not_called()
 
+    def test_on_created_directory_duplicate_burst_suppressed(self, handler, ws_server, tmp_path):
+        """Regression: a duplicate DirCreatedEvent burst is not re-broadcast.
+
+        Watchdog emits a synthetic DirCreatedEvent for children already
+        present whenever a watch is scheduled on a fresh directory, so a
+        chain of mkdirs can fire two DirCreatedEvent for the same directory
+        within milliseconds. The second identical event must be suppressed
+        (stat dedup), the re-created directory after a delete must not be.
+        """
+        test_dir = tmp_path / "dupd"
+        test_dir.mkdir()
+
+        config = {
+            "CID": "test-client",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "remote",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.Dir") as mock_dir,
+        ):
+            mock_dir_obj = MagicMock()
+            mock_dir.get.return_value = mock_dir_obj
+
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+            # Duplicate arrival of the same create (synthetic re-scan burst).
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+
+        # One broadcast, not two: the duplicate was stat-suppressed.
+        ws_server.broadcast_sync.assert_called_once()
+
+    def test_on_created_directory_recreated_after_delete_broadcasts(
+        self, handler, ws_server, tmp_path
+    ):
+        """A directory deleted and re-created is a real change: both broadcast.
+
+        The delete flush invalidates the dedup cache for the path, so the
+        re-creation (even with an identical stat) must not be skipped as a
+        duplicate create.
+        """
+        test_dir = tmp_path / "recreated"
+        test_dir.mkdir()
+
+        config = {
+            "CID": "test-client",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "remote",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.Dir") as mock_dir,
+            patch("hsync_client.file_event_handler.threading.Timer"),
+        ):
+            mock_dir_obj = MagicMock()
+            mock_dir.get.return_value = mock_dir_obj
+
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+            handler.on_deleted(DirDeletedEvent(str(test_dir)))
+            handler._flush_pending_deletes()
+            ws_server.broadcast_sync.reset_mock()
+
+            # Simulate the burst the mkdir of the re-created directory can
+            # produce: two identical DirCreatedEvent for the same path.
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+
+        # One broadcast for the re-create (the duplicate burst was
+        # stat-suppressed); the earlier create/delete were already counted.
+        assert ws_server.broadcast_sync.call_count == 1
+
+    def test_dir_rename_invalidates_create_dedup(self, handler, ws_server, tmp_path):
+        """Regression: a directory renamed away vacates its source path.
+
+        Renaming preserves the directory's mtime, so re-creating it at the
+        old path (e.g. an undone rename) must not be stat-suppressed by the
+        directory-create dedup; the duplicate burst of that re-create is
+        still deduplicated.
+        """
+        src_dir = tmp_path / "oldname"
+        src_dir.mkdir()
+        dst_dir = tmp_path / "newname"
+
+        config = {
+            "CID": "test-client",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "remote",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.Dir") as mock_dir,
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+        ):
+            mock_dir_obj = MagicMock()
+            mock_dir.get.return_value = mock_dir_obj
+
+            # First create at src: broadcast + dedup record.
+            handler.on_created(DirCreatedEvent(str(src_dir)))
+
+            # Rename src -> dst on disk (preserves mtime) and fire on_moved.
+            src_dir.rename(dst_dir)
+            handler.on_moved(DirMovedEvent(str(src_dir), str(dst_dir)))
+
+            # The vacated source path must be gone from the dedup cache.
+            assert str(src_dir) not in handler._last_broadcast_stat
+
+            # Undo the rename: same directory, same inode, same mtime.
+            dst_dir.rename(src_dir)
+            ws_server.broadcast_sync.reset_mock()
+
+            # The re-create must broadcast (not be stat-suppressed), while
+            # the duplicate burst is still deduplicated.
+            handler.on_created(DirCreatedEvent(str(src_dir)))
+            handler.on_created(DirCreatedEvent(str(src_dir)))
+
+        assert ws_server.broadcast_sync.call_count == 1
+
     def test_on_modified_directory(self, handler, ws_server, tmp_path):
         """Test handling directory modification event."""
         test_dir = tmp_path / "moddir"

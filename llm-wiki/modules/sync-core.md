@@ -126,30 +126,45 @@ from `constants.py:99`–`:101`.
 
 ## event_dispatch.py — apply inbound events
 
-`apply_inbound_event` (`event_dispatch.py:220`) routes a remote event dict to
-`_apply_add_or_modify` (`:244`, also receives `event_name` to log `[REMOTE CREATE]` vs
+`apply_inbound_event` (`event_dispatch.py:228`) routes a remote event dict to
+`_apply_add_or_modify` (`:274`, also receives `event_name` to log `[REMOTE CREATE]` vs
 `[REMOTE MODIFY]` for the directory branch — the log is gated on `update_dir` returning
-non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:314`), `_apply_delete` (`:392`,
-locked via `_remove_locked:55`), `_apply_symlink` (`:483`). Echo suppression uses
-the per-event `EventDispatchContext` (`:68`) marking (`_mark:210`/`_unmark:215`).
-Path resolution: `_resolve_local_path` (`:304`).
+non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:369`), `_apply_delete` (`:449`,
+locked via `_remove_locked:67`), `_apply_symlink` (`:523`). Echo suppression uses
+the `EventDispatchContext` (`:121`) marking (`_mark:218`/`_unmark:223`).
+Path resolution: `_resolve_local_path` (`:334`).
 
 **Inbound directory dedup** (`_apply_add_or_modify` + `_DirDedup`): the master
 broadcasts a burst of near-identical `added`/`modified` directory events per
-`mkdir` (its watcher fires several `IN_ATTRIB` ~1ms apart). Because `update_dir`
-returns the `Dir` even for a no-op (existing dir, unchanged permissions), each
-duplicate would be re-logged as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`.
-A per-connection `_DirDedup` cache (`dir path -> permissions`, threaded through
-`EventDispatchContext.dir_dedup`, default per-context) suppresses the repeat:
-it is keyed on the **absolute** local path (matching the delete/rename
-invalidation), records before acting so a concurrently-dispatched sibling is
-caught, and is invalidated on `deleted` (`_apply_delete`) and `renamed`
-(`_rename_path`) so a re-created directory with the same permissions is applied
-fresh. A genuine change carries different permissions and is never skipped; a
-security-rejected path (`update_dir` → `None`) is never recorded.
+`mkdir` (its watcher fires several `IN_ATTRIB` ~1ms apart). There are two
+suppression layers, both keyed on the **absolute** local path:
+
+1. **Converged no-op degradation**: before the apply, the local directory is
+   snapshotted (`Dir.get`); if it already exists with the same permissions the
+   event carries (or the event carries no permissions to adjust), `update_dir`
+   mutates nothing and the event degrades to a DEBUG `Already converged` line,
+   with **no** `transfer` UI event. This makes the echo loopback of the node's
+   own `POST /dirs` (visible when no `LAN_KEY` enables CID echo suppression)
+   truthful instead of a fake INFO `[REMOTE CREATE]`. A directory that did not
+   exist before is a real creation and stays INFO.
+2. **`_DirDedup` cache** (`dir path -> permissions`, threaded through
+   `EventDispatchContext.dir_dedup`, default per-context): suppresses the
+   repeat of a genuine apply — it is keyed on the **absolute** local path
+   (matching the delete/rename invalidation), records before acting so a
+   concurrently-dispatched sibling is caught, and is invalidated on `deleted`
+   (`_apply_delete`) and `renamed` (`_rename_path`) so a re-created directory
+   with the same permissions is applied fresh. A genuine change carries
+   different permissions and is never skipped; a security-rejected path
+   (`update_dir` → `None`) is never recorded or degraded.
+
+The LAN WebSocket loop builds **one context per connection** via
+`_build_lan_dispatch_ctx` (`lan_websocket.py`) and passes it to every
+`_handle_lan_event` call; the context-scoped `dir_dedup` factory guarantees the
+cache lives for the whole connection. Remote mode reuses a module-level
+`REMOTE_DISPATCH_CTX` (`remote_websocket.py:209`).
 
 **Symlink echo marking + idempotency** (`_apply_symlink`,
-`event_dispatch.py:483`): the mutation section (unlink/rmdir cleanup +
+`event_dispatch.py:523`): the mutation section (unlink/rmdir cleanup +
 `os_symlink`) is wrapped in `_mark(ctx, local)`/`finally: _unmark(ctx, local)`
 — placed *after* mkdir of the parent and *after* all validations, so a rejected
 (unsafe) path is never marked. Without the mark, a LAN peer materialising an
@@ -166,8 +181,8 @@ remote mode the `REMOTE_DISPATCH_CTX` has no marking callbacks, so
 `_mark`/`_unmark` are no-ops (the central server never echoes an event back to
 its sender via `ConnectionManager.send_message`).
 
-**Benign-echo degradation** (`_apply_delete`, dir branch `:398` / file branch
-`:424`): when an inbound `deleted` event targets a path already absent locally,
+**Benign-echo degradation** (`_apply_delete`, dir branch `:482` / file branch
+`:510`): when an inbound `deleted` event targets a path already absent locally,
 the delete has nothing to act on (the originator removed it, a peer's delete
 converged after a local deletion, or the path never existed here). This is logged
 at **DEBUG**, not WARNING — mirroring the master's "File already deleted" success
@@ -193,12 +208,12 @@ never echoes an event back to its sender.
 `hsync_common.path_validation.validate_remote_relpath` before dispatch —
 traversal, absolute paths, backslashes and internal engine files
 (`.hsync*`/`*.part`) are dropped, logged with `ActionLabel.SECURITY` and
-surfaced as a `security_rejected` UI event (`_reject_unsafe:177`). When a
+surfaced as a `security_rejected` UI event (`_reject_unsafe:207`). When a
 payload carries both `filepath` and `path`, *every* present key is validated
 (`hsync_common.wire_relpaths`, SSOT shared with the server relay gate) so a
 malicious second key cannot smuggle past the gate.
 Delete/rename/symlink targets are additionally **confined** with
-`resolve_within` (`_confined_local:161`): lexical safety alone cannot stop a
+`resolve_within` (`_confined_local:177`): lexical safety alone cannot stop a
 symlink *inside* the bucket (e.g. `docs -> /home/user`) from redirecting the
 operation outside it. Delete/rename/symlink-materialisation use
 `resolve_final=False` (the final component is NOT dereferenced): deleting or
@@ -208,12 +223,12 @@ exists()`). `_apply_symlink` also validates the link target with
 `is_safe_symlink_target`; `update_dir`/`update_file` (`sync.py`) apply the
 full-resolve confinement before mkdir/metadata writes.
 
-**Log labels** (`_tag:150`): every bracketed label in this module is resolved
+**Log labels** (`_tag:166`): every bracketed label in this module is resolved
 through `hsync_common.labels.resolve_label` (the SSOT shared with
 `BaseFileEventHandler._label`), so the watchdog handlers and the inbound
 dispatcher emit identical, colorizable tags. Inbound events are always
 peer-caused, so the prefix is the module constant `INBOUND_PREFIX = "REMOTE "`
-(`:101`) and every dispatch label is `REMOTE_*` (`[REMOTE RENAME]`,
+(`:163`) and every dispatch label is `REMOTE_*` (`[REMOTE RENAME]`,
 `[REMOTE DELETE]`, `[REMOTE SECURITY]`, `[REMOTE ECHO]`, …). There is no
 project-local label table, and `EventDispatchContext` carries no `log_prefix`
 field (removed as dead configuration — both inbound contexts would share the
@@ -278,11 +293,14 @@ dropping the create → delete → **re-create** third event so peers never
 receive the re-creation.
 
 **Rename invalidates the dedup cache for the source path** (`on_moved`,
-file branch, `file_event_handler.py`): a visible→visible file rename pops
-`src_path` from both dedup dicts after building the `renamed` event. Without
-this, a file later re-created at the original source path with identical
-stat+hash would be skipped at stage 1 the same way as the delete case.
-Directories carry no content hash so the invalidation is file-only.
+`file_event_handler.py`): a visible→visible rename pops `src_path` from both
+dedup dicts — the file branch after building the `renamed` event, the
+directory branch before logging it. Without this, a path later re-created at
+the original source location with an identical stat (and hash) would be
+skipped at stage 1 the same way as the delete case. Renaming preserves the
+directory's mtime, so the directory invalidation is what lets an undone
+rename (dir back to its old path) re-broadcast instead of being
+stat-suppressed by the directory-create dedup.
 
 **Delete buffering dedup** (`on_deleted`, `file_event_handler.py`): the
 coalescing buffer rejects an identical `(path, is_directory)` pair already
@@ -306,6 +324,20 @@ lets the pre-check catch the sibling immediately. A later genuine content
 change updates the directory mtime and is never skipped. The log carries a
 `(dir)` annotation to distinguish these directory-level metadata events from
 file content changes.
+
+**Directory create dedup** (`on_created`, directory branch,
+`file_event_handler.py`): mirrors the directory-modify dedup. Watchdog emits
+a synthetic `DirCreatedEvent` for children already present whenever a watch
+is scheduled on a fresh directory (the `observer.schedule` below), so a
+chain of mkdirs can fire two `DirCreatedEvent` for the same directory within
+milliseconds. The branch applies the same `(mtime_ns, size)` stat pre-check
+against `_last_broadcast_stat` and records before logging/broadcasting, so
+the duplicate is suppressed (one `[LOCAL/REMOTE CREATE]` line + one broadcast
+per directory). The delete flush and the directory-rename branch both
+invalidate the entry (`_flush_pending_deletes` / `on_moved`), so a
+re-created directory with an identical stat is never skipped. If the
+directory is already gone at event time (`stat()` raises), the event is
+noise and is dropped.
 
 **Recursive-delete MODIFY suppression** (same branch): before the stat
 pre-check, two guard clauses drop the `IN_ATTRIB` noise of an `rmtree` —

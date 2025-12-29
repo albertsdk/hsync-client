@@ -777,6 +777,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
+        origin_cid = query.get("cid", [None])[0]
+        valid_origin_cid = (
+            origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
+        )
+        authenticated = bool(CONFIG.get("LAN_KEY"))
         try:
             # Only mark inbound origin if the directory doesn't already
             # exist: an already-existing directory means the slave is
@@ -784,19 +789,35 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # the mark must not be recorded (it would paint the slave's
             # CID over a genuinely local path, causing later local
             # events to be misattributed as REMOTE).
-            if not Path(full_path).exists():
-                # A symlink *inside* the bucket pointing outside it must not
-                # redirect the mkdir into the out-of-bucket location (the
-                # path was already confined via resolve_within, which resolves
-                # existing symlink components — a symlink that would escape is
-                # rejected there). Nothing extra is needed here: resolve_within
-                # returns None when the path crosses an escaping symlink.
-                origin_cid = query.get("cid", [None])[0]
-                if origin_cid and is_valid_cid(origin_cid):
-                    from hsync_client.lan_websocket import mark_inbound_origin
+            #
+            # mkdir(parents=True) below also creates every missing ancestor,
+            # and the master's watcher fires a create event for each of them;
+            # those events must carry the slave's CID too, otherwise they
+            # would be logged/broadcast as local creates (no echo
+            # suppression possible on the slaves). Mark every missing
+            # ancestor BEFORE the mkdir.
+            if valid_origin_cid:
+                from hsync_client.lan_websocket import mark_inbound_origin
 
-                    authenticated = bool(CONFIG.get("LAN_KEY"))
-                    mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
+                bucket_path = Path(local_bucket)
+                for candidate in Path(full_path).parents:
+                    # Only candidates that are the bucket itself or live
+                    # inside it are eligible; ancestors above the bucket
+                    # root are never touched by the mkdir below.
+                    if not (candidate == bucket_path or bucket_path in candidate.parents):
+                        continue
+                    if not candidate.exists():
+                        mark_inbound_origin(
+                            str(candidate), valid_origin_cid, authenticated=authenticated
+                        )
+                if not Path(full_path).exists():
+                    # A symlink *inside* the bucket pointing outside it must not
+                    # redirect the mkdir into the out-of-bucket location (the
+                    # path was already confined via resolve_within, which resolves
+                    # existing symlink components — a symlink that would escape is
+                    # rejected there). Nothing extra is needed here: resolve_within
+                    # returns None when the path crosses an escaping symlink.
+                    mark_inbound_origin(full_path, valid_origin_cid, authenticated=authenticated)
 
             Path(full_path).mkdir(parents=True, exist_ok=True)
 

@@ -65,6 +65,91 @@ class TestHandleLanEvent:
             mock_update.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_handle_duplicate_dir_events_shared_context(self, tmp_path):
+        """Regression: the LAN dispatch context must be shared across events.
+
+        A single mkdir broadcast produces a burst of near-identical
+        added/modified directory events; with a shared per-connection context
+        the inbound directory dedup suppresses the duplicates (one INFO
+        [REMOTE CREATE] line), while a genuine permission change is still
+        logged.
+        """
+        from loguru import logger
+
+        from hsync_client.event_dispatch import EventDispatchContext
+        from hsync_client.logger import _format_record_plain
+
+        ctx = EventDispatchContext()  # the per-connection context
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
+        try:
+            config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+            with (
+                patch("hsync_client.event_dispatch.CONFIG", config),
+                patch("hsync_client.sync.CONFIG", config),
+            ):
+                event = {"name": "added", "src": {"path": "d", "permissions": "755"}}
+                await _handle_lan_event(event, ctx=ctx)  # first: applied + logged
+                await _handle_lan_event(event, ctx=ctx)  # duplicate burst: suppressed
+                changed = {"name": "added", "src": {"path": "d", "permissions": "700"}}
+                await _handle_lan_event(changed, ctx=ctx)  # real permission change
+        finally:
+            logger.remove(handler_id)
+
+        creates = [m for m in captured if "[REMOTE CREATE]" in m]
+        assert len(creates) == 2, captured
+
+    @pytest.mark.asyncio
+    async def test_converged_dir_event_logged_at_debug(self, tmp_path):
+        """An inbound directory event that changes nothing locally is a converged
+        no-op: the directory already exists with the permissions the event
+        carries. It must not log at INFO and must not emit a transfer UI event
+        (it is the echo loopback of this node's own POST /dirs, visible only
+        when no LAN key enables CID echo suppression); a genuine creation or
+        permission change stays INFO (covered elsewhere).
+        """
+        from hsync_common.permissions import mode_to_octal
+        from loguru import logger
+
+        from hsync_client.event_dispatch import EventDispatchContext
+        from hsync_client.logger import _format_record_plain
+
+        ctx = EventDispatchContext()
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="DEBUG", format=_format_record_plain, catch=False)
+        mock_emit = None
+        try:
+            config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+            with (
+                patch("hsync_client.event_dispatch.CONFIG", config),
+                patch("hsync_client.sync.CONFIG", config),
+                patch("hsync_client.event_dispatch.emit_event") as mock_emit,
+            ):
+                # Pre-create the directory as our own local mkdir would, and
+                # send an added event carrying its actual permissions.
+                echo_dir = tmp_path / "echo"
+                echo_dir.mkdir()
+                actual = mode_to_octal(echo_dir.stat().st_mode)
+                event = {"name": "added", "src": {"path": "echo", "permissions": actual}}
+                await _handle_lan_event(event, ctx=ctx)
+        finally:
+            logger.remove(handler_id)
+
+        info_lines = [m for m in captured if "INFO" in m and "REMOTE" in m]
+        assert info_lines == [], captured
+        assert any("[REMOTE CREATE]" in m and "Already converged" in m for m in captured)
+        assert mock_emit is not None and mock_emit.call_count == 0
+
+    @pytest.mark.asyncio
     async def test_handle_modified_file_event(self, tmp_path):
         """Test handling modified file event."""
         event_data = {

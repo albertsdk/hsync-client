@@ -10,6 +10,118 @@ import pytest
 from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
+# A well-formed CID per hsync_common.models.event.CID_PATTERN (21 alphanumeric).
+VALID_CID = "a" * 21
+
+
+class TestLANRequestHandlerCreateDir:
+    """Tests for the POST /dirs endpoint."""
+
+    @pytest.fixture
+    def server(self):
+        """Create and start a test server."""
+
+        port = get_free_port()
+        server = LANServer(port=port)
+        server.start()
+        time.sleep(0.1)
+        yield server, port
+        server.stop()
+
+    def test_create_nested_dir_marks_missing_parents_inbound(self, server, tmp_path):
+        """Regression: implicitly created parents must carry the origin CID.
+
+        ``mkdir(parents=True)`` creates every missing ancestor, and the
+        master's watcher fires a create event for each. Those events must be
+        attributed to the requesting slave (via ``mark_inbound_origin``),
+        otherwise they are logged/broadcast as local creates and the slaves
+        cannot echo-suppress them.
+        """
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _inbound_origin,
+            peek_inbound_origin,
+        )
+
+        _inbound_origin.clear()
+        srv, port = server
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
+            response = requests.post(url, params={"path": "a/b/c", "cid": VALID_CID}, timeout=5)
+            assert response.status_code == 201
+
+        # The leaf itself is marked...
+        assert peek_inbound_origin(str(tmp_path / "a" / "b" / "c")) == VALID_CID
+        # ...and so are the missing parents created by the same request.
+        assert peek_inbound_origin(str(tmp_path / "a")) == VALID_CID
+        assert peek_inbound_origin(str(tmp_path / "a" / "b")) == VALID_CID
+        # The bucket root itself is never a candidate.
+        assert peek_inbound_origin(str(tmp_path)) is None
+        # Exactly the three created directories were marked (peek does not
+        # consume, so the map still holds them).
+        assert set(_inbound_origin) == {
+            str(tmp_path / "a"),
+            str(tmp_path / "a" / "b"),
+            str(tmp_path / "a" / "b" / "c"),
+        }
+        _inbound_origin.clear()
+
+    def test_create_dir_invalid_cid_marks_nothing(self, server, tmp_path):
+        """A malformed cid must not reach the inbound-origin map."""
+        import requests
+
+        from hsync_client.lan_websocket import _inbound_origin
+
+        _inbound_origin.clear()
+        srv, port = server
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
+            response = requests.post(url, params={"path": "x", "cid": "not-a-valid-cid"}, timeout=5)
+            assert response.status_code == 201
+
+        assert (tmp_path / "x").exists()
+        assert _inbound_origin == {}
+
+    def test_create_dir_existing_dir_not_remarked(self, server, tmp_path):
+        """An already-existing directory is an echo: no mark is recorded."""
+        import requests
+
+        from hsync_client.lan_websocket import _inbound_origin
+
+        _inbound_origin.clear()
+        target = tmp_path / "existing"
+        target.mkdir()
+
+        srv, port = server
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+            },
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
+            response = requests.post(url, params={"path": "existing", "cid": VALID_CID}, timeout=5)
+            assert response.status_code == 201
+
+        assert _inbound_origin == {}
+
 
 class TestLANRequestHandlerDELETE:
     """Tests for DELETE endpoint."""
