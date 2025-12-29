@@ -19,7 +19,7 @@ then branches by mode and starts the watcher loop. Console script: `cli.run`
 | **LAN (P2P)** | `--lan-mode` | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `lan_handler.run_lan_mode` (`lan_handler.py:109`) |
 
 LAN sub-roles: `_run_as_master` (`lan_handler.py:237`) starts `LANServer`
-(`lan_server.py:1067`) + `LANWebSocketServer` (`lan_websocket.py:123`); `_run_as_slave`
+(`lan_server.py:1627`) + `LANWebSocketServer` (`lan_websocket.py:123`); `_run_as_slave`
 (`lan_handler.py:371`) connects to the elected master. Role is chosen by election
 (see [lan-mode.md](modules/lan-mode.md)).
 

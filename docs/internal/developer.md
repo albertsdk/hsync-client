@@ -38,6 +38,7 @@ graph LR
         subgraph "LAN/"
             lan[lan.py]
             lan_server[lan_server.py]
+            multipart[multipart.py]
             lan_websocket[lan_websocket.py]
             lan_handler[lan_handler.py]
         end
