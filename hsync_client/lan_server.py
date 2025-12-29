@@ -25,6 +25,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -53,6 +54,14 @@ from hsync_client.compression import (
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_INBOUND_SIZE_MB_DEFAULT, ActionLabel
 from hsync_client.utils import inbound_size_cap, open_partial_no_follow
+
+# Precompiled multipart parsing patterns: the boundary marker and the
+# Content-Disposition name/filename attributes are matched once per request /
+# per part, so the regex objects are built at import time instead of being
+# recompiled (or cache-looked-up) on every multipart body.
+_MULTIPART_BOUNDARY_RE = re.compile(r"boundary=([^\s;]+)")
+_MULTIPART_NAME_RE = re.compile(r'name="([^"]*)"')
+_MULTIPART_FILENAME_RE = re.compile(r'filename="([^"]*)"')
 
 # =============================================================================
 # Constants
@@ -320,8 +329,6 @@ class _StreamingMultipartParser:
         Returns ``(form_fields, file_meta)`` where ``file_meta`` is
         ``(field_name, filename)`` if a file part was seen.
         """
-        import re
-
         form_fields: dict[str, str] = {}
         file_meta: tuple[str, str] | None = None
 
@@ -349,8 +356,8 @@ class _StreamingMultipartParser:
                     headers[k.strip().lower()] = v.strip()
 
             cd = headers.get(b"content-disposition", b"").decode("utf-8", "replace")
-            name_m = re.search(r'name="([^"]*)"', cd)
-            filename_m = re.search(r'filename="([^"]*)"', cd)
+            name_m = _MULTIPART_NAME_RE.search(cd)
+            filename_m = _MULTIPART_FILENAME_RE.search(cd)
 
             if filename_m and name_m and file_open is not None and file_meta is None:
                 field_name = name_m.group(1)
@@ -1386,15 +1393,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         must match the declared offset. Compressed uploads are not resumable.
         """
 
-        import re
-
         content_type = self.headers.get("Content-Type", "")
 
         if "multipart/form-data" not in content_type:
             self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
             return
 
-        match = re.search(r"boundary=([^\s;]+)", content_type)
+        match = _MULTIPART_BOUNDARY_RE.search(content_type)
         if not match:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
             return
@@ -1767,13 +1772,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         RAM); the JSON instructions travel in the ``metadata`` form field and
         are applied by :func:`hsync_client.lan_delta.handle_delta_apply`.
         """
-        import re
-
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
             return
-        match = re.search(r"boundary=([^\s;]+)", content_type)
+        match = _MULTIPART_BOUNDARY_RE.search(content_type)
         if not match:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
             return

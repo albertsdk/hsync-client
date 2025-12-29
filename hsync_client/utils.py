@@ -15,6 +15,7 @@ import atexit
 import os
 import secrets
 import threading
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from os import chmod, walk
@@ -702,8 +703,6 @@ def get_throttle_delay(
     Returns:
         Delay in seconds to wait before next chunk (0 if no throttling needed).
     """
-    import time
-
     if bandwidth_limit is None or bandwidth_limit <= 0:
         return 0.0
 

@@ -13,9 +13,11 @@ file comparison, action determination, and sync execution.
 
 import asyncio
 import threading
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from errno import EACCES, EBUSY, EIO, ENOENT
 from os import cpu_count, remove, walk
 from pathlib import Path
 from shutil import copy2
@@ -718,9 +720,6 @@ def _get_single_file_metadata(file_path: str) -> dict | None:
     Returns:
         File or Symlink metadata dictionary or None if file cannot be read.
     """
-    import time
-    from errno import EACCES, EBUSY, EIO, ENOENT
-
     # Symlink first: emit a symlink entry without computing a content hash.
     if Path(file_path).is_symlink():
         link = Symlink.get(file_path)
