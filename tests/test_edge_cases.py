@@ -15,6 +15,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.hashing import compute_sha256
 from hsync_common.models.file import File
 
 
@@ -197,7 +198,7 @@ class TestSHA256Performance:
             f.write(b"x" * (10 * 1024 * 1024))
 
         start = time.time()
-        sha256sum = File._compute_sha256(str(test_file))
+        sha256sum = compute_sha256(str(test_file))
         elapsed = time.time() - start
 
         # Should complete in reasonable time (< 2 seconds for 10MB)
@@ -216,7 +217,7 @@ class TestSHA256Performance:
         test_file = tmp_path / "small.txt"
         test_file.write_text("hello world")
 
-        sha256sum = File._compute_sha256(str(test_file))
+        sha256sum = compute_sha256(str(test_file))
 
         import hashlib
 
@@ -228,7 +229,7 @@ class TestSHA256Performance:
         test_file = tmp_path / "empty.txt"
         test_file.write_text("")
 
-        sha256sum = File._compute_sha256(str(test_file))
+        sha256sum = compute_sha256(str(test_file))
 
         import hashlib
 

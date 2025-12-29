@@ -7,6 +7,7 @@ import tempfile
 from datetime import UTC, datetime
 
 import pytest
+from hsync_common.hashing import compute_sha256
 from hsync_common.models.file import File, is_hidden_file
 
 
@@ -203,7 +204,7 @@ class TestFileModel:
             temp_path = f.name
 
         try:
-            sha256 = File._compute_sha256(temp_path)
+            sha256 = compute_sha256(temp_path)
             # SHA-256 of "test content"
             assert sha256 == "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
         finally:

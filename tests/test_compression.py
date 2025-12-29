@@ -8,7 +8,7 @@ import os
 import tempfile
 
 from hsync_client.compression import (
-    MIN_SIZE_FOR_DOWNLOAD,
+    MIN_SIZE_FOR_COMPRESSION,
     MIN_SIZE_FOR_LAN,
     MIN_SIZE_FOR_UPLOAD,
     compress_data,
@@ -23,11 +23,11 @@ class TestShouldCompress:
 
     def test_small_file_download_skipped(self):
         """Files below download threshold are not compressed."""
-        assert should_compress("file.txt", MIN_SIZE_FOR_DOWNLOAD - 1) is False
+        assert should_compress("file.txt", MIN_SIZE_FOR_COMPRESSION - 1) is False
 
     def test_large_file_download_compressed(self):
         """Files above download threshold are compressed."""
-        assert should_compress("file.txt", MIN_SIZE_FOR_DOWNLOAD + 1) is True
+        assert should_compress("file.txt", MIN_SIZE_FOR_COMPRESSION + 1) is True
 
     def test_small_file_upload_skipped(self):
         """Files below upload threshold are not compressed for uploads."""
@@ -51,7 +51,7 @@ class TestShouldCompress:
 
     def test_precompressed_extension_skipped(self):
         """Already compressed files are not compressed again."""
-        large_size = MIN_SIZE_FOR_DOWNLOAD * 100
+        large_size = MIN_SIZE_FOR_COMPRESSION * 100
         assert should_compress("photo.jpg", large_size) is False
         assert should_compress("video.mp4", large_size) is False
         assert should_compress("archive.zip", large_size) is False
@@ -60,13 +60,13 @@ class TestShouldCompress:
 
     def test_precompressed_case_insensitive(self):
         """Extension check is case-insensitive."""
-        large_size = MIN_SIZE_FOR_DOWNLOAD * 100
+        large_size = MIN_SIZE_FOR_COMPRESSION * 100
         assert should_compress("PHOTO.JPG", large_size) is False
         assert should_compress("Video.MP4", large_size) is False
 
     def test_compressible_extensions(self):
         """Compressible file types are compressed when large enough."""
-        large_size = MIN_SIZE_FOR_DOWNLOAD * 100
+        large_size = MIN_SIZE_FOR_COMPRESSION * 100
         assert should_compress("data.csv", large_size) is True
         assert should_compress("source.py", large_size) is True
         assert should_compress("config.json", large_size) is True
@@ -75,7 +75,7 @@ class TestShouldCompress:
     def test_exact_threshold_download(self):
         """Files exactly at threshold are not compressed (below means <)."""
         # At exactly the threshold, size < threshold is False
-        assert should_compress("file.txt", MIN_SIZE_FOR_DOWNLOAD) is True
+        assert should_compress("file.txt", MIN_SIZE_FOR_COMPRESSION) is True
 
     def test_zero_size_skipped(self):
         """Zero-size files are not compressed."""
