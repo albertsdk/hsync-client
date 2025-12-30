@@ -98,6 +98,72 @@ class TestLanTombstone:
         finally:
             _terminate(master)
 
+    def test_slave_deletion_survives_master_restart(
+        self, lan_master_dir, lan_slave_dir, lan_bucket
+    ):
+        """Slave deletes while the master is down; on reconnect the deletion
+        propagates to the master instead of resurrecting the file on the slave.
+
+        Regression for the reported scenario: A/B killed, AAA deleted on the
+        still-running (or freshly reconnecting) C, A restarted with the same
+        identity — AAA and its file previously reappeared on C. The deletion
+        must survive locally (causal tombstone, ADR-0003) and the stale remote
+        copy must be deleted, never downloaded back.
+        """
+        import shutil
+
+        aaa = Path(lan_master_dir) / "AAA"
+        aaa.mkdir(parents=True)
+        (aaa / "test.txt").write_bytes(b"delete-me\n")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Phase 1: the file syncs to the slave (its merge base is recorded).
+                assert _wait_for_file(str(Path(lan_slave_dir) / "AAA" / "test.txt"), timeout=60), (
+                    "File did not sync from master to slave during initial sync"
+                )
+                assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=60), (
+                    "Slave did not complete the initial sync"
+                )
+
+                # Phase 2: master dies. Wait until the slave's watcher is fully
+                # stopped so the deletion below happens while the slave is
+                # offline and the watched tree is cold.
+                _terminate(master)
+                assert _wait_for_text_in_stderr(slave, "Client file watcher stopped", timeout=30), (
+                    "Slave watcher did not stop after the master went down"
+                )
+
+                # Phase 3: delete the whole AAA tree on the slave while offline.
+                shutil.rmtree(Path(lan_slave_dir) / "AAA")
+
+                # Phase 4: master restarts with the same identity (same device
+                # dir), so the slave's TOFU pin stays valid and it reconnects.
+                master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+                try:
+                    # The slave records the offline deletion and the stale
+                    # remote copy is deleted instead of being downloaded back.
+                    assert _wait_for_text_in_stderr(slave, "[TOMBSTONE]", timeout=90), (
+                        "Slave did not reconcile the deletion via tombstone\n"
+                        f"--- slave log tail ---\n{_stderr_text(slave)[-3000:]}"
+                    )
+                    assert _wait_for_file_gone(
+                        str(Path(lan_master_dir) / "AAA" / "test.txt"), timeout=60
+                    ), "Deleted file still present on master after reconnect (delete_remote missed)"
+                    # The slave must not resurrect the deleted file.
+                    time.sleep(3)
+                    assert not (Path(lan_slave_dir) / "AAA" / "test.txt").exists(), (
+                        "Deleted file resurrected on the slave after reconnect"
+                    )
+                finally:
+                    _terminate(master2)
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
 
 # =============================================================================
 # Multi-slave topology (3 peers)

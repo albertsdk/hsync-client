@@ -517,6 +517,39 @@ class LANWebSocketServer:
 # =============================================================================
 
 
+def _record_deletion_marker(src_path: str) -> None:
+    """Record a causal deletion marker and drop the path's merge base.
+
+    Shared chokepoint for deletions, used by the master's ``_on_deleted`` and
+    by the slave's watcher. The marker must survive locally even when the
+    transport is unavailable: the LAN master can be offline while a slave
+    deletes, and a slave can be unreachable while the master records. The
+    marker inherits the stored version clock and the recorded content hash
+    (``base_hash``), and is ticked by this peer BEFORE the merge-base entry is
+    cleared, so both delete-vs-recreate and delete-vs-delete resolve causally
+    (ADR-0003). The content hash lets a remote copy of the deleted file be
+    recognised and removed instead of being re-downloaded (resurrection guard).
+    Best-effort: a failure must never break event propagation.
+    """
+    try:
+        from hsync_client.sync_state import clear_base, flush, get_base_hash, get_vclock
+        from hsync_client.tombstones import record_deletion
+
+        # Causal provenance (ADR-0003): the marker inherits the path's recorded
+        # clock and content hash and is ticked by this peer BEFORE the
+        # merge-base entry is cleared below.
+        record_deletion(
+            src_path,
+            sha256sum=get_base_hash(src_path),
+            origin_cid=str(CONFIG.get("CID") or "") or None,
+            prev_vclock=get_vclock(src_path),
+        )
+        clear_base(src_path)
+        flush()
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug(f"Could not record tombstone for {src_path}: {e}")
+
+
 def _attach_effective_version(entity, abs_path: str) -> None:
     """Attach the effective causal version to a File entity (in place).
 
@@ -686,35 +719,13 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
         """Record a deletion marker so offline peers do not resurrect the path.
 
-        This is the master's single chokepoint for deletions: it fires both for
-        the master's own local removals and for slave-initiated deletes applied
-        via the HTTP API (which trigger the same filesystem event). Directories
-        carry no content hash so only files are recorded. Best-effort: a failure
-        to persist the marker must never break event propagation.
+        Fires both for the master's own local removals and for slave-initiated
+        deletes applied via the HTTP API (which trigger the same filesystem
+        event). Directories carry no content hash so only files are recorded.
         """
         if is_directory:
             return
-        try:
-            from hsync_client.sync_state import get_vclock
-            from hsync_client.tombstones import record_deletion
-
-            # Causal provenance (ADR-0003): the marker inherits the path's
-            # recorded clock and is ticked by this peer BEFORE the merge-base
-            # entry is cleared below.
-            prev_vclock = get_vclock(src_path)
-            record_deletion(
-                src_path, origin_cid=str(CONFIG.get("CID") or "") or None, prev_vclock=prev_vclock
-            )
-        except Exception as e:  # pragma: no cover - defensive
-            log.debug(f"Could not record tombstone for {src_path}: {e}")
-        # Drop the merge base too: a re-created path must start a fresh lineage.
-        try:
-            from hsync_client.sync_state import clear_base, flush
-
-            clear_base(src_path)
-            flush()
-        except Exception as e:  # pragma: no cover - defensive
-            log.debug(f"Could not clear sync-state for {src_path}: {e}")
+        _record_deletion_marker(src_path)
 
 
 # =============================================================================
@@ -1797,6 +1808,13 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             log.debug(f"{ActionLabel.LOCAL_IGNORE_DEL} Deletion ignored (ignore-delete mode)")
             return
 
+        # Causal tombstone (ADR-0003): the deletion must survive locally even
+        # when the master is unreachable. The DELETE below is best-effort, but
+        # the marker guarantees the next reconciliation recognises the deletion
+        # instead of resurrecting the file from the master's listing.
+        if not event.is_directory:
+            _record_deletion_marker(src_path)
+
         # Buffer the deletion instead of notifying immediately: the sibling
         # descendant events (and the directory event itself) arrive within
         # the coalescing window and fold into a single recursive DELETE.
@@ -1873,6 +1891,11 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # Visible to hidden - treat as deletion
         if not src_hidden and dest_hidden:
             if not CONFIG.get("IGNORE_DELETE", False):
+                # Causal tombstone (ADR-0003): a hide/move-away is a local
+                # deletion and must survive locally even when the master is
+                # unreachable (same guarantee as ``on_deleted``).
+                if not event.is_directory:
+                    _record_deletion_marker(src_path)
                 self._start_operation(
                     target=self._delete_on_master,
                     args=(src_path, event.is_directory),

@@ -713,6 +713,131 @@ class TestInboundOriginTracker:
         assert consume_inbound_origin("/bucket/a.txt") is None
 
 
+class TestSlaveRecordsLocalDeletionMarker:
+    """Regression: a slave-side deletion must survive locally.
+
+    When the master is unreachable at deletion time, the best-effort HTTP
+    DELETE is lost; the causal tombstone recorded by the slave is what lets
+    the next reconciliation delete the stale remote copy instead of
+    downloading it back (ADR-0003).
+    """
+
+    def test_on_deleted_records_causal_tombstone(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from hsync_common.models.file import File as FileModel
+        from hsync_common.models.tombstone import tombstone_key
+
+        from hsync_client import sync_state as ss_mod
+        from hsync_client import tombstones as ts_mod
+
+        target = tmp_path / "gone.txt"
+        target.write_text("content")
+        file_obj = FileModel.get(str(target))
+        assert file_obj is not None
+        base_hash = file_obj.sha256sum
+
+        cid = "SlaveLocal1234567890A"
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": cid,
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        # A tracked file: the marker must inherit the recorded hash + clock.
+        with patch("hsync_client.sync_state.CONFIG", cfg):
+            ss_mod.record_base(str(target), base_hash or "")
+            ss_mod.flush()
+            ss_mod._stores.clear()
+
+        handler = LANSlaveFileEventHandler("host", 9753, use_https=False)
+        # The file is already gone when the watchdog delivers the event.
+        target.unlink()
+
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = str(target)
+
+        with (
+            # No real thread toward a fake master: the HTTP DELETE is
+            # irrelevant to the tombstone guarantee under test.
+            patch.object(handler, "_start_operation"),
+            patch("hsync_client.lan_websocket.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.tombstones.CONFIG", cfg),
+        ):
+            handler.on_deleted(event)
+            handler._flush_pending_deletes()
+
+        with patch("hsync_client.tombstones.CONFIG", cfg):
+            payload = ts_mod.get_payload()
+            key = tombstone_key("gone.txt")
+            assert key in payload, "slave did not record a local deletion marker"
+            assert payload[key]["sha256"] == base_hash
+            # The inherited clock is ticked by the local cid (causal provenance).
+            assert payload[key]["vclock"] == {cid: 1}
+
+        with patch("hsync_client.sync_state.CONFIG", cfg):
+            # The merge base is dropped: a re-created path starts fresh.
+            assert ss_mod.get_base_hash(str(target)) is None
+
+    def test_visible_to_hidden_move_records_tombstone(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from hsync_common.models.file import File as FileModel
+        from hsync_common.models.tombstone import tombstone_key
+
+        from hsync_client import sync_state as ss_mod
+        from hsync_client import tombstones as ts_mod
+
+        target = tmp_path / "data.txt"
+        hidden_dest = tmp_path / ".goutputstream-data.txt"
+        target.write_text("content")
+        file_obj = FileModel.get(str(target))
+        assert file_obj is not None
+        base_hash = file_obj.sha256sum
+
+        cid = "SlaveLocal1234567890A"
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": cid,
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with patch("hsync_client.sync_state.CONFIG", cfg):
+            ss_mod.record_base(str(target), base_hash or "")
+            ss_mod.flush()
+            ss_mod._stores.clear()
+
+        handler = LANSlaveFileEventHandler("host", 9753, use_https=False)
+        target.unlink()
+
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = str(target)
+        event.dest_path = str(hidden_dest)
+
+        def _fake_hidden(path: str) -> bool:
+            return path == str(hidden_dest)
+
+        with (
+            patch.object(handler, "_start_operation"),
+            patch("hsync_client.lan_websocket.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.tombstones.CONFIG", cfg),
+            patch("hsync_client.lan_websocket.is_hidden_file", side_effect=_fake_hidden),
+        ):
+            handler.on_moved(event)
+
+        with patch("hsync_client.tombstones.CONFIG", cfg):
+            key = tombstone_key("data.txt")
+            assert key in ts_mod.get_payload(), (
+                "visible→hidden move did not record a local deletion marker"
+            )
+
+
 class TestEventLoopRemainsResponsive:
     """Regression test for the cascade where a multi-GB download blocked
     the asyncio loop and caused WebSocket keep-alive pings to time out.

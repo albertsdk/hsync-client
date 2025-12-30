@@ -76,6 +76,14 @@ matrix on the wire data.
 Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`
 prefix checks — sibling directories cannot bypass confinement).
+
+The reconcile action `transfer.delete_file_remote` speaks **both transports'
+DELETE contracts**: form fields (`filename`, `cid`) against the central server
+and query params (`path`, `is_dir`, `cid`) against the LAN master
+(`lan_server._handle_delete` reads only the query string). Sending the wrong
+shape made the master answer 400 and left the stale remote copy in place (the
+wire-shape half of the resurrection bug); the branch is driven by
+`CONFIG["LAN_MODE"]` and covered by `tests/test_transfer_delete_remote.py`.
 **Delete/rename/symlink endpoints use `resolve_final=False`**: the final
 component is never dereferenced, so deleting/renaming/replacing a link acts on
 the LINK entry, never on its target (with the default full resolve, deleting a
@@ -110,10 +118,11 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `lan_websocket_client` | `lan_websocket.py:725` | connect to master WSS, verify cert fp, **`lan/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`:875`) fires only after the handshake completed — a failed auth never reaches it |
-| `_handle_lan_event` | `lan_websocket.py:974` | apply inbound master events locally; the `lan_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_lan_dispatch_ctx`, `lan_websocket.py:952`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |
-| `LANSlaveFileEventHandler` | `:1003` | slave-local FS changes → upload to master |
-| `_lan_periodic_resync` | `:926` | periodic full reconcile (§13) |
+| `lan_websocket_client` | `lan_websocket.py:736` | connect to master WSS, verify cert fp, **`lan/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`:875`) fires only after the handshake completed — a failed auth never reaches it |
+| `_handle_lan_event` | `lan_websocket.py:985` | apply inbound master events locally; the `lan_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_lan_dispatch_ctx`, `lan_websocket.py:963`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |
+| `LANSlaveFileEventHandler` | `:1014` | slave-local FS changes → upload to master |
+| live deletion marker (slave) | `LANSlaveFileEventHandler.on_deleted` (`:1771`) / `on_moved` visible→hidden | a slave-side file deletion records a **causal tombstone locally** via the shared `_record_deletion_marker` (`lan_websocket.py:520`) before the best-effort HTTP DELETE reaches the master. Correctness never depends on the transport being up: the marker inherits the merge-base hash + clock (ticked by this peer) and drops the merge base, so the next reconciliation deletes the stale remote copy (`delete_remote`) instead of resurrecting it — the master-unreachable-deletion regression |
+| `_lan_periodic_resync` | `:937` | periodic full reconcile (§13) |
 | echo suppression | `:113`/`:137` | `mark_inbound_origin` / `consume_inbound_origin` (TTL `:110`) |
 | rename redundancy (inbound + outbound) | `LANSlaveFileEventHandler.record_inbound_rename` / `is_inbound_rename_echo` + `_record_outbound_dir_rename` / `is_outbound_dir_descendant` | exact `(src,dst)` pair cache (TTL `:703`); also matches **descendant** echoes of a directory rename in both directions: inbound (master renamed `ABC -> ABC-123`, slave's watcher echoes children) and outbound (slave renames `ABC-123 -> ABC-123-X`, its watcher emits child `on_moved` events). A single PATCH already renamed the whole tree on the master, so `on_moved` skips the redundant child PATCHes proactively and a 404 from the master is degraded to DEBUG when it matches, else stays WARNING (real divergence). Identifier-suffix guard (starts with `/`) avoids suppressing genuine renames that merely share a path prefix |
 | inbound-delete echo | `event_dispatch._apply_delete` (dir `:457` / file `:485`) | a `deleted` event for a path already absent locally is a benign echo (originator removed it / peer delete converged / never existed here): logged at DEBUG, not WARNING. Echo suppression can miss when the master has no `LAN_KEY` (the `mark_inbound_origin` cid gate is a security measure) or when `rmtree` removes a directory's children without individually marking them |

@@ -47,6 +47,11 @@ A deterministic algorithm picks the master based on:
 The remaining slaves hold a new election. The slave that started earliest
 becomes the new master. No data is lost — all slaves have a local copy.
 
+Deletions made while no master is reachable are recorded locally (as causal
+tombstones, see [Conflict Resolution](conflict-resolution.md)): when the
+master comes back, the deletion propagates to it instead of the deleted file
+being downloaded again.
+
 **Q: Can I force a specific device to always be the master?**
 Yes. Set `--force-master` on that device. It will win elections against
 non-force-master peers.

@@ -390,6 +390,16 @@ ancestor, so the file is deleted instead of being resurrected. The deletion
 | Tombstone and local clocks **concurrent** | Local edit is an intentional re-creation | Keep / upload |
 | Local clock **dominates** tombstone | Re-creation happened after the deletion | Keep |
 
+Every peer records the marker when **it** observes the deletion — as LAN master
+or as slave alike — so a deletion made while the elected master is temporarily
+unreachable is never lost: the next reconciliation recognises the recorded
+marker and deletes the stale copy still held by the (restarted) master, instead
+of downloading it back. A file that exists only on the remote side is deleted
+there when **either** of two proofs holds: the tombstone's content hash equals
+the remote copy's hash, or the tombstone clock causally dominates the remote
+version — an edit concurrent with the deletion is an intentional re-creation
+and is downloaded normally.
+
 The tombstone exemption also plugs into the mass-deletion guard: deletions
 backed by a matching tombstone are never blocked, because the marker is
 positive proof the removal was intentional.

@@ -867,6 +867,12 @@ def delete_file_remote(file: File) -> None:
     back. ``file.filepath`` is the bucket-relative path from the remote listing
     (it must not resolve to a local file).
 
+    The two transports speak different contracts for this endpoint: the
+    central server expects form fields (``filename`` + ``cid``) while the LAN
+    master reads query parameters (``path`` + ``is_dir`` + ``cid``, see
+    ``lan_server._handle_delete``). The branch below picks the wire shape
+    from ``CONFIG["LAN_MODE"]`` so the same action works in both modes.
+
     Raises:
         NetworkError: On a connection-level error.
         ServerError: On a server-side error response (except 404: the file is
@@ -880,9 +886,11 @@ def delete_file_remote(file: File) -> None:
     prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
     filename = str(file.filepath).removeprefix(prefix).lstrip("/")
 
+    lan_mode = bool(CONFIG.get("LAN_MODE", False))
     response = http_delete(
         uri,
-        data={"cid": CONFIG["CID"], "filename": filename},
+        params=({"path": filename, "is_dir": "false", "cid": CONFIG["CID"]} if lan_mode else None),
+        data=None if lan_mode else {"cid": CONFIG["CID"], "filename": filename},
         headers=dict(CONFIG["REQUEST_HEADERS"]),
         verify=get_ssl_verify(),
         timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),

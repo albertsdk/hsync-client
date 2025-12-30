@@ -1024,6 +1024,126 @@ class TestGetSyncActionsTombstones:
             assert result[0].tombstone_confirmed is True
 
 
+class TestGetSyncActionsRemoteOnlyTombstones:
+    """Tests for the remote-only tombstone branch in get_sync_actions.
+
+    A file that exists only on the remote may be the stale copy of a file
+    this peer deleted while the master was unreachable (or between sync
+    cycles). Two alternative proofs suppress the download (resurrection):
+    content-hash match and causal dominance of the remote advertised
+    version (ADR-0003). Without either, the remote copy is downloaded.
+    """
+
+    @staticmethod
+    def _remote_entry(sha256: str, vclock: dict):
+        """Build a remote-file listing entry advertising a causal version."""
+        return {
+            "filepath": "gone.txt",
+            "sha256sum": sha256,
+            "mtime": 1,
+            "ctime": 1,
+            "size": len(sha256),
+            "permissions": "644",
+            "version": {
+                "vclock": vclock,
+                "version_id": "v1",
+                "origin_cid": _peer_cid("R"),
+                "ts": 1,
+                "corrected_mtime": 0,
+            },
+        }
+
+    @staticmethod
+    def _tomb_entry(sha256, vclock):
+        return {
+            "ts": 1,
+            "sha256": sha256,
+            "version_id": "v1",
+            "origin_cid": _peer_cid("R"),
+            "vclock": vclock,
+        }
+
+    def test_remote_only_hash_match_deletes_remote(self, tmp_path):
+        """A tombstone whose content hash equals the remote copy proves the
+        remote file is the deleted content: delete it remotely, never
+        download it back (resurrection guard, content-match proof)."""
+        remote_hash = _sha("remote-content")
+        cid_local = _peer_cid("L")
+        # Concurrent clocks: only the content match can justify the deletion here.
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(remote_hash, {cid_local: 1})}
+        remote_files = [self._remote_entry(remote_hash, {_peer_cid("R"): 1})]
+
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [], tombstones=tombstones)
+
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.delete_remote
+
+    def test_remote_only_causal_dominance_deletes_remote(self, tmp_path):
+        """A tombstone causally dominating the remote advertised version is
+        positive proof the remote copy is a stale ancestor: delete it
+        remotely even when the marker has no content hash (regression:
+        deletion while the master was unreachable)."""
+        remote_hash = _sha("remote-content")
+        cid_local = _peer_cid("L")
+        cid_remote = _peer_cid("R")
+        # sha256=None: only the causal proof can justify the deletion.
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(None, {cid_remote: 2})}
+        remote_files = [self._remote_entry(remote_hash, {cid_remote: 1})]
+
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [], tombstones=tombstones)
+
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.delete_remote
+
+    def test_remote_only_concurrent_tombstone_downloads(self, tmp_path):
+        """A tombstone concurrent with the remote edit is a delete-vs-edit
+        divergence, not a stale ancestor: the remote copy is downloaded."""
+        remote_hash = _sha("remote-content")
+        cid_local = _peer_cid("L")
+        cid_remote = _peer_cid("R")
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(None, {cid_local: 1})}
+        remote_files = [self._remote_entry(remote_hash, {cid_remote: 2})]
+
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [], tombstones=tombstones)
+
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
+
+    def test_remote_only_without_tombstone_downloads(self, tmp_path):
+        """With no matching tombstone the remote-only file is downloaded as before."""
+        remote_hash = _sha("remote-content")
+        remote_files = [self._remote_entry(remote_hash, {_peer_cid("R"): 1})]
+
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": _peer_cid("L"),
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [], tombstones={})
+
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
+
+
 class TestClientTombstonesModule:
     """Tests for the per-peer tombstone store (hsync_client.tombstones)."""
 

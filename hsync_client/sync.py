@@ -281,10 +281,11 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
 
         # Record tombstones for files tracked by the merge base that are no
         # longer present locally: they were deleted while the peer was offline
-        # (the watcher is the only writer of record_deletion() in the live
-        # path, and it is inactive during a one-shot sync). The tombstone is
-        # keyed by the last-known content hash so the server can distinguish a
-        # true deletion from a path that was merely renamed or moved.
+        # or deleted below the watcher's radar (the live watcher records its
+        # own markers, but it is inactive during a one-shot sync, so this scan
+        # is the one-shot catch-all). The tombstone is keyed by the
+        # last-known content hash so the server can distinguish a true
+        # deletion from a path that was merely renamed or moved.
         # Merge-base keys are hashed (tombstone_key), so compare them against
         # the hashed local paths — a raw relpath would never match and every
         # tracked file would be mistaken for deleted. The existence snapshot
@@ -1074,9 +1075,25 @@ def _existing_file_paths(bucket_dir: str) -> list[str]:
     return paths
 
 
-def _tombstone_deletes_local(entry: dict, local_vclock: dict[str, int] | None) -> bool:
+def _tombstone_clock_dominates(entry: dict, other_vclock: dict[str, int] | None) -> bool:
+    """True when the tombstone clock causally dominates ``other_vclock``.
+
+    Dominance is positive proof that the deletion descends from the version
+    ``other_vclock`` describes, i.e. that version is a stale ancestor of the
+    deletion (ADR-0003). A marker without a structurally valid causal clock
+    carries no proof at all and never dominates. The wall clock is never
+    consulted.
     """
-    Decide whether a tombstone causally justifies deleting a solo-local file.
+    tomb_vclock = entry.get("vclock")
+    if not isinstance(tomb_vclock, dict):
+        # A marker without a valid causal clock carries no proof of deletion
+        # ancestry — never delete data on its say-so.
+        return False
+    return compare_vclocks(tomb_vclock, other_vclock) is VClockOrder.dominates
+
+
+def _tombstone_deletes_local(entry: dict, local_vclock: dict[str, int] | None) -> bool:
+    """Decide whether a tombstone causally justifies deleting a solo-local file.
 
     A local file that exists only on this peer is removed only when the
     tombstone's vector clock **dominates** the local version clock: the
@@ -1084,21 +1101,26 @@ def _tombstone_deletes_local(entry: dict, local_vclock: dict[str, int] | None) -
     stale ancestor). A local edit concurrent with (not dominated by) the
     deletion is an intentional re-creation and the file is kept (uploaded).
     The wall clock is never consulted (ADR-0003).
-
-    Args:
-        entry: Tombstone entry carrying the causal ``vclock``.
-        local_vclock: Effective local version clock for the file (None ⇒ empty).
-
-    Returns:
-        True if the local file should be deleted, False to keep/upload it.
     """
-    tomb_vclock = entry.get("vclock")
-    if not isinstance(tomb_vclock, dict):
-        # A marker without a valid causal clock carries no proof of deletion
-        # ancestry — never delete local data on its say-so.
-        return False
-    order = compare_vclocks(tomb_vclock, local_vclock)
-    return order is VClockOrder.dominates
+    return _tombstone_clock_dominates(entry, local_vclock)
+
+
+def _parse_advertised_version(
+    remote_version: object,
+) -> tuple[dict[str, int] | None, int]:
+    """Parse a wire ``version`` payload into ``(vclock, corrected_mtime)``.
+
+    Absent or malformed metadata degrades to an empty clock and corrected
+    mtime 0 (no error): the causal matrix handles the empty clock natively
+    and the divergence tie-break falls back to the deterministic content
+    hash (ADR-0022/ADR-0023).
+    """
+    if not isinstance(remote_version, dict):
+        return None, 0
+    parsed = parse_version_info(remote_version)
+    if not parsed:
+        return None, 0
+    return parsed["vclock"], int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
 
 
 def get_sync_actions(
@@ -1201,18 +1223,9 @@ def get_sync_actions(
             local_corrected = eff.get("corrected_mtime", 0) if eff else 0
             base_hash = sync_state.get_base_hash(abs_local)
             # Extract the remote advertised version (absent ⇒ empty clock).
-            remote_version = remote_file_info.get("version")
-            if isinstance(remote_version, dict):
-                parsed = parse_version_info(remote_version)
-                remote_vclock = parsed["vclock"] if parsed else None
-                remote_corrected = (
-                    int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
-                    if parsed
-                    else 0
-                )
-            else:
-                remote_vclock = None
-                remote_corrected = 0
+            remote_vclock, remote_corrected = _parse_advertised_version(
+                remote_file_info.get("version")
+            )
             action, timedelta = _compare_files(
                 remote_file,
                 local_file,
@@ -1245,24 +1258,37 @@ def get_sync_actions(
             )
         else:
             # File exists only on remote. Before downloading it, check the
-            # deletion markers: if it matches a tombstone whose content hash
-            # equals the remote file's hash, the file was deleted *here* while
-            # offline and the server copy is the stale one — deleting it on the
-            # server is the correct reconciliation (downloading it back would
-            # resurrect a deleted file).
+            # deletion markers: the marker is tombstones recorded by THIS peer
+            # when it deleted the path (live, with the master unreachable, or
+            # offline between sync cycles). Two alternative proofs make the
+            # remote copy the stale one and downloading it back a
+            # resurrection:
+            #
+            # 1. Content match — the tombstone's content hash equals the
+            #    remote file's hash: the remote copy is exactly the deleted
+            #    content. This also never fires for a path that was merely
+            #    renamed or moved (a renamed file has a different hash).
+            # 2. Causal dominance — the tombstone clock dominates the
+            #    remote's advertised version clock: positive proof the
+            #    deletion descends from the common history (ADR-0003).
+            #    This also covers markers whose content hash was unknown
+            #    when minted.
             rel = str(remote_file_info.get("filepath", "")).lstrip("/")
             entry = tombstones.get(tombstone_key(rel))
             remote_sha = remote_file.sha256sum or ""
-            if (
-                entry
-                and entry.get("sha256")
-                and remote_sha
-                and entry["sha256"] == remote_sha
-                and CONFIG.get("SYNC_DIRECTION", "bidirectional") != "download-only"
-            ):
+            remote_vclock, _remote_corrected = _parse_advertised_version(
+                remote_file_info.get("version")
+            )
+            hash_match = bool(
+                entry and entry.get("sha256") and remote_sha and entry["sha256"] == remote_sha
+            )
+            causal_match = bool(entry and _tombstone_clock_dominates(entry, remote_vclock))
+            if (hash_match or causal_match) and CONFIG.get(
+                "SYNC_DIRECTION", "bidirectional"
+            ) != "download-only":
                 log.info(
                     f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
-                    "deleting stale copy on server"
+                    "deleting stale copy on remote"
                 )
                 sync_actions.append(SyncAction(remote_file, SyncActionName.delete_remote))
             else:
@@ -1559,17 +1585,7 @@ def update_file(data: dict) -> None:
             # remote side is the advertised version (if any) on the event's
             # src File; the local side is the effective stored version. The
             # wall clock is never consulted.
-            remote_version = data.get("version")
-            remote_vclock = None
-            remote_corrected = 0
-            if isinstance(remote_version, dict):
-                parsed = parse_version_info(remote_version)
-                remote_vclock = parsed["vclock"] if parsed else None
-                remote_corrected = (
-                    int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
-                    if parsed
-                    else 0
-                )
+            remote_vclock, remote_corrected = _parse_advertised_version(data.get("version"))
             local_vclock = None
             local_corrected = 0
             base_hash = None
