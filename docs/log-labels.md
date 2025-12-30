@@ -106,6 +106,17 @@ front-end.
 
 The client does not emit `[WS]` (that is server/infrastructure-only).
 
+## Readiness state
+
+Emitted once the client has finished its startup sequence and is **ready to
+synchronize**: the filesystem watcher is active and the event channel is
+established. This is the line to look for to know the client is now reacting
+to file changes and peer events.
+
+| Label | Category | Meaning |
+|-------|----------|---------|
+| `[READY]` | create | Client ready for sync: watcher active + event channel up. Appears in watch mode (server), as LAN master (HTTP + WebSocket servers up, watcher running) and as LAN slave (watcher running + master handshake complete) |
+
 ## Related
 
 - [Usage](usage.md) — CLI commands and modes

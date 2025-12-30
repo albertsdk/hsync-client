@@ -339,6 +339,14 @@ def _run_as_master(
 
         _signal_ready()
 
+        # Readiness threshold: HTTP + WebSocket servers are up and the master
+        # watcher is running (started inside LANWebSocketServer.start) — the
+        # master now serves peers in real time.
+        log.info(
+            f"{ActionLabel.READY} Master ready — serving '{config['REMOTE_BUCKET']}' "
+            f"on port {lan_sync.port} (HTTPS), watching '{config['LOCAL_BUCKET']}'"
+        )
+
     if first_activation:
         log.info("Press Ctrl+C to stop...")
     # Yield back to the outer discovery loop after a short idle window

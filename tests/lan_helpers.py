@@ -254,18 +254,18 @@ def _wait_for_text_in_stderr(proc: subprocess.Popen, text: str, timeout: float =
 
 
 def _wait_for_slave_events(slave: subprocess.Popen, timeout: float = 30.0) -> bool:
-    """Wait until the slave is listening on the master's event channel.
+    """Wait until the slave is **ready** — watcher live + master handshake done.
 
-    A file mutated on the master after the slave's initial-sync listing but
-    before the slave is listening on the WebSocket falls into a blind spot:
-    it is neither in the served listing nor received as an event, and only
-    the periodic resync (``RESYNC``, default 300s) would recover it — far
-    beyond any sync timeout used here. Tests that mutate the master once a
-    slave has synced must wait for this marker first (the slave-side watcher
-    is also guaranteed started by then: it is scheduled before the WebSocket
-    connect).
+    The observable threshold is the ``[READY]`` log line, emitted right after
+    ``Listening for events from master`` once the local watcher is running and
+    the handshake completed. A file mutated on the master after the slave's
+    initial-sync listing but before this threshold falls into a blind spot:
+    it is neither in the served listing nor received as an event, and only the
+    periodic resync (``RESYNC``, default 300s) would recover it — far beyond
+    any sync timeout used here. Tests that mutate the master once a slave has
+    synced must wait for this marker first.
     """
-    return _wait_for_text_in_stderr(slave, "Listening for events from master", timeout=timeout)
+    return _wait_for_text_in_stderr(slave, "[READY]", timeout=timeout)
 
 
 def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:

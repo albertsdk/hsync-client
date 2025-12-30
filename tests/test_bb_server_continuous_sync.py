@@ -53,6 +53,16 @@ def _ready_path(local_dir: str) -> str:
     return str(Path(local_dir).parent / "client.ready")
 
 
+def _client_log_path(local_dir: str) -> str:
+    """The log file path the client writes via ``--output`` (loguru sink)."""
+    return str(Path(local_dir).parent / "client_output.log")
+
+
+def _wait_for_log_text(log_path: str, text: str, timeout: float = 30.0) -> bool:
+    """Poll the client log file until *text* appears (black-box observation)."""
+    return _wait_for(lambda: text in _watch_client_log_tail(log_path), timeout=timeout)
+
+
 class TestContinuousSyncServerRestart:
     def test_resync_after_server_restart(
         self,
@@ -113,10 +123,19 @@ class TestContinuousSyncMore:
     ):
         """File created on server is downloaded locally via WS event, then
         a modification on the server is re-downloaded."""
-        proc = watch_sync(bb_bucket, local_dir)
+        log_path = _client_log_path(local_dir)
+        # The client prints to stdout by default; --output redirects loguru to
+        # a file so the test can observe the [READY] threshold black-box.
+        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
                 "watch mode did not become ready"
+            )
+            # Readiness threshold: watcher active + event channel up. This is
+            # the observable marker that the client is reacting to events.
+            assert _wait_for_log_text(log_path, "[READY]", timeout=30), (
+                "client did not reach the [READY] threshold\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
             # Upload while the client is watching — the server broadcasts an

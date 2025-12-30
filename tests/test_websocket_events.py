@@ -680,6 +680,74 @@ class TestRemoteEvents:
             mock_websocket.send.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_remote_events_logs_ready_after_watcher_start(self):
+        """[READY] is logged once the watcher is running and the WS is authed.
+
+        The readiness threshold is observable: auth success alone is not
+        enough — the line must appear only after ``observer.start()``.
+        """
+        from json import dumps
+
+        from hsync_client.remote_websocket import remote_events
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": ["compression"],
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), _StopLoop("Stop loop")])
+
+        mock_observer = MagicMock()
+        mock_observer.start = MagicMock()
+        mock_observer.stop = MagicMock()
+        mock_observer.join = MagicMock()
+
+        with (
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.log") as mock_log,
+            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
+        ):
+            MockEventQueue.return_value = MagicMock()
+            MockEventQueue.return_value.process = AsyncMock()
+            MockEventQueue.return_value.stop = MagicMock()
+            mock_process.side_effect = _StopLoop("Stop loop")
+
+            with contextlib.suppress(_StopLoop):
+                await asyncio.wait_for(remote_events(), timeout=1.0)
+
+        ready_msgs = [
+            str(c.args[0])
+            for c in mock_log.info.call_args_list
+            if c.args and "[READY]" in str(c.args[0])
+        ]
+        assert len(ready_msgs) == 1, f"expected one [READY] line, got {ready_msgs!r}"
+        assert "watching '/tmp/bucket'" in ready_msgs[0]
+
+    @pytest.mark.asyncio
     async def test_remote_events_authentication_failed(self):
         """remote_events returns early when authentication fails."""
         from json import dumps
@@ -712,11 +780,20 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.log") as mock_log,
         ):
             await remote_events()
 
             # Should return early without processing events
             mock_websocket.recv.assert_called_once()
+
+        # A failed authentication must never reach the readiness threshold.
+        ready_msgs = [
+            str(c.args[0])
+            for c in mock_log.info.call_args_list
+            if c.args and "[READY]" in str(c.args[0])
+        ]
+        assert ready_msgs == [], f"no [READY] expected on auth failure, got {ready_msgs!r}"
 
     @pytest.mark.asyncio
     async def test_remote_events_protocol_incompatible(self):

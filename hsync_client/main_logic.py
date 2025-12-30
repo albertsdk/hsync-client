@@ -918,6 +918,7 @@ def run_sync(
         log.info("  watcher, [REMOTE ...] events caused by a peer (master, slave or server).")
         log.info("  Unprefixed labels belong to full-sync reconciliation and transfers.")
         log_labels = {
+            ActionLabel.READY: "Client ready for sync (watcher active + event channel up)",
             ActionLabel.IN_SYNC: "File already in sync (no action required)",
             ActionLabel.SKIP: "File skipped",
             ActionLabel.DOWNLOAD: "Download file from server/master",

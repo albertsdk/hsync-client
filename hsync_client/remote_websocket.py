@@ -37,7 +37,7 @@ from websockets import ConnectionClosed, connect
 
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG, get_api_key
-from hsync_client.constants import HSYNC_VERSION, WS_MAX_MESSAGE_BYTES
+from hsync_client.constants import HSYNC_VERSION, WS_MAX_MESSAGE_BYTES, ActionLabel
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
@@ -172,6 +172,13 @@ async def remote_events() -> None:
         warn_if_inotify_watch_limit_low(CONFIG["LOCAL_BUCKET"])
         observer.schedule(event_handler, CONFIG["LOCAL_BUCKET"], recursive=True)
         observer.start()
+
+        # Readiness threshold: the filesystem watcher is live and the
+        # WebSocket is authenticated — the node now reacts to events.
+        log.info(
+            f"{ActionLabel.READY} Client ready for sync — watching "
+            f"'{CONFIG['LOCAL_BUCKET']}', server events at {api_base}"
+        )
 
         try:
             # Main event loop - process incoming WebSocket messages

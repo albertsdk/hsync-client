@@ -72,6 +72,11 @@ class TestLanTombstone:
                 assert _wait_for_text_in_stderr(master, "File watcher started", timeout=30), (
                     "Master file watcher did not start"
                 )
+                # Readiness threshold: servers + watcher are up, the master is
+                # serving — the observable [READY] line must follow.
+                assert _wait_for_text_in_stderr(master, "[READY]", timeout=30), (
+                    "Master did not reach the [READY] threshold"
+                )
                 # Delete the file on master — the watcher detects it and
                 # records a tombstone
                 (Path(lan_master_dir) / "pre_delete.txt").unlink()

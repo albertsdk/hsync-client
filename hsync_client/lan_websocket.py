@@ -767,7 +767,6 @@ async def lan_websocket_client(
     warn_if_inotify_watch_limit_low(watch_path)
     observer.schedule(_slave_event_handler, watch_path, recursive=True)
     observer.start()
-    log.info(f"Client file watcher started for bidirectional sync: {watch_path}")
 
     # Periodic full resync as a safety net against silently missed
     # file-system events (e.g. inotify queue overflow). The master is the
@@ -868,6 +867,14 @@ async def lan_websocket_client(
                 return
 
             log.info("Listening for events from master...")
+
+            # Readiness threshold: the local watcher is running and the master
+            # handshake is complete — the slave now reacts to events in both
+            # directions.
+            log.info(
+                f"{ActionLabel.READY} Client ready for sync — watching "
+                f"'{CONFIG['LOCAL_BUCKET']}', master at {host}:{port}"
+            )
 
             # One dispatch context per connection: the inbound directory
             # dedup cache must persist across events (a per-event context

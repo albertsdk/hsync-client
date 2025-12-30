@@ -383,8 +383,12 @@ class TestRunAsMaster:
         infos = [str(c.args[0]) for c in mock_log.info.call_args_list if c.args]
         role_msgs = [m for m in infos if "is the MASTER" in m]
         ctrlc_msgs = [m for m in infos if "Ctrl+C" in m]
+        ready_msgs = [m for m in infos if "[READY]" in m]
         assert len(role_msgs) == 1, f"role message must log once, got {role_msgs!r}"
         assert len(ctrlc_msgs) == 1, f"Ctrl+C message must log once, got {ctrlc_msgs!r}"
+        # The readiness threshold is one-shot too: it sits inside the
+        # first-activation block and must never repeat across iterations.
+        assert len(ready_msgs) == 1, f"[READY] must log once, got {ready_msgs!r}"
 
 
 class TestRunAsMasterPersistentSemantics:
