@@ -305,3 +305,139 @@ class TestLanLogfile:
             assert "HSYNC Client" in log_content
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# Parity with the server-mode safety-guard suite (test_bb_server_safety_guards).
+# The guards fire during run_sync startup, BEFORE LAN mDNS discovery, so the
+# abort cases can be driven in-process without ever needing a second peer.
+# =============================================================================
+
+
+def _invoke_lan_cli(monkeypatch, bucket: str, local: str, *extra: str, lan_key: str | None = None):
+    """Run the public CLI in-process with --lan-mode and return the result.
+
+    A *lan_key* is set only when the target guard runs after the LAN-key write
+    policy (e.g. the disk-space guard); the deletion-risk guard fires first and
+    needs no key. Mirrors the server-mode ``run_cli`` harness: env cache
+    cleared around the run and process-wide globals guarded.
+
+    Ambient ``HSYNC_*`` variables are scrubbed (keeping only the autouse
+    isolation dirs) so the developer's own configuration can never leak into the
+    in-process run — the same guarantee the scrubbed ``_lan_start`` subprocess
+    harness provides.
+    """
+    from typer.testing import CliRunner
+
+    from hsync_client.cli import app
+    from hsync_client.config import get_env_settings
+
+    from .conftest import _ClientGlobalsGuard
+
+    _keep = {"HSYNC_DEVICE_DIR", "HSYNC_LOCKS_DIR", "HSYNC_STATE_DIR"}
+    for key in [k for k in os.environ if k.startswith("HSYNC_") and k not in _keep]:
+        monkeypatch.delenv(key, raising=False)
+    if lan_key is not None:
+        monkeypatch.setenv("HSYNC_LAN_KEY", lan_key)
+    get_env_settings.cache_clear()
+    runner = CliRunner()
+    with _ClientGlobalsGuard():
+        result = runner.invoke(app, ["--lan-mode", "-b", bucket, "-p", local, *extra])
+    get_env_settings.cache_clear()
+    if result.output:
+        print(f"--- hsync-client (lan) output ---\n{result.output}")
+    return result
+
+
+class TestLanDiskSpaceGuard:
+    def test_insufficient_disk_space_aborts(self, lan_bucket, local_dir, monkeypatch):
+        # Given a local dir with content and an impossibly high free-space requirement
+        (Path(local_dir) / "a.txt").write_bytes(b"a")
+
+        # When running --lan-mode with --min-free-disk-space far above what is available
+        result = _invoke_lan_cli(
+            monkeypatch,
+            lan_bucket,
+            local_dir,
+            "--min-free-disk-space",
+            "999999",
+            lan_key="test-lan-key",
+        )
+
+        # Then the disk-space guard aborts (non-zero exit) before discovery, and
+        # the guard-specific diagnostic is surfaced (logged or via the raised
+        # exception), proving it was this guard — not an unrelated failure.
+        assert result.exit_code != 0
+        assert "disk space" in (result.output + str(result.exception or "")).lower(), (
+            f"abort was not the disk-space guard: {result.output!r} / {result.exception!r}"
+        )
+
+
+class TestLanDeletionRiskGuard:
+    def test_download_only_without_yes_aborts_in_noninteractive(
+        self, lan_bucket, local_dir, monkeypatch
+    ):
+        # Given a non-empty local dir and a download-only direction that could
+        # delete local files, with no --yes confirmation
+        (Path(local_dir) / "keep.txt").write_bytes(b"keep")
+
+        # When running --lan-mode download-only without --yes
+        result = _invoke_lan_cli(
+            monkeypatch, lan_bucket, local_dir, "--sync-direction", "download-only"
+        )
+
+        # Then the deletion-risk guard aborts with its specific confirmation
+        # diagnostic (proving it was this guard), and the local file is kept
+        assert result.exit_code != 0
+        combined = result.output.lower()
+        assert "download-only mode" in combined or "deletion-risk" in combined, (
+            f"abort was not the deletion-risk guard: {result.output!r}"
+        )
+        assert (Path(local_dir) / "keep.txt").exists()
+
+
+class TestLanInstanceLock:
+    def test_second_process_on_same_directory_refused(self, lan_master_dir, lan_bucket):
+        """Two live clients must never sync the same local directory.
+
+        The second process on an already-locked directory refuses to start with
+        a clear error (the per-directory flock is held for the whole run and
+        released by the kernel even on SIGKILL)."""
+        # Given a LAN client already running on a directory (waiting for peers)
+        first = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            held = False
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                if first.poll() is not None:
+                    break
+                held = True
+                time.sleep(0.3)
+            assert held, "first client exited before acquiring the lock"
+
+            # When a second client targets the same directory
+            second = _lan_start(lan_master_dir, lan_bucket, never_master=True)
+            try:
+                # Then it refuses to start: non-zero exit and a clear message
+                refused = _wait_for_text_in_stderr(second, "already syncing", timeout=15)
+                assert refused, "second client was not refused by the instance lock"
+                second.wait(timeout=5)
+                assert second.returncode != 0
+            finally:
+                _terminate(second)
+        finally:
+            _terminate(first)
+
+
+class TestLanHttpRateLimit:
+    @pytest.mark.skip(
+        reason=(
+            "The LAN master applies no HTTP request rate limiting (no 429/"
+            "Retry-After on its REST surface); only client-side bandwidth "
+            "throttling exists, covered by the bandwidth-throttle parity test. "
+            "Server-side rate limiting is verified in test_bb_auth_protocol_limits."
+        )
+    )
+    def test_lan_master_rate_limit_429(self):
+        # Scenario B5 is not applicable to LAN P2P mode (see the skip reason).
+        pass

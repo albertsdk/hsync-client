@@ -28,6 +28,7 @@ Isolation contract (every helper here honours it):
   shell configuration can never leak into a run.
 """
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -408,3 +409,257 @@ def lan_bucket():
     import uuid
 
     return f"lan-bb-{uuid.uuid4().hex[:10]}"
+
+
+# =============================================================================
+# Helpers for driving a serving LAN master's public REST / WebSocket surface.
+#
+# The black-box parity suite (delta, resumable upload, causal arbitration,
+# protocol handshake, WebSocket relay) drives the *real* LAN master over its
+# public HTTPS REST and WSS endpoints — exactly the wire a peer uses. The
+# master only starts serving once it has won an election, so a slave peer is
+# kept connected for the duration of each block.
+# =============================================================================
+
+
+def _lan_auth_headers() -> dict[str, str]:
+    """Authorization headers for the LAN master's REST surface (Bearer LAN key)."""
+    return {"Authorization": f"Bearer {_LAN_KEY}"}
+
+
+def _lan_cid(tag: str) -> str:
+    """Build a wire-valid LAN cid (exactly 21 alphanumeric chars) from a tag.
+
+    Mirrors the server-side ``_cid`` helper: ``is_valid_cid`` rejects any
+    other shape, so short readable tags would be refused before auth.
+    """
+    base = f"bb{tag}"
+    return base + "0" * (21 - len(base))
+
+
+def _lan_ws_url(lan_port: int) -> str:
+    """The LAN master's WebSocket URL (it listens on ``lan_port + 1``)."""
+    return f"wss://127.0.0.1:{lan_port + 1}/"
+
+
+def _reserve_port_pair() -> int:
+    """Find a free port *P* whose *P+1* (the LAN WebSocket port) is also free.
+
+    The LAN master serves HTTPS on *P* and WSS on *P+1*; reserving both avoids an
+    intermittent WebSocket bind failure when the adjacent port happens to be in
+    use. Probes by binding (not holding), which is sufficient for the sequential
+    LAN black-box runs.
+    """
+    import socket
+
+    for _ in range(50):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        finally:
+            sock.close()
+        nxt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            nxt.bind(("127.0.0.1", port + 1))
+        except OSError:
+            continue
+        finally:
+            nxt.close()
+        return port
+    raise RuntimeError("could not find a free consecutive HTTP/WebSocket port pair")
+
+
+@contextlib.contextmanager
+def _lan_serving_master(
+    master_dir: str,
+    slave_dir: str,
+    bucket: str,
+    *,
+    master_extra: tuple[str, ...] = (),
+    slave_extra: tuple[str, ...] = (),
+):
+    """Start a force-master + slave so the master elects and serves HTTPS.
+
+    The LAN master only starts its HTTP and WebSocket servers once it has won
+    an election, which requires at least one peer via mDNS. A never-master
+    slave is therefore kept connected for the duration of the block so the
+    master keeps serving. Yields the LAN HTTP port *P* (WebSocket is on *P+1*);
+    a verified-free consecutive port pair is allocated internally. Both
+    processes are terminated on exit.
+    """
+    lan_port = _reserve_port_pair()
+    master = _lan_start(
+        master_dir, bucket, force_master=True, lan_port=lan_port, extra_args=master_extra
+    )
+    try:
+        slave = _lan_start(slave_dir, bucket, never_master=True, extra_args=slave_extra)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=60), (
+                "master did not win election and start serving"
+            )
+            # The master writes its PID into the ready file once HTTP + WS servers
+            # are up (the same readiness threshold the existing LAN suite waits on).
+            assert _wait_for_client_ready(master, _lan_ready_path(master_dir), timeout=60), (
+                "master HTTP/WS servers did not become ready"
+            )
+            yield lan_port
+        finally:
+            _terminate(slave)
+    finally:
+        _terminate(master)
+
+
+def _lan_upload(
+    base_url: str,
+    bucket: str,
+    filename: str,
+    content: bytes,
+    *,
+    path: str = "",
+    sha256sum: str | None = None,
+    permissions: str = "644",
+    offset: int = 0,
+    size: int = 0,
+    compressed: str = "false",
+    cid: str | None = None,
+    vclock: str = "",
+    version_id: str = "",
+):
+    """Upload a file to a serving LAN master over its public REST endpoint.
+
+    Mirrors the central server's multipart upload contract so the same wire
+    fields drive both modes. *cid* defaults to a wire-valid 21-char value.
+    """
+    import hashlib
+
+    import requests
+
+    return requests.post(
+        f"{base_url}/api/v1/buckets/{bucket}/files",
+        data={
+            "cid": cid or _lan_cid("upld"),
+            "path": path,
+            "sha256sum": sha256sum
+            if sha256sum is not None
+            else hashlib.sha256(content).hexdigest(),
+            "permissions": permissions,
+            "offset": str(offset),
+            "size": str(size),
+            "compressed": compressed,
+            "vclock": vclock,
+            "version_id": version_id,
+        },
+        files={"file": (filename, content, "application/octet-stream")},
+        headers=_lan_auth_headers(),
+        timeout=30.0,
+        verify=False,
+    )
+
+
+def _lan_download(base_url: str, bucket: str, filename: str) -> bytes:
+    """Download a file's content from a serving LAN master over REST."""
+    import requests
+
+    r = requests.get(
+        f"{base_url}/api/v1/buckets/{bucket}/files/download",
+        params={"filename": filename},
+        headers=_lan_auth_headers(),
+        timeout=30.0,
+        verify=False,
+    )
+    assert r.status_code == 200, f"LAN download failed: {r.status_code} {r.text}"
+    return r.content
+
+
+def _lan_files(base_url: str, bucket: str) -> set[str]:
+    """List files on a serving LAN master over REST (set of filepaths)."""
+    import requests
+
+    r = requests.get(
+        f"{base_url}/api/v1/buckets/{bucket}/files",
+        headers=_lan_auth_headers(),
+        timeout=30.0,
+        verify=False,
+    )
+    assert r.status_code == 200, f"LAN list failed: {r.status_code} {r.text}"
+    return {f["filepath"] for f in r.json()}
+
+
+def _upload_form_fields(
+    content: bytes,
+    *,
+    cid: str,
+    path: str = "",
+    sha256sum: str | None = None,
+    permissions: str = "644",
+    offset: int = 0,
+    size: int = 0,
+    compressed: str = "false",
+    vclock: str = "",
+    version_id: str = "",
+) -> dict[str, str]:
+    """Build the multipart form-data fields for a file upload (shared wire contract).
+
+    The single source of the upload field set, reused by the LAN upload driver
+    (``_lan_upload``) and the client ``bb_server_upload`` fixture so a wire-field
+    change only has to be made in one place (consumers: ``hsync-client`` BB
+    suites). The central server's ``bb_upload`` lives in a separate repo.
+    """
+    import hashlib
+
+    return {
+        "cid": cid,
+        "path": path,
+        "sha256sum": sha256sum if sha256sum is not None else hashlib.sha256(content).hexdigest(),
+        "permissions": permissions,
+        "offset": str(offset),
+        "size": str(size),
+        "compressed": compressed,
+        "vclock": vclock,
+        "version_id": version_id,
+    }
+
+
+def _lan_upload(
+    base_url: str,
+    bucket: str,
+    filename: str,
+    content: bytes,
+    *,
+    path: str = "",
+    sha256sum: str | None = None,
+    permissions: str = "644",
+    offset: int = 0,
+    size: int = 0,
+    compressed: str = "false",
+    cid: str | None = None,
+    vclock: str = "",
+    version_id: str = "",
+):
+    """Upload a file to a serving LAN master over its public REST endpoint.
+
+    Mirrors the central server's multipart upload contract so the same wire
+    fields drive both modes. *cid* defaults to a wire-valid 21-char value.
+    """
+    import requests
+
+    return requests.post(
+        f"{base_url}/api/v1/buckets/{bucket}/files",
+        data=_upload_form_fields(
+            content,
+            cid=cid or _lan_cid("upld"),
+            path=path,
+            sha256sum=sha256sum,
+            permissions=permissions,
+            offset=offset,
+            size=size,
+            compressed=compressed,
+            vclock=vclock,
+            version_id=version_id,
+        ),
+        files={"file": (filename, content, "application/octet-stream")},
+        headers=_lan_auth_headers(),
+        timeout=30.0,
+        verify=False,
+    )

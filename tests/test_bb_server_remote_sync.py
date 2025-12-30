@@ -16,6 +16,7 @@ Requires HSYNC_BB_SERVER=1 to run.
 import hashlib
 import json
 import os
+import random
 import uuid
 from pathlib import Path
 
@@ -957,3 +958,188 @@ class TestRemoteSyncNegative:
             )
         # An unreachable server is a sync failure: the CLI must exit non-zero.
         assert result.exit_code != 0
+
+
+# =============================================================================
+# Parity with the LAN black-box suite: file-size boundaries, symlink delete,
+# bandwidth throttle, filter-path, concurrent writers, tombstone catch-up.
+# Each mirrors a test_bb_lan_* scenario so the same replication behaviour is
+# verified in client-server mode.
+# =============================================================================
+
+
+def _random_payload(size: int) -> tuple[bytes, int]:
+    """Return ``(payload, seed)`` for a reproducible random payload.
+
+    The seed is logged by the caller so a failure can be reproduced exactly.
+    """
+    seed = random.randrange(2**32)
+    return random.Random(seed).randbytes(size), seed
+
+
+class TestRemoteEmptyFile:
+    def test_empty_file_round_trips(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        # Given an empty (0-byte) file
+        name = f"empty-{uuid.uuid4().hex[:8]}.bin"
+        content = b""
+        (Path(local_dir) / name).write_bytes(content)
+        print(f"[bb] empty-file: name={name} bucket={bb_bucket}")
+
+        # When syncing once
+        result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the upload succeeds, the server lists it, and a download round-trips 0 bytes
+        assert result.exit_code == 0
+        assert name in bb_server_files(bb_bucket)
+        assert _server_download(live_server, bb_bucket, name) == content
+
+
+class TestRemoteLargeFile:
+    def test_large_file_round_trips(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        # Given a 1 MiB file of random content
+        size = 1024 * 1024
+        content, seed = _random_payload(size)
+        name = f"large-{uuid.uuid4().hex[:8]}.bin"
+        (Path(local_dir) / name).write_bytes(content)
+        print(f"[bb] large-file: name={name} size={size} seed={seed} bucket={bb_bucket}")
+
+        # When syncing once
+        result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the upload succeeds, the server lists it, and the download matches byte-for-byte
+        assert result.exit_code == 0
+        assert name in bb_server_files(bb_bucket)
+        assert _server_download(live_server, bb_bucket, name) == content
+
+
+class TestRemoteSymlinkDeleteKeepsTarget:
+    def test_deleting_symlink_on_server_preserves_target(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        # Given a target file and an in-bucket symlink to it, both synced to the server
+        target_content = b"symlink-target\n"
+        (Path(local_dir) / "target.txt").write_bytes(target_content)
+        (Path(local_dir) / "link.txt").symlink_to("target.txt")
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+        assert "link.txt" in bb_server_files(bb_bucket)
+        assert "target.txt" in bb_server_files(bb_bucket)
+
+        # When the symlink is deleted on the server via the public REST API
+        _server_delete(live_server, bb_bucket, "link.txt")
+
+        # Then the link is gone from the server but the target survives and is intact
+        # (the delete must remove the LINK entry, never dereference it to the target)
+        files = bb_server_files(bb_bucket)
+        assert "link.txt" not in files
+        assert "target.txt" in files
+        assert _server_download(live_server, bb_bucket, "target.txt") == target_content
+
+
+class TestRemoteBandwidthThrottle:
+    def test_bandwidth_throttle_allows_sync(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+    ):
+        # Given a 50 KB file of random content
+        content, seed = _random_payload(50_000)
+        name = f"throttle-{uuid.uuid4().hex[:8]}.bin"
+        (Path(local_dir) / name).write_bytes(content)
+        print(f"[bb] bandwidth: name={name} seed={seed} bucket={bb_bucket}")
+
+        # When syncing with generous upload/download bandwidth limits
+        result = run_sync_once(
+            bb_bucket,
+            local_dir,
+            "--max-bandwidth-upload",
+            "10MB",
+            "--max-bandwidth-download",
+            "10MB",
+        )
+
+        # Then the upload succeeds and the content round-trips
+        assert result.exit_code == 0
+        assert name in bb_server_files(bb_bucket)
+        assert _server_download(live_server, bb_bucket, name) == content
+
+
+class TestRemoteFilterPath:
+    def test_filter_path_restricts_download(
+        self, live_server, bb_bucket, local_dir, run_sync_once, tmp_path
+    ):
+        # Given the server holds files in two subdirectories (uploaded by a first,
+        # unrestricted sync) — mirroring the LAN test where the master already
+        # holds both subtrees before the slave filters
+        (Path(local_dir) / "kept").mkdir()
+        (Path(local_dir) / "kept" / "a.txt").write_bytes(b"in-kept\n")
+        (Path(local_dir) / "excluded").mkdir()
+        (Path(local_dir) / "excluded" / "b.txt").write_bytes(b"in-excluded\n")
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        # When a fresh empty directory syncs with --filter-path restricting to "kept"
+        fresh = tmp_path / "fresh"
+        fresh.mkdir()
+        result = run_sync_once(bb_bucket, str(fresh), "--filter-path", "kept")
+
+        # Then only the filtered subtree is downloaded; the other stays absent locally
+        assert result.exit_code == 0
+        assert (fresh / "kept" / "a.txt").exists()
+        assert not (fresh / "excluded").exists()
+
+
+class TestRemoteConcurrentWrites:
+    def test_two_writers_different_files_converge(
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        run_sync_once,
+        bb_server_upload,
+        bb_server_files,
+    ):
+        # Given client A has uploaded fileA
+        a_content = b"from-client-A\n"
+        (Path(local_dir) / "fileA.txt").write_bytes(a_content)
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+        assert "fileA.txt" in bb_server_files(bb_bucket)
+
+        # When a second remote writer (emulated via the public REST API) creates a different file
+        b_content = b"from-client-B\n"
+        bb_server_upload(bb_bucket, "fileB.txt", b_content)
+
+        # Then client A's next sync converges on both files (no conflict, different paths)
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        assert (Path(local_dir) / "fileA.txt").read_bytes() == a_content
+        assert (Path(local_dir) / "fileB.txt").read_bytes() == b_content
+        assert {"fileA.txt", "fileB.txt"}.issubset(bb_server_files(bb_bucket))
+
+
+class TestRemoteTombstoneCatchUp:
+    def test_offline_server_delete_cleaned_up_on_resync(
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        run_sync_once,
+        bb_server_upload,
+        bb_server_files,
+    ):
+        # Given a file synced to the local dir
+        content = b"to-be-deleted-remotely\n"
+        bb_server_upload(bb_bucket, "catchup.txt", content)
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+        assert (Path(local_dir) / "catchup.txt").exists()
+
+        # When the file is deleted on the server (recording a tombstone) while
+        # the client is offline, then the client resyncs
+        _server_delete(live_server, bb_bucket, "catchup.txt")
+        result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the local copy is removed (tombstone catch-up): a single
+        # tombstone-confirmed delete must not be blocked by the mass-delete guard
+        assert result.exit_code == 0
+        assert not (Path(local_dir) / "catchup.txt").exists()
+        assert "catchup.txt" not in bb_server_files(bb_bucket)

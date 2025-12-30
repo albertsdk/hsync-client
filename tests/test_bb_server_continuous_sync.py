@@ -425,3 +425,122 @@ class TestContinuousSync:
             assert proc.poll() is None
         finally:
             _terminate(proc)
+
+
+# =============================================================================
+# Parity with the LAN black-box suite: symlink stability, .hsyncignore
+# hot-reload, and client restart — all in watch (continuous) mode.
+# =============================================================================
+
+
+class TestContinuousSyncSymlinkStable:
+    def test_symlink_uploads_and_stays_stable(
+        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_files
+    ):
+        """A local in-bucket symlink is uploaded structurally and converges
+        without oscillation: no duplicate entries appear over a quiet window
+        (the server never echoes a sender's own event back to it)."""
+        proc = watch_sync(bb_bucket, local_dir)
+        try:
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
+            # Given a target file and an in-bucket symlink created locally
+            (Path(local_dir) / "tgt.txt").write_bytes(b"target\n")
+            (Path(local_dir) / "link.txt").symlink_to("tgt.txt")
+
+            # When the watcher detects the new entries
+            assert _wait_for(lambda: "link.txt" in bb_server_files(bb_bucket), timeout=30), (
+                "symlink was not uploaded to the server"
+            )
+
+            # Then the server stored a *structural* symlink (not a dereferenced
+            # regular file): the listing entry must advertise type + target.
+            import requests
+
+            base, api_key = live_server
+            listing = requests.get(
+                f"{base}/api/v1/buckets/{bb_bucket}/files",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=15.0,
+                verify=False,
+            ).json()
+            link_entry = next(f for f in listing if f["filepath"] == "link.txt")
+            assert link_entry.get("type") == "symlink", (
+                f"expected structural symlink entry, got {link_entry!r}"
+            )
+            assert link_entry.get("target") == "tgt.txt"
+
+            # And after a quiet window the entry is still present and not duplicated
+            time.sleep(5)
+            files = bb_server_files(bb_bucket)
+            assert "link.txt" in files
+            assert sum(1 for f in files if "link" in f) == 1, (
+                f"symlink entry duplicated (oscillation): {files}"
+            )
+        finally:
+            _terminate(proc)
+
+
+class TestContinuousSyncHsyncignoreReload:
+    def test_hsyncignore_hot_reload_stops_uploading_matching_files(
+        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_files
+    ):
+        """Adding .hsyncignore during an active watch stops uploading newly
+        created matching files, while already-synced files are preserved
+        (exclude protects, it does not delete)."""
+        proc = watch_sync(bb_bucket, local_dir)
+        try:
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
+            # Given a visible file uploaded before any ignore rule
+            (Path(local_dir) / "keep.txt").write_bytes(b"keep\n")
+            assert _wait_for(lambda: "keep.txt" in bb_server_files(bb_bucket))
+
+            # When .hsyncignore is added excluding *.log and a new .log is created
+            (Path(local_dir) / ".hsyncignore").write_text("*.log\n")
+            time.sleep(2)  # let the hot-reload watcher rebuild the matcher
+            (Path(local_dir) / "secret.log").write_bytes(b"hidden\n")
+
+            # Then the newly-excluded file is NOT uploaded within a quiet window
+            assert not _wait_for(lambda: "secret.log" in bb_server_files(bb_bucket), timeout=5), (
+                "secret.log was uploaded despite the .hsyncignore *.log rule"
+            )
+            # And the already-synced file is preserved
+            assert "keep.txt" in bb_server_files(bb_bucket)
+        finally:
+            _terminate(proc)
+
+
+class TestContinuousSyncClientRestart:
+    def test_client_restart_resyncs_after_restart(
+        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
+    ):
+        """After the watch client is terminated and restarted on the same
+        directory, it re-acquires its instance lock, reconnects, and resumes
+        syncing: a file created on the server during the outage is downloaded."""
+        ready = _ready_path(local_dir)
+        proc = watch_sync(bb_bucket, local_dir)
+        try:
+            assert _wait_for_client_ready(proc, ready), "first watch did not become ready"
+            # Establish a synced baseline
+            bb_server_upload(bb_bucket, "pre.txt", b"pre\n")
+            assert _wait_for(lambda: (Path(local_dir) / "pre.txt").exists())
+        finally:
+            _terminate(proc)
+
+        # When the client is restarted on the same directory
+        proc2 = watch_sync(bb_bucket, local_dir)
+        try:
+            assert _wait_for_client_ready(proc2, ready), "restarted watch did not become ready"
+
+            # Then a file created on the server is downloaded after reconnection
+            content = b"post-restart\n"
+            bb_server_upload(bb_bucket, "post.txt", content)
+            assert _wait_for(lambda: (Path(local_dir) / "post.txt").exists(), timeout=30), (
+                "restarted client did not download the new server file"
+            )
+            assert (Path(local_dir) / "post.txt").read_bytes() == content
+        finally:
+            _terminate(proc2)

@@ -189,3 +189,41 @@ class TestBlackBoxCorrectedMtimeServer:
         assert copies, "losing local edit was not preserved as a conflict copy"
         assert any(c.read_bytes() == local_edit for c in copies)
         assert p.read_bytes() == remote_edit
+
+
+class TestBlackBoxNtpUnreachableServer:
+    def test_dead_ntp_hosts_do_not_block_server_sync(
+        self, live_server, bb_bucket, local_dir, run_sync_once, monkeypatch
+    ):
+        """A dead ``HSYNC_NTP_HOSTS`` must not break server-mode sync.
+
+        In server mode the client takes its time authority from the server's
+        ``/api/v1/time`` endpoint (``probe_server_clock_offset``), never from the
+        external SNTP list (``HSYNC_NTP_HOSTS``, a LAN-mode probe). This is a
+        regression guard: server mode must remain unaffected by a dead
+        ``HSYNC_NTP_HOSTS`` and never accidentally consult external NTP, so a
+        sync started with one set still completes and propagates the file.
+
+        The genuine "NTP unreachable does not block sync" behaviour (degraded
+        temporal mode, offset 0) is exercised in LAN mode by
+        ``test_bb_lan_corrected_mtime``.
+        """
+        import socket
+
+        # Given a dead NTP target (a closed loopback port) configured in the env
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            dead_ntp = f"127.0.0.1:{s.getsockname()[1]}"
+        monkeypatch.setenv("HSYNC_NTP_HOSTS", dead_ntp)
+
+        # When syncing a file with the dead NTP target configured
+        content = b"still synchronises without NTP\n"
+        (Path(local_dir) / "no_ntp.txt").write_bytes(content)
+        result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the sync completes (server mode ignores HSYNC_NTP_HOSTS) and the
+        # file reaches the server
+        assert result.exit_code == 0
+        listing = _server_listing(live_server, bb_bucket)
+        names = {f["filepath"] for f in listing}
+        assert "no_ntp.txt" in names

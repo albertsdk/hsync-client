@@ -15,7 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from .lan_helpers import lan_bucket, lan_master_dir, lan_slave_dir  # noqa: F401
+from .lan_helpers import (  # noqa: F401
+    _upload_form_fields,
+    lan_bucket,
+    lan_master_dir,
+    lan_slave_dir,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -581,8 +586,6 @@ def bb_bucket(live_server) -> Generator[str]:
 @pytest.fixture
 def bb_server_upload(live_server):
     """Upload a file to the live server over HTTPS (black-box setup helper)."""
-    import hashlib
-
     import requests
 
     base, api_key = live_server
@@ -597,17 +600,7 @@ def bb_server_upload(live_server):
     ) -> None:
         r = requests.post(
             f"{base}/api/v1/buckets/{bucket}/files",
-            data={
-                "cid": cid,
-                "path": "",
-                "sha256sum": hashlib.sha256(content).hexdigest(),
-                "permissions": "644",
-                "offset": "0",
-                "size": "0",
-                "compressed": "false",
-                "vclock": vclock,
-                "version_id": version_id,
-            },
+            data=_upload_form_fields(content, cid=cid, vclock=vclock, version_id=version_id),
             files={"file": (filename, content, "application/octet-stream")},
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,

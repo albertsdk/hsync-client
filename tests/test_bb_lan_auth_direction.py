@@ -9,6 +9,7 @@
 Requires HSYNC_BB_LAN=1 to run.
 """
 
+import json
 import os
 import time
 from pathlib import Path
@@ -16,8 +17,12 @@ from pathlib import Path
 import pytest
 
 from .lan_helpers import (
+    _lan_download,
+    _lan_files,
     _lan_ready_path,
+    _lan_serving_master,
     _lan_start,
+    _lan_upload,
     _stderr_text,
     _terminate,
     _wait_for_client_ready,
@@ -516,3 +521,73 @@ class TestLanConcurrency:
                 _terminate(slave)
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# Causal upload arbitration over the public LAN REST surface (ADR-0022)
+#
+# Parity with the server-side ``TestUploadOverwrite``: the LAN master is a
+# transport hub, not an authority. The ``vclock`` form field is the author's
+# causal history; the ``superseded`` 409 token is the observable outcome.
+# =============================================================================
+
+
+class TestLanCausalArbitration:
+    def test_dominating_version_accepted_without_copy(
+        self, lan_master_dir, lan_slave_dir, lan_bucket
+    ):
+        """A causally-ahead upload (same author, higher counter) replaces the
+        content silently: 201, no conflicted copy."""
+        # Given a valid 21-char author cid
+        cid = "TestClientA1234567890"
+        old = b"version one data"
+        new = b"version two - updated content"
+
+        with _lan_serving_master(lan_master_dir, lan_slave_dir, lan_bucket) as lan_port:
+            base = f"https://127.0.0.1:{lan_port}"
+            # First push v1, then a causally-dominant v2
+            assert (
+                _lan_upload(
+                    base, lan_bucket, "arb.bin", old, cid=cid, vclock=json.dumps({cid: 1})
+                ).status_code
+                == 201
+            )
+            r = _lan_upload(base, lan_bucket, "arb.bin", new, cid=cid, vclock=json.dumps({cid: 2}))
+
+            # Then the dominant version is accepted, the file holds the new content...
+            assert r.status_code == 201
+            assert _lan_download(base, lan_bucket, "arb.bin") == new
+            # ...and no conflicted copy is created: this was a clean causal edit
+            assert not any("conflicted_copy" in p for p in _lan_files(base, lan_bucket)), (
+                "a dominant upload must not create a conflicted copy"
+            )
+
+    def test_stale_version_superseded_without_copy(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """A causally-dominated upload (older content, older clock) is rejected
+        with 409 ``superseded``: the winner stays and no copy is created."""
+        cid = "TestClientA1234567890"
+        new = b"version two - updated content"
+        old = b"version one data"
+
+        with _lan_serving_master(lan_master_dir, lan_slave_dir, lan_bucket) as lan_port:
+            base = f"https://127.0.0.1:{lan_port}"
+            # First push the causally-newer version...
+            assert (
+                _lan_upload(
+                    base, lan_bucket, "stale.bin", new, cid=cid, vclock=json.dumps({cid: 2})
+                ).status_code
+                == 201
+            )
+            # ...then a stale peer re-pushes the older content with the older clock.
+            r = _lan_upload(
+                base, lan_bucket, "stale.bin", old, cid=cid, vclock=json.dumps({cid: 1})
+            )
+
+            # Then the stale upload is superseded, the winner remains on disk...
+            assert r.status_code == 409
+            assert r.json()["error"] == "superseded"
+            assert _lan_download(base, lan_bucket, "stale.bin") == new
+            # ...and no conflicted copy is created: the ancestor is inside the winner's history
+            assert not any("conflicted_copy" in p for p in _lan_files(base, lan_bucket)), (
+                "a superseded upload must not create a conflicted copy"
+            )
