@@ -11,17 +11,10 @@ Re-exports from hsync_common.compression. All compression logic and
 thresholds (download/upload/LAN) live in hsync-common.
 """
 
-# Re-export core compression from hsync-common
+# Re-export the compression API used by client modules.
 from hsync_common.compression import (  # noqa: F401
-    COMPRESSION_LEVEL,
     CONTENT_ENCODING_ZSTD,
-    MIN_SIZE_FOR_COMPRESSION,
-    MIN_SIZE_FOR_LAN,
-    MIN_SIZE_FOR_UPLOAD,
-    PRECOMPRESSED_EXTENSIONS,
     compress_data,
-    compress_file,
-    decompress_data,
     decompress_stream,
     should_compress,
 )

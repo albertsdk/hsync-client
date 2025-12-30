@@ -32,7 +32,12 @@ from hsync_common.text import escape_loguru_markup, safe_json_for_log
 from loguru import logger as log
 from requests import RequestException
 
-from hsync_client.compression import compress_data, decompress_stream, should_compress
+from hsync_client.compression import (
+    CONTENT_ENCODING_ZSTD,
+    compress_data,
+    decompress_stream,
+    should_compress,
+)
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
@@ -77,9 +82,6 @@ from hsync_client.utils import (
 from hsync_client.utils import (
     open_partial_no_follow as _open_partial_no_follow,
 )
-
-# Content-Encoding header value for zstd compression
-CONTENT_ENCODING_ZSTD = "zstd"
 
 
 def _transfer_retry_params() -> tuple[int, float, float]:

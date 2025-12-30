@@ -16,11 +16,6 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 # Re-export shared constants from hsync-common
 from hsync_common.constants import (  # noqa: E402, F401
-    CHUNK_SIZE_LARGE,
-    CHUNK_SIZE_MEDIUM,
-    CHUNK_SIZE_SMALL,
-    FILE_SIZE_MEDIUM,
-    FILE_SIZE_SMALL,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,
     VERSION,
@@ -44,11 +39,6 @@ HSYNC_VERSION = VERSION
 # no `-`/`_`, so a generated CID always starts with a letter or digit.
 CID_LENGTH = 21
 CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-
-
-# =============================================================================
-# File Transfer Settings (chunk sizes re-exported from hsync-common above)
-# =============================================================================
 
 
 # =============================================================================

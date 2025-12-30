@@ -7,15 +7,15 @@ Tests compression decision logic, compress/decompress functions, and file compre
 import os
 import tempfile
 
-from hsync_client.compression import (
+from hsync_common.compression import (
     MIN_SIZE_FOR_COMPRESSION,
     MIN_SIZE_FOR_LAN,
     MIN_SIZE_FOR_UPLOAD,
-    compress_data,
     compress_file,
     decompress_data,
-    should_compress,
 )
+
+from hsync_client.compression import compress_data, should_compress
 
 
 class TestShouldCompress:
