@@ -290,6 +290,23 @@ HSYNC supports a per-bucket ignore file with the same syntax as `.gitignore`.
 Place a `.hsyncignore` file in the **root of the local bucket directory** to
 control which files and directories are excluded from synchronization.
 
+> **Where to put the file — and the nested-file limitation.**
+> The `.hsyncignore` file **must live at the root of the synced bucket
+> directory** — i.e. the exact folder you pass as the local path / shared
+> folder, not a subdirectory inside it. HSYNC reads **only** the ignore file at
+> the bucket root; **nested `.hsyncignore` files in subdirectories are NOT
+> supported** (unlike Git, which reads a `.gitignore` per directory). If the
+> file is placed in a subfolder it is silently ignored and no rules are applied,
+> so excluded content (e.g. `build/`) will still be synced. Patterns are matched
+> at any depth, so a root-level rule such as `build/` already covers nested
+> directories like `some/module/build/`. As an alternative to a file, pass
+> patterns directly with `--ignore-patterns` (see below), which apply regardless
+> of location.
+>
+> Note also that the ignore rules only prevent *future* transfers: files that
+> were already synced to the server before a rule was added are **not** removed
+> retroactively and must be deleted from the bucket manually.
+
 ### Default behaviour
 
 By default (without `.hsyncignore` and without `--sync-hidden`), HSYNC
