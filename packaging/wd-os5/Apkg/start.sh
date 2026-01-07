@@ -146,6 +146,9 @@ esac
 [ -n "${HSYNC_MIN_FREE_DISK_MB}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK_MB}"
 [ -n "${HSYNC_MAX_INBOUND_SIZE_MB}" ] && set -- "$@" --max-inbound-size "${HSYNC_MAX_INBOUND_SIZE_MB}"
 [ "${HSYNC_VERBOSE}" = "true" ]        && set -- "$@" --verbose
+[ "${HSYNC_AUTOTUNE}" = "false" ]      && set -- "$@" --no-autotune
+[ -n "${HSYNC_HTTP_TIMEOUT}" ]         && set -- "$@" --timeout "${HSYNC_HTTP_TIMEOUT}"
+[ -n "${HSYNC_RECONNECT_DELAY}" ]      && set -- "$@" --retry-delay "${HSYNC_RECONNECT_DELAY}"
 
 # ---------------------------------------------------------------------------
 # Launch under nohup. Secrets are exported (not passed as flags) so the binary
@@ -161,6 +164,10 @@ esac
 export HSYNC_API_KEY
 export HSYNC_LAN_KEY
 export HSYNC_NTP_HOSTS
+# Per-file retry waits have no CLI flags; EnvSettings reads them from the
+# process environment. Empty values stay unset so autotune/defaults apply.
+[ -n "${HSYNC_TRANSFER_RETRY_MIN_WAIT}" ] && export HSYNC_TRANSFER_RETRY_MIN_WAIT
+[ -n "${HSYNC_TRANSFER_RETRY_MAX_WAIT}" ] && export HSYNC_TRANSFER_RETRY_MAX_WAIT
 # Causal state lives outside the synced folder (ADR-0025). Default next to
 # the NAS config/log tree so it survives package upgrades.
 HSYNC_STATE_DIR="${HSYNC_STATE_DIR:-/mnt/HD/HD_a2/hsync/state}"

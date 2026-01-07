@@ -404,6 +404,11 @@ The tombstone exemption also plugs into the mass-deletion guard: deletions
 backed by a matching tombstone are never blocked, because the marker is
 positive proof the removal was intentional.
 
+Tombstones are not a recycle bin. They do not store file bytes and there is
+no restore command or API. The default 90-day TTL only garbage-collects the
+marker; after a delete the content is already gone from disk. Keep verified
+backups if undelete is required.
+
 ---
 
 ## Boundary cases

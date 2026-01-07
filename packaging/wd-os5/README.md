@@ -156,11 +156,16 @@ option to configure.
 | NTP hosts           | `HSYNC_NTP_HOSTS` env var                      | `pool.ntp.org,time.cloudflare.com,time.google.com` (probed in order; used by the client for LAN time synchronisation / conflict tie-break) |
 | Min free disk space | `--min-free-disk-space`                        | service default                  |
 | Max inbound size    | `--max-inbound-size`                          | service default                  |
-| Max concurrent      | `--max-concurrent-transfers`                   | `5`                              |
-| Mass-delete guard   | `--mass-delete-guard/--no-mass-delete-guard`   | on                               |
-| Mass-delete thresh  | `--mass-delete-threshold`                      | `50` (0 = disabled)              |
-| Mass-delete percent | `--mass-delete-percent`                        | `50` (0 = disabled)              |
+| Max concurrent      | _(not in WD UI; binary default)_               | autotune / `5`                   |
+| Mass-delete guard   | _(not in WD UI; binary default)_               | on                               |
+| Mass-delete thresh  | _(not in WD UI; binary default)_               | `50`                             |
+| Mass-delete percent | _(not in WD UI; binary default)_               | `50`                             |
 | Verbose log         | `-v / --verbose`                               | off                              |
+| Auto-tune           | `--no-autotune` when unchecked                 | on                               |
+| HTTP timeout        | `--timeout`                                    | auto (empty = autotune/default)  |
+| Reconnect delay     | `--retry-delay`                                | auto (empty = autotune/default)  |
+| Transfer retry min  | `HSYNC_TRANSFER_RETRY_MIN_WAIT` env            | auto (empty = autotune/default)  |
+| Transfer retry max  | `HSYNC_TRANSFER_RETRY_MAX_WAIT` env            | auto (empty = autotune/default)  |
 
 The role selector maps to the existing CLI primitives:
 

@@ -167,37 +167,26 @@ For usage and configuration, see [Configuration > Compression](../configuration.
 
 ## WebSocket Reconnection
 
-When the WebSocket connection drops in watch mode, the client enters a
-reconnection state machine:
+When the WebSocket connection drops in watch mode, `remote_connect` loops
+forever: sleep a **fixed** `RECONNECT_DELAY`, refresh autotune RTT, then
+run a full `sync()` and re-enter `remote_events`. There is no attempt
+counter, no exponential backoff, and no fatal exit after N failures.
 
 ```
-Connected ──(disconnect)──► Reconnecting
-Reconnecting ──(success)──► Connected (resume sync)
-Reconnecting ──(max retries)──► Exit (fatal error)
+Connected ──(disconnect)──► sleep RECONNECT_DELAY
+                         ──► full sync() ──► Connected
 ```
 
-### Exponential backoff
+`RECONNECT_DELAY` defaults to 5 seconds (range 1–60). Autotune may change
+the value from measured RTT; each wait still uses that single interval.
+Exponential backoff belongs to per-file transfer retries (`retry.py`) and
+the outbound `EventQueue`, not this loop.
 
-Each reconnection attempt uses exponential backoff with a configurable base
-delay (`HSYNC_RECONNECT_DELAY`, default 5 seconds):
+### Reconnect vs. periodic resync
 
-| Attempt | Delay | Total wait |
-|---------|-------|------------|
-| 1 | 5s | 5s |
-| 2 | 10s | 15s |
-| 3 | 20s | 35s |
-| 4 | 40s | 75s |
-| 5 | 80s | 155s |
-
-The delay caps at a maximum (5 minutes) to avoid unbounded waits. After each
-successful reconnection the counter resets.
-
-### Reconnect vs. full resync
-
-On reconnection, the client does **not** perform a full resync — it only
-resumes listening for new events. A periodic full resync is driven separately
-by `HSYNC_RESYNC` (default 300 seconds) as a safety net for missed events
-during the disconnection window.
+Every reconnect already runs a full `sync()` before listening again.
+`HSYNC_RESYNC` (default 300 seconds) is a separate safety net that
+re-reconciles while the connection stays up, in case events were missed.
 
 ## Stdin Command Protocol
 

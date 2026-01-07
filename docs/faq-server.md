@@ -24,20 +24,25 @@ your use case.
 **Q: How does HSYNC keep my files safe?**
 - All traffic uses HTTPS/WSS (TLS encrypted).
 - The API key authenticates each client to the server.
-- Files are never deleted immediately — deletions are recorded as causal
-  tombstones with a retention window (default 90 days).
+- Deletions take effect immediately on disk. A causal tombstone marker is
+  recorded so offline peers do not resurrect the file (retention of the
+  marker, default 90 days). Tombstones are not a recycle bin.
 - SHA-256 verification ensures files are not corrupted in transit.
 
 **Q: What happens if two clients modify the same file simultaneously?**
 The server is a transport hub, not an authority. Concurrent edits are
-resolved causally (ADR-0022): the deterministic SHA-256 tie-break picks the
-winner, and the losing version is preserved as a `_conflicted_copy_`. See
+resolved causally (ADR-0022): the later `corrected_mtime` keeps the original
+path (ADR-0023); SHA-256 is the fallback when that field is missing or tied.
+The losing version is preserved as a `_conflicted_copy_`. See
 [Conflict Resolution](conflict-resolution.md).
 
 **Q: Can I recover accidentally deleted files?**
-Yes. The server keeps causal tombstone records for deleted files
-(configurable retention, default 90 days). Files can be restored during that
-window.
+No. Tombstones are deletion *markers* (hashed path, content hash, vector
+clock). They stop a stale copy from coming back; they do not store file
+contents and there is no restore command or API. Keep verified backups if you
+need undelete. Concurrent-edit losers are a different mechanism
+(`_conflicted_copy_` files) and only apply to that conflict, not to ordinary
+deletes. See [Conflict Resolution](conflict-resolution.md).
 
 ## Sync Behavior
 
@@ -47,9 +52,22 @@ watcher and pushed immediately. You can also configure periodic full resyncs
 with `HSYNC_RESYNC`.
 
 **Q: What happens if the server goes offline?**
-The client retries the WebSocket connection with exponential backoff. When
-the server comes back, a full sync reconciles any changes made during the
-downtime.
+The client retries the WebSocket connection after a **fixed** delay
+(`--retry-delay` / `HSYNC_RECONNECT_DELAY`, default 5 seconds, range
+1–60). Autotune may pick that interval from network RTT, but each wait is
+still the same value — not exponential backoff. (Exponential backoff is used
+for per-file transfer retries, not for the WebSocket reconnect loop.) When
+the connection succeeds again, a full sync reconciles changes made during
+the downtime — including files deleted while offline, which are removed from
+the server instead of being downloaded back.
+
+**Q: What happens if the client process is killed?**
+On restart, a full sync reconciles any changes made while the process was
+dead. Files created or modified while offline are uploaded, and files deleted
+while offline are removed from the server. A file uploaded just before the
+crash and then deleted while the process was dead is still removed on restart:
+the agreed content is persisted to disk on every real-time transfer, so a
+crash cannot lose it and resurrect the file.
 
 **Q: Can I exclude certain files or directories?**
 Yes. Create a `.hsyncignore` file in your bucket directory using standard
@@ -74,12 +92,11 @@ many files efficiently.
 ## Debian Package
 
 **Q: How do I configure the systemd service for server mode?**
-Set the environment variables in `/etc/hsync/hsync.env`:
-```
-HSYNC_SERVER="https://your-server:9753"
-HSYNC_API_KEY="your-api-key"
-HSYNC_BUCKET="mybucket"
-HSYNC_PATH="/path/to/sync"
-HSYNC_WATCH=true
-```
-Then restart with `systemctl restart hsync`.
+The packaged unit starts **LAN** mode (`--lan-mode --watch`) and reads
+`/etc/hsync/hsync.conf`. `HSYNC_BUCKET` / `HSYNC_PATH` in that file are
+expanded by systemd into `--bucket` / `--path`; they are not client settings
+keys. `HSYNC_WATCH` is not read.
+
+To run server mode, override `ExecStart` (for example with `systemctl edit
+hsync`) so it calls `hsync` with `-s` / `-b` / `-p` / `-w` and set
+`HSYNC_API_KEY` in `hsync.conf`. See [Debian package](debian-package.md).

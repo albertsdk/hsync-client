@@ -108,24 +108,27 @@ sequenceDiagram
     C->>M: GET /api/v1/buckets/{bucket}/files/download?filename=doc.txt
     M->>C: [file content]
 
-    Note over C,M: Delete Local Files (not on master)
-    C->>C: Remove files that exist only locally
-    Note right of C: Master is the initial reference<br/>Local-only files are deleted
+    Note over C,M: Local-only files (bidirectional)
+    C->>M: POST upload of files that exist only locally
+    Note right of C: download-only slaves delete local-only files;<br/>tombstones delete when the marker dominates
 ```
 
-> **Important**: In LAN mode, files that exist only on the client (not on master)
-> are **deleted locally** during initial sync. This ensures that if a file was
-> deleted on the master while the client was offline, the deletion is correctly
-> propagated when the client reconnects.
+> **Important**: In default **bidirectional** LAN mode, files that exist only
+> on the client are **uploaded**, not deleted. Local-only files are removed
+> when the slave is `--sync-direction download-only`, or when a causal
+> tombstone dominates the local copy (deletion while offline). The master is
+> a transport hub, not a content authority.
 
 ### Reconnection behavior
 
 When a client reconnects after being offline:
 
-1. **Master state is the starting reference** — the master's file list drives
-   the initial reconciliation
-2. **Missing files are downloaded** — files on master but not on client are downloaded
-3. **Extra files are deleted** — files on client but not on master are deleted locally
+1. **Causal reconcile** — local listing, master's listing, and tombstones
+   drive the same three-way merge as server mode
+2. **Missing files are downloaded** — files on master but not on client
+   (unless a local tombstone proves they were deleted)
+3. **Local-only files are uploaded** in bidirectional/upload-only; deleted
+   only for download-only slaves or a dominating tombstone
 4. **Modified files are synced** — differences are reconciled causally via
    the vector-clock matrix (ADR-0022 / ADR-0003), never by mtime "newer wins";
    the master never decides content by role

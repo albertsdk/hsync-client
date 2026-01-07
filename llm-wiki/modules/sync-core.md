@@ -11,11 +11,11 @@ and LAN modes.
 | `get_files_local` | `sync.py:577` | scan local tree (parallel, adaptive workers `_get_optimal_workers:528`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed |
 | `get_files_remote` | `sync.py:661` | fetch remote file list |
 | `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:950` / `:998` | tombstone exchange |
-| offline-deletion tombstone minting | `sync.py`, within `sync()` | a merge-base entry missing from the local listing is tombstoned (deleted while offline, or below the watcher's radar in a one-shot run). The comparison is ignore-agnostic: `_existing_file_paths` (`sync.py`) enumerates every real file bypassing the active `IgnoreMatcher`, so a file hidden by `.hsyncignore` is never mistaken for a deletion — "exclude protects, it does not delete" (rsync `--exclude`, Syncthing `.stignore`). The same snapshot keeps the merge base alive across `retain`, so re-including the file later reconciles with full causal history instead of a false conflict. Local listing paths are normalized via `relpath_in_bucket` before hashing (absolute-path hashes never match the relative-keyed store) |
+| offline-deletion tombstone minting | `sync.py`, within `sync()` | a merge-base entry missing from the local filesystem is tombstoned (deleted while offline, or below the watcher's radar in a one-shot run). The existence check uses the ignore-agnostic `_existing_file_paths` (`sync.py`) snapshot only — it enumerates every real file bypassing the active `IgnoreMatcher`, so a file hidden by `.hsyncignore` is never mistaken for a deletion ("exclude protects, it does not delete", rsync `--exclude`, Syncthing `.stignore`); it is a superset of the syncable listing for on-disk files, so the syncable `local_keys` set is redundant and was dropped to fix a mid-scan race (a file deleted while `get_files_remote` retries bridge a transiently-unreachable master would otherwise survive in the stale listing and be resurrected). The same snapshot keeps the merge base alive across `retain`, so re-including the file later reconciles with full causal history instead of a false conflict. Paths are normalized via `relpath_in_bucket` before hashing (absolute-path hashes never match the relative-keyed store) |
 | `get_sync_actions` | `sync.py:1140` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`); `persist_state=False` (preview/dry-run) skips `merge_and_record` so `syncstate.db` is never mutated. **Symlink entries** (`"type": "symlink"`, local or remote listing) are routed to `SyncActionName.upload_symlink` / `download_symlink` — the pair (path,target) is replicated STRUCTURALLY, never as File content (regola 1); direction filters treat them as uploads/downloads |
 | remote-only tombstone proofs | `sync.py:1286` | the remote-only branch decides **download vs `delete_remote`** on two alternative proofs: (1) content-hash match — `entry["sha256"] == remote sha` (also excludes renamed paths: a rename changes the hash); (2) causal dominance — `_tombstone_clock_dominates(entry, remote_vclock)` (`sync.py:1078`), positive proof the remote copy is a stale ancestor even when the marker lacks a content hash (deletion recorded with the master unreachable). Concurrent delete-vs-edit still downloads (resurrection of a re-created file). `delete_remote` is executed best-effort per cycle (`sync.py`) and retried by the next reconcile because the tombstone stays in the local store |
 | `_parse_advertised_version` | `sync.py:1108` | shared wire `version` parser (vclock + corrected mtime) used by the remote-only branch, the two-sided compare, and `update_file` — third use extracted per the Rule of Three |
-| `_compare_files` | `sync.py:989` | per-file decision via the causal vector-clock matrix (ADR-0022): content identity (hash) → causal dominance (`compare_vclocks`) → deterministic SHA-256 tie-break on true divergence. The wall clock is never consulted |
+| `_compare_files` | `sync.py:1388` | per-file decision via `resolve_three_way` (ADR-0022/0023): content identity → causal dominance → **corrected_mtime** tie-break on true concurrency → SHA-256 if mtime missing or tied. Raw wall clock is never consulted |
 | `_save_conflict_copy` | `sync.py:1228` | write a conflict copy on `conflict_download` (remote won the causal tie-break); resolves bucket-relative action paths against `LOCAL_BUCKET` before reading/preserving the local file (raw relative paths were silently skipped) |
 | `_execute_parallel_transfers` | `sync.py:357` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` |
 | `_mass_deletion_blocked` | `sync.py:134` | §12 guard: pause when deletions exceed threshold/percent or empty master |
@@ -32,14 +32,15 @@ and never consults the wall clock.
 ## Causal conflict resolution (ADR-0022)
 
 `_compare_files` calls `hsync_common.models.version.resolve_three_way` with
-`(local_hash, local_vclock, remote_hash, remote_vclock, base_hash)`:
+hashes, vclocks, `base_hash`, and `local_corrected_mtime` /
+`remote_corrected_mtime` (ADR-0023):
 
 | Decision | Meaning | Action |
 | -------- | ------- | ------ |
 | `in_sync` | content identical | nothing |
 | `upload` | local causally ahead (or remote at base) | upload |
 | `download` | remote causally ahead (or local at base) | download |
-| `conflict_upload` | concurrent; local wins SHA-256 tie-break | upload (receiver preserves its loser) |
+| `conflict_upload` | concurrent; local wins corrected_mtime (SHA-256 fallback) | upload (receiver preserves its loser) |
 | `conflict_download` | concurrent; remote wins tie-break | preserve local + download |
 
 The local vclock is resolved **purely** (no store mutation) via
@@ -91,7 +92,7 @@ caller falls back to a full transfer.
 | `_reschedule_upload` | `transfer.py:764` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:172` / `:149` | streaming multipart |
 | `_ThrottledFileReader` | `transfer.py:119` | bandwidth throttle on upload reads |
-| `_record_synced_base` | `transfer.py:98` | persist merge base after success (sync_state); resolves relative action paths to absolute before recording (raw relative paths were silent no-ops that degraded every later cycle to the mtime heuristic); accepts the merged `vclock` to record (convergence D11) |
+| `_record_synced_base` | `transfer.py:101` | persist merge base after success (sync_state); resolves relative action paths to absolute before recording (raw relative paths were silent no-ops that degraded every later cycle to the mtime heuristic); accepts the merged `vclock` to record (convergence D11). **Durability**: for real-time transfers (watcher uploads / inbound event downloads, detected via `is_sync_cycle_active()` being False) the merge base is flushed to `syncstate.db` immediately, so a process kill cannot lose it and resurrect a file deleted while offline; during a full reconcile cycle the record stays in memory and is flushed once by the single end-of-cycle `sync_state.flush()` (batch, avoids per-file rewrites of the whole version map) |
 | `_handle_upload_conflict_response` | `transfer.py` | handle 409 upload responses: `superseded`/`conflict_lost` → download needed (next cycle); legacy "already present" → record base as in-sync |
 | `_upload_version_fields` / `_resolve_local_vclock` | `transfer.py` | resolve the effective local `vclock`/`version_id` for the upload form and merge-base recording (delegates to `sync_state.upload_version_fields`) |
 | `_emit_transfer_failed` | `transfer.py:93` | emit `transfer_failed` UI event on exhaustion |

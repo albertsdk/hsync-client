@@ -12,9 +12,16 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | `capabilities_json_callback` | `:76` | `--capabilities-json` (introspects options via `collect_cli_options:59`) |
 | `_validate_bucket` | `:88` | bucket flag validation |
 
-Flags map to env keys; capabilities JSON is built from
-`hsync_common.protocol.capabilities.build_capabilities` so the desktop can gate UI
-(§8).
+Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
+`--api-key-fd` / `--lan-key-fd` for a parent process. There is no `--api-key`
+or `--lan-key`. `--env-file` is the only dotenv path (`main_logic.py` →
+`load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
+`EnvSettings` fields; bucket/path/watch/direction/`--lan-mode`/`--force-master`
+stay CLI-only.
+
+Flags map to env keys where `EnvSettings` has a field; capabilities JSON is
+built from `hsync_common.protocol.capabilities.build_capabilities` so the
+desktop can gate UI (§8).
 
 ## Orchestration (`main_logic.py`)
 
@@ -37,8 +44,8 @@ Flags map to env keys; capabilities JSON is built from
 | ------ | ---- | ---- |
 | `EnvSettings` | `config.py:47` | pydantic-settings model for all `HSYNC_*` vars |
 | `HsyncConfig` / `ApiEndpoints` | `:294` / `:275` | the merged runtime config TypedDicts |
-| `CONFIG` (global) | `:391` | the live config SSOT |
-| `set_config` / `get_config` | `:397` / `:422` | write/read the global |
+| `CONFIG` (global) | `:511` | the live config SSOT |
+| `set_config` | `:517` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
 | `set_debug` / `is_debug` | `:411` / `:432` | debug flag |
 | `load_env_file` | `:33` | dotenv loader |
 | typed getters | `:154`–`:265` | `get_server_url`, `get_api_key`, LAN getters, guard getters, delta getters (`get_delta_enabled`, `get_delta_min_file_size`, `get_delta_min_file_size_lan`), etc. |
@@ -65,4 +72,8 @@ Flags map to env keys; capabilities JSON is built from
 
 > **Domain-critical**: any change to `HSYNC_*` flags / defaults requires the
 > synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
+> WD `packaging/wd-os5/Apkg/start.sh` maps the web UI autotune fields to the
+> binary: `--no-autotune` / `--timeout` / `--retry-delay`, and exports
+> `HSYNC_TRANSFER_RETRY_MIN_WAIT` / `HSYNC_TRANSFER_RETRY_MAX_WAIT` (no CLI).
+> Empty UI values are omitted so autotune/defaults apply. Secrets stay env-only.
 > Human guides: `../../docs/configuration.md`, `../../docs/configuration-server.md`, `../../docs/configuration-lan.md`, `../../docs/usage.md`.

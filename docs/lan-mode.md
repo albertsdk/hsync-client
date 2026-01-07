@@ -63,12 +63,16 @@ In plain terms, LAN mode works in three steps:
    concurrent edits are resolved causally (see
    [Conflict Resolution](conflict-resolution.md)).
 
-> **Important — deletions propagate.** During the first sync after a peer comes
-> online, files that exist **only** on that peer (and not on the master) are
-> **deleted locally**. This is intentional: it lets a deletion made on the master
-> while the peer was offline reach the peer when it reconnects. If you need to
-> keep local-only files, use a directional mode (see
-> [Sync Modes](sync-modes.md#operating-modes-server-vs-lan)).
+> **Important — local-only files.** In the default **bidirectional** direction,
+> files that exist only on this peer are **uploaded** to the master, not
+> deleted. A local-only file is removed only when:
+> - `--sync-direction download-only` (the slave mirrors the master), or
+> - a causal tombstone proves the path was deleted while this peer was offline.
+>
+> Deletions made on the master still reach the peer via tombstones, not by
+> wiping every unmatched local file. See
+> [Sync Modes — LAN](sync-modes-lan.md) and
+> [Conflict Resolution](conflict-resolution.md).
 
 > The architecture and discovery/election/sync **sequence diagrams**, the full
 > bidirectional operations table and the WebSocket event format are in
@@ -155,7 +159,7 @@ All LAN command-line options and `HSYNC_*` environment variables — including t
 master-election flags `--force-master`/`--never-master`, the discovery/heartbeat
 timeouts, `HSYNC_LAN_KEY`, `HSYNC_DEVICE_DIR` and persistence — are documented
 in the single reference:
-[Configuration → LAN Mode Options](configuration.md#lan-mode-options).
+[Configuration — LAN P2P Mode](configuration-lan.md).
 
 > **Key incompatibilities** (the client refuses to start otherwise):
 > - `--force-master` cannot be combined with `--sync-direction upload-only`/`download-only` — the master must stay bidirectional.

@@ -39,11 +39,30 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
 
 ## Reconnect & resilience
 
-- Outbound events buffered + retried by `EventQueue` (see
-  [sync-core.md](sync-core.md)).
+- `remote_connect` (`remote_websocket.py:373`) is an infinite loop: on
+  `ConnectionClosed` or unexpected error it `await sleep(CONFIG["RECONNECT_DELAY"])`
+  (`:404`–`:417`), then `_refresh_network_tuning()` and a full `sync()` before
+  `remote_events` again. The delay is **fixed** (default 5 s, clamp 1–60), not
+  exponential and not attempt-capped. Autotune may rewrite `RECONNECT_DELAY`
+  from RTT; each wait still uses that one value.
+- Exponential backoff is **not** this loop: per-file transfers use `retry.py`;
+  outbound WS events use `EventQueue` (see [sync-core.md](sync-core.md)).
 - Transfers retry on transient errors (`retry.py:105`) and emit `transfer_failed`
   on exhaustion.
-- Periodic `resync` and inotify-overflow handling force a full reconcile (§13).
+- Periodic `resync` (`:296`) and inotify-overflow handling force a full
+  reconcile while already connected (§13).
+- The reconnect `sync()` reconciles local changes made while the WS was down
+  (the watcher is stopped during the outage): creations/modifications are
+  uploaded, and deletions are detected by the offline-deletion tombstone
+  minting in `sync()` (a merge-base entry whose file is no longer on disk →
+  tombstone → `delete_remote`, no resurrection).
+- **Crash-safe merge base**: real-time transfers (watcher uploads / inbound
+  downloads) persist the merge base to `syncstate.db` immediately
+  (`_record_synced_base`, see [sync-core.md](sync-core.md)), so a process kill
+  between a watcher upload and the next cycle flush cannot lose the base —
+  otherwise a file deleted while the process was dead would be resurrected on
+  restart (no base to mint a tombstone from). Full-sync transfers defer to the
+  single end-of-cycle flush.
 
 ## Auth & versioning
 

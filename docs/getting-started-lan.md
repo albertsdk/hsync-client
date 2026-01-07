@@ -96,12 +96,13 @@ See [Authentication — Client-Side](authentication.md) for diagrams of both flo
 
 ## Environment Configuration
 
-Set the required variables in your shell or export them in a `.env` file:
+Set the shared secret in the shell (optional) and enable LAN on the CLI.
+`HSYNC_LAN_MODE` is not read.
 
 ```bash
-export HSYNC_LAN_MODE=true
 export HSYNC_LAN_KEY="shared-secret"   # optional, recommended
 export HSYNC_LAN_GROUP="mygroup"       # optional, isolates peer groups
+hsync -b documents -p ~/Documents --lan-mode
 ```
 
 See [Configuration — LAN P2P Mode](configuration-lan.md) for all LAN-mode options.

@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-08-18" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-08-21" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -46,8 +46,10 @@ One peer is elected
 .B master
 and the others become
 .BR slaves .
-No central server is required. Communication can be encrypted with HTTPS
-and authenticated with a shared secret (HSYNC_LAN_KEY).
+No central server is required. LAN traffic is always HTTPS/WSS
+(there is no plaintext transport) and may be authenticated with a shared
+secret
+.RB ( HSYNC_LAN_KEY ).
 .
 .SS Features
 \(bu Real-time file watching with
@@ -117,6 +119,13 @@ Local directory to synchronize (default: current directory).
 .TP
 .BR \-w ", " \-\-watch
 Watch for file changes and sync continuously.
+.TP
+.B \-\-once
+Run a single sync cycle and exit (explicit form of the default one-shot
+behaviour). Incompatible with
+.BR \-w .
+In LAN mode a one-shot run also requires
+.BR \-\-no\-lan\-persistent .
 .TP
 .BR \-i ", " \-\-interval =\fISEC\fP
 Force a full re-scan every
@@ -332,9 +341,10 @@ using
 .P
 One peer is dynamically elected as
 .BR master .
-The master serves the bucket to other peers and acts as the source
-of truth.  Slaves connect to the master via HTTPS (LAN communication
-is always encrypted; self-signed certificates are generated per master).
+The master is a transport hub: it serves the bucket and relays events,
+but it does not decide conflicts by role. Slaves connect to the master
+via HTTPS/WSS (always encrypted; self-signed certificates are generated
+per device).
 .
 .P
 A shared secret can be set via the
@@ -489,8 +499,8 @@ Percentage of local files whose deletion trips the guard (default:
 .TP
 .B HSYNC_TOMBSTONE_TTL_DAYS
 Days to retain deletion markers before garbage collection (default:
-.BR 30 ;
-0 = forever).
+.BR 90 ;
+0 = forever). Tombstones are not a recycle bin.
 .TP
 .B HSYNC_DEVICE_DIR
 Directory holding the persistent device identity: the stable device ID and
@@ -602,13 +612,35 @@ transfers before exiting.
 .
 .\" ---------------------------------------------------------------------
 .SH EXIT STATUS
+One-shot runs
+.RB ( \-\-once ,
+or LAN
+.BR \-\-no\-lan\-persistent )
+return these codes (see
+.IR docs/scheduling.md ).
+Watch/persistent daemons typically exit 0 or 1.
 .TP
 .B 0
-Synchronisation completed successfully (one-shot mode) or daemon exited
-cleanly.
+Synchronisation completed with no anomalies (also a successful dry-run),
+or a persistent daemon exited cleanly.
 .TP
 .B 1
-An error occurred (configuration, network, or I/O).
+Fatal error: invalid configuration, unreachable server, authentication
+failure, directory lock held, or an unexpected exception.
+.TP
+.B 2
+The cycle completed but some transfers failed. Re-runnable.
+.TP
+.B 3
+The mass-deletion guard skipped unconfirmed deletions this cycle.
+.TP
+.B 4
+Causal conflicts were resolved by preserving
+.I *_conflicted_copy_*
+files.
+.TP
+.B 5
+LAN one-shot: no peer/master found within the discovery timeout.
 .
 .\" ---------------------------------------------------------------------
 .SH SEE ALSO

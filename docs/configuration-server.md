@@ -9,39 +9,40 @@ Server-mode configuration for connecting to a central HSYNC Server.
 
 | Option | Description | Default |
 |---|---|---|
-| `-s, --server` | Server URL (required) | `HSYNC_SERVER` env var |
-| `-b, --bucket` | Bucket name | (required) |
-| `--api-key` | API key for authentication | `HSYNC_API_KEY` env var |
-
-## SSL/TLS for Server Connections
-
-| Option | Description | Default |
-|---|---|---|
+| `-s, --server` | Server URL (`https://…`; required in server mode) | `HSYNC_SERVER` |
+| `-b, --bucket` | Bucket name | (required; CLI only) |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
 | `--insecure` | Skip SSL certificate verification | `false` |
+
+There is **no** `--api-key` flag. The account token is read from the
+`HSYNC_API_KEY` environment variable. The desktop GUI (and other parent
+processes) may pass it on a pipe with the hidden `--api-key-fd` flag; that
+option is not part of the interactive CLI.
 
 ## Environment Variables — Server Mode
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_SERVER` | Server URL | (required or use `-s`) |
-| `HSYNC_API_KEY` | API key for authentication | (required) |
+| `HSYNC_SERVER` | Server URL (alternative to `-s`) | (required or use `-s`) |
+| `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
 
-## Configuration via `.env` file
+Bucket, local path, watch mode, and sync direction are **CLI flags**, not
+environment variables. Putting `HSYNC_BUCKET` or `HSYNC_WATCH` in an env
+file has no effect.
 
-Create a `.env` file in your working directory:
+## Environment files
+
+The client does **not** load `./.env` by itself. Pass a file explicitly:
 
 ```bash
-# Server Mode
-HSYNC_SERVER="https://hsync.example.com:9753"
-HSYNC_API_KEY="your-api-key"
-HSYNC_BUCKET="documents"
-HSYNC_PATH="$HOME/Documents"
-HSYNC_WATCH=true
-HSYNC_SYNC_DIRECTION="bidirectional"
+export HSYNC_API_KEY="hs_…"
+hsync --env-file ./hsync.env -s https://hsync.example.com:9753 -b documents -p "$HOME/Documents" -w
 ```
 
-Then simply run `hsync` — the client reads `.env` automatically.
+`--env-file` only applies `HSYNC_*` keys recognised by the client settings
+model (for server mode: `HSYNC_SERVER`, `HSYNC_API_KEY`, plus the shared
+keys in [Configuration](configuration.md)). Alternatively, `export` the
+variables in the shell (or `source` a file) before running `hsync`.
 
 ## See also
 

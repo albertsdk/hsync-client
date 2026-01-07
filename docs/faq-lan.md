@@ -28,9 +28,10 @@ No. Each HSYNC instance operates in one mode at a time.
 
 **Q: What happens if two devices modify the same file?**
 No device is authoritative: HSYNC resolves concurrent edits with a causal
-vector-clock model (ADR-0022). On a true divergence the deterministic,
-content-only tie-break (highest SHA-256) picks the winner, and the losing
-version is preserved as a `_conflicted_copy_` so nothing is lost. See
+vector-clock model (ADR-0022). On a true divergence the later
+`corrected_mtime` keeps the original path (ADR-0023); SHA-256 is used only
+when that field is missing or tied. The losing version is preserved as a
+`_conflicted_copy_` so nothing is lost. See
 [Conflict Resolution](conflict-resolution.md).
 
 ## LAN Mode
@@ -145,12 +146,12 @@ polling. Compression and delta transfer reduce bandwidth further.
 ## Debian Package
 
 **Q: How do I configure the systemd service for LAN mode?**
-Set the environment variables in `/etc/hsync/hsync.env`:
+The packaged unit already passes `--lan-mode --watch` on `ExecStart`. Edit
+`/etc/hsync/hsync.conf` (not `hsync.env`):
 ```
 HSYNC_BUCKET="mybucket"
 HSYNC_PATH="/path/to/sync"
-HSYNC_LAN_MODE=true
 HSYNC_LAN_GROUP="mygroup"        # optional
 HSYNC_LAN_KEY="shared-secret"    # optional, recommended
 ```
-Then restart with `systemctl restart hsync`.
+`HSYNC_LAN_MODE` is ignored; do not add it. Then `systemctl restart hsync`.

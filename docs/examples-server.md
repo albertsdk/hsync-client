@@ -11,19 +11,20 @@ All examples assume the binary has been built (`./compile.sh`) and the
 `HSYNC_API_KEY` holding an account token (`hs_<id>_<secret>`) issued by the
 server.
 
-### Configuration via `.env` file
+### Configuration via environment
+
+The client does not load `./.env` by itself. Export the token (and optional
+server URL), then pass bucket, path, and watch on the CLI:
 
 ```bash
-# .env
-HSYNC_SERVER="https://hsync.example.com:9753"
-HSYNC_API_KEY="your-api-key"
-HSYNC_BUCKET="documents"
-HSYNC_PATH="$HOME/Documents"
-HSYNC_WATCH=true
-HSYNC_SYNC_DIRECTION="bidirectional"
+export HSYNC_SERVER="https://hsync.example.com:9753"
+export HSYNC_API_KEY="your-api-key"
+hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents" -w
 ```
 
-Then simply run `hsync` — the client reads `.env` automatically.
+`--env-file` loads recognised `HSYNC_*` keys only (`HSYNC_SERVER`,
+`HSYNC_API_KEY`, …). `HSYNC_BUCKET`, `HSYNC_PATH`, and `HSYNC_WATCH` are
+not settings keys.
 
 ## 1.1 Sync a personal folder (one-time)
 
@@ -72,7 +73,7 @@ Changes made on one device propagate through the server to all others.
 ## 1.7 Bandwidth-limited sync over a slow connection
 
 ```bash
-HSYNC_UPLOAD_LIMIT=1048576 hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -w
+hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -w --max-bandwidth-upload 1MB
 ```
 
 ## 1.8 Long-running unattended service

@@ -21,10 +21,17 @@ Shared configuration options that apply to both Server Mode and LAN P2P Mode.
 
 ## Mass-Deletion Guard
 
+There is no time window. The guard trips on a **single reconciliation
+cycle** (absolute count or percentage of local files).
+
 | Option | Description | Default |
 |---|---|---|
-| `--mass-deletion-threshold` | Max files allowed to be deleted in one sync (0 = unlimited) | — |
-| `--mass-deletion-window` | Time window (seconds) for counting deletions | `3600` |
+| `--mass-delete-guard` / `--no-mass-delete-guard` | Enable or disable the guard | enabled |
+| `--mass-delete-threshold` | Absolute deletions per cycle that trip the guard (`0` = disabled) | `50` |
+| `--mass-delete-percent` | Percentage of local files whose deletion trips the guard (`0` = disabled) | `50` |
+
+Environment equivalents: `HSYNC_MASS_DELETE_GUARD`,
+`HSYNC_MASS_DELETE_THRESHOLD`, `HSYNC_MASS_DELETE_PERCENT`.
 
 ## Output & Logging
 
@@ -33,14 +40,18 @@ Shared configuration options that apply to both Server Mode and LAN P2P Mode.
 | `-o, --output` | Log file path (enables file logging) | — (stdout only) |
 | `-q, --quiet` | Suppress non-error output | `false` |
 | `-v, --verbose` | Verbose output | `false` |
-| `--log-level` | Log level: `debug`, `info`, `warning`, `error` | `info` |
+| `--no-color` | Disable colored output | `false` |
+| `--help-symbols` | Show output symbols legend and exit | — |
+
+There is no `--log-level` flag. Verbosity is `-v` / `-q` only.
 
 ## General Options
 
 | Option | Description | Default |
 |---|---|---|
-| `--yes` | Non-interactive mode (skip confirmations) | `false` |
-| `--version` | Show version and exit | — |
+| `-y, --yes` | Non-interactive mode (skip confirmations) | `false` |
+| `--env-file` | Load recognised `HSYNC_*` keys from a file (does not load `./.env` by itself) | — |
+| `-V, --version` | Show version and exit | — |
 | `--help` | Show help and exit | — |
 
 ## Compression
@@ -61,10 +72,13 @@ See [Configuration — Server Mode](configuration-server.md) and
 
 ## Bandwidth Limiting
 
-| Variable | Description | Default |
+Bandwidth is set on the CLI only (no `HSYNC_UPLOAD_LIMIT` /
+`HSYNC_DOWNLOAD_LIMIT` environment variables).
+
+| Option | Description | Default |
 |---|---|---|
-| `HSYNC_UPLOAD_LIMIT` | Upload bandwidth limit (bytes/second, 0 = unlimited) | `0` |
-| `HSYNC_DOWNLOAD_LIMIT` | Download bandwidth limit (bytes/second, 0 = unlimited) | `0` |
+| `--max-bandwidth-upload` | Upload cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
+| `--max-bandwidth-download` | Download cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
 
 ## Ignore Files & Patterns
 
@@ -101,8 +115,8 @@ When file logging is enabled with `-o/--output`:
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_AUTOTUNE` | Enable auto-tuning of timeout, retry, and concurrency | `true` |
-| `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300) | auto |
-| `HSYNC_RECONNECT_DELAY` | WS reconnection delay in seconds (1-60) | auto (`5`) |
+| `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300); CLI `--timeout` | auto |
+| `HSYNC_RECONNECT_DELAY` | WS reconnection delay in seconds (1-60); CLI `--retry-delay` | auto (`5`) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | auto (`5`-`20`) |
 | `HSYNC_TRANSFER_RETRY_MIN_WAIT` | Per-file retry min wait in seconds | auto |
 | `HSYNC_TRANSFER_RETRY_MAX_WAIT` | Per-file retry max wait in seconds | auto |
@@ -137,21 +151,27 @@ a small `.hsyncfolder` identity marker.
 
 ## Tuning for containers and VMs
 
-| Variable | Description | Default |
-|---|---|---|
-| `HSYNC_AUTOTUNE_STORAGE_TYPE` | Override detected storage type: `hdd`, `ssd`, `nvme`, `unknown` | auto |
-| `HSYNC_AUTOTUNE_NETWORK_TYPE` | Override detected network: `lan`, `wan`, `unknown` | auto |
+Storage and network class are **probed at runtime**. There are no
+`HSYNC_AUTOTUNE_STORAGE_TYPE` or `HSYNC_AUTOTUNE_NETWORK_TYPE` overrides.
+Disable autotune with `--no-autotune` / `HSYNC_AUTOTUNE=false` and set
+`--timeout`, `--retry-delay`, and `--max-concurrent-transfers` yourself.
 
-## Environment Files
+## Environment files
 
-The client provides environment file templates:
+The client does **not** load `./.env` automatically. Use `--env-file PATH`,
+or `export` / `source` variables in the shell before launching `hsync`.
+
+`--env-file` only applies keys recognised by the settings model (the
+`HSYNC_*` variables listed in this page and the server/LAN guides). It does
+**not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `-w/--watch`,
+`--sync-direction`, `--lan-mode`, or `--force-master`.
+
+Repo templates `dev.env` / `prod.env` are meant to be sourced or passed to
+`--env-file`; they are not read on their own.
 
 ```bash
-# Development (HTTP, localhost)
-source dev.env
-
-# Production (HTTPS, remote server)
-source prod.env
+# Load recognised HSYNC_* keys, then pass CLI-only flags
+hsync --env-file ./prod.env -s https://hsync.example.com:9753 -b documents -p ~/Documents -w
 ```
 
 ## Periodic resync and the inotify watch limit (Linux)

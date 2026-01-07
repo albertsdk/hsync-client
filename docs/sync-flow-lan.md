@@ -90,8 +90,8 @@ the configured `HSYNC_RESYNC` interval.
 
 The master is a **transport hub, not an authority**: it relays bytes and
 metadata but never decides conflicts by role. Every peer applies the same
-causal vector-clock matrix (content identity → causal dominance → deterministic
-SHA-256 tie-break). On a true concurrent divergence, the losing content is
+causal vector-clock matrix (content identity → causal dominance → later
+`corrected_mtime`, SHA-256 if missing or tied). On a true concurrent divergence, the losing content is
 preserved as `_conflicted_copy_<ts>_<cid>` — by the uploader if its upload loses
 the arbitration, or by the reconciling peer if its local content loses the
 tie-break.

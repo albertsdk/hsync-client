@@ -44,9 +44,9 @@ In LAN mode, the **slave**'s sync direction controls what it sends to the master
 
 ### Watch Mode
 
-In LAN mode, watch mode is **always active** — there is no `--watch` flag.
-Once a peer connects, it continuously monitors the local folder and the
-master's event stream.
+In LAN mode watch is **implicit**: persistent peers monitor the local folder
+and the master's event stream even without `-w`. The `--watch` flag still
+exists; it is the explicit form used in server mode.
 
 ### Single Sync (one-shot)
 
@@ -74,8 +74,9 @@ hsync --dry-run -b mybucket -p ~/Sync --lan-mode
 The elected master is a **transport hub, not an authority**: it serves bytes and
 relays events but never decides conflicts by role. Conflicts are resolved
 causally on every peer, identically to Server Mode — content identity first,
-then vector-clock dominance, then a deterministic SHA-256 tie-break on true
-concurrent divergence. The losing content is preserved as
+then vector-clock dominance, then on true concurrency the later
+`corrected_mtime` (ADR-0023), with SHA-256 only if that field is missing or
+tied. The losing content is preserved as
 `_conflicted_copy_<timestamp>_<cid>`, by whichever side lost (the reconciling
 peer, or the upload arbitration on the master).
 

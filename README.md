@@ -276,8 +276,8 @@ flowchart LR
 4. **④ Sync Files** — Master uploads changes to client
 
 In LAN mode, the master relays files between peers. Conflicts are resolved
-causally on every node (vector clocks + deterministic SHA-256 tie-break); both
-directions are supported for bidirectional sync peers.
+causally on every node (vector clocks, then `corrected_mtime`, then SHA-256);
+both directions are supported for bidirectional sync peers.
 
 ## Documentation
 
