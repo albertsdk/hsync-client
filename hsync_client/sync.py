@@ -297,11 +297,6 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         # hash *bucket-relative* paths: normalize through relpath_in_bucket
         # (a raw path hash would never match, mistaking every visible file
         # for a deletion).
-        local_keys = {
-            tombstone_key(rp)
-            for f in local_files
-            if (rp := relpath_in_bucket(str(f.get("filepath", "")), CONFIG["LOCAL_BUCKET"]))
-        }
         existing_paths = _existing_file_paths(CONFIG["LOCAL_BUCKET"])
         existing_keys = {
             tombstone_key(rp)
@@ -310,9 +305,19 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         }
         # Causal provenance (ADR-0003): the marker inherits the path's
         # recorded clock and is ticked by this peer.
+        #
+        # The existence check uses the ignore-agnostic ``existing_keys``
+        # snapshot only: it is a superset of the syncable ``local_keys`` for
+        # on-disk files, so dropping ``local_keys`` is behaviour-preserving in
+        # the steady state. It fixes a mid-scan race where ``get_files_local``
+        # (run early in the cycle) snapshots a file that is then deleted while
+        # ``get_files_remote`` retries bridge a transiently-unreachable master:
+        # the stale ``local_keys`` would block minting and the file would be
+        # resurrected. ``existing_keys`` is computed right before this loop, so
+        # it reflects the live filesystem at mint time.
         minted = False
         for key, base_hash, vclock in list(sync_state.iter_merge_bases()):
-            if key and key not in local_keys and key not in existing_keys:
+            if key and key not in existing_keys:
                 from hsync_client.tombstones import record_deletion_by_key
 
                 record_deletion_by_key(

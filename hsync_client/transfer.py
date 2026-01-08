@@ -122,12 +122,19 @@ def _record_synced_base(
     on upload it is the local effective clock the client just pushed. When
     absent, ``merge_and_record`` falls back to merging the stored clock.
 
-    Persistence is deferred to the single ``sync_state.flush()`` at the end of
-    the sync cycle (``sync.py``), avoiding redundant per-file rewrites of the
-    entire version map.
+    Persistence: during a full reconcile cycle the record is held in memory and
+    flushed once by the single ``sync_state.flush()`` at the end of the cycle
+    (``sync.py``), avoiding redundant per-file rewrites of the entire version
+    map. For **real-time** transfers (watcher uploads / inbound event downloads,
+    detected via ``is_sync_cycle_active`` being False) the merge base is
+    persisted immediately instead: a process kill between a watcher upload and
+    the next cycle flush would otherwise lose the in-memory base, and a file
+    then deleted while the process was dead would be resurrected on restart
+    (the offline-deletion minting in ``sync()`` has no base to mint from). The
+    tombstone store already persists every marker immediately (same pattern).
     """
     try:
-        from hsync_client.sync_state import merge_and_record, record_base
+        from hsync_client.sync_state import flush, merge_and_record, record_base
 
         if file.filepath and file.sha256sum:
             if Path(file.filepath).is_absolute():
@@ -147,6 +154,13 @@ def _record_synced_base(
                     version_id=version_id,
                     corrected_mtime=corrected_mtime,
                 )
+            # Real-time transfers (not inside a full-sync cycle) persist the
+            # merge base durably so a crash cannot lose it. Full-sync transfers
+            # defer to the single end-of-cycle flush (batch).
+            from hsync_client.sync import is_sync_cycle_active
+
+            if not is_sync_cycle_active():
+                flush()
     except Exception as e:  # pragma: no cover - bookkeeping must never break sync
         log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
 
