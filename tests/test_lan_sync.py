@@ -162,6 +162,24 @@ class TestLANSync:
         assert len(connected_msgs) == 1, "the connected count must log once, not on every poll"
         assert len(alone_msgs) == 0, "a master with connected clients is not alone"
 
+    def test_wait_for_discovery_waits_on_peer_change_event(self):
+        """The discovery wait delegates to the peer manager's change event."""
+        from unittest.mock import patch
+
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        lan._peer_manager = MagicMock()
+        lan._peer_manager.get_alive_peers.return_value = []
+        lan._peer_manager.get_master_cid.return_value = "test123"
+        lan._peer_manager.get_master.return_value = None
+
+        with patch("hsync_client.lan.time.sleep") as mock_sleep:
+            lan.wait_for_discovery(timeout=7)
+
+        lan._peer_manager.wait_for_change.assert_called_once_with(7)
+        mock_sleep.assert_not_called()
+
     def test_connected_clients_coalesces_record_refresh(self):
         """A join/leave burst triggers one debounced mDNS re-registration.
 

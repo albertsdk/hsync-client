@@ -561,9 +561,10 @@ class TestRunLanModeNoMasterWarning:
             patch.object(lan_handler, "_run_as_slave", side_effect=_slave),
             patch("time.time", side_effect=lambda: next(times)),
             # The startup NTP offset probe (ADR-0023) is orthogonal to the
-            # [NO MASTER] warning timed by ``time.time``: stub it so it never
-            # consumes the finite time iterator nor touches the network.
-            patch("hsync_client.timesync.probe_ntp_clock_offset", return_value=None),
+            # [NO MASTER] warning timed by ``time.time``: stub the async
+            # launcher so no probe thread is spawned (it would otherwise
+            # consume the finite time iterator and touch the network).
+            patch("hsync_client.timesync.start_ntp_clock_offset_probe", return_value=None),
         ):
             run_lan_mode(config, mock_log)
 

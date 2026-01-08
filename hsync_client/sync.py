@@ -26,7 +26,7 @@ from time import monotonic
 from traceback import print_tb
 from typing import cast
 
-from hsync_common.clock import clamp_incoming_corrected_mtime
+from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.file import (
     File,
@@ -248,6 +248,7 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
 
     _sync_cycle_active.set()
     try:
+        offset_store.begin_epoch()
         # Clear SHA-256 cache so every file is re-hashed with fresh content
         clear_sha256_cache()
 
@@ -539,6 +540,7 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
                 print_tb(exc_tb)
         raise
     finally:
+        offset_store.end_epoch()
         _sync_cycle_active.clear()
 
 

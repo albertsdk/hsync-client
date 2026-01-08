@@ -7,15 +7,17 @@
 """
 Clock-offset bootstrap for the HSYNC client (ADR-0023).
 
-Resolves the process-wide offset used to compute ``corrected_mtime`` before
-any version is advertised:
+Resolves the process-wide offset used to compute ``corrected_mtime``:
 
 * **Server mode** — the configured server is the time authority:
   ``measure_clock_offset`` performs an NTP-like HTTP round-trip against
-  ``/api/v1/time``.
+  ``/api/v1/time`` *before* the first sync advertises versions.
 * **LAN mode / placeholder URL** — no server is known yet, so a configurable
   list of public SNTP servers (``HSYNC_NTP_HOSTS``, comma-separated; defaults
-  from ``hsync_common.constants.NTP_DEFAULT_HOSTS``) is probed in order.
+  from ``hsync_common.constants.NTP_DEFAULT_HOSTS``) is probed **in the
+  background** so discovery is never blocked. ``sync()`` freezes the offset
+  for the duration of a cycle (``ClockOffsetStore.begin_epoch``): a probe
+  that finishes mid-cycle applies only to the next cycle.
 * **Offline / air-gapped** — every probe fails: the offset is recorded as 0
   and a degraded-temporal-mode warning is logged; synchronisation proceeds
   (the deterministic hash fallback covers unknown corrected mtimes).
@@ -31,6 +33,7 @@ Consumers: ``hsync_client.main_logic`` (server mode),
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 from hsync_common.clock import (
@@ -42,6 +45,11 @@ from hsync_common.clock import (
 from loguru import logger as log
 
 from hsync_client.utils import get_ssl_verify
+
+# Generation of the in-flight LAN NTP probe. A newer start_ntp_clock_offset_probe
+# call invalidates older workers so a slow probe cannot overwrite a fresher result.
+_probe_generation = 0
+_probe_lock = threading.Lock()
 
 
 def _ntp_targets() -> tuple[tuple[str, int], ...]:
@@ -81,13 +89,8 @@ def probe_server_clock_offset(server_url: str, logger: Any = log) -> None:
     logger.debug(f"Clock offset from server: {offset:+.3f}s")
 
 
-def probe_ntp_clock_offset(logger: Any = log) -> None:
-    """Measure the offset against the configured public SNTP servers.
-
-    Probes every host in order until one answers (median of several
-    round-trips). Offline/air-gapped ⇒ offset 0 + degraded-temporal-mode
-    warning; synchronisation is never blocked.
-    """
+def _measure_ntp_offset(logger: Any) -> tuple[float, str, str | None]:
+    """Probe SNTP hosts; return ``(offset, source, host)`` (host is None when offline)."""
     targets = _ntp_targets()
     try:
         result = measure_clock_offset_ntp_multi(targets)
@@ -99,8 +102,49 @@ def probe_ntp_clock_offset(logger: Any = log) -> None:
             f"No NTP answer from {', '.join(h for h, _ in targets)}; running "
             "in degraded temporal mode (offset 0, uncorrected local time)"
         )
-        offset_store.record(0.0, "offline")
-        return
+        return 0.0, "offline", None
     offset, _rtt, host = result
-    offset_store.record(offset, f"ntp:{host}")
-    logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
+    return offset, f"ntp:{host}", host
+
+
+def probe_ntp_clock_offset(logger: Any = log) -> None:
+    """Measure the offset against the configured public SNTP servers.
+
+    Probes every host in order until one answers (median of several
+    round-trips). Offline/air-gapped ⇒ offset 0 + degraded-temporal-mode
+    warning; synchronisation is never blocked.
+    """
+    offset, source, host = _measure_ntp_offset(logger)
+    offset_store.record(offset, source)
+    if host is not None:
+        logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
+
+
+def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
+    """Start the SNTP offset probe on a background daemon thread.
+
+    LAN discovery must never wait on an external time source: the probe runs
+    concurrently with discovery. A newer call invalidates in-flight workers
+    (generation token) so a slow probe cannot overwrite a fresher result.
+    ``sync()`` freezes the offset for one cycle, so a probe that finishes
+    mid-cycle applies only to the next cycle.
+
+    Returns the started thread so callers (and tests) can join it.
+    """
+    global _probe_generation
+    with _probe_lock:
+        _probe_generation += 1
+        generation = _probe_generation
+
+    def _run() -> None:
+        offset, source, host = _measure_ntp_offset(logger)
+        with _probe_lock:
+            if generation != _probe_generation:
+                return
+            offset_store.record(offset, source)
+        if host is not None:
+            logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
+
+    thread = threading.Thread(target=_run, daemon=True, name="hsync-ntp-probe")
+    thread.start()
+    return thread

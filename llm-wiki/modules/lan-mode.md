@@ -13,7 +13,7 @@ SSOT in `hsync-common`.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_lan_mode` | `lan_handler.py:109` | start discovery, elect, branch to role |
+| `run_lan_mode` | `lan_handler.py:109` | start discovery, elect, branch to role; kicks off the background SNTP clock-offset probe (`timesync.start_ntp_clock_offset_probe`) so discovery never waits on an external time source |
 | `_run_as_master` | `:273` | start `LANServer` + `LANWebSocketServer` + watcher; **readiness threshold**: after both servers are up and `update_server_ready()` ran, it logs `[READY] Master ready — serving …` (`:346`) |
 | `_run_as_slave` | `:418` | TOFU-pin master, refresh tuning, then connect + sync |
 | `_evaluate_master_pin` | `:377` | apply pin decision before slave connect |
@@ -47,6 +47,18 @@ peer(s)`, `No other peers discovered - N client(s) connected`, or `No other
 peers discovered - this client is alone`. The master re-registers its mDNS
 record whenever the WS count changes (`LANSync.set_connected_clients`), so
 slaves observe presence without a server round-trip.
+
+The wait is **event-driven**, not a fixed sleep: `PeerManager` keeps a
+generation counter + `threading.Condition` (`_change_generation` /
+`wait_for_change`) signalled on peer add/remove, local `server_ready` flip,
+election-relevant field changes, and discovery-relevant metadata updates
+(address/port, HTTPS/fingerprint, `connected`, capabilities). Heartbeat-only
+`last_seen` refreshes do **not** signal. `wait_for_discovery` blocks on
+`PeerManager.wait_for_change(timeout)` instead of `time.sleep(timeout)`. A
+peer already advertising (or a master flipping to `server_ready`) therefore
+wakes the loop in mDNS time (~1 s) rather than after the full
+`DISCOVERY_TIMEOUT` window. With no change the wait still blocks for the full
+window, so the polling cadence is unchanged in steady state.
 
 ## Master server (`lan_server.py`, `lan_websocket.py`)
 

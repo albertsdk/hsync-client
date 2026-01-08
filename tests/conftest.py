@@ -82,6 +82,35 @@ def reset_sync_state_stores() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_clock_offset() -> None:
+    """Clear the process-wide clock offset around each test.
+
+    The LAN startup NTP probe runs on a background thread; a slow probe from a
+    previous test must not leak its offset. Tests that need a specific offset
+    set it themselves.
+    """
+    from hsync_common.clock import offset_store
+
+    offset_store.clear()
+    yield
+    offset_store.clear()
+
+
+@pytest.fixture(autouse=True)
+def _stub_lan_ntp_probe(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not spawn real SNTP workers from in-process ``run_lan_mode`` tests.
+
+    ``test_timesync`` exercises the real launcher (with the probe body mocked).
+    """
+    if getattr(request.module, "__name__", "").endswith("test_timesync"):
+        return
+    monkeypatch.setattr(
+        "hsync_client.timesync.start_ntp_clock_offset_probe",
+        lambda logger=None: None,
+    )
+
+
+@pytest.fixture(autouse=True)
 def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Force plain, uncolored CLI output for every test.

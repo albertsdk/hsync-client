@@ -69,6 +69,90 @@ class TestPeerManager:
         pm.remove_peer("temp")
         assert pm.is_master() is True
 
+    def test_wait_for_change_returns_immediately_when_signalled(self):
+        """A peer added before the wait makes wait_for_change return at once."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+
+        start = time.monotonic()
+        pm.wait_for_change(timeout=5.0)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0, "wait_for_change must not sleep when a change is pending"
+
+    def test_wait_for_change_wakes_on_peer_added_during_wait(self):
+        """A peer discovered while waiting wakes the loop before the timeout."""
+        import threading
+
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        timer = threading.Timer(
+            0.1,
+            lambda: pm.add_peer(
+                Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753)
+            ),
+        )
+        timer.start()
+        try:
+            start = time.monotonic()
+            pm.wait_for_change(timeout=5.0)
+            elapsed = time.monotonic() - start
+        finally:
+            timer.cancel()
+
+        assert elapsed < 2.0, "a peer discovered mid-wait must wake the loop early"
+
+    def test_wait_for_change_blocks_until_timeout_when_alone(self):
+        """With no discovery change the wait still blocks for the full window."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+
+        start = time.monotonic()
+        pm.wait_for_change(timeout=0.2)
+        elapsed = time.monotonic() - start
+
+        assert elapsed >= 0.2, "wait_for_change must wait the full window when alone"
+
+    def test_wait_for_change_clears_after_wake(self):
+        """After a wake the generation is consumed so the next wait blocks again."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        pm.wait_for_change(timeout=0.0)
+
+        start = time.monotonic()
+        pm.wait_for_change(timeout=0.2)
+        elapsed = time.monotonic() - start
+
+        assert elapsed >= 0.2, "the generation must be consumed so a later wait blocks"
+
+    def test_wait_for_change_wakes_on_connected_update(self):
+        """A master's updated connected count wakes the discovery loop."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(
+            Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753, connected=0)
+        )
+        pm.wait_for_change(timeout=0.0)
+        pm.add_peer(
+            Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753, connected=2)
+        )
+
+        start = time.monotonic()
+        pm.wait_for_change(timeout=5.0)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0, "a connected-count update must wake the loop"
+
+    def test_wait_for_change_ignores_heartbeat_only_refresh(self):
+        """A last_seen-only mDNS refresh must not wake the discovery loop."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        pm.wait_for_change(timeout=0.0)
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+
+        start = time.monotonic()
+        pm.wait_for_change(timeout=0.15)
+        elapsed = time.monotonic() - start
+
+        assert elapsed >= 0.15, "heartbeat-only refreshes must not signal waiters"
+
     def test_bidirectional_preferred_over_upload_only(self):
         """Test that bidirectional peer wins over upload-only with same startup_time."""
         # Local is upload-only, remote is bidirectional — remote should win

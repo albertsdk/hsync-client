@@ -136,9 +136,11 @@ In LAN mode there is no server at startup, so the client measures its clock
 offset against public SNTP servers. The offset powers the chronological
 conflict tie-break (`corrected_mtime`, see
 [Conflict Resolution](conflict-resolution.md)): the most recent
-offset-corrected edit keeps the original path. When every probe fails the
-client records offset 0 (raw local time) and synchronisation proceeds
-normally.
+offset-corrected edit keeps the original path. The probe runs in the
+background, so discovery never waits on an external time source. Each sync
+cycle freezes whatever offset is already known: a probe that finishes during
+the cycle applies only to the next one. When every probe fails the client
+records offset 0 (raw local time) and synchronisation proceeds normally.
 
 | Variable | Description | Default |
 |---|---|---|

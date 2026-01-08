@@ -126,11 +126,13 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     log.info("LAN P2P mode enabled")
 
     # Clock offset (ADR-0023): in LAN mode no server is known at startup, so
-    # the public SNTP hosts (HSYNC_NTP_HOSTS) are the time authority. Failures
-    # degrade to offset 0 and never block discovery or synchronisation.
-    from hsync_client.timesync import probe_ntp_clock_offset
+    # the public SNTP hosts (HSYNC_NTP_HOSTS) are the time authority. The probe
+    # runs on a background thread: discovery and the first sync never wait on
+    # an external time source, and failures degrade to offset 0 (uncorrected
+    # local time) without blocking anything.
+    from hsync_client.timesync import start_ntp_clock_offset_probe
 
-    probe_ntp_clock_offset(logger=log)
+    start_ntp_clock_offset_probe(logger=log)
 
     persistent = config.get("LAN_PERSISTENT", False)
     if persistent:

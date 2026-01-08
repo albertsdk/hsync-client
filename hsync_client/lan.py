@@ -184,6 +184,13 @@ class PeerManager:
         self._master_cid: str | None = None
         self._local_server_ready = False
         self._on_master_change: Callable[[Peer | None], None] | None = None
+        # Generation + Condition: waiters observe a monotonic counter so a
+        # change that arrives between wait-return and the next wait is not
+        # lost (unlike Event.wait/clear). Heartbeat-only last_seen bumps do
+        # not increment the generation.
+        self._change_cond = threading.Condition(self._lock)
+        self._change_generation = 0
+        self._seen_generation = 0
 
     def set_local_server_ready(self, ready: bool) -> None:
         """Mark the local node as actively serving (incumbent master).
@@ -197,6 +204,7 @@ class PeerManager:
                 return
             self._local_server_ready = ready
             self._elect_master()
+            self._signal_change()
 
     @property
     def local_cid(self) -> str:
@@ -277,6 +285,17 @@ class PeerManager:
                     or existing.startup_time != peer.startup_time
                     or existing.sync_direction != peer.sync_direction
                 )
+                discovery_changed = election_changed or (
+                    existing.address != peer.address
+                    or existing.port != peer.port
+                    or existing.use_https != peer.use_https
+                    or existing.cert_fingerprint != peer.cert_fingerprint
+                    or existing.connected != peer.connected
+                    or existing.compression_enabled != peer.compression_enabled
+                    or existing.delta_enabled != peer.delta_enabled
+                    or existing.vector_clocks != peer.vector_clocks
+                    or existing.tombstones_enabled != peer.tombstones_enabled
+                )
                 # Update all properties from the new peer object
                 existing.address = peer.address
                 existing.port = peer.port
@@ -302,13 +321,17 @@ class PeerManager:
                 self._peers[peer.cid] = peer
                 log.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")
                 election_changed = True
+                discovery_changed = True
 
             # Re-run the election on a first discovery or a relevant field
             # change. The expired-peer check also covers the original
             # behaviour where a stale peer (whose heartbeat stop arriving)
             # was excluded from the candidate list at the next update.
-            if election_changed or any(not p.is_alive() for p in self._peers.values()):
+            stale_peer = any(not p.is_alive() for p in self._peers.values())
+            if election_changed or stale_peer:
                 self._elect_master()
+            if discovery_changed or stale_peer:
+                self._signal_change()
 
     def remove_peer(self, cid: str) -> None:
         """Remove a peer by CID."""
@@ -317,11 +340,36 @@ class PeerManager:
                 del self._peers[cid]
                 log.info(f"Peer disconnected: {cid}")
                 self._elect_master()
+                self._signal_change()
 
     def get_alive_peers(self) -> list[Peer]:
         """Get all peers that are still alive."""
         with self._lock:
             return [p for p in self._peers.values() if p.is_alive()]
+
+    def _signal_change(self) -> None:
+        """Bump the discovery generation and wake waiters. Caller holds ``_lock``."""
+        self._change_generation += 1
+        self._change_cond.notify_all()
+
+    def wait_for_change(self, timeout: float) -> None:
+        """Block until a discovery change is signalled or *timeout* elapses.
+
+        The discovery loop waits on this instead of a fixed sleep: a peer
+        discovered (or a master flipping to ``server_ready``) while waiting
+        wakes the loop immediately, so startup detection and master readiness
+        react in mDNS time (~1 s) rather than after the full polling window.
+        A pending generation from before this call is consumed immediately
+        (no lost wakeup). Heartbeat-only ``last_seen`` refreshes do not signal.
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._lock:
+            while self._change_generation == self._seen_generation:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                self._change_cond.wait(remaining)
+            self._seen_generation = self._change_generation
 
     def _elect_master(self) -> None:
         """
@@ -1078,7 +1126,13 @@ class LANSync:
             self._discovery_announced = True
         else:
             log.debug(f"Waiting {timeout}s for peer discovery...")
-        time.sleep(timeout)
+        # Wake on a discovery change (peer added/updated/removed, local
+        # server_ready flip) instead of sleeping the full window: a peer that
+        # is already advertising is detected in mDNS time, not after ``timeout``.
+        if self._peer_manager is not None:
+            self._peer_manager.wait_for_change(timeout)
+        else:
+            time.sleep(timeout)
 
         if self._peer_manager:
             peers = self._peer_manager.get_alive_peers()
