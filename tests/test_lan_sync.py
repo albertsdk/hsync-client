@@ -193,7 +193,11 @@ class TestLANSync:
 
         lan = LANSync(cid="test123", bucket="photos")
         lan._service_info = MagicMock()  # a serving registered master
-        lan._refresh_lock = type(lan._refresh_lock)()  # real lock, no timer
+        # __init__ already provides a real threading.Lock with no timer, which
+        # is exactly the state this test needs. Re-instantiating the lock via
+        # type(...)() is not portable: _thread.LockType is only constructible
+        # from Python 3.13 onward (CPython GH-101102) and raises
+        # "TypeError: cannot create '_thread.lock' instances" on 3.12.
         lan._refresh_timer = None
 
         # Cancel every timer the debounce schedules: the test simulates the
