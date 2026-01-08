@@ -35,7 +35,11 @@ from typing import IO
 from urllib.parse import parse_qs, urlparse
 
 from hsync_common.clock import clamp_incoming_corrected_mtime
-from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
+from hsync_common.constants import (
+    CONTENT_TYPE_JSON,
+    CONTENT_TYPE_OCTET_STREAM,
+    PARTIAL_DOWNLOAD_SUFFIX,
+)
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.event import is_valid_cid
@@ -125,10 +129,6 @@ ENDPOINT_SYMLINKS_SUFFIX = "/symlinks"
 ENDPOINT_DELTA_SIGNATURES_SUFFIX = "/files/delta/signatures"
 ENDPOINT_DELTA_APPLY_SUFFIX = "/files/delta/apply"
 ENDPOINT_DELTA_DATA_MARKER = "/files/delta/data/"
-
-# Content Types
-CONTENT_TYPE_JSON = "application/json"
-CONTENT_TYPE_OCTET_STREAM = "application/octet-stream"
 
 # HTTP Status Codes
 HTTP_OK = 200

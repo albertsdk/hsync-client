@@ -14,19 +14,42 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 # Application Info
 # =============================================================================
-# Re-export shared constants from hsync-common
+from typing import Final, Literal  # noqa: E402
+
+# Re-export shared constants from hsync-common. The plain names keep the
+# module's public re-export API consumed across hsync_client (HSYNC_VERSION,
+# HSYNCKEEP_FILENAME, PARTIAL_DOWNLOAD_SUFFIX, WS_MAX_MESSAGE_BYTES); the
+# aliased header names are re-typed below as string literals because mypy
+# requires literal keys for TypedDicts.
 from hsync_common.constants import (  # noqa: E402, F401
+    CONTENT_TYPE_JSON,
+    CONTENT_TYPE_OCTET_STREAM,
+    HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,
-    VERSION,
     WS_MAX_MESSAGE_BYTES,
+)
+from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME  # noqa: E402
+from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION  # noqa: E402
+from hsync_common.constants import (  # noqa: E402
+    HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
 )
 
 # Re-export shared action labels from hsync-common
 from hsync_common.labels import ActionLabel  # noqa: E402, F401
 
-# Application version (re-exported from hsync-common)
-HSYNC_VERSION = VERSION
+# Application name sent as the X-Client-Name REST header. Identifies the
+# originating product (the CLI / sync daemon), never an internal module.
+CLIENT_NAME = "hsync-client"
+
+# The header names feed TypedDict keys in ``main_logic.py`` (REQUEST_HEADERS),
+# which mypy accepts only as string literals. hsync-common ships no ``py.typed``
+# marker, so mypy sees its symbols as ``Any`` and rejects them as keys; the
+# re-annotations below restore the literal type while the VALUE keeps coming
+# from the SSOT import.
+HEADER_CLIENT_NAME: Final[Literal["X-Client-Name"]] = _HEADER_CLIENT_NAME
+HEADER_CLIENT_VERSION: Final[Literal["X-Client-Version"]] = _HEADER_CLIENT_VERSION
+HEADER_PROTOCOL_VERSION: Final[Literal["X-Protocol-Version"]] = _HEADER_PROTOCOL_VERSION
 
 
 # =============================================================================
@@ -175,6 +198,3 @@ MAX_INBOUND_SIZE_MB_DEFAULT = 10_240  # 10 GB
 INOTIFY_MAX_USER_WATCHES_PATH = "/proc/sys/fs/inotify/max_user_watches"
 # Fraction of the limit at which we emit the warning.
 INOTIFY_WATCH_WARN_RATIO = 0.9
-
-
-# HSYNCKEEP_FILENAME is re-exported from hsync_common.constants above

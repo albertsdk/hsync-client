@@ -14,8 +14,12 @@ from typing_extensions import TypedDict
 
 from hsync_client.config import get_env_settings
 from hsync_client.constants import (
+    CLIENT_NAME,
     DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
+    HEADER_CLIENT_NAME,
+    HEADER_CLIENT_VERSION,
+    HSYNC_VERSION,
     RESYNC_DEFAULT,
 )
 from hsync_client.main_logic import (
@@ -701,6 +705,10 @@ class TestRunSync:
             # set_config should have been called with config containing the key
             config_arg = mock_set_cfg.call_args[0][0]
             assert "my-secret-key" in config_arg["REQUEST_HEADERS"]["Authorization"]
+            # The client-name header identifies the product, never an internal
+            # module (regression: it used to leak Path(__file__).name).
+            assert config_arg["REQUEST_HEADERS"][HEADER_CLIENT_NAME] == CLIENT_NAME
+            assert config_arg["REQUEST_HEADERS"][HEADER_CLIENT_VERSION] == HSYNC_VERSION
 
     def test_api_key_over_http_aborts(self, tmp_path):
         """run_sync refuses to send an API key over an unencrypted http:// URL."""

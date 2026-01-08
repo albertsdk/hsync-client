@@ -36,7 +36,9 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
   (container/TTY/cgroup limits) at startup.
 - Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py:58`);
   LAN → `lan_handler.run_lan_mode` (`lan_handler.py:109`).
-- Version SSOT: `HSYNC_VERSION = VERSION` (`constants.py:32`).
+- Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
+  (`constants.py:21`); `CLIENT_NAME = "hsync-client"` (`:32`) feeds the
+  `X-Client-Name` REST header build in `main_logic.py`.
 - Config: env + CLI merged into the global `CONFIG: HsyncConfig` (`config.py:391`),
   set via `set_config` (`config.py:397`), read via `get_config` (`config.py:422`).
 - Reuses `hsync_common.models` directly — there is **no** `hsync_client/models/`.

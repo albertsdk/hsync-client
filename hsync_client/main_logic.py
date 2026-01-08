@@ -52,8 +52,12 @@ from hsync_client.config import (
     set_debug,
 )
 from hsync_client.constants import (
+    CLIENT_NAME,
     DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
+    HEADER_CLIENT_NAME,
+    HEADER_CLIENT_VERSION,
+    HEADER_PROTOCOL_VERSION,
     HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
@@ -771,9 +775,9 @@ def run_sync(
         "REQUEST_HEADERS": {
             "accept": "application/json",
             "Authorization": f"Bearer {resolved_api_key}",
-            "X-Client-Name": Path(__file__).name,
-            "X-Client-Version": HSYNC_VERSION,
-            "X-Protocol-Version": PROTOCOL_VERSION_REST,
+            HEADER_CLIENT_NAME: CLIENT_NAME,
+            HEADER_CLIENT_VERSION: HSYNC_VERSION,
+            HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION_REST,
         },
         "RECONNECT_DELAY": _resolved_reconnect_delay,
         "RESYNC": _get_resync_value(resync),

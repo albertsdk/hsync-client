@@ -52,7 +52,13 @@ desktop can gate UI (§8).
 
 ## Constants & validators
 
-- `constants.py` — bounds + defaults: stability (`:57`–`:73`), reschedule
+- `constants.py` — application info: re-exports `HSYNC_VERSION` +
+  `HEADER_CLIENT_NAME`/`HEADER_CLIENT_VERSION` from `hsync-common`, and
+  defines `CLIENT_NAME = "hsync-client"` (the `X-Client-Name` REST header
+  value built in `main_logic.py`); re-exports the wire content types
+  `CONTENT_TYPE_OCTET_STREAM`/`CONTENT_TYPE_JSON` used by
+  `lan_server.py`/`transfer.py`/`delta_transfer.py`/`lan_delta.py`.
+  Bounds + defaults: stability (`:57`–`:73`), reschedule
   (`:79`/`:80`), concurrency (`:90`), retry (`:99`–`:101`), mass-delete (`:112`–`:114`),
   bandwidth (`:121`/`:122`), resync (`:130`–`:135`), max inbound file size
   (  `MAX_INBOUND_SIZE_MB_*`, default 10 GB — absolute anti-bomb cap applied as

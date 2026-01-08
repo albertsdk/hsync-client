@@ -37,7 +37,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import zstandard as zstd
-from hsync_common.constants import DELTA_MAX_LITERAL_SIZE, PARTIAL_DELTA_SUFFIX
+from hsync_common.constants import (
+    CONTENT_TYPE_OCTET_STREAM,
+    DELTA_MAX_LITERAL_SIZE,
+    PARTIAL_DELTA_SUFFIX,
+)
 from hsync_common.delta import (
     changed_block_ratio,
     compute_signatures,
@@ -490,7 +494,7 @@ def handle_delta_data(handler, bucket: str, token: str) -> None:
     try:
         payload_size = Path(payload_file).stat().st_size
         handler.send_response(_HTTP_OK)
-        handler.send_header("Content-Type", "application/octet-stream")
+        handler.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
         handler.send_header("Content-Length", str(payload_size))
         handler.send_header("Content-Disposition", 'attachment; filename="delta-data.bin"')
         if entry.compressed:

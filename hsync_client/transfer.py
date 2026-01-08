@@ -23,6 +23,7 @@ from typing import cast
 
 import zstandard as zstd
 from hsync_common.clock import clamp_incoming_corrected_mtime
+from hsync_common.constants import CONTENT_TYPE_OCTET_STREAM
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
@@ -260,7 +261,7 @@ def _build_multipart_streaming(
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="{file_field_name}"; '
         f'filename="{safe_filename}"\r\n'
-        f"Content-Type: application/octet-stream\r\n\r\n"
+        f"Content-Type: {CONTENT_TYPE_OCTET_STREAM}\r\n\r\n"
     ).encode()
     file_trailer = b"\r\n"
     closing = f"--{boundary}--\r\n".encode()

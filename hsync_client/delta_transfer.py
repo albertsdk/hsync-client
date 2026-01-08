@@ -36,7 +36,7 @@ from time import monotonic
 from typing import cast
 
 import zstandard as zstd
-from hsync_common.constants import PARTIAL_DELTA_SUFFIX
+from hsync_common.constants import CONTENT_TYPE_OCTET_STREAM, PARTIAL_DELTA_SUFFIX
 from hsync_common.delta import (
     apply_delta,
     compute_signatures,
@@ -299,7 +299,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         apply_uri,
         headers=headers,
         data={"path": ctx.relpath, "metadata": json.dumps(metadata)},
-        files={"file": ("delta.bin", payload, "application/octet-stream")},
+        files={"file": ("delta.bin", payload, CONTENT_TYPE_OCTET_STREAM)},
         verify=get_ssl_verify(),
         timeout=_upload_timeout(),
     )
