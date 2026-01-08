@@ -502,6 +502,33 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
         return None
 
 
+def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str, Any]:
+    """Build the redacted config dump for the verbose "Local configuration" log.
+
+    Masks ``API_KEY``, ``LAN_KEY`` and the ``Authorization`` header, and appends
+    a ``PATHS`` section resolving the filesystem locations the client uses
+    (env file, device identity dir, state dir, SQLite DB, instance-lock dir).
+    """
+    from hsync_common.models.folder import default_state_dir, default_syncstate_db_path
+
+    from hsync_client.identity import default_device_dir, default_locks_dir
+    from hsync_client.utils import redact_headers
+
+    safe: dict[str, Any] = {**config}
+    safe["REQUEST_HEADERS"] = redact_headers(config["REQUEST_HEADERS"])
+    safe["API_KEY"] = "****"
+    if safe.get("LAN_KEY"):
+        safe["LAN_KEY"] = "****"
+    safe["PATHS"] = {
+        "ENV_FILE": env_file,
+        "DEVICE_DIR": str(default_device_dir()),
+        "STATE_DIR": str(default_state_dir()),
+        "STATE_DB": str(default_syncstate_db_path()),
+        "LOCKS_DIR": str(default_locks_dir()),
+    }
+    return safe
+
+
 def run_sync(
     bucket: str,
     env_file: str | None,
@@ -907,13 +934,7 @@ def run_sync(
         _check_disk_space(local_path, min_free_disk_space, log)
 
     # Mask sensitive values before logging (shared helper, DRY with transfer.py)
-    from hsync_client.utils import redact_headers
-
-    _safe_config = {**config}
-    _safe_config["REQUEST_HEADERS"] = redact_headers(config["REQUEST_HEADERS"])
-    if _safe_config.get("LAN_KEY"):
-        _safe_config["LAN_KEY"] = "****"
-    log.debug("Local configuration:", extra={"json_data": _safe_config})
+    log.debug("Local configuration:", extra={"json_data": _safe_config_for_log(config, env_file)})
 
     # Display legend if requested
     if legend:

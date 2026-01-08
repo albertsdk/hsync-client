@@ -5,14 +5,14 @@ Contains TestGetStabilityDelayValue, TestCheckServerConnectivity, TestRunSync cl
 """
 
 import os
-from typing import Unpack
+from typing import Unpack, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from hsync_common.runtime import ContainerInfo
 from typing_extensions import TypedDict
 
-from hsync_client.config import get_env_settings
+from hsync_client.config import HsyncConfig, get_env_settings
 from hsync_client.constants import (
     CLIENT_NAME,
     DISCOVERY_TIMEOUT_DEFAULT,
@@ -27,6 +27,7 @@ from hsync_client.main_logic import (
     _get_discovery_timeout_value,
     _get_resync_value,
     _get_stability_delay_value,
+    _safe_config_for_log,
     _warn_if_lan_in_container,
     run_sync,
 )
@@ -790,3 +791,54 @@ class TestWarnIfLanInContainer:
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
         assert "docker" in warning_texts
         assert "--network host" in warning_texts
+
+
+class TestSafeConfigForLog:
+    """Tests for _safe_config_for_log (verbose 'Local configuration' dump)."""
+
+    @staticmethod
+    def _make_config() -> HsyncConfig:
+        return cast(
+            HsyncConfig,
+            {
+                "API_KEY": "super-secret-api-key",
+                "LAN_KEY": "super-secret-lan-key",
+                "REQUEST_HEADERS": {
+                    "accept": "application/json",
+                    "Authorization": "Bearer super-secret-api-key",
+                    "X-Client-Name": CLIENT_NAME,
+                    "X-Client-Version": HSYNC_VERSION,
+                    "X-Protocol-Version": "1",
+                },
+                "LOCAL_BUCKET": "/tmp/bucket",
+            },
+        )
+
+    def test_masks_secrets(self):
+        """API_KEY, LAN_KEY and the Authorization header are redacted."""
+        safe = _safe_config_for_log(self._make_config(), None)
+        assert safe["API_KEY"] == "****"
+        assert safe["LAN_KEY"] == "****"
+        assert safe["REQUEST_HEADERS"]["Authorization"] == "Bearer ****"
+
+    def test_paths_section_resolves_env_overrides(self, tmp_path, monkeypatch):
+        """PATHS reflects HSYNC_* overrides and the env file argument."""
+        device = tmp_path / "device"
+        state = tmp_path / "state"
+        locks = tmp_path / "locks"
+        monkeypatch.setenv("HSYNC_DEVICE_DIR", str(device))
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(state))
+        monkeypatch.setenv("HSYNC_LOCKS_DIR", str(locks))
+
+        safe = _safe_config_for_log(self._make_config(), "/tmp/.env")
+
+        assert safe["PATHS"]["ENV_FILE"] == "/tmp/.env"
+        assert safe["PATHS"]["DEVICE_DIR"] == str(device)
+        assert safe["PATHS"]["STATE_DIR"] == str(state)
+        assert safe["PATHS"]["STATE_DB"] == str(state / "syncstate.db")
+        assert safe["PATHS"]["LOCKS_DIR"] == str(locks)
+
+    def test_env_file_none_when_omitted(self):
+        """ENV_FILE is None when no --env-file was passed."""
+        safe = _safe_config_for_log(self._make_config(), None)
+        assert safe["PATHS"]["ENV_FILE"] is None

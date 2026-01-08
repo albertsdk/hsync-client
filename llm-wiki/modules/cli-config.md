@@ -35,6 +35,7 @@ desktop can gate UI (§8).
 | `_check_server_connectivity` | `:1040` | fail fast on unreachable server |
 | `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `:215` / `:232` / `:249` | resolve CLI > env > default |
 | `_start_hsyncignore_watcher` | `:463` | hot-reload `.hsyncignore` matcher |
+| `_safe_config_for_log` | `:505` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`LAN_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
 | `_run_preview` | `:87` | dry-run action preview |
 | stdin runtime control | `:916`/`:1014`/`:1019` | live commands (e.g. change direction) via `stdin_commands.StdinCommandHandler` (`stdin_commands.py:35`) |
 

@@ -45,6 +45,11 @@ Environment equivalents: `HSYNC_MASS_DELETE_GUARD`,
 
 There is no `--log-level` flag. Verbosity is `-v` / `-q` only.
 
+In verbose mode the startup log includes a `Local configuration` JSON dump of
+the effective settings plus a `PATHS` section (env file, device identity dir,
+state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `LAN_KEY`,
+`Authorization`) are masked.
+
 ## General Options
 
 | Option | Description | Default |
