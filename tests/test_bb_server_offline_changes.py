@@ -73,6 +73,57 @@ def _full_log(local_dir: str, limit: int = 60000) -> str:
         return "<client log unavailable>"
 
 
+def _wait_for_log_text(local_dir: str, text: str, timeout: float = 30.0) -> bool:
+    """Poll the client log until *text* appears.
+
+    The ready-file only signals that the initial full sync completed; the
+    filesystem watcher becomes active a moment later (inside the remote/lan
+    event loop). The ``[READY]`` log marker is the observable readiness
+    threshold for local writes: "watcher active + event channel up". Waiting
+    for it here eliminates the race where a test writes a local file while
+    the inotify watch is not yet registered (the event is then lost and the
+    file never reaches the server).
+    """
+    return _wait_for(lambda: text in _full_log(local_dir), timeout=timeout)
+
+
+def _wait_for_watcher_pipeline(bucket: str, local_dir: str, server_files) -> None:
+    """Prove the local→server watcher pipeline before the real writes.
+
+    The inotify watch registration is asynchronous relative to
+    ``observer.start()``: a file written right after the ``[READY]`` log
+    line can race the kernel watch and be silently lost. This barrier
+    repeatedly writes a *distinct* probe file and waits for it to appear in
+    the server listing; a lost event simply means the next probe is tried.
+    When one arrives, the pipeline is warm. Probes are removed once the
+    barrier is crossed.
+    """
+    probes: list[Path] = []
+    for attempt in range(1, 11):
+        name = f"watcher-probe-{attempt}.txt"
+        probe = Path(local_dir) / name
+        probe.write_bytes(f"probe-{attempt}\n".encode())
+        probes.append(probe)
+        if _wait_for(lambda name=name: name in server_files(bucket), timeout=15):
+            for p in probes:
+                p.unlink()
+            return
+    last = Path(local_dir) / "watcher-probe-final.txt"
+    last.write_bytes(b"probe-final\n")
+    probes.append(last)
+    if _wait_for(lambda: "watcher-probe-final.txt" in server_files(bucket), timeout=15):
+        for p in probes:
+            p.unlink()
+        return
+    for p in probes:
+        p.unlink()
+    raise AssertionError(
+        "watcher pipeline never delivered a probe file "
+        f"(server files: {sorted(server_files(bucket))})\n"
+        f"--- client log tail ---\n{_full_log(local_dir)}"
+    )
+
+
 def _kill(proc: subprocess.Popen) -> None:
     """SIGKILL the client subprocess and reap it (simulates a hard crash)."""
     proc.kill()
@@ -119,6 +170,14 @@ class TestOfflineChangesServerDisconnect:
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
                 f"watch mode did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
+            )
+            # Watcher readiness (see _wait_for_log_text above): local writes
+            # must not race the inotify watch registration.
+            assert _wait_for_log_text(local_dir, "[READY]"), (
+                f"watcher did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
+            )
+            _wait_for_watcher_pipeline(
+                bb_restartable_bucket, local_dir, bb_restartable_server_files
             )
 
             # Baseline: a synced file the client uploaded (merge base recorded).
@@ -203,6 +262,10 @@ class TestOfflineChangesClientKill:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
                 f"watch mode did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
             )
+            assert _wait_for_log_text(local_dir, "[READY]"), (
+                f"watcher did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
+            )
+            _wait_for_watcher_pipeline(bb_bucket, local_dir, bb_server_files)
             (Path(local_dir) / "modify_me.txt").write_bytes(b"v1\n")
             assert _wait_for(lambda: "modify_me.txt" in bb_server_files(bb_bucket), timeout=40), (
                 "baseline file did not reach the server"
@@ -270,6 +333,10 @@ class TestOfflineChangesClientKill:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
                 f"watch mode did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
             )
+            assert _wait_for_log_text(local_dir, "[READY]"), (
+                f"watcher did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
+            )
+            _wait_for_watcher_pipeline(bb_bucket, local_dir, bb_server_files)
             # File created locally and uploaded by the watcher (merge base only
             # in memory until a sync cycle flushes it).
             (Path(local_dir) / "kill_me.txt").write_bytes(b"kill\n")

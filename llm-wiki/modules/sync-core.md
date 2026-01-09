@@ -290,20 +290,50 @@ preceding no-op close):
   so `on_modified` calls `_process_permission_only` (`file_event_handler.py`),
   which refreshes the cached mode and, on a real change, invokes the transport
   hook `_on_permissions_changed(file, path)`. Content bytes are NEVER read from
-  this path (a concurrent partial write would be torn).
+  this path (a concurrent partial write would be torn). The mode baseline lives
+  in the dedicated `_last_mode` map — deliberately SEPARATE from
+  `_last_broadcast_stat`: writing the first-observed stat there poisoned stage 1
+  of `_process_file_ready` (a fast single-syscall write reaches its final size
+  before the handler runs, so `on_closed` saw the same stat and skipped the
+  file as "unchanged", silently losing the upload); `_last_mode` is kept in
+  step with the last *propagated* content in `_record_broadcast` and
+  invalidated on rename/delete/eviction.
 - **Non-inotify platforms**: the same mode comparison lives in stage 2 of
   `_process_file_ready` — a hash match with a different mode triggers the hook
   instead of the skip.
-- **Transports**: the Remote handler uploads the file (the server's same-SHA
-  branch applies only the permissions and broadcasts `modified`); the LAN
-  master broadcasts `modified` so slaves converge via `update_file`. The LAN
-  slave handler (`LANSlaveFileEventHandler.on_modified` Linux branch) keeps its
-  own `_last_mode` map and uploads on mode change so the master re-applies the
+- **Transports**: the Remote handler uploads the file with
+  `permissions_only=True`; when the upload-status precheck reports
+  `complete`, the `PATCH …/files/permissions` endpoint is tried first
+  (`patch_permissions_remote` / `_patch_permissions_only`, `transfer.py`):
+  the mode travels alone, NO file bytes cross the wire. When the peer does
+  not expose the endpoint (older version), the legacy same-SHA full-upload
+  branch is the fallback. The LAN master broadcasts `modified` so slaves
+  converge via `update_file`. The LAN slave handler
+  (`LANSlaveFileEventHandler.on_modified` Linux branch) keeps its own
+  `_last_mode` map and uploads on mode change so the master re-applies the
   permissions to itself and re-broadcasts.
 - **One-shot reconcile** (`get_sync_actions`, `sync.py`): when content hashes
   agree but permissions differ, the `nothing` action is reclassified —
   `upload` in bidirectional/upload-only (local permissions win) or local
-  `set_permissions(remote)` in download-only (remote wins).
+  `set_permissions(remote)` in download-only (remote wins). The permission
+  mutation is gated on `persist_state` so a dry-run never chmods anything.
+
+**Directory permission-only changes (chmod on a dir)** propagate through the
+directory metadata surface (directories carry no content hash and never
+appear in the `/files` listing):
+
+- **LAN slave watcher** (Linux IN_ATTRIB): the slave keeps a `_last_dir_mode`
+  map and, on a mode change, pushes the directory through `POST /dirs` with
+  `permissions` set (`_propagate_dir_permission_change`, `lan_websocket.py`);
+  the master applies the mode (owner rwx floor) and its watcher re-broadcasts
+  the change.
+- **Inbound events**: `update_dir` (`sync.py`) applies the remote mode with
+  the owner rwx floor via `set_permissions_on_dir` (`utils.py`) — a peer mode
+  like `000` can never lock the receiver out of its own storage.
+- **One-shot reconcile (download-only)**: `converge_directory_permissions`
+  (`sync.py`) compares the dedicated `GET /dirs` listing (exposed by both the
+  server and the LAN master) against the local tree and applies the remote
+  mode where it diverges. Runs only inside `sync()`, never in previews.
 
 This correctly handles the no-op-close-before-safe-save scenario: the first
 close (content unchanged) is skipped at stage 2, and the subsequent rename

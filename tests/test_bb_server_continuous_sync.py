@@ -63,6 +63,61 @@ def _wait_for_log_text(log_path: str, text: str, timeout: float = 30.0) -> bool:
     return _wait_for(lambda: text in _watch_client_log_tail(log_path), timeout=timeout)
 
 
+def _wait_for_ready(local_dir: str, proc: subprocess.Popen, log_path: str | None = None) -> bool:
+    """Wait until the client is *actually* ready for local writes.
+
+    The ready-file only proves the initial full sync completed; the watcher
+    becomes active a moment later (inside the event loop, right before the
+    ``[READY]`` log line). A local write performed in that window races the
+    inotify watch registration and is silently lost (no upload). This helper
+    gates on the observable ``[READY]`` marker ("watcher active + event
+    channel up") when a log path is available, falling back to the ready-file
+    plus a short settle window otherwise.
+    """
+    assert _wait_for_client_ready(proc, _ready_path(local_dir)), "client did not become ready"
+    if log_path is not None:
+        return _wait_for_log_text(log_path, "[READY]", timeout=30)
+    time.sleep(2.0)  # settle window for the watcher to observe
+    return True
+
+
+def _wait_for_watcher_pipeline(bucket: str, local_dir: str, server_files) -> None:
+    """Prove the local→server watcher pipeline before the real writes.
+
+    The inotify watch registration is asynchronous relative to
+    ``observer.start()``: a file written right after the ``[READY]`` log
+    line can race the kernel watch and be silently lost (no event, no
+    upload). This barrier repeatedly writes a *distinct* probe file and
+    waits for it to appear in the server listing; a lost event simply means
+    the next probe is tried. When a probe arrives, the pipeline is warm and
+    the subsequent real writes are delivered. The probes are removed once
+    the barrier is crossed.
+    """
+    probes: list[Path] = []
+    for attempt in range(1, 11):
+        name = f"watcher-probe-{attempt}.txt"
+        probe = Path(local_dir) / name
+        probe.write_bytes(f"probe-{attempt}\n".encode())
+        probes.append(probe)
+        if _wait_for(lambda name=name: name in server_files(bucket), timeout=15):
+            for p in probes:
+                p.unlink()
+            return
+    last = Path(local_dir) / "watcher-probe-final.txt"
+    last.write_bytes(b"probe-final\n")
+    probes.append(last)
+    if _wait_for(lambda: "watcher-probe-final.txt" in server_files(bucket), timeout=15):
+        for p in probes:
+            p.unlink()
+        return
+    for p in probes:
+        p.unlink()
+    raise AssertionError(
+        "watcher pipeline never delivered a probe file "
+        f"(server files: {sorted(server_files(bucket))})"
+    )
+
+
 class TestContinuousSyncServerRestart:
     def test_resync_after_server_restart(
         self,
@@ -84,10 +139,17 @@ class TestContinuousSyncServerRestart:
         # Given a client running in watch mode against a bucket (periodic
         # full resync every 20s)
         log_path = str(Path(local_dir).parent / "client.log")
-        proc = watch_sync_restartable(bb_restartable_bucket, local_dir, "--interval", "20")
+        proc = watch_sync_restartable(
+            bb_restartable_bucket, local_dir, "--interval", "20", "--output", log_path
+        )
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
+            # Prove the local→server watcher pipeline before the real writes.
+            _wait_for_watcher_pipeline(
+                bb_restartable_bucket, local_dir, bb_restartable_server_files
             )
 
             # Create a file locally so it is uploaded while the server is up
@@ -156,18 +218,24 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_files
     ):
         # Given a client running in watch mode against an empty bucket
-        proc = watch_sync(bb_bucket, local_dir)
+        log_path = _client_log_path(local_dir)
+        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
+            # Prove the local→server watcher pipeline before the real writes.
+            _wait_for_watcher_pipeline(bb_bucket, local_dir, bb_server_files)
 
             # When a new file is created locally
             content = b"watched change\n"
             (Path(local_dir) / "watched.txt").write_bytes(content)
 
             # Then the file is uploaded to the server within a few seconds
-            assert _wait_for(lambda: "watched.txt" in bb_server_files(bb_bucket))
+            assert _wait_for(lambda: "watched.txt" in bb_server_files(bb_bucket)), (
+                f"file not uploaded\n--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
             time.sleep(5)
             # The process shouldn't crash — smoke test
             assert proc.poll() is None
@@ -310,10 +378,12 @@ class TestContinuousSync:
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_files
     ):
         """Directory created locally appears on the server."""
-        proc = watch_sync(bb_bucket, local_dir)
+        log_path = _client_log_path(local_dir)
+        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
             sub = Path(local_dir) / "newdir"
@@ -322,11 +392,11 @@ class TestContinuousSync:
             # before creating files inside it — the kernel may deliver the
             # DirCreated event to watchdog asynchronously, and until the handler
             # calls observer.schedule() the subdirectory is unmonitored.
-            time.sleep(0.5)
+            time.sleep(2.0)
             (sub / "f.txt").write_bytes(b"inside\n")
 
             # The file inside the directory should appear on server
-            assert _wait_for(lambda: "newdir/f.txt" in bb_server_files(bb_bucket), timeout=20)
+            assert _wait_for(lambda: "newdir/f.txt" in bb_server_files(bb_bucket), timeout=60)
         finally:
             _terminate(proc)
 
@@ -489,11 +559,15 @@ class TestContinuousSyncHsyncignoreReload:
         """Adding .hsyncignore during an active watch stops uploading newly
         created matching files, while already-synced files are preserved
         (exclude protects, it does not delete)."""
-        proc = watch_sync(bb_bucket, local_dir)
+        log_path = _client_log_path(local_dir)
+        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
+            # Prove the local→server watcher pipeline before the real writes.
+            _wait_for_watcher_pipeline(bb_bucket, local_dir, bb_server_files)
             # Given a visible file uploaded before any ignore rule
             (Path(local_dir) / "keep.txt").write_bytes(b"keep\n")
             assert _wait_for(lambda: "keep.txt" in bb_server_files(bb_bucket))

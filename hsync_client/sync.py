@@ -51,6 +51,7 @@ from hsync_common.path_validation import (
     resolve_within,
     validate_remote_relpath,
 )
+from hsync_common.permissions import sanitize_remote_permissions
 from loguru import logger as log
 from requests import RequestException
 
@@ -69,6 +70,7 @@ from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import (
     get_ssl_verify,
     set_permissions,
+    set_permissions_on_dir,
 )
 
 # ── Sync-cycle coordination flag ──────────────────────────────────────────
@@ -341,6 +343,13 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         sync_actions = get_sync_actions(
             remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
         )
+
+        # Directory permission-only convergence (download-only): the remote
+        # mode wins. Directories never appear in the /files listing, so the
+        # dedicated /dirs listing is fetched on demand (best-effort: an older
+        # peer without the endpoint simply skips the converge).
+        if CONFIG.get("SYNC_DIRECTION", "bidirectional") == "download-only":
+            converge_directory_permissions(get_dirs_remote())
 
         # A fresh sync cycle starts — clear the per-cycle skip-set of
         # permanently-failed downloads so a file that failed last tick is
@@ -1147,6 +1156,78 @@ def _parse_advertised_version(
     return parsed["vclock"], int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
 
 
+# ── Download-only directory permission converge (dir chmod) ───────────────
+# Directories carry no content hash and never appear in the /files listing, so
+# the reconcile compares the dedicated /dirs listing against the local tree and
+# applies the remote mode when it diverges. This runs only inside sync() —
+# never in previews: a dry-run calls get_sync_actions(persist_state=False)
+# directly and never reaches this path.
+
+
+def get_dirs_remote() -> list[dict]:
+    """Fetch the remote directory metadata (path + permissions) listing.
+
+    Best-effort by design: a peer that does not expose the endpoint (older
+    version) or any non-200 response yields an empty list, so the
+    directory-permission converge is simply skipped. Mirrors the tombstone
+    listing availability contract.
+    """
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/dirs"
+    try:
+        response = get(
+            uri,
+            headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
+            verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
+        )
+    except RequestException as e:
+        log.debug(f"Dirs listing unavailable: {e}")
+        return []
+    if response.status_code != 200:
+        log.debug(f"Dirs listing unavailable (status {response.status_code})")
+        return []
+    data = response.json()
+    return data if isinstance(data, list) else []
+
+
+def converge_directory_permissions(remote_dirs: list[dict]) -> None:
+    """Apply divergent remote directory permissions locally (download-only).
+
+    Each entry is validated (untrusted wire input) and compared against the
+    local directory mode; on divergence the remote mode wins. Every chmod is
+    best-effort — a failure is logged and never aborts the cycle.
+    """
+    for info in remote_dirs:
+        if not isinstance(info, dict):
+            continue
+        rel = info.get("path")
+        remote_permissions = info.get("permissions")
+        if not isinstance(rel, str) or not isinstance(remote_permissions, str):
+            continue
+        if validate_remote_relpath(rel) is None:
+            log.warning(f"{ActionLabel.SECURITY} Ignoring unsafe remote directory entry: {rel!r}")
+            continue
+        # Hidden check on the ABSOLUTE path: the ignore matcher compares
+        # slash-joined patterns, so a relative path could miss (or falsely
+        # match) directory-prefix rules.
+        if is_hidden_dir(str(Path(CONFIG["LOCAL_BUCKET"]) / rel)):
+            continue
+        local_dir = Dir.get(rel, CONFIG["LOCAL_BUCKET"])
+        if local_dir is None or not local_dir.path:
+            continue
+        try:
+            sanitized = sanitize_remote_permissions(remote_permissions)
+        except ValueError:
+            continue
+        if local_dir.permissions == sanitized:
+            continue
+        try:
+            set_permissions_on_dir(local_dir.path, sanitized)
+            log.debug(f'Permission-only converge (remote): "{local_dir.path}" ({sanitized})')
+        except OSError as e:
+            log.warning(f'Could not set directory permissions for "{local_dir.path}": {e}')
+
+
 def get_sync_actions(
     remote_files: list[dict] | None = None,
     local_files: list[dict] | None = None,
@@ -1268,8 +1349,10 @@ def get_sync_actions(
             #   file (the server/master same-SHA branch applies only the
             #   permissions and notifies the other clients);
             # - download-only: the remote mode wins → converge locally.
+            # Gated on persist_state so a dry-run/preview never mutates the
+            # local filesystem (same purity contract as merge_and_record).
             permissions_only = False
-            if action == SyncActionName.nothing:
+            if action == SyncActionName.nothing and persist_state:
                 local_perms = local_file.permissions
                 remote_perms = remote_file.permissions
                 if local_perms and remote_perms and local_perms != remote_perms:
@@ -1581,7 +1664,7 @@ def update_dir(data: dict) -> Dir | None:
         dir_data = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
         if dir_data.permissions != dir.permissions and dir.path and dir_data.permissions:
             dir.permissions = dir_data.permissions
-            set_permissions(dir.path, dir.permissions)
+            set_permissions_on_dir(dir.path, dir.permissions)
     else:
         # Directory doesn't exist - create it
         dir = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
@@ -1589,7 +1672,7 @@ def update_dir(data: dict) -> Dir | None:
             Path(dir.path).mkdir(parents=True, exist_ok=True)
             emit_event(UiEventName.dir_created, path=dir.path)
             if dir.permissions:
-                set_permissions(dir.path, dir.permissions)
+                set_permissions_on_dir(dir.path, dir.permissions)
 
     return dir
 

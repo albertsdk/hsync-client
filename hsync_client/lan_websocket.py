@@ -1069,6 +1069,11 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # propagated as a permission-only upload. Pop the entry on delete/rename
         # so a re-created path with a different mode is never suppressed.
         self._last_mode: dict[str, int] = {}
+        # Same dedup, for directories: a directory chmod fires only IN_ATTRIB
+        # (no close, no content hash), so the mode is tracked separately and a
+        # change triggers a /dirs call to the master (directory-permission
+        # propagation — the master then re-broadcasts it to the other slaves).
+        self._last_dir_mode: dict[str, int] = {}
         # Track files we're currently receiving from master to avoid echo
         self._receiving_files: set[str] = set()
         self._receiving_lock = threading.Lock()
@@ -1263,6 +1268,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self,
         target,
         args: tuple = (),
+        kwargs: dict | None = None,
         name: str | None = None,
         bytes_estimate: int = 0,
     ) -> threading.Thread:
@@ -1271,6 +1277,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         Args:
             target: Callable to run in the thread.
             args: Arguments to pass to target.
+            kwargs: Keyword arguments to pass to target.
             name: Optional thread name for debugging.
             bytes_estimate: Expected payload size in bytes (used by
                 ``wait_pending`` to derive a proportional timeout).
@@ -1279,7 +1286,9 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         Returns:
             The started thread.
         """
-        thread = threading.Thread(target=target, args=args, daemon=True, name=name)
+        thread = threading.Thread(
+            target=target, args=args, kwargs=kwargs or {}, daemon=True, name=name
+        )
         with self._pending_ops_lock:
             # Clean up completed threads
             self._pending_ops = [(t, b) for t, b in self._pending_ops if t.is_alive()]
@@ -1361,12 +1370,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
 
-    def _create_dir_on_master(self, dir_path: str) -> None:
+    def _create_dir_on_master(self, dir_path: str, permissions: str | None = None) -> None:
         """Notify master about a directory creation.
 
         POSTs to the master's ``/dirs`` endpoint so the directory (and any
         missing parents) is created on the master and propagated to other
         slaves. Respects ``SYNC_DIRECTION == "download-only"``.
+        When *permissions* is given (a directory chmod propagate), the master
+        applies the mode to the already-existing directory (owner-floor
+        preserved) and re-broadcasts it.
         """
         from hsync_client.utils import get_ssl_verify, http_post
 
@@ -1384,6 +1396,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             )
 
             params = {"path": rel_path}
+            if permissions:
+                params["permissions"] = permissions
             # Include our CID so the master can attribute the resulting
             # filesystem event back to us and suppress the echo broadcast.
             own_cid = CONFIG.get("CID")
@@ -1641,6 +1655,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             return
 
         if event.is_directory:
+            if not is_hidden_dir(src_path):
+                self._propagate_dir_permission_change(src_path)
             return
 
         if is_hidden_file(src_path):
@@ -1677,6 +1693,34 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         # On non-Linux, use on_modified as fallback for file completion
         self._handle_file_upload(src_path)
+
+    def _propagate_dir_permission_change(self, src_path: str) -> None:
+        """Propagate a directory permission-only change to the master.
+
+        A directory ``chmod`` fires only ``IN_ATTRIB`` (no close, no content);
+        the master's watcher would never see it from this slave. On a mode
+        change (after the first observation), the directory is pushed through
+        the existing ``POST /dirs`` surface with its current permissions: the
+        master applies the mode (owner-floor preserved) and its watcher
+        re-broadcasts the change to the other slaves.
+        """
+        try:
+            mode = Path(src_path).stat().st_mode & 0o7777
+        except OSError:
+            return
+        prev = self._last_dir_mode.get(src_path)
+        self._last_dir_mode[src_path] = mode
+        if prev is None:
+            return
+        if prev == mode:
+            return
+        log.info(f'[PERMISSION] mode change: "{src_path}" (dir)')
+        self._start_operation(
+            target=self._create_dir_on_master,
+            args=(src_path,),
+            kwargs={"permissions": f"{mode:o}"},
+            name=f"dir-permissions-{src_path}",
+        )
 
     def on_closed(self, event) -> None:
         """Handle file close events (Linux only)."""
@@ -1825,6 +1869,8 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # The file no longer exists: cancel any on_created-deferred upload so
         # a stale timer does not try to upload a deleted file.
         self._cancel_create_upload(src_path)
+        self._last_mode.pop(src_path, None)
+        self._last_dir_mode.pop(src_path, None)
 
         # Skip temp files (.part files used during downloads)
         if self._is_temp_file(src_path):
@@ -1895,6 +1941,13 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # The file moved away from src_path: cancel any on_created-deferred
         # upload for it so a stale timer does not upload a moved file.
         self._cancel_create_upload(src_path)
+        self._last_mode.pop(src_path, None)
+        self._last_dir_mode.pop(src_path, None)
+        # The destination is a fresh path: reset any mode tracking so the
+        # first event for it records the current mode instead of comparing
+        # against the stale one from the source.
+        self._last_mode.pop(dest_path, None)
+        self._last_dir_mode.pop(dest_path, None)
 
         # Skip in download-only mode (don't propagate local renames)
         if CONFIG.get("SYNC_DIRECTION") == "download-only":

@@ -78,6 +78,9 @@ from hsync_client.utils import (
     http_get as get,
 )
 from hsync_client.utils import (
+    http_patch as patch,
+)
+from hsync_client.utils import (
     http_post as post,
 )
 from hsync_client.utils import (
@@ -1100,6 +1103,60 @@ def _remote_vclock(file: File) -> dict[str, int] | None:
     return None
 
 
+def patch_permissions_remote(filename: str, permissions: str) -> bool:
+    """Apply a permission-only change on the remote WITHOUT sending file bytes.
+
+    Hits the server's metadata-only ``PATCH …/files/permissions`` endpoint
+    (the same route the LAN master exposes), so a chmod on a large file does
+    not re-upload its content. Best-effort by construction: any transport
+    error or non-200 status degrades to ``False`` and the caller falls back
+    to the regular upload path (whose same-SHA branch applies the mode).
+
+    Args:
+        filename: Bucket-relative remote path of the file.
+        permissions: Octal permission string to apply (remote-sanitized).
+
+    Returns:
+        True when the remote applied the change, False otherwise.
+    """
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/permissions"
+    params: dict[str, str] = {"filename": filename, "permissions": permissions}
+    own_cid = CONFIG.get("CID")
+    if own_cid:
+        params["cid"] = own_cid
+    try:
+        response = patch(
+            uri,
+            params=params,
+            headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
+            verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
+        )
+    except RequestException as e:
+        log.debug(f'Permission PATCH failed for "{filename}": {e}')
+        return False
+    if response.status_code == 200:
+        return True
+    log.debug(f'Permission PATCH for "{filename}": status {response.status_code}')
+    return False
+
+
+def _patch_permissions_only(file: File, filename: str) -> bool:
+    """Resolve a ``permissions_only`` upload through the metadata-only endpoint.
+
+    Returns ``True`` when the upload is fully resolved (mode applied remotely,
+    merge base recorded, UI event emitted). Returns ``False`` when the endpoint
+    is unavailable (older server) and the caller must fall back to the legacy
+    full-upload same-SHA branch.
+    """
+    if not patch_permissions_remote(filename, file.permissions or ""):
+        return False
+    log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
+    _record_synced_base(file, vclock=_resolve_local_vclock(file))
+    emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
+    return True
+
+
 def _remote_corrected_mtime(file: File) -> int:
     """Return the remote-advertised corrected mtime for *file*, or 0.
 
@@ -1278,9 +1335,12 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 log.debug(f'"{file.filepath}" (already present on server)')
                 _record_synced_base(file, vclock=_resolve_local_vclock(file))
                 return
-            # A permission-only chmod: fall through with a full upload so the
-            # peer's same-SHA branch applies the new mode (and re-broadcasts);
-            # the bytes themselves are skipped there.
+            # A permission-only chmod: try the metadata-only endpoint first
+            # (no bytes cross the wire). When the peer does not expose it,
+            # fall through with a full upload so the same-SHA branch applies
+            # the new mode (and re-broadcasts); the bytes are skipped there.
+            if _patch_permissions_only(file, filename):
+                return
             log.debug(f'"{file.filepath}" (already present — converging metadata)')
             offset = 0
 

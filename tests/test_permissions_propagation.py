@@ -59,11 +59,11 @@ def test_process_permission_only_triggers_hook_on_mode_change():
         patch("hsync_client.file_event_handler.CONFIG", {"SYNC_DIRECTION": "bidirectional"}),
         patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
     ):
-        handler._last_broadcast_stat[src] = (5, 10, 0o644)  # previously 644
+        handler._last_mode[src] = 0o644  # previously 644
         handler._process_permission_only(src)
     mock_get.assert_called_once()
     assert len(handler.permissions_calls) == 1
-    assert handler._last_broadcast_stat[src][2] == 0o600
+    assert handler._last_mode[src] == 0o600
 
 
 def test_process_permission_only_noop_on_same_mode():
@@ -78,7 +78,7 @@ def test_process_permission_only_noop_on_same_mode():
         patch("hsync_client.file_event_handler.CONFIG", {"SYNC_DIRECTION": "bidirectional"}),
         patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
     ):
-        handler._last_broadcast_stat[src] = (5, 10, 0o644)  # same mode
+        handler._last_mode[src] = 0o644  # same mode
         handler._process_permission_only(src)
     mock_get.assert_not_called()
     assert handler.permissions_calls == []
@@ -99,7 +99,7 @@ def test_process_permission_only_first_observation_records_only():
         handler._process_permission_only(src)
     mock_get.assert_not_called()
     assert handler.permissions_calls == []
-    assert handler._last_broadcast_stat[src][2] == 0o644
+    assert handler._last_mode[src] == 0o644
 
 
 def _mock_engine(sync_mod, *, direction: str):
@@ -184,6 +184,40 @@ def test_get_sync_actions_download_only_converges_locally():
     names = [a.name for a in actions]
     assert SyncActionName.upload not in names
     mock_set.assert_called_once_with("/bucket/doc.txt", "600")
+
+
+def test_get_sync_actions_preview_does_not_touch_permissions():
+    """persist_state=False (preview/dry-run) must not mutate local permissions.
+
+    The download-only permission converge writes the remote mode to disk;
+    a preview must compute decisions without side effects, exactly like the
+    merge-base refresh it mirrors (same purity contract).
+    """
+    from hsync_client import sync as sync_mod
+
+    remote, local = _remote_local_lists()
+    with _mock_engine(sync_mod, direction="download-only"):
+        with patch.object(sync_mod, "set_permissions") as mock_set:
+            actions = sync_mod.get_sync_actions(
+                remote_files=remote, local_files=local, persist_state=False
+            )
+    names = [a.name for a in actions]
+    assert SyncActionName.upload not in names
+    mock_set.assert_not_called()
+
+
+def test_get_sync_actions_preview_keeps_permission_action_silent():
+    """persist_state=False must not reclassify a permission divergence as an upload."""
+    from hsync_client import sync as sync_mod
+
+    remote, local = _remote_local_lists()
+    with _mock_engine(sync_mod, direction="bidirectional"):
+        actions = sync_mod.get_sync_actions(
+            remote_files=remote, local_files=local, persist_state=False
+        )
+    names = [a.name for a in actions]
+    assert SyncActionName.nothing in names
+    assert SyncActionName.upload not in names
 
 
 def test_remote_handler_permissions_hook_uploads():

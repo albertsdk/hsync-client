@@ -37,6 +37,7 @@ from hsync_common.constants import (  # noqa: E402
 
 # Re-export shared action labels from hsync-common
 from hsync_common.labels import ActionLabel  # noqa: E402, F401
+from hsync_common.permissions import OWNER_DIRECTORY_ACCESS  # noqa: E402, F401
 
 # Application name sent as the X-Client-Name REST header. Identifies the
 # originating product (the CLI / sync daemon), never an internal module.

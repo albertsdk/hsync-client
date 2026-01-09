@@ -41,7 +41,7 @@ from hsync_common.constants import (
     PARTIAL_DOWNLOAD_SUFFIX,
 )
 from hsync_common.hashing import compute_sha256, is_sha256_hex
-from hsync_common.models.dir import is_hidden_dir
+from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File, is_hidden_file
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
@@ -123,6 +123,7 @@ ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
 ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
 ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX = "/files/upload-status"
+ENDPOINT_FILES_PERMISSIONS_SUFFIX = "/files/permissions"
 ENDPOINT_DIRS_SUFFIX = "/dirs"
 ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
 ENDPOINT_SYMLINKS_SUFFIX = "/symlinks"
@@ -233,6 +234,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._handle_time()
             return
 
+        # List directory permissions: /api/v1/buckets/{bucket}/dirs
+        if path.endswith(ENDPOINT_DIRS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_list_dirs()
+            return
+
         # List files: /api/v1/buckets/{bucket}/files
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_list_files(query)
@@ -339,12 +345,85 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
+        # Permission-only change: /api/v1/buckets/{bucket}/files/permissions
+        if path.endswith(ENDPOINT_FILES_PERMISSIONS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_patch_permissions(query)
+            return
+
         # Rename file/dir: /api/v1/buckets/{bucket}/files?src=...&dst=...
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_rename(query)
             return
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def _handle_patch_permissions(self, query: dict) -> None:
+        """Apply a permission-only change (chmod) from a slave peer.
+
+        Metadata-only convergence: the slave declares the bucket-relative
+        ``filename`` and the desired octal ``permissions``; no file bytes
+        cross the wire. Only REGULAR files are handled (directory modes go
+        through the ``/dirs`` surface — a directory chmod must keep the
+        owner rwx floor, which the file setter does not apply). The new mode
+        is sanitized (special bits stripped) and applied when it diverges
+        from the stored one. The master's own watcher then observes the
+        IN_ATTRIB change and broadcasts the ``modified`` event to the other
+        slaves, exactly like the central server's same-SHA branch.
+        """
+        rel_path = query.get("filename", [None])[0]
+        permissions = query.get("permissions", [None])[0]
+
+        if not rel_path or not permissions:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' or 'permissions'")
+            return
+
+        from hsync_common.permissions import is_valid_octal_permissions
+
+        if not is_valid_octal_permissions(permissions):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
+            return
+
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+
+        full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
+        if not full_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return
+
+        target = Path(full_path)
+        if target.is_symlink() or not target.is_file():
+            # Symlinks are replicated structurally (their POSIX mode is always
+            # 0777 anyway); directories go through the /dirs surface.
+            self._send_error_response(HTTP_NOT_FOUND, "File not found")
+            return
+
+        origin_cid = query.get("cid", [None])[0]
+        valid_origin_cid = (
+            origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
+        )
+        authenticated = bool(CONFIG.get("LAN_KEY"))
+        try:
+            # Attribute the resulting IN_ATTRIB event to the slave that sent it
+            # so its watcher can suppress its own echo (only honoured on
+            # authenticated requests).
+            if valid_origin_cid:
+                from hsync_client.lan_websocket import mark_inbound_origin
+
+                mark_inbound_origin(full_path, valid_origin_cid, authenticated=authenticated)
+
+            from hsync_client.utils import set_permissions
+
+            set_permissions(full_path, permissions)
+        except (OSError, ValueError) as e:
+            log.warning(f'Permission update failed for "{full_path}": {e}')
+            self._send_error_response(HTTP_INTERNAL_ERROR, "Permission update failed")
+            return
+
+        log.info(f'{ActionLabel.PERMISSION} Permissions updated: "{full_path}" ({permissions})')
+        self._send_json_response(HTTP_OK, {"info": "Permissions updated"})
 
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from client."""
@@ -597,12 +676,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             Path(full_path).mkdir(parents=True, exist_ok=True)
 
-            # Apply optional permissions if provided.
+            # Apply optional permissions if provided. The directory-specific
+            # setter keeps the owner rwx floor so a peer-supplied mode like
+            # ``000`` can never lock the master out of its own storage.
             permissions = query.get("permissions", [None])[0]
             if permissions:
-                from hsync_client.utils import set_permissions
+                from hsync_client.utils import set_permissions_on_dir
 
-                set_permissions(full_path, permissions)
+                set_permissions_on_dir(full_path, permissions)
 
             self._send_json_response(HTTP_CREATED, {"info": "Directory created successfully"})
 
@@ -714,6 +795,36 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         clock offset using round-trip measurement (NTP-like).
         """
         self._send_json_response(HTTP_OK, {"timestamp": time.time()})
+
+    def _handle_list_dirs(self) -> None:
+        """List directory metadata (path + permissions) inside the bucket.
+
+        Mirrors the central server's ``GET …/dirs`` endpoint so the client
+        download-only directory-permission converge works identically in
+        remote and LAN mode.
+        """
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket or not Path(local_bucket).exists():
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not found")
+            return
+
+        entries: list[dict] = []
+        for root, dirs, _files in walk(local_bucket):
+            dirs[:] = [d for d in dirs if not is_hidden_dir(f"{root}/{d}")]
+            for name in dirs:
+                full = f"{root}/{name}"
+                if Path(full).is_symlink():
+                    continue
+                dir_obj = Dir.get(full)
+                if dir_obj is None or dir_obj.permissions is None:
+                    continue
+                rel = os.path.relpath(full, local_bucket)
+                if rel == ".":
+                    continue
+                entries.append({"path": rel, "permissions": dir_obj.permissions})
+
+        entries.sort(key=lambda x: x.get("path", ""))
+        self._send_json_response(HTTP_OK, entries)
 
     def _handle_list_files(self, query: dict) -> None:
         """Handle list files endpoint."""

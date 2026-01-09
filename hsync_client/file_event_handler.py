@@ -134,6 +134,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
         #    still propagates as a permission-only event.
         self._last_broadcast_stat: dict[str, tuple[int, int, int]] = {}
         self._last_broadcast_hash: dict[str, str] = {}
+        # Mode-only dedup for the IN_ATTRIB (chmod) path. Deliberately SEPARATE
+        # from _last_broadcast_stat: the latter is the content-upload dedup key
+        # and must only be written by _record_broadcast (after a real
+        # propagation). Recording the first-observed stat there poisoned stage 1
+        # of _process_file_ready: a fast single-syscall write (e.g.
+        # Path.write_bytes of a small file) reaches its final size before the
+        # handler runs, so on_modified and on_closed observe the SAME stat; the
+        # poisoned entry made on_closed skip the file as "unchanged" and the
+        # upload was silently lost.
+        self._last_mode: dict[str, int] = {}
         # Optional observer reference: when set, newly created directories are
         # watched recursively so files inside them are picked up immediately
         # instead of waiting for the next full sync cycle.
@@ -228,6 +238,9 @@ class BaseFileEventHandler(FileSystemEventHandler):
         - mode changed: re-reads the file and delegates to the
           ``_on_permissions_changed`` transport hook.
         Content is NEVER uploaded from here (a partial write would be unsafe).
+
+        The mode baseline lives in the dedicated ``_last_mode`` map — never in
+        ``_last_broadcast_stat`` (see the init comment for why).
         """
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
@@ -237,20 +250,19 @@ class BaseFileEventHandler(FileSystemEventHandler):
             st = Path(src_path).stat()
         except OSError:
             return
-        current = self._stat_key(st)
-        prev = self._last_broadcast_stat.get(src_path)
-        if prev is None:
-            # First observation (e.g. the watch just started): record the mode
-            # so a later chmod is detected; content goes via on_closed.
-            self._last_broadcast_stat[src_path] = current
-            return
-        if current[2] == prev[2]:
+        mode = st.st_mode & 0o7777
+        prev = self._last_mode.get(src_path)
+        self._last_mode[src_path] = mode
+        if prev is None or prev == mode:
+            # First observation (e.g. the watch just started, or the content
+            # write that preceded this event): record the mode so a later
+            # chmod is detected; content goes via on_closed. Mode unchanged:
+            # no-op.
             return
         invalidate_sha256_cache(src_path)
         file_obj = File.get(src_path)
         if file_obj is None:
             return
-        self._last_broadcast_stat[src_path] = current
         log.info(f'[PERMISSION] mode change: "{src_path}"{self._cid_suffix(src_path)}')
         self._on_permissions_changed(file_obj, src_path)
 
@@ -270,8 +282,17 @@ class BaseFileEventHandler(FileSystemEventHandler):
             oldest = next(iter(self._last_broadcast_stat))
             self._last_broadcast_stat.pop(oldest, None)
             self._last_broadcast_hash.pop(oldest, None)
+            self._last_mode.pop(oldest, None)
         self._last_broadcast_stat[src_path] = stat
         self._last_broadcast_hash[src_path] = sha256
+        # Keep the mode baseline in step with the last PROPAGATED content, so a
+        # later chmod is detected relative to the uploaded mode and not to a
+        # stale pre-upload observation. stat is the 3-tuple produced by
+        # _stat_key; tolerate a 2-tuple (legacy callers/tests) by skipping the
+        # mode baseline update (the _last_mode map is only read by the chmod
+        # path, which always goes through _stat_key).
+        if len(stat) >= 3:
+            self._last_mode[src_path] = stat[2]
 
     # ----- watchdog event handlers -----
 
@@ -349,7 +370,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # directory (the observer.schedule below), so a chain of mkdirs
             # can fire two DirCreatedEvent for the same directory within
             # milliseconds. Directories carry no content hash, so a stat
-            # pre-check (mtime_ns + size) against the last broadcast is
+            # pre-check (mtime_ns + size + mode) against the last broadcast is
             # sufficient and cheap (one stat()). The stat is recorded
             # *before* logging/broadcasting: recording up front lets the
             # pre-check catch the sibling immediately (same pattern as the
@@ -410,8 +431,9 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 # fires IN_ATTRIB on a directory whenever a child is created,
                 # written, renamed or removed, so a single file save can emit
                 # several identical directory MODIFY lines. Directories carry no
-                # content hash, so a stat pre-check (mtime_ns + size) against
-                # the last broadcast is sufficient and cheap (one stat()).
+                # content hash, so a stat pre-check (mtime_ns + size + mode)
+                # against the last broadcast is sufficient and cheap (one
+                # stat()); the mode half also detects a directory chmod.
                 # The (dir) annotation disambiguates these directory-level
                 # metadata broadcasts from file content changes.
                 try:
@@ -483,7 +505,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
         Two-stage content dedup suppresses spurious broadcasts:
 
-        1. **Stat pre-check** — if ``(mtime, size)`` matches the last
+        1. **Stat pre-check** — if ``(mtime, size, mode)`` matches the last
            broadcast for this path, skip without hashing (catches an editor
            open/close with no write; cost: one ``stat()``).
         2. **Hash compare** — if the stat changed, compute the SHA-256 (via
@@ -591,6 +613,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # invalidation below and the delete-flush invalidation.
             self._last_broadcast_stat.pop(src_path, None)
             self._last_broadcast_hash.pop(src_path, None)
+            self._last_mode.pop(src_path, None)
 
             log.info(
                 f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
@@ -644,6 +667,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 # Mirrors the invalidation in on_deleted for the same bug class.
                 self._last_broadcast_stat.pop(src_path, None)
                 self._last_broadcast_hash.pop(src_path, None)
+                self._last_mode.pop(src_path, None)
 
         if message:
             self._broadcast_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
@@ -685,6 +709,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # "Skip unchanged (stat)".
             self._last_broadcast_stat.pop(src_path, None)
             self._last_broadcast_hash.pop(src_path, None)
+            self._last_mode.pop(src_path, None)
 
             if covered_by_deleted_ancestor(src_path):
                 log.debug(f'Folded into ancestor delete: "{src_path}"')

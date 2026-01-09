@@ -604,6 +604,29 @@ def set_permissions(file_path: str, permissions: str) -> None:
     chmod(file_path, mode)
 
 
+def set_permissions_on_dir(dir_path: str, permissions: str) -> None:
+    """Set directory permissions as received from a remote peer.
+
+    Same sanitization contract as :func:`set_permissions` (special bits
+    stripped — a synced directory must never become setuid/setgid/sticky),
+    plus the owner rwx floor that keeps the directory traversable by the
+    sync engine and its own storage (mirrors the server's
+    ``set_directory_permissions``).
+    """
+    from hsync_client.constants import OWNER_DIRECTORY_ACCESS
+
+    permissions = sanitize_remote_permissions(permissions)
+
+    # Skip if permissions already match (ignore the owner-floor when
+    # comparing: the floor is applied unconditionally below).
+    if Path(dir_path).exists() and permissions == get_permissions(dir_path):
+        return
+
+    mode = octal_to_mode(permissions) | OWNER_DIRECTORY_ACCESS
+    log.debug(f'{ActionLabel.PERMISSION} Set directory permission "{permissions}" to {dir_path}')
+    chmod(dir_path, mode)
+
+
 # =============================================================================
 # Bandwidth Limiting
 # =============================================================================
