@@ -4,9 +4,9 @@ LAN Mode lets devices on the same local network synchronize files directly,
 peer-to-peer, without a centralized HSYNC server.
 
 > **Quick links**
-> - Full option & environment-variable reference → [Configuration](configuration.md#lan-mode-options)
+> - Full option & environment-variable reference → [Configuration — LAN P2P Mode](configuration-lan.md#lan-mode-options)
 > - Ready-to-use recipes → [Examples](examples.md)
-> - Server vs LAN comparison → [Sync Modes](sync-modes.md#operating-modes-server-vs-lan)
+> - Server vs LAN comparison → [Sync Modes](sync-modes.md)
 > - Protocol internals (diagrams, HTTP/WS API, echo suppression) → [LAN Internals](internal/lan-internals.md)
 
 ## Overview
@@ -78,42 +78,11 @@ In plain terms, LAN mode works in three steps:
 > bidirectional operations table and the WebSocket event format are in
 > [LAN Internals](internal/lan-internals.md).
 
-## Quick Start
-
-### Basic Usage (No Authentication)
-
-```bash
-# On all devices - they will discover each other automatically
-hsync -b photos -p ~/Pictures --lan-mode
-```
-
-### With Authentication
-
-```bash
-# On all devices - use the same key via environment variable
-export HSYNC_LAN_KEY="mySecretKey123"
-hsync -b photos -p ~/Pictures --lan-mode
-
-# Or inline
-HSYNC_LAN_KEY="mySecretKey123" hsync -b photos -p ~/Pictures --lan-mode
-```
-
-### With Specific Port
-
-```bash
-# Use a specific port instead of random
-hsync -b photos -p ~/Pictures --lan-mode --lan-port 9000
-```
-
-### Disable Persistent Mode
-
-```bash
-# Exit immediately if no peers are found (one-shot sync)
-hsync -b photos -p ~/Pictures --lan-mode --no-lan-persistent
-
-# Or via environment variable
-HSYNC_LAN_PERSISTENT=false hsync -b photos -p ~/Pictures --lan-mode
-```
+> **First sync?** → Follow the step-by-step
+> [Getting Started — LAN P2P Mode](getting-started-lan.md) guide; this page
+> explains how LAN Mode works. Authentication (`HSYNC_LAN_KEY`), specific
+> ports, and every other LAN option live in
+> [Configuration — LAN P2P Mode](configuration-lan.md).
 
 ## Persistent Mode (Default)
 
@@ -397,8 +366,7 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 
 ## Comparison: Server Mode vs LAN Mode
 
-See [Sync Modes → Operating Modes](sync-modes.md#operating-modes-server-vs-lan)
-for the full Server vs LAN comparison table.
+See [Sync Modes](sync-modes.md) for the full Server vs LAN comparison table.
 
 ## Technical Internals
 

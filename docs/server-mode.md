@@ -4,9 +4,9 @@ Server Mode connects every device to a central **HSYNC server**, which acts as
 the canonical store and relays events to all connected clients in real time.
 
 > **Quick links**
-> - Full option & environment-variable reference → [Configuration](configuration.md#connection)
-> - Ready-to-use recipes → [Examples](examples.md#part-1--server-based-examples)
-> - Server vs LAN comparison → [Sync Modes](sync-modes.md#operating-modes-server-vs-lan)
+> - Full option & environment-variable reference → [Configuration — Server Mode](configuration-server.md#server-connection-options)
+> - Ready-to-use recipes → [Examples — Server Mode](examples-server.md)
+> - Server vs LAN comparison → [Sync Modes](sync-modes.md)
 > - Client-side sync flow (diagrams, delta transfer, event handling) → [Sync Flow](sync-flow.md)
 
 ## Overview
@@ -81,44 +81,9 @@ sequenceDiagram
 > conflict-resolution tree and the delta-transfer internals are in
 > [Sync Flow](sync-flow.md).
 
-## Quick Start
-
-### Basic Usage
-
-```bash
-# One-shot sync
-hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
-
-# Continuous real-time sync (watch mode)
-hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir -w
-```
-
-The API key is **required** in server mode. Set it via environment variable:
-
-```bash
-export HSYNC_API_KEY="your-api-key"
-```
-
-### With Custom CA Certificate (self-signed server)
-
-```bash
-# Copy the server's certificate to the client machine, then:
-hsync -s https://server:9753 -b mybucket -p /path/to/dir --ca-cert server.crt
-```
-
-> For local development only: `--insecure` skips all certificate verification.
-> Do **not** use in production. See [SSL/TLS](configuration.md#ssltls-httpswss)
-> for the full security guidance.
-
-### Directional Sync
-
-```bash
-# Upload-only: push local files to server, never download (backup)
-hsync -s https://server:9753 -b backup -p ~ --sync-direction upload-only
-
-# Download-only: mirror remote content locally (shared assets)
-hsync -s https://server:9753 -b shared -p ~/Assets --sync-direction download-only
-```
+> **First sync?** → Follow the step-by-step
+> [Getting Started — Server Mode](getting-started-server.md) guide; this page
+> explains how Server Mode works.
 
 ## Watch Mode & Auto-Sync
 
@@ -143,7 +108,7 @@ one-shot mode (`-y` to skip interactive prompts):
 
 ```bash
 # Cron entry: sync every hour
-0 * * * * HSYNC_API_KEY="key" hsync -s https://server:9753 -b mybucket -p /path -y
+0 * * * * HSYNC_API_KEY="hs_<id>_<secret>" hsync -s https://server:9753 -b mybucket -p /path -y
 ```
 
 ## Delta Transfer, Compression & Bandwidth
@@ -164,7 +129,7 @@ hsync -s https://server:9753 -b media -p ~/Media -w --no-delta
 ```
 
 > Full conditions, configuration and the fallback model are documented in
-> [Configuration → Delta Transfer](configuration.md#delta-transfer).
+> [Configuration → Delta Transfer](configuration.md#delta-transfer-rsync-style-block-sync).
 
 ### Compression (automatic, skips already-compressed files)
 
@@ -208,7 +173,7 @@ hsync -s https://server:9753 -b mybucket --ignore-patterns ".git/,*.log,/dist/"
 ```
 
 > Full syntax, examples and the complete default-pattern list are in
-> [Configuration → Ignore Files](configuration.md#ignore-files-hsyncignore).
+> [Configuration → Ignore Files](configuration.md#ignore-files--patterns).
 
 ## Security
 
@@ -226,7 +191,7 @@ over the encrypted channel and is **required**.
 
 > Complete SSL/TLS documentation, including certificate pinning,
 > reverse-proxy setup, and the `--ca-cert` / `--insecure` options, is in
-> [Configuration → SSL/TLS](configuration.md#ssltls-httpswss).
+> [Configuration — Server Mode → Server Connection Options](configuration-server.md#server-connection-options).
 
 ## Mass Deletion Guard
 
@@ -257,14 +222,14 @@ hsync -s https://server:9753 -b mybucket --mass-delete-threshold 10 --mass-delet
 ```
 
 > Full decision flowchart and the relationship with `--ignore-delete` and
-> `--sync-direction` are in [Configuration → Mass-Deletion Safety
-> Guard](configuration.md#mass-deletion-safety-guard).
+> `--sync-direction` are in [Configuration → Mass-Deletion
+> Guard](configuration.md#mass-deletion-guard).
 
 ## Options & Environment Variables
 
 All server-mode command-line options and `HSYNC_*` environment variables are
-documented in the single reference:
-[Configuration → CLI Options](configuration.md#cli-options).
+documented once in [Configuration](configuration.md) (shared) and
+[Configuration — Server Mode](configuration-server.md) (server-specific).
 
 Key server-mode specific options:
 
@@ -280,8 +245,7 @@ Key server-mode specific options:
 
 ## Comparison: Server Mode vs LAN Mode
 
-See [Sync Modes → Operating Modes](sync-modes.md#operating-modes-server-vs-lan)
-for the full comparison table.
+See [Sync Modes](sync-modes.md) for the full comparison table.
 
 ## Troubleshooting
 
@@ -314,7 +278,7 @@ for the full comparison table.
 
 - **`.hsyncignore` placement**: the file must be at the root of the bucket
   directory, not in a subdirectory. See
-  [Ignore Files](configuration.md#ignore-files-hsyncignore).
+  [Ignore Files](configuration.md#ignore-files--patterns).
 - **Dotfiles**: they sync by default. If they aren't appearing, check that
   `.hsyncignore` or `--ignore-patterns` is not excluding them. If they
   shouldn't sync, add `.git/` or `.env` to `.hsyncignore`.
@@ -326,7 +290,7 @@ for the full comparison table.
 
 Practical server-mode recipes — personal sync, backup, mirror, bandwidth
 limits, cron/systemd scheduling, mass-deletion guard — are in
-[Examples → Server-Based Examples](examples.md#part-1--server-based-examples).
+[Examples — Server Mode](examples-server.md).
 
 ## Technical Internals
 

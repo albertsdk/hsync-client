@@ -3,92 +3,65 @@
 HSYNC is a file-synchronization client. It keeps a local directory in sync in
 real-time either with a central **HSYNC server** (Server Mode) or directly with
 other devices on the same network (peer-to-peer **LAN Mode**). It ships as a
-single self-contained binary —
-no Python runtime is required to run it.
+single self-contained binary — no Python runtime is required to run it.
 
-## Install & quickstart
+## Start here
+
+This guide is organised as a linear journey; pick the step that matches where
+you are.
+
+### 1. Install
 
 Download the installer script, a prebuilt binary, `.deb`, or WD OS5 `.bin` from
 the [Releases page](https://github.com/albertobasso/hsync-client/releases), or
 build it from source — full instructions are in [Installation](installation.md).
 
-Once you have a working `hsync` binary, run a one-off sync against a server, or
-peer-to-peer on the LAN:
+- [`.deb` package guide](debian-package.md) — systemd service, custom paths, ACLs.
+- [Migration Guide](migration.md) — coming from rsync, Syncthing, or manual copies.
 
-```bash
-# Server Mode (needs HSYNC_API_KEY)
-hsync -s https://server:9753 -b mybucket -p /path/to/dir
+### 2. Choose a mode and run your first sync
 
-# LAN Mode (peers discover each other via mDNS)
-hsync -b mybucket -p /path/to/dir --lan-mode
-```
+HSYNC runs in two mutually exclusive modes. The [Getting Started](getting-started.md)
+chooser picks the right path; each path is a complete, copy-paste walkthrough:
 
-See [Getting Started](getting-started.md) for the full walkthrough.
+| Mode | Walkthrough | Best for |
+|------|-------------|----------|
+| **Server Mode** (central server) | [Getting Started — Server Mode](getting-started-server.md) | remote / internet sync, multiple sites |
+| **LAN Mode** (peer-to-peer) | [Getting Started — LAN P2P Mode](getting-started-lan.md) | devices on the same network, no server |
 
-## Where to start
+For the concepts behind each mode (how they work, security, master election),
+see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 
-- **Installing for the first time?** → Start with [Installation](installation.md).
-- **First sync?** → Follow the [Getting Started](getting-started.md) guide.
-- **Coming from another tool?** → See the [Migration Guide](migration.md).
-- **All CLI options?** → Check [Configuration](configuration.md).
-- **Using a central server?** → Read [Server Mode](server-mode.md).
-- **Peer-to-peer on the LAN?** → Read [LAN Mode](lan-mode.md).
-- **Contributing?** → See the [Developer Guide](internal/developer.md).
+### 3. Configure
 
-## Documentation map
+- [Configuration](configuration.md) — shared options: sync, compression, delta, logging, auto-tuning.
+- [Configuration — Server Mode](configuration-server.md) — server URL, API key, SSL/TLS, env vars.
+- [Configuration — LAN P2P Mode](configuration-lan.md) — discovery, master election, `HSYNC_LAN_KEY`, stability.
+- [Sync Modes](sync-modes.md) — server vs LAN topologies and how to combine flags.
 
-### Getting Started
+### 4. Operate
 
-| Document | What it covers |
-| -------- | -------------- |
-| [installation.md](installation.md) | Install via the installer script, prebuilt binary, `.deb`, or `.bin`, or build from source. |
-| [debian-package.md](debian-package.md) | Detailed guide for the `.deb` package: service, custom paths, ACLs. |
-| [getting-started.md](getting-started.md) | Build, choose a mode, and pick your path (Server or LAN P2P). |
-| [getting-started-server.md](getting-started-server.md) | Server Mode quickstart: connect to a central server. |
-| [getting-started-lan.md](getting-started-lan.md) | LAN P2P quickstart: sync directly with peers on your network. |
-| [migration.md](migration.md) | Migrate to HSYNC from rsync, Syncthing, cloud storage, or manual copies. |
+| Task | Guide |
+|------|-------|
+| Practical recipes (backup, mirror, multi-device, bandwidth) | [Examples](examples.md) → `examples-server.md` / `examples-lan.md` |
+| Schedule one-shot syncs (cron, systemd timers, alerts) | [Scheduling](scheduling.md) |
+| Read the client logs | [Log Labels](log-labels.md) |
+| Troubleshooting | [FAQ](faq.md) → `faq-server.md` / `faq-lan.md` |
 
-### Usage & Configuration
+### 5. Understand
 
-| Document | What it covers |
-| -------- | -------------- |
-| [usage.md](usage.md) | Complete command-line reference and common workflows. |
-| [configuration.md](configuration.md) | Shared options: sync, compression, delta, logging, auto-tuning. |
-| [configuration-server.md](configuration-server.md) | Server-mode options: server URL, API key, SSL/TLS, environment variables. |
-| [configuration-lan.md](configuration-lan.md) | LAN P2P options: discovery, master election, LAN_KEY, file stability. |
-| [sync-modes.md](sync-modes.md) | Index: Server vs LAN modes (split into separate guides). |
-| [sync-modes-server.md](sync-modes-server.md) | Server Mode: sync directions, watch mode, single sync, dry run, conflict handling. |
-| [sync-modes-lan.md](sync-modes-lan.md) | LAN P2P: master election, sync directions, watch mode, conflict handling. |
-| [server-mode.md](server-mode.md) | Server mode guide: how it works, quick start, security, and troubleshooting. |
-| [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
-| [examples.md](examples.md) | Index: practical usage recipes (split by mode). |
-| [examples-server.md](examples-server.md) | Server Mode examples: sync, backup, multi-device, bandwidth-limited. |
-| [examples-lan.md](examples-lan.md) | LAN P2P examples: Wi-Fi sync, NAS backup, groups, fixed ports. |
-| [scheduling.md](scheduling.md) | Schedule one-shot syncs with cron or systemd timers: exit codes, env-file secrets, alerting, examples. |
-| [log-labels.md](log-labels.md) | Every action label that can appear in the logs and what it means. |
+- [Authentication](authentication.md) — API key, LAN_KEY, hello handshake.
+- [Sync Flow](sync-flow.md) — client-side flow, split by mode.
+- [Conflict Resolution](conflict-resolution.md) — causal model and decision trees.
 
-### How It Works
+### 6. Reference & internals
 
-| Document | What it covers |
-| -------- | -------------- |
-| [authentication.md](authentication.md) | Authentication flows: Server Mode (API key), LAN P2P with/without LAN_KEY, hello handshake. |
-| [sync-flow.md](sync-flow.md) | Index: client-side sync flow (split into separate guides). |
-| [sync-flow-server.md](sync-flow-server.md) | Server Mode sync flow: connection, watch mode, event loop, conflict handling. |
-| [sync-flow-lan.md](sync-flow-lan.md) | LAN P2P sync flow: master election, WebSocket hub, echo suppression, slave upload. |
-| [faq.md](faq.md) | Index: frequently asked questions (split by mode). |
-| [faq-server.md](faq-server.md) | Server Mode FAQ: security, sync behavior, files, performance, Debian package. |
-| [faq-lan.md](faq-lan.md) | LAN P2P FAQ: master election, groups, ports, hello handshake, authentication. |
-
-### Internal / For Contributors
-
-| Document | What it covers |
-| -------- | -------------- |
-| [internal/architecture.md](internal/architecture.md) | How the client is structured internally. |
-| [conflict-resolution.md](conflict-resolution.md) | Causal conflict model (ADR-0022): decision tree of all cases, version store, conflicted-copy handling, upload arbitration on server/LAN master, and causal tombstones (ADR-0003) — with diagrams. |
-| [internal/lan-internals.md](internal/lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
-| [internal/developer.md](internal/developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
-| [internal/testing.md](internal/testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |
-| [internal/autotune.md](internal/autotune.md) | Auto-tuning subsystem: environment-adaptive defaults for HTTP timeout, retry delay, and transfer concurrency. |
+- [Usage](usage.md) — CLI syntax and behaviour (symlinks, error handling, auto-tuning).
+- [Internal architecture](internal/architecture.md) — how the client is structured.
+- [LAN protocol internals](internal/lan-internals.md) — deep P2P details.
+- [Auto-tuning internals](internal/autotune.md) — environment-adaptive defaults.
+- [Developer Guide](internal/developer.md) — for contributors.
+- [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.
 
 ## Related projects
 

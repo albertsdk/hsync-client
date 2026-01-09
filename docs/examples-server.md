@@ -18,13 +18,18 @@ server URL), then pass bucket, path, and watch on the CLI:
 
 ```bash
 export HSYNC_SERVER="https://hsync.example.com:9753"
-export HSYNC_API_KEY="your-api-key"
+export HSYNC_API_KEY="hs_<id>_<secret>"
 hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents" -w
 ```
 
 `--env-file` loads recognised `HSYNC_*` keys only (`HSYNC_SERVER`,
 `HSYNC_API_KEY`, …). `HSYNC_BUCKET`, `HSYNC_PATH`, and `HSYNC_WATCH` are
 not settings keys.
+
+> **Buckets must exist before the first sync.** Create them on the server
+> (once) with `hsync-server admin bucket create --bucket <name>` — see the
+> server [Getting Started](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started.md)
+> guide. The examples below assume the referenced bucket already exists.
 
 ## 1.1 Sync a personal folder (one-time)
 

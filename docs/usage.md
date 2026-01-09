@@ -23,8 +23,7 @@ hsync -s <server_url> -b <bucket_name> [options]
 hsync --lan-mode -b <bucket_name> [options]
 ```
 
-See [Sync Modes → Operating Modes](sync-modes.md#operating-modes-server-vs-lan)
-for when to use each.
+See [Sync Modes](sync-modes.md) for when to use each.
 
 ### Options Overview
 
@@ -32,8 +31,8 @@ Options are grouped into **Connection**, **Sync**, **LAN**, **Output** and
 **General** panels (run `hsync --help` to see them in your terminal).
 
 > For the **complete option reference** (descriptions, defaults and accepted
-> values) see [Configuration → CLI Options](configuration.md#cli-options).
-> `HSYNC_LAN_KEY` is set via environment variable only.
+> values) see [Configuration](configuration.md). `HSYNC_LAN_KEY` is set via
+> environment variable only.
 
 ## Usage Scenarios
 
@@ -58,7 +57,7 @@ Errors are handled per item, so one failure never aborts the whole run: network
 errors are retried with backoff (then marked failed), authentication errors abort
 early, missing files are skipped and permission issues are logged as warnings.
 The full decision flow is documented in
-[Architecture → Error Handling & Retries](internal/architecture.md#error-handling--retries).
+[Developer Guide → Error Handling & Retries](internal/developer.md#error-handling--retries).
 
 ## Auto-Tuning
 
@@ -66,50 +65,19 @@ HSYNC automatically tunes HTTP timeout, retry backoff, and transfer
 concurrency based on the runtime environment (network latency, bandwidth,
 storage type). This is enabled by default and requires no configuration.
 
-### How it works
-
-At startup the client probes the environment:
-
-- **Network latency** (TCP connect RTT to the server/LAN master)
-- **Bandwidth** (passive EMA from real transfers; optional active probe)
-- **Storage type** (HDD / SSD / NVMe, probed from the sync root)
-- **Transfer-queue profile** (re-evaluated each sync cycle, zero I/O)
-
-The derived values are used as defaults when the user has not set an explicit
-override. Per-cycle concurrency is refreshed from the live queue shape.
-
-### Resolution chain
-
-```
-CLI flag  >  HSYNC_* env var  >  auto-tuned value  >  static default
-```
-
-Set any of `HSYNC_HTTP_TIMEOUT`, `HSYNC_RECONNECT_DELAY`,
-`HSYNC_MAX_CONCURRENT_TRANSFERS`, `HSYNC_TRANSFER_RETRY_MIN_WAIT`, or
-`HSYNC_TRANSFER_RETRY_MAX_WAIT` to override the auto-tuned value. Use
-`--no-autotune` or `HSYNC_AUTOTUNE=false` to disable auto-tuning entirely
-and use the built-in static defaults.
-
-### Tuned parameters
-
-| Parameter | Static default | Auto-tuned range |
-| --------- | -------------- | ---------------- |
-| HTTP timeout | 30 s | 30 / 45 / 60 s (based on RTT) |
-| Retry min wait | 1 s | 5–15 s (scales with RTT) |
-| Retry max wait | 10 s | 10–30 s (scales with RTT) |
-| Reconnect delay | 5 s | 5–15 s (scales with RTT) |
-| Concurrency | 5 | 5–20 (based on storage + bandwidth + queue) |
-
-See [Configuration → Environment Variables](configuration.md#environment-variables)
-for the full reference.
+> The full explanation — probing, the resolution chain (`CLI flag > env var >
+> auto-tuned value > static default`), and the tuned parameter ranges — is in
+> [Auto-Tuning internals](internal/autotune.md); the user-facing knobs are in
+> [Configuration → Auto-Tuning](configuration.md#auto-tuning).
 
 ## Environment Variables
 
 Environment variables and the provided `dev.env` / `prod.env` templates are
 documented in the single configuration reference:
 
-- [Configuration → Environment Variables](configuration.md#environment-variables)
-- [Configuration → Environment Files](configuration.md#environment-files)
+- [Configuration](configuration.md) — shared options and `HSYNC_*` variables
+- [Configuration → Environment files](configuration.md#environment-files)
+- [Configuration — Server Mode](configuration-server.md#environment-variables--server-mode) / [Configuration — LAN P2P Mode](configuration-lan.md#environment-variables--lan-mode) — per-mode variables
 
 ## Symlinks
 
