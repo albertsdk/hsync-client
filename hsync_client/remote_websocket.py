@@ -471,3 +471,14 @@ class RemoteFileEventHandler(BaseFileEventHandler):
     ) -> None:
         """Upload the file via HTTP to the central server."""
         upload_file(file, from_closed=from_closed)
+
+    def _on_permissions_changed(self, file: File, src_path: str) -> None:
+        """Propagate a permission-only change (chmod) to the central server.
+
+        The upload carries the same content hash, so the server's same-SHA
+        branch applies the new permissions and notifies the other connected
+        clients — no bytes are re-stored server-side. ``permissions_only``
+        bypasses the upload-status "complete" early-return so the mode change
+        actually reaches the server.
+        """
+        upload_file(file, permissions_only=True)

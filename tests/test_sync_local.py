@@ -30,6 +30,23 @@ from hsync_client.sync import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _deterministic_umask():
+    """Force the canonical umask so test files are born with 0o644.
+
+    The permission-only reconcile compares local file modes against the
+    remote metadata; the historical fixtures hardcode ``"644"``. On hosts
+    with a more permissive umask (e.g. 0o2) the local files would be 0o664
+    and the tests would spuriously classify the otherwise-identical file as
+    a permission divergence.
+    """
+    old = os.umask(0o022)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
 class TestGetFilesLocal:
     """Tests for get_files_local function."""
 

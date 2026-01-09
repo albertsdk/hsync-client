@@ -831,7 +831,9 @@ def _wait_for_stable_file(file: File, from_closed: bool = False) -> bool:
     return True
 
 
-def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
+def _reschedule_upload(
+    file: File, reschedules_left: int | None = None, permissions_only: bool = False
+) -> None:
     """
     Defer an upload whose file never stabilized within the configured
     "MAX_WAIT_TIMEOUT".
@@ -867,7 +869,13 @@ def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
         f"{delay}s ({reschedules_left} attempt(s) left)"
     )
     timer = threading.Timer(
-        delay, upload_file, args=(file,), kwargs={"_reschedules_left": reschedules_left - 1}
+        delay,
+        upload_file,
+        args=(file,),
+        kwargs={
+            "_reschedules_left": reschedules_left - 1,
+            "permissions_only": permissions_only,
+        },
     )
     timer.daemon = True
     timer.start()
@@ -928,6 +936,7 @@ def upload_file(
     file: File,
     check_size: bool = True,
     from_closed: bool = False,
+    permissions_only: bool = False,
     _reschedules_left: int | None = None,
 ) -> None:
     """
@@ -1004,7 +1013,7 @@ def upload_file(
         if not _wait_for_stable_file(file, from_closed):
             # File never stopped being written within the wait window: defer the
             # upload instead of transferring a half-written file.
-            _reschedule_upload(file, _reschedules_left)
+            _reschedule_upload(file, _reschedules_left, permissions_only)
             return
 
         # Refresh file metadata after write is complete
@@ -1014,7 +1023,7 @@ def upload_file(
         log.debug(f'Written file: "{file.filepath}" ({format_bytes(file.size)})')
 
         # Recursive call with check_size=False to do actual upload
-        upload_file(file, False)
+        upload_file(file, False, permissions_only=permissions_only)
         return
 
     max_attempts, min_wait, max_wait = _transfer_retry_params()
@@ -1025,7 +1034,7 @@ def upload_file(
         # Serialize on the local path so the read does not race a
         # concurrent download/delete of the same file.
         with path_lock(file.filepath):
-            attempt(file)
+            attempt(file, permissions_only=permissions_only)
     except (RequestException, ServerError, PermanentUploadError) as exc:
         log.error(
             f'Upload failed after retries for "{file.filepath}": {escape_loguru_markup(str(exc))}'
@@ -1206,7 +1215,7 @@ def _handle_upload_conflict_response(file: File, response) -> bool:
     return False
 
 
-def _upload_file_attempt(file: File) -> None:
+def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
     """
     Perform a single upload attempt with resume support.
 
@@ -1233,7 +1242,9 @@ def _upload_file_attempt(file: File) -> None:
         # Delta branch: when the peer still holds the recorded base, only the
         # changed blocks need to cross the wire. Any recoverable failure falls
         # through to the full-upload body below (same attempt, retry unchanged).
-        if delta_ctx := prepare_delta_upload(file, filename):
+        # A permission-only upload carries no content change, so it skips the
+        # delta path entirely (the same-SHA branch applies the mode server-side).
+        if not permissions_only and (delta_ctx := prepare_delta_upload(file, filename)):
             try:
                 upload_file_delta(file, delta_ctx)
                 log.info(
@@ -1261,9 +1272,17 @@ def _upload_file_attempt(file: File) -> None:
             status, offset = _get_upload_status(filename, file.sha256sum, file.size)
 
         if status == "complete":
-            log.debug(f'"{file.filepath}" (already present on server)')
-            _record_synced_base(file, vclock=_resolve_local_vclock(file))
-            return
+            if not permissions_only:
+                # Identical content is already on the peer and no permission
+                # change was requested: it is a genuine no-op upload.
+                log.debug(f'"{file.filepath}" (already present on server)')
+                _record_synced_base(file, vclock=_resolve_local_vclock(file))
+                return
+            # A permission-only chmod: fall through with a full upload so the
+            # peer's same-SHA branch applies the new mode (and re-broadcasts);
+            # the bytes themselves are skipped there.
+            log.debug(f'"{file.filepath}" (already present — converging metadata)')
+            offset = 0
 
         if status == "resumable" and offset > 0:
             log.info(
@@ -1352,6 +1371,11 @@ def _upload_file_attempt(file: File) -> None:
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
                 _record_201_upload(file, response)
+            elif response.status_code == 200:
+                # Permissions updated on the same-SHA branch (permission-only
+                # change): local and remote content agree; record the base.
+                log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
+                _record_synced_base(file, vclock=_resolve_local_vclock(file))
             elif response.status_code == 401:
                 log.error(f'Authentication failed uploading "{file.filepath}"')
                 emit_event(
@@ -1415,6 +1439,11 @@ def _upload_file_attempt(file: File) -> None:
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
                 _record_201_upload(file, response)
+            elif response.status_code == 200:
+                # Permissions updated on the same-SHA branch (permission-only
+                # change): local and remote content agree; record the base.
+                log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
+                _record_synced_base(file, vclock=_resolve_local_vclock(file))
             elif response.status_code == 202:
                 # Partial upload received - file still incomplete
                 result = response.json()

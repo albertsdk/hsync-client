@@ -371,6 +371,7 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         # eight separate list comprehensions over the same list).
         downloads: list = []
         uploads: list = []
+        permission_uploads: list = []
         deletes: list = []
         nothing: list = []
         symlink_uploads: list = []
@@ -382,7 +383,10 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
             if name == SyncActionName.download:
                 downloads.append(a.file)
             elif name == SyncActionName.upload:
-                uploads.append(a.file)
+                if getattr(a, "permissions_only", False):
+                    permission_uploads.append(a.file)
+                else:
+                    uploads.append(a.file)
             elif name == SyncActionName.delete:
                 deletes.append(a.file)
                 if getattr(a, "tombstone_confirmed", False):
@@ -497,10 +501,12 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
 
         # Execute transfers in parallel using thread pool
         transfer_counters: dict[str, int] = {"failed": 0}
-        if downloads or uploads:
+        if downloads or uploads or permission_uploads:
             # Re-derive concurrency from the live transfer queue profile
-            _refresh_concurrency_from_queue(downloads, uploads)
-            await _execute_parallel_transfers(downloads, uploads, transfer_counters)
+            _refresh_concurrency_from_queue(downloads, uploads + permission_uploads)
+            await _execute_parallel_transfers(
+                downloads, uploads, transfer_counters, permission_uploads
+            )
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
         # and every _record_synced_base() from completed transfers) in a single
@@ -592,6 +598,7 @@ async def _execute_parallel_transfers(
     downloads: list[File],
     uploads: list[File],
     counters: dict[str, int] | None = None,
+    permission_uploads: list[File] | None = None,
 ) -> None:
     """
     Execute file transfers in parallel using a thread pool.
@@ -669,11 +676,21 @@ async def _execute_parallel_transfers(
         for file in uploads:
             tasks.append(transfer_with_semaphore(upload_file, file))
 
+        # Permission-only uploads skip the content dedup on the peer (same-SHA
+        # branch applies the new mode); they re-use the same upload machinery.
+        if permission_uploads:
+            from functools import partial
+
+            perm_upload = partial(upload_file, permissions_only=True)
+            for file in permission_uploads:
+                tasks.append(transfer_with_semaphore(perm_upload, file))
+
         # Execute all transfers concurrently
         if tasks:
             log.info(
                 f"Starting parallel transfers: {len(downloads)} downloads, "
-                f"{len(uploads)} uploads (max {max_concurrent} concurrent)"
+                f"{len(uploads)} uploads ({len(permission_uploads or [])} permission-only), "
+                f"max {max_concurrent} concurrent"
             )
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1243,6 +1260,30 @@ def get_sync_actions(
                 remote_corrected_mtime=int(remote_corrected),
             )
 
+            # Permission-only divergence (chmod): the causal matrix above
+            # compares content hashes, so an identical content with different
+            # permissions resolves to ``nothing``. Permissions still propagate
+            # as a normal `modified` change (no special policy):
+            # - bidirectional / upload-only: the local mode wins → upload the
+            #   file (the server/master same-SHA branch applies only the
+            #   permissions and notifies the other clients);
+            # - download-only: the remote mode wins → converge locally.
+            permissions_only = False
+            if action == SyncActionName.nothing:
+                local_perms = local_file.permissions
+                remote_perms = remote_file.permissions
+                if local_perms and remote_perms and local_perms != remote_perms:
+                    if CONFIG.get("SYNC_DIRECTION", "bidirectional") == "download-only":
+                        if local_file.filepath:
+                            set_permissions(local_file.filepath, remote_perms)
+                            log.debug(
+                                f'Permission-only converge (remote): "{local_file.filepath}" '
+                                f"({remote_perms})"
+                            )
+                    else:
+                        action = SyncActionName.upload
+                        permissions_only = True
+
             # A download with timedelta == 0 is a conflict_download: the remote
             # won the tie-break, so the local copy must be preserved before
             # being overwritten.
@@ -1261,6 +1302,7 @@ def get_sync_actions(
                     action,
                     timedelta,
                     conflict=is_conflict,
+                    permissions_only=permissions_only,
                 )
             )
         else:

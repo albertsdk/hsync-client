@@ -273,14 +273,37 @@ suppresses spurious broadcasts without a naive time-based debounce (which was
 counterproductive: it suppressed the real safe-save rename while keeping the
 preceding no-op close):
 
-1. **Stat pre-check** — compares `(mtime, size)` with the last broadcast for
-   the path (`_last_broadcast_stat`). If identical, skips without hashing
-   (catches an editor open/close with no write; cost: one `stat()`).
+1. **Stat pre-check** — compares `(mtime, size, mode)` with the last broadcast
+   for the path (`_last_broadcast_stat`, `_stat_key` masks `st_mode` to the
+   permission bits `0o7777`). If identical, skips without hashing (catches an
+   editor open/close with no write; cost: one `stat()`).
 2. **Hash compare** — if the stat changed, computes the SHA-256 (via
    `File.get`, which the code already did) and compares with
    `_last_broadcast_hash`. If the content is identical (e.g. mtime touched
    but bytes unchanged), skips the broadcast. Only a genuine content change
    propagates.
+
+**Permission-only changes (chmod)** propagate as a normal `modified` change
+(no special policy), driven by the mode half of the stat key:
+
+- **Linux (inotify)**: a `chmod` fires only `IN_ATTRIB` (no `IN_CLOSE_WRITE`),
+  so `on_modified` calls `_process_permission_only` (`file_event_handler.py`),
+  which refreshes the cached mode and, on a real change, invokes the transport
+  hook `_on_permissions_changed(file, path)`. Content bytes are NEVER read from
+  this path (a concurrent partial write would be torn).
+- **Non-inotify platforms**: the same mode comparison lives in stage 2 of
+  `_process_file_ready` — a hash match with a different mode triggers the hook
+  instead of the skip.
+- **Transports**: the Remote handler uploads the file (the server's same-SHA
+  branch applies only the permissions and broadcasts `modified`); the LAN
+  master broadcasts `modified` so slaves converge via `update_file`. The LAN
+  slave handler (`LANSlaveFileEventHandler.on_modified` Linux branch) keeps its
+  own `_last_mode` map and uploads on mode change so the master re-applies the
+  permissions to itself and re-broadcasts.
+- **One-shot reconcile** (`get_sync_actions`, `sync.py`): when content hashes
+  agree but permissions differ, the `nothing` action is reclassified —
+  `upload` in bidirectional/upload-only (local permissions win) or local
+  `set_permissions(remote)` in download-only (remote wins).
 
 This correctly handles the no-op-close-before-safe-save scenario: the first
 close (content unchanged) is skipped at stage 2, and the subsequent rename

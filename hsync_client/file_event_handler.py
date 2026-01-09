@@ -24,6 +24,7 @@ points so each transport plugs in its own behaviour:
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from copy import deepcopy
@@ -122,13 +123,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
         self._delete_lock = threading.Lock()
 
         # Two-stage content dedup for file-ready events:
-        # 1. stat pre-check (mtime, size): cheap filter that avoids re-hashing
-        #    on no-op closes where the editor opened/closed without saving.
+        # 1. stat pre-check (mtime, size, mode): cheap filter that avoids
+        #    re-hashing on no-op closes where the editor opened/closed without
+        #    saving. st_mode is included (masked to the permission bits) so a
+        #    permission-only change (chmod) is never mistaken for a no-op.
         # 2. hash compare: precise filter that skips broadcasts when the file
         #    content matches what was last propagated (catches mtime-touch
         #    without content change, and the spurious close that precedes an
-        #    editor safe-save rename).
-        self._last_broadcast_stat: dict[str, tuple[int, int]] = {}
+        #    editor safe-save rename). A hash match with a mode difference
+        #    still propagates as a permission-only event.
+        self._last_broadcast_stat: dict[str, tuple[int, int, int]] = {}
         self._last_broadcast_hash: dict[str, str] = {}
         # Optional observer reference: when set, newly created directories are
         # watched recursively so files inside them are picked up immediately
@@ -163,6 +167,18 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """
         raise NotImplementedError
 
+    def _on_permissions_changed(self, file: File, src_path: str) -> None:
+        """Called when only the permissions changed (content hash unchanged).
+
+        A ``chmod`` changes ``st_mode`` without touching ``mtime``/``size`` or
+        the content hash, so the regular content dedup would discard it. This
+        hook lets each transport propagate the permission-only change as a
+        normal ``modified`` event: the Remote handler uploads the file (the
+        server applies the new permissions on its same-SHA branch) and the LAN
+        master broadcasts the updated ``File`` so slaves converge.
+        """
+        raise NotImplementedError
+
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
         """Called after a non-hidden deletion has been observed and broadcast.
 
@@ -190,7 +206,55 @@ class BaseFileEventHandler(FileSystemEventHandler):
             is_dir and prefix.startswith(rec_path.rstrip("/") + "/") for rec_path, is_dir in pending
         )
 
-    def _record_broadcast(self, src_path: str, stat: tuple[int, int], sha256: str) -> None:
+    @staticmethod
+    def _stat_key(st: os.stat_result) -> tuple[int, int, int]:
+        """Return the dedup key for a stat result: (mtime_ns, size, mode).
+
+        The permission bits are masked with ``0o7777`` so the key stable
+        across unrelated stat fields (device/inode/uid/gid) while still
+        detecting ``chmod`` changes, which alter neither mtime nor size.
+        """
+        return (st.st_mtime_ns, st.st_size, st.st_mode & 0o7777)
+
+    def _process_permission_only(self, src_path: str) -> None:
+        """Handle a file event that may be a pure ``chmod`` on Linux.
+
+        On inotify platforms content changes propagate via ``on_closed``
+        (``IN_CLOSE_WRITE``); a ``chmod`` only fires ``IN_ATTRIB``, which
+        watchdog delivers as a file ``modified`` event with no close. This
+        path inspects the mode only:
+        - first observation of the path: just records the mode;
+        - mode unchanged: no-op;
+        - mode changed: re-reads the file and delegates to the
+          ``_on_permissions_changed`` transport hook.
+        Content is NEVER uploaded from here (a partial write would be unsafe).
+        """
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            return
+        if is_hidden_file(src_path) or Path(src_path).is_symlink():
+            return
+        try:
+            st = Path(src_path).stat()
+        except OSError:
+            return
+        current = self._stat_key(st)
+        prev = self._last_broadcast_stat.get(src_path)
+        if prev is None:
+            # First observation (e.g. the watch just started): record the mode
+            # so a later chmod is detected; content goes via on_closed.
+            self._last_broadcast_stat[src_path] = current
+            return
+        if current[2] == prev[2]:
+            return
+        invalidate_sha256_cache(src_path)
+        file_obj = File.get(src_path)
+        if file_obj is None:
+            return
+        self._last_broadcast_stat[src_path] = current
+        log.info(f'[PERMISSION] mode change: "{src_path}"{self._cid_suffix(src_path)}')
+        self._on_permissions_changed(file_obj, src_path)
+
+    def _record_broadcast(self, src_path: str, stat: tuple[int, int, int], sha256: str) -> None:
         """Record a broadcast for content dedup, evicting oldest if at capacity.
 
         Both ``_last_broadcast_stat`` and ``_last_broadcast_hash`` are updated
@@ -297,7 +361,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             except OSError:
                 log.debug(f'Skip dir create, directory gone: "{src_path}"')
                 return
-            current_stat = (file_stat.st_mtime_ns, file_stat.st_size)
+            current_stat = self._stat_key(file_stat)
             if current_stat == self._last_broadcast_stat.get(src_path):
                 log.debug(f'Skip duplicate create (stat): "{src_path}" (dir)')
                 return
@@ -357,7 +421,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 if file_stat is None:
                     log.debug(f'Skip dir modify, directory gone: "{src_path}"')
                     return
-                current_stat = (file_stat.st_mtime_ns, file_stat.st_size)
+                current_stat = self._stat_key(file_stat)
                 if current_stat == self._last_broadcast_stat.get(src_path):
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
                     return
@@ -386,7 +450,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     )
             return
 
-        if SUPPORTS_ON_CLOSED or is_hidden_file(src_path):
+        if SUPPORTS_ON_CLOSED:
+            # Content changes propagate via on_closed on inotify platforms;
+            # a chmod (IN_ATTRIB) never fires a close, so inspect mode-only
+            # changes here without touching file bytes.
+            if not is_hidden_file(src_path):
+                self._process_permission_only(src_path)
+            return
+        if is_hidden_file(src_path):
             return
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
@@ -453,19 +524,31 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
             # Stage 1: stat pre-check (cheap, avoids re-hash on no-op close).
             # Uses st_mtime_ns (nanosecond precision) so two writes within the
-            # same second with the same size are NOT falsely skipped.
+            # same second with the same size are NOT falsely skipped. The mode
+            # is part of the key so a pure chmod is never a stat no-op.
             file_stat = Path(src_path).stat()
-            current_stat = (file_stat.st_mtime_ns, file_stat.st_size)
+            current_stat = self._stat_key(file_stat)
             if current_stat == self._last_broadcast_stat.get(src_path):
                 log.debug(f'Skip unchanged (stat): "{src_path}"')
                 return
 
             # Stage 2: hash compare (precise, catches mtime-touch without
-            # content change).
+            # content change and splits permission-only changes).
             invalidate_sha256_cache(src_path)
             file_obj = File.get(src_path)
             if file_obj:
                 if file_obj.sha256sum == self._last_broadcast_hash.get(src_path):
+                    prev = self._last_broadcast_stat.get(src_path)
+                    if prev is not None and current_stat[2] != prev[2]:
+                        # Identical content, different mode: a chmod-only
+                        # change on a non-inotify platform (or a close after
+                        # it). The transport broadcasts it as a modified
+                        # event; record the new stat so the next event with
+                        # the same mode is suppressed again.
+                        self._last_broadcast_stat[src_path] = current_stat
+                        log.info(f'[PERMISSION] mode change: "{src_path}"')
+                        self._on_permissions_changed(file_obj, src_path)
+                        return
                     log.debug(f'Skip unchanged (hash): "{src_path}"')
                     # Update stat so the next no-op close with this mtime is
                     # caught by the cheap stage-1 filter. Key already exists

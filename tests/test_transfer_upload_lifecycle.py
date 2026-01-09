@@ -96,7 +96,7 @@ class TestUploadFileMaxWaitTimeout:
             upload_file(file, check_size=True)
             # The file never stabilized, so the upload must be deferred, not forced.
             mock_post.assert_not_called()
-            mock_reschedule.assert_called_once_with(file, None)
+            mock_reschedule.assert_called_once_with(file, None, False)
 
     def test_upload_uses_default_max_wait_timeout(self, tmp_path):
         """Upload uses default timeout when not configured."""
@@ -169,9 +169,9 @@ class TestRescheduleUpload:
             # delay, target callable
             assert args[0] == 7
             assert args[1] is upload_file
-            # re-arms upload_file(file, _reschedules_left=2)
+            # re-arms upload_file(file, _reschedules_left=2, permissions_only=False)
             assert kwargs["args"] == (file,)
-            assert kwargs["kwargs"] == {"_reschedules_left": 2}
+            assert kwargs["kwargs"] == {"_reschedules_left": 2, "permissions_only": False}
             assert mock_timer.return_value.daemon is True
             mock_timer.return_value.start.assert_called_once()
 
@@ -192,7 +192,10 @@ class TestRescheduleUpload:
 
             # Resolved 4 from CONFIG, then decremented to 3 for the next attempt.
             assert mock_timer.call_args.kwargs["args"] == (file,)
-            assert mock_timer.call_args.kwargs["kwargs"] == {"_reschedules_left": 3}
+            assert mock_timer.call_args.kwargs["kwargs"] == {
+                "_reschedules_left": 3,
+                "permissions_only": False,
+            }
 
     def test_exhausted_does_not_schedule(self, tmp_path):
         """Once reschedules are exhausted the file is skipped, not deferred."""

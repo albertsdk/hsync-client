@@ -658,6 +658,33 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
         )
         self._ws_server.broadcast_sync(event_dict)
 
+    def _on_permissions_changed(self, file: File, src_path: str) -> None:
+        """Broadcast a ``modified`` event so slaves converge the new mode.
+
+        The payload carries the current content hash (unchanged) and the new
+        permissions: a slave whose copy matches by hash applies only the
+        permissions locally (see ``update_file``), without re-downloading
+        bytes.
+        """
+        try:
+            if peek_inbound_origin(src_path) is None and file.sha256sum:
+                from hsync_client.sync_state import flush, note_local_edit
+
+                note_local_edit(src_path, file.sha256sum)
+                flush()
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not self-record local edit for {src_path}: {e}")
+        self._broadcast_event(
+            Event(
+                CONFIG["CID"],
+                CONFIG["LOCAL_BUCKET"],
+                CONFIG["REMOTE_BUCKET"],
+                EventName.modified,
+                file,
+            ),
+            src_abs_path=src_path,
+        )
+
     def _on_file_ready(
         self,
         file: File,
@@ -1037,6 +1064,11 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._master_port = master_port
         self._use_https = use_https
         self._last_modified: dict[str, float] = {}
+        # Track the last observed permission mode per file so a pure ``chmod``
+        # (IN_ATTRIB, which inotify delivers without a close) is recognised and
+        # propagated as a permission-only upload. Pop the entry on delete/rename
+        # so a re-created path with a different mode is never suppressed.
+        self._last_mode: dict[str, int] = {}
         # Track files we're currently receiving from master to avoid echo
         self._receiving_files: set[str] = set()
         self._receiving_lock = threading.Lock()
@@ -1614,6 +1646,25 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if is_hidden_file(src_path):
             return
 
+        if SUPPORTS_ON_CLOSED:
+            # On inotify platforms content changes propagate via on_closed; a
+            # chmod fires only IN_ATTRIB (no close). Inspect the mode and, on a
+            # change, propagate a permission-only upload (the master's watcher
+            # then broadcasts the new mode to the other slaves).
+            try:
+                mode = Path(src_path).stat().st_mode & 0o7777
+            except OSError:
+                return
+            prev = self._last_mode.get(src_path)
+            self._last_mode[src_path] = mode
+            if prev is None:
+                return
+            if prev == mode:
+                return
+            log.info(f'[PERMISSION] mode change: "{src_path}"')
+            self._handle_file_upload(src_path)
+            return
+
         # A file-symlink created via a deferred path (e.g. atomic rename of a
         # symlink, or a symlink modified in place) is uploaded by
         # ``_handle_file_upload`` → ``upload_file``, which refuses targets
@@ -1625,8 +1676,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._last_modified[src_path] = now
 
         # On non-Linux, use on_modified as fallback for file completion
-        if not SUPPORTS_ON_CLOSED:
-            self._handle_file_upload(src_path)
+        self._handle_file_upload(src_path)
 
     def on_closed(self, event) -> None:
         """Handle file close events (Linux only)."""
