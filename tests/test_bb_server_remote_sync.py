@@ -48,20 +48,6 @@ def _server_delete(live_server, bucket: str, filename: str) -> None:
     assert r.status_code in (200, 204), f"Server delete failed: {r.status_code} {r.text}"
 
 
-def _server_download(live_server, bucket: str, filename: str) -> bytes:
-    """Download a file's content from the server via REST API."""
-    base, api_key = live_server
-    r = requests.get(
-        f"{base}/api/v1/buckets/{bucket}/files/download",
-        params={"filename": filename, "cid": BB_CLIENT_CID},
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=15.0,
-        verify=False,
-    )
-    assert r.status_code == 200, f"Server download failed: {r.status_code} {r.text}"
-    return r.content
-
-
 def _server_file_metadata(live_server, bucket: str, filename: str) -> dict:
     """Return the server-side metadata dict for a single file."""
     base, api_key = live_server
@@ -132,7 +118,9 @@ class TestRemoteSyncHappy:
 
 
 class TestRemoteFileOperations:
-    def test_file_modification_uploaded(self, live_server, bb_bucket, local_dir, run_sync_once):
+    def test_file_modification_uploaded(
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_download
+    ):
         (Path(local_dir) / "mod.txt").write_bytes(b"v1\n")
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
@@ -143,7 +131,7 @@ class TestRemoteFileOperations:
         assert result.exit_code == 0
 
         # The updated content must actually be on the server
-        assert _server_download(live_server, bb_bucket, "mod.txt") == b"v2-updated\n"
+        assert bb_server_download(bb_bucket, "mod.txt") == b"v2-updated\n"
 
     def test_file_deletion_propagates_to_server(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
@@ -480,6 +468,7 @@ class TestRemoteConflictedCopy:
         run_sync_once,
         bb_server_files,
         bb_server_upload,
+        bb_server_download,
     ):
         """When two remote writers upload different content for the same path
         with *concurrent* causal histories, the deterministic SHA-256 tie-break
@@ -543,7 +532,7 @@ class TestRemoteConflictedCopy:
             f"Expected exactly 1 conflicted copy for {name}, found {len(conflicts)}: {conflicts}"
         )
         conflict_path = conflicts[0]
-        assert _server_download(live_server, bb_bucket, conflict_path) == loser, (
+        assert bb_server_download(bb_bucket, conflict_path) == loser, (
             f"Conflicted copy {conflict_path} does not preserve the losing content"
         )
 
@@ -650,7 +639,7 @@ class TestRemoteCausalConflict:
         )
 
     def test_client_loses_local_copy_preserved_and_propagated(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         """I edit offline, the other side wins the hash tie-break: my version
         is preserved as a *_conflicted_copy_* next to the file, the other side
@@ -697,12 +686,12 @@ class TestRemoteCausalConflict:
         listing = bb_server_files(bb_bucket)
         conflicts = self._server_copies(listing, stem)
         assert len(conflicts) == 1, f"expected 1 server conflict copy, got {conflicts}"
-        assert _server_download(live_server, bb_bucket, conflicts[0]) == local_edit, (
+        assert bb_server_download(bb_bucket, conflicts[0]) == local_edit, (
             "The server copy must carry my losing content"
         )
 
     def test_client_wins_server_preserves_remote(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         """I edit offline and my version wins the hash tie-break: my file keeps
         the original path (no local copy), and the *server* preserves the other
@@ -737,17 +726,17 @@ class TestRemoteCausalConflict:
 
         listing = bb_server_files(bb_bucket)
         assert name in listing
-        assert _server_download(live_server, bb_bucket, name) == local_edit, (
+        assert bb_server_download(bb_bucket, name) == local_edit, (
             "The server must adopt my winning content"
         )
         conflicts = self._server_copies(listing, stem)
         assert len(conflicts) == 1, f"expected 1 server conflict copy, got {conflicts}"
-        assert _server_download(live_server, bb_bucket, conflicts[0]) == remote_content, (
+        assert bb_server_download(bb_bucket, conflicts[0]) == remote_content, (
             "The server conflict copy must preserve the losing remote content"
         )
 
     def test_new_file_both_sides_client_wins(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         """A brand-new file was created independently on both sides (no shared
         ancestor): my content has the higher hash, so my file wins the path and
@@ -777,15 +766,15 @@ class TestRemoteCausalConflict:
         )
 
         listing = bb_server_files(bb_bucket)
-        assert _server_download(live_server, bb_bucket, name) == local_content
+        assert bb_server_download(bb_bucket, name) == local_content
         conflicts = self._server_copies(listing, stem)
         assert len(conflicts) == 1, f"expected 1 server conflict copy, got {conflicts}"
-        assert _server_download(live_server, bb_bucket, conflicts[0]) == remote_content, (
+        assert bb_server_download(bb_bucket, conflicts[0]) == remote_content, (
             "The server conflict copy must preserve the losing remote content"
         )
 
     def test_new_file_both_sides_client_loses(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         """Independent creation of the same new path, my hash loses the
         tie-break: the other side takes the path and my version is preserved
@@ -821,7 +810,7 @@ class TestRemoteCausalConflict:
         assert self._server_copies(listing, stem) == [], (
             "The server never sees the losing local content before it is re-uploaded"
         )
-        assert _server_download(live_server, bb_bucket, name) == remote_content
+        assert bb_server_download(bb_bucket, name) == remote_content
 
     def test_identical_new_file_both_sides_no_conflict(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
@@ -959,6 +948,42 @@ class TestRemoteSyncNegative:
         # An unreachable server is a sync failure: the CLI must exit non-zero.
         assert result.exit_code != 0
 
+    def test_tls_without_insecure_aborts(self, live_server, bb_bucket, local_dir):
+        """Connecting to an HTTPS server with a self-signed cert without
+        --insecure must abort (TLS verification failure)."""
+        # Given an HTTPS live server with a self-signed certificate
+        from typer.testing import CliRunner
+
+        from hsync_client.cli import app
+
+        from .conftest import _ClientGlobalsGuard
+
+        base_url, api_key = live_server
+
+        # When the client syncs without --insecure (but with a valid API key
+        # so the failure is TLS verification, not a missing-key abort)
+        with _ClientGlobalsGuard():
+            result = CliRunner().invoke(
+                app,
+                [
+                    "-b",
+                    bb_bucket,
+                    "-s",
+                    base_url,
+                    "-p",
+                    local_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                ],
+                env={"HSYNC_API_KEY": api_key},
+            )
+
+        # Then the CLI aborts (TLS verification failure) and does not sync
+        assert result.exit_code != 0
+        local_files = list(Path(local_dir).iterdir())
+        assert local_files == [] or all(p.name.startswith(".hsync") for p in local_files)
+
 
 # =============================================================================
 # Parity with the LAN black-box suite: file-size boundaries, symlink delete,
@@ -979,7 +1004,7 @@ def _random_payload(size: int) -> tuple[bytes, int]:
 
 class TestRemoteEmptyFile:
     def test_empty_file_round_trips(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         # Given an empty (0-byte) file
         name = f"empty-{uuid.uuid4().hex[:8]}.bin"
@@ -993,12 +1018,12 @@ class TestRemoteEmptyFile:
         # Then the upload succeeds, the server lists it, and a download round-trips 0 bytes
         assert result.exit_code == 0
         assert name in bb_server_files(bb_bucket)
-        assert _server_download(live_server, bb_bucket, name) == content
+        assert bb_server_download(bb_bucket, name) == content
 
 
 class TestRemoteLargeFile:
     def test_large_file_round_trips(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         # Given a 1 MiB file of random content
         size = 1024 * 1024
@@ -1013,12 +1038,12 @@ class TestRemoteLargeFile:
         # Then the upload succeeds, the server lists it, and the download matches byte-for-byte
         assert result.exit_code == 0
         assert name in bb_server_files(bb_bucket)
-        assert _server_download(live_server, bb_bucket, name) == content
+        assert bb_server_download(bb_bucket, name) == content
 
 
 class TestRemoteSymlinkDeleteKeepsTarget:
     def test_deleting_symlink_on_server_preserves_target(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         # Given a target file and an in-bucket symlink to it, both synced to the server
         target_content = b"symlink-target\n"
@@ -1036,12 +1061,12 @@ class TestRemoteSymlinkDeleteKeepsTarget:
         files = bb_server_files(bb_bucket)
         assert "link.txt" not in files
         assert "target.txt" in files
-        assert _server_download(live_server, bb_bucket, "target.txt") == target_content
+        assert bb_server_download(bb_bucket, "target.txt") == target_content
 
 
 class TestRemoteBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
+        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
     ):
         # Given a 50 KB file of random content
         content, seed = _random_payload(50_000)
@@ -1062,12 +1087,12 @@ class TestRemoteBandwidthThrottle:
         # Then the upload succeeds and the content round-trips
         assert result.exit_code == 0
         assert name in bb_server_files(bb_bucket)
-        assert _server_download(live_server, bb_bucket, name) == content
+        assert bb_server_download(bb_bucket, name) == content
 
 
 class TestRemoteFilterPath:
     def test_filter_path_restricts_download(
-        self, live_server, bb_bucket, local_dir, run_sync_once, tmp_path
+        self, live_server, bb_bucket, local_dir, run_sync_once, tmp_path, bb_server_download
     ):
         # Given the server holds files in two subdirectories (uploaded by a first,
         # unrestricted sync) — mirroring the LAN test where the master already
@@ -1098,6 +1123,7 @@ class TestRemoteConcurrentWrites:
         run_sync_once,
         bb_server_upload,
         bb_server_files,
+        bb_server_download,
     ):
         # Given client A has uploaded fileA
         a_content = b"from-client-A\n"

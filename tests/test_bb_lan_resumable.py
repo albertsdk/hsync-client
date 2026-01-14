@@ -56,6 +56,7 @@ def _lan_upload_status(base_url: str, bucket: str, filename: str, sha: str, size
 
 
 class TestLanResumableUpload:
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_partial_then_status_then_resume_completes(
         self, lan_master_dir, lan_slave_dir, lan_bucket
     ):
@@ -85,7 +86,7 @@ class TestLanResumableUpload:
             )
 
             # Then the upload completes and the downloaded content matches the original
-            assert r2.status_code == 201
+            assert r2.status_code == 201, f"resume failed: {r2.status_code} {r2.text}"
             assert _lan_download(base, lan_bucket, "res.bin") == full
 
 

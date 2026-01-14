@@ -11,6 +11,7 @@ Shared pytest fixtures for the hsync-client test suite.
 import os
 import subprocess
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,79 @@ def _kill_orphan_hsync_processes() -> None:
 BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
 BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
 BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
+
+
+# ---------------------------------------------------------------------------
+# Black-box test-data helpers
+#
+# ``bb_sample`` builds reproducible random artefacts (file name + payload +
+# seed). Every generated sample is recorded on the test node so that, on
+# failure, its name and seed are appended to the report for reproducibility.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BBSample:
+    """A reproducible random test artefact."""
+
+    name: str
+    payload: bytes
+    seed: int
+
+    @property
+    def ctx(self) -> str:
+        """Context string for reproducibility logs."""
+        return f"[bb-sample] name={self.name} seed={self.seed}"
+
+
+@pytest.fixture
+def bb_sample(request: pytest.FixtureRequest):
+    """Return a factory that builds reproducible random test data.
+
+    Usage::
+
+        s = bb_sample(size=1024)
+        (Path(local_dir) / s.name).write_bytes(s.payload)
+        ... assert ..., s.ctx
+    """
+    import random
+    import uuid
+
+    recorded: list[BBSample] = []
+    request.node._bb_samples = recorded  # type: ignore[attr-defined]
+
+    def _make(suffix: str = ".txt", size: int = 0, prefix: str = "bb") -> BBSample:
+        name = f"{prefix}-{uuid.uuid4().hex[:8]}{suffix}"
+        seed = random.randrange(2**32)
+        payload = random.Random(seed).randbytes(size) if size else b""
+        sample = BBSample(name=name, payload=payload, seed=seed)
+        recorded.append(sample)
+        return sample
+
+    return _make
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    """On failure, append recorded black-box sample seeds to the report.
+
+    Uses ``hookwrapper=True`` so the default ``TestReport`` is still created
+    by pytest's built-in implementation — a plain ``firstresult`` override
+    would shadow it and break report-dependent fixture teardown.
+    """
+    outcome = yield
+    if call.when == "call":
+        report = outcome.get_result()
+        if report.failed:
+            samples = getattr(item, "_bb_samples", None)
+            if samples:
+                report.sections.append(
+                    (
+                        "bb-samples",
+                        "Black-box samples (name + seed for reproducibility):\n"
+                        + "\n".join(s.ctx for s in samples),
+                    )
+                )
 
 
 def _free_port() -> int:
@@ -658,6 +732,27 @@ def bb_server_files(live_server):
         return {f["filepath"] for f in r.json()}
 
     return _list
+
+
+@pytest.fixture
+def bb_server_download(live_server):
+    """Download a file's content from the live server via the public REST API."""
+    import requests
+
+    base, api_key = live_server
+
+    def _download(bucket: str, filename: str) -> bytes:
+        r = requests.get(
+            f"{base}/api/v1/buckets/{bucket}/files/download",
+            params={"filename": filename, "cid": BB_CLIENT_CID},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15.0,
+            verify=False,
+        )
+        assert r.status_code == 200, f"Server download failed: {r.status_code} {r.text}"
+        return r.content
+
+    return _download
 
 
 @pytest.fixture

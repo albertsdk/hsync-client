@@ -16,9 +16,11 @@ import pytest
 
 from .lan_helpers import (
     _lan_device_dir,
+    _lan_ready_path,
     _lan_start,
     _stderr_text,
     _terminate,
+    _wait_for_client_ready,
     _wait_for_file,
     _wait_for_master,
     _wait_for_slave_events,
@@ -211,6 +213,54 @@ class TestLanResilience:
                     "Slave did not catch up after reconnect"
                 )
                 assert (Path(lan_slave_dir) / "catch_up.txt").read_bytes() == content
+            finally:
+                _terminate(slave2)
+        finally:
+            _terminate(master)
+
+    def test_require_pairing_accepts_pinned_master(
+        self, lan_master_dir, lan_slave_dir, lan_bucket, bb_sample
+    ):
+        """--require-pairing accepts a master whose cert was TOFU-pinned in a
+        prior connection (the positive counterpart of the rejection test)."""
+        # Given a serving master
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            # And a slave that has already TOFU-pinned the master (no --require-pairing)
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_text_in_stderr(
+                    slave1, "Pinned LAN master certificate", timeout=30
+                ), "First slave did not TOFU-pin the master"
+            finally:
+                _terminate(slave1)
+
+            # When the slave is restarted with --require-pairing
+            slave2 = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--require-pairing",),
+            )
+            try:
+                # Then the pinned master is accepted (no pairing rejection)
+                assert _wait_for_client_ready(slave2, _lan_ready_path(lan_slave_dir), timeout=60), (
+                    "Slave with --require-pairing did not accept the pinned master"
+                )
+
+                # Wait for the slave's watcher to be live before creating files
+                assert _wait_for_slave_events(slave2), "slave2 did not reach [READY]"
+
+                # And a new file on the master syncs to the slave
+                s = bb_sample(prefix="pair", size=0)
+                content = b"paired-sync\n"
+                (Path(lan_master_dir) / s.name).write_bytes(content)
+                assert _wait_for_file(str(Path(lan_slave_dir) / s.name), timeout=30), (
+                    f"file did not sync after pairing acceptance. {s.ctx}"
+                )
+                assert (Path(lan_slave_dir) / s.name).read_bytes() == content
             finally:
                 _terminate(slave2)
         finally:

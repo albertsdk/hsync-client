@@ -16,11 +16,14 @@ from pathlib import Path
 import pytest
 
 from .lan_helpers import (
+    _lan_ready_path,
     _lan_start,
     _stderr_text,
     _terminate,
+    _wait_for_client_ready,
     _wait_for_file,
     _wait_for_master,
+    _wait_for_slave_events,
     _wait_for_text_in_stderr,
 )
 
@@ -65,6 +68,48 @@ class TestLanGroupFiltering:
                 assert _wait_for_text_in_stderr(
                     slave, "No other peers discovered", timeout=10
                 ) or _wait_for_text_in_stderr(slave, "not found", timeout=5)
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_same_lan_group_discovers_and_syncs(
+        self, lan_master_dir, lan_slave_dir, lan_bucket, bb_sample
+    ):
+        """Peers in the same LAN group discover each other and sync (positive
+        counterpart of test_different_lan_groups_dont_discover)."""
+        # Given a master and slave in the same LAN group
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--lan-group", "group-alpha"),
+        )
+        try:
+            _wait_for_master(
+                master, lan_slave_dir, lan_bucket, slave_extra_args=("--lan-group", "group-alpha")
+            )
+
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--lan-group", "group-alpha"),
+            )
+            try:
+                # Wait for the slave's watcher to be live before creating files
+                assert _wait_for_slave_events(slave), "slave did not reach [READY]"
+
+                # When a file is created on the master
+                s = bb_sample(prefix="grp", size=0)
+                content = b"same-group\n"
+                (Path(lan_master_dir) / s.name).write_bytes(content)
+
+                # Then the slave in the same group receives it
+                assert _wait_for_file(str(Path(lan_slave_dir) / s.name), timeout=30), (
+                    f"file did not sync within the same group. {s.ctx}"
+                )
+                assert (Path(lan_slave_dir) / s.name).read_bytes() == content
             finally:
                 _terminate(slave)
         finally:
@@ -129,19 +174,44 @@ class TestLanDelta:
 
 
 class TestLanPeriodicResync:
-    def test_periodic_resync_fires(self, lan_master_dir, lan_bucket):
-        """Master with --interval triggers periodic full sync."""
-        master = _lan_start(
-            lan_master_dir,
-            lan_bucket,
-            force_master=True,
-            extra_args=("--interval", "20"),  # 20s is the minimum accepted interval
-        )
+    def test_periodic_resync_fires(self, lan_master_dir, lan_slave_dir, lan_bucket, bb_sample):
+        """Slave with --interval triggers a periodic full resync after the
+        configured interval, observable in its log output."""
+        # Given a serving master and a slave with --interval 20
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            # Only check that the master stays alive and logs the resync
-            # (periodic resync only runs when there is at least one slave)
-            time.sleep(5)
-            assert master.poll() is None, "Master exited prematurely"
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--interval", "20"),
+            )
+            try:
+                # Wait for the slave's initial sync to complete (ready-file)
+                assert _wait_for_client_ready(slave, _lan_ready_path(lan_slave_dir), timeout=60), (
+                    "slave did not complete initial sync"
+                )
+
+                # When a file is created on the master
+                s = bb_sample(prefix="periodic", size=0)
+                content = b"periodic\n"
+                (Path(lan_master_dir) / s.name).write_bytes(content)
+
+                # Then the slave receives it (pipeline is warm)
+                assert _wait_for_file(str(Path(lan_slave_dir) / s.name), timeout=30), (
+                    f"file did not sync to slave. {s.ctx}"
+                )
+
+                # And after the interval elapses the periodic resync fires,
+                # observable as the "LAN force resync" log line on the slave
+                assert _wait_for_text_in_stderr(slave, "LAN force resync", timeout=40), (
+                    "periodic resync did not fire within the interval. "
+                    f"{s.ctx}\n--- slave log ---\n{_stderr_text(slave)}"
+                )
+            finally:
+                _terminate(slave)
         finally:
             _terminate(master)
 

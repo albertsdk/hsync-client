@@ -427,17 +427,3 @@ class TestLanInstanceLock:
                 _terminate(second)
         finally:
             _terminate(first)
-
-
-class TestLanHttpRateLimit:
-    @pytest.mark.skip(
-        reason=(
-            "The LAN master applies no HTTP request rate limiting (no 429/"
-            "Retry-After on its REST surface); only client-side bandwidth "
-            "throttling exists, covered by the bandwidth-throttle parity test. "
-            "Server-side rate limiting is verified in test_bb_auth_protocol_limits."
-        )
-    )
-    def test_lan_master_rate_limit_429(self):
-        # Scenario B5 is not applicable to LAN P2P mode (see the skip reason).
-        pass

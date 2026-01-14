@@ -150,48 +150,48 @@ class TestLanMasterRestart:
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_master_restart_slave_recovers(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """After master crash + restart, slave rediscovers and resumes syncing."""
-        # First master session
+        # Given a first master session and a slave that has completed initial sync
         master1 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master1, lan_slave_dir, lan_bucket)
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
-            _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
-
-            # Kill master
-            _terminate(master1)
-
-            # Wait for slave to detect disconnection and re-enter discovery
-            assert _wait_for_text_in_stderr(
-                slave, "discovery", timeout=30
-            ) or _wait_for_text_in_stderr(slave, "Waiting for peers", timeout=5), (
-                "Slave did not re-enter discovery after master crash"
-            )
-
-            # Restart master with same dir (same bucket, inherits existing files)
-            master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
             try:
-                # The already-running slave triggers the election; wait for the
-                # restarted master to finish startup (ready file carries its PID).
-                assert _wait_for_client_ready(
-                    master2, _lan_ready_path(lan_master_dir), timeout=60
-                ), "Restarted master did not become ready"
+                _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
 
-                # Create a new file on restarted master
-                content = b"post-restart\n"
-                (Path(lan_master_dir) / "post_restart.txt").write_bytes(content)
+                # When the master is killed
+                _terminate(master1)
 
-                # Slave should pick it up after rediscovery
-                assert _wait_for_file(str(Path(lan_slave_dir) / "post_restart.txt"), timeout=60), (
-                    "Slave did not receive file after master restart"
+                # Then the slave detects the disconnection and re-enters discovery
+                assert _wait_for_text_in_stderr(
+                    slave, "discovery", timeout=30
+                ) or _wait_for_text_in_stderr(slave, "Waiting for peers", timeout=5), (
+                    "Slave did not re-enter discovery after master crash"
                 )
-                assert (Path(lan_slave_dir) / "post_restart.txt").read_bytes() == content
+
+                # When the master is restarted on the same directory
+                master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+                try:
+                    # Then the restarted master becomes ready
+                    assert _wait_for_client_ready(
+                        master2, _lan_ready_path(lan_master_dir), timeout=60
+                    ), "Restarted master did not become ready"
+
+                    # And a new file on the restarted master reaches the slave
+                    content = b"post-restart\n"
+                    (Path(lan_master_dir) / "post_restart.txt").write_bytes(content)
+                    assert _wait_for_file(
+                        str(Path(lan_slave_dir) / "post_restart.txt"), timeout=60
+                    ), "Slave did not receive file after master restart"
+                    assert (Path(lan_slave_dir) / "post_restart.txt").read_bytes() == content
+                finally:
+                    _terminate(master2)
             finally:
-                _terminate(master2)
                 _terminate(slave)
-        except BaseException:
+        finally:
+            # Safety net: master1 may still be alive if an early failure
+            # prevented the explicit _terminate above.
             _terminate(master1)
-            raise
 
 
 # =============================================================================

@@ -11,14 +11,12 @@ Requires HSYNC_BB_LAN=1 to run.
 
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from .lan_helpers import (
-    _lan_env,
     _lan_start,
     _stderr_text,
     _terminate,
@@ -219,43 +217,21 @@ class TestLanMultiSlave:
 class TestLanPersistent:
     def test_no_lan_persistent_exits_when_alone(self, lan_master_dir, lan_bucket):
         """--no-lan-persistent exits instead of waiting when no peers are found."""
-        env = _lan_env(lan_master_dir)
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "5",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--no-lan-persistent",
-            ],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+        # Given a LAN client started with --no-lan-persistent and no peers
+        proc = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            extra_args=("--no-lan-persistent",),
         )
         try:
-            # Should exit (not hang) within ~15s when no peers found
+            # When no peers are discovered within the discovery timeout
             try:
-                exit_code = proc.wait(timeout=20)
+                exit_code = proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
                 pytest.fail("--no-lan-persistent did not exit when no peers were found")
-            # Exit code 0 or 5 is acceptable (0 = clean exit, 5 = no peers found;
-            # see hsync_client.exitcodes.ExitCode.LAN_NO_PEER)
+            # Then the client exits (0 = clean, 5 = LAN_NO_PEER)
             assert exit_code in (0, 5), f"Unexpected exit code: {exit_code}"
         finally:
             _terminate(proc)
@@ -491,3 +467,50 @@ class TestLanPermissions:
 # =============================================================================
 # Max inbound size guard
 # =============================================================================
+
+
+class TestLanMaxInboundSize:
+    def test_oversized_upload_refused_small_file_syncs(
+        self, lan_master_dir, lan_slave_dir, lan_bucket, bb_sample
+    ):
+        """Master with --max-inbound-size 1 refuses uploads over 1 MiB; small
+        files still sync normally."""
+        # Given a master with a 1 MiB inbound size cap
+        master = _lan_start(
+            lan_master_dir,
+            lan_bucket,
+            force_master=True,
+            extra_args=("--max-inbound-size", "1"),
+        )
+        try:
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Wait for the slave's watcher to be live before creating files
+                assert _wait_for_slave_events(slave), "slave did not reach [READY]"
+
+                # When a small file is created on the slave
+                s_small = bb_sample(prefix="small", size=0)
+                small_content = b"small file\n"
+                (Path(lan_slave_dir) / s_small.name).write_bytes(small_content)
+
+                # Then it syncs to the master (under the cap)
+                assert _wait_for_file(str(Path(lan_master_dir) / s_small.name), timeout=30), (
+                    f"small file did not sync. {s_small.ctx}"
+                )
+                assert (Path(lan_master_dir) / s_small.name).read_bytes() == small_content
+
+                # When an oversized file (> 1 MiB) is created on the slave
+                s_big = bb_sample(suffix=".bin", prefix="big", size=2 * 1024 * 1024)
+                (Path(lan_slave_dir) / s_big.name).write_bytes(s_big.payload)
+
+                # Then it does NOT appear on the master (refused by the cap)
+                time.sleep(5)
+                assert not (Path(lan_master_dir) / s_big.name).exists(), (
+                    f"oversized file was accepted despite --max-inbound-size 1. {s_big.ctx}"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)

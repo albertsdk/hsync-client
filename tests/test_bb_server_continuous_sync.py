@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import pytest
+import requests
 
 from tests.conftest import BB_CLIENT_CID, _watch_client_log_tail
 from tests.lan_helpers import _wait_for_client_ready
@@ -181,34 +182,44 @@ class TestContinuousSyncServerRestart:
 
 class TestContinuousSyncMore:
     def test_remote_file_modification_downloaded(
-        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
+        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload, bb_sample
     ):
         """File created on server is downloaded locally via WS event, then
         a modification on the server is re-downloaded."""
+        # Given a watch client ready to receive events
         log_path = _client_log_path(local_dir)
-        # The client prints to stdout by default; --output redirects loguru to
-        # a file so the test can observe the [READY] threshold black-box.
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
-            )
-            # Readiness threshold: watcher active + event channel up. This is
-            # the observable marker that the client is reacting to events.
-            assert _wait_for_log_text(log_path, "[READY]", timeout=30), (
-                "client did not reach the [READY] threshold\n"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
-            # Upload while the client is watching — the server broadcasts an
-            # "added" event via WebSocket which triggers a download.
-            content = b"v1\n"
-            bb_server_upload(bb_bucket, "update_me.txt", content)
-            local_file = Path(local_dir) / "update_me.txt"
+            # When a file is uploaded to the server (broadcasts "added")
+            s = bb_sample(prefix="update", size=0)
+            filename = s.name
+            content_v1 = b"v1\n"
+            bb_server_upload(bb_bucket, filename, content_v1)
+            local_file = Path(local_dir) / filename
+
+            # Then the first version is downloaded via the WS event
             assert _wait_for(lambda: local_file.exists(), timeout=20), (
-                "File uploaded via API did not sync locally"
+                f"File uploaded via API did not sync locally. {s.ctx}"
             )
-            assert local_file.read_bytes() == content
+            assert local_file.read_bytes() == content_v1, s.ctx
+
+            # When the file is modified on the server (broadcasts "modified")
+            content_v2 = b"v2-replaced\n"
+            bb_server_upload(bb_bucket, filename, content_v2)
+
+            # Then the updated version is re-downloaded to the local dir
+            assert _wait_for(
+                lambda: local_file.exists() and local_file.read_bytes() == content_v2,
+                timeout=30,
+            ), (
+                "Modified file was not re-downloaded from the server.\n"
+                f"{s.ctx}\n--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
         finally:
             _terminate(proc)
 
@@ -280,8 +291,6 @@ class TestContinuousSync:
             assert _wait_for(lambda: old_file.exists())
 
             # Rename on server via API (using files endpoint PATCH)
-            import requests
-
             base, api_key = live_server
             r = requests.patch(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",
@@ -327,27 +336,45 @@ class TestContinuousSync:
             _terminate(proc)
 
     def test_local_file_modification_uploaded(
-        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        watch_sync,
+        bb_server_upload,
+        bb_server_download,
+        bb_sample,
     ):
         """File modified locally is re-uploaded to the server."""
-        proc = watch_sync(bb_bucket, local_dir)
+        # Given a watch client ready to receive events
+        log_path = _client_log_path(local_dir)
+        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
-            # Upload while watching so the file reaches the client via
-            # WebSocket "added" event (not via initial full sync).
-            bb_server_upload(bb_bucket, "mod.txt", b"v1\n")
-            assert _wait_for(lambda: (Path(local_dir) / "mod.txt").exists())
+            # And a file uploaded to the server so it reaches the client via
+            # WebSocket "added" event (not via initial full sync)
+            s = bb_sample(prefix="mod", size=0)
+            filename = s.name
+            bb_server_upload(bb_bucket, filename, b"v1\n")
+            assert _wait_for(lambda: (Path(local_dir) / filename).exists()), s.ctx
 
-            # Modify locally
+            # When the local copy is modified
             time.sleep(0.5)
-            (Path(local_dir) / "mod.txt").write_bytes(b"v2-updated\n")
+            content_v2 = b"v2-updated\n"
+            (Path(local_dir) / filename).write_bytes(content_v2)
 
-            # The modified file should be re-uploaded (detected via ws event)
-            # Smoke test: the process stays alive (no crash)
-            assert _wait_for(lambda: True, timeout=3)  # just let watcher run
+            # Then the modified file is re-uploaded to the server
+            assert _wait_for(
+                lambda: bb_server_download(bb_bucket, filename) == content_v2,
+                timeout=30,
+            ), (
+                "Modified local file was not re-uploaded to the server.\n"
+                f"{s.ctx}\n--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
         finally:
             _terminate(proc)
 
@@ -417,8 +444,6 @@ class TestContinuousSync:
             assert _wait_for(lambda: local_file.exists())
 
             # Delete on server via API
-            import requests
-
             base, api_key = live_server
             r = requests.delete(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",
@@ -435,64 +460,44 @@ class TestContinuousSync:
             _terminate(proc)
 
     def test_ignore_delete_keeps_local_file(
-        self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        watch_sync,
+        bb_server_upload,
+        bb_server_files,
+        bb_sample,
     ):
-        """Watch mode with --ignore-delete preserves locally-deleted files on server."""
-        import os
-        import sys
-
-        base_url, api_key = live_server
-        # Scrub pre-existing HSYNC_* variables and keep the instance-lock dir
-        # per-test (see the watch_sync fixture in conftest.py).
-        env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
-        env.update(
-            {
-                "HSYNC_API_KEY": api_key,
-                "HSYNC_READY_FILE": _ready_path(local_dir),
-                "HSYNC_LOCKS_DIR": str(Path(local_dir).parent / "locks"),
-            }
-        )
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "-b",
-                bb_bucket,
-                "-s",
-                base_url,
-                "-p",
-                local_dir,
-                "-w",
-                "--yes",
-                "--insecure",
-                "--min-free-disk-space",
-                "0",
-                "--ignore-delete",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        """Watch mode with --ignore-delete preserves the server copy when the
+        local file is deleted."""
+        # Given a watch client with --ignore-delete, ready to receive events
+        log_path = _client_log_path(local_dir)
+        proc = watch_sync(bb_bucket, local_dir, "--output", log_path, "--ignore-delete")
         try:
-            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+            assert _wait_for_ready(local_dir, proc, log_path), (
+                "watch mode did not become ready\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
-            # Upload while watching so the file reaches the client via
-            # WebSocket "added" event (not via initial full sync).
-            bb_server_upload(bb_bucket, "keep_server.txt", b"keep\n")
+            # And a file uploaded to the server so it reaches the client via WS
+            s = bb_sample(prefix="keep", size=0)
+            filename = s.name
+            content = b"keep me\n"
+            bb_server_upload(bb_bucket, filename, content)
+            local_file = Path(local_dir) / filename
+            assert _wait_for(lambda: local_file.exists()), s.ctx
 
-            # Delete locally
-            local_file = Path(local_dir) / "keep_server.txt"
-            assert _wait_for(lambda: local_file.exists())
+            # When the local copy is deleted
             local_file.unlink()
 
-            # Wait a bit and verify the file is still NOT deleted on server
-            # (ignore-delete should prevent the deletion from propagating)
+            # Then the server copy is still present after a quiet window
+            # (--ignore-delete must prevent the local deletion from propagating)
             time.sleep(5)
-            # The process shouldn't crash — smoke test
-            assert proc.poll() is None
+            assert filename in bb_server_files(bb_bucket), (
+                f"Server file was deleted despite --ignore-delete. {s.ctx}\n"
+                f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
         finally:
             _terminate(proc)
 
@@ -526,8 +531,6 @@ class TestContinuousSyncSymlinkStable:
 
             # Then the server stored a *structural* symlink (not a dereferenced
             # regular file): the listing entry must advertise type + target.
-            import requests
-
             base, api_key = live_server
             listing = requests.get(
                 f"{base}/api/v1/buckets/{bb_bucket}/files",

@@ -185,13 +185,14 @@ def _lan_start(
 
 
 def _terminate(proc: subprocess.Popen) -> None:
-    """Terminate and reap a subprocess."""
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+    """Terminate and reap a subprocess (idempotent: safe on dead processes)."""
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
     # Drain pipes to avoid ResourceWarning
     if proc.stdout:
         proc.stdout.close()
