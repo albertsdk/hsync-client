@@ -351,6 +351,36 @@ class TestMeasureBandwidthActive:
         monkeypatch.setattr("requests.get", _fail)
         assert measure_bandwidth_active("http://localhost:9999") is None
 
+    def test_measures_throughput_with_size_param(self, monkeypatch):
+        """The probe requests ``/health?size=`` and derives Mbps from the payload."""
+        captured = {}
+
+        class _FakeResp:
+            ok = True
+            content = b"x" * 262144  # 256 KB
+
+        def _fake_get(url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs.get("params")
+            return _FakeResp()
+
+        monkeypatch.setattr("requests.get", _fake_get)
+        mbps = measure_bandwidth_active("http://localhost:9999")
+        assert mbps is not None
+        assert mbps > 0
+        assert captured["url"] == "http://localhost:9999/health"
+        assert captured["params"] == {"size": 262144}
+
+    def test_returns_none_on_empty_payload(self, monkeypatch):
+        """An empty payload (no size support) yields None, not a bogus 0 Mbps."""
+
+        class _EmptyResp:
+            ok = True
+            content = b""
+
+        monkeypatch.setattr("requests.get", lambda *a, **kw: _EmptyResp())
+        assert measure_bandwidth_active("http://localhost:9999") is None
+
 
 # ── Precedence tests (CLI > env > autotune > default) ─────────────────────
 

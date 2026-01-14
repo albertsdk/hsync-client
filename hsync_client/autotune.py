@@ -200,7 +200,13 @@ def update_bw_ema(bytes_transferred: int, elapsed_sec: float) -> None:
 
 
 def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> float | None:
-    """GET a small payload from the server, return Mbps. ``None`` on failure."""
+    """Measure throughput by downloading *size_bytes* from the server's health
+    probe (``GET /health?size=``), returning Mbps. ``None`` on failure.
+
+    The server bounds the payload (``HEALTH_MAX_PROBE_BYTES``), so the result
+    is a coarse seed for the bandwidth class until the passive EMA has data.
+    Never used on metered connections (Android forces ``MOBILE`` instead).
+    """
     try:
         from requests import get as http_get
         from requests.exceptions import RequestException
@@ -210,10 +216,15 @@ def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> f
 
     try:
         t0 = monotonic()
-        resp = http_get(f"{server_url}/api/v1/health", timeout=10)
+        resp = http_get(
+            f"{server_url.rstrip('/')}/health",
+            params={"size": size_bytes},
+            timeout=10,
+        )
         elapsed = monotonic() - t0
-        if resp.ok and elapsed > 0:
-            return (len(resp.content) * 8 / elapsed) / 1_000_000
+        payload_bytes = len(resp.content)
+        if resp.ok and elapsed > 0 and payload_bytes > 0:
+            return (payload_bytes * 8 / elapsed) / 1_000_000
     except (RequestException, OSError) as e:
         log.warning(f"autotune: active bandwidth probe failed ({e})")
     return None

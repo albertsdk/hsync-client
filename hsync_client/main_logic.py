@@ -739,6 +739,7 @@ def run_sync(
                 classify_network,
                 derive_profile,
                 detect_storage_type,
+                measure_bandwidth_active,
                 measure_rtt,
                 profile_transfer_queue,
             )
@@ -751,7 +752,13 @@ def run_sync(
             # to the post-discovery refresh in lan_handler (slave role only).
             rtt_ms = None if using_lan_placeholder else measure_rtt(rtt_host, rtt_port)
             net_class = classify_network(rtt_ms)
-            bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
+            # Active bandwidth probe seeds the class at startup when the passive
+            # EMA has no data yet (no transfers have run). Skipped for the LAN
+            # placeholder — no server URL exists until a master is discovered.
+            active_mbps = None
+            if not using_lan_placeholder and autotune_mod._bw_ema is None:
+                active_mbps = measure_bandwidth_active(effective_server_url)
+            bw_class = classify_bandwidth(autotune_mod._bw_ema, None, active_mbps)
             storage_type = detect_storage_type(local_path)
 
             probe_results = ProbeResults(
@@ -903,13 +910,8 @@ def run_sync(
     # Hot-reload watcher: rebuild the matcher when .hsyncignore changes.
     _hsyncignore_observer = _start_hsyncignore_watcher(local_path, _matcher)
 
-    # Check if local directory exists at startup
-    if not Path(local_path).exists():
-        log.error(f"Local directory '{local_path}' does not exist")
-        sys.exit(1)
-
     # Check for file deletion risk before syncing
-    if not dryrun and Path(local_path).exists():
+    if not dryrun:
         _check_deletion_risk(
             local_path=local_path,
             lan_mode=lan_mode,

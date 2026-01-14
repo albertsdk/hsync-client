@@ -44,8 +44,12 @@ EMA (`_bw_ema`) updated after each transfer. Callers must read it via the
 module attribute (`autotune_mod._bw_ema`), not via a value import, to avoid
 stale snapshots.
 
-**Active (optional)**: `measure_bandwidth_active(server_url)` GETs `/api/v1/health`
-and measures throughput. Never used on metered connections (Android).
+**Active (startup fallback)**: `measure_bandwidth_active(server_url, size_bytes)`
+GETs `/health?size=<size_bytes>` (default 256 KB, server-capped at 1 MB) and
+measures throughput from the returned payload. It runs **only at startup**,
+when the passive EMA has no data yet (`_bw_ema is None`) and a real server URL
+is configured (skipped for the LAN placeholder). Never used on metered
+connections (Android).
 
 `classify_bandwidth(mbps, nic_hint, active)` maps to `BwClass`:
 
