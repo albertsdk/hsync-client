@@ -11,6 +11,7 @@ This module provides the Typer-based CLI for the HSYNC command-line interface.
 """
 
 import json
+import re
 from os import getcwd
 from typing import Annotated, cast
 
@@ -94,8 +95,6 @@ def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
 
 def _validate_bucket(value: str) -> str:
     """Validate bucket name (alphanumeric, hyphens and underscores allowed)."""
-    import re
-
     if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
         raise typer.BadParameter(
             "The bucket name must be alphanumeric (hyphens and underscores allowed, "

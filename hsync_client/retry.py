@@ -47,6 +47,22 @@ DEFAULT_MAX_WAIT = TRANSFER_RETRY_MAX_WAIT_DEFAULT
 _retry_log = logging.getLogger("hsync_client.retry")
 
 
+def _retry_on(
+    exc_types: tuple[type[BaseException], ...] | type[BaseException],
+    max_attempts: int,
+    min_wait: float,
+    max_wait: float,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Build a tenacity retry decorator for *exc_types* with exponential backoff."""
+    return retry(
+        retry=retry_if_exception_type(exc_types),
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
+        reraise=True,
+    )
+
+
 def retry_on_network_error(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     min_wait: float = DEFAULT_MIN_WAIT,
@@ -71,13 +87,7 @@ def retry_on_network_error(
             response = requests.get(url)
             return response.json()
     """
-    return retry(
-        retry=retry_if_exception_type((RequestException, NetworkError)),
-        stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
-        reraise=True,
-    )
+    return _retry_on((RequestException, NetworkError), max_attempts, min_wait, max_wait)
 
 
 def retry_on_connection_error(
@@ -98,13 +108,7 @@ def retry_on_connection_error(
     Returns:
         A retry decorator configured with the specified parameters.
     """
-    return retry(
-        retry=retry_if_exception_type(RequestException),
-        stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
-        reraise=True,
-    )
+    return _retry_on(RequestException, max_attempts, min_wait, max_wait)
 
 
 def retry_on_transient_transfer_error(
@@ -129,10 +133,4 @@ def retry_on_transient_transfer_error(
     Returns:
         A retry decorator configured with the specified parameters.
     """
-    return retry(
-        retry=retry_if_exception_type((RequestException, ServerError)),
-        stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(_retry_log, logging.WARNING),
-        reraise=True,
-    )
+    return _retry_on((RequestException, ServerError), max_attempts, min_wait, max_wait)

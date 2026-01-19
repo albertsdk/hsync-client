@@ -21,7 +21,7 @@ Features:
 """
 
 from asyncio import Event, Queue, ensure_future, wait, wait_for
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from json import dumps
 from logging import getLogger
 from time import time
@@ -55,13 +55,11 @@ class QueuedEvent:
         data: The event payload to send.
         retry_count: Number of times this event has been retried.
         next_retry_time: Unix timestamp when retry is allowed.
-        created_at: Unix timestamp when event was first queued.
     """
 
     data: dict[str, Any]
     retry_count: int = 0
     next_retry_time: float = 0.0
-    created_at: float = field(default_factory=time)
 
     def get_backoff_delay(self) -> float:
         """
@@ -156,31 +154,6 @@ class EventQueue:
         except Exception as e:
             log.warning(f"Failed to send event: {e}")
             return False
-
-    async def _next_event(self) -> QueuedEvent | None:
-        """Return the next event to process, preserving strict FIFO order.
-
-        A failed event held in ``_pending_retry`` takes precedence and blocks
-        newer events until its backoff has elapsed and it is re-attempted
-        (head-of-line blocking). This guarantees events are delivered in the
-        order they occurred, so a retried "added" can never overtake a later
-        "deleted" on the same file.
-
-        Returns:
-            The next event to send, or None if nothing is ready yet.
-        """
-        if self._pending_retry is not None:
-            if time() >= self._pending_retry.next_retry_time:
-                event = self._pending_retry
-                self._pending_retry = None
-                return event
-            # Still waiting on the failed event: do not pull newer events.
-            return None
-
-        if not self.queue.empty():
-            return await self.queue.get()
-
-        return None
 
     async def _await_event(self) -> QueuedEvent | None:
         """Block for the next queued event, or return None on ``stop()``.

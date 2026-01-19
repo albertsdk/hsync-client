@@ -21,7 +21,7 @@ from asyncio import (
 )
 from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
-from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
+from ssl import CERT_NONE, Purpose, create_default_context
 
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File
@@ -43,7 +43,7 @@ from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.presence import record_presence
-from hsync_client.sync import sync
+from hsync_client.sync import is_sync_cycle_active, sync
 from hsync_client.transfer import upload_file
 from hsync_client.utils import warn_if_inotify_watch_limit_low
 
@@ -86,12 +86,6 @@ async def remote_events() -> None:
         elif CONFIG.get("CA_CERT"):
             # Load custom CA certificate for self-signed server certs
             ssl_context.load_verify_locations(cafile=CONFIG["CA_CERT"])
-            ssl_context.check_hostname = True
-            ssl_context.verify_mode = CERT_REQUIRED
-        else:
-            # Default SSL verification
-            ssl_context.check_hostname = True
-            ssl_context.verify_mode = CERT_REQUIRED
 
     # Connect to WebSocket endpoint with heartbeat. ``max_size`` is set
     # explicitly (events carry file metadata, never bulk content) instead of
@@ -309,8 +303,6 @@ async def resync() -> None:
             # concurrent sync() cycles from racing on the same merge-base /
             # tombstone stores. The flag is advisory and non-blocking: a
             # missed cycle just means the next interval picks up the changes.
-            from hsync_client.sync import is_sync_cycle_active
-
             if is_sync_cycle_active():
                 log.debug("Force sync skipped: a sync cycle is already in progress")
                 continue

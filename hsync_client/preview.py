@@ -12,6 +12,7 @@ import between the two modules and eliminate duplicated code.
 """
 
 import contextlib
+from typing import Literal
 
 from hsync_common.format import format_bytes
 from hsync_common.models.file import clear_sha256_cache
@@ -31,6 +32,29 @@ from hsync_client.sync import (
     sync,
 )
 from hsync_client.utils import reset_bandwidth_throttle
+
+_BANDWIDTH_KEY = Literal["MAX_BANDWIDTH_UPLOAD", "MAX_BANDWIDTH_DOWNLOAD"]
+
+
+def _apply_bandwidth(value: object, key: _BANDWIDTH_KEY, name: str, log) -> bool:
+    """Parse *value* (``0``/``"0"``/int/str) into ``CONFIG[key]``.
+
+    Returns False (after logging) when the value is not a valid bandwidth.
+    """
+    if value == 0 or value == "0":
+        CONFIG[key] = None
+    elif isinstance(value, int):
+        CONFIG[key] = value
+    elif isinstance(value, str):
+        try:
+            CONFIG[key] = int(value)
+        except (ValueError, TypeError):
+            log.warning(f"Invalid {name} bandwidth value: {value!r}")
+            return False
+    else:
+        log.warning(f"Invalid {name} bandwidth value: {value!r}")
+        return False
+    return True
 
 
 def _run_preview(log) -> None:
@@ -194,35 +218,14 @@ async def _with_stdin_commands(log, coro) -> None:
         upload = kw.get("upload")
         download = kw.get("download")
 
-        if upload is not None:
-            if upload == 0 or upload == "0":
-                CONFIG["MAX_BANDWIDTH_UPLOAD"] = None
-            elif isinstance(upload, int):
-                CONFIG["MAX_BANDWIDTH_UPLOAD"] = upload
-            elif isinstance(upload, str):
-                try:
-                    CONFIG["MAX_BANDWIDTH_UPLOAD"] = int(upload)
-                except (ValueError, TypeError):
-                    log.warning(f"Invalid upload bandwidth value: {upload!r}")
-                    return
-            else:
-                log.warning(f"Invalid upload bandwidth value: {upload!r}")
-                return
-
-        if download is not None:
-            if download == 0 or download == "0":
-                CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = None
-            elif isinstance(download, int):
-                CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = download
-            elif isinstance(download, str):
-                try:
-                    CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = int(download)
-                except (ValueError, TypeError):
-                    log.warning(f"Invalid download bandwidth value: {download!r}")
-                    return
-            else:
-                log.warning(f"Invalid download bandwidth value: {download!r}")
-                return
+        if upload is not None and not _apply_bandwidth(
+            upload, "MAX_BANDWIDTH_UPLOAD", "upload", log
+        ):
+            return
+        if download is not None and not _apply_bandwidth(
+            download, "MAX_BANDWIDTH_DOWNLOAD", "download", log
+        ):
+            return
 
         upload_str = (
             format_bytes(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"

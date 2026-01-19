@@ -408,6 +408,13 @@ def _cid_suffix(origin_cid: object) -> str:
     return f" (CID: {origin_cid})" if origin_cid else ""
 
 
+def _ensure_parent_dir(path: str) -> None:
+    """Create the parent directory of *path* if it does not exist."""
+    parent = str(Path(path).parent)
+    if parent and not Path(parent).exists():
+        Path(parent).mkdir(parents=True, exist_ok=True)
+
+
 async def _rename_path(
     src_path: str | None,
     dst_path: str | None,
@@ -431,9 +438,7 @@ async def _rename_path(
         if _path_present(src_path):
             log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{_cid_suffix(origin_cid)}')
             emit_event(UiEventName.rename, src=src_path, dst=dst_path)
-            parent = str(Path(dst_path).parent)
-            if parent and not Path(parent).exists():
-                Path(parent).mkdir(parents=True, exist_ok=True)
+            _ensure_parent_dir(dst_path)
             await asyncio.to_thread(rename, src_path, dst_path)
             if ctx.record_inbound_rename:
                 ctx.record_inbound_rename(src_path, dst_path)
@@ -556,9 +561,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     log.info(
         f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{_cid_suffix(origin_cid)}'
     )
-    parent = str(Path(local).parent)
-    if not Path(parent).exists():
-        Path(parent).mkdir(parents=True, exist_ok=True)
+    _ensure_parent_dir(local)
     # Mark the path as being mutated on behalf of a peer so the local
     # watcher can suppress the resulting deleted/created events instead of
     # rebroadcasting them as fresh local changes (echo suppression). Without

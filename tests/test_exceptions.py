@@ -6,11 +6,8 @@ import pytest
 
 from hsync_client.exceptions import (
     AuthenticationError,
-    ConfigurationError,
-    ConnectionError,
     DownloadError,
     FileOperationError,
-    FilePermissionError,
     HSyncClientError,
     NetworkError,
     ServerError,
@@ -48,17 +45,6 @@ class TestHSyncClientError:
         assert "Test error" in str(exc_info.value)
 
 
-class TestConfigurationErrors:
-    """Tests for configuration-related exceptions."""
-
-    def test_configuration_error(self):
-        """Test ConfigurationError."""
-        exc = ConfigurationError()
-        assert exc.error_code == "HSYNC-C1000"
-        assert exc.message == "Configuration error"
-        assert isinstance(exc, HSyncClientError)
-
-
 class TestNetworkErrors:
     """Tests for network-related exceptions."""
 
@@ -68,13 +54,6 @@ class TestNetworkErrors:
         assert exc.error_code == "HSYNC-C2000"
         assert exc.message == "Network error"
         assert isinstance(exc, HSyncClientError)
-
-    def test_connection_error(self):
-        """Test ConnectionError."""
-        exc = ConnectionError(details={"host": "localhost", "port": 8080})
-        assert exc.error_code == "HSYNC-C2001"
-        assert exc.message == "Connection failed"
-        assert isinstance(exc, NetworkError)
 
     def test_authentication_error(self):
         """Test AuthenticationError."""
@@ -115,13 +94,6 @@ class TestSyncErrors:
         assert exc.message == "File operation failed"
         assert isinstance(exc, HSyncClientError)
 
-    def test_permission_error(self):
-        """Test FilePermissionError."""
-        exc = FilePermissionError()
-        assert exc.error_code == "HSYNC-C4003"
-        assert exc.message == "Permission denied"
-        assert isinstance(exc, FileOperationError)
-
 
 class TestExceptionHierarchy:
     """Tests for exception inheritance hierarchy."""
@@ -129,15 +101,12 @@ class TestExceptionHierarchy:
     def test_all_inherit_from_base(self):
         """Test that all exceptions inherit from HSyncClientError."""
         exceptions = [
-            ConfigurationError,
             NetworkError,
-            ConnectionError,
             AuthenticationError,
             ServerError,
             SyncError,
             DownloadError,
             FileOperationError,
-            FilePermissionError,
         ]
         for exc_class in exceptions:
             assert issubclass(exc_class, HSyncClientError)
@@ -152,10 +121,6 @@ class TestExceptionHierarchy:
         with pytest.raises(SyncError):
             raise DownloadError()
 
-        # Catch FileOperationError subclasses
-        with pytest.raises(FileOperationError):
-            raise FilePermissionError()
-
         # Catch all by base class
         with pytest.raises(HSyncClientError):
-            raise ConfigurationError()
+            raise ServerError()

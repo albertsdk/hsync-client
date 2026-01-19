@@ -125,6 +125,13 @@ def _is_permanently_failed(file: File) -> bool:
     return _permanent_skip_key(file) in _permanent_download_failures
 
 
+def _record_permanent_download_failure(file: File, e: PermanentDownloadError) -> None:
+    """Record a permanent download failure: skip-set entry + log + UI event."""
+    _permanent_download_failures.add(_permanent_skip_key(file))
+    log.warning(f'Permanent download failure for "{file.filepath}" (skipped for this cycle): {e}')
+    emit_event(UiEventName.transfer_failed, file=file.filepath, reason=str(e))
+
+
 # =============================================================================
 # Main Sync Function
 # =============================================================================
@@ -140,8 +147,6 @@ def _cleanup_partial_files() -> int:
     Returns:
         Number of partial files removed.
     """
-    from os import walk
-
     removed_count = 0
     local_bucket = CONFIG["LOCAL_BUCKET"]
 
@@ -653,17 +658,8 @@ async def _execute_parallel_transfers(
                     # Permanent failure (e.g. over the size cap): record it so
                     # the file is not retried on every resync tick, and notify
                     # the UI. The partial file is already dropped in transfer.py.
-                    _permanent_download_failures.add(_permanent_skip_key(file))
                     _count_transfer_failure(counters)
-                    log.warning(
-                        f'Permanent download failure for "{file.filepath}" '
-                        f"(skipped for this cycle): {e}"
-                    )
-                    emit_event(
-                        UiEventName.transfer_failed,
-                        file=file.filepath,
-                        reason=str(e),
-                    )
+                    _record_permanent_download_failure(file, e)
                 except Exception as e:
                     _count_transfer_failure(counters)
                     log.error(f"Transfer error for {file.filepath}: {e}")
@@ -1758,16 +1754,7 @@ def update_file(data: dict) -> None:
             try:
                 download_file(file_data)
             except PermanentDownloadError as e:
-                _permanent_download_failures.add(_permanent_skip_key(file_data))
-                log.warning(
-                    f'Permanent download failure for "{file_data.filepath}" '
-                    f"(skipped for this cycle): {e}"
-                )
-                emit_event(
-                    UiEventName.transfer_failed,
-                    file=file_data.filepath,
-                    reason=str(e),
-                )
+                _record_permanent_download_failure(file_data, e)
                 return
             # Invalidate cached SHA-256 — file content has changed
             if file_data.filepath:
@@ -1788,12 +1775,4 @@ def update_file(data: dict) -> None:
         try:
             download_file(file)
         except PermanentDownloadError as e:
-            _permanent_download_failures.add(_permanent_skip_key(file))
-            log.warning(
-                f'Permanent download failure for "{file.filepath}" (skipped for this cycle): {e}'
-            )
-            emit_event(
-                UiEventName.transfer_failed,
-                file=file.filepath,
-                reason=str(e),
-            )
+            _record_permanent_download_failure(file, e)

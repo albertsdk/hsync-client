@@ -568,16 +568,14 @@ class HsyncServiceListener(ServiceListener):
     registers them with the PeerManager.
     """
 
-    def __init__(self, peer_manager: PeerManager, zeroconf: Zeroconf) -> None:
+    def __init__(self, peer_manager: PeerManager) -> None:
         """
         Initialize the service listener.
 
         Args:
             peer_manager: PeerManager to register discovered peers.
-            zeroconf: Zeroconf instance for service queries.
         """
         self._peer_manager = peer_manager
-        self._zeroconf = zeroconf
 
     def _register_peer_from_info(self, info: ServiceInfo) -> None:
         """Extract peer information from ServiceInfo and register it."""
@@ -875,7 +873,7 @@ class LANSync:
             self._register_service()
 
         # Start listening for other services
-        listener = HsyncServiceListener(self._peer_manager, self._zeroconf)
+        listener = HsyncServiceListener(self._peer_manager)
         self._browser = ServiceBrowser(self._zeroconf, HSYNC_SERVICE_TYPE, listener)
 
         self._running = True

@@ -925,8 +925,6 @@ def delete_file_remote(file: File) -> None:
         log.debug(f'"{filename}" already absent on server')
         return
     if response.status_code not in (200, 204):
-        from hsync_client.exceptions import ServerError
-
         raise ServerError(
             message=f"Remote delete failed for {filename}: status {response.status_code}",
             details={"status_code": response.status_code, "response": response.text},
@@ -1209,21 +1207,18 @@ def _record_201_upload(file: File, response) -> None:
     try:
         payload = response.json() if response.text else None
         if isinstance(payload, dict):
-            # Both shapes are accepted: the canonical "version" object, and the
-            # legacy "resolution" dict some hubs used to return.
+            # The canonical "version" object carries the recorded causal
+            # version (merged vclock + ADR-0023 corrected mtime).
             version = payload.get("version")
-            resolution = payload.get("resolution")
-            for container in (version, resolution):
-                if not isinstance(container, dict):
-                    continue
-                vclock_raw = container.get("vclock")
+            if isinstance(version, dict):
+                vclock_raw = version.get("vclock")
                 if isinstance(vclock_raw, dict) and record_vclock is None:
                     record_vclock = {
                         str(k): int(v)
                         for k, v in vclock_raw.items()
                         if isinstance(v, int) and not isinstance(v, bool)
                     }
-                raw_corrected = container.get("corrected_mtime")
+                raw_corrected = version.get("corrected_mtime")
                 if (
                     isinstance(raw_corrected, int)
                     and not isinstance(raw_corrected, bool)

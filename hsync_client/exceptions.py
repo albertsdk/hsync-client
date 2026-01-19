@@ -12,7 +12,6 @@ and more informative error messages. Each exception includes an error
 code for debugging purposes.
 
 Error Code Format: HSYNC-CXXXX (C = Client)
-- C1XXX: Configuration/Validation errors
 - C2XXX: Network/Connection errors
 - C3XXX: Sync operation errors
 - C4XXX: File operation errors
@@ -35,18 +34,6 @@ class HSyncClientError(HSyncError):
 
 
 # =============================================================================
-# Configuration/Validation Errors (C1XXX)
-# =============================================================================
-
-
-class ConfigurationError(HSyncClientError):
-    """Configuration is invalid or missing."""
-
-    error_code = "HSYNC-C1000"
-    default_message = "Configuration error"
-
-
-# =============================================================================
 # Network/Connection Errors (C2XXX)
 # =============================================================================
 
@@ -56,13 +43,6 @@ class NetworkError(HSyncClientError):
 
     error_code = "HSYNC-C2000"
     default_message = "Network error"
-
-
-class ConnectionError(NetworkError):
-    """Failed to connect to server."""
-
-    error_code = "HSYNC-C2001"
-    default_message = "Connection failed"
 
 
 class AuthenticationError(NetworkError):
@@ -139,13 +119,6 @@ class FileOperationError(HSyncClientError):
 
     error_code = "HSYNC-C4000"
     default_message = "File operation failed"
-
-
-class FilePermissionError(FileOperationError):
-    """Permission denied for file operation."""
-
-    error_code = "HSYNC-C4003"
-    default_message = "Permission denied"
 
 
 class InsufficientDiskSpaceError(FileOperationError):

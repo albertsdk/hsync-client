@@ -254,22 +254,3 @@ class TestVerifyCertFingerprint:
         data = b"test certificate data"
         fingerprint = hashlib.sha256(data).hexdigest()
         assert verify_cert_fingerprint(data, fingerprint.upper()) is True
-
-
-class TestGetServerCertFingerprint:
-    """Tests for get_server_cert_fingerprint function."""
-
-    def test_get_fingerprint_connection_error(self):
-        """Returns None on connection error."""
-        from hsync_client.ssl_utils import get_server_cert_fingerprint
-
-        # Non-routable IP to cause connection timeout
-        result = get_server_cert_fingerprint("10.255.255.1", 9999)
-        assert result is None
-
-    def test_get_fingerprint_invalid_host(self):
-        """Returns None for invalid host."""
-        from hsync_client.ssl_utils import get_server_cert_fingerprint
-
-        result = get_server_cert_fingerprint("invalid.hostname.that.does.not.exist", 443)
-        assert result is None

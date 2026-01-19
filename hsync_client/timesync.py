@@ -107,19 +107,6 @@ def _measure_ntp_offset(logger: Any) -> tuple[float, str, str | None]:
     return offset, f"ntp:{host}", host
 
 
-def probe_ntp_clock_offset(logger: Any = log) -> None:
-    """Measure the offset against the configured public SNTP servers.
-
-    Probes every host in order until one answers (median of several
-    round-trips). Offline/air-gapped ⇒ offset 0 + degraded-temporal-mode
-    warning; synchronisation is never blocked.
-    """
-    offset, source, host = _measure_ntp_offset(logger)
-    offset_store.record(offset, source)
-    if host is not None:
-        logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
-
-
 def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
     """Start the SNTP offset probe on a background daemon thread.
 

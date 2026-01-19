@@ -85,17 +85,6 @@ class _BoundedLineReader:
             self._buf.extend(chunk)
 
 
-async def _readline_bounded(reader: asyncio.StreamReader, max_bytes: int) -> bytes:
-    """Read a newline-terminated line with a hard size cap.
-
-    Returns the line (including the trailing newline) or an empty bytes
-    object on EOF.  If *max_bytes* is exceeded, the reader is drained up
-    to the cap and an empty line is returned (treated as a malformed
-    message by the caller).
-    """
-    return await _BoundedLineReader().readline(reader, max_bytes)
-
-
 class StdinCommandHandler:
     """Async reader that dispatches JSON commands received on stdin."""
 

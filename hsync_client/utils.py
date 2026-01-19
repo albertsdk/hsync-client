@@ -44,6 +44,7 @@ from hsync_client.constants import (
     CID_LENGTH,
     INOTIFY_MAX_USER_WATCHES_PATH,
     INOTIFY_WATCH_WARN_RATIO,
+    OWNER_DIRECTORY_ACCESS,
     ActionLabel,
 )
 
@@ -290,8 +291,6 @@ def safe_rmdir_if_empty(dir_path: str, bucket_root: str | None = None) -> bool:
     Returns:
         True if the directory was removed, False otherwise.
     """
-    from os import listdir, rmdir
-
     if not dir_path or not Path(dir_path).exists():
         return False
     if bucket_root is None:
@@ -299,9 +298,9 @@ def safe_rmdir_if_empty(dir_path: str, bucket_root: str | None = None) -> bool:
     if bucket_root and is_same_paths(dir_path, bucket_root):
         return False
     try:
-        if listdir(dir_path):
+        if os.listdir(dir_path):
             return False
-        rmdir(dir_path)
+        os.rmdir(dir_path)
         return True
     except OSError:
         return False
@@ -577,6 +576,19 @@ def get_permissions(obj_path: str) -> str:
     return _read_permissions(obj_path)
 
 
+def _apply_permissions(path: str, permissions: str, *, extra_mode_bits: int = 0) -> None:
+    """Apply sanitized remote permissions to *path*, OR-ing *extra_mode_bits*."""
+    permissions = sanitize_remote_permissions(permissions)
+
+    # Skip if permissions already match
+    if Path(path).exists() and permissions == get_permissions(path):
+        return
+
+    mode = octal_to_mode(permissions) | extra_mode_bits
+    log.debug(f'{ActionLabel.PERMISSION} Set permission "{permissions}" to {path}')
+    chmod(path, mode)
+
+
 def set_permissions(file_path: str, permissions: str) -> None:
     """
     Set file permissions from a canonical octal string.
@@ -593,15 +605,7 @@ def set_permissions(file_path: str, permissions: str) -> None:
         file_path: Path to the file.
         permissions: Octal permission string (e.g., '644').
     """
-    permissions = sanitize_remote_permissions(permissions)
-
-    # Skip if permissions already match
-    if Path(file_path).exists() and permissions == get_permissions(file_path):
-        return
-
-    mode = octal_to_mode(permissions)
-    log.debug(f'{ActionLabel.PERMISSION} Set permission "{permissions}" to {file_path}')
-    chmod(file_path, mode)
+    _apply_permissions(file_path, permissions)
 
 
 def set_permissions_on_dir(dir_path: str, permissions: str) -> None:
@@ -613,18 +617,7 @@ def set_permissions_on_dir(dir_path: str, permissions: str) -> None:
     sync engine and its own storage (mirrors the server's
     ``set_directory_permissions``).
     """
-    from hsync_client.constants import OWNER_DIRECTORY_ACCESS
-
-    permissions = sanitize_remote_permissions(permissions)
-
-    # Skip if permissions already match (ignore the owner-floor when
-    # comparing: the floor is applied unconditionally below).
-    if Path(dir_path).exists() and permissions == get_permissions(dir_path):
-        return
-
-    mode = octal_to_mode(permissions) | OWNER_DIRECTORY_ACCESS
-    log.debug(f'{ActionLabel.PERMISSION} Set directory permission "{permissions}" to {dir_path}')
-    chmod(dir_path, mode)
+    _apply_permissions(dir_path, permissions, extra_mode_bits=OWNER_DIRECTORY_ACCESS)
 
 
 # =============================================================================

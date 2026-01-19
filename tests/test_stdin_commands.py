@@ -82,7 +82,7 @@ class TestStop:
 def _make_reader(*lines: bytes) -> AsyncMock:
     """Return a mock StreamReader whose ``read(1)`` yields individual bytes.
 
-    ``_readline_bounded`` reads byte-by-byte via ``reader.read(1)``,
+    ``_BoundedLineReader`` reads byte-by-byte via ``reader.read(1)``,
     so the mock must return single-byte ``bytes`` objects, not lines.
     """
     byte_list: list[bytes] = []

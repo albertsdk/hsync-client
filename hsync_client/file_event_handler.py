@@ -115,6 +115,23 @@ class BaseFileEventHandler(FileSystemEventHandler):
         cid = self._origin_cid(src_path, dst_path)
         return f" (CID: {cid})" if cid else ""
 
+    def _make_event(self, name: EventName, src, dst=None) -> Event:
+        """Build an ``Event`` with the three CONFIG identity fields."""
+        return Event(
+            CONFIG["CID"],
+            CONFIG["LOCAL_BUCKET"],
+            CONFIG["REMOTE_BUCKET"],
+            name,
+            src,
+            dst,
+        )
+
+    def _invalidate_dedup(self, path: str) -> None:
+        """Drop the dedup caches for *path* so a re-created entry is re-evaluated."""
+        self._last_broadcast_stat.pop(path, None)
+        self._last_broadcast_hash.pop(path, None)
+        self._last_mode.pop(path, None)
+
     def __init__(self, observer: Observer | None = None) -> None:
         # Delete coalescing: buffered (path, is_directory) pairs pending a flush.
         # Guarded by _delete_lock; _delete_timer is the pending threading.Timer.
@@ -280,9 +297,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             and len(self._last_broadcast_stat) >= DEDUP_MAX_ENTRIES
         ):
             oldest = next(iter(self._last_broadcast_stat))
-            self._last_broadcast_stat.pop(oldest, None)
-            self._last_broadcast_hash.pop(oldest, None)
-            self._last_mode.pop(oldest, None)
+            self._invalidate_dedup(oldest)
         self._last_broadcast_stat[src_path] = stat
         self._last_broadcast_hash[src_path] = sha256
         # Keep the mode baseline in step with the last PROPAGATED content, so a
@@ -305,10 +320,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
         each of them will receive its own ``DirCreatedEvent`` and trigger
         another scan.
         """
-        from os import listdir
-
         try:
-            for name in listdir(dir_path):
+            for name in os.listdir(dir_path):
                 full = str(Path(dir_path) / name)
                 if is_hidden_file(full) or Path(full).is_dir():
                     continue
@@ -344,13 +357,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         log.info(f'{self._label("SYMLINK", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
         if link is not None:
             self._broadcast_event(
-                Event(
-                    CONFIG["CID"],
-                    CONFIG["LOCAL_BUCKET"],
-                    CONFIG["REMOTE_BUCKET"],
-                    EventName.symlink,
-                    link,
-                ),
+                self._make_event(EventName.symlink, link),
                 src_abs_path=src_path,
             )
 
@@ -391,13 +398,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 self._broadcast_event(
-                    Event(
-                        CONFIG["CID"],
-                        CONFIG["LOCAL_BUCKET"],
-                        CONFIG["REMOTE_BUCKET"],
-                        EventName.added,
-                        dir_obj,
-                    ),
+                    self._make_event(EventName.added, dir_obj),
                     src_abs_path=src_path,
                 )
             # Start watching the new directory recursively so files created
@@ -461,13 +462,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(
-                        Event(
-                            CONFIG["CID"],
-                            CONFIG["LOCAL_BUCKET"],
-                            CONFIG["REMOTE_BUCKET"],
-                            EventName.modified,
-                            dir_obj,
-                        ),
+                        self._make_event(EventName.modified, dir_obj),
                         src_abs_path=src_path,
                     )
             return
@@ -611,9 +606,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # (dir back to its old path) would otherwise be stat-suppressed
             # by the directory-create dedup. Mirrors the file-branch
             # invalidation below and the delete-flush invalidation.
-            self._last_broadcast_stat.pop(src_path, None)
-            self._last_broadcast_hash.pop(src_path, None)
-            self._last_mode.pop(src_path, None)
+            self._invalidate_dedup(src_path)
 
             log.info(
                 f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
@@ -623,14 +616,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if dst:
                 src = deepcopy(dst)
                 src.path = src_path
-                message = Event(
-                    CONFIG["CID"],
-                    CONFIG["LOCAL_BUCKET"],
-                    CONFIG["REMOTE_BUCKET"],
-                    EventName.renamed,
-                    src,
-                    dst,
-                )
+                message = self._make_event(EventName.renamed, src, dst)
         else:
             if is_hidden_file(src_path):
                 # Safe-save: an editor/application wrote to a temp file
@@ -653,21 +639,12 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if dst:
                 src = deepcopy(dst)
                 src.filepath = src_path
-                message = Event(
-                    CONFIG["CID"],
-                    CONFIG["LOCAL_BUCKET"],
-                    CONFIG["REMOTE_BUCKET"],
-                    EventName.renamed,
-                    src,
-                    dst,
-                )
+                message = self._make_event(EventName.renamed, src, dst)
                 # The source path no longer exists; drop its dedup cache so a
                 # file later re-created at the same path with identical stat
                 # and/or hash is re-evaluated (not skipped as "unchanged").
                 # Mirrors the invalidation in on_deleted for the same bug class.
-                self._last_broadcast_stat.pop(src_path, None)
-                self._last_broadcast_hash.pop(src_path, None)
-                self._last_mode.pop(src_path, None)
+                self._invalidate_dedup(src_path)
 
         if message:
             self._broadcast_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
@@ -707,9 +684,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # create -> delete -> re-create of the same file (same content,
             # preserved mtime) silently drops the third event as
             # "Skip unchanged (stat)".
-            self._last_broadcast_stat.pop(src_path, None)
-            self._last_broadcast_hash.pop(src_path, None)
-            self._last_mode.pop(src_path, None)
+            self._invalidate_dedup(src_path)
 
             if covered_by_deleted_ancestor(src_path):
                 log.debug(f'Folded into ancestor delete: "{src_path}"')
@@ -728,13 +703,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             else:
                 obj = File(src_path)
             self._broadcast_event(
-                Event(
-                    CONFIG["CID"],
-                    CONFIG["LOCAL_BUCKET"],
-                    CONFIG["REMOTE_BUCKET"],
-                    EventName.deleted,
-                    obj,
-                ),
+                self._make_event(EventName.deleted, obj),
                 src_abs_path=src_path,
             )
             self._on_deleted(src_path, is_directory)

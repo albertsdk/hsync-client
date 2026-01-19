@@ -61,7 +61,12 @@ from hsync_common.models.file import File
 from hsync_common.path_validation import resolve_within
 from loguru import logger as log
 
-from hsync_client.compression import CONTENT_ENCODING_ZSTD, should_compress
+from hsync_client.compression import (
+    CONTENT_ENCODING_ZSTD,
+    compress_data,
+    decompress_stream,
+    should_compress,
+)
 from hsync_client.config import CONFIG
 
 # HTTP status codes used here (kept local to avoid a lan_server import cycle).
@@ -82,6 +87,12 @@ _delta_compute_sem = threading.Semaphore(4)
 # Token TTL (seconds) and the cap on concurrently live tokens.
 _TOKEN_TTL = 300
 _MAX_TOKENS = 100
+
+
+def _file_sha256(filepath: str) -> str:
+    """Return the cached SHA-256 for *filepath*, recomputing it on a miss."""
+    file_obj = File.get(filepath)
+    return (file_obj.sha256sum if file_obj else None) or compute_sha256(filepath)
 
 
 @dataclass
@@ -193,8 +204,7 @@ def handle_delta_signatures_get(handler, query: dict) -> None:
         return
     file_size = Path(filepath).stat().st_size
     block_size = optimal_block_size(file_size)
-    file_obj = File.get(filepath)
-    sha256sum = (file_obj.sha256sum if file_obj else None) or compute_sha256(filepath)
+    sha256sum = _file_sha256(filepath)
     with _delta_compute_sem:
         sigs = compute_signatures(filepath, block_size)
     handler._send_json_response(
@@ -245,8 +255,7 @@ def handle_delta_signatures_post(handler) -> None:
     sigs = [BlockSignature(**s) for s in clean_sigs]
 
     new_size = Path(filepath).stat().st_size
-    file_obj = File.get(filepath)
-    new_sha256 = (file_obj.sha256sum if file_obj else None) or compute_sha256(filepath)
+    new_sha256 = _file_sha256(filepath)
 
     with _delta_compute_sem:
         ops, literals = find_matches_file(filepath, sigs, block_size)
@@ -271,7 +280,7 @@ def handle_delta_signatures_post(handler) -> None:
         and CONFIG.get("COMPRESSION_ENABLED", False)
         and should_compress(filepath, len(literals), is_lan=True)
     ):
-        payload = zstd.ZstdCompressor().compress(literals)
+        payload = compress_data(literals)
         compressed = True
 
     bucket = CONFIG.get("REMOTE_BUCKET", "")
@@ -346,8 +355,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     ]
 
     # Race check: the master's base must still be what the slave saw.
-    file_obj = File.get(filepath)
-    current_base = (file_obj.sha256sum if file_obj else None) or compute_sha256(filepath)
+    current_base = _file_sha256(filepath)
     if current_base != base_sha256:
         handler._send_json_response(
             _HTTP_CONFLICT,
@@ -365,18 +373,8 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     if meta.get("compressed") is True:
         decompressed_path = f"{literal_path}.decompressed"
         try:
-            with (
-                zstd.ZstdDecompressor().stream_reader(open(literal_path, "rb")) as reader,
-                open(decompressed_path, "wb") as out,
-            ):
-                remaining = DELTA_MAX_LITERAL_SIZE
-                while True:
-                    chunk = reader.read(64 * 1024)
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-                    if remaining < 0:
-                        raise ValueError("literal payload exceeds maximum size")
+            with open(literal_path, "rb") as src, open(decompressed_path, "wb") as out:
+                for chunk in decompress_stream(src, DELTA_MAX_LITERAL_SIZE):
                     out.write(chunk)
         except (zstd.ZstdError, ValueError) as exc:
             handler._send_error_response(_HTTP_BAD_REQUEST, f"Invalid compressed payload: {exc}")

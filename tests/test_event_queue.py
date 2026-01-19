@@ -27,7 +27,6 @@ class TestQueuedEvent:
         assert event.data == {"name": "added"}
         assert event.retry_count == 0
         assert event.next_retry_time == 0.0
-        assert event.created_at > 0
 
     def test_get_backoff_delay_initial(self):
         """Test initial backoff delay."""
@@ -165,29 +164,41 @@ class TestEventQueue:
         """A failed event held for retry blocks newer events until ready."""
         queue = EventQueue(mock_websocket)
 
-        # A newer event is already waiting in the queue...
+        # Two events: the first is held as a pending retry, the second is newer.
+        await queue.enqueue({"name": "pending"})
         await queue.enqueue({"name": "newer"})
 
-        # ...but a failed event is pending with a not-yet-elapsed backoff.
-        pending = QueuedEvent(data={"name": "pending"})
+        # Pull the first event and hold it as pending with a not-yet-elapsed
+        # backoff (mirrors a failed send in process()).
+        pending = await queue.queue.get()
         pending.retry_count = 1
         pending.next_retry_time = time() + 100  # not ready yet
         queue._pending_retry = pending
 
-        # While the pending event is not ready, nothing is returned: the
-        # newer event must not overtake it.
-        assert await queue._next_event() is None
+        # While the pending event is not ready, process() must not send the
+        # newer event: the pending event blocks the queue (head-of-line).
+        async def run_and_stop():
+            await asyncio.sleep(0.05)
+            queue.stop()
+
+        await asyncio.gather(queue.process(), run_and_stop())
+
+        mock_websocket.send.assert_not_called()
         assert queue._pending_retry is pending
 
-        # Once the backoff elapses, the pending event is returned first.
-        pending.next_retry_time = time() - 1
-        event = await queue._next_event()
-        assert event is pending
-        assert queue._pending_retry is None
+        # Once the backoff elapses, the pending event is sent before the newer one.
+        pending.next_retry_time = 0
+        queue._running = True
 
-        # Only afterwards is the newer queued event delivered.
-        event = await queue._next_event()
-        assert event.data["name"] == "newer"
+        async def run_and_stop_2():
+            await asyncio.sleep(0.05)
+            queue.stop()
+
+        await asyncio.gather(queue.process(), run_and_stop_2())
+
+        sent = [c.args[0] for c in mock_websocket.send.call_args_list]
+        assert '"pending"' in sent[0]
+        assert '"newer"' in sent[1]
 
     def test_stop(self, mock_websocket):
         """Test stopping the queue."""

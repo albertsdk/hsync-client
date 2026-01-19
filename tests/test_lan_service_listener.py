@@ -51,7 +51,7 @@ def _full_props(overrides: dict[bytes, bytes] | None = None) -> dict[bytes, byte
 
 def _listener_with_pm(**pm_kwargs) -> tuple[HsyncServiceListener, PeerManager]:
     pm = PeerManager(local_cid="local-cid", bucket="photos", **pm_kwargs)
-    return HsyncServiceListener(pm, MagicMock()), pm
+    return HsyncServiceListener(pm), pm
 
 
 class TestRegisterPeerFromInfo:
