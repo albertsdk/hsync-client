@@ -136,6 +136,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # Delete coalescing: buffered (path, is_directory) pairs pending a flush.
         # Guarded by _delete_lock; _delete_timer is the pending threading.Timer.
         self._pending_deletes: list[tuple[str, bool]] = []
+        # O(1) duplicate detection set (same tuples as _pending_deletes).
+        self._pending_delete_set: set[tuple[str, bool]] = set()
+        # O(1) ancestor lookup for _is_covered_by_pending_delete:
+        # normalized directory paths (rstrip("/")) currently buffered.
+        self._pending_delete_dir_paths: set[str] = set()
         self._delete_timer: threading.Timer | None = None
         self._delete_lock = threading.Lock()
 
@@ -223,15 +228,24 @@ class BaseFileEventHandler(FileSystemEventHandler):
         directory MODIFY per removed child before the tree's own ``deleted``
         events are coalesced. Those modifies are noise, not metadata changes:
         a path equal to, or under, a directory already buffered for deletion
-        is skipped by ``on_modified``. A snapshot is taken under the buffer's
-        lock (the flush timer drains it from another thread).
+        is skipped by ``on_modified``.
+
+        Instead of scanning every pending delete (O(n) per MODIFY event, O(n²)
+        total during ``rm -rf``), check only the path's ancestors against the
+        pre-built set of pending directory paths (O(depth) ≈ O(1) in practice).
         """
-        prefix = path.rstrip("/") + "/"
+        norm = path.rstrip("/")
         with self._delete_lock:
-            pending = list(self._pending_deletes)
-        return any(
-            is_dir and prefix.startswith(rec_path.rstrip("/") + "/") for rec_path, is_dir in pending
-        )
+            dir_paths = self._pending_delete_dir_paths
+        # Walk ancestors bottom-up: /a/b/c/d → /a/b/c → /a/b → /a
+        while True:
+            if norm in dir_paths:
+                return True
+            idx = norm.rfind("/")
+            if idx <= 0:
+                break
+            norm = norm[:idx]
+        return False
 
     @staticmethod
     def _stat_key(st: os.stat_result) -> tuple[int, int, int]:
@@ -664,6 +678,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
         with self._delete_lock:
             pending = self._pending_deletes
             self._pending_deletes = []
+            self._pending_delete_set = set()
+            self._pending_delete_dir_paths = set()
             self._delete_timer = None
         if not pending:
             return
@@ -729,10 +745,13 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # two identical [LOCAL DELETE] lines and two identical broadcasts.
         with self._delete_lock:
             entry = (src_path, event.is_directory)
-            if entry in self._pending_deletes:
+            if entry in self._pending_delete_set:
                 log.debug(f'Duplicate delete skipped: "{src_path}"')
             else:
                 self._pending_deletes.append(entry)
+                self._pending_delete_set.add(entry)
+                if event.is_directory:
+                    self._pending_delete_dir_paths.add(src_path.rstrip("/"))
             if self._delete_timer is None:
                 self._delete_timer = threading.Timer(
                     DELETE_COALESCE_WINDOW, self._flush_pending_deletes

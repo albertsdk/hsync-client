@@ -20,6 +20,7 @@ synced base from the parallel transfer thread pool; persistence is decoupled
 from mutation so a full sync flushes once instead of per file.
 """
 
+import json
 import os
 import threading
 
@@ -247,12 +248,10 @@ def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str,
     no version is recorded and the content is absent (the server treats an
     empty clock and a 0 mtime natively).
     """
-    from json import dumps
-
     eff = local_version_for_compare(abs_path, current_hash)
     if eff is not None:
         return (
-            dumps(eff["vclock"]),
+            json.dumps(eff["vclock"]),
             eff.get("version_id", "") or "",
             int(eff.get("corrected_mtime", 0) or 0),
         )

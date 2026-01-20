@@ -14,6 +14,7 @@ synchronizing files with the remote server.
 import hmac
 import threading
 from collections.abc import Iterator
+from io import BytesIO
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
@@ -21,6 +22,7 @@ from sys import maxsize
 from time import monotonic
 from time import sleep as time_sleep
 from typing import cast
+from uuid import uuid4
 
 import zstandard as zstd
 from hsync_common.clock import clamp_incoming_corrected_mtime
@@ -29,6 +31,7 @@ from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
 from hsync_common.models.symlink import Symlink
+from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import is_safe_symlink_target, resolve_within
 from hsync_common.text import escape_loguru_markup, safe_json_for_log
 from loguru import logger as log
@@ -68,6 +71,7 @@ from hsync_client.exceptions import (
     ServerError,
 )
 from hsync_client.retry import retry_on_transient_transfer_error
+from hsync_client.sync_state import get_sync_state_store, local_version_for_compare
 from hsync_client.utils import (
     get_ssl_verify,
     get_throttle_delay,
@@ -1055,8 +1059,6 @@ def _resolve_effective_version(file: File) -> dict | None:
     stored clock.
     """
     try:
-        from hsync_client.sync_state import get_sync_state_store, local_version_for_compare
-
         if not file.filepath:
             return None
         abs_path = (
@@ -1067,7 +1069,6 @@ def _resolve_effective_version(file: File) -> dict | None:
         eff = local_version_for_compare(abs_path, file.sha256sum)
         if eff is not None:
             return eff
-        from hsync_common.models.tombstone import relpath_in_bucket
 
         relpath = relpath_in_bucket(abs_path, str(CONFIG["LOCAL_BUCKET"]))
         if relpath:
@@ -1402,7 +1403,6 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             data["compressed_size"] = len(compressed_data)
 
             # Send compressed data as file
-            from io import BytesIO
 
             compressed_file = BytesIO(compressed_data)
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
@@ -1466,9 +1466,8 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             # Standard upload: stream the multipart body directly from disk
             # so files of arbitrary size do not need to be loaded into RAM.
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-            import uuid
 
-            boundary = uuid.uuid4().hex
+            boundary = uuid4().hex
             body, content_type = _build_multipart_streaming(
                 file.filepath,
                 dict(data),

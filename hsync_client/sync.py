@@ -820,8 +820,6 @@ def _get_optimal_workers(file_count: int) -> int:
         cpu_cores = 4
 
     # Allow configuration via environment variable
-    import os
-
     env_max = os.environ.get("HSYNC_MAX_FILE_WORKERS")
     if env_max:
         try:
