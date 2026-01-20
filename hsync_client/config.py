@@ -191,6 +191,24 @@ class EnvSettings(BaseSettings):
         default=None, ge=0.1, description="Maximum per-file retry wait in seconds"
     )
 
+    # Connectivity Check Retry
+    connectivity_retry_attempts: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="Server connectivity check retry attempts (1-20)",
+    )
+    connectivity_retry_min_wait: float | None = Field(
+        default=None,
+        ge=0.1,
+        description="Minimum connectivity retry wait in seconds",
+    )
+    connectivity_retry_max_wait: float | None = Field(
+        default=None,
+        ge=0.1,
+        description="Maximum connectivity retry wait in seconds",
+    )
+
 
 @lru_cache
 def get_env_settings() -> EnvSettings:
@@ -359,6 +377,21 @@ def get_transfer_retry_max_wait() -> float | None:
     return get_env_settings().transfer_retry_max_wait
 
 
+def get_connectivity_retry_attempts() -> int | None:
+    """Get connectivity check retry attempts from environment (None = use default)."""
+    return get_env_settings().connectivity_retry_attempts
+
+
+def get_connectivity_retry_min_wait() -> float | None:
+    """Get minimum connectivity retry wait from environment (None = use default)."""
+    return get_env_settings().connectivity_retry_min_wait
+
+
+def get_connectivity_retry_max_wait() -> float | None:
+    """Get maximum connectivity retry wait from environment (None = use default)."""
+    return get_env_settings().connectivity_retry_max_wait
+
+
 # =============================================================================
 # Configuration TypedDict
 # =============================================================================
@@ -494,6 +527,12 @@ class HsyncConfig(TypedDict):
     TRANSFER_RETRY_MIN_WAIT: float
     # Maximum per-file retry wait in seconds (exponential backoff ceiling)
     TRANSFER_RETRY_MAX_WAIT: float
+    # Server connectivity check retry attempts
+    CONNECTIVITY_RETRY_ATTEMPTS: int
+    # Minimum connectivity retry wait in seconds (exponential backoff floor)
+    CONNECTIVITY_RETRY_MIN_WAIT: float
+    # Maximum connectivity retry wait in seconds (exponential backoff ceiling)
+    CONNECTIVITY_RETRY_MAX_WAIT: float
     # Auto-tuning enabled flag (set at runtime, not from env/CLI directly)
     AUTOTUNE_ENABLED: bool
     # Cached storage type from autotune probes (set at runtime for per-cycle refresh)

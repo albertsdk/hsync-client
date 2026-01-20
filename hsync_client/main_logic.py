@@ -28,6 +28,9 @@ from hsync_client.config import (
     get_api_key,
     get_autotune_enabled,
     get_compression_enabled,
+    get_connectivity_retry_attempts,
+    get_connectivity_retry_max_wait,
+    get_connectivity_retry_min_wait,
     get_delta_enabled,
     get_discovery_timeout,
     get_heartbeat_interval,
@@ -53,6 +56,9 @@ from hsync_client.config import (
 )
 from hsync_client.constants import (
     CLIENT_NAME,
+    CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT,
+    CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT,
+    CONNECTIVITY_RETRY_MIN_WAIT_DEFAULT,
     DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
     HEADER_CLIENT_NAME,
@@ -75,7 +81,6 @@ from hsync_client.lan_handler import run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.remote_websocket import remote_connect
-from hsync_client.retry import retry_on_connection_error
 from hsync_client.sync import (
     sync,
 )
@@ -792,6 +797,17 @@ def run_sync(
     _resolved_retry_min, _retry_min_src = _get_transfer_retry_min_wait_value(_autotune_retry_min)
     _resolved_retry_max, _retry_max_src = _get_transfer_retry_max_wait_value(_autotune_retry_max)
 
+    # Connectivity check retry (env var or default; not autotune-managed)
+    _conn_retry_attempts = get_connectivity_retry_attempts()
+    if _conn_retry_attempts is None:
+        _conn_retry_attempts = CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT
+    _conn_retry_min = get_connectivity_retry_min_wait()
+    if _conn_retry_min is None:
+        _conn_retry_min = float(CONNECTIVITY_RETRY_MIN_WAIT_DEFAULT)
+    _conn_retry_max = get_connectivity_retry_max_wait()
+    if _conn_retry_max is None:
+        _conn_retry_max = float(CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT)
+
     config: HsyncConfig = {
         "API": {
             "buckets": f"{effective_server_url}/api/v1/buckets",
@@ -858,6 +874,9 @@ def run_sync(
         "TRANSFER_RETRY_ATTEMPTS": TRANSFER_RETRY_ATTEMPTS_DEFAULT,
         "TRANSFER_RETRY_MIN_WAIT": _resolved_retry_min,
         "TRANSFER_RETRY_MAX_WAIT": _resolved_retry_max,
+        "CONNECTIVITY_RETRY_ATTEMPTS": _conn_retry_attempts,
+        "CONNECTIVITY_RETRY_MIN_WAIT": _conn_retry_min,
+        "CONNECTIVITY_RETRY_MAX_WAIT": _conn_retry_max,
         # Auto-tuning runtime state (updated below after set_config)
         "AUTOTUNE_ENABLED": autotune_enabled,
         "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
@@ -1090,7 +1109,9 @@ def _check_server_connectivity(
     """
     Check server connectivity with automatic retry on transient failures.
 
-    Uses tenacity for exponential backoff retry (3 attempts, 1-10s wait).
+    Uses tenacity for exponential backoff retry. Attempt count, min wait, and
+    max wait are read from CONFIG (settable via HSYNC_CONNECTIVITY_RETRY_*
+    environment variables); defaults: 5 attempts, 1-30 s wait.
 
     Args:
         server_url: Base URL of the server.
@@ -1103,8 +1124,27 @@ def _check_server_connectivity(
     """
     from requests import RequestException
     from requests import get as http_get
+    from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-    @retry_on_connection_error(max_attempts=3, min_wait=1, max_wait=10)
+    max_attempts = int(
+        CONFIG.get("CONNECTIVITY_RETRY_ATTEMPTS", CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT)
+    )
+    min_wait = float(CONFIG.get("CONNECTIVITY_RETRY_MIN_WAIT", CONNECTIVITY_RETRY_MIN_WAIT_DEFAULT))
+    max_wait = float(CONFIG.get("CONNECTIVITY_RETRY_MAX_WAIT", CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT))
+
+    def _before_sleep_health(retry_state):
+        logger.warning(
+            f"Server connectivity check attempt {retry_state.attempt_number}/{max_attempts} "
+            f"failed; retrying in {retry_state.next_action.sleep:.0f}s..."
+        )
+
+    @retry(
+        retry=retry_if_exception_type(RequestException),
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+        before_sleep=_before_sleep_health,
+        reraise=True,
+    )
     def _do_health_check() -> int:
         """Perform health check request (decorated with retry)."""
         response = http_get(

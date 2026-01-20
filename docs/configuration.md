@@ -125,6 +125,9 @@ When file logging is enabled with `-o/--output`:
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | auto (`5`-`20`) |
 | `HSYNC_TRANSFER_RETRY_MIN_WAIT` | Per-file retry min wait in seconds | auto |
 | `HSYNC_TRANSFER_RETRY_MAX_WAIT` | Per-file retry max wait in seconds | auto |
+| `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` | Server connectivity check retry attempts (1–20) | `5` |
+| `HSYNC_CONNECTIVITY_RETRY_MIN_WAIT` | Connectivity check retry min wait in seconds | `1` |
+| `HSYNC_CONNECTIVITY_RETRY_MAX_WAIT` | Connectivity check retry max wait in seconds | `30` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 
 Use `--no-autotune` or `HSYNC_AUTOTUNE=false` to disable auto-tuning and use

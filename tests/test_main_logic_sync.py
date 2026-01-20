@@ -12,7 +12,7 @@ import pytest
 from hsync_common.runtime import ContainerInfo
 from typing_extensions import TypedDict
 
-from hsync_client.config import HsyncConfig, get_env_settings
+from hsync_client.config import CONFIG, HsyncConfig, get_env_settings
 from hsync_client.constants import (
     CLIENT_NAME,
     DISCOVERY_TIMEOUT_DEFAULT,
@@ -236,6 +236,13 @@ class TestGetResyncValue:
 
 class TestCheckServerConnectivity:
     """Tests for _check_server_connectivity function."""
+
+    @pytest.fixture(autouse=True)
+    def _fast_retry(self, monkeypatch):
+        """Set CONFIG connectivity retry to 1 attempt so tests don't hang."""
+        monkeypatch.setitem(CONFIG, "CONNECTIVITY_RETRY_ATTEMPTS", 1)
+        monkeypatch.setitem(CONFIG, "CONNECTIVITY_RETRY_MIN_WAIT", 0.01)
+        monkeypatch.setitem(CONFIG, "CONNECTIVITY_RETRY_MAX_WAIT", 0.01)
 
     def test_successful_connection(self):
         """Test successful server connection."""

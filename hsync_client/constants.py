@@ -122,6 +122,17 @@ TRANSFER_RETRY_MIN_WAIT_DEFAULT = 1  # seconds
 TRANSFER_RETRY_MAX_WAIT_DEFAULT = 10  # seconds
 
 # =============================================================================
+# Server Connectivity Check Retry
+# =============================================================================
+
+# The initial connectivity check (health endpoint) must be more patient than
+# per-file transfer retries: a server restart can take 15-30 s. Exponential
+# backoff with multiplier=1: 1s → 2s → 4s → 8s → 16s (~31 s across 5 attempts).
+CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT = 5
+CONNECTIVITY_RETRY_MIN_WAIT_DEFAULT = 1  # seconds
+CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT = 30  # seconds
+
+# =============================================================================
 # Mass-Deletion Guard
 # =============================================================================
 

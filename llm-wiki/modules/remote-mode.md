@@ -45,6 +45,14 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
   `remote_events` again. The delay is **fixed** (default 5 s, clamp 1–60), not
   exponential and not attempt-capped. Autotune may rewrite `RECONNECT_DELAY`
   from RTT; each wait still uses that one value.
+- **Initial connectivity check** (`main_logic._check_server_connectivity`
+  `main_logic.py:1103`) runs before the WS loop and uses exponential backoff
+  with **5 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,
+  overridable via `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` /
+  `HSYNC_CONNECTIVITY_RETRY_MIN_WAIT` / `HSYNC_CONNECTIVITY_RETRY_MAX_WAIT`
+  environment variables). The backoff sequence is 1 s → 2 s → 4 s → 8 s → 16 s
+  (~31 s cumulative), covering a typical server restart window. Each retry logs
+  the attempt number (e.g. "attempt 2/5") so users can gauge progress.
 - Exponential backoff is **not** this loop: per-file transfers use `retry.py`;
   outbound WS events use `EventQueue` (see [sync-core.md](sync-core.md)).
 - Transfers retry on transient errors (`retry.py:105`) and emit `transfer_failed`

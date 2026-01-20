@@ -60,7 +60,14 @@ from requests import RequestException
 from hsync_client import sync_state
 from hsync_client.autotune import update_bw_ema
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import HSYNCKEEP_FILENAME, HTTP_TIMEOUT_DEFAULT, ActionLabel
+from hsync_client.constants import (
+    HSYNCKEEP_FILENAME,
+    HTTP_TIMEOUT_DEFAULT,
+    TRANSFER_RETRY_ATTEMPTS_DEFAULT,
+    TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+    TRANSFER_RETRY_MIN_WAIT_DEFAULT,
+    ActionLabel,
+)
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import (
     AuthenticationError,
@@ -927,14 +934,15 @@ def get_files_local() -> list[dict]:
     return file_list
 
 
-@retry_on_network_error(max_attempts=3, min_wait=1, max_wait=10)
 def get_files_remote() -> list[dict]:
     """
     Get list of all remote files from the server.
 
     Makes an HTTP GET request to retrieve file metadata from the
     remote bucket, sorted by the configured sync order. Retries
-    automatically on network errors with exponential backoff.
+    automatically on network errors with exponential backoff (attempt
+    count, min/max wait read from CONFIG so autotune and env vars
+    apply).
 
     Returns:
         List of file metadata dictionaries from server.
@@ -944,38 +952,45 @@ def get_files_remote() -> list[dict]:
         AuthenticationError: If authentication fails (401/403).
         ServerError: If server returns an error response.
     """
-    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
-    try:
-        # Build query parameters
-        params: dict[str, str] = {}
-        # Add path filter if specified
-        if (filter_path := CONFIG.get("FILTER_PATH")) is not None:
-            params["path"] = filter_path
+    max_attempts = cast(int, CONFIG.get("TRANSFER_RETRY_ATTEMPTS", TRANSFER_RETRY_ATTEMPTS_DEFAULT))
+    min_wait = cast(float, CONFIG.get("TRANSFER_RETRY_MIN_WAIT", TRANSFER_RETRY_MIN_WAIT_DEFAULT))
+    max_wait = cast(float, CONFIG.get("TRANSFER_RETRY_MAX_WAIT", TRANSFER_RETRY_MAX_WAIT_DEFAULT))
 
-        response = get(
-            uri,
-            headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
-            params=params,
-            verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
-        )
+    def _attempt() -> list[dict]:
+        uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
+        try:
+            # Build query parameters
+            params: dict[str, str] = {}
+            # Add path filter if specified
+            if (filter_path := CONFIG.get("FILTER_PATH")) is not None:
+                params["path"] = filter_path
 
-        _check_auth_status(response.status_code)
-        if response.status_code != 200:
-            raise ServerError(
-                message=f"Server returned status {response.status_code}",
-                details={"status_code": response.status_code, "response": response.text},
+            response = get(
+                uri,
+                headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
+                params=params,
+                verify=get_ssl_verify(),
+                timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
             )
 
-        return response.json()
-    except RequestException as e:
-        raise NetworkError(
-            message=f"Error downloading files list: {e}",
-            details={"url": uri},
-        )
+            _check_auth_status(response.status_code)
+            if response.status_code != 200:
+                raise ServerError(
+                    message=f"Server returned status {response.status_code}",
+                    details={"status_code": response.status_code, "response": response.text},
+                )
+
+            return response.json()
+        except RequestException as e:
+            raise NetworkError(
+                message=f"Error downloading files list: {e}",
+                details={"url": uri},
+            )
+
+    attempt = retry_on_network_error(max_attempts, min_wait, max_wait)(_attempt)
+    return attempt()
 
 
-@retry_on_network_error(max_attempts=3, min_wait=1, max_wait=10)
 def get_tombstones_remote() -> dict[str, dict]:
     """
     Get deletion markers (tombstones) from the server.
@@ -991,6 +1006,9 @@ def get_tombstones_remote() -> dict[str, dict]:
     version) or any non-200 response yields an empty mapping, so the rest of
     the sync proceeds unchanged.
 
+    Retries transient network errors with exponential backoff (attempt
+    count, min/max wait read from CONFIG so autotune and env vars apply).
+
     Returns:
         Mapping of hashed path to tombstone entry (possibly empty).
 
@@ -998,30 +1016,38 @@ def get_tombstones_remote() -> dict[str, dict]:
         NetworkError: If the request fails after retries.
         AuthenticationError: If authentication fails (401/403).
     """
-    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/tombstones"
-    try:
-        response = get(
-            uri,
-            headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
-            verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
-        )
+    max_attempts = cast(int, CONFIG.get("TRANSFER_RETRY_ATTEMPTS", TRANSFER_RETRY_ATTEMPTS_DEFAULT))
+    min_wait = cast(float, CONFIG.get("TRANSFER_RETRY_MIN_WAIT", TRANSFER_RETRY_MIN_WAIT_DEFAULT))
+    max_wait = cast(float, CONFIG.get("TRANSFER_RETRY_MAX_WAIT", TRANSFER_RETRY_MAX_WAIT_DEFAULT))
 
-        _check_auth_status(response.status_code)
-        if response.status_code != 200:
-            log.debug(
-                f"Tombstones unavailable (status {response.status_code}); "
-                "skipping deletion reconciliation"
+    def _attempt() -> dict[str, dict]:
+        uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/tombstones"
+        try:
+            response = get(
+                uri,
+                headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
+                verify=get_ssl_verify(),
+                timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
             )
-            return {}
 
-        data = response.json()
-        return data if isinstance(data, dict) else {}
-    except RequestException as e:
-        raise NetworkError(
-            message=f"Error downloading tombstones: {e}",
-            details={"url": uri},
-        )
+            _check_auth_status(response.status_code)
+            if response.status_code != 200:
+                log.debug(
+                    f"Tombstones unavailable (status {response.status_code}); "
+                    "skipping deletion reconciliation"
+                )
+                return {}
+
+            data = response.json()
+            return data if isinstance(data, dict) else {}
+        except RequestException as e:
+            raise NetworkError(
+                message=f"Error downloading tombstones: {e}",
+                details={"url": uri},
+            )
+
+    attempt = retry_on_network_error(max_attempts, min_wait, max_wait)(_attempt)
+    return attempt()
 
 
 def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
