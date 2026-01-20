@@ -1111,7 +1111,7 @@ def _check_server_connectivity(
 
     Uses tenacity for exponential backoff retry. Attempt count, min wait, and
     max wait are read from CONFIG (settable via HSYNC_CONNECTIVITY_RETRY_*
-    environment variables); defaults: 5 attempts, 1-30 s wait.
+    environment variables); defaults: 7 attempts, 1-30 s wait.
 
     Args:
         server_url: Base URL of the server.

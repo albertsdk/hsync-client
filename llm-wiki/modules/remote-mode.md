@@ -47,7 +47,7 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
   from RTT; each wait still uses that one value.
 - **Initial connectivity check** (`main_logic._check_server_connectivity`
   `main_logic.py:1103`) runs before the WS loop and uses exponential backoff
-  with **5 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,
+  with **7 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,
   overridable via `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` /
   `HSYNC_CONNECTIVITY_RETRY_MIN_WAIT` / `HSYNC_CONNECTIVITY_RETRY_MAX_WAIT`
   environment variables). The backoff sequence is 1 s → 2 s → 4 s → 8 s → 16 s
