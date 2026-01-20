@@ -348,7 +348,7 @@ class TestMeasureBandwidthActive:
         def _fail(*_args, **_kw):
             raise RequestException("network error")
 
-        monkeypatch.setattr("requests.get", _fail)
+        monkeypatch.setattr("hsync_client.utils.http_get", _fail)
         assert measure_bandwidth_active("http://localhost:9999") is None
 
     def test_measures_throughput_with_size_param(self, monkeypatch):
@@ -364,7 +364,7 @@ class TestMeasureBandwidthActive:
             captured["params"] = kwargs.get("params")
             return _FakeResp()
 
-        monkeypatch.setattr("requests.get", _fake_get)
+        monkeypatch.setattr("hsync_client.utils.http_get", _fake_get)
         mbps = measure_bandwidth_active("http://localhost:9999")
         assert mbps is not None
         assert mbps > 0
@@ -378,7 +378,7 @@ class TestMeasureBandwidthActive:
             ok = True
             content = b""
 
-        monkeypatch.setattr("requests.get", lambda *a, **kw: _EmptyResp())
+        monkeypatch.setattr("hsync_client.utils.http_get", lambda *a, **kw: _EmptyResp())
         assert measure_bandwidth_active("http://localhost:9999") is None
 
 

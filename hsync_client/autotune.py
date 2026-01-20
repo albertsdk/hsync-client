@@ -208,8 +208,9 @@ def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> f
     Never used on metered connections (Android forces ``MOBILE`` instead).
     """
     try:
-        from requests import get as http_get
         from requests.exceptions import RequestException
+
+        from hsync_client.utils import get_ssl_verify, http_get
     except ImportError:
         log.warning("autotune: requests not available, skipping active bandwidth probe")
         return None
@@ -220,6 +221,7 @@ def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> f
             f"{server_url.rstrip('/')}/health",
             params={"size": size_bytes},
             timeout=10,
+            verify=get_ssl_verify(),
         )
         elapsed = monotonic() - t0
         payload_bytes = len(resp.content)

@@ -906,9 +906,8 @@ def run_sync(
         CONFIG["AUTOTUNE_STORAGE_TYPE"] = tuning.storage_type.value
 
     # When TLS verification is disabled (--insecure), silence urllib3's
-    # per-request InsecureRequestWarning once up-front. The connectivity check
-    # and clock-skew probe issue raw requests that bypass get_ssl_verify(), so
-    # suppressing here ensures even the very first health check stays quiet.
+    # per-request InsecureRequestWarning once up-front so that even the very
+    # first autotune bandwidth probe stays quiet.
     if config["NO_VERIFY_SSL"]:
         _suppress_insecure_warning()
 
