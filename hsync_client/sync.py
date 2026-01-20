@@ -12,6 +12,7 @@ file comparison, action determination, and sync execution.
 """
 
 import asyncio
+import os
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -19,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from errno import EACCES, EBUSY, EIO, ENOENT
 from os import cpu_count, remove, walk
+from os.path import basename
 from pathlib import Path
 from shutil import copy2
 from sys import exc_info
@@ -153,7 +155,7 @@ def _cleanup_partial_files() -> int:
     for root, _dirs, files in walk(local_bucket):
         for file in files:
             if is_partial_file(file):
-                partial_path = str(Path(root) / file)
+                partial_path = os.path.join(root, file)
                 try:
                     remove(partial_path)
                     log.debug(f"Removed incomplete download: {partial_path}")
@@ -397,13 +399,13 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
             if name == SyncActionName.download:
                 downloads.append(a.file)
             elif name == SyncActionName.upload:
-                if getattr(a, "permissions_only", False):
+                if a.permissions_only:
                     permission_uploads.append(a.file)
                 else:
                     uploads.append(a.file)
             elif name == SyncActionName.delete:
                 deletes.append(a.file)
-                if getattr(a, "tombstone_confirmed", False):
+                if a.tombstone_confirmed:
                     tombstone_deletes.append(a.file)
                 else:
                     guarded_deletes.append(a.file)
@@ -490,7 +492,7 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         # there is never a wall-clock winner).
         conflicts = 0
         for action in sync_actions:
-            if action.name == SyncActionName.download and getattr(action, "conflict", False):
+            if action.name == SyncActionName.download and action.conflict:
                 conflicts += 1
                 _save_conflict_copy(action.file)
 
@@ -723,7 +725,7 @@ def ensure_hsynckeep_files() -> None:
         has_syncable = any(not is_hidden_file(f) for f in files)
 
         if not has_syncable:
-            sentinel = str(Path(root) / HSYNCKEEP_FILENAME)
+            sentinel = os.path.join(root, HSYNCKEEP_FILENAME)
             if not Path(sentinel).exists():
                 try:
                     open(sentinel, "w").close()  # noqa: SIM115
@@ -878,7 +880,7 @@ def get_files_local() -> list[dict]:
             # Skip hidden files
             if is_hidden_file(file):
                 continue
-            file_path = str(Path(root) / file)
+            file_path = os.path.join(root, file)
             # Security: a file-symlink whose target escapes the bucket must never
             # be followed. ``os.walk`` (followlinks=False, the default) already
             # prevents descending into symlinked *directories*, but a symlink to a
@@ -1097,7 +1099,7 @@ def _existing_file_paths(bucket_dir: str) -> list[str]:
             for name in files:
                 if is_internal_name(name):
                     continue
-                paths.append(str(Path(root) / name))
+                paths.append(os.path.join(root, name))
     except OSError:
         # An unreadable bucket must not be treated as "everything deleted".
         return []
@@ -1224,6 +1226,24 @@ def converge_directory_permissions(remote_dirs: list[dict]) -> None:
             log.warning(f'Could not set directory permissions for "{local_dir.path}": {e}')
 
 
+# ── Direction-filter exclusion sets (module-level, pre-computed once) ─────
+_UPLOAD_ONLY_EXCLUDE: frozenset[SyncActionName] = frozenset(
+    {
+        SyncActionName.download,
+        SyncActionName.download_symlink,
+        SyncActionName.delete,
+        SyncActionName.delete_remote,
+    }
+)
+_DOWNLOAD_ONLY_EXCLUDE: frozenset[SyncActionName] = frozenset(
+    {
+        SyncActionName.upload,
+        SyncActionName.upload_symlink,
+        SyncActionName.delete_remote,
+    }
+)
+
+
 def get_sync_actions(
     remote_files: list[dict] | None = None,
     local_files: list[dict] | None = None,
@@ -1265,13 +1285,23 @@ def get_sync_actions(
     if tombstones is None:
         tombstones = {}
 
+    # Pre-compute the direction filter: excluded actions never enter the list.
+    _direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    _excluded: frozenset[SyncActionName] = (
+        _UPLOAD_ONLY_EXCLUDE
+        if _direction == "upload-only"
+        else _DOWNLOAD_ONLY_EXCLUDE
+        if _direction == "download-only"
+        else frozenset()
+    )
+
     sync_actions: list[SyncAction] = []
     remote_filepaths: set[str] = set()
 
     # Process remote files
     for remote_file_info in remote_files:
         # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
-        if Path(str(remote_file_info.get("filepath", ""))).name == HSYNCKEEP_FILENAME:
+        if basename(str(remote_file_info.get("filepath", ""))) == HSYNCKEEP_FILENAME:
             continue
         # The remote listing is untrusted input (hostile server or LAN
         # master): drop entries whose path is unsafe or names an internal
@@ -1426,7 +1456,7 @@ def get_sync_actions(
     # Find local files not present on remote
     for local_file_dict in local_files:
         # .hsynckeep is a per-peer local sentinel: never propagate to remote.
-        if Path(str(local_file_dict.get("filepath", ""))).name == HSYNCKEEP_FILENAME:
+        if basename(str(local_file_dict.get("filepath", ""))) == HSYNCKEEP_FILENAME:
             continue
         # Symlink entry: replicate the LINK (pair path+target), never the bytes
         # of its target. Escaping targets were already skipped by
@@ -1469,33 +1499,9 @@ def get_sync_actions(
                     # bidirectional/upload-only converge toward shared state)
                     sync_actions.append(SyncAction(file, SyncActionName.upload))
 
-    # ── Filter actions based on sync direction ──────────────────────
-    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-    if direction == "upload-only":
-        # Remove downloads and both delete flavours; keep uploads and nothing
-        sync_actions = [
-            a
-            for a in sync_actions
-            if a.name
-            not in (
-                SyncActionName.download,
-                SyncActionName.download_symlink,
-                SyncActionName.delete,
-                SyncActionName.delete_remote,
-            )
-        ]
-    elif direction == "download-only":
-        # Remove uploads and remote deletions; keep downloads, deletes and nothing
-        sync_actions = [
-            a
-            for a in sync_actions
-            if a.name
-            not in (
-                SyncActionName.upload,
-                SyncActionName.upload_symlink,
-                SyncActionName.delete_remote,
-            )
-        ]
+    # ── Filter actions based on sync direction (pre-computed frozenset) ────
+    if _excluded:
+        sync_actions[:] = [a for a in sync_actions if a.name not in _excluded]
 
     return sync_actions
 

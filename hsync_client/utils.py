@@ -125,16 +125,35 @@ def get_http_session() -> "Session":
     Returns:
         A configured :class:`requests.Session`.
     """
+    fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
+    cache_key = str(fingerprint) if fingerprint else ""
+
+    # Lazy-init the per-thread session store.
+    store = getattr(_http_session_cache, "store", None)
+    if store is None:
+        store = {}
+        _http_session_cache.store = store
+
+    session = store.get(cache_key)
+    if session is not None:
+        return session
+
     from requests import Session
 
     session = Session()
-    fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
     if fingerprint:
         from hsync_client.ssl_utils import FingerprintHTTPAdapter
 
         _suppress_insecure_warning()
         session.mount("https://", FingerprintHTTPAdapter(str(fingerprint)))
+    store[cache_key] = session
     return session
+
+
+# Per-thread session cache. ``threading.local()`` isolates sessions across
+# the transfer thread pool: each worker reuses its own Session (keep-alive,
+# connection pooling) without contention, while no two threads share a Session.
+_http_session_cache = threading.local()
 
 
 def http_get(url: str, **kwargs) -> "Response":

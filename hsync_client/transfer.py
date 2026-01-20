@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
+from sys import maxsize
 from time import monotonic
 from time import sleep as time_sleep
 from typing import cast
@@ -594,13 +595,15 @@ def _download_file_attempt(file: File) -> None:
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
             dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
             write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_INBOUND_SIZE", 0))
+            if write_cap is None:
+                write_cap = maxsize
             written = resume_offset
             with _open_partial_no_follow(partial_file_path, write_mode) as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if not chunk:
                         break
                     written += len(chunk)
-                    if write_cap is not None and written > write_cap:
+                    if written > write_cap:
                         # Over-cap body (hostile or simply larger than the
                         # configured maximum): permanent failure — the
                         # partial file is dropped in ``finally``.

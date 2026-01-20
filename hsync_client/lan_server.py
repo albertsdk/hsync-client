@@ -848,7 +848,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 if is_hidden_file(file):
                     continue
 
-                file_path = str(Path(root) / file)
+                file_path = os.path.join(root, file)
                 # Symlinks are emitted as structural entries (path + target),
                 # never dereferenced: File.get() (exists/stat/sha256) would
                 # follow the link and the listing would either exfiltrate an
