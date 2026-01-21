@@ -377,15 +377,27 @@ sending the single recursive DELETE to the master.
 `file_event_handler.py`): inotify fires `IN_ATTRIB` on a directory whenever a
 child is created, written, renamed or removed, so a single file save can
 emit several identical directory `MODIFY` lines. The directory branch applies
-the same stat pre-check as the file stage-1 filter (`(mtime_ns, size)` against
-`_last_broadcast_stat`) and suppresses the duplicate broadcast + log line.
-The stat is recorded **before** the broadcast (not after): `mkdir` emits a
-burst of `IN_ATTRIB` ~1ms apart and the second can be dispatched while
+the same stat pre-check as the file stage-1 filter (`(mtime_ns, size, mode)`
+against `_last_broadcast_stat`) and suppresses the duplicate broadcast + log
+line. The stat is recorded **before** the broadcast (not after): `mkdir` emits
+a burst of `IN_ATTRIB` ~1ms apart and the second can be dispatched while
 `Dir.get` + broadcast of the first is still in flight, so recording up front
 lets the pre-check catch the sibling immediately. A later genuine content
 change updates the directory mtime and is never skipped. The log carries a
 `(dir)` annotation to distinguish these directory-level metadata events from
 file content changes.
+
+**Directory-modify time window** (same branch): the stat check alone cannot
+collapse the burst of a recursive operation — each child create/remove bumps
+the directory mtime, so every `IN_ATTRIB` has a *distinct* `(mtime_ns, size,
+mode)` and passes the stat check. A second guard folds a follow-up `MODIFY`
+for the same path within `DIR_MODIFY_WINDOW` (0.1s, `file_event_handler.py`)
+**only when the mode is unchanged**: pure mtime/size churn (an inbound
+`rmtree` applied on the receiving side, a deep download, a `mkdir` burst) is
+noise, while a `chmod` (mode change) is the one meaningful directory signal
+and always falls through to broadcast. The timestamp lives in a parallel
+`_last_broadcast_ts` map, written in `_record_broadcast` and evicted/invalidated
+in lockstep with `_last_broadcast_stat`/`_last_broadcast_hash`.
 
 **Directory create dedup** (`on_created`, directory branch,
 `file_event_handler.py`): mirrors the directory-modify dedup. Watchdog emits

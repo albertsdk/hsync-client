@@ -1121,12 +1121,58 @@ class TestFileEventHandler:
             self.handler.on_modified(event)
             assert mock_broadcast.call_count == 1
 
-    def test_on_modified_directory_broadcasts_when_stat_changes(self):
-        """A directory MODIFY with a different stat still broadcasts.
+    def test_on_modified_directory_suppresses_mtime_burst_within_window(self):
+        """A burst of directory MODIFY with changing mtime but same mode folds.
 
-        The dedup must not over-suppress: when the directory mtime genuinely
-        changes between two IN_ATTRIB fires (e.g. two different children
-        modified at different times), the second event broadcasts normally.
+        inotify fires IN_ATTRIB once per child remove during an rmtree, so the
+        receiving side logs+broadcasts the same directory many times, each with
+        a distinct mtime that the stat dedup cannot collapse. The time-window
+        dedup must fold the burst into a single broadcast.
+        """
+        path = "/bucket/subdir"
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        stats = []
+        for i in range(5):
+            s = MagicMock()
+            s.st_mtime_ns = 100 + i
+            s.st_size = 4096
+            s.st_mode = 0o40755
+            stats.append(s)
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch(
+                "hsync_client.file_event_handler.monotonic",
+                side_effect=[0.0, 0.01, 0.02, 0.03, 0.04],
+            ),
+        ):
+            mock_path_cls.return_value.stat.side_effect = stats
+            for _ in stats:
+                self.handler.on_modified(event)
+
+            assert mock_broadcast.call_count == 1
+
+    def test_on_modified_directory_mode_change_broadcasts_within_window(self):
+        """A directory chmod (mode change) still broadcasts, even within the window.
+
+        The window dedup must never fold a meaningful signal: a permission
+        change is the one directory metadata event that must propagate, so it
+        bypasses the mtime-churn window.
         """
         path = "/bucket/subdir"
         event = MagicMock()
@@ -1142,9 +1188,11 @@ class TestFileEventHandler:
         stat1 = MagicMock()
         stat1.st_mtime_ns = 100
         stat1.st_size = 4096
+        stat1.st_mode = 0o40755
         stat2 = MagicMock()
         stat2.st_mtime_ns = 200
         stat2.st_size = 4096
+        stat2.st_mode = 0o40700
 
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
@@ -1154,11 +1202,61 @@ class TestFileEventHandler:
             patch("hsync_client.file_event_handler.Path") as mock_path_cls,
             patch.object(self.handler, "_broadcast_event") as mock_broadcast,
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch(
+                "hsync_client.file_event_handler.monotonic",
+                side_effect=[0.0, 0.01, 0.02],
+            ),
         ):
             mock_path_cls.return_value.stat.side_effect = [stat1, stat2]
+            self.handler.on_modified(event)
+            self.handler.on_modified(event)
 
+            assert mock_broadcast.call_count == 2
+
+    def test_on_modified_directory_broadcasts_after_window_expires(self):
+        """An mtime-only change after the window still broadcasts.
+
+        The window must not over-suppress: two genuinely spaced changes to the
+        same directory (beyond DIR_MODIFY_WINDOW) each broadcast, even when the
+        mode is unchanged.
+        """
+        path = "/bucket/subdir"
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        stat1 = MagicMock()
+        stat1.st_mtime_ns = 100
+        stat1.st_size = 4096
+        stat1.st_mode = 0o40755
+        stat2 = MagicMock()
+        stat2.st_mtime_ns = 200
+        stat2.st_size = 4096
+        stat2.st_mode = 0o40755
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch(
+                "hsync_client.file_event_handler.monotonic",
+                side_effect=[0.0, 1.0, 1.5],
+            ),
+        ):
+            mock_path_cls.return_value.stat.side_effect = [stat1, stat2]
             self.handler.on_modified(event)
             self.handler.on_modified(event)
+
             assert mock_broadcast.call_count == 2
 
     def test_on_modified_directory_records_stat_before_broadcast(self):

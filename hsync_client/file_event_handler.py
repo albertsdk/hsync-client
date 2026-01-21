@@ -29,6 +29,7 @@ import sys
 import threading
 from copy import deepcopy
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from hsync_common.labels import ActionLabel, resolve_label
@@ -59,6 +60,15 @@ MODIFIED_DEBOUNCE_INTERVAL = 1.0
 # for this window and then flushed as a single recursive `deleted` event for
 # the topmost deleted directory(s); descendants are folded away.
 DELETE_COALESCE_WINDOW = 0.2
+
+# Minimum quiet window for directory MODIFY events. inotify fires IN_ATTRIB on
+# a directory once per child create/write/rename/remove, so a single recursive
+# operation (rmtree of an inbound delete, a deep download, a mkdir burst) emits
+# a burst of MODIFY events for the same directory within milliseconds, each
+# with a distinct mtime. The stat-only dedup cannot collapse them (mtime changes
+# every time); within this window a second MODIFY whose mode is unchanged is
+# folded. A mode change (chmod) is never folded.
+DIR_MODIFY_WINDOW = 0.1
 
 # Maximum entries kept in the broadcast dedup dicts (_last_broadcast_stat /
 # _last_broadcast_hash). Mirrors SHA256_CACHE_MAX_SIZE so memory stays bounded
@@ -130,6 +140,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """Drop the dedup caches for *path* so a re-created entry is re-evaluated."""
         self._last_broadcast_stat.pop(path, None)
         self._last_broadcast_hash.pop(path, None)
+        self._last_broadcast_ts.pop(path, None)
         self._last_mode.pop(path, None)
 
     def __init__(self, observer: Observer | None = None) -> None:
@@ -156,6 +167,9 @@ class BaseFileEventHandler(FileSystemEventHandler):
         #    still propagates as a permission-only event.
         self._last_broadcast_stat: dict[str, tuple[int, int, int]] = {}
         self._last_broadcast_hash: dict[str, str] = {}
+        # Last-broadcast monotonic timestamp per path, for the directory MODIFY
+        # window. Set and evicted in lockstep with _last_broadcast_stat/hash.
+        self._last_broadcast_ts: dict[str, float] = {}
         # Mode-only dedup for the IN_ATTRIB (chmod) path. Deliberately SEPARATE
         # from _last_broadcast_stat: the latter is the content-upload dedup key
         # and must only be written by _record_broadcast (after a real
@@ -329,6 +343,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             self._invalidate_dedup(oldest)
         self._last_broadcast_stat[src_path] = stat
         self._last_broadcast_hash[src_path] = sha256
+        self._last_broadcast_ts[src_path] = monotonic()
         # Keep the mode baseline in step with the last PROPAGATED content, so a
         # later chmod is detected relative to the uploaded mode and not to a
         # stale pre-upload observation. stat is the 3-tuple produced by
@@ -476,6 +491,22 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 current_stat = self._stat_key(file_stat)
                 if current_stat == self._last_broadcast_stat.get(src_path):
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
+                    return
+                # Time-window dedup for directory metadata churn: a recursive
+                # operation (rmtree of an inbound delete, a deep download, a
+                # mkdir burst) fires IN_ATTRIB once per child change, each with
+                # a DISTINCT mtime the stat check above cannot collapse. A
+                # follow-up MODIFY within DIR_MODIFY_WINDOW whose mode is
+                # unchanged is folded; a mode change (chmod) never folds and
+                # falls through to broadcast.
+                last_ts = self._last_broadcast_ts.get(src_path)
+                last_mode = self._last_broadcast_stat.get(src_path, (0, 0, 0))[2]
+                if (
+                    last_ts is not None
+                    and monotonic() - last_ts < DIR_MODIFY_WINDOW
+                    and current_stat[2] == last_mode
+                ):
+                    log.debug(f'Skip dir modify (window): "{src_path}"')
                     return
                 # Record the stat *before* logging/broadcasting: mkdir emits a
                 # burst of IN_ATTRIB events ~1ms apart, and the second one can
