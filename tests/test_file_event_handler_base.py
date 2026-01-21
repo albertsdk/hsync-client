@@ -1515,6 +1515,140 @@ class TestFileEventHandler:
 
         mock_broadcast.assert_called_once()
 
+    def test_dir_modify_suppressed_when_descendant_is_pending_delete(self):
+        """A dir MODIFY is suppressed when a descendant dir is pending deletion.
+
+        During an inbound ``rmtree`` (applied by ``_apply_delete``),
+        inotify delivers ``IN_ATTRIB`` (modify) for a parent directory
+        *before* ``IN_DELETE_SELF`` for the child directory that is being
+        removed, so the ancestor check alone misses it.  The descendant
+        check recognises that a directory whose *children* are buffered for
+        deletion is being emptied, not genuinely modified.
+        """
+        # Child is buffered for deletion first (inotify bottom-up)
+        delete_event = MagicMock()
+        delete_event.is_directory = True
+        delete_event.src_path = "/bucket/a/b"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            # inotify fires IN_DELETE for /a/b *before* IN_ATTRIB for /a
+            self.handler.on_deleted(delete_event)
+
+            # Now IN_ATTRIB fires on the parent /a -- the descendant check
+            # should suppress it because /a/b is pending deletion under /a.
+            modify_event = MagicMock()
+            modify_event.is_directory = True
+            modify_event.src_path = "/bucket/a"
+            self.handler.on_modified(modify_event)
+
+            # Flush so the delete is broadcast.
+            self.handler._flush_pending_deletes()
+
+        # Only the delete is broadcast; the modify of /a is suppressed.
+        mock_broadcast.assert_called_once()
+        broadcast_event = mock_broadcast.call_args.args[0]
+        assert broadcast_event.name == "deleted"
+
+    def test_dir_modify_suppressed_by_deeply_nested_descendant_delete(self):
+        """A dir MODIFY is suppressed when a deeply nested descendant is pending deletion.
+
+        /a/b/c/d is pending -> IN_ATTRIB on /a is noise from the ongoing rmtree.
+        """
+        delete_event = MagicMock()
+        delete_event.is_directory = True
+        delete_event.src_path = "/bucket/a/b/c/d"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            self.handler.on_deleted(delete_event)
+
+            # IN_ATTRIB fires on /a (grandparent of the deleted /a/b/c/d)
+            modify_event = MagicMock()
+            modify_event.is_directory = True
+            modify_event.src_path = "/bucket/a"
+            self.handler.on_modified(modify_event)
+
+            self.handler._flush_pending_deletes()
+
+        # The modify is suppressed -- only the delete is broadcast.
+        mock_broadcast.assert_called_once()
+        assert mock_broadcast.call_args.args[0].name == "deleted"
+
+    def test_dir_modify_not_suppressed_by_unrelated_delete(self):
+        """A dir MODIFY is NOT suppressed when the pending delete is unrelated.
+
+        /bucket/x/y is pending -- /bucket/a is NOT an ancestor of /bucket/x/y,
+        and /bucket/x/y does NOT descend from /bucket/a, so the modify is valid.
+        """
+        delete_event = MagicMock()
+        delete_event.is_directory = True
+        delete_event.src_path = "/bucket/x/y"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 200
+        mock_stat.st_size = 4096
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.stat.return_value = mock_stat
+            self.handler.on_deleted(delete_event)
+
+            # A genuinely modified directory that is unrelated to the delete.
+            modify_event = MagicMock()
+            modify_event.is_directory = True
+            modify_event.src_path = "/bucket/a"
+            self.handler.on_modified(modify_event)
+
+            self.handler._flush_pending_deletes()
+
+        # Both events broadcast: the delete for /x/y AND the modify for /a.
+        assert mock_broadcast.call_count == 2
+        names = [c.args[0].name for c in mock_broadcast.call_args_list]
+        assert "deleted" in names
+        assert "modified" in names
+
 
 class TestRemoteModeOriginLabels:
     """Remote-mode watcher labels are always LOCAL-prefixed (origin-aware _label)."""

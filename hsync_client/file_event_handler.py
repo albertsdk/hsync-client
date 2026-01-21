@@ -221,7 +221,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
         return None
 
     def _is_covered_by_pending_delete(self, path: str) -> bool:
-        """Return True when *path* equals or descends from a buffered dir delete.
+        """Return True when *path* equals or descends from a buffered dir delete,
+        OR when a descendant of *path* is buffered for deletion.
 
         inotify fires ``IN_ATTRIB`` on a directory whenever a child entry is
         removed, so an ``rmtree`` of a deep tree produces one spurious
@@ -230,10 +231,20 @@ class BaseFileEventHandler(FileSystemEventHandler):
         a path equal to, or under, a directory already buffered for deletion
         is skipped by ``on_modified``.
 
-        Instead of scanning every pending delete (O(n) per MODIFY event, O(n²)
-        total during ``rm -rf``), check only the path's ancestors against the
-        pre-built set of pending directory paths (O(depth) ≈ O(1) in practice).
-        """
+        The ancestor-only check (original) works for self-originated deletes
+        when the observer fires modify events *after* the directory itself has
+        been buffered.  During an inbound delete (applied via ``rmtree``),
+        inotify delivers ``IN_ATTRIB`` (modify) *before* ``IN_DELETE_SELF``
+        (delete), so the path is not yet buffered.  The descendant check
+        covers this by recognising that a directory whose *children* are
+        pending deletion is itself being emptied by the same recursive delete:
+        any ``IN_ATTRIB`` on it is noise, not a metadata change.
+
+        Instead of scanning every pending delete (O(n) per MODIFY event,
+        O(n+m) in the worst case), the ancestor path walk is O(depth) ≈ O(1)
+        and the descendant prefix check iterates the small set of buffered
+        directory paths (m = number of distinct directories in the coalescing
+        window, bounded by DELETE_COALESCE_WINDOW)."""
         norm = path.rstrip("/")
         with self._delete_lock:
             dir_paths = self._pending_delete_dir_paths
@@ -245,7 +256,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if idx <= 0:
                 break
             norm = norm[:idx]
-        return False
+        # Descendant check: if any buffered directory delete starts with this
+        # path + "/", then this path is an ancestor of a pending delete and
+        # its IN_ATTRIB events are noise from the ongoing recursive removal.
+        prefix = path.rstrip("/") + "/"
+        return any(d.startswith(prefix) for d in dir_paths)
 
     @staticmethod
     def _stat_key(st: os.stat_result) -> tuple[int, int, int]:

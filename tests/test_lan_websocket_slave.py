@@ -558,6 +558,46 @@ class TestSlaveFileEventHandler:
         handler.on_modified(event)
         assert len(handler._pending_ops) == 0
 
+    def test_on_modified_directory_inbound_delete_echo_suppressed(self, handler, tmp_path):
+        """Dir MODIFY covered by an inbound recursive delete is suppressed.
+
+        When the slave applies an inbound recursive delete, the local
+        watcher fires IN_ATTRIB on every ancestor directory as children
+        are removed.  Those modifies are noise, not permission changes,
+        and must not be propagated to the master (via _propagate_dir_-
+        permission_change).
+        """
+        root = str(tmp_path / "a")
+        handler.record_inbound_delete(root)
+
+        # An IN_ATTRIB event for a directory under the inbound delete root.
+        event = DirDeletedEvent(str(tmp_path / "a" / "sub"))
+        event.is_directory = True
+
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            with patch.object(handler, "_propagate_dir_permission_change") as mock_prop:
+                handler.on_modified(event)
+
+        # The permission-change propagation must NOT be called: the modify
+        # is an echo of the inbound delete, not a real permission change.
+        mock_prop.assert_not_called()
+
+    def test_on_modified_directory_not_suppressed_without_inbound_delete(self, handler, tmp_path):
+        """Dir MODIFY without an inbound delete still propagates permission changes."""
+        event = DirDeletedEvent(str(tmp_path / "a" / "sub"))
+        event.is_directory = True
+
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.is_hidden_dir", return_value=False),
+            patch.object(handler, "_propagate_dir_permission_change") as mock_prop,
+        ):
+            handler.on_modified(event)
+
+        mock_prop.assert_called_once()
+
     def test_on_modified_os_cache_file_ignored(self, handler, tmp_path):
         """Test on_modified ignores OS cache files."""
         event = FileModifiedEvent(str(tmp_path / "Thumbs.db"))

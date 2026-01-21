@@ -1656,6 +1656,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         if event.is_directory:
             if not is_hidden_dir(src_path):
+                # Suppress the IN_ATTRIB burst of an inbound recursive delete:
+                # inotify fires IN_ATTRIB on a directory whenever a child is
+                # removed, so rmtree of a deep tree produces one spurious
+                # directory modify per removed child.  A path equal to, or
+                # under, a directory already cached as an inbound delete is
+                # noise, not a permission change, and must not be propagated
+                # to the master.
+                if self.is_inbound_delete_echo(src_path):
+                    return
                 self._propagate_dir_permission_change(src_path)
             return
 
