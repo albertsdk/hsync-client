@@ -199,13 +199,20 @@ def update_bw_ema(bytes_transferred: int, elapsed_sec: float) -> None:
     _bw_ema = mbps if _bw_ema is None else _BW_EMA_ALPHA * mbps + (1 - _BW_EMA_ALPHA) * _bw_ema
 
 
-def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> float | None:
+def measure_bandwidth_active(
+    server_url: str, size_bytes: int = 256 * 1024, verify: bool | str = True
+) -> float | None:
     """Measure throughput by downloading *size_bytes* from the server's health
     probe (``GET /health?size=``), returning Mbps. ``None`` on failure.
 
     The server bounds the payload (``HEALTH_MAX_PROBE_BYTES``), so the result
     is a coarse seed for the bandwidth class until the passive EMA has data.
     Never used on metered connections (Android forces ``MOBILE`` instead).
+
+    *verify* controls TLS certificate verification (same semantics as
+    ``requests``). When left at its default (``True``) the function falls back
+    to :func:`hsync_client.utils.get_ssl_verify` so that late callers (e.g. the
+    LAN post-discovery refresh) benefit from the already-populated ``CONFIG``.
     """
     try:
         from requests.exceptions import RequestException
@@ -215,13 +222,18 @@ def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> f
         log.warning("autotune: requests not available, skipping active bandwidth probe")
         return None
 
+    # Resolve the effective verify value: an explicit override always wins;
+    # otherwise consult CONFIG via get_ssl_verify() so that the LAN refresh
+    # path picks up --insecure / CA_CERT / fingerprint settings.
+    effective_verify: bool | str = verify if verify is not True else get_ssl_verify()
+
     try:
         t0 = monotonic()
         resp = http_get(
             f"{server_url.rstrip('/')}/health",
             params={"size": size_bytes},
             timeout=10,
-            verify=get_ssl_verify(),
+            verify=effective_verify,
         )
         elapsed = monotonic() - t0
         payload_bytes = len(resp.content)

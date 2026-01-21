@@ -762,7 +762,7 @@ def run_sync(
             # placeholder — no server URL exists until a master is discovered.
             active_mbps = None
             if not using_lan_placeholder and autotune_mod._bw_ema is None:
-                active_mbps = measure_bandwidth_active(effective_server_url)
+                active_mbps = measure_bandwidth_active(effective_server_url, verify=verify_ssl)
             bw_class = classify_bandwidth(autotune_mod._bw_ema, None, active_mbps)
             storage_type = detect_storage_type(local_path)
 
