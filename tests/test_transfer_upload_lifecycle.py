@@ -6,6 +6,7 @@
 
 """Tests for upload max-wait timeout, reschedule, stable-file, and nothing-to-do."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from hsync_common.models.file import File
@@ -287,6 +288,120 @@ class TestWaitForStableFile:
             patch("hsync_client.transfer.time_sleep"),
         ):
             assert _wait_for_stable_file(file, from_closed=False) is False
+
+    def test_already_settled_skips_conservative_poll(self, tmp_path):
+        """An old mtime skips the 5s poll on the conservative path."""
+        import os
+
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+        past = 1_000_000.0
+        os.utime(file.filepath, (past, past))
+
+        with (
+            patch("hsync_client.transfer.CONFIG", {"STABILITY_DELAY": 5, "MAX_WAIT_TIMEOUT": 120}),
+            patch("hsync_client.transfer.is_file_stable") as mock_stable,
+            patch("hsync_client.transfer.time_sleep") as mock_sleep,
+        ):
+            assert _wait_for_stable_file(file, from_closed=False) is True
+            mock_stable.assert_not_called()
+            mock_sleep.assert_not_called()
+
+    def test_fresh_mtime_still_polls(self, tmp_path):
+        """A just-written file still takes the conservative poll."""
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", {"STABILITY_DELAY": 5, "MAX_WAIT_TIMEOUT": 120}),
+            patch("hsync_client.transfer.is_file_stable", return_value=True) as mock_stable,
+            patch("hsync_client.transfer.time_sleep"),
+        ):
+            assert _wait_for_stable_file(file, from_closed=False) is True
+            mock_stable.assert_called_once_with(file)
+
+    def test_from_closed_does_not_use_already_settled_shortcut(self, tmp_path):
+        """IN_CLOSE_WRITE always does the 0.3s re-check, even on an old mtime."""
+        import os
+
+        from hsync_client.constants import STABILITY_DELAY_ON_CLOSED
+        from hsync_client.transfer import _wait_for_stable_file
+
+        file = self._make_file(tmp_path)
+        os.utime(file.filepath, (1_000_000.0, 1_000_000.0))
+
+        with (
+            patch("hsync_client.transfer.CONFIG", {"STABILITY_DELAY": 5, "MAX_WAIT_TIMEOUT": 120}),
+            patch("hsync_client.transfer.is_file_stable", return_value=True) as mock_stable,
+        ):
+            assert _wait_for_stable_file(file, from_closed=True) is True
+            mock_stable.assert_called_once_with(file, STABILITY_DELAY_ON_CLOSED)
+
+    def test_upload_reuses_hash_when_size_and_mtime_ns_unchanged(self, tmp_path):
+        """Unchanged size+st_mtime_ns reuses the digest already on the File."""
+        file = self._make_file(tmp_path)
+        known = "b" * 64
+        file.sha256sum = known
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    **_BASE_CONFIG,
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "MAX_WAIT_TIMEOUT": 120,
+                    "STABILITY_DELAY": 5,
+                },
+            ),
+            patch("hsync_client.transfer._wait_for_stable_file", return_value=True),
+            patch("hsync_client.transfer.compute_sha256") as mock_hash,
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.prepare_delta_upload", return_value=None),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            upload_file(file, check_size=True)
+            mock_hash.assert_not_called()
+            assert file.sha256sum == known
+
+    def test_upload_rehashes_when_identity_changes_during_wait(self, tmp_path):
+        """A size or ns-mtime change during the wait forces a fresh hash."""
+        file = self._make_file(tmp_path)
+        file.sha256sum = "c" * 64
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        def _mutate_then_stable(_file, _from_closed=False):
+            Path(file.filepath).write_text("changed-same-second")
+            return True
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    **_BASE_CONFIG,
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "MAX_WAIT_TIMEOUT": 120,
+                    "STABILITY_DELAY": 5,
+                },
+            ),
+            patch(
+                "hsync_client.transfer._wait_for_stable_file",
+                side_effect=_mutate_then_stable,
+            ),
+            patch("hsync_client.transfer.compute_sha256", return_value="d" * 64) as mock_hash,
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.prepare_delta_upload", return_value=None),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            upload_file(file, check_size=True)
+            mock_hash.assert_called_once_with(file.filepath)
+            assert file.sha256sum == "d" * 64
 
 
 class TestNothingToDo:

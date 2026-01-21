@@ -237,11 +237,16 @@ flowchart TD
 
 **File stability check:**
 
-Before uploading, the client verifies the file has stopped being written by checking:
-1. **File size** - must remain constant over the stability delay period
-2. **Modification time (mtime)** - must remain constant over the stability delay period
+Before uploading, the client verifies the file has stopped being written:
 
-The stability delay defaults to **5 seconds** (inspired by Syncthing's default of 10 seconds) and can be configured via:
+1. **Writer close (`on_closed` / `IN_CLOSE_WRITE`)** — one 0.3s size+mtime re-check.
+2. **Already idle** — if `mtime` is older than the stability delay, the file is
+   treated as settled and uploaded immediately (covers reconcile and atomic
+   renames of finished files).
+3. **Conservative poll** — otherwise size and mtime must stay constant over the
+   stability delay (default **5 seconds**).
+
+The delay can be configured via:
 - CLI: `--stability-delay SEC`
 - Environment variable: `HSYNC_STABILITY_DELAY`
 

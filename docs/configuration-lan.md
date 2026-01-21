@@ -35,7 +35,7 @@ pass it on a pipe with the hidden `--lan-key-fd` flag.
 
 | Option | Description | Default |
 |---|---|---|
-| `--stability-delay` | Seconds to wait before uploading a modified file | `5` |
+| `--stability-delay` | Seconds a file must stay unchanged before upload. Already-idle files (mtime older than this) skip the wait. After a writer close, a 0.3s re-check is used instead. | `5` |
 | `--max-wait-timeout` | Maximum seconds to wait for a file to stabilize | `120` |
 
 ## Advanced LAN Options
@@ -57,7 +57,7 @@ pass it on a pipe with the hidden `--lan-key-fd` flag.
 | `HSYNC_LAN_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
 | `HSYNC_LAN_PERSISTENT` | Keep waiting for peers (`false` ≈ `--no-lan-persistent`) | `true` |
 | `HSYNC_DISCOVERY_TIMEOUT` | LAN peer discovery timeout in seconds (`0` = indefinitely) | `10` |
-| `HSYNC_STABILITY_DELAY` | File stability wait (seconds) | `5` |
+| `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Min file size for delta transfer in LAN mode | `1048576` (1 MB) |
 
 `HSYNC_LAN_MODE` and `HSYNC_LAN_FORCE_MASTER` are **not** read. Enable LAN

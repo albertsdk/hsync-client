@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-08-21" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-08-25" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -142,8 +142,11 @@ seconds before retrying a failed connection. When auto-tuning is enabled
 Range: 1\(en60.
 .TP
 .BR \-\-stability\-delay =\fISEC\fP
-Seconds to wait after a file stops changing before uploading it
+Seconds a file must stay unchanged before it is uploaded
 (default: 5; range: 1\(en60).
+Files whose modification time is already older than this
+are uploaded immediately. After a writer close
+(\fIIN_CLOSE_WRITE\fP) a 0.3s re-check is used instead.
 .TP
 .BR \-\-max\-wait\-timeout =\fISEC\fP
 Maximum time to wait for a file to stabilize (default:
@@ -413,8 +416,9 @@ When auto-tuning is enabled and this is unset, the value is derived
 from RTT.
 .TP
 .B HSYNC_STABILITY_DELAY
-Seconds to wait after a file stops changing before uploading it
+Seconds a file must stay unchanged before it is uploaded
 (default: 5; range: 1\(en60).
+Already-idle files skip the wait.
 .TP
 .B HSYNC_RESYNC
 Periodic resync interval in seconds (default:

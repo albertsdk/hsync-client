@@ -88,7 +88,7 @@ caller falls back to a full transfer.
 | `download_file` / `_download_file_attempt` | `transfer.py:280` / `:326` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta`; the up-to-date shortcut is content-aware (equal/newer local mtime is trusted only when the expected hash matches — required to deliver the master's version after a preserved conflict) |
 | `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta` |
 | `_get_upload_status` | `transfer.py:680` | query server for resume offset |
-| `is_file_stable` / `_wait_for_stable_file` | `transfer.py:624` / `:728` | size+mtime stability gate; fast path on `from_closed` |
+| `is_file_stable` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` |
 | `_reschedule_upload` | `transfer.py:764` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:172` / `:149` | streaming multipart |
 | `_ThrottledFileReader` | `transfer.py:119` | bandwidth throttle on upload reads |
@@ -100,6 +100,12 @@ caller falls back to a full transfer.
 | `_open_partial_no_follow` | `utils.py:379` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
 | escaping-symlink upload guard | `upload_file` `transfer.py` | refuses (before any hashing/read) a symlink whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (realtime watch/LAN path; the reconcile routes links structurally instead — see symlink replication below). Emits `security_rejected` |
 | `upload_symlink` / `download_symlink` / `materialize_symlink_local` | `transfer.py` (symlink section) | **Structural replication**: `upload_symlink` POSTs `(path, target)` to `/symlinks` (central server AND LAN master — same surface, transport-agnostic); an ABSOLUTE local target is relativized against the link's parent via `hsync_common.wire_symlink_target` (rsync `munge` semantics: the sender's absolute paths must never reach peers; escaping targets → security_rejected). `download_symlink` → `materialize_symlink_local` recreates the LINK locally (confined `resolve_within(..., resolve_final=False)`, target validated `is_safe_symlink_target`), replacing an existing file/link but refusing a non-empty directory. `upload_file` is never used for links in the reconcile path |
+
+After `_wait_for_stable_file` succeeds, `upload_file` snapshots
+`(size, st_mtime_ns)` before the wait and compares it after. If both match and
+the `File` already carries a digest (watcher / reconcile scan), that digest is
+reused. Otherwise it rehashes with `compute_sha256` — `File.get`'s cache is
+keyed on `int(mtime)+size` and would miss a same-second same-size rewrite.
 
 **Transfer duration logging**: every `[DOWNLOAD]`/`[UPLOAD]` success log
 includes the per-attempt wall-clock duration via

@@ -243,7 +243,7 @@ def main(
         int | None,
         typer.Option(
             "--stability-delay",
-            help="Seconds to wait before uploading modified files.",
+            help="Seconds a file must stay unchanged before upload. Already-idle files skip the wait.",
             metavar="SEC",
             rich_help_panel="Sync",
         ),

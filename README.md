@@ -58,7 +58,7 @@ opaque internal formats.
 - ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
 - 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
 - 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
-- ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets.
+- ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets. After the editor closes the file, the upload starts in a fraction of a second — not after a 5–10s quiet window (the default in tools like Syncthing). Already-idle files (full resync, atomic moves) skip the wait.
 
 Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate proxies, reverse proxies, load balancers, and CDNs without any special configuration.
 
@@ -69,6 +69,7 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 - ⬆️ Upload-only and ⬇️ download-only sync directions
 - ⚡ Parallel file transfers (configurable concurrency)
 - 👁️ Real-time file system monitoring (watchdog)
+- ⚡ Fast after save — transfer starts when the writer closes the file, without a multi-second debounce; already-idle files skip the wait
 - ✅ SHA-256-based file integrity verification
 - 🗜️ Zstandard (zstd) transfer compression
 - 🧩 Delta transfer (rsync-style block sync for large files)

@@ -15,12 +15,13 @@ import hmac
 import threading
 from collections.abc import Iterator
 from io import BytesIO
-from os import fsync, remove, replace, utime
+from os import fsync, remove, replace, stat_result, utime
 from pathlib import Path
 from shutil import disk_usage
 from sys import maxsize
 from time import monotonic
 from time import sleep as time_sleep
+from time import time as wall_time
 from typing import cast
 from uuid import uuid4
 
@@ -33,6 +34,7 @@ from hsync_common.models.file import File
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import is_safe_symlink_target, resolve_within
+from hsync_common.permissions import mode_to_octal
 from hsync_common.text import escape_loguru_markup, safe_json_for_log
 from loguru import logger as log
 from requests import RequestException
@@ -752,6 +754,43 @@ def is_file_stable(file: File, interval: float | None = None) -> bool:
     return last_size == current_size and last_mtime == current_mtime
 
 
+def _file_already_settled(file: File) -> bool:
+    """True when *file* has not been written for at least ``STABILITY_DELAY``.
+
+    Used by the conservative stability path to skip a full size+mtime poll
+    when the first ``stat`` already shows an mtime older than the configured
+    delay. A writer that is still appending would have refreshed ``mtime``.
+    ``from_closed`` never uses this shortcut: the 0.3s re-check stays
+    mandatory after ``IN_CLOSE_WRITE``.
+    """
+    if not file.filepath:
+        return True
+    try:
+        mtime = Path(file.filepath).stat().st_mtime
+    except OSError:
+        # Deleted / unreadable: same degradation as ``is_file_stable``.
+        return True
+    delay = CONFIG.get("STABILITY_DELAY", FILE_STABILITY_INTERVAL_DEFAULT)
+    return (wall_time() - mtime) >= delay
+
+
+def _file_identity(path: str) -> tuple[int, int] | None:
+    """Return ``(size, st_mtime_ns)`` for *path*, or ``None`` if unreadable."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def _apply_stat_metadata(file: File, st: stat_result) -> None:
+    """Copy size, timestamps, and mode from a ``stat`` result onto *file*."""
+    file.size = st.st_size
+    file.mtime = int(st.st_mtime)
+    file.ctime = int(st.st_ctime)
+    file.permissions = mode_to_octal(st.st_mode)
+
+
 # =============================================================================
 # Upload Operations
 # =============================================================================
@@ -813,9 +852,11 @@ def _wait_for_stable_file(file: File, from_closed: bool = False) -> bool:
     the writer closed the descriptor, so a single short re-check
     (``STABILITY_DELAY_ON_CLOSED``) is enough to absorb edge cases (NFS chunked
     writes, rapid multi-close, non-atomic saves) before trusting the close and
-    uploading immediately. When the trigger is not a close event, or the short
-    re-check still sees the file changing, fall back to the conservative poll
-    bounded by ``MAX_WAIT_TIMEOUT``.
+    uploading immediately. When the trigger is not a close event, a file whose
+    mtime is already older than ``STABILITY_DELAY`` is treated as settled
+    without the 5s poll. Otherwise, or if the short re-check still sees the
+    file changing, fall back to the conservative poll bounded by
+    ``MAX_WAIT_TIMEOUT``.
 
     Args:
         file: File object to check.
@@ -828,6 +869,13 @@ def _wait_for_stable_file(file: File, from_closed: bool = False) -> bool:
     """
     # Fast path: trust the close after a single short re-check.
     if from_closed and is_file_stable(file, STABILITY_DELAY_ON_CLOSED):
+        return True
+
+    # Already-settled shortcut (conservative path only): if mtime is older
+    # than STABILITY_DELAY the file has not been written recently, so the
+    # 5s size+mtime poll would only confirm what we already know. Fresh
+    # mtimes (atomic rename just landed, still-open writer) still poll.
+    if not from_closed and _file_already_settled(file):
         return True
 
     # Conservative path: poll until size/mtime settle, bounded by the timeout.
@@ -1018,15 +1066,28 @@ def upload_file(
             return
 
     if check_size:
+        pre_identity = _file_identity(file.filepath)
         if not _wait_for_stable_file(file, from_closed):
             # File never stopped being written within the wait window: defer the
             # upload instead of transferring a half-written file.
             _reschedule_upload(file, _reschedules_left, permissions_only)
             return
 
-        # Refresh file metadata after write is complete
-        file.size = Path(file.filepath).stat().st_size
-        file.sha256sum = compute_sha256(file.filepath)
+        # Refresh metadata after the write is complete. Reuse the digest
+        # already on *file* (watcher / reconcile scan) only when size and
+        # nanosecond mtime are unchanged — File.get's cache is keyed on
+        # int(mtime)+size and would miss a same-second same-size rewrite.
+        try:
+            st = Path(file.filepath).stat()
+        except OSError:
+            log.warning(f'File "{file.filepath}" disappeared after stability wait')
+            return
+        post_identity = (st.st_size, st.st_mtime_ns)
+        if file.sha256sum and pre_identity == post_identity:
+            _apply_stat_metadata(file, st)
+        else:
+            file.sha256sum = compute_sha256(file.filepath)
+            _apply_stat_metadata(file, st)
 
         log.debug(f'Written file: "{file.filepath}" ({format_bytes(file.size)})')
 

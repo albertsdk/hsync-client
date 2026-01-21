@@ -66,7 +66,7 @@ threshold, so `[READY]` always means "reacting to events now".
 watchdog Observer ──> BaseFileEventHandler (file_event_handler.py:49)
         │ on_created/on_closed/on_modified/on_deleted/on_moved
         ▼
- stability check (transfer._wait_for_stable_file:591) ──> upload_file (transfer.py:665)
+ stability check (transfer._wait_for_stable_file) ──> upload_file (transfer.py)
         │
  inbound WS event ──> event_dispatch.apply_inbound_event (event_dispatch.py:103)
         │                         └─> download/delete/rename/symlink locally
