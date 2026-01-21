@@ -455,7 +455,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_MAX_CONCURRENT_TRANSFERS", "8")
         get_env_settings.cache_clear()
-        assert _get_max_concurrent_transfers_value(cli_value=2, autotune=15) == 2
+        assert _get_max_concurrent_transfers_value(cli_value=2, autotune=15) == (2, "cli")
 
     def test_max_concurrent_transfers_env_beats_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -463,7 +463,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_MAX_CONCURRENT_TRANSFERS", "8")
         get_env_settings.cache_clear()
-        assert _get_max_concurrent_transfers_value(cli_value=None, autotune=15) == 8
+        assert _get_max_concurrent_transfers_value(cli_value=None, autotune=15) == (8, "env")
 
     def test_max_concurrent_transfers_autotune_beats_default(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -471,7 +471,18 @@ class TestPrecedence:
 
         monkeypatch.delenv("HSYNC_MAX_CONCURRENT_TRANSFERS", raising=False)
         get_env_settings.cache_clear()
-        assert _get_max_concurrent_transfers_value(cli_value=None, autotune=15) == 15
+        assert _get_max_concurrent_transfers_value(cli_value=None, autotune=15) == (15, "autotune")
+
+    def test_max_concurrent_transfers_default_when_no_overrides(self, monkeypatch):
+        from hsync_client.config import get_env_settings
+        from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
+        from hsync_client.main_logic import _get_max_concurrent_transfers_value
+
+        monkeypatch.delenv("HSYNC_MAX_CONCURRENT_TRANSFERS", raising=False)
+        get_env_settings.cache_clear()
+        value, src = _get_max_concurrent_transfers_value(cli_value=None, autotune=None)
+        assert src == "default"
+        assert value == MAX_CONCURRENT_TRANSFERS_DEFAULT
 
     def test_transfer_retry_min_wait_env_beats_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -586,3 +597,92 @@ class TestIntegration:
         assert autotune_mod._bw_ema == pytest.approx(80.0, rel=0.01)
         # Cleanup
         autotune_mod._bw_ema = None
+
+
+class TestRefreshConcurrencyFromQueue:
+    """Per-cycle concurrency refresh must honor explicit CLI/env overrides."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_config(self):
+        """Restore CONFIG and the autotune EMA after each test."""
+        import hsync_client.autotune as autotune_mod
+        from hsync_client.config import CONFIG
+
+        snapshot = dict(CONFIG)
+        prev_ema = autotune_mod._bw_ema
+        try:
+            yield
+        finally:
+            CONFIG.clear()
+            CONFIG.update(snapshot)
+            autotune_mod._bw_ema = prev_ema
+
+    @staticmethod
+    def _file(tmp_path):
+        from hsync_common.models.file import File
+
+        f = tmp_path / "f.bin"
+        f.write_bytes(b"x" * 1024)
+        return File(filepath=str(f), sha256sum="a" * 64, size=1024)
+
+    def test_explicit_override_is_preserved(self, tmp_path):
+        """MAX_CONCURRENT_TRANSFERS absent from managed keys -> no rewrite."""
+        from hsync_client.config import CONFIG
+        from hsync_client.sync import _refresh_concurrency_from_queue
+
+        CONFIG.clear()
+        CONFIG.update(
+            {
+                "AUTOTUNE_ENABLED": True,
+                "AUTOTUNE_MANAGED_KEYS": [],  # nothing managed -> explicit override
+                "MAX_CONCURRENT_TRANSFERS": 20,
+                "AUTOTUNE_STORAGE_TYPE": "ssd",
+            }
+        )
+        before = CONFIG["MAX_CONCURRENT_TRANSFERS"]
+
+        _refresh_concurrency_from_queue([self._file(tmp_path)], [])
+
+        assert CONFIG["MAX_CONCURRENT_TRANSFERS"] == before == 20
+
+    def test_managed_key_is_rewritten(self, tmp_path):
+        """When managed (autotune/default provenance), the refresh may rewrite."""
+        import hsync_client.autotune as autotune_mod
+        from hsync_client.config import CONFIG
+        from hsync_client.sync import _refresh_concurrency_from_queue
+
+        autotune_mod._bw_ema = None  # deterministic: bandwidth UNKNOWN
+        CONFIG.clear()
+        CONFIG.update(
+            {
+                "AUTOTUNE_ENABLED": True,
+                "AUTOTUNE_MANAGED_KEYS": ["MAX_CONCURRENT_TRANSFERS"],
+                "MAX_CONCURRENT_TRANSFERS": 99,  # deliberately not a derived value
+                "AUTOTUNE_STORAGE_TYPE": "nvme",
+            }
+        )
+
+        _refresh_concurrency_from_queue([self._file(tmp_path)], [])
+
+        # With NVME + MIXED queue the derived base is 15; the refresh must have
+        # moved CONFIG away from the seeded 99.
+        assert CONFIG["MAX_CONCURRENT_TRANSFERS"] != 99
+
+    def test_autotune_disabled_is_noop(self, tmp_path):
+        """--no-autotune (AUTOTUNE_ENABLED False): concurrency is never touched."""
+        from hsync_client.config import CONFIG
+        from hsync_client.sync import _refresh_concurrency_from_queue
+
+        CONFIG.clear()
+        CONFIG.update(
+            {
+                "AUTOTUNE_ENABLED": False,
+                "AUTOTUNE_MANAGED_KEYS": ["MAX_CONCURRENT_TRANSFERS"],
+                "MAX_CONCURRENT_TRANSFERS": 20,
+                "AUTOTUNE_STORAGE_TYPE": "",
+            }
+        )
+
+        _refresh_concurrency_from_queue([self._file(tmp_path)], [])
+
+        assert CONFIG["MAX_CONCURRENT_TRANSFERS"] == 20

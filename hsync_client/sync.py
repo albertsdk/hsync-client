@@ -574,7 +574,14 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
 
 
 def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) -> None:
-    """Re-derive concurrency from the live transfer queue profile (per cycle, zero I/O)."""
+    """Re-derive concurrency from the live transfer queue profile (per cycle, zero I/O).
+
+    No-op unless autotune is enabled **and** ``MAX_CONCURRENT_TRANSFERS`` is an
+    autotune-managed key (i.e. resolved from autotune/default, not a CLI/env
+    override): an explicit ``--max-concurrent-transfers`` / ``HSYNC_MAX_*`` must
+    survive the per-cycle refresh, preserving the CLI > env > autotune > default
+    precedence encoded in ``AUTOTUNE_MANAGED_KEYS``.
+    """
     import hsync_client.autotune as autotune_mod
     from hsync_client.autotune import (
         StorageType,
@@ -586,6 +593,11 @@ def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) 
         MAX_CONCURRENT_TRANSFERS_MAX,
         MAX_CONCURRENT_TRANSFERS_MIN,
     )
+
+    if not CONFIG.get("AUTOTUNE_ENABLED"):
+        return
+    if "MAX_CONCURRENT_TRANSFERS" not in CONFIG.get("AUTOTUNE_MANAGED_KEYS", []):
+        return
 
     all_files = downloads + uploads
     if not all_files:

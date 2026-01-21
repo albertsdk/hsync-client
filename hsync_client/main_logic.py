@@ -165,22 +165,27 @@ def _get_resync_value(cli_value: int | None) -> int | None:
     return RESYNC_DEFAULT
 
 
-def _get_max_concurrent_transfers_value(cli_value: int | None, autotune: int | None = None) -> int:
+def _get_max_concurrent_transfers_value(
+    cli_value: int | None, autotune: int | None = None
+) -> tuple[int, TuningSource]:
     """
-    Determine the max concurrent transfers value.
+    Determine the max concurrent transfers value and its provenance.
 
     Priority: CLI argument > environment variable > autotune > default constant.
+    The provenance tag feeds ``AUTOTUNE_MANAGED_KEYS``: only a value resolved
+    from autotune/default may be re-derived by the per-cycle queue refresh in
+    ``sync._refresh_concurrency_from_queue`` (CLI/env overrides are preserved).
     """
     from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
 
     if cli_value is not None:
-        return cli_value
+        return cli_value, "cli"
     env_value = get_max_concurrent_transfers()
     if env_value is not None:
-        return env_value
+        return env_value, "env"
     if autotune is not None:
-        return autotune
-    return MAX_CONCURRENT_TRANSFERS_DEFAULT
+        return autotune, "autotune"
+    return MAX_CONCURRENT_TRANSFERS_DEFAULT, "default"
 
 
 def _get_http_timeout_value(
@@ -796,6 +801,39 @@ def run_sync(
     )
     _resolved_retry_min, _retry_min_src = _get_transfer_retry_min_wait_value(_autotune_retry_min)
     _resolved_retry_max, _retry_max_src = _get_transfer_retry_max_wait_value(_autotune_retry_max)
+    _resolved_max_concurrent, _max_concurrent_src = _get_max_concurrent_transfers_value(
+        max_concurrent_transfers, _autotune_concurrency
+    )
+
+    # Single source of truth for the tuning keys: both the user-override log
+    # (cli/env sources) and AUTOTUNE_MANAGED_KEYS (autotune/default sources)
+    # are derived from this sequence, so the two can never drift apart.
+    # Tuple: (config key, display label, resolved value, provenance, unit).
+    _tuning_keys = [
+        ("HTTP_TIMEOUT", "timeout", _resolved_http_timeout, _http_timeout_src, "s"),
+        ("RECONNECT_DELAY", "reconnect", _resolved_reconnect_delay, _reconnect_src, "s"),
+        ("TRANSFER_RETRY_MIN_WAIT", "retry_min", _resolved_retry_min, _retry_min_src, "s"),
+        ("TRANSFER_RETRY_MAX_WAIT", "retry_max", _resolved_retry_max, _retry_max_src, "s"),
+        (
+            "MAX_CONCURRENT_TRANSFERS",
+            "concurrency",
+            _resolved_max_concurrent,
+            _max_concurrent_src,
+            "",
+        ),
+    ]
+
+    # Surface user overrides so the startup summary reflects the EFFECTIVE tuning,
+    # not just autotune's recommendation (e.g. --max-concurrent-transfers 20 stays
+    # 20 even when autotune would derive 4). Only logged when something is set
+    # explicitly via CLI/env, to avoid noise on a fully-autotuned run.
+    _overrides = [
+        f"{label}={value}{unit} ({src})"
+        for _key, label, value, src, unit in _tuning_keys
+        if src in ("cli", "env")
+    ]
+    if _overrides:
+        log.info(f"autotune: user overrides in effect: {', '.join(_overrides)}")
 
     # Connectivity check retry (env var or default; not autotune-managed)
     _conn_retry_attempts = get_connectivity_retry_attempts()
@@ -868,9 +906,7 @@ def run_sync(
         "MASS_DELETE_GUARD": _get_mass_delete_guard_value(mass_delete_guard),
         "MASS_DELETE_THRESHOLD": _get_mass_delete_threshold_value(mass_delete_threshold),
         "MASS_DELETE_PERCENT": _get_mass_delete_percent_value(mass_delete_percent),
-        "MAX_CONCURRENT_TRANSFERS": _get_max_concurrent_transfers_value(
-            max_concurrent_transfers, _autotune_concurrency
-        ),
+        "MAX_CONCURRENT_TRANSFERS": _resolved_max_concurrent,
         "TRANSFER_RETRY_ATTEMPTS": TRANSFER_RETRY_ATTEMPTS_DEFAULT,
         "TRANSFER_RETRY_MIN_WAIT": _resolved_retry_min,
         "TRANSFER_RETRY_MAX_WAIT": _resolved_retry_max,
@@ -880,16 +916,13 @@ def run_sync(
         # Auto-tuning runtime state (updated below after set_config)
         "AUTOTUNE_ENABLED": autotune_enabled,
         "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
-        # Keys the LAN post-discovery refresh may re-derive: only those
-        # resolved from autotune/default (CLI/env overrides are preserved)
+        # Keys the LAN post-discovery refresh AND the per-cycle concurrency
+        # refresh may re-derive: only those resolved from autotune/default
+        # (CLI/env overrides are preserved). Derived from `_tuning_keys` so it
+        # stays in sync with the user-override log above.
         "AUTOTUNE_MANAGED_KEYS": [
             key
-            for key, src in (
-                ("HTTP_TIMEOUT", _http_timeout_src),
-                ("RECONNECT_DELAY", _reconnect_src),
-                ("TRANSFER_RETRY_MIN_WAIT", _retry_min_src),
-                ("TRANSFER_RETRY_MAX_WAIT", _retry_max_src),
-            )
+            for key, _label, _value, src, _unit in _tuning_keys
             if src in ("autotune", "default")
         ],
     }

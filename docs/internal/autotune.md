@@ -154,7 +154,11 @@ no-op when auto-tuning is disabled or the RTT is not measurable.
 ### Per sync cycle (`sync._refresh_concurrency_from_queue`)
 
 Re-derives concurrency from the live queue profile (zero I/O). Reads
-`CONFIG["AUTOTUNE_STORAGE_TYPE"]` and `autotune_mod._bw_ema`.
+`CONFIG["AUTOTUNE_STORAGE_TYPE"]` and `autotune_mod._bw_ema`. It is a no-op
+unless `AUTOTUNE_ENABLED` is true **and** `MAX_CONCURRENT_TRANSFERS` is in
+`AUTOTUNE_MANAGED_KEYS` — an explicit `--max-concurrent-transfers` /
+`HSYNC_MAX_CONCURRENT_TRANSFERS` is preserved across cycles, so the per-cycle
+refresh only refines a value that autotune (or the default) already set.
 
 ### WS reconnect (`remote_websocket.py`)
 
@@ -173,14 +177,15 @@ Resolvers in `main_logic.py`:
 | --- | --- | --- |
 | `_get_http_timeout_value` | `http_timeout` | `(value, provenance)` |
 | `_get_reconnect_delay_value` | `reconnect_delay` | `(value, provenance)` |
-| `_get_max_concurrent_transfers_value` | `max_concurrent_transfers` | `value` |
+| `_get_max_concurrent_transfers_value` | `max_concurrent_transfers` | `(value, provenance)` |
 | `_get_transfer_retry_min_wait_value` | `transfer_retry_min_wait` | `(value, provenance)` |
 | `_get_transfer_retry_max_wait_value` | `transfer_retry_max_wait` | `(value, provenance)` |
 
 The provenance tag (`cli` / `env` / `autotune` / `default`) is the single
 encode site for the precedence chain: `AUTOTUNE_MANAGED_KEYS` is built from
-the tags of the four LAN-refreshed keys (only `autotune`/`default`-sourced
-keys are managed), so explicit CLI/env overrides are never re-derived.
+the tags of all five tuning keys (only `autotune`/`default`-sourced keys are
+managed), so explicit CLI/env overrides are never re-derived — by the LAN
+post-discovery refresh nor the per-cycle concurrency refresh.
 
 `TRANSFER_RETRY_ATTEMPTS` is always `3` (no env/CLI override in v1).
 

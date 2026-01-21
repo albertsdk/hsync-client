@@ -77,19 +77,23 @@ event (`main_logic.py:793`).
 the master is pinned and `set_config(config)` has run. Measures the real RTT
 toward the elected master and re-derives `HTTP_TIMEOUT`,
 `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT` and `RECONNECT_DELAY` via
-`derive_timeout`/`derive_retry`. Only keys listed in
-`CONFIG["AUTOTUNE_MANAGED_KEYS"]` are touched — keys set via CLI/env keep
-their values (provenance tagged by the `_get_*_value` resolvers themselves,
-`main_logic.py:295-364`; the managed check short-circuits before any probing).
+`derive_timeout`/`derive_retry` (it does not touch `MAX_CONCURRENT_TRANSFERS`).
+Only keys listed in `CONFIG["AUTOTUNE_MANAGED_KEYS"]` are touched — keys set
+via CLI/env keep their values (provenance tagged by the `_get_*_value`
+resolvers themselves, `main_logic.py`; the managed check short-circuits before
+any probing).
 Updates are written to both the global `CONFIG` and the local config dict
 (`set_config` copies values, so the two are distinct objects). No-op when
 `AUTOTUNE_ENABLED` is false or the RTT is not measurable.
 
 ### Per sync cycle (`sync._refresh_concurrency_from_queue`)
 
-`sync.py:316-348` — re-derives concurrency from the live transfer queue
-profile (zero I/O). Reads `CONFIG["AUTOTUNE_STORAGE_TYPE"]` (set at startup
-from `tuning.storage_type.value`) and `autotune_mod._bw_ema`.
+`sync.py` — re-derives concurrency from the live transfer queue profile
+(zero I/O). Reads `CONFIG["AUTOTUNE_STORAGE_TYPE"]` (set at startup from
+`tuning.storage_type.value`) and `autotune_mod._bw_ema`. No-op unless
+`AUTOTUNE_ENABLED` and `MAX_CONCURRENT_TRANSFERS ∈ AUTOTUNE_MANAGED_KEYS`:
+an explicit `--max-concurrent-transfers` / `HSYNC_MAX_CONCURRENT_TRANSFERS`
+survives the per-cycle refresh, preserving CLI > env > autotune > default.
 
 ### WS reconnect (`remote_websocket.py`)
 
@@ -102,15 +106,14 @@ network changes.
 CLI flag  >  HSYNC_* env var  >  autotuned value  >  static default constant
 ```
 
-Resolvers in `main_logic.py` (the four LAN-refreshed ones return
-`(value, provenance)`; provenance ∈ `cli`/`env`/`autotune`/`default` feeds
-`AUTOTUNE_MANAGED_KEYS`):
+Resolvers in `main_logic.py` (all five return `(value, provenance)`; provenance
+∈ `cli`/`env`/`autotune`/`default` feeds `AUTOTUNE_MANAGED_KEYS`):
 
 | Resolver | Location | Returns |
 | --- | --- | --- |
 | `_get_http_timeout_value` | `main_logic.py:295` | `(int, TuningSource)` |
 | `_get_reconnect_delay_value` | `main_logic.py:316` | `(int, TuningSource)` |
-| `_get_max_concurrent_transfers_value` | `main_logic.py:277` | `int` (not LAN-refreshed) |
+| `_get_max_concurrent_transfers_value` | `main_logic.py:277` | `(int, TuningSource)` |
 | `_get_transfer_retry_min_wait_value` | `main_logic.py:335` | `(float, TuningSource)` |
 | `_get_transfer_retry_max_wait_value` | `main_logic.py:351` | `(float, TuningSource)` |
 
