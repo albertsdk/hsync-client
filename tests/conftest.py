@@ -83,7 +83,7 @@ def reset_sync_state_stores() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_clock_offset() -> None:
+def _reset_clock_offset() -> Generator[None]:
     """Clear the process-wide clock offset around each test.
 
     The LAN startup NTP probe runs on a background thread; a slow probe from a
@@ -190,7 +190,7 @@ def _terminate_child_hsync_processes() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _kill_orphan_hsync_processes() -> None:
+def _kill_orphan_hsync_processes() -> Generator[None]:
     """Reap orphaned LAN subprocesses after each test (see helper above).
 
     Function-scoped because the mDNS cascade happens *between* tests: a peer
@@ -389,6 +389,44 @@ def _self_signed_cert(cert_dir):
     return str(cert_path), str(key_path)
 
 
+def _server_env(buckets_dir: str, state_dir: str) -> dict:
+    """Build the scrubbed, isolated env for a hsync-server subprocess.
+
+    Every pre-existing ``HSYNC_*`` variable is stripped so the developer's own
+    configuration can never leak into the test server. ``HSYNC_BUCKETS`` and
+    ``HSYNC_STATE_DIR`` are pointed at per-test temp dirs so neither bucket
+    content nor the shared ``syncstate.db`` account store is reused across
+    tests — a shared ``syncstate.db`` caused startup ``SQLITE_BUSY`` / stale
+    schema collisions when several server modules ran in one session. The
+    scrypt cost is lowered to keep bootstrap fast.
+    """
+    import os
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+    env.update(
+        {
+            "HSYNC_ADMIN_KEY": BB_ADMIN_SECRET,
+            "HSYNC_SCRYPT_N": "16",
+            "HSYNC_SCRYPT_MAXMEM": "33554432",
+            "HSYNC_BUCKETS": buckets_dir,
+            "HSYNC_STATE_DIR": state_dir,
+            "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
+            "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
+            "HSYNC_RATE_LIMIT_DOWNLOAD": "1000000/minute",
+            "HSYNC_RATE_LIMIT_DELTA": "1000000/minute",
+            "HSYNC_RATE_LIMIT_WEBSOCKET": "1000000/minute",
+            "HSYNC_RATE_LIMIT_WS_MESSAGES": "1000000/second",
+            "HSYNC_WS_AUTH_TIMEOUT": "5",
+            "HSYNC_WS_HEARTBEAT_INTERVAL": "5",
+            "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
+            "HSYNC_MIN_FREE_DISK_SPACE": "0",
+            "HSYNC_ENABLE_DOCS": "false",
+            "HSYNC_SSL_KEYFILE_PASSWORD": BB_SSL_KEY_PASSWORD,
+        }
+    )
+    return env
+
+
 @pytest.fixture(scope="module")
 def live_server(tmp_path_factory):
     """Start the real hsync-server as a *separate subprocess* over loopback HTTPS.
@@ -412,7 +450,6 @@ def live_server(tmp_path_factory):
     runs with a self-signed cert and the client is driven with ``--insecure``.
     Yields (base_url, api_key).
     """
-    import os
     import shutil
     import subprocess
     import sys
@@ -426,31 +463,12 @@ def live_server(tmp_path_factory):
     warnings.simplefilter("ignore", InsecureRequestWarning)
 
     buckets_dir = tempfile.mkdtemp(prefix="hsync_bb_buckets_")
+    state_dir = tempfile.mkdtemp(prefix="hsync_bb_state_")
     cert_dir = tmp_path_factory.mktemp("bbssl")
     cert_file, key_file = _self_signed_cert(cert_dir)
     port = _free_port()
 
-    env = os.environ.copy()
-    env.update(
-        {
-            "HSYNC_ADMIN_KEY": BB_ADMIN_SECRET,
-            "HSYNC_SCRYPT_N": "16",
-            "HSYNC_SCRYPT_MAXMEM": "33554432",
-            "HSYNC_BUCKETS": buckets_dir,
-            "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
-            "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
-            "HSYNC_RATE_LIMIT_DOWNLOAD": "1000000/minute",
-            "HSYNC_RATE_LIMIT_DELTA": "1000000/minute",
-            "HSYNC_RATE_LIMIT_WEBSOCKET": "1000000/minute",
-            "HSYNC_RATE_LIMIT_WS_MESSAGES": "1000000/second",
-            "HSYNC_WS_AUTH_TIMEOUT": "5",
-            "HSYNC_WS_HEARTBEAT_INTERVAL": "5",
-            "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
-            "HSYNC_MIN_FREE_DISK_SPACE": "0",
-            "HSYNC_ENABLE_DOCS": "false",
-            "HSYNC_SSL_KEYFILE_PASSWORD": BB_SSL_KEY_PASSWORD,
-        }
-    )
+    env = _server_env(buckets_dir, state_dir)
 
     proc = subprocess.Popen(
         [
@@ -505,32 +523,42 @@ def live_server(tmp_path_factory):
             proc.kill()
             proc.wait(timeout=5)
         shutil.rmtree(buckets_dir, ignore_errors=True)
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 class _RestartableServer:
     """A real hsync-server subprocess that can be stopped and restarted.
 
-    The buckets dir and TLS material are created once per server and reused
-    across restarts so bucket data persists, exactly like a real deployment
-    whose server process is restarted. Exposes ``base_url`` / ``api_key`` /
-    ``restart()`` / ``stop()``.
+    The buckets dir, state dir and TLS material are created once per server and
+    reused across restarts so bucket data and the account store persist,
+    exactly like a real deployment whose server process is restarted. Exposes
+    ``base_url`` / ``api_key`` / ``restart()`` / ``stop()``.
     """
 
-    def __init__(self, base_url: str, port: int, buckets_dir: str, cert_file: str, key_file: str):
+    def __init__(
+        self,
+        base_url: str,
+        port: int,
+        buckets_dir: str,
+        state_dir: str,
+        cert_file: str,
+        key_file: str,
+    ):
         self.base_url = base_url
         self.api_key = BB_API_KEY
         self._port = port
         self._buckets_dir = buckets_dir
+        self._state_dir = state_dir
         self._cert_file = cert_file
         self._key_file = key_file
-        self._proc = _start_server_proc(port, buckets_dir, cert_file, key_file)
+        self._proc = _start_server_proc(port, buckets_dir, state_dir, cert_file, key_file)
         _wait_for_server_ready_https(base_url, self._proc)
 
     def restart(self) -> None:
         """Stop the current server and start a fresh one on the same state."""
         _stop_proc(self._proc)
         self._proc = _start_server_proc(
-            self._port, self._buckets_dir, self._cert_file, self._key_file
+            self._port, self._buckets_dir, self._state_dir, self._cert_file, self._key_file
         )
         _wait_for_server_ready_https(self.base_url, self._proc)
 
@@ -550,18 +578,25 @@ def restartable_live_server(tmp_path):
     import tempfile
 
     buckets_dir = tempfile.mkdtemp(prefix="hsync_bb_buckets_")
+    state_dir = tempfile.mkdtemp(prefix="hsync_bb_state_")
     cert_dir = tmp_path / "bbssl"
     cert_dir.mkdir()
     cert_file, key_file = _self_signed_cert(cert_dir)
     port = _free_port()
     server = _RestartableServer(
-        f"https://127.0.0.1:{port}", port, buckets_dir, str(cert_file), str(key_file)
+        f"https://127.0.0.1:{port}",
+        port,
+        buckets_dir,
+        state_dir,
+        str(cert_file),
+        str(key_file),
     )
     try:
         yield server
     finally:
         server.stop()
         shutil.rmtree(buckets_dir, ignore_errors=True)
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 def _stop_proc(proc) -> None:
@@ -576,39 +611,17 @@ def _stop_proc(proc) -> None:
         proc.wait(timeout=5)
 
 
-def _start_server_proc(port: int, buckets_dir: str, cert_file: str, key_file: str):
-    """Start a real hsync-server over loopback HTTPS with a scrubbed env.
+def _start_server_proc(port: int, buckets_dir: str, state_dir: str, cert_file: str, key_file: str):
+    """Start a real hsync-server over loopback HTTPS with a scrubbed, isolated env.
 
-    The env is scrubbed of every pre-existing ``HSYNC_*`` variable so the
-    developer's own configuration can never leak into the test server; the
-    override set mirrors the one used by :func:`live_server`. The caller owns
+    The env is scrubbed of every pre-existing ``HSYNC_*`` variable and pointed
+    at isolated buckets/state dirs (see :func:`_server_env`). The caller owns
     termination via :func:`_stop_proc`.
     """
-    import os
     import subprocess
     import sys
 
-    env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
-    env.update(
-        {
-            "HSYNC_ADMIN_KEY": BB_ADMIN_SECRET,
-            "HSYNC_SCRYPT_N": "16",
-            "HSYNC_SCRYPT_MAXMEM": "33554432",
-            "HSYNC_BUCKETS": buckets_dir,
-            "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
-            "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
-            "HSYNC_RATE_LIMIT_DOWNLOAD": "1000000/minute",
-            "HSYNC_RATE_LIMIT_DELTA": "1000000/minute",
-            "HSYNC_RATE_LIMIT_WEBSOCKET": "1000000/minute",
-            "HSYNC_RATE_LIMIT_WS_MESSAGES": "1000000/second",
-            "HSYNC_WS_AUTH_TIMEOUT": "5",
-            "HSYNC_WS_HEARTBEAT_INTERVAL": "5",
-            "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
-            "HSYNC_MIN_FREE_DISK_SPACE": "0",
-            "HSYNC_ENABLE_DOCS": "false",
-            "HSYNC_SSL_KEYFILE_PASSWORD": BB_SSL_KEY_PASSWORD,
-        }
-    )
+    env = _server_env(buckets_dir, state_dir)
     return subprocess.Popen(
         [
             sys.executable,
@@ -827,17 +840,17 @@ def _start_watch_client(
         "0",
         *extra,
     ]
-    stderr = open(log_path, "wb") if log_path else subprocess.DEVNULL
+    stderr_file = open(log_path, "wb") if log_path else None
     try:
         return subprocess.Popen(
             args,
             env=env,
             stdout=subprocess.DEVNULL,
-            stderr=stderr,
+            stderr=stderr_file if stderr_file is not None else subprocess.DEVNULL,
         )
     finally:
-        if log_path:
-            stderr.close()
+        if stderr_file is not None:
+            stderr_file.close()
 
 
 @pytest.fixture

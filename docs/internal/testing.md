@@ -152,7 +152,7 @@ Used by `test_bb_server_remote_sync.py`, `test_bb_server_continuous_sync.py`,
 
 | Fixture | Scope | Purpose |
 |---------|-------|---------|
-| `live_server` | module | Starts the **real `hsync-server`** as a separate subprocess on loopback HTTPS with a self‑signed certificate; readiness is probed via `GET /health`. Yields `(base_url, api_key)`. Disables rate‑limiting and docs. |
+| `live_server` | module | Starts the **real `hsync-server`** as a separate subprocess on loopback HTTPS with a self‑signed certificate; readiness is probed via `GET /health`. Runs with isolated `HSYNC_BUCKETS`/`HSYNC_STATE_DIR`. Yields `(base_url, api_key)`. Disables rate‑limiting and docs. |
 | `bb_bucket` | function | Creates a uniquely‑named bucket on the live server for one test and deletes it afterwards. |
 | `local_dir` | function | Creates a temp directory used as the client's local sync path. |
 | `run_sync_once` | function | Returns a callable that runs a **one‑shot** client sync via `CliRunner` (Typer) with `--yes --insecure --min-free-disk-space 0`. Wraps the invocation in `_ClientGlobalsGuard`. |
@@ -407,7 +407,13 @@ design).
   rotates the certificate while keeping the device ID (used by the
   fingerprint-changed test).
 - Subprocess environments are scrubbed of every pre-existing `HSYNC_*`
-  variable before test overrides are applied (`_lan_env`, `watch_sync`).
+  variable before test overrides are applied (`_lan_env`, `watch_sync`, and
+  `_server_env` for the `hsync-server` subprocess).
+- The `hsync-server` subprocess gets its own `HSYNC_BUCKETS` and
+  `HSYNC_STATE_DIR` temp dirs (`_server_env`), so neither bucket content nor
+  the shared `syncstate.db` account store is reused across tests — a shared
+  `syncstate.db` caused startup `SQLITE_BUSY`/schema collisions when several
+  server modules ran in one session.
 - The per-directory instance lock (`hsync_client.identity.InstanceLock`)
   makes two live clients on one synced directory impossible; its lock files
   live in a per-test `HSYNC_LOCKS_DIR`.
