@@ -23,6 +23,11 @@
 #                                                    (builds one binary per
 #                                                     arch, packages all 10
 #                                                     models in dist/wd-os5/)
+#   -v, --version VERSION   Override the version used for packages (default:
+#                           the pyproject.toml version). Also settable via the
+#                           HSYNC_VERSION environment variable. A prerelease
+#                           (e.g. 1.2.0-alpha.1) is translated to the Debian
+#                           form (1.2.0~alpha.1) for the .deb target.
 #   -h, --help              Show this help message
 #
 # Requirements:
@@ -209,6 +214,8 @@ ${BOLD}Options:${RESET}
     -t, --target TARGET     Build target (default: native)
                             Supported: native, deb, deb-all,
                             wd-ex2-ultra-os5, wd-os5-all
+    -v, --version VERSION   Override the package version (default:
+                            pyproject.toml). Also settable via HSYNC_VERSION.
     -h, --help              Show this help message
 
 ${BOLD}Examples:${RESET}
@@ -292,9 +299,30 @@ check_prerequisites() {
     fi
 }
 
-# Get version from pyproject.toml
+# Version override, set by --version in main() and/or the HSYNC_VERSION
+# environment variable. Mutable (not readonly) so main() can assign it.
+VERSION_OVERRIDE=""
+
+# Get the source (SemVer) version: --version flag > HSYNC_VERSION env >
+# pyproject.toml. May be a prerelease (e.g. 1.2.0-alpha.1); the .deb build
+# translates it to the Debian form via _semver_to_debian below.
 get_version() {
-    grep -E '^version\s*=' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'
+    if [[ -n "${VERSION_OVERRIDE}" ]]; then
+        printf '%s' "${VERSION_OVERRIDE}"
+    elif [[ -n "${HSYNC_VERSION:-}" ]]; then
+        printf '%s' "${HSYNC_VERSION}"
+    else
+        grep -E '^version\s*=' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'
+    fi
+}
+
+# Translate a SemVer version into a Debian policy version so a prerelease sorts
+# *before* the stable release. Debian uses '~' as the "sorts before everything"
+# separator while '-' denotes the debian revision, so the first '-' (the SemVer
+# prerelease separator) becomes '~': 1.2.0-alpha.1 -> 1.2.0~alpha.1. Build
+# metadata ('+') is left untouched (Debian uses '+' too).
+_semver_to_debian() {
+    printf '%s' "$1" | sed 's/-/~/'
 }
 
 # Build the binary
@@ -492,8 +520,9 @@ _inject_shlib_depends() {
 
 # Build a .deb package for the host architecture (native build, no Docker).
 build_deb() {
-    local version deb_arch
+    local version deb_version deb_arch
     version="$(get_version)"
+    deb_version="$(_semver_to_debian "${version}")"
     deb_arch="$(_arch_to_deb "${ARCH_NAME}")"
 
     log_step "Building ${DEB_PKG_NAME} v${version} for ${deb_arch} (host build)..."
@@ -548,7 +577,7 @@ build_deb() {
     fi
 
     # --- stage .deb tree -------------------------------------------------
-    local stage_dir="${DEB_BUILD_DIR}/${DEB_PKG_NAME}_${version}_${deb_arch}"
+    local stage_dir="${DEB_BUILD_DIR}/${DEB_PKG_NAME}_${deb_version}_${deb_arch}"
     rm -rf "${stage_dir}"
     mkdir -p "${stage_dir}"
 
@@ -582,9 +611,9 @@ build_deb() {
     _finalize_deb_stage "${stage_dir}"
 
     # --- inject version / arch into control ------------------------------
-    log_step "Injecting version ${version} and arch ${deb_arch} into control..."
+    log_step "Injecting version ${deb_version} and arch ${deb_arch} into control..."
     sed -i.bak \
-        -e "s/__VERSION__/${version}/g" \
+        -e "s/__VERSION__/${deb_version}/g" \
         -e "s/__ARCH__/${deb_arch}/g" \
         "${stage_dir}/DEBIAN/control"
     rm -f "${stage_dir}/DEBIAN/control.bak"
@@ -606,7 +635,7 @@ build_deb() {
     fi
     ${deb_cmd} dpkg-deb --build "${stage_dir}" "${DEB_OUTPUT_DIR}"
 
-    local deb_name="${DEB_PKG_NAME}_${version}_${deb_arch}.deb"
+    local deb_name="${DEB_PKG_NAME}_${deb_version}_${deb_arch}.deb"
     local deb_path="${DEB_OUTPUT_DIR}/${deb_name}"
     local size deb_abs
     size="$(du -h "${deb_path}" | cut -f1)"
@@ -621,7 +650,7 @@ build_deb() {
     echo -e "  ${BOLD}Package:${RESET}  ${deb_name}"
     echo -e "  ${BOLD}Arch:${RESET}     ${deb_arch}"
     echo -e "  ${BOLD}Size:${RESET}     ${size}"
-    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo -e "  ${BOLD}Version:${RESET}  ${deb_version}"
     echo
     echo -e "${DIM}Install with:${RESET}"
     echo -e "${DIM}  sudo dpkg -i ${deb_abs}${RESET}"
@@ -654,8 +683,9 @@ readonly DEB_ALL_BUILDER_IMAGE_PREFIX="hsync-deb-builder"
 #
 # Output: dist/deb/hsync-client_<ver>_<arch>.deb
 build_deb_all() {
-    local version
+    local version deb_version
     version="$(get_version)"
+    deb_version="$(_semver_to_debian "${version}")"
 
     log_step "Building ${DEB_PKG_NAME} v${version} for all 3 Debian/Ubuntu architectures..."
 
@@ -728,7 +758,7 @@ build_deb_all() {
         local arch_build_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}"
         local bin_dir="${arch_build_dir}/pyinstaller"
         local work_dir="${arch_build_dir}/work"
-        local stage_dir="${arch_build_dir}/${DEB_PKG_NAME}_${version}_${deb_arch}"
+        local stage_dir="${arch_build_dir}/${DEB_PKG_NAME}_${deb_version}_${deb_arch}"
         mkdir -p "${bin_dir}" "${work_dir}"
 
         echo
@@ -821,7 +851,7 @@ build_deb_all() {
 
         # Inject version / arch into control.
         sed -i.bak \
-            -e "s/__VERSION__/${version}/g" \
+            -e "s/__VERSION__/${deb_version}/g" \
             -e "s/__ARCH__/${deb_arch}/g" \
             "${stage_dir}/DEBIAN/control"
         rm -f "${stage_dir}/DEBIAN/control.bak"
@@ -858,11 +888,11 @@ build_deb_all() {
                     echo 'WARNING: dpkg-shlibdeps resolved no dependencies' >&2
                 fi
                 dpkg-deb --build /pkg /out
-                chmod 0644 /out/${DEB_PKG_NAME}_${version}_${deb_arch}.deb
-                chown -R \"\${HOST_UID}:\${HOST_GID}\" /pkg \"/out/${DEB_PKG_NAME}_${version}_${deb_arch}.deb\"
+                chmod 0644 /out/${DEB_PKG_NAME}_${deb_version}_${deb_arch}.deb
+                chown -R \"\${HOST_UID}:\${HOST_GID}\" /pkg \"/out/${DEB_PKG_NAME}_${deb_version}_${deb_arch}.deb\"
             "
 
-        local deb_name="${DEB_PKG_NAME}_${version}_${deb_arch}.deb"
+        local deb_name="${DEB_PKG_NAME}_${deb_version}_${deb_arch}.deb"
         local deb_path="${out_abs}/${deb_name}"
         if [[ ! -f "${deb_path}" ]]; then
             log_error ".deb not produced for ${deb_arch} at ${deb_path}"
@@ -877,7 +907,7 @@ build_deb_all() {
     echo
     log_ok "All 3 Debian packages built!"
     echo
-    echo -e "  ${BOLD}Version:${RESET}   ${version}"
+    echo -e "  ${BOLD}Version:${RESET}   ${deb_version}"
     echo -e "  ${BOLD}Output:${RESET}    ${out_abs}/"
     echo
     local sep="────────────────────────────────────────────────────────────"
@@ -1380,6 +1410,11 @@ main() {
             -t|--target)
                 [[ $# -ge 2 ]] || { log_error "--target requires a value"; exit 1; }
                 target="$2"
+                shift 2
+                ;;
+            -v|--version)
+                [[ $# -ge 2 ]] || { log_error "--version requires a value"; exit 1; }
+                VERSION_OVERRIDE="$2"
                 shift 2
                 ;;
             -h|--help)

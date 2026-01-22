@@ -129,6 +129,25 @@ jobs:
           ref: main
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}
+      # The package version is the resolved version (tag for a push, or
+      # pyproject base + optional suffix for a manual dispatch). It is exported
+      # to compile.sh via HSYNC_VERSION so the .deb/.bin carry the same version
+      # as the native archives and the release tag; compile.sh translates the
+      # SemVer prerelease to the Debian form (~) for the .deb.
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            BASE=$(grep -E '^version\s*=' hsync-client/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            SUFFIX="${{ inputs.version_suffix }}"
+            if [ -n "$SUFFIX" ]; then
+              echo "version=${BASE}-${SUFFIX}" >> "$GITHUB_OUTPUT"
+            else
+              echo "version=${BASE}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
       # The .deb/WD OS5 images are cross-built for ARMv7/arm64 under qemu-user.
       # The QEMU that ships with the ubuntu-latest runner has regressed and makes
       # gcc crash deterministically with SIGSEGV (exit 139) while emitting -O3
@@ -148,6 +167,8 @@ jobs:
         uses: docker/setup-buildx-action@v4
       - name: Build .deb and WD OS5 packages
         working-directory: hsync-client
+        env:
+          HSYNC_VERSION: ${{ steps.version.outputs.version }}
         run: |
           ./compile.sh --target deb-all
           ./compile.sh --target wd-os5-all
@@ -206,3 +227,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: assets/*
           generate_release_notes: true
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          make_latest: ${{ ! contains(steps.tag.outputs.tag, '-') }}
