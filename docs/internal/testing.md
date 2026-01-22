@@ -409,6 +409,14 @@ design).
 - Subprocess environments are scrubbed of every pre-existing `HSYNC_*`
   variable before test overrides are applied (`_lan_env`, `watch_sync`, and
   `_server_env` for the `hsync-server` subprocess).
+- The in-process `tests/conftest.py` autouse fixture `_scrub_hsync_env`
+  removes every `HSYNC_*` inherited from the developer's shell before each
+  test (`monkeypatch.delenv` restores them on teardown), so the client/server
+  configuration surface is hermetic: a shell-exported `HSYNC_API_KEY` /
+  `HSYNC_MAX_CONCURRENT_TRANSFERS` / … can never leak into assertions such as
+  `EnvSettings` defaults or `AUTOTUNE_MANAGED_KEYS`. Tests that set their own
+  `HSYNC_*` (via `monkeypatch.setenv` or directly) still work because they run
+  after the scrub.
 - The `hsync-server` subprocess gets its own `HSYNC_BUCKETS` and
   `HSYNC_STATE_DIR` temp dirs (`_server_env`), so neither bucket content nor
   the shared `syncstate.db` account store is reused across tests — a shared

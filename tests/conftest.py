@@ -42,6 +42,37 @@ def _prevent_os_environ_leakage(monkeypatch: pytest.MonkeyPatch) -> Generator[No
         monkeypatch.delenv(key, raising=False)
 
 
+# HSYNC_* keys that ``_isolate_device_state`` manages (it overrides them with
+# per-test temp dirs via ``monkeypatch.setenv``). The global scrub must NOT
+# touch them: autouse-fixture ordering is not declaration order, so the scrub
+# can run *after* ``_isolate_device_state`` and would otherwise delete the
+# isolation values it just set.
+_ISOLATION_MANAGED_HSYNC_KEYS = frozenset(
+    {"HSYNC_DEVICE_DIR", "HSYNC_LOCKS_DIR", "HSYNC_STATE_DIR"}
+)
+
+
+@pytest.fixture(autouse=True)
+def _scrub_hsync_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scrub every ``HSYNC_*`` inherited from the developer's environment.
+
+    The client and server read their configuration exclusively from ``HSYNC_*``
+    env vars, so a shell-exported ``HSYNC_API_KEY`` / ``HSYNC_MAX_CONCURRENT_
+    TRANSFERS`` / … would otherwise leak into assertions (e.g. ``EnvSettings``
+    defaults, autotune-managed-keys) and make tests depend on the execution
+    environment. ``monkeypatch.delenv`` restores the original values on
+    teardown; tests that set their own ``HSYNC_*`` (via ``monkeypatch.setenv``
+    or directly) still work because they run after this scrub.
+
+    ``_ISOLATION_MANAGED_HSYNC_KEYS`` is excluded: those are managed by
+    ``_isolate_device_state`` and must survive the scrub.
+    """
+    for key in [
+        k for k in os.environ if k.startswith("HSYNC_") and k not in _ISOLATION_MANAGED_HSYNC_KEYS
+    ]:
+        monkeypatch.delenv(key)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_device_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     """Keep every test away from the developer's real device identity and locks.

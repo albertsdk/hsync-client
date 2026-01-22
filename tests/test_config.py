@@ -75,13 +75,8 @@ class TestLoadEnvFile:
 class TestEnvSettings:
     """Tests for EnvSettings pydantic model."""
 
-    def test_defaults(self, monkeypatch):
+    def test_defaults(self):
         """Default values are correct."""
-        # Scrub any HSYNC_* inherited from the developer's environment so the
-        # defaults are asserted against a clean env (e.g. a shell-exported
-        # HSYNC_API_KEY must not leak into the "unset" assertions below).
-        for key in [k for k in os.environ if k.startswith("HSYNC_")]:
-            monkeypatch.delenv(key)
         get_env_settings.cache_clear()
         settings = EnvSettings()
         assert settings.server is None
