@@ -21,16 +21,11 @@ CLI client for HTTP-based file synchronization with WebSocket support for real-t
 ```bash
 cd hsync-client
 
-# Create virtual environment
-python3 -m venv .venv
+# Install dependencies with Poetry
+poetry install
 
-# Activate the venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-# or
-pip install websockets watchdog requests
+# Activate the virtual environment
+poetry shell
 ```
 
 ## Configuration
