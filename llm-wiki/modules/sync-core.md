@@ -328,6 +328,16 @@ preceding no-op close):
 directory metadata surface (directories carry no content hash and never
 appear in the `/files` listing):
 
+- **Remote / LAN-master watcher** (`BaseFileEventHandler.on_modified`,
+  directory branch, `file_event_handler.py`): a directory `chmod` fires only
+  `IN_ATTRIB`, which watchdog delivers as a directory `modified` event. The
+  branch detects a mode-only change — `st_mode` changed but `st_mtime` and
+  `st_size` unchanged — and logs `[PERMISSION] mode change: "<path>" (dir)`
+  (with the `(CID:)` suffix when peer-attributed on the master) instead of
+  `[LOCAL/REMOTE MODIFY]`. The `modified` event with the `Dir` (including the
+  new `permissions`) is broadcast unchanged. This mirrors the file-chmod path
+  (`_process_permission_only`, logged `[PERMISSION] mode change`) and the LAN
+  slave's directory-chmod line.
 - **LAN slave watcher** (Linux IN_ATTRIB): the slave keeps a `_last_dir_mode`
   map and, on a mode change, pushes the directory through `POST /dirs` with
   `permissions` set (`_propagate_dir_permission_change`, `lan_websocket.py`);
@@ -395,9 +405,12 @@ for the same path within `DIR_MODIFY_WINDOW` (0.1s, `file_event_handler.py`)
 **only when the mode is unchanged**: pure mtime/size churn (an inbound
 `rmtree` applied on the receiving side, a deep download, a `mkdir` burst) is
 noise, while a `chmod` (mode change) is the one meaningful directory signal
-and always falls through to broadcast. The timestamp lives in a parallel
-`_last_broadcast_ts` map, written in `_record_broadcast` and evicted/invalidated
-in lockstep with `_last_broadcast_stat`/`_last_broadcast_hash`.
+and always falls through to broadcast. When it does, the branch detects a
+mode-only change (`st_mode` changed, `st_mtime`/`st_size` unchanged) and logs
+`[PERMISSION] mode change: "<path>" (dir)` instead of `[LOCAL/REMOTE MODIFY]`
+(see "Directory permission-only changes" above). The timestamp lives in a
+parallel `_last_broadcast_ts` map, written in `_record_broadcast` and
+evicted/invalidated in lockstep with `_last_broadcast_stat`/`_last_broadcast_hash`.
 
 **Directory create dedup** (`on_created`, directory branch,
 `file_event_handler.py`): mirrors the directory-modify dedup. Watchdog emits

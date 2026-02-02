@@ -489,7 +489,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     log.debug(f'Skip dir modify, directory gone: "{src_path}"')
                     return
                 current_stat = self._stat_key(file_stat)
-                if current_stat == self._last_broadcast_stat.get(src_path):
+                prev_stat = self._last_broadcast_stat.get(src_path)
+                if current_stat == prev_stat:
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
                     return
                 # Time-window dedup for directory metadata churn: a recursive
@@ -500,7 +501,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 # unchanged is folded; a mode change (chmod) never folds and
                 # falls through to broadcast.
                 last_ts = self._last_broadcast_ts.get(src_path)
-                last_mode = self._last_broadcast_stat.get(src_path, (0, 0, 0))[2]
+                last_mode = prev_stat[2] if prev_stat is not None else 0
                 if (
                     last_ts is not None
                     and monotonic() - last_ts < DIR_MODIFY_WINDOW
@@ -508,6 +509,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 ):
                     log.debug(f'Skip dir modify (window): "{src_path}"')
                     return
+                # A chmod changes only st_mode: mtime+size unchanged with a mode
+                # change is a pure permission change (not a child add/remove), so
+                # it is labelled [PERMISSION] like the file-chmod path instead
+                # of [LOCAL/REMOTE MODIFY].
+                permission_only = (
+                    prev_stat is not None
+                    and current_stat[2] != prev_stat[2]
+                    and current_stat[0] == prev_stat[0]
+                    and current_stat[1] == prev_stat[1]
+                )
                 # Record the stat *before* logging/broadcasting: mkdir emits a
                 # burst of IN_ATTRIB events ~1ms apart, and the second one can
                 # be dispatched before Dir.get + broadcast of the first has
@@ -515,10 +526,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 # that sibling immediately; a later genuine content change
                 # updates the directory mtime and is never skipped.
                 self._record_broadcast(src_path, current_stat, "")
-                log.info(
-                    f'{self._label("MODIFY", src_path)} "{src_path}" (dir)'
-                    f"{self._cid_suffix(src_path)}"
-                )
+                if permission_only:
+                    log.info(
+                        f'{ActionLabel.PERMISSION} mode change: "{src_path}" (dir)'
+                        f"{self._cid_suffix(src_path)}"
+                    )
+                else:
+                    log.info(
+                        f'{self._label("MODIFY", src_path)} "{src_path}" (dir)'
+                        f"{self._cid_suffix(src_path)}"
+                    )
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(

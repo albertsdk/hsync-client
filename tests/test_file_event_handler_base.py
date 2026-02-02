@@ -1213,6 +1213,65 @@ class TestFileEventHandler:
 
             assert mock_broadcast.call_count == 2
 
+    def test_on_modified_directory_chmod_logs_permission(self):
+        """A directory chmod (mode-only change) logs [PERMISSION], not MODIFY.
+
+        chmod changes only st_mode (not mtime/size); a child add/remove changes
+        the directory mtime. A pure mode change is therefore a permission-only
+        event and must be labelled [PERMISSION] mode change, like the file-chmod
+        path, instead of [LOCAL MODIFY].
+        """
+        path = "/bucket/subdir"
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = path
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        # Identical mtime+size, different mode (chmod 755 -> 700).
+        stat1 = MagicMock()
+        stat1.st_mtime_ns = 100
+        stat1.st_size = 4096
+        stat1.st_mode = 0o40755
+        stat2 = MagicMock()
+        stat2.st_mtime_ns = 100
+        stat2.st_size = 4096
+        stat2.st_mode = 0o40700
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch("hsync_client.file_event_handler.log") as mock_log,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch(
+                "hsync_client.file_event_handler.monotonic",
+                side_effect=[0.0, 0.0, 0.01, 0.01],
+            ),
+        ):
+            mock_path_cls.return_value.stat.side_effect = [stat1, stat2]
+            # First call records the baseline (logs [LOCAL MODIFY]); second is
+            # the chmod and must log [PERMISSION].
+            self.handler.on_modified(event)
+            self.handler.on_modified(event)
+
+            msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
+            # The chmod (second call) logs [PERMISSION] mode change (dir); the
+            # baseline first call logs [LOCAL MODIFY] (dir) exactly once.
+            assert any("[PERMISSION]" in m and "mode change" in m and "(dir)" in m for m in msgs), (
+                msgs
+            )
+            assert sum(1 for m in msgs if "[LOCAL MODIFY]" in m and "(dir)" in m) == 1, msgs
+            # The chmod still propagates.
+            assert mock_broadcast.call_count == 2
+
     def test_on_modified_directory_broadcasts_after_window_expires(self):
         """An mtime-only change after the window still broadcasts.
 
