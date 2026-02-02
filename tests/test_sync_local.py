@@ -1046,20 +1046,27 @@ class TestGetSyncActionsRemoteOnlyTombstones:
 
     A file that exists only on the remote may be the stale copy of a file
     this peer deleted while the master was unreachable (or between sync
-    cycles). Two alternative proofs suppress the download (resurrection):
-    content-hash match and causal dominance of the remote advertised
-    version (ADR-0003). Without either, the remote copy is downloaded.
+    cycles). The download (resurrection) is suppressed only on positive
+    causal proof: the tombstone clock dominating the remote advertised
+    version (ADR-0003). Content equality is not a delete proof — an
+    identical-content re-creation (an empty file being the trivial case) is
+    an intentional re-creation and is downloaded (add-wins semantics).
     """
 
     @staticmethod
-    def _remote_entry(sha256: str, vclock: dict):
-        """Build a remote-file listing entry advertising a causal version."""
+    def _remote_entry(sha256: str, vclock: dict, size: int | None = None):
+        """Build a remote-file listing entry advertising a causal version.
+
+        ``size`` defaults to ``len(sha256)`` — a placeholder the tombstone
+        decision never reads. Pass an explicit ``size`` (e.g. ``0``) for
+        fixtures that must represent a specific file accurately.
+        """
         return {
             "filepath": "gone.txt",
             "sha256sum": sha256,
             "mtime": 1,
             "ctime": 1,
-            "size": len(sha256),
+            "size": len(sha256) if size is None else size,
             "permissions": "644",
             "version": {
                 "vclock": vclock,
@@ -1080,13 +1087,15 @@ class TestGetSyncActionsRemoteOnlyTombstones:
             "vclock": vclock,
         }
 
-    def test_remote_only_hash_match_deletes_remote(self, tmp_path):
-        """A tombstone whose content hash equals the remote copy proves the
-        remote file is the deleted content: delete it remotely, never
-        download it back (resurrection guard, content-match proof)."""
+    def test_remote_only_content_match_concurrent_downloads(self, tmp_path):
+        """A tombstone whose content hash equals the remote copy but whose clock
+        is concurrent with it is a delete-vs-recreate divergence, not a stale
+        ancestor: the remote copy is downloaded, never deleted (regression:
+        identical content re-created after an offline delete must survive)."""
         remote_hash = _sha("remote-content")
         cid_local = _peer_cid("L")
-        # Concurrent clocks: only the content match can justify the deletion here.
+        # Concurrent clocks + identical content: content equality is not a
+        # delete proof, so the intentional re-creation is downloaded.
         tombstones = {tombstone_key("gone.txt"): self._tomb_entry(remote_hash, {cid_local: 1})}
         remote_files = [self._remote_entry(remote_hash, {_peer_cid("R"): 1})]
 
@@ -1098,7 +1107,26 @@ class TestGetSyncActionsRemoteOnlyTombstones:
             result = get_sync_actions(remote_files, [], tombstones=tombstones)
 
         assert len(result) == 1
-        assert result[0].name == SyncActionName.delete_remote
+        assert result[0].name == SyncActionName.download
+
+    def test_remote_only_empty_file_recreation_downloads(self, tmp_path):
+        """An empty file re-created after an offline delete is downloaded, not
+        deleted: every empty file shares the same SHA-256, so a content match
+        alone must never justify deleting the remote copy."""
+        empty_sha = _sha("")
+        cid_local = _peer_cid("L")
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(empty_sha, {cid_local: 1})}
+        remote_files = [self._remote_entry(empty_sha, {_peer_cid("R"): 1}, size=0)]
+
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [], tombstones=tombstones)
+
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
 
     def test_remote_only_causal_dominance_deletes_remote(self, tmp_path):
         """A tombstone causally dominating the remote advertised version is

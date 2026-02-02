@@ -1468,34 +1468,27 @@ def get_sync_actions(
             )
         else:
             # File exists only on remote. Before downloading it, check the
-            # deletion markers: the marker is tombstones recorded by THIS peer
+            # deletion markers: the marker is a tombstone recorded by THIS peer
             # when it deleted the path (live, with the master unreachable, or
-            # offline between sync cycles). Two alternative proofs make the
-            # remote copy the stale one and downloading it back a
-            # resurrection:
+            # offline between sync cycles). The remote copy is deleted only on
+            # positive causal proof — the tombstone clock dominating the
+            # remote's advertised version clock (ADR-0003) — which proves the
+            # remote copy is a stale ancestor of the deletion.
             #
-            # 1. Content match — the tombstone's content hash equals the
-            #    remote file's hash: the remote copy is exactly the deleted
-            #    content. This also never fires for a path that was merely
-            #    renamed or moved (a renamed file has a different hash).
-            # 2. Causal dominance — the tombstone clock dominates the
-            #    remote's advertised version clock: positive proof the
-            #    deletion descends from the common history (ADR-0003).
-            #    This also covers markers whose content hash was unknown
-            #    when minted.
+            # Content equality is deliberately NOT a delete proof. A file
+            # re-created byte-for-byte identically (an empty file being the
+            # trivial case) carries a hash equal to the tombstone's, but it is
+            # an intentional re-creation, so it must be downloaded, not
+            # deleted (add-wins semantics, mirroring Syncthing's
+            # modification-beats-deletion policy). A marker without a valid
+            # causal clock carries no proof of ancestry and never deletes.
             rel = str(remote_file_info.get("filepath", "")).lstrip("/")
             entry = tombstones.get(tombstone_key(rel))
-            remote_sha = remote_file.sha256sum or ""
             remote_vclock, _remote_corrected = _parse_advertised_version(
                 remote_file_info.get("version")
             )
-            hash_match = bool(
-                entry and entry.get("sha256") and remote_sha and entry["sha256"] == remote_sha
-            )
             causal_match = bool(entry and _tombstone_clock_dominates(entry, remote_vclock))
-            if (hash_match or causal_match) and CONFIG.get(
-                "SYNC_DIRECTION", "bidirectional"
-            ) != "download-only":
+            if causal_match and CONFIG.get("SYNC_DIRECTION", "bidirectional") != "download-only":
                 log.info(
                     f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
                     "deleting stale copy on remote"
