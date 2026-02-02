@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "HSYNC Client"
 authors = ["Alberto Basso <alberto.sdk@gmail.com>"]
 readme = "README.md"
-package-mode = false
+packages = [{include = "hsync_client"}]
+
+[tool.poetry.scripts]
+hsync = "hsync_client.cli:main"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
