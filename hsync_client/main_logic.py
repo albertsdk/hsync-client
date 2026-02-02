@@ -1108,6 +1108,11 @@ def run_sync(
                 )
             )
     finally:
+        # Compact syncstate.db once at process exit (best-effort): the state
+        # stores are no longer writing here, so the VACUUM cannot race a flush.
+        from hsync_client.state_maintenance import vacuum_on_shutdown
+
+        vacuum_on_shutdown()
         instance_lock.release()
 
 

@@ -538,6 +538,12 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         # rewrites of the entire version map.
         sync_state.flush()
 
+        # Reclaim freed pages from syncstate.db (throttled; lightweight no-op
+        # when nothing was pruned this cycle or the interval has not elapsed).
+        from hsync_client.state_maintenance import incremental_vacuum_if_due
+
+        incremental_vacuum_if_due()
+
         log.info("Sync completed successfully")
         emit_event(UiEventName.sync_complete)
         from hsync_client.utils import _write_ready_file as _signal_ready

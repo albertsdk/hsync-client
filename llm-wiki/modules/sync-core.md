@@ -23,6 +23,7 @@ and LAN modes.
 | `update_file` / `update_dir` | `sync.py:1159` / `:1111` | apply inbound metadata; reject unsafe remote paths |
 | `ensure_hsynckeep_files` | `sync.py:445` | keep empty dirs via sentinel |
 | `_cleanup_partial_files` | `sync.py:102` | drop stale `.part` files |
+| `incremental_vacuum_if_due` | `state_maintenance.py:38` | end-of-cycle compaction of `syncstate.db` (ADR-0025), called by `sync()` after `sync_state.flush()`; throttled to `INCREMENTAL_VACUUM_INTERVAL_S` and bounded to `INCREMENTAL_VACUUM_PAGES` free pages. A full `VACUUM` runs once at process exit via `vacuum_on_shutdown` (`state_maintenance.py:53`), wired in `main_logic.run_sync`'s `finally` |
 
 Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:799`,
 `MTIME_TOLERANCE` `:796`). `MTIME_TOLERANCE` is used **only** by the
