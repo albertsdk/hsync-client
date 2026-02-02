@@ -66,6 +66,7 @@ from hsync_client.constants import (
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
+    WORKER_MEMORY_BUDGET_BYTES,
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
@@ -819,7 +820,10 @@ def _get_optimal_workers(file_count: int) -> int:
 
     Uses the effective CPU quota (cgroup-aware, reflects container limits)
     to determine parallelism, with a configurable maximum and sensible
-    defaults for different workload sizes.
+    defaults for different workload sizes. When a cgroup memory limit is
+    detected (containers), it additionally caps parallelism so the worker
+    pool's combined memory footprint stays within the limit; on bare metal
+    the memory probe is None and only the CPU quota applies.
 
     Args:
         file_count: Number of files to process.
@@ -832,32 +836,44 @@ def _get_optimal_workers(file_count: int) -> int:
     # or when cgroups are unavailable, fall back to ``os.cpu_count()``.
     # Default to 4 if every probe fails.
     try:
-        from hsync_common.runtime import get_cpu_quota_cores
+        from hsync_common.runtime import get_cpu_quota_cores, get_memory_limit_bytes
 
         cpu_cores = int(get_cpu_quota_cores() or cpu_count() or 4)
+        mem_limit = get_memory_limit_bytes()
     except Exception:
         cpu_cores = 4
+        mem_limit = None
+
+    # Memory-derived worker cap: bounded by the per-worker working set
+    # (``WORKER_MEMORY_BUDGET_BYTES``). Floor of 1 worker; None (bare metal or
+    # unknown) leaves the CPU-derived cap untouched.
+    resource_cap = cpu_cores
+    if mem_limit is not None:
+        mem_workers = max(1, mem_limit // WORKER_MEMORY_BUDGET_BYTES)
+        resource_cap = min(resource_cap, mem_workers)
 
     # Allow configuration via environment variable
     env_max = os.environ.get("HSYNC_MAX_FILE_WORKERS")
     if env_max:
         try:
             max_allowed = int(env_max)
-            return min(max_allowed, file_count, cpu_cores)
+            return min(max_allowed, file_count, resource_cap)
         except ValueError:
             pass
 
-    # For small file counts, don't over-parallelize
+    # For small file counts, don't over-parallelize. The resource cap is
+    # intentionally not applied to this trivial 2-worker floor (mirroring the
+    # existing non-application of the CPU quota here).
     if file_count < 10:
         return min(2, file_count)
 
     # For medium file counts, use moderate parallelism
     if file_count < 100:
-        return min(4, file_count, cpu_cores)
+        return min(4, file_count, resource_cap)
 
     # For large file counts, use more parallelism but cap at 8
     # to avoid overwhelming the system with too many threads
-    return min(8, file_count, cpu_cores)
+    return min(8, file_count, resource_cap)
 
 
 def get_files_local() -> list[dict]:

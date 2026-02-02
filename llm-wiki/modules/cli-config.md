@@ -67,6 +67,10 @@ desktop can gate UI (§8).
   `CONFIG["MAX_INBOUND_SIZE"]` in bytes), inotify (`:176`/`:178`); visual
    `ActionLabel` enum (`:195`); delta transfer (`:185`–`:189`: `DELTA_ENABLED`,
    `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_LAN` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB).
+   `WORKER_MEMORY_BUDGET_BYTES` (`:213`, 8 MiB) — per-worker memory budget for the
+   parallel local-file scan/hash pool (`_get_optimal_workers`), combined with the
+   cgroup memory limit to cap parallelism inside containers (no effect on bare
+   metal, where the memory probe returns `None`).
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter`; bucket naming
   via `_validate_bucket` (`cli.py:88`). There is no separate validators module.

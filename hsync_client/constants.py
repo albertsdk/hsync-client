@@ -200,6 +200,18 @@ MAX_INBOUND_SIZE_MB_MIN = 0  # 0 = disabled (cap = declared size only)
 MAX_INBOUND_SIZE_MB_MAX = 10_000_000  # 10 TB
 MAX_INBOUND_SIZE_MB_DEFAULT = 10_240  # 10 GB
 
+# Per-worker memory budget for the parallel local-file scan/hash pool
+# (``sync._get_optimal_workers`` → ``get_files_local``). Each worker runs
+# ``_get_single_file_metadata`` → ``File.get`` → ``compute_sha256``
+# (``hashlib.file_digest``, streaming) plus a thread stack and a small
+# ``File``/``dict``; peak per-worker RSS is a few MiB at most. This pool only
+# scans and hashes — compression/transfer buffers live on the transfer path,
+# not here — so the budget is a streaming-hash working-set upper bound. Used
+# together with the cgroup CPU quota to bound parallelism inside containers
+# (``hsync_common.runtime.get_memory_limit_bytes``); on bare metal the memory
+# probe returns None and this budget is not applied.
+WORKER_MEMORY_BUDGET_BYTES = 8 * 1024 * 1024  # 8 MiB
+
 # =============================================================================
 # inotify Watch-Limit Diagnostics (Linux only)
 # =============================================================================
