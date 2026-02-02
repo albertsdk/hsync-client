@@ -25,13 +25,15 @@ Version: 0.1.0
 import logging
 import stat
 
+from hsync_client.event_queue import EventQueue
 from hsync_client.logger import setup_logging, log_with_data
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
+from hsync_client.models.symlink import Symlink
 from hsync_client.models.sync_action import SyncAction, SyncActionName
 from argparse import ArgumentParser, ArgumentTypeError, HelpFormatter
-from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe, sleep
+from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe, sleep, Task
 from copy import deepcopy
 from hashlib import md5
 from json import dumps, loads
@@ -43,6 +45,8 @@ from os import (
     remove,
     rename,
     stat as os_stat,
+    symlink as os_symlink,
+    unlink,
     utime,
     walk,
 )
@@ -273,6 +277,30 @@ def get_permissions(obj_path: str) -> str:
     return stat.filemode(permissions)
 
 
+def get_chunk_size(file_size: Optional[int]) -> int:
+    """
+    Calculate optimal chunk size based on file size.
+
+    Uses larger chunks for bigger files to improve transfer efficiency
+    while keeping memory usage reasonable.
+
+    Args:
+        file_size: Size of the file in bytes, or None if unknown.
+
+    Returns:
+        Optimal chunk size in bytes (8KB to 256KB).
+    """
+    if file_size is None:
+        return 64 * 1024  # Default 64KB for unknown size
+
+    if file_size < 1_000_000:        # < 1MB
+        return 8 * 1024              # 8KB
+    elif file_size < 100_000_000:    # < 100MB
+        return 64 * 1024             # 64KB
+    else:
+        return 256 * 1024            # 256KB
+
+
 def set_permissions(file_path: str, permissions: str) -> None:
     """
     Set file permissions from symbolic notation.
@@ -348,7 +376,7 @@ def get_files_remote() -> list[dict]:
         Exception: If the request fails or returns non-200 status.
     """
     try:
-        uri = f"{CONFIG["API"]["files"]}/{CONFIG["REMOTE_BUCKET"]}"
+        uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files"
         response = get(
             uri,
             headers=CONFIG["REQUEST_HEADERS"],
@@ -383,7 +411,7 @@ def download_file(file: File) -> None:
         log(f"[E] Invalid file metadata: missing filepath or name")
         return
 
-    uri = f"{CONFIG["API"]["download"]}/{CONFIG["REMOTE_BUCKET"]}"
+    uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files/download"
     response = get(
         uri,
         headers=CONFIG["REQUEST_HEADERS"],
@@ -402,9 +430,12 @@ def download_file(file: File) -> None:
             temp_file_path = temp_file.name
 
         try:
+            # Calculate optimal chunk size based on file size
+            chunk_size = get_chunk_size(file.size)
+
             # Stream file content to temporary file
             with open(temp_file_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024):
+                for chunk in response.iter_content(chunk_size=chunk_size):
                     if not chunk:
                         break
                     f.write(chunk)
@@ -525,7 +556,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
     try:
         # Prepare upload request
-        uri = f"{CONFIG["API"]["upload"]}/{CONFIG["REMOTE_BUCKET"]}"
+        uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files"
         prefix = f"{CONFIG["LOCAL_BUCKET"]}".rstrip("/")
         path = dirname(file.filepath).rstrip("/").removeprefix(prefix).lstrip("/")
 
@@ -898,15 +929,15 @@ async def remote_events() -> None:
     """
     log("[I] Continuous sync starting…")
 
-    # Build WebSocket URI with authentication token
-    api_events = CONFIG["API"]["events"]
+    # Build WebSocket URI (no token in URL for security)
+    api_base = CONFIG["API"]["events"]
     cid = CONFIG["CID"]
     bucket = CONFIG["REMOTE_BUCKET"]
-    uri = f"{api_events}/{bucket}/{cid}?token={HSYNC_API_KEY}"
+    uri = f"{api_base}/{bucket}/events/{cid}"
 
     # Configure SSL context for secure WebSocket connections
     ssl_context = None
-    if str(api_events).startswith("wss"):
+    if str(api_base).startswith("wss"):
         ssl_context = create_default_context(Purpose.SERVER_AUTH)
         if CONFIG["NO_VERIFY_SSL"]:
             ssl_context.check_hostname = False
@@ -915,14 +946,31 @@ async def remote_events() -> None:
             ssl_context.check_hostname = True
             ssl_context.verify_mode = CERT_REQUIRED
 
-    # Connect to WebSocket endpoint
+    # Connect to WebSocket endpoint with heartbeat
+    # ping_interval: Send ping every 30 seconds to detect dead connections
+    # ping_timeout: Wait up to 10 seconds for pong response
+    # close_timeout: Wait up to 5 seconds for close handshake
     async with connect(
         uri,
         ssl=ssl_context,
+        ping_interval=30,
+        ping_timeout=10,
+        close_timeout=5,
     ) as websocket:
-        # Log connection info (without exposing API key)
-        uri_log = uri.replace(f"?token={HSYNC_API_KEY}", "")
-        log(f"[I] WebSocket connected to {uri_log}")
+        log(f"[I] WebSocket connected to {uri}")
+
+        # Authenticate via first message (more secure than URL token)
+        auth_message = {"type": "auth", "token": HSYNC_API_KEY}
+        await websocket.send(dumps(auth_message))
+
+        # Wait for authentication confirmation
+        auth_response = await websocket.recv()
+        auth_result = loads(auth_response)
+        if auth_result.get("type") != "auth" or auth_result.get("status") != "ok":
+            log(f"[E] WebSocket authentication failed: {auth_result}")
+            return
+
+        log("[I] WebSocket authenticated successfully")
 
         if DEBUG:
             log(f"[I] Sync reconnection delay: {CONFIG["RECONNECT_DELAY"]} sec.")
@@ -930,9 +978,15 @@ async def remote_events() -> None:
 
         log(f"[I] Client ID (CID): {CONFIG["CID"]}")
 
-        # Set up local file system watcher
+        # Set up event queue for reliable message delivery
         loop = get_running_loop()
-        event_handler = FileEventHandler(websocket, loop)
+        event_queue = EventQueue(websocket)
+
+        # Start event queue processor as background task
+        queue_task = create_task(event_queue.process())
+
+        # Set up local file system watcher with event queue
+        event_handler = FileEventHandler(websocket, loop, event_queue)
         observer = Observer()
         observer.schedule(event_handler, CONFIG["LOCAL_BUCKET"], recursive=True)
         observer.start()
@@ -1037,6 +1091,30 @@ async def remote_events() -> None:
                             log(f'[W] Cannot delete: "{file.filepath}"')
                             log(f'[W] Not found: "{file.filepath}"')
 
+                # Handle Symlink events
+                elif event_name == EventName.symlink:
+                    if src and src.get("type") == "symlink":
+                        # Create symlink locally
+                        link = Symlink.from_dict(src)
+                        link.filepath = join(
+                            CONFIG["LOCAL_BUCKET"], link.filepath.lstrip("/")
+                        )
+                        target = link.target
+
+                        if link.filepath and target:
+                            log(f'[L] Creating symlink: "{link.filepath}" -> "{target}"')
+                            # Ensure parent directory exists
+                            parent_dir = dirname(link.filepath)
+                            if not exists(parent_dir):
+                                makedirs(parent_dir, exist_ok=True)
+
+                            # Remove existing file/symlink if present
+                            if islink(link.filepath) or exists(link.filepath):
+                                unlink(link.filepath)
+
+                            # Create the symlink
+                            os_symlink(target, link.filepath)
+
         except ConnectionClosed as e:
             # WebSocket connection was closed
             if e.reason:
@@ -1049,9 +1127,21 @@ async def remote_events() -> None:
             log(f"[E] Exception: {e}")
 
         finally:
+            # Stop event queue processor
+            event_queue.stop()
+            queue_task.cancel()
+            try:
+                await queue_task
+            except Exception:
+                pass  # Task was cancelled
+
             # Clean up file system observer
             observer.stop()
             observer.join()
+
+
+# Global resync task reference for cancellation on reconnect
+_resync_task: Optional[Task[None]] = None
 
 
 async def resync() -> None:
@@ -1062,10 +1152,15 @@ async def resync() -> None:
     performing full sync cycles at configured intervals to
     catch any missed events or resolve inconsistencies.
     """
-    while True:
-        log(f"[I] Force sync ({CONFIG['RESYNC']} sec.)")
-        await sync()
-        await sleep(CONFIG["RESYNC"])
+    try:
+        while True:
+            await sleep(CONFIG["RESYNC"])
+            log(f"[I] Force sync ({CONFIG['RESYNC']} sec.)")
+            await sync()
+    except Exception as e:
+        # Task was cancelled or error occurred
+        if DEBUG:
+            log(f"[I] Resync task stopped: {e}")
 
 
 async def remote_connect() -> None:
@@ -1075,15 +1170,26 @@ async def remote_connect() -> None:
     Performs initial sync, optionally starts periodic resync,
     then enters continuous event monitoring. Automatically
     reconnects on connection loss after configured delay.
+    Cancels previous resync task before creating a new one.
     """
+    global _resync_task
+
     while True:
         try:
             # Perform initial sync before entering event loop
             await sync()
 
+            # Cancel previous resync task if it exists
+            if _resync_task is not None and not _resync_task.done():
+                _resync_task.cancel()
+                try:
+                    await _resync_task
+                except Exception:
+                    pass  # Task was cancelled, ignore
+
             # Start background resync task if configured
             if CONFIG["RESYNC"]:
-                create_task(resync())
+                _resync_task = create_task(resync())
 
             # Enter continuous event monitoring
             await remote_events()
@@ -1115,16 +1221,44 @@ class FileEventHandler(FileSystemEventHandler):
         loop: asyncio event loop for scheduling coroutines.
     """
 
-    def __init__(self, websocket, loop) -> None:
+    def __init__(self, websocket, loop, event_queue: EventQueue = None) -> None:
         """
         Initialize the file event handler.
 
         Args:
             websocket: Active WebSocket connection to the server.
             loop: Running asyncio event loop for thread-safe operations.
+            event_queue: Optional event queue for reliable message delivery.
         """
         self.websocket = websocket
         self.loop = loop
+        self.event_queue = event_queue
+
+    def _send_message(self, message: Event) -> None:
+        """
+        Send an event message to the server.
+
+        Uses event queue if available for reliable delivery with retry,
+        otherwise sends directly via WebSocket.
+
+        Args:
+            message: Event to send.
+        """
+        if DEBUG:
+            log(f"[I] Send message: {message}")
+
+        message_dict = message.to_dict()
+
+        if self.event_queue:
+            # Use event queue for reliable delivery
+            run_coroutine_threadsafe(
+                self.event_queue.enqueue(message_dict), self.loop
+            )
+        else:
+            # Direct send (legacy)
+            run_coroutine_threadsafe(
+                self.websocket.send(dumps(message_dict)), self.loop
+            )
 
     def on_any_event(self, event) -> None:
         """
@@ -1152,7 +1286,7 @@ class FileEventHandler(FileSystemEventHandler):
         Handle file/directory creation events.
 
         For directories: broadcasts 'added' event to server.
-        For symlinks: uploads the file (symlink events not yet implemented).
+        For symlinks: broadcasts 'symlink' event to server.
 
         Args:
             event: File system creation event from watchdog.
@@ -1169,17 +1303,20 @@ class FileEventHandler(FileSystemEventHandler):
                     EventName.added,
                     dir,
                 )
-                if DEBUG:
-                    log(f"[I] Send message: {message}")
-                run_coroutine_threadsafe(
-                    self.websocket.send(dumps(message.to_dict())), self.loop
+                self._send_message(message)
+        elif not is_hidden_file(event.src_path) and islink(event.src_path):
+            # Symlink created - broadcast symlink event
+            log(f'[L] "{event.src_path}"')
+            symlink = Symlink.get(event.src_path)
+            if symlink:
+                message = Event(
+                    CONFIG["CID"],
+                    CONFIG["LOCAL_BUCKET"],
+                    CONFIG["REMOTE_BUCKET"],
+                    EventName.symlink,
+                    symlink,
                 )
-        else:
-            # Handle symlinks (TODO: implement proper symlink event)
-            if not is_hidden_file(event.src_path) and islink(event.src_path):
-                file = File.get(event.src_path)
-                if file:
-                    upload_file(file)
+                self._send_message(message)
 
     def on_modified(self, event) -> None:
         """
@@ -1207,11 +1344,7 @@ class FileEventHandler(FileSystemEventHandler):
                     EventName.modified,
                     dir,
                 )
-                if DEBUG:
-                    log(f"[I] Send message: {message}")
-                run_coroutine_threadsafe(
-                    self.websocket.send(dumps(message.to_dict())), self.loop
-                )
+                self._send_message(message)
 
     def on_closed(self, event) -> None:
         """
@@ -1328,11 +1461,7 @@ class FileEventHandler(FileSystemEventHandler):
 
         # Send event to server via WebSocket
         if message:
-            if DEBUG:
-                log(f"[I] Send message: {message}")
-            run_coroutine_threadsafe(
-                self.websocket.send(dumps(message.to_dict())), self.loop
-            )
+            self._send_message(message)
 
     def on_deleted(self, event) -> None:
         """
@@ -1367,11 +1496,7 @@ class FileEventHandler(FileSystemEventHandler):
         )
 
         # Send event to server via WebSocket
-        if DEBUG:
-            log(f"[I] Send message: {message}")
-        run_coroutine_threadsafe(
-            self.websocket.send(dumps(message.to_dict())), self.loop
-        )
+        self._send_message(message)
 
 
 # =============================================================================
@@ -1626,12 +1751,10 @@ def main() -> None:
 
     # Populate global configuration dictionary
     CONFIG = {
-        # API endpoints
+        # API endpoints (RESTful paths)
         "API": {
-            "download": f"{server_url}/download/v1",
-            "events": f"{ws_url}/events/v1",
-            "files": f"{server_url}/files/v1",
-            "upload": f"{server_url}/upload/v1",
+            "buckets": f"{server_url}/api/v1/buckets",
+            "events": f"{ws_url}/api/v1/buckets",
         },
         # Unique client identifier for this session
         "CID": get_cid(),
