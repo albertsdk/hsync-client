@@ -15,7 +15,7 @@ Usage:
     hsync -b <bucket> -u <server_url> [options]
 
 Environment Variables:
-    HSYNC_ENDPOINT_URL: Default server URL
+    HSYNC_SERVER_URL: Server URL
     HSYNC_API_KEY: API key for authentication
 
 Author: HSYNC Project
@@ -1379,8 +1379,8 @@ class FileEventHandler(FileSystemEventHandler):
 # =============================================================================
 
 # Environment variables for configuration
-HSYNC_ENDPOINT_URL: Optional[str] = environ.get("HSYNC_ENDPOINT_URL", None)
-"""Server endpoint URL from environment variable."""
+HSYNC_SERVER_URL: Optional[str] = environ.get("HSYNC_SERVER_URL", None)
+"""Server URL from environment variable."""
 
 HSYNC_API_KEY: str = environ.get("HSYNC_API_KEY", "")
 """API key for authentication from environment variable."""
@@ -1419,9 +1419,10 @@ def main() -> None:
     # Argument Parser Setup
     # =========================================================================
     parser = ArgumentParser(
+        prog="hsync",
         description="HSYNC - HTTP-based file synchronization client",
         formatter_class=SortedHelpFormatter,
-        epilog="Environment variables: HSYNC_ENDPOINT_URL, HSYNC_API_KEY",
+        epilog="Environment: HSYNC_SERVER_URL, HSYNC_API_KEY",
     )
 
     # -------------------------------------------------------------------------
@@ -1435,7 +1436,7 @@ def main() -> None:
         type=valid_bucket,
         required=True,
         metavar="NAME",
-        help="Remote bucket name for file storage.",
+        help="Remote bucket name.",
     )
 
     # -------------------------------------------------------------------------
@@ -1444,20 +1445,21 @@ def main() -> None:
 
     # Server endpoint URL
     parser.add_argument(
-        "-u",
-        "--endpoint-url",
+        "-s",
+        "--server",
         type=str,
-        required=False if HSYNC_ENDPOINT_URL else True,
+        required=False if HSYNC_SERVER_URL else True,
         metavar="URL",
-        help="Server endpoint URL (or set HSYNC_ENDPOINT_URL).",
+        dest="server_url",
+        help="Server URL (or set HSYNC_SERVER_URL).",
     )
 
     # Disable SSL certificate verification
     parser.add_argument(
-        "--no-verify-ssl",
+        "--insecure",
         action="store_false",
         dest="verify_ssl",
-        help="Disable SSL certificate verification.",
+        help="Skip SSL certificate verification.",
     )
 
     # -------------------------------------------------------------------------
@@ -1466,69 +1468,79 @@ def main() -> None:
 
     # Local directory to sync
     parser.add_argument(
-        "-d",
-        "--dir",
+        "-p",
+        "--path",
         type=str,
         required=False,
         default=getcwd(),
-        metavar="PATH",
-        help="Local directory to sync (default: current directory).",
+        metavar="DIR",
+        dest="local_path",
+        help="Local directory path (default: cwd).",
     )
 
-    # Continuous sync mode
+    # Watch mode (continuous sync)
     parser.add_argument(
-        "-c",
-        "--continuous",
+        "-w",
+        "--watch",
         action="store_true",
-        help="Enable continuous synchronization with real-time updates.",
+        dest="continuous",
+        help="Watch for changes and sync continuously.",
     )
 
     # Sync order (mtime or ctime)
     parser.add_argument(
-        "--sync-order",
+        "--order-by",
         type=str,
         required=False,
         default="mtime",
         choices=["mtime", "ctime"],
-        metavar="ORDER",
-        help="File comparison order: mtime or ctime (default: mtime).",
+        metavar="FIELD",
+        dest="sync_order",
+        help="Compare files by: mtime, ctime (default: mtime).",
     )
 
     # Periodic resync interval
     parser.add_argument(
-        "--resync",
+        "-i",
+        "--interval",
         type=valid_resync,
         required=False,
-        metavar="SECONDS",
-        help="Force periodic resync interval (requires -c).",
+        metavar="SEC",
+        dest="resync",
+        help="Force full sync every SEC seconds (requires -w).",
     )
 
     # Reconnection delay after disconnect
     parser.add_argument(
-        "--reconnect-delay",
+        "--retry-delay",
         type=valid_reconnect_delay,
         required=False,
         default=5,
-        metavar="SECONDS",
-        help="Reconnection delay after disconnect (default: 5s).",
+        metavar="SEC",
+        dest="reconnect_delay",
+        help="Retry connection after SEC seconds (default: 5).",
     )
 
     # Dry-run mode (preview only)
     parser.add_argument(
-        "--dryrun",
+        "-n",
+        "--dry-run",
         action="store_true",
-        help="Preview operations without executing them.",
+        dest="dryrun",
+        help="Show what would be done without making changes.",
     )
 
     # -------------------------------------------------------------------------
     # Output options
     # -------------------------------------------------------------------------
 
-    # Debug mode (verbose logging)
+    # Verbose mode (debug logging)
     parser.add_argument(
-        "--debug",
+        "-v",
+        "--verbose",
         action="store_true",
-        help="Enable debug output with verbose logging.",
+        dest="debug",
+        help="Enable verbose output.",
     )
 
     # Quiet mode (suppress output)
@@ -1536,17 +1548,18 @@ def main() -> None:
         "-q",
         "--quiet",
         action="store_true",
-        help="Suppress all output messages.",
+        help="Suppress all output.",
     )
 
     # Log file path
     parser.add_argument(
-        "-l",
-        "--logfile",
+        "-o",
+        "--output",
         type=str,
         required=False,
         metavar="FILE",
-        help="Write logs to file instead of console.",
+        dest="logfile",
+        help="Write output to FILE.",
     )
 
     # Disable colored output
@@ -1558,14 +1571,15 @@ def main() -> None:
 
     # Display log legend
     parser.add_argument(
-        "--legend",
+        "--help-symbols",
         action="store_true",
-        help="Show log symbols legend and exit.",
+        dest="legend",
+        help="Show output symbols legend.",
     )
 
     # Version display
     parser.add_argument(
-        "-v",
+        "-V",
         "--version",
         action="version",
         version=f"%(prog)s {HSYNC_VERSION}",
@@ -1585,46 +1599,46 @@ def main() -> None:
     )
 
     # Validate local directory exists
-    if not exists(args.dir):
-        LOG.error(f"Directory '{args.dir}' does not exist")
+    if not exists(args.local_path):
+        LOG.error(f"Directory '{args.local_path}' does not exist")
         return
 
     # Validate log file path
     if args.logfile and not is_valid_logfile(args.logfile):
-        LOG.error(f"Invalid logfile '{args.logfile}'")
+        LOG.error(f"Invalid output file '{args.logfile}'")
         return
 
     # =========================================================================
     # Build Configuration
     # =========================================================================
 
-    # Determine endpoint URL (CLI argument takes precedence over env var)
-    endpoint_url = args.endpoint_url or HSYNC_ENDPOINT_URL
+    # Determine server URL (CLI argument takes precedence over env var)
+    server_url = args.server_url or HSYNC_SERVER_URL
 
-    # Validate endpoint URL is provided
-    if not endpoint_url:
-        log("[E] Endpoint URL is required (use -u or set HSYNC_ENDPOINT_URL)")
+    # Validate server URL is provided
+    if not server_url:
+        log("[E] Server URL is required (use -s or set HSYNC_SERVER)")
         return
 
     # Convert HTTP URL to WebSocket URL for events endpoint
-    ws_url = sub(r"^http:", "ws:", endpoint_url)
+    ws_url = sub(r"^http:", "ws:", server_url)
     ws_url = sub(r"^https:", "wss:", ws_url)
 
     # Populate global configuration dictionary
     CONFIG = {
         # API endpoints
         "API": {
-            "download": f"{endpoint_url}/download/v1",
+            "download": f"{server_url}/download/v1",
             "events": f"{ws_url}/events/v1",
-            "files": f"{endpoint_url}/files/v1",
-            "upload": f"{endpoint_url}/upload/v1",
+            "files": f"{server_url}/files/v1",
+            "upload": f"{server_url}/upload/v1",
         },
         # Unique client identifier for this session
         "CID": get_cid(),
         # Dry-run mode flag
         "DRYRUN": args.dryrun,
         # Local directory path
-        "LOCAL_BUCKET": args.dir,
+        "LOCAL_BUCKET": args.local_path,
         # Log file path
         "LOGFILE": args.logfile,
         # SSL verification flag (inverted: verify_ssl=False means NO_VERIFY_SSL=True)
