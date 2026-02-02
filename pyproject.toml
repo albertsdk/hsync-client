@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{include = "hsync_client"}]
 
 [tool.poetry.scripts]
-hsync = "hsync_client.cli:main"
+hsync = "hsync_client.main:main"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
