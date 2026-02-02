@@ -26,7 +26,7 @@ Three decoupled layers:
 `measure_rtt(host, port)` — median of 3 TCP-connect samples, 2 s per-sample
 timeout. Returns `None` on failure.
 
-`classify_network(rtt_ms, is_mobile)` maps RTT to `NetClass`:
+`classify_network(rtt_ms)` maps RTT to `NetClass`:
 
 | RTT | Class |
 | --- | --- |
@@ -34,8 +34,6 @@ timeout. Returns `None` on failure.
 | < 50 ms | `LAN` |
 | 50–150 ms | `BROADBAND` |
 | > 150 ms | `MOBILE` |
-
-Android passes `is_mobile=True` from `ConnectivityManager` to force `MOBILE`.
 
 ### Bandwidth
 
@@ -48,15 +46,14 @@ stale snapshots.
 GETs `/health?size=<size_bytes>` (default 256 KB, server-capped at 1 MB) and
 measures throughput from the returned payload. It runs **only at startup**,
 when the passive EMA has no data yet (`_bw_ema is None`) and a real server URL
-is configured (skipped for the LAN placeholder). Never used on metered
-connections (Android).
+is configured (skipped for the LAN placeholder).
 
-`classify_bandwidth(mbps, nic_hint, active)` maps to `BwClass`:
+`classify_bandwidth(mbps, active)` maps to `BwClass`:
 
-| Mbps / NIC | Class |
+| Mbps | Class |
 | --- | --- |
-| `None` (all) | `UNKNOWN` |
-| ≥ 2000 Mbps or ≥ 10000 NIC | `TEN_G` |
+| `None` | `UNKNOWN` |
+| ≥ 2000 Mbps | `TEN_G` |
 | ≥ 800 Mbps | `GIGABIT` |
 | ≥ 50 Mbps | `MID` |
 | < 50 Mbps | `LOW` |

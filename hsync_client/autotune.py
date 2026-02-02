@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 
 class NetClass(StrEnum):
-    """Network class based on RTT (and Android metered override)."""
+    """Network class based on RTT."""
 
     UNKNOWN = "unknown"
     LAN = "lan"
@@ -56,7 +56,7 @@ class NetClass(StrEnum):
 
 
 class BwClass(StrEnum):
-    """Bandwidth class from passive EMA, active probe, or NIC hint."""
+    """Bandwidth class from passive EMA or active probe."""
 
     UNKNOWN = "unknown"
     LOW = "low"
@@ -172,10 +172,8 @@ def measure_rtt(host: str, port: int, samples: int = 3) -> float | None:
     return _median(times) if times else None
 
 
-def classify_network(rtt_ms: float | None, is_mobile: bool = False) -> NetClass:
-    """Map RTT to ``NetClass``. *is_mobile* override from Android."""
-    if is_mobile:
-        return NetClass.MOBILE
+def classify_network(rtt_ms: float | None) -> NetClass:
+    """Map RTT to ``NetClass``."""
     if rtt_ms is None:
         return NetClass.UNKNOWN
     if rtt_ms > 150:
@@ -246,18 +244,17 @@ def measure_bandwidth_active(
 
 def classify_bandwidth(
     mbps: float | None,
-    nic_speed_hint: int | None,
     active_mbps: float | None = None,
 ) -> BwClass:
     """Classify bandwidth using passive EMA (preferred) or active probe (fallback)."""
     effective_mbps = mbps if mbps is not None else active_mbps
-    if effective_mbps is None and nic_speed_hint is None:
+    if effective_mbps is None:
         return BwClass.UNKNOWN
-    if (effective_mbps or 0) >= 2000 or (nic_speed_hint or 0) >= 10000:
+    if effective_mbps >= 2000:
         return BwClass.TEN_G
-    if (effective_mbps or 0) >= 800:
+    if effective_mbps >= 800:
         return BwClass.GIGABIT
-    if (effective_mbps or 0) >= 50:
+    if effective_mbps >= 50:
         return BwClass.MID
     return BwClass.LOW
 

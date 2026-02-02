@@ -26,7 +26,7 @@ Log rotation configuration (via environment variables):
 - HSYNC_LOG_RETENTION: How long to keep old logs (e.g., "7 days", "5")
 - HSYNC_LOG_COMPRESSION: Compression format (default "xz"; also "gz", "zip", "bz2")
 
-Log format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
+Log format: 2024-01-15T10:30:45.123Z - [12345] [<cid>] INFO: message
 """
 
 import logging
@@ -86,6 +86,16 @@ def set_client_id(client_id: str | None) -> None:
     global _global_client_id
     client_id_var.set(client_id)
     _global_client_id = client_id
+
+
+def get_client_id() -> str | None:
+    """Return the current client ID (ContextVar first, global fallback)."""
+    return client_id_var.get() or _global_client_id
+
+
+def _patch_client_id(record: "Record") -> None:
+    """Inject the current CID into every record's ``extra`` for formatting."""
+    record["extra"]["client_id"] = get_client_id() or "N/A"
 
 
 # =============================================================================
@@ -152,8 +162,12 @@ def _transform_plain(record: "Record", message: str) -> str:
     return _append_json_data(record, message)
 
 
-_format_record_colored = build_record_formatter(colored=True, message_transform=_transform_colored)
-_format_record_plain = build_record_formatter(colored=False, message_transform=_transform_plain)
+_format_record_colored = build_record_formatter(
+    colored=True, extra_fields=("client_id",), message_transform=_transform_colored
+)
+_format_record_plain = build_record_formatter(
+    colored=False, extra_fields=("client_id",), message_transform=_transform_plain
+)
 
 
 def setup_logging(
@@ -187,6 +201,10 @@ def setup_logging(
     """
     # Remove default loguru handler
     logger.remove()
+
+    # Inject the session CID into every record's ``extra`` so the shared
+    # formatter renders it as a correlation field (process-global value).
+    logger.configure(patcher=_patch_client_id)
 
     if quiet:
         # No handlers for quiet mode

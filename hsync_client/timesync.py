@@ -75,22 +75,22 @@ def probe_server_clock_offset(server_url: str, logger: Any = log) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — degraded mode, never fatal
         logger.warning(f"Clock offset probe failed (degraded temporal mode): {exc}")
-        offset_store.record(0.0, "offline")
+        offset_store.record(0.0)
         return
     if result is None:
         logger.warning(
             "Server time endpoint unavailable; running in degraded temporal mode "
             "(uncorrected local time)"
         )
-        offset_store.record(0.0, "offline")
+        offset_store.record(0.0)
         return
     offset, _rtt = result
-    offset_store.record(offset, server_url)
+    offset_store.record(offset)
     logger.debug(f"Clock offset from server: {offset:+.3f}s")
 
 
-def _measure_ntp_offset(logger: Any) -> tuple[float, str, str | None]:
-    """Probe SNTP hosts; return ``(offset, source, host)`` (host is None when offline)."""
+def _measure_ntp_offset(logger: Any) -> tuple[float, str | None]:
+    """Probe SNTP hosts; return ``(offset, host)`` (host is None when offline)."""
     targets = _ntp_targets()
     try:
         result = measure_clock_offset_ntp_multi(targets)
@@ -102,9 +102,9 @@ def _measure_ntp_offset(logger: Any) -> tuple[float, str, str | None]:
             f"No NTP answer from {', '.join(h for h, _ in targets)}; running "
             "in degraded temporal mode (offset 0, uncorrected local time)"
         )
-        return 0.0, "offline", None
+        return 0.0, None
     offset, _rtt, host = result
-    return offset, f"ntp:{host}", host
+    return offset, host
 
 
 def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
@@ -124,11 +124,11 @@ def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
         generation = _probe_generation
 
     def _run() -> None:
-        offset, source, host = _measure_ntp_offset(logger)
+        offset, host = _measure_ntp_offset(logger)
         with _probe_lock:
             if generation != _probe_generation:
                 return
-            offset_store.record(offset, source)
+            offset_store.record(offset)
         if host is not None:
             logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
 

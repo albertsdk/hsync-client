@@ -22,9 +22,9 @@ class TestStartNtpClockOffsetProbe:
         main_thread = threading.current_thread()
         started = threading.Event()
 
-        def fake_measure(logger=None) -> tuple[float, str, str | None]:
+        def fake_measure(logger=None) -> tuple[float, str | None]:
             started.set()
-            return 0.0, "offline", None
+            return 0.0, None
 
         with patch.object(timesync, "_measure_ntp_offset", side_effect=fake_measure):
             thread = timesync.start_ntp_clock_offset_probe()
@@ -42,10 +42,10 @@ class TestStartNtpClockOffsetProbe:
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_measure(logger=None) -> tuple[float, str, str | None]:
+        def blocking_measure(logger=None) -> tuple[float, str | None]:
             entered.set()
             release.wait(5.0)
-            return 0.0, "offline", None
+            return 0.0, None
 
         with patch.object(timesync, "_measure_ntp_offset", side_effect=blocking_measure):
             thread = timesync.start_ntp_clock_offset_probe()
@@ -63,14 +63,14 @@ class TestStartNtpClockOffsetProbe:
         first_release = threading.Event()
         calls = 0
 
-        def fake_measure(logger=None) -> tuple[float, str, str | None]:
+        def fake_measure(logger=None) -> tuple[float, str | None]:
             nonlocal calls
             calls += 1
             if calls == 1:
                 first_entered.set()
                 first_release.wait(5.0)
-                return 99.0, "ntp:stale", "stale"
-            return 1.0, "ntp:fresh", "fresh"
+                return 99.0, "stale"
+            return 1.0, "fresh"
 
         with patch.object(timesync, "_measure_ntp_offset", side_effect=fake_measure):
             stale = timesync.start_ntp_clock_offset_probe()
@@ -80,10 +80,8 @@ class TestStartNtpClockOffsetProbe:
                 fresh.join(2.0)
                 assert not fresh.is_alive()
                 assert offset_store.get() == 1.0
-                assert offset_store.source == "ntp:fresh"
             finally:
                 first_release.set()
                 stale.join(2.0)
                 assert not stale.is_alive()
             assert offset_store.get() == 1.0
-            assert offset_store.source == "ntp:fresh"

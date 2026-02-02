@@ -34,10 +34,10 @@ policy layer is pure (no I/O) and fully unit-testable.
 | Probe | Function | Returns | Failure mode |
 | --- | --- | --- | --- |
 | RTT | `measure_rtt(host, port)` `autotune.py:150` | `float \| None` (ms) | `None` + warning |
-| Network class | `classify_network(rtt_ms, is_mobile)` `autotune.py:175` | `NetClass` | `UNKNOWN` |
+| Network class | `classify_network(rtt_ms)` `autotune.py:175` | `NetClass` | `UNKNOWN` |
 | Bandwidth (passive) | `update_bw_ema(bytes, elapsed)` `autotune.py:193` | updates `_bw_ema` | ignored on `elapsed<=0` |
 | Bandwidth (active) | `measure_bandwidth_active(server_url, size_bytes)` `autotune.py:202` | `float \| None` (Mbps) | `None` + warning |
-| Bandwidth class | `classify_bandwidth(mbps, nic, active)` `autotune.py:233` | `BwClass` | `UNKNOWN` |
+| Bandwidth class | `classify_bandwidth(mbps, active)` `autotune.py:247` | `BwClass` | `UNKNOWN` |
 | Storage type | `detect_storage_type(path)` `autotune.py:256` | `StorageType` | `UNKNOWN` (HDD-class) |
 | Queue profile | `profile_transfer_queue(files)` `autotune.py:316` | `QueueProfile` | `MIXED` |
 

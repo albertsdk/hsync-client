@@ -28,6 +28,9 @@ from hsync_client.logger import (
     _format_record_colored,
     _format_record_plain,
     _get_json_data,
+    _patch_client_id,
+    get_client_id,
+    set_client_id,
     setup_logging,
 )
 
@@ -358,6 +361,51 @@ class TestFormatRecordPlain:
         assert "12345" in result
         assert "INFO" in result
         assert "plain message" in result
+
+
+class TestClientId:
+    """Tests for CID correlation in log output."""
+
+    def test_get_client_id_after_set(self):
+        set_client_id("TestClientX1234567890")
+        try:
+            assert get_client_id() == "TestClientX1234567890"
+        finally:
+            set_client_id(None)
+
+    def test_get_client_id_defaults_to_none(self):
+        set_client_id(None)
+        assert get_client_id() is None
+
+    def test_patch_client_id_injects_extra(self):
+        set_client_id("cid-abc")
+        try:
+            record = cast(Any, {"extra": {}})
+            _patch_client_id(record)
+            assert record["extra"]["client_id"] == "cid-abc"
+        finally:
+            set_client_id(None)
+
+    def test_patch_client_id_falls_back_to_n_a(self):
+        set_client_id(None)
+        record = cast(Any, {"extra": {}})
+        _patch_client_id(record)
+        assert record["extra"]["client_id"] == "N/A"
+
+    def test_format_renders_cid(self):
+        from datetime import datetime
+
+        level_record = MagicMock()
+        level_record.name = "INFO"
+        record = {
+            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC),
+            "level": level_record,
+            "message": "hello",
+            "process": MagicMock(id=12345),
+            "extra": {"client_id": "cid-abc"},
+        }
+        result = _format_record_plain(record)
+        assert "[cid-abc]" in result
 
 
 class TestGetRotationConfig:

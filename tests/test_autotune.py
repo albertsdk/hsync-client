@@ -50,9 +50,6 @@ class TestClassifyNetwork:
     def test_unknown_on_none(self):
         assert classify_network(None) == NetClass.UNKNOWN
 
-    def test_mobile_override(self):
-        assert classify_network(30, is_mobile=True) == NetClass.MOBILE
-
     def test_boundary_50(self):
         assert classify_network(50) == NetClass.LAN
 
@@ -65,28 +62,25 @@ class TestClassifyNetwork:
 
 class TestClassifyBandwidth:
     def test_unknown_all_none(self):
-        assert classify_bandwidth(None, None) == BwClass.UNKNOWN
+        assert classify_bandwidth(None) == BwClass.UNKNOWN
 
     def test_ten_g_by_mbps(self):
-        assert classify_bandwidth(3000, None) == BwClass.TEN_G
-
-    def test_ten_g_by_nic(self):
-        assert classify_bandwidth(None, 10000) == BwClass.TEN_G
+        assert classify_bandwidth(3000) == BwClass.TEN_G
 
     def test_gigabit(self):
-        assert classify_bandwidth(900, None) == BwClass.GIGABIT
+        assert classify_bandwidth(900) == BwClass.GIGABIT
 
     def test_mid(self):
-        assert classify_bandwidth(100, None) == BwClass.MID
+        assert classify_bandwidth(100) == BwClass.MID
 
     def test_low(self):
-        assert classify_bandwidth(20, None) == BwClass.LOW
+        assert classify_bandwidth(20) == BwClass.LOW
 
     def test_active_fallback(self):
-        assert classify_bandwidth(None, None, active_mbps=2000) == BwClass.TEN_G
+        assert classify_bandwidth(None, active_mbps=2000) == BwClass.TEN_G
 
     def test_passive_preferred_over_active(self):
-        assert classify_bandwidth(100, None, active_mbps=2000) == BwClass.MID
+        assert classify_bandwidth(100, active_mbps=2000) == BwClass.MID
 
 
 # ── profile_transfer_queue ────────────────────────────────────────────────

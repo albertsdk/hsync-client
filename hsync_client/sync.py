@@ -607,7 +607,7 @@ def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) 
     # AUTOTUNE_STORAGE_TYPE is "" when autotune is disabled (main_logic),
     # which is not a valid StorageType — map it to UNKNOWN.
     storage_type = StorageType(str(CONFIG.get("AUTOTUNE_STORAGE_TYPE") or "unknown"))
-    bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
+    bw_class = classify_bandwidth(autotune_mod._bw_ema)
 
     concurrency = derive_concurrency(
         storage_type,
