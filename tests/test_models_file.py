@@ -175,3 +175,26 @@ class TestFileModel:
         finally:
             os.unlink(temp_path)
 
+    def test_from_dict_strip_without_prefix_raises(self):
+        """from_dict raises ValueError when strip_dir_prefix=True but no dir_prefix."""
+        data = {"filepath": "/bucket/test.txt", "size": 100}
+        with pytest.raises(ValueError, match="Set dir_prefix to strip it"):
+            File.from_dict(data, strip_dir_prefix=True)
+
+    def test_from_dict_with_all_fields(self):
+        """from_dict handles all optional fields."""
+        data = {
+            "filepath": "test.txt",
+            "ctime": 1000.0,
+            "mtime": 2000.0,
+            "size": 500,
+            "md5sum": "abc123",
+            "permissions": "-rw-r--r--"
+        }
+        # Need to provide dir_prefix or set strip_dir_prefix=False
+        f = File.from_dict(data, dir_prefix="/bucket", strip_dir_prefix=False)
+        assert f.ctime is not None
+        assert f.mtime is not None
+        assert f.md5sum == "abc123"
+        assert f.permissions == "-rw-r--r--"
+
