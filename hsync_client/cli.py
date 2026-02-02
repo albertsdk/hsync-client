@@ -1419,9 +1419,28 @@ def main() -> None:
     # Argument Parser Setup
     # =========================================================================
     parser = ArgumentParser(
-        description="HSYNC Client - HTTP Files synchronization client",
+        description="HSYNC - HTTP-based file synchronization client",
         formatter_class=SortedHelpFormatter,
+        epilog="Environment variables: HSYNC_ENDPOINT_URL, HSYNC_API_KEY",
     )
+
+    # -------------------------------------------------------------------------
+    # Required arguments
+    # -------------------------------------------------------------------------
+
+    # Remote bucket name
+    parser.add_argument(
+        "-b",
+        "--bucket",
+        type=valid_bucket,
+        required=True,
+        metavar="NAME",
+        help="Remote bucket name for file storage.",
+    )
+
+    # -------------------------------------------------------------------------
+    # Connection options
+    # -------------------------------------------------------------------------
 
     # Server endpoint URL
     parser.add_argument(
@@ -1429,30 +1448,21 @@ def main() -> None:
         "--endpoint-url",
         type=str,
         required=False if HSYNC_ENDPOINT_URL else True,
-        help="HSYNC endpoint server URI.",
+        metavar="URL",
+        help="Server endpoint URL (or set HSYNC_ENDPOINT_URL).",
     )
 
-    # Dry-run mode (preview only)
+    # Disable SSL certificate verification
     parser.add_argument(
-        "--dryrun",
-        action="store_true",
-        help="Displays the operations that would be performed without actually running them.",
+        "--no-verify-ssl",
+        action="store_false",
+        dest="verify_ssl",
+        help="Disable SSL certificate verification.",
     )
 
-    # Debug mode (verbose logging)
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Print debug messages.",
-    )
-
-    # Quiet mode (suppress output)
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="Do not output any message.",
-    )
+    # -------------------------------------------------------------------------
+    # Sync options
+    # -------------------------------------------------------------------------
 
     # Local directory to sync
     parser.add_argument(
@@ -1461,25 +1471,16 @@ def main() -> None:
         type=str,
         required=False,
         default=getcwd(),
-        help="Local path for syncing.",
+        metavar="PATH",
+        help="Local directory to sync (default: current directory).",
     )
 
-    # Log file path
+    # Continuous sync mode
     parser.add_argument(
-        "-l",
-        "--logfile",
-        type=str,
-        required=False,
-        help="Filename to log messages.",
-    )
-
-    # Remote bucket name
-    parser.add_argument(
-        "-b",
-        "--bucket",
-        type=valid_bucket,
-        required=True,
-        help="Bucket name. Where the files are stored.",
+        "-c",
+        "--continuous",
+        action="store_true",
+        help="Enable continuous synchronization with real-time updates.",
     )
 
     # Sync order (mtime or ctime)
@@ -1489,15 +1490,8 @@ def main() -> None:
         required=False,
         default="mtime",
         choices=["mtime", "ctime"],
-        help="Sync priority order.",
-    )
-
-    # Continuous sync mode
-    parser.add_argument(
-        "-c",
-        "--continuous",
-        action="store_true",
-        help="Continuous synchronization.",
+        metavar="ORDER",
+        help="File comparison order: mtime or ctime (default: mtime).",
     )
 
     # Periodic resync interval
@@ -1505,10 +1499,8 @@ def main() -> None:
         "--resync",
         type=valid_resync,
         required=False,
-        help=(
-            "Automatic re-syncronization after the given seconds "
-            "(only on continuous synchronization)."
-        ),
+        metavar="SECONDS",
+        help="Force periodic resync interval (requires -c).",
     )
 
     # Reconnection delay after disconnect
@@ -1517,28 +1509,58 @@ def main() -> None:
         type=valid_reconnect_delay,
         required=False,
         default=5,
-        help=(
-            "Try automatic reconnection again after the given seconds "
-            "(only on continuous synchronization)."
-        ),
+        metavar="SECONDS",
+        help="Reconnection delay after disconnect (default: 5s).",
+    )
+
+    # Dry-run mode (preview only)
+    parser.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="Preview operations without executing them.",
+    )
+
+    # -------------------------------------------------------------------------
+    # Output options
+    # -------------------------------------------------------------------------
+
+    # Debug mode (verbose logging)
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output with verbose logging.",
+    )
+
+    # Quiet mode (suppress output)
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress all output messages.",
+    )
+
+    # Log file path
+    parser.add_argument(
+        "-l",
+        "--logfile",
+        type=str,
+        required=False,
+        metavar="FILE",
+        help="Write logs to file instead of console.",
+    )
+
+    # Disable colored output
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output.",
     )
 
     # Display log legend
     parser.add_argument(
         "--legend",
         action="store_true",
-        help="Show log legend description.",
-    )
-
-    # Disable SSL certificate verification
-    parser.add_argument(
-        "--no-verify-ssl",
-        action="store_false",
-        help=(
-            "By default, the HSYNC client uses SSL when communicating with AWS services. "
-            "For each SSL connection, the HSYNC client will verify SSL certificates. "
-            "This option overrides the default behavior of verifying SSL certificates."
-        ),
+        help="Show log symbols legend and exit.",
     )
 
     # Version display
@@ -1547,7 +1569,6 @@ def main() -> None:
         "--version",
         action="version",
         version=f"%(prog)s {HSYNC_VERSION}",
-        help="Display the version of the tool.",
     )
 
     # =========================================================================
@@ -1560,6 +1581,7 @@ def main() -> None:
         debug=args.debug,
         quiet=args.quiet,
         logfile=args.logfile if hasattr(args, 'logfile') and args.logfile and is_valid_logfile(args.logfile) else None,
+        no_color=args.no_color,
     )
 
     # Validate local directory exists
@@ -1605,8 +1627,8 @@ def main() -> None:
         "LOCAL_BUCKET": args.dir,
         # Log file path
         "LOGFILE": args.logfile,
-        # SSL verification flag
-        "NO_VERIFY_SSL": args.no_verify_ssl,
+        # SSL verification flag (inverted: verify_ssl=False means NO_VERIFY_SSL=True)
+        "NO_VERIFY_SSL": not args.verify_ssl,
         # Quiet mode flag
         "QUIET": args.quiet,
         # Remote bucket name
