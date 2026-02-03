@@ -44,7 +44,7 @@ from hsync_client.exceptions import (
     NetworkError,
     ServerError,
 )
-from hsync_client.logger import setup_logging, log_with_data, set_client_id
+from hsync_client.logger import setup_logging, set_client_id
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
@@ -105,64 +105,17 @@ HSYNC_VERSION = "0.1.0"
 LOG: logging.Logger = logging.getLogger("hsync")
 
 
-# Action prefixes for sync operations (kept for visual distinction)
-ACTION_PREFIX = {
-    "download": "↓",      # Download file
-    "upload": "↑",        # Upload file
-    "move": "→",          # Move/Rename
-    "remove": "✕",        # Remove/Delete
-    "create": "+",        # Create directory
-    "permission": "⚙",    # Set permission
-    "skip": "·",          # No change (skipped)
+# Action labels for logging with column alignment (10 chars for alignment)
+ACTION_LABEL = {
+    "download": "[DOWNLOAD  ]",
+    "upload": "[UPLOAD    ]",
+    "move": "[MOVE      ]",
+    "remove": "[REMOVE    ]",
+    "create": "[CREATE    ]",
+    "permission": "[PERMISSION]",
+    "symlink": "[SYMLINK   ]",
+    "skip": "[SKIP      ]",
 }
-
-
-def log(message: str = "", data: Optional[object] = None) -> None:
-    """
-    Log a message with optional JSON data.
-
-    Uses the standard logging module with a format matching the server.
-    Automatically determines log level and removes redundant prefixes.
-
-    Args:
-        message: The message to be logged.
-        data: Optional data to include as formatted JSON (dict, list, etc.).
-    """
-    # Determine log level and clean message
-    level = logging.INFO
-
-    # Handle error messages
-    if message.startswith("[E] "):
-        level = logging.ERROR
-        message = message[4:]  # Remove "[E] " prefix
-    # Handle warning messages
-    elif message.startswith("[W] "):
-        level = logging.WARNING
-        message = message[4:]  # Remove "[W] " prefix
-    # Handle debug/skip messages
-    elif message.startswith("[-] "):
-        level = logging.DEBUG
-        message = f"{ACTION_PREFIX['skip']} {message[4:]}"
-    elif message.startswith("[I] ") and DEBUG:
-        level = logging.DEBUG
-        message = message[4:]  # Remove "[I] " prefix
-    elif message.startswith("[I] "):
-        message = message[4:]  # Remove "[I] " prefix
-    # Handle action prefixes - convert to symbols
-    elif message.startswith("[D] "):
-        message = f"{ACTION_PREFIX['download']} {message[4:]}"
-    elif message.startswith("[U] "):
-        message = f"{ACTION_PREFIX['upload']} {message[4:]}"
-    elif message.startswith("[M] "):
-        message = f"{ACTION_PREFIX['move']} {message[4:]}"
-    elif message.startswith("[R] "):
-        message = f"{ACTION_PREFIX['remove']} {message[4:]}"
-    elif message.startswith("[C] "):
-        message = f"{ACTION_PREFIX['create']} {message[4:]}"
-    elif message.startswith("[P] "):
-        message = f"{ACTION_PREFIX['permission']} {message[4:]}"
-
-    log_with_data(LOG, level, message, data)
 
 
 def get_ssl_verify() -> bool | str:
@@ -381,7 +334,7 @@ def set_permissions(file_path: str, permissions: str) -> None:
                 mode |= permission_types[char] << (6 - (i * 3))
 
     if DEBUG:
-        log(f'[P] Set permission "{permissions}" to {file_path}')
+        LOG.info(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
     chmod(file_path, mode)
 
 
@@ -433,13 +386,16 @@ def get_files_remote() -> list[dict]:
     """
     uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files"
     try:
+        # Build query parameters
+        params = {"sync_order": CONFIG["SYNC_ORDER"]}
+        # Add path filter if specified
+        if CONFIG.get("FILTER_PATH"):
+            params["path"] = CONFIG["FILTER_PATH"]
+
         response = get(
             uri,
             headers=CONFIG["REQUEST_HEADERS"],
-            params={
-                # TODO: implement path filtering
-                "sync_order": CONFIG["SYNC_ORDER"]
-            },
+            params=params,
             verify=get_ssl_verify(),
         )
 
@@ -479,7 +435,7 @@ def download_file(file: File) -> None:
     """
     # Validate required file attributes
     if not file.filepath or not file.name:
-        log(f"[E] Invalid file metadata: missing filepath or name")
+        LOG.error(f"Invalid file metadata: missing filepath or name")
         return
 
     uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files/download"
@@ -492,21 +448,21 @@ def download_file(file: File) -> None:
             verify=get_ssl_verify(),
         )
     except RequestException as e:
-        log(f'[E] Network error downloading "{file.filepath}": {e}')
+        LOG.error(f'Network error downloading "{file.filepath}": {e}')
         return
 
     if DEBUG:
-        log(f"[I] Request URI: {uri}")
-        log(f"[I] Request Header:", CONFIG["REQUEST_HEADERS"])
+        LOG.info(f"Request URI: {uri}")
+        LOG.info(f"Request Header:", CONFIG["REQUEST_HEADERS"])
 
     if response.status_code == 401:
-        log(f'[E] Authentication failed downloading "{file.filepath}"')
+        LOG.error(f'Authentication failed downloading "{file.filepath}"')
         return
     if response.status_code == 404:
-        log(f'[E] File not found on server: "{file.filepath}"')
+        LOG.error(f'File not found on server: "{file.filepath}"')
         return
     if response.status_code != 200:
-        log(f'[E] Server error downloading "{file.filepath}": {response.status_code}')
+        LOG.error(f'Server error downloading "{file.filepath}": {response.status_code}')
         return
 
     # Create temporary file for download
@@ -527,8 +483,8 @@ def download_file(file: File) -> None:
         # Verify MD5 checksum
         md5sum = compute_md5(temp_file_path)
         if md5sum != file.md5sum:
-            log(
-                f'[E] "{file.filepath}" '
+            LOG.error(
+                f'"{file.filepath}" '
                 f"(Invalid checksum: expected {file.md5sum}, "
                 f"{md5sum} given)"
             )
@@ -549,7 +505,7 @@ def download_file(file: File) -> None:
 
         # Move temporary file to final destination
         move(temp_file_path, full_save_path)
-        log(f'[D] "{full_save_path}" {bytes_to_human_readable(file.size)}')
+        LOG.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
         # Preserve timestamps from remote file
         if file.ctime is not None and file.mtime is not None:
@@ -560,9 +516,9 @@ def download_file(file: File) -> None:
             set_permissions(full_save_path, file.permissions)
 
     except PermissionError as e:
-        log(f'[E] Permission denied saving "{file.filepath}": {e}')
+        LOG.error(f'Permission denied saving "{file.filepath}": {e}')
     except OSError as e:
-        log(f'[E] Error saving file "{file.filepath}": {e}')
+        LOG.error(f'Error saving file "{file.filepath}": {e}')
     finally:
         # Clean up temporary file
         if exists(temp_file_path):
@@ -593,8 +549,8 @@ def is_file_stable(file: File, interval: int = 2) -> bool:
     current_size = getsize(file.filepath)
 
     if DEBUG:
-        log(
-            f'[I] Writing file: "{file.filepath}" '
+        LOG.info(
+            f'Writing file: "{file.filepath}" '
             f"({bytes_to_human_readable(last_size)} >"
             f" {bytes_to_human_readable(current_size)})"
         )
@@ -621,7 +577,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
     """
     # Validate required file attributes
     if not file.filepath:
-        log(f"[E] Cannot upload file: missing filepath")
+        LOG.error(f"Cannot upload file: missing filepath")
         return
 
     if check_size:
@@ -634,8 +590,8 @@ def upload_file(file: File, check_size: bool = True) -> None:
         file.md5sum = compute_md5(file.filepath)
 
         if DEBUG:
-            log(
-                f'[I] Written file: "{file.filepath}" '
+            LOG.info(
+                f'Written file: "{file.filepath}" '
                 f"({bytes_to_human_readable(file.size)})"
             )
 
@@ -661,10 +617,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
         }
 
         if DEBUG:
-            log(f"[I] Upload file: {file.filepath}")
-            log(f"[I]         URI: {uri}")
-            log(f"[I]      Header:", CONFIG["REQUEST_HEADERS"])
-            log(f"[I]        data:", data)
+            LOG.info(f"Upload file: {file.filepath}")
+            LOG.info(f"        URI: {uri}")
+            LOG.info(f"     Header:", CONFIG["REQUEST_HEADERS"])
+            LOG.info(f"       data:", data)
 
         with open(file.filepath, "rb") as upload:
             files = {"file": (basename(file.filepath), upload)}
@@ -676,24 +632,24 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 verify=get_ssl_verify(),
             )
             if response.status_code == 201:
-                log(f'[U] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                LOG.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
             elif response.status_code == 401:
-                log(f'[E] Authentication failed uploading "{file.filepath}"')
+                LOG.error(f'Authentication failed uploading "{file.filepath}"')
             elif response.status_code == 403:
-                log(f'[E] Access denied uploading "{file.filepath}"')
+                LOG.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
                 if DEBUG:
-                    log(f'[I] "{file.filepath}" (already present)')
+                    LOG.info(f'"{file.filepath}" (already present)')
             elif response.status_code >= 500:
-                log(f'[E] Server error uploading "{file.filepath}": {response.status_code}')
+                LOG.error(f'Server error uploading "{file.filepath}": {response.status_code}')
             else:
                 response.raise_for_status()
     except FileNotFoundError:
-        log(f'[E] File not found: "{file.filepath}"')
+        LOG.error(f'File not found: "{file.filepath}"')
     except PermissionError:
-        log(f'[E] Permission denied reading: "{file.filepath}"')
+        LOG.error(f'Permission denied reading: "{file.filepath}"')
     except RequestException as e:
-        log(f'[E] Network error uploading "{file.filepath}": {e}')
+        LOG.error(f'Network error uploading "{file.filepath}": {e}')
 
 
 def nothing_to_do(file: File) -> None:
@@ -706,7 +662,7 @@ def nothing_to_do(file: File) -> None:
         file: File that is already synchronized.
     """
     if DEBUG:
-        log(f'[-] "{file.filepath}"')
+        LOG.debug(f'"{file.filepath}"')
 
 
 def get_sync_actions(
@@ -867,7 +823,7 @@ async def sync() -> None:
     only logs what would be done without making changes.
     """
     if not CONFIG["DRYRUN"]:
-        log("[I] Sync starting…")
+        LOG.info("Sync starting…")
 
     sync_actions: list[SyncAction] = []
 
@@ -887,18 +843,18 @@ async def sync() -> None:
         sync_actions = get_sync_actions(remote_files, local_files)
 
         if DEBUG:
-            log(f"[I] Local files:", local_files)
-            log(f"[I] Remote files:", remote_files)
-            log(f"[I] Sync actions: {sync_actions}")
+            LOG.info(f"Local files:", local_files)
+            LOG.info(f"Remote files:", remote_files)
+            LOG.info(f"Sync actions: {sync_actions}")
 
     except Exception as e:
         if DEBUG:
             exc_type, exc_value, exc_traceback = exc_info()
-            log(f"[E] Exception type: {exc_type}")
-            log(f"[E] Exception message: {exc_value}")
-            log(f"[E] Traceback details: {print_tb(exc_traceback)}")
+            LOG.error(f"Exception type: {exc_type}")
+            LOG.error(f"Exception message: {exc_value}")
+            LOG.error(f"Traceback details: {print_tb(exc_traceback)}")
         else:
-            log(f"[E] Exception: {e}")
+            LOG.error(f"Exception: {e}")
 
     # Track number of actions performed
     todo = 0
@@ -907,7 +863,7 @@ async def sync() -> None:
         # Dry-run mode: just log what would be done
         for sync_action in sync_actions:
             if DEBUG:
-                log(f"[I] Sync action:", sync_action.to_dict())
+                LOG.info(f"Sync action:", sync_action.to_dict())
             else:
                 # Map action to log symbol
                 if sync_action.name == SyncActionName.download:
@@ -923,8 +879,8 @@ async def sync() -> None:
                     if sync_action.file.filepath
                     else ""
                 )
-                log(
-                    f'[{action}] "{filepath}" '
+                LOG.info(
+                    f'[{action.upper():10s}] "{filepath}" '
                     f"{bytes_to_human_readable(sync_action.file.size)} "
                     f"({sync_action.timedelta})"
                 )
@@ -939,8 +895,8 @@ async def sync() -> None:
 
     if not CONFIG["DRYRUN"]:
         if todo == 0:
-            log("[I] Nothing to sync")
-        log("[I] Sync completed.")
+            LOG.info("Nothing to sync")
+        LOG.info("Sync completed.")
 
 
 def update_dir(data: dict) -> Optional[Dir]:
@@ -989,7 +945,7 @@ def update_file(data: dict) -> None:
     file_data = File().from_dict(data, CONFIG["LOCAL_BUCKET"], False)
 
     if not file_data.filepath:
-        log(f"[E] Invalid file data: missing filepath")
+        LOG.error(f"Invalid file data: missing filepath")
         return
 
     if exists(file_data.filepath):
@@ -1006,7 +962,7 @@ def update_file(data: dict) -> None:
                 set_permissions(file_data.filepath, file_data.permissions)
         else:
             if DEBUG:
-                log(f'[I] File not changed: "{file_data.filepath}"')
+                LOG.info(f'File not changed: "{file_data.filepath}"')
     else:
         # File doesn't exist locally - download it
         file = File().from_dict(data, CONFIG["LOCAL_BUCKET"])
@@ -1024,7 +980,7 @@ async def remote_events() -> None:
 
     This function runs until the WebSocket connection is closed.
     """
-    log("[I] Continuous sync starting…")
+    LOG.info("Continuous sync starting…")
 
     # Build WebSocket URI (no token in URL for security)
     api_base = CONFIG["API"]["events"]
@@ -1061,7 +1017,7 @@ async def remote_events() -> None:
         ping_timeout=10,
         close_timeout=5,
     ) as websocket:
-        log(f"[I] WebSocket connected to {uri}")
+        LOG.info(f"WebSocket connected to {uri}")
 
         # Authenticate via first message (more secure than URL token)
         auth_message = {"type": "auth", "token": HSYNC_API_KEY}
@@ -1071,16 +1027,16 @@ async def remote_events() -> None:
         auth_response = await websocket.recv()
         auth_result = loads(auth_response)
         if auth_result.get("type") != "auth" or auth_result.get("status") != "ok":
-            log(f"[E] WebSocket authentication failed: {auth_result}")
+            LOG.error(f"WebSocket authentication failed: {auth_result}")
             return
 
-        log("[I] WebSocket authenticated successfully")
+        LOG.info("WebSocket authenticated successfully")
 
         if DEBUG:
-            log(f"[I] Sync reconnection delay: {CONFIG["RECONNECT_DELAY"]} sec.")
-            log(f"[I] Force resync: {CONFIG["RESYNC"]} sec.")
+            LOG.info(f"Sync reconnection delay: {CONFIG["RECONNECT_DELAY"]} sec.")
+            LOG.info(f"Force resync: {CONFIG["RESYNC"]} sec.")
 
-        log(f"[I] Client ID (CID): {CONFIG["CID"]}")
+        LOG.info(f"Client ID (CID): {CONFIG["CID"]}")
 
         # Set up event queue for reliable message delivery
         loop = get_running_loop()
@@ -1102,7 +1058,7 @@ async def remote_events() -> None:
                 message = loads(data)
 
                 if DEBUG:
-                    log(f"[I] Received message for CID {CONFIG["CID"]}: {message}")
+                    LOG.info(f"Received message for CID {CONFIG["CID"]}: {message}")
 
                 # Validate event type
                 if message.get("name") not in {
@@ -1111,19 +1067,19 @@ async def remote_events() -> None:
                     EventName.renamed.value,
                     EventName.deleted.value,
                 }:
-                    log(f"[E] Invalid event: {message.get("name")}")
+                    LOG.error(f"Invalid event: {message.get("name")}")
                     continue
 
                 # Skip events from this client (echo prevention)
                 if message.get("cid") == CONFIG["CID"]:
                     if DEBUG:
-                        log("[W] Same CID, dropped.")
+                        LOG.warning("Same CID, dropped.")
                     continue
 
                 # Skip events from different buckets
                 if message.get("bucket") != bucket:
                     if DEBUG:
-                        log("[W] Different bucket, dropped.")
+                        LOG.warning("Different bucket, dropped.")
                     continue
 
                 # Extract event data
@@ -1153,8 +1109,8 @@ async def remote_events() -> None:
                             rename(src_dir.path, dst_dir.path)
                         else:
                             # Source doesn't exist - log warning and create destination
-                            log(f"[W] Cannot rename: {src_dir.path} -> {dst_dir.path}")
-                            log(f"[W] Not found: {src_dir.path}")
+                            LOG.warning(f"Cannot rename: {src_dir.path} -> {dst_dir.path}")
+                            LOG.warning(f"Not found: {src_dir.path}")
                             update_dir(dst)
 
                     elif src and "filepath" in src and dst:
@@ -1167,10 +1123,10 @@ async def remote_events() -> None:
                             rename(src_file.filepath, dst_file.filepath)
                         else:
                             # Source doesn't exist - log warning and download destination
-                            log(
-                                f'[W] Cannot rename: "{src_file.filepath}" -> "{dst_file.filepath}"'
+                            LOG.warning(
+                                f'Cannot rename: "{src_file.filepath}" -> "{dst_file.filepath}"'
                             )
-                            log(f'[W] Not found: "{src_file.filepath}"')
+                            LOG.warning(f'Not found: "{src_file.filepath}"')
                             download_file(dst_file)
 
                 # Handle Deleted events
@@ -1182,8 +1138,8 @@ async def remote_events() -> None:
                             # Directory exists - remove recursively
                             rmtree(dir.path, ignore_errors=False)
                         else:
-                            log(f'[W] Cannot delete: "{dir.path}"')
-                            log(f'[W] Not found: "{dir.path}"')
+                            LOG.warning(f'Cannot delete: "{dir.path}"')
+                            LOG.warning(f'Not found: "{dir.path}"')
 
                     elif src and "filepath" in src:
                         # File deletion event
@@ -1192,8 +1148,8 @@ async def remote_events() -> None:
                             # File exists - remove it
                             remove(file.filepath)
                         else:
-                            log(f'[W] Cannot delete: "{file.filepath}"')
-                            log(f'[W] Not found: "{file.filepath}"')
+                            LOG.warning(f'Cannot delete: "{file.filepath}"')
+                            LOG.warning(f'Not found: "{file.filepath}"')
 
                 # Handle Symlink events
                 elif event_name == EventName.symlink:
@@ -1206,7 +1162,7 @@ async def remote_events() -> None:
                         target = link.target
 
                         if link.filepath and target:
-                            log(f'[L] Creating symlink: "{link.filepath}" -> "{target}"')
+                            LOG.info(f'[SYMLINK   ] Creating symlink: "{link.filepath}" -> "{target}"')
                             # Ensure parent directory exists
                             parent_dir = dirname(link.filepath)
                             if not exists(parent_dir):
@@ -1222,13 +1178,13 @@ async def remote_events() -> None:
         except ConnectionClosed as e:
             # WebSocket connection was closed
             if e.reason:
-                log(f"[W] Connection closed: {e.reason}")
+                LOG.warning(f"Connection closed: {e.reason}")
             else:
-                log("[W] Connection closed.")
+                LOG.warning("Connection closed.")
 
         except Exception as e:
             # Unexpected error during event processing
-            log(f"[E] Exception: {e}")
+            LOG.error(f"Exception: {e}")
 
         finally:
             # Stop event queue processor
@@ -1259,12 +1215,12 @@ async def resync() -> None:
     try:
         while True:
             await sleep(CONFIG["RESYNC"])
-            log(f"[I] Force sync ({CONFIG['RESYNC']} sec.)")
+            LOG.info(f"Force sync ({CONFIG['RESYNC']} sec.)")
             await sync()
     except Exception as e:
         # Task was cancelled or error occurred
         if DEBUG:
-            log(f"[I] Resync task stopped: {e}")
+            LOG.info(f"Resync task stopped: {e}")
 
 
 async def remote_connect() -> None:
@@ -1304,11 +1260,11 @@ async def remote_connect() -> None:
 
         except Exception as e:
             # Unexpected error - log and retry
-            log(f"[E] An unexpected error occurred: {e}.")
+            LOG.error(f"An unexpected error occurred: {e}.")
             await sleep(CONFIG["RECONNECT_DELAY"])
 
         finally:
-            log(f"[I] Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
+            LOG.info(f"Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
 
 
 class FileEventHandler(FileSystemEventHandler):
@@ -1349,7 +1305,7 @@ class FileEventHandler(FileSystemEventHandler):
             message: Event to send.
         """
         if DEBUG:
-            log(f"[I] Send message: {message}")
+            LOG.info(f"Send message: {message}")
 
         message_dict = message.to_dict()
 
@@ -1385,7 +1341,7 @@ class FileEventHandler(FileSystemEventHandler):
                     (event.is_directory and is_hidden_dir(path))
                     or (not event.is_directory and is_hidden_file(path))
                 ):
-                    log(f"[I] Skip hidden {kind} {hidden_prefix}: {path}")
+                    LOG.info(f"Skip hidden {kind} {hidden_prefix}: {path}")
 
     def on_created(self, event) -> None:
         """
@@ -1401,7 +1357,7 @@ class FileEventHandler(FileSystemEventHandler):
 
         if event.is_directory and not is_hidden_dir(src_path):
             # Directory created - broadcast event
-            log(f'[C] "{src_path}"')
+            LOG.info(f'[CREATE    ] "{src_path}"')
             dir = Dir.get(src_path)
             if dir:
                 message = Event(
@@ -1414,7 +1370,7 @@ class FileEventHandler(FileSystemEventHandler):
                 self._send_message(message)
         elif not is_hidden_file(src_path) and islink(src_path):
             # Symlink created - broadcast symlink event
-            log(f'[L] "{src_path}"')
+            LOG.info(f'[SYMLINK   ] "{src_path}"')
             symlink = Symlink.get(src_path)
             if symlink:
                 message = Event(
@@ -1444,7 +1400,7 @@ class FileEventHandler(FileSystemEventHandler):
             and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
         ):
             # Directory modified (permissions change) - broadcast event
-            log(f'[M] "{src_path}"')
+            LOG.info(f'[MOVE      ] "{src_path}"')
             dir = Dir.get(src_path)
             if dir:
                 message = Event(
@@ -1478,12 +1434,12 @@ class FileEventHandler(FileSystemEventHandler):
                         upload_file(file)
                 else:
                     # File was deleted before we could upload
-                    log(
-                        f'[W] File "{src_path}" not found. '
+                    LOG.warning(
+                        f'File "{src_path}" not found. '
                         f"It might have been altered by an external tool."
                     )
             except Exception as e:
-                log(f'[E] Error handling closed event for "{src_path}": {e}')
+                LOG.error(f'Error handling closed event for "{src_path}": {e}')
 
     def on_moved(self, event) -> None:
         """
@@ -1500,9 +1456,9 @@ class FileEventHandler(FileSystemEventHandler):
 
         if DEBUG:
             if dest_path:
-                log(f'[M] "{src_path}" -> "{dest_path}"')
+                LOG.info(f'[MOVE      ] "{src_path}" -> "{dest_path}"')
             else:
-                log(f'[M] "{src_path}"')
+                LOG.info(f'[MOVE      ] "{src_path}"')
 
         message = None
 
@@ -1515,12 +1471,15 @@ class FileEventHandler(FileSystemEventHandler):
                 # Both hidden - ignore
                 return
             if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
-                # Hidden to visible - not yet implemented
-                log("[W] TODO ???")
+                # Hidden to visible - treat as creation of visible directory
+                LOG.debug(f"Switch event to created: {dest_path}")
+                from watchdog.events import DirCreatedEvent
+                created_event = DirCreatedEvent(dest_path)
+                self.on_created(created_event)
                 return
             if is_hidden_dir(dest_path):
                 # Moving to hidden directory - treat as deletion
-                log(f"[W] Switch event to deleted: {dest_path}")
+                LOG.warning(f"Switch event to deleted: {dest_path}")
                 # Create a mock event for on_deleted
                 from watchdog.events import DirDeletedEvent
                 deleted_event = DirDeletedEvent(dest_path)
@@ -1601,7 +1560,7 @@ class FileEventHandler(FileSystemEventHandler):
         if not event.is_directory and is_hidden_file(src_path):
             return
 
-        log(f'[R] "{src_path}"')
+        LOG.info(f'[REMOVE    ] "{src_path}"')
 
         # Create appropriate object type for the deleted item
         obj = Dir(src_path) if event.is_directory else File(src_path)
@@ -1777,6 +1736,16 @@ def main() -> None:
         help="Retry connection after SEC seconds (default: 5).",
     )
 
+    # Filter path (sync only a subdirectory)
+    parser.add_argument(
+        "--filter-path",
+        type=str,
+        required=False,
+        default=None,
+        metavar="PATH",
+        help="Sync only files within this subdirectory path.",
+    )
+
     # Dry-run mode (preview only)
     parser.add_argument(
         "-n",
@@ -1873,7 +1842,7 @@ def main() -> None:
 
     # Validate server URL is provided
     if not server_url:
-        log("[E] Server URL is required (use -s or set HSYNC_SERVER)")
+        LOG.error("Server URL is required (use -s or set HSYNC_SERVER)")
         return
 
     # Convert HTTP URL to WebSocket URL for events endpoint
@@ -1922,6 +1891,8 @@ def main() -> None:
         "RESYNC": args.resync,
         # Sync ordering (mtime or ctime)
         "SYNC_ORDER": args.sync_order,
+        # Filter path for subdirectory sync
+        "FILTER_PATH": args.filter_path,
     }
 
     # Set global debug flag
@@ -1935,17 +1906,18 @@ def main() -> None:
     # =========================================================================
     if args.legend:
         LOG.info("Log legend:")
-        log_symbols = {
-            ACTION_PREFIX['skip']: "File not changed (no action required)",
-            ACTION_PREFIX['download']: "Download file",
-            ACTION_PREFIX['upload']: "Upload file",
-            ACTION_PREFIX['move']: "Move/Rename file/dir",
-            ACTION_PREFIX['remove']: "Remove file/dir",
-            ACTION_PREFIX['create']: "Create directory",
-            ACTION_PREFIX['permission']: "Set permission",
+        log_labels = {
+            ACTION_LABEL['skip']: "File not changed (no action required)",
+            ACTION_LABEL['download']: "Download file",
+            ACTION_LABEL['upload']: "Upload file",
+            ACTION_LABEL['move']: "Move/Rename file/dir",
+            ACTION_LABEL['remove']: "Remove file/dir",
+            ACTION_LABEL['create']: "Create directory",
+            ACTION_LABEL['permission']: "Set permission",
+            ACTION_LABEL['symlink']: "Create symlink",
         }
-        for symbol, description in log_symbols.items():
-            LOG.info(f"    {symbol} {description}")
+        for label, description in log_labels.items():
+            LOG.info(f"  {label} {description}")
 
     # =========================================================================
     # Execute Sync

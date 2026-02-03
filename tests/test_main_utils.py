@@ -6,6 +6,7 @@ import os
 import stat
 import tempfile
 from argparse import ArgumentTypeError
+from unittest.mock import patch
 
 import pytest
 
@@ -21,6 +22,8 @@ from hsync_client.main import (
     valid_reconnect_delay,
     valid_resync,
     valid_bucket,
+    get_ssl_verify,
+    CONFIG,
 )
 
 
@@ -337,3 +340,54 @@ class TestValidBucket:
         with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
             valid_bucket("my bucket")
 
+
+class TestGetSslVerify:
+    """Tests for get_ssl_verify function."""
+
+    def test_returns_false_when_insecure(self):
+        """Test returns False when NO_VERIFY_SSL is True."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["NO_VERIFY_SSL"] = True
+            CONFIG["CA_CERT"] = None
+            result = get_ssl_verify()
+            assert result is False
+        finally:
+            CONFIG.clear()
+            CONFIG.update(original)
+
+    def test_returns_ca_cert_path(self):
+        """Test returns CA cert path when provided."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["NO_VERIFY_SSL"] = False
+            CONFIG["CA_CERT"] = "/path/to/ca.crt"
+            result = get_ssl_verify()
+            assert result == "/path/to/ca.crt"
+        finally:
+            CONFIG.clear()
+            CONFIG.update(original)
+
+    def test_returns_true_by_default(self):
+        """Test returns True for default SSL verification."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["NO_VERIFY_SSL"] = False
+            CONFIG["CA_CERT"] = None
+            result = get_ssl_verify()
+            assert result is True
+        finally:
+            CONFIG.clear()
+            CONFIG.update(original)
+
+    def test_insecure_takes_priority(self):
+        """Test NO_VERIFY_SSL takes priority over CA_CERT."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["NO_VERIFY_SSL"] = True
+            CONFIG["CA_CERT"] = "/path/to/ca.crt"
+            result = get_ssl_verify()
+            assert result is False
+        finally:
+            CONFIG.clear()
+            CONFIG.update(original)
