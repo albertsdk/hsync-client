@@ -218,8 +218,7 @@ hsync-client/
 ├── dist/                   # Compiled binary (created by compile.sh)
 │   └── hsync               # Standalone executable
 ├── build/                  # Build artifacts (created by compile.sh)
-├── compile.sh              # Build script
-├── hsync.spec              # PyInstaller spec file (auto-generated)
+├── compile.sh              # Build script (PyInstaller with optimizations)
 ├── pyproject.toml
 ├── poetry.lock
 └── README.md
