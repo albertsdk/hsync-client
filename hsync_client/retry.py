@@ -19,7 +19,9 @@ from requests import RequestException
 from tenacity import (
     before_sleep_log,
     retry,
+    retry_base,
     retry_if_exception_type,
+    retry_if_not_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
@@ -29,7 +31,7 @@ from hsync_client.constants import (
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
 )
-from hsync_client.exceptions import NetworkError, ServerError
+from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 
 # =============================================================================
 # Retry Configuration
@@ -52,10 +54,21 @@ def _retry_on(
     max_attempts: int,
     min_wait: float,
     max_wait: float,
+    *,
+    exclude: type[BaseException] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Build a tenacity retry decorator for *exc_types* with exponential backoff."""
+    """Build a tenacity retry decorator for *exc_types* with exponential backoff.
+
+    ``exclude`` narrows the retry set: exceptions of that type (or a subclass)
+    are never retried even when they also match ``exc_types``. This keeps
+    permanent failures out of the retry loop while the broader type still
+    covers the transient ones.
+    """
+    predicate: retry_base = retry_if_exception_type(exc_types)
+    if exclude is not None:
+        predicate = predicate & retry_if_not_exception_type(exclude)
     return retry(
-        retry=retry_if_exception_type(exc_types),
+        retry=predicate,
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
         before_sleep=before_sleep_log(_retry_log, logging.WARNING),
@@ -71,7 +84,9 @@ def retry_on_network_error(
     """
     Create a retry decorator for network operations.
 
-    Retries on RequestException and NetworkError with exponential backoff.
+    Retries on ``RequestException`` and ``NetworkError`` with exponential
+    backoff, but never on ``AuthenticationError``: an auth failure (401/403)
+    is permanent and would not be resolved by retrying.
 
     Args:
         max_attempts: Maximum number of retry attempts.
@@ -87,28 +102,13 @@ def retry_on_network_error(
             response = requests.get(url)
             return response.json()
     """
-    return _retry_on((RequestException, NetworkError), max_attempts, min_wait, max_wait)
-
-
-def retry_on_connection_error(
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    min_wait: float = DEFAULT_MIN_WAIT,
-    max_wait: float = DEFAULT_MAX_WAIT,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """
-    Create a retry decorator specifically for connection errors.
-
-    Retries only on RequestException (connection-level errors).
-
-    Args:
-        max_attempts: Maximum number of retry attempts.
-        min_wait: Minimum wait time between retries in seconds.
-        max_wait: Maximum wait time between retries in seconds.
-
-    Returns:
-        A retry decorator configured with the specified parameters.
-    """
-    return _retry_on(RequestException, max_attempts, min_wait, max_wait)
+    return _retry_on(
+        (RequestException, NetworkError),
+        max_attempts,
+        min_wait,
+        max_wait,
+        exclude=AuthenticationError,
+    )
 
 
 def retry_on_transient_transfer_error(

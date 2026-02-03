@@ -100,7 +100,6 @@ class TestRunAsMaster:
                     log=mock_log,
                     lan_sync=mock_lan_sync,
                     cert_info=mock_cert_info,
-                    persistent=False,
                     lan_server=None,
                     lan_ws_server=None,
                 )
@@ -114,8 +113,8 @@ class TestRunAsMaster:
         mock_ws_server.start.assert_called_once_with(watch_path=str(tmp_path))
         mock_lan_sync.update_server_ready.assert_called_once()
 
-    def test_run_as_master_persistent_mode(self, tmp_path):
-        """Master in persistent mode runs indefinitely until keyboard interrupt."""
+    def test_run_as_master_loops_until_keyboard_interrupt(self, tmp_path):
+        """Master runs indefinitely until keyboard interrupt."""
         from hsync_client.lan_handler import _run_as_master
 
         config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
@@ -148,7 +147,6 @@ class TestRunAsMaster:
                     log=mock_log,
                     lan_sync=mock_lan_sync,
                     cert_info=mock_cert_info,
-                    persistent=True,
                     lan_server=None,
                     lan_ws_server=None,
                 )
@@ -190,7 +188,6 @@ class TestRunAsMaster:
                     log=mock_log,
                     lan_sync=mock_lan_sync,
                     cert_info=mock_cert_info,
-                    persistent=False,
                     lan_server=None,
                     lan_ws_server=None,
                 )
@@ -236,7 +233,6 @@ class TestRunAsMaster:
                     log=mock_log,
                     lan_sync=mock_lan_sync,
                     cert_info=None,
-                    persistent=False,
                     lan_server=mock_existing_server,
                     lan_ws_server=mock_existing_ws,
                 )
@@ -282,7 +278,6 @@ class TestRunAsMaster:
                 log=mock_log,
                 lan_sync=mock_lan_sync,
                 cert_info=_make_cert_info(),
-                persistent=True,
                 lan_server=None,
                 lan_ws_server=None,
             )
@@ -322,7 +317,6 @@ class TestRunAsMaster:
                 log=mock_log,
                 lan_sync=mock_lan_sync,
                 cert_info=_make_cert_info(),
-                persistent=True,
                 lan_server=None,
                 lan_ws_server=None,
             )
@@ -332,7 +326,6 @@ class TestRunAsMaster:
                 log=mock_log,
                 lan_sync=mock_lan_sync,
                 cert_info=_make_cert_info(),
-                persistent=True,
                 lan_server=first[0],
                 lan_ws_server=first[1],
             )
@@ -366,7 +359,6 @@ class TestRunAsMaster:
                 log=mock_log,
                 lan_sync=mock_lan_sync,
                 cert_info=_make_cert_info(),
-                persistent=True,
                 lan_server=None,
                 lan_ws_server=None,
             )
@@ -375,7 +367,6 @@ class TestRunAsMaster:
                 log=mock_log,
                 lan_sync=mock_lan_sync,
                 cert_info=_make_cert_info(),
-                persistent=True,
                 lan_server=first[0],
                 lan_ws_server=first[1],
             )
@@ -400,13 +391,12 @@ class TestRunAsMasterPersistentSemantics:
     :func:`_run_as_master`, the function must:
 
     * Always sleep once and return (no infinite ``while True`` inside).
-    * Behave identically regardless of the ``persistent`` argument.
     * Be re-entered by the outer discovery loop while the role holds,
       without rebinding servers (verified by other tests above).
     """
 
-    def test_master_returns_after_single_sleep_when_non_persistent(self, tmp_path):
-        """Non-persistent master must not block forever: it returns after one sleep."""
+    def test_master_returns_after_single_sleep(self, tmp_path):
+        """Master must not block forever: it returns after one sleep."""
         from hsync_client.lan_handler import _run_as_master
 
         config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
@@ -426,7 +416,6 @@ class TestRunAsMasterPersistentSemantics:
                 log=mock_log,
                 lan_sync=mock_lan_sync,
                 cert_info=_make_cert_info(),
-                persistent=False,
                 lan_server=None,
                 lan_ws_server=None,
             )
@@ -437,37 +426,6 @@ class TestRunAsMasterPersistentSemantics:
         )
         assert result is not None
         assert result[0] is not None and result[1] is not None
-
-    def test_master_behaviour_is_identical_for_both_persistent_values(self, tmp_path):
-        """Master must yield/return identically regardless of the persistent flag."""
-        from hsync_client.lan_handler import _run_as_master
-
-        def _run_once(persistent_value: bool) -> tuple[int, object]:
-            config = _make_lan_config(tmp_path, LAN_PERSISTENT=persistent_value)
-            sleeps: list[float] = []
-            with (
-                patch("hsync_client.lan_handler.LANServer", return_value=MagicMock()),
-                patch("hsync_client.lan_handler.LANWebSocketServer", return_value=MagicMock()),
-                patch("time.sleep", side_effect=lambda s: sleeps.append(s)),
-            ):
-                result = _run_as_master(
-                    config=config,
-                    log=MagicMock(),
-                    lan_sync=MagicMock(port=9000),
-                    cert_info=_make_cert_info(),
-                    persistent=persistent_value,
-                    lan_server=None,
-                    lan_ws_server=None,
-                )
-            return len(sleeps), result
-
-        persistent_sleeps, persistent_result = _run_once(True)
-        non_persistent_sleeps, non_persistent_result = _run_once(False)
-
-        assert persistent_sleeps == non_persistent_sleeps == 1
-        # Both paths return a 2-tuple of (server, ws_server) instances.
-        assert persistent_result is not None and non_persistent_result is not None
-        assert len(persistent_result) == 2 and len(non_persistent_result) == 2
 
 
 class TestRunLanModeOuterLoopMasterPath:

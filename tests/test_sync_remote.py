@@ -157,6 +157,81 @@ class TestGetFilesRemote:
                 get_files_remote()
 
 
+class TestGetFilesRemoteRetry:
+    """Retry policy: transient failures are retried, permanent auth failures are not.
+
+    Regression for the retry-policy narrowing: ``retry_on_network_error`` must
+    retry connection failures and 5xx responses, but never ``AuthenticationError``
+    (401/403), which is permanent and would not be resolved by retrying.
+    """
+
+    _CONFIG = {
+        "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+        "REMOTE_BUCKET": "testbucket",
+        "REQUEST_HEADERS": {"X-API-Key": "test"},
+        "NO_VERIFY_SSL": True,
+        "TRANSFER_RETRY_ATTEMPTS": 3,
+        "TRANSFER_RETRY_MIN_WAIT": 0.01,
+        "TRANSFER_RETRY_MAX_WAIT": 0.05,
+    }
+
+    def test_does_not_retry_on_401(self):
+        """A permanent auth failure (401) must be attempted exactly once."""
+        from hsync_client.exceptions import AuthenticationError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.get", return_value=mock_response) as mock_get,
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(AuthenticationError):
+                get_files_remote()
+
+        assert mock_get.call_count == 1
+
+    def test_retries_transient_connection_error(self):
+        """A transient connection failure is retried until attempts are exhausted."""
+        from requests.exceptions import RequestException
+
+        from hsync_client.exceptions import NetworkError
+        from hsync_client.sync import get_files_remote
+
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch(
+                "hsync_client.sync.get", side_effect=RequestException("Connection failed")
+            ) as mock_get,
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(NetworkError):
+                get_files_remote()
+
+        assert mock_get.call_count == 3
+
+    def test_retries_transient_server_error(self):
+        """A transient 5xx (ServerError) is still retried."""
+        from hsync_client.exceptions import ServerError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.get", return_value=mock_response) as mock_get,
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(ServerError):
+                get_files_remote()
+
+        assert mock_get.call_count == 3
+
+
 class TestExecuteParallelTransfers:
     """Tests for _execute_parallel_transfers function."""
 

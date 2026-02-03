@@ -191,7 +191,6 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     log=log,
                     lan_sync=lan_sync,
                     cert_info=cert_info,
-                    persistent=persistent,
                     lan_server=lan_server,
                     lan_ws_server=lan_ws_server,
                 )
@@ -278,26 +277,21 @@ def _run_as_master(
     log,
     lan_sync: LANSync,
     cert_info,
-    persistent: bool,
     lan_server,
     lan_ws_server,
 ) -> tuple[LANServer | None, LANWebSocketServer | None]:
     """Run as master (sync coordinator).
 
     The master role is inherently continuous: the master must stay
-    available to serve any peer that joins.  The ``persistent`` flag
-    only affects slave behaviour (one-shot vs. continuous sync) and is
-    accepted here for API symmetry with :func:`_run_as_slave` but does
-    not change the master loop, which always yields back to the outer
-    discovery loop after a brief idle window so master/peer election
-    can be re-evaluated.
+    available to serve any peer that joins. The ``persistent`` flag only
+    affects slave behaviour (one-shot vs. continuous sync); the master loop
+    always yields back to the outer discovery loop after a brief idle window
+    so master/peer election can be re-evaluated.
 
     Returns the (lan_server, lan_ws_server) tuple so the caller can persist
     the running server instances across discovery loop iterations and avoid
     re-binding the same port on subsequent iterations.
     """
-    del persistent  # master role is always continuous; flag kept for API symmetry
-
     # The discovery loop re-enters this function on every iteration while we
     # remain master. ``lan_server is None`` is true only on the first call
     # (or after we lost and re-won the role, which stops the servers), so it

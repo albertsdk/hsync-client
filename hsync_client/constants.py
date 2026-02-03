@@ -16,23 +16,22 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 from typing import Final, Literal  # noqa: E402
 
+from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME  # noqa: E402
+from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION  # noqa: E402
+from hsync_common.constants import (  # noqa: E402
+    HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
+)
+
 # Re-export shared constants from hsync-common. The plain names keep the
 # module's public re-export API consumed across hsync_client (HSYNC_VERSION,
 # HSYNCKEEP_FILENAME, PARTIAL_DOWNLOAD_SUFFIX, WS_MAX_MESSAGE_BYTES); the
 # aliased header names are re-typed below as string literals because mypy
 # requires literal keys for TypedDicts.
 from hsync_common.constants import (  # noqa: E402, F401
-    CONTENT_TYPE_JSON,
-    CONTENT_TYPE_OCTET_STREAM,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,
     WS_MAX_MESSAGE_BYTES,
-)
-from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME  # noqa: E402
-from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION  # noqa: E402
-from hsync_common.constants import (  # noqa: E402
-    HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
 )
 
 # Re-export shared action labels from hsync-common
