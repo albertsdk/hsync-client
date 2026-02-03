@@ -41,15 +41,8 @@ import stat
 from hsync_client.event_queue import EventQueue
 from hsync_client.exceptions import (
     AuthenticationError,
-    ChecksumError,
-    ConnectionError as HSyncConnectionError,
-    DownloadError,
-    FileReadError,
-    FileWriteError,
     NetworkError,
     ServerError,
-    UploadError,
-    WebSocketError,
 )
 from hsync_client.logger import setup_logging, log_with_data
 from hsync_client.models.event import Event, EventName
@@ -402,8 +395,8 @@ def get_files_remote() -> list[dict]:
         AuthenticationError: If authentication fails (401/403).
         ServerError: If server returns an error response.
     """
+    uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files"
     try:
-        uri = f"{CONFIG["API"]["buckets"]}/{CONFIG["REMOTE_BUCKET"]}/files"
         response = get(
             uri,
             headers=CONFIG["REQUEST_HEADERS"],
@@ -1289,7 +1282,7 @@ class FileEventHandler(FileSystemEventHandler):
         loop: asyncio event loop for scheduling coroutines.
     """
 
-    def __init__(self, websocket, loop, event_queue: EventQueue = None) -> None:
+    def __init__(self, websocket, loop, event_queue: Optional[EventQueue] = None) -> None:
         """
         Initialize the file event handler.
 
