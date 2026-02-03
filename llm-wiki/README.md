@@ -22,6 +22,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, reconnect |
 | [modules/lan-mode.md](modules/lan-mode.md) | `lan.py` discovery/election, `lan_server.py`, `lan_websocket.py`, `lan_handler.py`, `pinning.py`, `ssl_utils.py`, `identity.py` (device identity + instance lock) |
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |
+| [modules/wd-os5-web.md](modules/wd-os5-web.md) | WD My Cloud OS5 web UI (`packaging/wd-os5/Apkg/web`) + connect-command generator |
 | [modules/autotune.md](modules/autotune.md) | `autotune.py` — adaptive tuning of timeout, retry & concurrency |
 | [data-models.md](data-models.md) | reused common models + client-local state stores (sync_state, tombstones, pins) |
 | [decisions.md](decisions.md) | pointer to ecosystem ADRs + client-local choices |

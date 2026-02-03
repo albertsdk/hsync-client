@@ -24,6 +24,17 @@
         'HSYNC_AUTOTUNE',
     ];
 
+    // Placeholder shown for the local folder on the *other* device (unknowable
+    // from the NAS) and the fixed mask used for the LAN shared key in the
+    // generated connect command (fixed length so it does not leak the key length).
+    const PATH_PLACEHOLDER = '<local-folder>';
+    const KEY_MASK = '••••••••';
+
+    // Reveal state + last computed unmasked command, preserved across re-renders
+    // so typing in another field does not re-mask an already-revealed key.
+    let keyRevealed = false;
+    let connectUnmasked = '';
+
     const $  = (sel) => document.querySelector(sel);
     const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -48,6 +59,9 @@
         }
         document.documentElement.lang = lang;
         applyDict();
+        // Re-render the connect command so the reveal-toggle label tracks the
+        // new language (applyDict resets it to the data-i18n default).
+        renderConnectCommand();
     }
 
     function t(key, fallback) {
@@ -111,6 +125,95 @@
         const mode = $('#HSYNC_MODE').value;
         $('#hsync-lan-options').hidden    = (mode !== 'lan');
         $('#hsync-server-options').hidden = (mode !== 'server');
+        renderConnectCommand();
+    }
+
+    // -----------------------------------------------------------------
+    // "Connect another device" command
+    // -----------------------------------------------------------------
+    // Builds the hsync command to run on a second device to join the sync
+    // group coordinated by this NAS. Only the connection-matching fields are
+    // emitted (bucket, mode, group, LAN key); per-device sync-behaviour flags
+    // (watch, ignore-delete, compression, ...) are intentionally omitted — they
+    // do not need to match between peers. The NAS role is also omitted: LAN
+    // master election resolves the remote device's role automatically regardless
+    // of the NAS role (auto/master/slave/never-master).
+    function buildConnectCommand() {
+        const bucketEl = $('#HSYNC_BUCKET');
+        const bucket = (bucketEl && bucketEl.value.trim())
+            || (bucketEl && bucketEl.placeholder)
+            || '<bucket>';
+        const group = $('#HSYNC_LAN_GROUP').value.trim();
+        const key = $('#HSYNC_LAN_KEY').value;
+
+        // POSIX single-quote every interpolated value so the generated command
+        // is safe to paste into a shell regardless of its contents (no $ /
+        // backtick / " expansion, no < > redirection from the placeholder).
+        let cmd = 'hsync -b ' + shellQuote(bucket)
+            + ' -p ' + shellQuote(PATH_PLACEHOLDER)
+            + ' --lan-mode';
+        if (group) cmd += ' --lan-group ' + shellQuote(group);
+
+        const showKey = key.length > 0;
+        const masked = showKey ? ('HSYNC_LAN_KEY=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;
+        const unmasked = showKey ? ('HSYNC_LAN_KEY=' + shellQuote(key) + ' ' + cmd) : cmd;
+        return { masked, unmasked, showKey };
+    }
+
+    // POSIX shell single-quoting: wrap in '...' and escape embedded ' as '\''.
+    function shellQuote(v) {
+        return "'" + String(v).replace(/'/g, "'\\''") + "'";
+    }
+
+    function renderConnectCommand() {
+        const cmdEl = $('#hsync-connect-command');
+        const copyBtn = $('#hsync-btn-copy');
+        const revealBtn = $('#hsync-btn-reveal-key');
+        if (!cmdEl) return;
+
+        const isLan = $('#HSYNC_MODE').value === 'lan';
+        $('#hsync-connect-note-lan').hidden = !isLan;
+        $('#hsync-connect-note-server').hidden = isLan;
+
+        if (!isLan) {
+            cmdEl.textContent = '';
+            cmdEl.hidden = true;
+            copyBtn.hidden = true;
+            revealBtn.hidden = true;
+            connectUnmasked = '';
+            return;
+        }
+
+        const { masked, unmasked, showKey } = buildConnectCommand();
+        connectUnmasked = unmasked;
+        cmdEl.hidden = false;
+        cmdEl.textContent = keyRevealed ? unmasked : masked;
+        copyBtn.hidden = false;
+        revealBtn.hidden = !showKey;
+        revealBtn.textContent = keyRevealed
+            ? t('action.hide_key', 'Hide key')
+            : t('action.reveal_key', 'Show key');
+    }
+
+    async function copyConnectCommand() {
+        if (!connectUnmasked) return;
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(connectUnmasked);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = connectUnmasked;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            toast(t('action.copy_done', 'Copied'), 'ok');
+        } catch (e) {
+            toast(t('toast.save_error', 'Failed') + ': ' + e.message, 'error');
+        }
     }
 
     // -----------------------------------------------------------------
@@ -227,8 +330,19 @@
 
         try { applyConfig(await loadConfig()); }
         catch (e) { toast(t('toast.load_error', 'Failed to load configuration') + ': ' + e.message, 'error'); }
+        renderConnectCommand();
 
         $('#HSYNC_MODE').addEventListener('change', syncModeVisibility);
+        ['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'].forEach((id) => {
+            const el = $('#' + id);
+            if (el) el.addEventListener('input', renderConnectCommand);
+        });
+
+        $('#hsync-btn-copy').addEventListener('click', copyConnectCommand);
+        $('#hsync-btn-reveal-key').addEventListener('click', () => {
+            keyRevealed = !keyRevealed;
+            renderConnectCommand();
+        });
 
         $('#hsync-btn-save').addEventListener('click', async () => {
             try {

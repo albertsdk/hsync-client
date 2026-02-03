@@ -70,5 +70,13 @@
     "log.clear":  "Limpiar",
     "log.close":  "Cerrar",
 
+    "section.connect": "Conectar otro dispositivo",
+    "note.connect_lan": "Ejecuta este comando en otro dispositivo para conectarlo directamente a este NAS. Sustituye la carpeta local por la carpeta que deseas sincronizar en ese dispositivo.",
+    "note.connect_server": "Este NAS funciona en modo servidor y se conecta a un servidor HSYNC central. Para sincronizar otro dispositivo con los mismos datos, apúntalo a la misma URL de servidor y al mismo bucket.",
+    "action.copy":      "Copiar",
+    "action.copy_done": "Copiado",
+    "action.reveal_key": "Mostrar clave",
+    "action.hide_key":   "Ocultar clave",
+
     "footer.version": "Versión"
 }

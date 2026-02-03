@@ -107,6 +107,22 @@
     border-radius: 4px;
 }
 
+/* ---- generated connect command ---- */
+#hsync-app .hsync-connect-cmd {
+    display: block !important;
+    margin: 0 0 4px 0 !important;
+    padding: 10px 12px !important;
+    background: #0b1f1f;
+    color: #d6e6e6;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-radius: 4px;
+    overflow: auto;
+}
+
 /* ---- labels ---- */
 #hsync-app .hsync-label {
     display: block !important;
@@ -355,6 +371,18 @@
             <span data-i18n="field.api_key">API key</span>
             <input type="password" name="HSYNC_API_KEY" id="HSYNC_API_KEY" autocomplete="new-password">
         </label>
+    </div>
+
+    <!-- Connect another device ------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.connect">Connect another device</div>
+        <p class="hsync-note" id="hsync-connect-note-lan" data-i18n="note.connect_lan">Run this command on another device to connect it directly to this NAS. Replace the local folder with the folder to sync on that device.</p>
+        <p class="hsync-note" id="hsync-connect-note-server" data-i18n="note.connect_server" hidden>This NAS runs in server mode and connects to a central HSYNC server. To sync another device with the same data, point it at the same server URL and bucket.</p>
+        <code id="hsync-connect-command" class="hsync-connect-cmd"></code>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-copy" class="hsync-btn" data-i18n="action.copy">Copy</button>
+            <button type="button" id="hsync-btn-reveal-key" class="hsync-btn" data-i18n="action.reveal_key" hidden>Show key</button>
+        </div>
     </div>
 
     <!-- Sync behaviour --------------------------------------------- -->

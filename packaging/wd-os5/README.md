@@ -176,6 +176,35 @@ The role selector maps to the existing CLI primitives:
 | Slave       | `--sync-direction download-only`                | NAS is a read-only replica           |
 | Never master| `--never-master`                                | Syncs both ways but never becomes master |
 
+## Connect another device
+
+When the NAS runs in **LAN mode**, the web UI shows a live-generated
+`hsync` command under a **Connect another device** section. Run that command
+on another device to join the sync group coordinated by the NAS instead of
+assembling the flags by hand.
+
+The command is built client-side from the current form values and contains
+only the connection-matching fields:
+
+```
+HSYNC_LAN_KEY='<masked>' hsync -b '<bucket>' -p '<local-folder>' --lan-mode [--lan-group '<group>']
+```
+
+- `<bucket>` and `--lan-group` mirror the NAS settings so the peer can find the
+  group; `<local-folder>` is a placeholder for the folder to sync on the other
+  device. Every interpolated value is POSIX single-quoted, so the command is
+  safe to paste even if a value contains `$`, `"`, backticks, or spaces.
+- The LAN shared key (when set) is shown **masked** with a *Show key* toggle;
+  the *Copy* button copies the full command including the real key value.
+- Per-device sync behaviour (watch, ignore-delete, compression, delta,
+  bandwidth, …) and the NAS role are intentionally omitted: watch is implicit
+  in LAN mode and master election resolves the remote device's role
+  automatically.
+
+In **server mode** the NAS is itself a client of a central `hsync-server`, so
+there is no direct "connect to the NAS" command; the section shows a note
+explaining how to point another device at the same server and bucket.
+
 ## Locales
 
 The web UI ships with the same five locales as the desktop / Android clients:

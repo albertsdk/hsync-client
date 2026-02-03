@@ -70,5 +70,13 @@
     "log.clear":  "Pulisci",
     "log.close":  "Chiudi",
 
+    "section.connect": "Connetti un altro dispositivo",
+    "note.connect_lan": "Esegui questo comando su un altro dispositivo per collegarlo direttamente a questo NAS. Sostituisci la cartella locale con la cartella da sincronizzare su quel dispositivo.",
+    "note.connect_server": "Questo NAS è in modalità server e si collega a un server HSYNC centrale. Per sincronizzare un altro dispositivo con gli stessi dati, puntalo allo stesso URL del server e allo stesso bucket.",
+    "action.copy":      "Copia",
+    "action.copy_done": "Copiato",
+    "action.reveal_key": "Mostra chiave",
+    "action.hide_key":   "Nascondi chiave",
+
     "footer.version": "Versione"
 }
