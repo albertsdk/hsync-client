@@ -33,6 +33,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
@@ -497,9 +498,20 @@ def _run_as_slave(
             # Perform initial sync (the master is the transport coordinator)
             try:
                 result = run(sync(lan_mode=True))
+            except (AuthenticationError, NetworkError, ServerError):
+                # sync() already logged the failure and emitted the structured
+                # event. A one-shot (non-persistent) run maps a transport
+                # failure to a fatal exit; a persistent run must survive a
+                # transient failure (e.g. the master going offline mid-sync)
+                # and re-enter the discovery loop so the master is re-detected
+                # or a new one is elected.
+                if persistent or wait_indefinitely_for_peer:
+                    return True, int(ExitCode.OK)
+                return False, int(ExitCode.FATAL)
             except Exception:
-                # sync() already logged the fatal error and emitted the
-                # structured event; fail the run without a raw traceback.
+                # An unexpected error (a genuine bug) must never be masked as a
+                # retryable condition, even in persistent mode: surface it as a
+                # fatal exit instead of looping forever.
                 return False, int(ExitCode.FATAL)
             if isinstance(result, SyncCycleResult):
                 exit_code = exit_code_for_result(

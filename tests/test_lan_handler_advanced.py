@@ -830,6 +830,72 @@ class TestRunAsSlave:
         assert result[0] is True
         assert any("WebSocket connection ended" in str(c) for c in mock_log.warning.call_args_list)
 
+    def test_persistent_sync_exception_reenters_loop(self, tmp_path):
+        """A transport failure in persistent mode must not terminate the run.
+
+        When the master goes offline mid-sync, ``sync()`` raises a transport
+        error; a persistent run must re-enter the discovery loop (return True)
+        so the peer stays alive and re-detects the master (or a newly elected
+        one) on the next iteration instead of exiting with "LAN mode stopped".
+        """
+        from hsync_client.exceptions import NetworkError
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run", side_effect=NetworkError("boom")),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+
+        assert result == (True, 0)
+
+    def test_nonpersistent_sync_exception_is_fatal(self, tmp_path):
+        """A transport failure in one-shot mode still maps to a fatal exit."""
+        from hsync_client.exceptions import NetworkError
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run", side_effect=NetworkError("boom")),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+
+        assert result == (False, 1)
+
+    def test_persistent_unexpected_exception_is_fatal(self, tmp_path):
+        """An unexpected (non-transport) error stays fatal even in persistent mode.
+
+        A genuine programming bug must surface as a fatal exit rather than be
+        masked into an endless retry loop.
+        """
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run", side_effect=RuntimeError("boom")),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+
+        assert result == (False, 1)
+
     def test_dryrun_persistent_runs_preview_and_stdin_wait(self, tmp_path):
         """Dry-run persistent slave shows a preview then waits on stdin."""
         from hsync_client.lan_handler import _run_as_slave
