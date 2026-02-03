@@ -35,27 +35,29 @@ policy layer is pure (no I/O) and fully unit-testable.
 | --- | --- | --- | --- |
 | RTT | `measure_rtt(host, port)` `autotune.py:150` | `float \| None` (ms) | `None` + warning |
 | Network class | `classify_network(rtt_ms)` `autotune.py:175` | `NetClass` | `UNKNOWN` |
-| Bandwidth (passive) | `update_bw_ema(bytes, elapsed)` `autotune.py:193` | updates `_bw_ema` | ignored on `elapsed<=0` |
-| Bandwidth (active) | `measure_bandwidth_active(server_url, size_bytes)` `autotune.py:202` | `float \| None` (Mbps) | `None` + warning |
-| Bandwidth class | `classify_bandwidth(mbps, active)` `autotune.py:247` | `BwClass` | `UNKNOWN` |
-| Storage type | `detect_storage_type(path)` `autotune.py:256` | `StorageType` | `UNKNOWN` (HDD-class) |
-| Queue profile | `profile_transfer_queue(files)` `autotune.py:316` | `QueueProfile` | `MIXED` |
+| Bandwidth (passive) | `update_bw_ema(bytes, elapsed)` `autotune.py:191` | updates `_bw_ema` | ignored on `elapsed<=0` |
+| Bandwidth (seed) | `seed_bw_ema(mbps)` `autotune.py:200` | sets `_bw_ema` (if unset) | ignored on `mbps<=0` or already set |
+| Bandwidth (active) | `measure_bandwidth_active(server_url, size_bytes)` `autotune.py:216` | `float \| None` (Mbps) | `None` + warning |
+| Bandwidth class | `classify_bandwidth(mbps, active)` `autotune.py:261` | `BwClass` | `UNKNOWN` |
+| Storage type | `detect_storage_type(path)` `autotune.py:283` | `StorageType` | `UNKNOWN` (HDD-class) |
+| Queue profile | `profile_transfer_queue(files)` `autotune.py:343` | `QueueProfile` | `MIXED` |
 
 ### Module-level state
 
-`_bw_ema` (`autotune.py:123`) is a module-level float updated by
-`update_bw_ema()` after each transfer. Callers must read it via the module
-attribute (`autotune_mod._bw_ema`), not via a value import, to avoid stale
-snapshots.
+`_bw_ema` (`autotune.py:134`) is a module-level float updated by
+`update_bw_ema()` after each transfer and seeded by `seed_bw_ema()` from an
+active probe when no passive sample exists yet. Callers must read it via the
+module attribute (`autotune_mod._bw_ema`), not via a value import, to avoid
+stale snapshots.
 
 ## Policy (pure functions)
 
 | Function | Location | Returns |
 | --- | --- | --- |
-| `derive_profile(results)` | `autotune.py:296` | `TuningProfile` |
-| `derive_timeout(rtt, net, min, max)` | `autotune.py:346` | `int` |
-| `derive_retry(rtt, net, rmin, rmax)` | `autotune.py:361` | `(min, max, reconnect)` |
-| `derive_concurrency(storage, bw, queue, cmin, cmax)` | `autotune.py:379` | `int` |
+| `derive_profile(results)` | `autotune.py:379` | `TuningProfile` |
+| `derive_timeout(rtt, net, min, max)` | `autotune.py:428` | `int` |
+| `derive_retry(rtt, net, rmin, rmax)` | `autotune.py:443` | `(min, max, reconnect)` |
+| `derive_concurrency(storage, bw, queue, cmin, cmax)` | `autotune.py:461` | `int` |
 
 ## Integration points
 
@@ -85,6 +87,23 @@ any probing).
 Updates are written to both the global `CONFIG` and the local config dict
 (`set_config` copies values, so the two are distinct objects). No-op when
 `AUTOTUNE_ENABLED` is false or the RTT is not measurable.
+
+### Remote per-connection refresh (`remote_websocket._refresh_network_tuning`)
+
+`remote_websocket.py:318`, called from `remote_connect` (`:425`) at the top of
+its reconnect loop, **before every `sync()`** — including the first. Re-derives
+`HTTP_TIMEOUT`, `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT` and
+`RECONNECT_DELAY` from a fresh `measure_rtt`, so a cold start whose startup
+probes failed (server not yet reachable) still re-tunes once the server is up,
+instead of keeping the startup safe defaults for the whole session. Like the
+LAN refresh it only rewrites keys in `CONFIG["AUTOTUNE_MANAGED_KEYS"]`
+(CLI/env overrides survive), and a failed/unmeasurable probe keeps the current
+values rather than resetting to SAFE. When `MAX_CONCURRENT_TRANSFERS` is
+managed and `_bw_ema` is still empty (startup active probe failed), it also
+re-seeds the EMA from a fresh `measure_bandwidth_active` (offloaded to a
+worker thread via `asyncio.to_thread`), so the per-cycle concurrency refresh
+has a bandwidth class before the first transfer completes. No-op when
+`AUTOTUNE_ENABLED` is false.
 
 ### Per sync cycle (`sync._refresh_concurrency_from_queue`)
 

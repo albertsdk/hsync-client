@@ -264,6 +264,38 @@ class TestUpdateBwEma:
         assert autotune._bw_ema == 100.0
 
 
+class TestSeedBwEma:
+    def test_seed_sets_ema_when_unset(self):
+        import hsync_client.autotune as autotune
+
+        autotune._bw_ema = None
+        try:
+            autotune.seed_bw_ema(500.0)
+            assert autotune._bw_ema == 500.0
+        finally:
+            autotune._bw_ema = None
+
+    def test_seed_never_overwrites_existing_ema(self):
+        import hsync_client.autotune as autotune
+
+        autotune._bw_ema = 100.0
+        try:
+            autotune.seed_bw_ema(500.0)
+            assert autotune._bw_ema == 100.0
+        finally:
+            autotune._bw_ema = None
+
+    def test_seed_ignores_nonpositive(self):
+        import hsync_client.autotune as autotune
+
+        autotune._bw_ema = None
+        try:
+            autotune.seed_bw_ema(0)
+            assert autotune._bw_ema is None
+        finally:
+            autotune._bw_ema = None
+
+
 # ── Thread-safety tests ──────────────────────────────────────────────────
 
 

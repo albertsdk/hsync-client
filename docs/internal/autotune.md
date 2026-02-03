@@ -159,8 +159,15 @@ refresh only refines a value that autotune (or the default) already set.
 
 ### WS reconnect (`remote_websocket.py`)
 
-Re-evaluates RTT on reconnect to catch network changes (e.g. laptop moved
-from Ethernet to Wi-Fi).
+`remote_connect` re-evaluates RTT at the top of its loop — before every
+`sync()`, including the first — so the first sync after a cold start (where
+the startup probes failed because the server was not yet reachable) also runs
+on a freshly measured RTT instead of the startup safe defaults. Each reconnect
+likewise re-measures RTT to catch network changes (e.g. laptop moved from
+Ethernet to Wi-Fi). When the passive bandwidth EMA is still empty (startup
+active probe failed) and concurrency is autotune-managed, the same refresh
+re-runs the active bandwidth probe and seeds the EMA, so the per-cycle
+concurrency refresh gets a bandwidth class before the first transfer completes.
 
 ## Resolver chain
 

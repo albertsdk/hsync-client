@@ -18,10 +18,12 @@ from asyncio import (
     get_running_loop,
     run_coroutine_threadsafe,
     sleep,
+    to_thread,
 )
 from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
 from ssl import CERT_NONE, Purpose, create_default_context
+from typing import Any, cast
 
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File
@@ -314,17 +316,33 @@ async def resync() -> None:
 
 
 async def _refresh_network_tuning() -> None:
-    """Re-measure RTT on WS reconnect and update network-derived CONFIG keys."""
+    """Re-measure RTT and re-derive the autotune-managed network keys.
+
+    Only keys listed in ``CONFIG["AUTOTUNE_MANAGED_KEYS"]`` are rewritten, so
+    an explicit CLI/env override (``--timeout``, ``HSYNC_RECONNECT_DELAY`` …)
+    survives the refresh — same guard as the LAN post-discovery refresh
+    (``lan_handler._refresh_lan_network_tuning``). A failed/unmeasurable probe
+    keeps the current values instead of resetting them to the SAFE profile.
+    When the passive bandwidth EMA is still empty (startup active probe
+    failed), it also re-seeds it from a fresh active probe so the per-cycle
+    concurrency refresh has a bandwidth class before the first transfer.
+    """
     if not CONFIG.get("AUTOTUNE_ENABLED", False):
+        return
+    managed = set(CONFIG.get("AUTOTUNE_MANAGED_KEYS", []))
+    if not managed:
         return
     try:
         from urllib.parse import urlparse
 
+        import hsync_client.autotune as autotune_mod
         from hsync_client.autotune import (
             classify_network,
             derive_retry,
             derive_timeout,
+            measure_bandwidth_active,
             measure_rtt,
+            seed_bw_ema,
         )
         from hsync_client.constants import (
             HTTP_TIMEOUT_MAX,
@@ -339,25 +357,49 @@ async def _refresh_network_tuning() -> None:
         rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
         rtt_ms = measure_rtt(rtt_host, rtt_port)
+        if rtt_ms is None:
+            log.debug("autotune (reconnect): RTT not measurable; keeping current tuning")
+            return
         net_class = classify_network(rtt_ms)
 
-        timeout = derive_timeout(rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX)
-        min_wait, max_wait, reconnect = derive_retry(
-            rtt_ms,
-            net_class,
-            RECONNECT_DELAY_MIN,
-            RECONNECT_DELAY_MAX,
-        )
+        updates: dict[str, int | float] = {}
+        if "HTTP_TIMEOUT" in managed:
+            updates["HTTP_TIMEOUT"] = derive_timeout(
+                rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX
+            )
+        if managed & {"TRANSFER_RETRY_MIN_WAIT", "TRANSFER_RETRY_MAX_WAIT", "RECONNECT_DELAY"}:
+            min_wait, max_wait, reconnect = derive_retry(
+                rtt_ms,
+                net_class,
+                RECONNECT_DELAY_MIN,
+                RECONNECT_DELAY_MAX,
+            )
+            if "TRANSFER_RETRY_MIN_WAIT" in managed:
+                updates["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
+            if "TRANSFER_RETRY_MAX_WAIT" in managed:
+                updates["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
+            if "RECONNECT_DELAY" in managed:
+                updates["RECONNECT_DELAY"] = reconnect
 
-        CONFIG["HTTP_TIMEOUT"] = timeout
-        CONFIG["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
-        CONFIG["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
-        CONFIG["RECONNECT_DELAY"] = reconnect
-        log.debug(
-            f"autotune (reconnect): rtt={rtt_ms or '?'}ms "
-            f"net={net_class.value} -> timeout={timeout}s "
-            f"retry=({min_wait},{max_wait})s reconnect={reconnect}s"
-        )
+        for key, value in updates.items():
+            cast(dict[str, Any], CONFIG)[key] = value
+        if updates:
+            log.debug(
+                f"autotune (reconnect): rtt={rtt_ms:.1f}ms "
+                f"net={net_class.value} -> {safe_json_for_log(updates)}"
+            )
+
+        # Re-seed bandwidth when the startup active probe failed (server not
+        # yet reachable) and no passive sample exists yet: the seed feeds the
+        # per-cycle concurrency refresh, the only consumer of the bandwidth
+        # class. Offloaded to a worker thread (blocking HTTP, up to ~10 s) and
+        # skipped unless concurrency is autotune-managed.
+        if "MAX_CONCURRENT_TRANSFERS" in managed and autotune_mod._bw_ema is None:
+            server_url = f"{parsed.scheme}://{parsed.netloc}"
+            active_mbps = await to_thread(measure_bandwidth_active, server_url)
+            if active_mbps:
+                seed_bw_ema(active_mbps)
+                log.debug(f"autotune (reconnect): bandwidth seed={active_mbps:.1f} Mbps")
     except Exception as e:
         log.debug(f"autotune: reconnect RTT probe failed ({e}); keeping current values")
 
@@ -375,6 +417,13 @@ async def remote_connect() -> None:
 
     while True:
         try:
+            # Re-measure RTT before each sync — not only on reconnect — so the
+            # first sync after a cold start (startup probes failed because the
+            # server was not yet reachable) re-derives timeout/retry/reconnect
+            # from a live measurement. No-op when autotune is disabled or the
+            # RTT is not measurable.
+            await _refresh_network_tuning()
+
             # Perform initial sync before entering event loop
             await sync()
 
@@ -403,9 +452,6 @@ async def remote_connect() -> None:
             await sleep(CONFIG["RECONNECT_DELAY"])
 
         finally:
-            # Re-measure RTT to catch network changes (e.g. laptop moved
-            # from Ethernet to Wi-Fi) before the next sync cycle starts.
-            await _refresh_network_tuning()
             log.info(f"Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
 
 

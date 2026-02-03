@@ -197,6 +197,22 @@ def update_bw_ema(bytes_transferred: int, elapsed_sec: float) -> None:
     _bw_ema = mbps if _bw_ema is None else _BW_EMA_ALPHA * mbps + (1 - _BW_EMA_ALPHA) * _bw_ema
 
 
+def seed_bw_ema(mbps: float) -> None:
+    """Seed the passive EMA with a coarse active-probe measurement.
+
+    The startup active probe fails when the server is not yet reachable; a
+    later refresh (post-connect) that obtains a measurement uses this to seed
+    ``_bw_ema`` exactly as the first transfer sample would, so the per-cycle
+    concurrency refresh classifies bandwidth before any transfer completes.
+    Never overwrites a value already populated by real transfers.
+    """
+    if mbps <= 0:
+        return
+    global _bw_ema
+    if _bw_ema is None:
+        _bw_ema = mbps
+
+
 def measure_bandwidth_active(
     server_url: str, size_bytes: int = 256 * 1024, verify: bool | str = True
 ) -> float | None:

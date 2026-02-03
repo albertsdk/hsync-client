@@ -485,6 +485,36 @@ class TestRemoteConnect:
             assert sync_called
 
     @pytest.mark.asyncio
+    async def test_remote_connect_refreshes_tuning_before_initial_sync(self):
+        """remote_connect re-measures RTT before the initial sync (cold start)."""
+        from hsync_client.remote_websocket import remote_connect
+
+        config = {"RESYNC": None, "RECONNECT_DELAY": 0.01, "AUTOTUNE_ENABLED": True}
+
+        order = []
+
+        async def mock_refresh():
+            order.append("refresh")
+
+        async def mock_sync():
+            order.append("sync")
+            raise KeyboardInterrupt("Stop loop")
+
+        async def mock_remote_events():
+            raise _StopLoop("Stop")
+
+        with (
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket._refresh_network_tuning", mock_refresh),
+        ):
+            with contextlib.suppress(TimeoutError, KeyboardInterrupt, _StopLoop):
+                await asyncio.wait_for(remote_connect(), timeout=1.0)
+            assert order == ["refresh", "sync"]
+
+    @pytest.mark.asyncio
     async def test_remote_connect_starts_resync_task_when_configured(self):
         """remote_connect starts resync task when RESYNC is configured."""
         import hsync_client.remote_websocket as ws_module
@@ -601,6 +631,72 @@ class TestRemoteConnect:
             # First task should have been cancelled
             assert first_task is not None
             assert first_task.cancelled()
+
+
+class TestRefreshNetworkTuning:
+    """Tests for _refresh_network_tuning (RTT + bandwidth re-seed)."""
+
+    @pytest.mark.asyncio
+    async def test_seeds_bandwidth_when_ema_empty(self):
+        """Re-seeds the bandwidth EMA from the active probe when it is empty."""
+        from hsync_client.remote_websocket import _refresh_network_tuning
+
+        config = {
+            "AUTOTUNE_ENABLED": True,
+            "AUTOTUNE_MANAGED_KEYS": ["HTTP_TIMEOUT", "MAX_CONCURRENT_TRANSFERS"],
+            "API": {"buckets": "https://localhost:9753/api/v1/buckets"},
+        }
+        with (
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.autotune.measure_rtt", return_value=5.0),
+            patch("hsync_client.autotune.measure_bandwidth_active", return_value=900.0),
+            patch("hsync_client.autotune._bw_ema", None),
+            patch("hsync_client.autotune.seed_bw_ema") as mock_seed,
+        ):
+            await _refresh_network_tuning()
+            mock_seed.assert_called_once_with(900.0)
+
+    @pytest.mark.asyncio
+    async def test_skips_bandwidth_when_ema_populated(self):
+        """No active bandwidth probe once the passive EMA already has data."""
+        from hsync_client.remote_websocket import _refresh_network_tuning
+
+        config = {
+            "AUTOTUNE_ENABLED": True,
+            "AUTOTUNE_MANAGED_KEYS": ["HTTP_TIMEOUT", "MAX_CONCURRENT_TRANSFERS"],
+            "API": {"buckets": "https://localhost:9753/api/v1/buckets"},
+        }
+        with (
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.autotune.measure_rtt", return_value=5.0),
+            patch("hsync_client.autotune.measure_bandwidth_active") as mock_bw,
+            patch("hsync_client.autotune._bw_ema", 500.0),
+            patch("hsync_client.autotune.seed_bw_ema") as mock_seed,
+        ):
+            await _refresh_network_tuning()
+            mock_bw.assert_not_called()
+            mock_seed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_bandwidth_when_concurrency_not_managed(self):
+        """No active bandwidth probe when concurrency is not autotune-managed."""
+        from hsync_client.remote_websocket import _refresh_network_tuning
+
+        config = {
+            "AUTOTUNE_ENABLED": True,
+            "AUTOTUNE_MANAGED_KEYS": ["HTTP_TIMEOUT"],
+            "API": {"buckets": "https://localhost:9753/api/v1/buckets"},
+        }
+        with (
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.autotune.measure_rtt", return_value=5.0),
+            patch("hsync_client.autotune.measure_bandwidth_active") as mock_bw,
+            patch("hsync_client.autotune._bw_ema", None),
+            patch("hsync_client.autotune.seed_bw_ema") as mock_seed,
+        ):
+            await _refresh_network_tuning()
+            mock_bw.assert_not_called()
+            mock_seed.assert_not_called()
 
 
 class TestRemoteEvents:

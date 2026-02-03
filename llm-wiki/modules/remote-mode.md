@@ -39,12 +39,16 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
 
 ## Reconnect & resilience
 
-- `remote_connect` (`remote_websocket.py:373`) is an infinite loop: on
-  `ConnectionClosed` or unexpected error it `await sleep(CONFIG["RECONNECT_DELAY"])`
-  (`:404`–`:417`), then `_refresh_network_tuning()` and a full `sync()` before
-  `remote_events` again. The delay is **fixed** (default 5 s, clamp 1–60), not
-  exponential and not attempt-capped. Autotune may rewrite `RECONNECT_DELAY`
-  from RTT; each wait still uses that one value.
+- `remote_connect` (`remote_websocket.py:407`) is an infinite loop: each
+  iteration re-measures RTT and re-seeds bandwidth (`_refresh_network_tuning()`,
+  `:425`) and runs a full `sync()` before `remote_events`; on `ConnectionClosed`
+  or unexpected error it `await sleep(CONFIG["RECONNECT_DELAY"])` and loops
+  again. The delay is **fixed** (default 5 s, clamp 1–60), not exponential and
+  not attempt-capped. Autotune may rewrite `RECONNECT_DELAY` from RTT; each
+  wait still uses that one value. The per-iteration refresh means the first
+  sync after a cold start (startup probes failed while the server was still
+  down) also runs on freshly measured RTT/bandwidth rather than the startup
+  safe defaults.
 - **Initial connectivity check** (`main_logic._check_server_connectivity`
   `main_logic.py:1103`) runs before the WS loop and uses exponential backoff
   with **7 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,
