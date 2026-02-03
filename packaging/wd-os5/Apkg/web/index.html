@@ -112,15 +112,27 @@
     display: block !important;
     margin: 0 0 4px 0 !important;
     padding: 10px 12px !important;
-    background: #0b1f1f;
-    color: #d6e6e6;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
+    background: #0b1f1f !important;
+    color: #d6e6e6 !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+    font-size: 12px !important;
     line-height: 1.5;
-    white-space: pre-wrap;
+    white-space: pre-wrap !important;
     word-break: break-word;
     border-radius: 4px;
     overflow: auto;
+}
+
+/*
+ * display:!important on layout primitives beats the UA [hidden] { display:none }
+ * rule (and the dashboard's own hidden reset). Mirror the toast/modal pattern.
+ */
+#hsync-app .hsync-section[hidden],
+#hsync-app .hsync-note[hidden],
+#hsync-app .hsync-connect-cmd[hidden],
+#hsync-app .hsync-btn[hidden],
+#hsync-app .hsync-actions[hidden] {
+    display: none !important;
 }
 
 /* ---- labels ---- */
