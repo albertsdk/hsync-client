@@ -137,6 +137,12 @@ for md_file in "${SCRIPT_DIR}"/*.md; do
     fi
 done
 
+# Process README.md in parent directory
+README_FILE="${SCRIPT_DIR}/../README.md"
+if [[ -f "${README_FILE}" ]]; then
+    extract_and_render "${README_FILE}"
+fi
+
 # Cleanup
 rm -f "${CONFIG_FILE}"
 
