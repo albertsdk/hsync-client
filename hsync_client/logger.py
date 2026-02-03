@@ -17,16 +17,49 @@
 """
 Logging configuration for HSYNC Client.
 
-This module provides a standardized logging setup that matches the server's
-format while supporting client-specific features like quiet mode, file output,
-and colored console output.
+This module provides a standardized logging setup with enterprise-grade features:
+- ISO 8601 timestamps with milliseconds
+- Client ID (CID) for session correlation and distributed tracing
+- Optional colored console output
+- File output support
+- Quiet mode
+
+Log format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
 """
 
 import logging
 import sys
-
+from contextvars import ContextVar
 from json import dumps
 from typing import Optional
+
+
+# Context variable for client ID - thread-safe storage for per-session data
+client_id_var: ContextVar[Optional[str]] = ContextVar("client_id", default=None)
+
+
+def get_client_id() -> Optional[str]:
+    """Get the current client ID from context."""
+    return client_id_var.get()
+
+
+def set_client_id(client_id: Optional[str]) -> None:
+    """Set the client ID in context for the current session."""
+    client_id_var.set(client_id)
+
+
+class ClientIdFilter(logging.Filter):
+    """
+    Logging filter that adds client_id to log records.
+
+    This filter retrieves the client ID from the context variable
+    and adds it to each log record, enabling session correlation.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add client_id to the log record."""
+        record.client_id = get_client_id() or "-"
+        return True
 
 
 # ANSI color codes for terminal output
@@ -167,8 +200,8 @@ def setup_logging(
     """
     Configure and return the HSYNC client logger.
 
-    Sets up logging with a format matching the server's output style.
-    Supports console output with colors, file output, and quiet mode.
+    Sets up logging with enterprise-grade features including client ID
+    correlation for session tracing.
 
     Args:
         debug: Enable DEBUG level logging.
@@ -190,15 +223,16 @@ def setup_logging(
         logger.addHandler(logging.NullHandler())
         return logger
 
-    # Log format matching server style
-    # Format: 2024-01-15T10:30:45.123 - [12345] INFO: message
-    log_format = '%(asctime)s.%(msecs)03d - [%(process)d] %(levelname)s: %(message)s'
+    # Log format with client ID for session correlation
+    # Format: 2024-01-15T10:30:45.123 - [12345] [cid-abc123] INFO: message
+    log_format = '%(asctime)s.%(msecs)03d - [%(process)d] [%(client_id)s] %(levelname)s: %(message)s'
     date_format = '%Y-%m-%dT%H:%M:%SZ'
 
     if logfile:
         # File handler - no colors
         file_formatter = JsonFormatter(fmt=log_format, datefmt=date_format)
         file_handler = logging.FileHandler(logfile, mode='a', encoding='utf-8')
+        file_handler.addFilter(ClientIdFilter())
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
     else:
@@ -209,6 +243,7 @@ def setup_logging(
             use_colors=not no_color,
         )
         console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.addFilter(ClientIdFilter())
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
 
