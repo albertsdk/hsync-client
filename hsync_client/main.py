@@ -344,8 +344,7 @@ def set_permissions(file_path: str, permissions: str) -> None:
             if char in permission_types:
                 mode |= permission_types[char] << (6 - (i * 3))
 
-    if DEBUG:
-        LOG.info(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
+    LOG.debug(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
     chmod(file_path, mode)
 
 
@@ -462,9 +461,8 @@ def download_file(file: File) -> None:
         LOG.error(f'Network error downloading "{file.filepath}": {e}')
         return
 
-    if DEBUG:
-        LOG.info(f"Request URI: {uri}")
-        LOG.info(f"Request Header:", CONFIG["REQUEST_HEADERS"])
+    LOG.debug(f"Request URI: {uri}")
+    LOG.debug(f"Request Header: {CONFIG['REQUEST_HEADERS']}")
 
     if response.status_code == 401:
         LOG.error(f'Authentication failed downloading "{file.filepath}"')
@@ -559,12 +557,11 @@ def is_file_stable(file: File, interval: int = 2) -> bool:
     time_sleep(interval)
     current_size = getsize(file.filepath)
 
-    if DEBUG:
-        LOG.info(
-            f'Writing file: "{file.filepath}" '
-            f"({bytes_to_human_readable(last_size)} >"
-            f" {bytes_to_human_readable(current_size)})"
-        )
+    LOG.debug(
+        f'Writing file: "{file.filepath}" '
+        f"({bytes_to_human_readable(last_size)} >"
+        f" {bytes_to_human_readable(current_size)})"
+    )
 
     return last_size == current_size
 
@@ -600,11 +597,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
         file.size = getsize(file.filepath)
         file.md5sum = compute_md5(file.filepath)
 
-        if DEBUG:
-            LOG.info(
-                f'Written file: "{file.filepath}" '
-                f"({bytes_to_human_readable(file.size)})"
-            )
+        LOG.debug(
+            f'Written file: "{file.filepath}" '
+            f"({bytes_to_human_readable(file.size)})"
+        )
 
         # Recursive call with check_size=False to do actual upload
         upload_file(file, False)
@@ -627,11 +623,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
             "permissions": file.permissions,
         }
 
-        if DEBUG:
-            LOG.info(f"Upload file: {file.filepath}")
-            LOG.info(f"        URI: {uri}")
-            LOG.info(f"     Header:", CONFIG["REQUEST_HEADERS"])
-            LOG.info(f"       data:", data)
+        LOG.debug(f"Upload file: {file.filepath}")
+        LOG.debug(f"        URI: {uri}")
+        LOG.debug(f"     Header: {CONFIG['REQUEST_HEADERS']}")
+        LOG.debug(f"       data: {data}")
 
         with open(file.filepath, "rb") as upload:
             files = {"file": (basename(file.filepath), upload)}
@@ -649,8 +644,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             elif response.status_code == 403:
                 LOG.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
-                if DEBUG:
-                    LOG.info(f'"{file.filepath}" (already present)')
+                LOG.debug(f'"{file.filepath}" (already present)')
             elif response.status_code >= 500:
                 LOG.error(f'Server error uploading "{file.filepath}": {response.status_code}')
             else:
@@ -672,8 +666,7 @@ def nothing_to_do(file: File) -> None:
     Args:
         file: File that is already synchronized.
     """
-    if DEBUG:
-        LOG.debug(f'"{file.filepath}"')
+    LOG.debug(f'"{file.filepath}"')
 
 
 def get_sync_actions(
@@ -853,10 +846,9 @@ async def sync() -> None:
         # Determine required actions
         sync_actions = get_sync_actions(remote_files, local_files)
 
-        if DEBUG:
-            LOG.info(f"Local files:", local_files)
-            LOG.info(f"Remote files:", remote_files)
-            LOG.info(f"Sync actions: {sync_actions}")
+        LOG.debug(f"Local files: {local_files}")
+        LOG.debug(f"Remote files: {remote_files}")
+        LOG.debug(f"Sync actions: {sync_actions}")
 
     except Exception as e:
         if DEBUG:
@@ -873,28 +865,26 @@ async def sync() -> None:
     if CONFIG["DRYRUN"]:
         # Dry-run mode: just log what would be done
         for sync_action in sync_actions:
-            if DEBUG:
-                LOG.info(f"Sync action:", sync_action.to_dict())
+            LOG.debug(f"Sync action: {sync_action.to_dict()}")
+            # Map action to descriptive label
+            if sync_action.name == SyncActionName.download:
+                action_label = ACTION_LABEL["download"]
+            elif sync_action.name == SyncActionName.upload:
+                action_label = ACTION_LABEL["upload"]
             else:
-                # Map action to descriptive label
-                if sync_action.name == SyncActionName.download:
-                    action_label = ACTION_LABEL["download"]
-                elif sync_action.name == SyncActionName.upload:
-                    action_label = ACTION_LABEL["upload"]
-                else:
-                    action_label = ACTION_LABEL["nothing"]
+                action_label = ACTION_LABEL["nothing"]
 
-                # Format relative filepath for display
-                filepath = (
-                    sync_action.file.filepath.removeprefix(CONFIG["LOCAL_BUCKET"]).lstrip("/")
-                    if sync_action.file.filepath
-                    else ""
-                )
-                LOG.info(
-                    f'{action_label} "{filepath}" '
-                    f"{bytes_to_human_readable(sync_action.file.size)} "
-                    f"({sync_action.timedelta})"
-                )
+            # Format relative filepath for display
+            filepath = (
+                sync_action.file.filepath.removeprefix(CONFIG["LOCAL_BUCKET"]).lstrip("/")
+                if sync_action.file.filepath
+                else ""
+            )
+            LOG.info(
+                f'{action_label} "{filepath}" '
+                f"{bytes_to_human_readable(sync_action.file.size)} "
+                f"({sync_action.timedelta})"
+            )
     else:
         # Execute sync actions
         for sync_action in sync_actions:
@@ -972,8 +962,7 @@ def update_file(data: dict) -> None:
             if file_data.permissions:
                 set_permissions(file_data.filepath, file_data.permissions)
         else:
-            if DEBUG:
-                LOG.info(f'File not changed: "{file_data.filepath}"')
+            LOG.debug(f'File not changed: "{file_data.filepath}"')
     else:
         # File doesn't exist locally - download it
         file = File().from_dict(data, CONFIG["LOCAL_BUCKET"])
@@ -1043,9 +1032,8 @@ async def remote_events() -> None:
 
         LOG.info("WebSocket authenticated successfully")
 
-        if DEBUG:
-            LOG.info(f"Sync reconnection delay: {CONFIG["RECONNECT_DELAY"]} sec.")
-            LOG.info(f"Force resync: {CONFIG["RESYNC"]} sec.")
+        LOG.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")
+        LOG.debug(f"Force resync: {CONFIG['RESYNC']} sec.")
 
         LOG.info(f"Client ID (CID): {CONFIG["CID"]}")
 
@@ -1068,8 +1056,7 @@ async def remote_events() -> None:
                 data = await websocket.recv()
                 message = loads(data)
 
-                if DEBUG:
-                    LOG.info(f"Received message for CID {CONFIG["CID"]}: {message}")
+                LOG.debug(f"Received message for CID {CONFIG['CID']}: {message}")
 
                 # Validate event type
                 if message.get("name") not in {
@@ -1083,14 +1070,12 @@ async def remote_events() -> None:
 
                 # Skip events from this client (echo prevention)
                 if message.get("cid") == CONFIG["CID"]:
-                    if DEBUG:
-                        LOG.warning("Same CID, dropped.")
+                    LOG.debug("Same CID, dropped.")
                     continue
 
                 # Skip events from different buckets
                 if message.get("bucket") != bucket:
-                    if DEBUG:
-                        LOG.warning("Different bucket, dropped.")
+                    LOG.debug("Different bucket, dropped.")
                     continue
 
                 # Extract event data
@@ -1230,8 +1215,7 @@ async def resync() -> None:
             await sync()
     except Exception as e:
         # Task was cancelled or error occurred
-        if DEBUG:
-            LOG.info(f"Resync task stopped: {e}")
+        LOG.debug(f"Resync task stopped: {e}")
 
 
 async def remote_connect() -> None:
@@ -1315,8 +1299,7 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             message: Event to send.
         """
-        if DEBUG:
-            LOG.info(f"Send message: {message}")
+        LOG.debug(f"Send message: {message}")
 
         message_dict = message.to_dict()
 
@@ -1341,18 +1324,17 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event: File system event from watchdog.
         """
-        if DEBUG:
-            hidden_prefix = "dir" if event.is_directory else "file"
-            src_path = ensure_str_path(event.src_path)
-            dest_path = ensure_str_path(getattr(event, 'dest_path', None))
-            paths = {"src": src_path, "dest": dest_path}
+        hidden_prefix = "dir" if event.is_directory else "file"
+        src_path = ensure_str_path(event.src_path)
+        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+        paths = {"src": src_path, "dest": dest_path}
 
-            for kind, path in paths.items():
-                if path and (
-                    (event.is_directory and is_hidden_dir(path))
-                    or (not event.is_directory and is_hidden_file(path))
-                ):
-                    LOG.info(f"Skip hidden {kind} {hidden_prefix}: {path}")
+        for kind, path in paths.items():
+            if path and (
+                (event.is_directory and is_hidden_dir(path))
+                or (not event.is_directory and is_hidden_file(path))
+            ):
+                LOG.debug(f"Skip hidden {kind} {hidden_prefix}: {path}")
 
     def on_created(self, event) -> None:
         """
@@ -1465,11 +1447,10 @@ class FileEventHandler(FileSystemEventHandler):
         src_path = ensure_str_path(event.src_path)
         dest_path = ensure_str_path(getattr(event, 'dest_path', None))
 
-        if DEBUG:
-            if dest_path:
-                LOG.info(f'[MOVE      ] "{src_path}" -> "{dest_path}"')
-            else:
-                LOG.info(f'[MOVE      ] "{src_path}"')
+        if dest_path:
+            LOG.debug(f'[MOVE      ] "{src_path}" -> "{dest_path}"')
+        else:
+            LOG.debug(f'[MOVE      ] "{src_path}"')
 
         message = None
 
