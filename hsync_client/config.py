@@ -48,11 +48,13 @@ class ApiEndpoints(TypedDict):
     events: str   # WebSocket URL for real-time events
 
 
-class RequestHeaders(TypedDict):
-    """HTTP request headers."""
-
-    accept: str
-    Authorization: str
+# RequestHeaders uses functional syntax because keys contain hyphens
+RequestHeaders = TypedDict('RequestHeaders', {
+    'accept': str,
+    'Authorization': str,
+    'X-Client-Name': str,
+    'X-Client-Version': str,
+})
 
 
 class HsyncConfig(TypedDict):

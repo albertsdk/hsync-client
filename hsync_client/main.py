@@ -36,7 +36,7 @@ from os.path import basename, exists
 from re import sub
 
 from hsync_client.cli import create_argument_parser
-from hsync_client.config import HSYNC_API_KEY, HSYNC_SERVER_URL, set_config, set_debug
+from hsync_client.config import HSYNC_API_KEY, HSYNC_SERVER_URL, HsyncConfig, set_config, set_debug
 from hsync_client.constants import ACTION_LABEL, HSYNC_VERSION
 from hsync_client.logger import setup_logging, set_client_id
 from hsync_client.sync import sync
@@ -105,7 +105,7 @@ def main() -> None:
     set_client_id(cid)
 
     # Populate global configuration dictionary
-    config = {
+    config: HsyncConfig = {
         # API endpoints (RESTful paths)
         "API": {
             "buckets": f"{server_url}/api/v1/buckets",

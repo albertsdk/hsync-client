@@ -253,21 +253,3 @@ def setup_logging(
     return logger
 
 
-def log_with_data(
-    logger: logging.Logger,
-    level: int,
-    message: str,
-    data: Optional[object] = None,
-) -> None:
-    """
-    Log a message with optional JSON data.
-
-    Args:
-        logger: Logger instance to use.
-        level: Logging level (e.g., logging.INFO).
-        message: Log message.
-        data: Optional data to format as JSON.
-    """
-    extra = {'json_data': data} if data else {'json_data': None}
-    logger.log(level, message, extra=extra)
-

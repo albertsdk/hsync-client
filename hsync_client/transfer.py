@@ -24,6 +24,7 @@ synchronizing files with the remote server.
 import logging
 
 from os import makedirs, remove, utime
+from typing import cast
 from os.path import basename, dirname, exists, getmtime, getsize, join
 from requests import get, post, RequestException
 from shutil import move
@@ -76,7 +77,7 @@ def download_file(file: File) -> None:
     try:
         response = get(
             uri,
-            headers=CONFIG["REQUEST_HEADERS"],
+            headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
             params={"filename": file.filepath},
             stream=True,
             verify=get_ssl_verify(),
@@ -266,7 +267,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             files = {"file": (basename(file.filepath), upload)}
             response = post(
                 uri,
-                headers=CONFIG["REQUEST_HEADERS"],
+                headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
                 data=data,
                 files=files,
                 verify=get_ssl_verify(),

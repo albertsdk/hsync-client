@@ -29,7 +29,7 @@ from os.path import exists, join
 from requests import get, RequestException
 from sys import exc_info
 from traceback import print_tb
-from typing import Optional
+from typing import Mapping, Optional, cast
 
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import ACTION_LABEL
@@ -42,6 +42,56 @@ from hsync_client.utils import bytes_to_human_readable, get_ssl_verify, set_perm
 
 # Logger instance for this module
 LOG = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Main Sync Function
+# =============================================================================
+
+
+async def sync() -> None:
+    """
+    Perform a full synchronization between local and remote files.
+
+    Compares local and remote file lists, determines required actions,
+    and executes them (download, upload, or skip).
+    """
+    # Import here to avoid circular import
+    from hsync_client.transfer import download_file, upload_file, nothing_to_do
+
+    try:
+        # Get file lists from both sides
+        local_files = get_files_local()
+        remote_files = get_files_remote()
+
+        # Determine what actions need to be taken
+        sync_actions = get_sync_actions(remote_files, local_files)
+
+        LOG.info(f"Sync actions: {len(sync_actions)} files to process")
+
+        # Execute each sync action
+        for action in sync_actions:
+            if action.name == SyncActionName.download:
+                download_file(action.file)
+            elif action.name == SyncActionName.upload:
+                upload_file(action.file)
+            elif action.name == SyncActionName.nothing:
+                nothing_to_do(action.file)
+
+        LOG.info("Sync completed successfully")
+
+    except (AuthenticationError, NetworkError, ServerError) as e:
+        LOG.error(f"Sync failed: {e}")
+        if is_debug():
+            exc_type, exc_value, exc_tb = exc_info()
+            if exc_tb:
+                print_tb(exc_tb)
+    except Exception as e:
+        LOG.error(f"Unexpected error during sync: {e}")
+        if is_debug():
+            exc_type, exc_value, exc_tb = exc_info()
+            if exc_tb:
+                print_tb(exc_tb)
 
 
 # =============================================================================
@@ -100,12 +150,12 @@ def get_files_remote() -> list[dict]:
         # Build query parameters
         params = {"sync_order": CONFIG["SYNC_ORDER"]}
         # Add path filter if specified
-        if CONFIG.get("FILTER_PATH"):
-            params["path"] = CONFIG["FILTER_PATH"]
+        if (filter_path := CONFIG.get("FILTER_PATH")) is not None:
+            params["path"] = filter_path
 
         response = get(
             uri,
-            headers=CONFIG["REQUEST_HEADERS"],
+            headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
             params=params,
             verify=get_ssl_verify(),
         )
@@ -285,94 +335,4 @@ def update_file(data: dict) -> None:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
         download_file(file)
-
-
-# =============================================================================
-# Main Sync Function
-# =============================================================================
-
-
-async def sync() -> None:
-    """
-    Perform a single synchronization cycle.
-
-    Fetches file lists from both local and remote, determines
-    required sync actions, and executes them. In dry-run mode,
-    only logs what would be done without making changes.
-    """
-    # Import here to avoid circular import
-    from hsync_client.transfer import download_file, nothing_to_do, upload_file
-
-    if not CONFIG["DRYRUN"]:
-        LOG.info("Sync starting…")
-
-    sync_actions: list[SyncAction] = []
-
-    # Action handlers - use direct function references where possible
-    actions: dict[SyncActionName, object] = {
-        SyncActionName.download: download_file,
-        SyncActionName.upload: partial(upload_file, check_size=False),
-        SyncActionName.nothing: nothing_to_do,
-    }
-
-    try:
-        # Get file lists from both sides
-        remote_files = get_files_remote()
-        local_files = get_files_local()
-
-        # Determine required actions
-        sync_actions = get_sync_actions(remote_files, local_files)
-
-        LOG.debug(f"Local files: {local_files}")
-        LOG.debug(f"Remote files: {remote_files}")
-        LOG.debug(f"Sync actions: {sync_actions}")
-
-    except Exception as e:
-        if is_debug():
-            exc_type, exc_value, exc_traceback = exc_info()
-            LOG.error(f"Exception type: {exc_type}")
-            LOG.error(f"Exception message: {exc_value}")
-            LOG.error(f"Traceback details: {print_tb(exc_traceback)}")
-        else:
-            LOG.error(f"Exception: {e}")
-
-    # Track number of actions performed
-    actions_count = 0
-
-    if CONFIG["DRYRUN"]:
-        # Dry-run mode: just log what would be done
-        for sync_action in sync_actions:
-            LOG.debug(f"Sync action: {sync_action.to_dict()}")
-            # Map action to descriptive label
-            if sync_action.name == SyncActionName.download:
-                action_label = ACTION_LABEL["download"]
-            elif sync_action.name == SyncActionName.upload:
-                action_label = ACTION_LABEL["upload"]
-            else:
-                action_label = ACTION_LABEL["nothing"]
-
-            # Format relative filepath for display
-            filepath = (
-                sync_action.file.filepath.removeprefix(CONFIG["LOCAL_BUCKET"]).lstrip("/")
-                if sync_action.file.filepath
-                else ""
-            )
-            LOG.info(
-                f'{action_label} "{filepath}" '
-                f"{bytes_to_human_readable(sync_action.file.size)} "
-                f"({sync_action.timedelta})"
-            )
-    else:
-        # Execute sync actions
-        for sync_action in sync_actions:
-            if sync_action.name and sync_action.name in {SyncActionName.download, SyncActionName.upload}:
-                action_func = actions.get(sync_action.name)
-                if callable(action_func):
-                    action_func(sync_action.file)
-                actions_count += 1
-
-    if not CONFIG["DRYRUN"]:
-        if actions_count == 0:
-            LOG.info("Nothing to sync")
-        LOG.info("Sync completed.")
 

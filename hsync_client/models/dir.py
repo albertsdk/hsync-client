@@ -16,8 +16,9 @@ def is_hidden_dir(directory: str) -> bool:
     """
     Check if a directory is hidden.
 
-    A directory is considered hidden if its parent directory name
-    starts with a dot (.).
+    A directory is considered hidden if:
+    - Its name starts with a dot (.)
+    - Any parent directory in its path starts with a dot
 
     Args:
         directory: Path to the directory.
@@ -25,7 +26,17 @@ def is_hidden_dir(directory: str) -> bool:
     Returns:
         True if the directory is hidden, False otherwise.
     """
-    return basename(dirname(directory)).startswith(".")
+    # Check if the directory name itself starts with a dot
+    dir_name = basename(directory.rstrip("/"))
+    if dir_name.startswith("."):
+        return True
+    # Check if any parent directory is hidden
+    parent = dirname(directory)
+    if parent and parent != directory:
+        parent_name = basename(parent)
+        if parent_name.startswith("."):
+            return True
+    return False
 
 
 class Dir:

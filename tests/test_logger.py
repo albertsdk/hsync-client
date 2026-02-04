@@ -17,7 +17,6 @@ from hsync_client.logger import (
     JsonFormatter,
     ClientIdFilter,
     setup_logging,
-    log_with_data,
     get_client_id,
     set_client_id,
 )
@@ -359,45 +358,6 @@ class TestSetupLogging:
         assert isinstance(handler.formatter, ColoredFormatter)
         # Colors should be disabled
         assert handler.formatter.use_colors is False
-
-
-class TestLogWithData:
-    """Tests for log_with_data function."""
-
-    def test_log_with_data(self):
-        """Test logging with data."""
-        logger = MagicMock(spec=logging.Logger)
-        data = {"key": "value"}
-
-        log_with_data(logger, logging.INFO, "Test message", data)
-
-        logger.log.assert_called_once()
-        call_args = logger.log.call_args
-        assert call_args[0][0] == logging.INFO
-        assert call_args[0][1] == "Test message"
-        assert call_args[1]["extra"]["json_data"] == data
-
-    def test_log_without_data(self):
-        """Test logging without data."""
-        logger = MagicMock(spec=logging.Logger)
-
-        log_with_data(logger, logging.WARNING, "Warning message")
-
-        logger.log.assert_called_once()
-        call_args = logger.log.call_args
-        assert call_args[0][0] == logging.WARNING
-        assert call_args[0][1] == "Warning message"
-        assert call_args[1]["extra"]["json_data"] is None
-
-    def test_log_with_none_data(self):
-        """Test logging with explicit None data."""
-        logger = MagicMock(spec=logging.Logger)
-
-        log_with_data(logger, logging.ERROR, "Error message", None)
-
-        logger.log.assert_called_once()
-        call_args = logger.log.call_args
-        assert call_args[1]["extra"]["json_data"] is None
 
 
 class TestClientIdContext:
