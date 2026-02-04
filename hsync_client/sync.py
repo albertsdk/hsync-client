@@ -221,6 +221,7 @@ def get_files_remote() -> list[dict]:
             headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
             params=params,
             verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
         )
 
         if response.status_code == 401:

@@ -36,6 +36,8 @@ from asyncio import run
 from os.path import basename, exists
 from re import sub
 
+from requests import get as http_get, RequestException
+
 from hsync_client.cli import create_argument_parser
 from hsync_client.config import (
     get_api_key,
@@ -187,6 +189,8 @@ def main() -> None:
         "FILTER_PATH": args.filter_path,
         # File stability delay in seconds (CLI > env > default)
         "STABILITY_DELAY": _get_stability_delay(args.stability_delay),
+        # HTTP request timeout in seconds
+        "HTTP_TIMEOUT": args.http_timeout,
     }
 
     # Set global configuration and debug flag
@@ -214,6 +218,26 @@ def main() -> None:
         }
         for label, description in log_labels.items():
             LOG.info(f"  {label} {description}")
+
+    # =========================================================================
+    # Server Connectivity Check
+    # =========================================================================
+    LOG.debug(f"Checking server connectivity: {server_url}")
+    try:
+        # Use a short timeout for the connectivity check
+        check_timeout = min(config["HTTP_TIMEOUT"], 10)
+        response = http_get(
+            f"{server_url}/api/v1/health",
+            timeout=check_timeout,
+            verify=not config["NO_VERIFY_SSL"],
+        )
+        if response.status_code >= 500:
+            LOG.error(f"Server error: {server_url} returned status {response.status_code}")
+            return
+        LOG.debug(f"Server is reachable (status: {response.status_code})")
+    except RequestException as e:
+        LOG.error(f"Cannot connect to server: {server_url} ({e})")
+        return
 
     # =========================================================================
     # Execute Sync
