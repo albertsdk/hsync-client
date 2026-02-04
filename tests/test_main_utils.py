@@ -12,6 +12,7 @@ import pytest
 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
+    is_valid_filename,
     is_valid_logfile,
     is_same_paths,
     get_cid,
@@ -57,6 +58,52 @@ class TestIsValidLogfile:
         assert is_valid_logfile("COM1") is False
         assert is_valid_logfile("LPT1") is False
 
+    def test_reserved_names_with_extension(self):
+        """Test Windows reserved names with extension are rejected."""
+        # Reserved names are also reserved when followed by an extension
+        assert is_valid_logfile("NUL.txt") is False
+        assert is_valid_logfile("CON.log") is False
+        assert is_valid_logfile("COM1.log") is False
+        assert is_valid_logfile("LPT1.txt") is False
+        assert is_valid_logfile("AUX.dat") is False
+
+    def test_reserved_names_all_ports(self):
+        """Test all COM and LPT port numbers are rejected."""
+        for i in range(1, 10):
+            assert is_valid_logfile(f"COM{i}") is False
+            assert is_valid_logfile(f"LPT{i}") is False
+
+    def test_reserved_names_superscript(self):
+        """Test superscript digit variants of COM and LPT are rejected."""
+        # Windows recognizes ¹²³ as valid digits in device names
+        assert is_valid_logfile("COM\u00b9") is False  # COM¹
+        assert is_valid_logfile("COM\u00b2") is False  # COM²
+        assert is_valid_logfile("COM\u00b3") is False  # COM³
+        assert is_valid_logfile("LPT\u00b9") is False  # LPT¹
+        assert is_valid_logfile("LPT\u00b2") is False  # LPT²
+        assert is_valid_logfile("LPT\u00b3") is False  # LPT³
+
+    def test_control_chars_rejected(self):
+        """Test control characters (ASCII 1-31) are rejected."""
+        assert is_valid_logfile("file\x01name.log") is False
+        assert is_valid_logfile("file\x1fname.log") is False
+        assert is_valid_logfile("file\tname.log") is False  # Tab
+        assert is_valid_logfile("file\nname.log") is False  # Newline
+
+    def test_nul_char_rejected(self):
+        """Test NUL character is rejected."""
+        assert is_valid_logfile("file\x00name.log") is False
+
+    def test_trailing_space_rejected(self):
+        """Test trailing space is rejected (Windows ignores them)."""
+        assert is_valid_logfile("file.log ") is False
+        assert is_valid_logfile("file ") is False
+
+    def test_trailing_period_rejected(self):
+        """Test trailing period is rejected (Windows ignores them)."""
+        assert is_valid_logfile("file.") is False
+        assert is_valid_logfile("filename.") is False
+
     def test_absolute_path_valid(self):
         """Test absolute path is valid."""
         assert is_valid_logfile("/var/log/hsync.log") is True
@@ -66,6 +113,59 @@ class TestIsValidLogfile:
         """Test relative path with directory is invalid."""
         assert is_valid_logfile("logs/hsync.log") is False
         assert is_valid_logfile("subdir/logs/hsync.log") is False
+
+
+class TestIsValidFilename:
+    """Tests for is_valid_filename function."""
+
+    def test_valid_filenames(self):
+        """Test valid filenames are accepted."""
+        assert is_valid_filename("file.txt") is True
+        assert is_valid_filename("document.pdf") is True
+        assert is_valid_filename("image-2024.png") is True
+        assert is_valid_filename("data_file.csv") is True
+
+    def test_empty_filename_rejected(self):
+        """Test empty filename is rejected."""
+        assert is_valid_filename("") is False
+
+    def test_forbidden_chars_rejected(self):
+        """Test filenames with forbidden characters are rejected."""
+        assert is_valid_filename("file<name>.txt") is False
+        assert is_valid_filename("file:name.txt") is False
+        assert is_valid_filename('file"name.txt') is False
+        assert is_valid_filename("file|name.txt") is False
+        assert is_valid_filename("file?name.txt") is False
+        assert is_valid_filename("file*name.txt") is False
+
+    def test_control_chars_rejected(self):
+        """Test filenames with control characters are rejected."""
+        assert is_valid_filename("file\x01name.txt") is False
+        assert is_valid_filename("file\x1fname.txt") is False
+
+    def test_nul_char_rejected(self):
+        """Test filenames with NUL character are rejected."""
+        assert is_valid_filename("file\x00name.txt") is False
+
+    def test_reserved_names_rejected(self):
+        """Test Windows reserved names are rejected."""
+        assert is_valid_filename("CON") is False
+        assert is_valid_filename("NUL") is False
+        assert is_valid_filename("COM1") is False
+        assert is_valid_filename("LPT1") is False
+
+    def test_reserved_names_with_extension_rejected(self):
+        """Test reserved names with extensions are rejected."""
+        assert is_valid_filename("NUL.txt") is False
+        assert is_valid_filename("COM1.log") is False
+
+    def test_trailing_space_rejected(self):
+        """Test filenames with trailing space are rejected."""
+        assert is_valid_filename("file.txt ") is False
+
+    def test_trailing_period_rejected(self):
+        """Test filenames with trailing period are rejected."""
+        assert is_valid_filename("file.") is False
 
 
 class TestIsSamePaths:

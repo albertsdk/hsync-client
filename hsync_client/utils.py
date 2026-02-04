@@ -38,11 +38,13 @@ from hsync_client.constants import (
     CHUNK_SIZE_LARGE,
     CHUNK_SIZE_MEDIUM,
     CHUNK_SIZE_SMALL,
+    CONTROL_CHARS,
     FILE_SIZE_MEDIUM,
     FILE_SIZE_SMALL,
     FORBIDDEN_FILENAME_CHARS,
     FORBIDDEN_PATH_CHARS,
     MD5_CHUNK_SIZE,
+    PROBLEMATIC_TRAILING_CHARS,
     RESERVED_FILENAMES,
 )
 
@@ -77,12 +79,77 @@ def get_ssl_verify() -> bool | str:
 # =============================================================================
 
 
+def _has_forbidden_chars(name: str, chars: frozenset[str]) -> bool:
+    """Check if name contains any forbidden characters."""
+    return any(char in name for char in chars)
+
+
+def _has_control_chars(name: str) -> bool:
+    """Check if name contains any control characters (ASCII 1-31)."""
+    return any(char in name for char in CONTROL_CHARS)
+
+
+def _is_reserved_name(name: str) -> bool:
+    """
+    Check if name is a Windows reserved filename.
+
+    Handles names with or without extensions (e.g., NUL.txt is also reserved).
+    """
+    # Get base name without extension for checking reserved names
+    base_name = name.split(".")[0].upper() if "." in name else name.upper()
+    return base_name in RESERVED_FILENAMES
+
+
+def _has_problematic_trailing(name: str) -> bool:
+    """Check if name ends with problematic characters (space or period)."""
+    return bool(name) and name[-1] in PROBLEMATIC_TRAILING_CHARS
+
+
+def is_valid_filename(filename: str) -> bool:
+    """
+    Validate a filename for cross-platform compatibility.
+
+    Checks for:
+    - Empty filename
+    - Forbidden characters (cross-platform)
+    - Control characters (ASCII 1-31)
+    - Reserved names on Windows (including with extensions, e.g., NUL.txt)
+    - Problematic trailing characters (space, period)
+
+    Args:
+        filename: The filename to validate (without path).
+
+    Returns:
+        True if the filename is valid, False otherwise.
+    """
+    if not filename:
+        return False
+
+    if _has_forbidden_chars(filename, FORBIDDEN_FILENAME_CHARS):
+        return False
+
+    if _has_control_chars(filename):
+        return False
+
+    if _is_reserved_name(filename):
+        return False
+
+    if _has_problematic_trailing(filename):
+        return False
+
+    return True
+
+
 def is_valid_logfile(path_string: str) -> bool:
     """
     Validate a log file path for correctness.
 
-    Checks for forbidden characters and reserved names on Windows.
-    If a directory is specified, the path must be absolute.
+    Checks for:
+    - Forbidden characters (cross-platform)
+    - Control characters (ASCII 1-31)
+    - Reserved names on Windows (including with extensions, e.g., NUL.txt)
+    - Problematic trailing characters (space, period)
+    - Absolute path requirement when directory is specified
 
     Args:
         path_string: Path to validate.
@@ -95,12 +162,22 @@ def is_valid_logfile(path_string: str) -> bool:
 
         # If there's no parent directory, assume it's just a filename
         if path.parent == Path("."):
-            # Basic check for forbidden characters in the filename
-            if any(char in path.name for char in FORBIDDEN_FILENAME_CHARS):
+            name = path.name
+
+            # Check for forbidden characters in the filename
+            if _has_forbidden_chars(name, FORBIDDEN_FILENAME_CHARS):
                 return False
 
-            # Verify the filename doesn't use reserved names (Windows check)
-            if path.name.upper() in RESERVED_FILENAMES:
+            # Check for control characters
+            if _has_control_chars(name):
+                return False
+
+            # Check for Windows reserved names (including with extensions)
+            if _is_reserved_name(name):
+                return False
+
+            # Check for problematic trailing characters
+            if _has_problematic_trailing(name):
                 return False
 
         else:
@@ -108,9 +185,11 @@ def is_valid_logfile(path_string: str) -> bool:
             if not path.is_absolute():
                 return False
 
-            # Check each part of the path for forbidden characters
+            # Check each part of the path for forbidden and control characters
             for part in path.parts:
-                if any(char in part for char in FORBIDDEN_PATH_CHARS):
+                if _has_forbidden_chars(part, FORBIDDEN_PATH_CHARS):
+                    return False
+                if _has_control_chars(part):
                     return False
 
         return True
