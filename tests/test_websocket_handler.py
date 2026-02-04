@@ -16,6 +16,7 @@
 
 """Tests for the WebSocket handler module."""
 
+import asyncio
 import pytest
 from asyncio import new_event_loop
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -580,3 +581,219 @@ class TestProcessWebsocketEvents:
             except Exception:
                 pass
             mock_delete.assert_called_once_with(message["src"])
+
+    @pytest.mark.asyncio
+    async def test_processes_modified_directory_event(self):
+        """Processes modified directory event correctly."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "modified",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "modifieddir", "permissions": "drwxr-xr-x"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_dir') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_called_once_with(message["src"])
+
+    @pytest.mark.asyncio
+    async def test_processes_modified_file_event(self):
+        """Processes modified file event correctly."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        message = {
+            "name": "modified",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {
+                "filepath": "modifiedfile.txt",
+                "md5sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "permissions": "-rw-r--r--",
+            },
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.update_file') as mock_update:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            mock_update.assert_called_once_with(message["src"])
+
+    @pytest.mark.asyncio
+    async def test_skips_symlink_event(self):
+        """Skips symlink events (not in valid event types)."""
+        from hsync_client.websocket_handler import _process_websocket_events
+        from json import dumps
+
+        # Note: symlink events are not in the valid event types list
+        # They are handled locally but not received via WebSocket
+        message = {
+            "name": "symlink",
+            "cid": "other_client",
+            "bucket": "testbucket",
+            "src": {"path": "link.txt", "target": "target.txt", "permissions": "lrwxrwxrwx"},
+        }
+
+        websocket = AsyncMock()
+        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+
+        config = {"CID": "my_client"}
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler._handle_symlink_event') as mock_symlink:
+            try:
+                await _process_websocket_events(websocket, "testbucket")
+            except Exception:
+                pass
+            # Symlink events are filtered out as invalid
+            mock_symlink.assert_not_called()
+
+
+class TestResync:
+    """Tests for resync function."""
+
+    @pytest.mark.asyncio
+    async def test_resync_calls_sync_periodically(self):
+        """resync calls sync after configured delay."""
+        from hsync_client.websocket_handler import resync
+
+        config = {"RESYNC": 0.01}  # Very short delay for testing
+
+        call_count = 0
+
+        async def mock_sync():
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise Exception("Stop after 2 calls")
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.sync', mock_sync):
+            try:
+                await resync()
+            except Exception:
+                pass
+            assert call_count >= 2
+
+
+class TestRemoteConnect:
+    """Tests for remote_connect function."""
+
+    @pytest.mark.asyncio
+    async def test_remote_connect_performs_initial_sync(self):
+        """remote_connect performs initial sync before entering event loop."""
+        from hsync_client.websocket_handler import remote_connect
+
+        config = {"RESYNC": None, "RECONNECT_DELAY": 0.01}
+
+        sync_called = False
+        iteration = 0
+
+        async def mock_sync():
+            nonlocal sync_called, iteration
+            sync_called = True
+            iteration += 1
+            if iteration > 1:
+                raise KeyboardInterrupt("Stop loop")
+
+        async def mock_remote_events():
+            raise Exception("Stop after first iteration")
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.sync', mock_sync), \
+             patch('hsync_client.websocket_handler.remote_events', mock_remote_events):
+            try:
+                await asyncio.wait_for(remote_connect(), timeout=1.0)
+            except (asyncio.TimeoutError, KeyboardInterrupt, Exception):
+                pass
+            assert sync_called
+
+    @pytest.mark.asyncio
+    async def test_remote_connect_starts_resync_task_when_configured(self):
+        """remote_connect starts resync task when RESYNC is configured."""
+        from hsync_client.websocket_handler import remote_connect
+        import hsync_client.websocket_handler as ws_module
+
+        config = {"RESYNC": 60, "RECONNECT_DELAY": 0.01}
+
+        iteration = 0
+        task_created = False
+
+        async def mock_sync():
+            nonlocal iteration
+            iteration += 1
+            if iteration > 1:
+                raise KeyboardInterrupt("Stop loop")
+
+        async def mock_remote_events():
+            nonlocal task_created
+            # Check if task was created before raising
+            task_created = ws_module._resync_task is not None
+            raise Exception("Stop")
+
+        async def mock_resync():
+            await asyncio.sleep(10)  # Long sleep to keep task alive
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.sync', mock_sync), \
+             patch('hsync_client.websocket_handler.remote_events', mock_remote_events), \
+             patch('hsync_client.websocket_handler.resync', mock_resync):
+            # Reset global task
+            ws_module._resync_task = None
+            try:
+                await asyncio.wait_for(remote_connect(), timeout=1.0)
+            except (asyncio.TimeoutError, KeyboardInterrupt, Exception):
+                pass
+            # Task should have been created
+            assert task_created
+
+    @pytest.mark.asyncio
+    async def test_remote_connect_handles_connection_closed(self):
+        """remote_connect handles ConnectionClosed and reconnects."""
+        from hsync_client.websocket_handler import remote_connect
+        from websockets.exceptions import ConnectionClosed
+
+        config = {"RESYNC": None, "RECONNECT_DELAY": 0.01}
+
+        call_count = 0
+
+        async def mock_sync():
+            pass
+
+        async def mock_remote_events():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionClosed(None, None)
+            raise KeyboardInterrupt("Stop after reconnect")
+
+        with patch('hsync_client.websocket_handler.CONFIG', config), \
+             patch('hsync_client.websocket_handler.sync', mock_sync), \
+             patch('hsync_client.websocket_handler.remote_events', mock_remote_events):
+            try:
+                await asyncio.wait_for(remote_connect(), timeout=2.0)
+            except (asyncio.TimeoutError, KeyboardInterrupt, Exception):
+                pass
+            assert call_count >= 2  # Should have reconnected
