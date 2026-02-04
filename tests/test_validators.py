@@ -1,0 +1,91 @@
+"""
+Tests for CLI validator functions in hsync_client.validators module.
+"""
+
+from argparse import ArgumentTypeError
+
+import pytest
+
+from hsync_client.validators import (
+    valid_reconnect_delay,
+    valid_resync,
+    valid_bucket,
+)
+
+
+class TestValidReconnectDelay:
+    """Tests for valid_reconnect_delay function."""
+
+    def test_valid_value(self):
+        """Test valid reconnect delay value."""
+        assert valid_reconnect_delay("30") == 30
+        assert valid_reconnect_delay("10") == 10
+        assert valid_reconnect_delay("59") == 59
+
+    def test_boundary_too_low(self):
+        """Test value at lower boundary is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be between 1 and 60"):
+            valid_reconnect_delay("1")
+
+    def test_boundary_too_high(self):
+        """Test value at upper boundary is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be between 1 and 60"):
+            valid_reconnect_delay("60")
+
+    def test_non_integer(self):
+        """Test non-integer value is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
+            valid_reconnect_delay("abc")
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
+            valid_reconnect_delay("3.5")
+
+
+class TestValidResync:
+    """Tests for valid_resync function."""
+
+    def test_valid_value(self):
+        """Test valid resync value."""
+        assert valid_resync("60") == 60
+        assert valid_resync("300") == 300
+        assert valid_resync("3599") == 3599
+
+    def test_boundary_too_low(self):
+        """Test value at lower boundary is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be between 20 and 3600"):
+            valid_resync("20")
+
+    def test_boundary_too_high(self):
+        """Test value at upper boundary is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be between 20 and 3600"):
+            valid_resync("3600")
+
+    def test_non_integer(self):
+        """Test non-integer value is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
+            valid_resync("abc")
+
+
+class TestValidBucket:
+    """Tests for valid_bucket function."""
+
+    def test_valid_alphanumeric(self):
+        """Test valid alphanumeric bucket names."""
+        assert valid_bucket("bucket123") == "bucket123"
+        assert valid_bucket("MYBUCKET") == "MYBUCKET"
+        assert valid_bucket("test") == "test"
+        assert valid_bucket("123") == "123"
+
+    def test_invalid_special_chars(self):
+        """Test bucket names with special characters are rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket-name")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket_name")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket.name")
+
+    def test_invalid_with_spaces(self):
+        """Test bucket names with spaces are rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("my bucket")
+
