@@ -68,7 +68,10 @@ FILE_STABILITY_INTERVAL = 2
 
 # Maximum number of concurrent file transfers (downloads/uploads)
 # Higher values increase throughput but also server load
-MAX_CONCURRENT_TRANSFERS = 5
+# Can be overridden via HSYNC_MAX_CONCURRENT_TRANSFERS environment variable
+MAX_CONCURRENT_TRANSFERS = int(
+    __import__("os").environ.get("HSYNC_MAX_CONCURRENT_TRANSFERS", "5")
+)
 
 
 # =============================================================================
