@@ -186,12 +186,15 @@ build_binary() {
     # --strip: Remove debug symbols to reduce binary size
     # --hidden-import: Include modules not detected by static analysis
     # --exclude-module: Exclude unnecessary modules to reduce size
-    "${PYINSTALLER}" \
+    #
+    # LC_ALL=C: Force English locale to avoid ldconfig localization warnings
+    # PYTHONWARNINGS=ignore: Suppress Python warnings during build
+    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" \
         --clean \
         --onefile \
         --strip \
         --name "${APP_NAME}" \
-        --log-level WARN \
+        --log-level ERROR \
         --hidden-import "websockets.legacy" \
         --hidden-import "websockets.legacy.client" \
         --hidden-import "websockets.client" \
@@ -209,6 +212,7 @@ build_binary() {
         --exclude-module "setuptools" \
         --exclude-module "wheel" \
         --exclude-module "pkg_resources" \
+        --exclude-module "rapidfuzz" \
         "${ENTRY_POINT}"
 
     # Verify output
