@@ -22,21 +22,86 @@ configuration access for the application.
 """
 
 from os import environ
+from pathlib import Path
 from typing import Optional, TypedDict
 
 
 # =============================================================================
-# Environment Variables
+# Environment File Loading
 # =============================================================================
 
-# Server URL (default: None, must be provided via CLI or env)
+
+def load_env_file(file_path: str) -> None:
+    """
+    Load environment variables from a file.
+
+    The file format is simple key=value pairs, one per line.
+    Lines starting with # are comments and are ignored.
+    Empty lines are ignored.
+
+    Args:
+        file_path: Path to the environment file.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If a line has invalid format.
+    """
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Environment file not found: {file_path}")
+
+    with path.open("r", encoding="utf-8") as f:
+        for line_num, line in enumerate(f, start=1):
+            line = line.strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith("#"):
+                continue
+
+            # Parse key=value
+            if "=" not in line:
+                raise ValueError(
+                    f"Invalid format at line {line_num}: expected KEY=value"
+                )
+
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+
+            # Remove surrounding quotes if present
+            if (value.startswith('"') and value.endswith('"')) or \
+               (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+
+            # Only set if not already in environment (CLI/shell takes precedence)
+            if key not in environ:
+                environ[key] = value
+
+
+# =============================================================================
+# Environment Variables (read via getters for late binding)
+# =============================================================================
+
+
+def get_server_url() -> Optional[str]:
+    """Get server URL from environment."""
+    return environ.get("HSYNC_SERVER")
+
+
+def get_api_key() -> str:
+    """Get API key from environment."""
+    return environ.get("HSYNC_API_KEY", "")
+
+
+def get_stability_delay() -> Optional[str]:
+    """Get stability delay from environment."""
+    return environ.get("HSYNC_STABILITY_DELAY")
+
+
+# Legacy exports for backward compatibility (read at import time)
+# These are used where early binding is acceptable
 HSYNC_SERVER_URL: Optional[str] = environ.get("HSYNC_SERVER")
-
-# API key for authentication
 HSYNC_API_KEY: str = environ.get("HSYNC_API_KEY", "")
-
-# File stability delay in seconds (how long to wait between size/mtime checks)
-# Overridable via CLI --stability-delay or this environment variable
 HSYNC_STABILITY_DELAY: Optional[str] = environ.get("HSYNC_STABILITY_DELAY")
 
 

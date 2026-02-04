@@ -30,6 +30,7 @@ Environment Variables:
 """
 
 import logging
+import sys
 
 from asyncio import run
 from os.path import basename, exists
@@ -37,9 +38,10 @@ from re import sub
 
 from hsync_client.cli import create_argument_parser
 from hsync_client.config import (
-    HSYNC_API_KEY,
-    HSYNC_SERVER_URL,
-    HSYNC_STABILITY_DELAY,
+    get_api_key,
+    get_server_url,
+    get_stability_delay,
+    load_env_file,
     HsyncConfig,
     set_config,
     set_debug,
@@ -69,9 +71,10 @@ def _get_stability_delay(cli_value: int | None) -> int:
     """
     if cli_value is not None:
         return cli_value
-    if HSYNC_STABILITY_DELAY is not None:
+    env_value = get_stability_delay()
+    if env_value is not None:
         try:
-            return int(HSYNC_STABILITY_DELAY)
+            return int(env_value)
         except ValueError:
             pass
     return FILE_STABILITY_INTERVAL_DEFAULT
@@ -88,6 +91,20 @@ def main() -> None:
     # Parse command-line arguments
     parser = create_argument_parser()
     args = parser.parse_args()
+
+    # =========================================================================
+    # Load Environment File (if specified)
+    # =========================================================================
+
+    if args.env_file:
+        try:
+            load_env_file(args.env_file)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except ValueError as e:
+            print(f"Error in env file: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # =========================================================================
     # Argument Validation
@@ -116,7 +133,7 @@ def main() -> None:
     # =========================================================================
 
     # Determine server URL (CLI argument takes precedence over env var)
-    server_url = args.server_url or HSYNC_SERVER_URL
+    server_url = args.server_url or get_server_url()
 
     # Validate server URL is provided
     if not server_url:
@@ -159,7 +176,7 @@ def main() -> None:
         # HTTP request headers
         "REQUEST_HEADERS": {
             "accept": "application/json",
-            "Authorization": f"Bearer {HSYNC_API_KEY}",
+            "Authorization": f"Bearer {get_api_key()}",
             "X-Client-Name": basename(__file__),
             "X-Client-Version": HSYNC_VERSION,
         },
