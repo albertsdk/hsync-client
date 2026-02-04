@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from hsync_client.main import (
+from hsync_client.config import CONFIG
+from hsync_client.utils import (
     is_valid_logfile,
     is_same_paths,
     get_cid,
@@ -19,11 +20,12 @@ from hsync_client.main import (
     get_permissions,
     get_chunk_size,
     set_permissions,
+    get_ssl_verify,
+)
+from hsync_client.validators import (
     valid_reconnect_delay,
     valid_resync,
     valid_bucket,
-    get_ssl_verify,
-    CONFIG,
 )
 
 
@@ -285,9 +287,9 @@ class TestValidReconnectDelay:
 
     def test_non_integer(self):
         """Test non-integer value is rejected."""
-        with pytest.raises(ArgumentTypeError, match="must be integer"):
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
             valid_reconnect_delay("abc")
-        with pytest.raises(ArgumentTypeError, match="must be integer"):
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
             valid_reconnect_delay("3.5")
 
 
@@ -312,7 +314,7 @@ class TestValidResync:
 
     def test_non_integer(self):
         """Test non-integer value is rejected."""
-        with pytest.raises(ArgumentTypeError, match="must be integer"):
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
             valid_resync("abc")
 
 
