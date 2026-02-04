@@ -115,7 +115,9 @@ class TestGetSyncActions:
         local_file = tmp_path / "local_file.txt"
         local_file.write_text("local content")
 
-        local_files = [File.get(str(local_file)).to_dict()]
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "SYNC_ORDER": "mtime"}):
             result = get_sync_actions([], local_files)
@@ -128,7 +130,9 @@ class TestGetSyncActions:
         local_file.write_text("content")
         mtime = int(os.path.getmtime(str(local_file)))
 
-        local_file_dict = File.get(str(local_file)).to_dict()
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
         # Use relative filepath - the function will join with LOCAL_BUCKET
         remote_files = [{
             "filepath": "same_file.txt",
@@ -151,7 +155,9 @@ class TestGetSyncActions:
         local_file.write_text("content")
         local_mtime = int(os.path.getmtime(str(local_file)))
 
-        local_file_dict = File.get(str(local_file)).to_dict()
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
         remote_files = [{
             "filepath": "file.txt",
             "name": "file.txt",
@@ -173,7 +179,9 @@ class TestGetSyncActions:
         local_file.write_text("content")
         local_mtime = int(os.path.getmtime(str(local_file)))
 
-        local_file_dict = File.get(str(local_file)).to_dict()
+        local_file_obj = File.get(str(local_file))
+        assert local_file_obj is not None
+        local_file_dict = local_file_obj.to_dict()
         remote_files = [{
             "filepath": "file.txt",
             "name": "file.txt",
@@ -285,6 +293,7 @@ class TestUpdateFile:
         local_file = tmp_path / "file.txt"
         local_file.write_text("content")
         file_obj = File.get(str(local_file))
+        assert file_obj is not None
 
         data = {
             "filepath": "file.txt",
@@ -308,6 +317,7 @@ class TestUpdateFile:
         local_file = tmp_path / "file.txt"
         local_file.write_text("content")
         file_obj = File.get(str(local_file))
+        assert file_obj is not None
 
         data = {
             "filepath": "file.txt",

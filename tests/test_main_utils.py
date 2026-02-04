@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hsync_client.config import CONFIG
+from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
     is_valid_logfile,
     is_same_paths,
@@ -355,8 +355,7 @@ class TestGetSslVerify:
             result = get_ssl_verify()
             assert result is False
         finally:
-            CONFIG.clear()
-            CONFIG.update(original)
+            set_config(original)
 
     def test_returns_ca_cert_path(self):
         """Test returns CA cert path when provided."""
@@ -367,8 +366,7 @@ class TestGetSslVerify:
             result = get_ssl_verify()
             assert result == "/path/to/ca.crt"
         finally:
-            CONFIG.clear()
-            CONFIG.update(original)
+            set_config(original)
 
     def test_returns_true_by_default(self):
         """Test returns True for default SSL verification."""
@@ -379,8 +377,7 @@ class TestGetSslVerify:
             result = get_ssl_verify()
             assert result is True
         finally:
-            CONFIG.clear()
-            CONFIG.update(original)
+            set_config(original)
 
     def test_insecure_takes_priority(self):
         """Test NO_VERIFY_SSL takes priority over CA_CERT."""
@@ -391,5 +388,4 @@ class TestGetSslVerify:
             result = get_ssl_verify()
             assert result is False
         finally:
-            CONFIG.clear()
-            CONFIG.update(original)
+            set_config(original)
