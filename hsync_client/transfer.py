@@ -32,7 +32,7 @@ from tempfile import NamedTemporaryFile
 from time import sleep as time_sleep
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import FILE_STABILITY_INTERVAL
+from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.models.file import File
 from hsync_client.utils import (
     bytes_to_human_readable,
@@ -164,36 +164,53 @@ def download_file(file: File) -> None:
 # =============================================================================
 
 
-def is_file_stable(file: File, interval: int = FILE_STABILITY_INTERVAL) -> bool:
+def is_file_stable(file: File, interval: int | None = None) -> bool:
     """
     Check if a file has stopped being written to.
 
-    Compares file size at two points in time to detect if the file
-    is still being modified. Used to wait for file writes to complete
-    before uploading.
+    Compares file size and modification time at two points in time to detect
+    if the file is still being modified. Used to wait for file writes to
+    complete before uploading.
 
     Args:
         file: File object to check.
-        interval: Seconds to wait between size checks.
+        interval: Seconds to wait between checks. If None, uses the configured
+                  STABILITY_DELAY from CONFIG, or falls back to the default.
 
     Returns:
-        True if file size is stable, False if still changing.
+        True if file size and mtime are stable, False if still changing.
     """
-    # Validate filepath before checking size
+    # Determine interval: explicit parameter > CONFIG > default
+    if interval is None:
+        interval = CONFIG.get("STABILITY_DELAY", FILE_STABILITY_INTERVAL_DEFAULT)
+    # Validate filepath before checking
     if not file.filepath:
         return True
 
-    last_size = getsize(file.filepath)
+    try:
+        last_size = getsize(file.filepath)
+        last_mtime = getmtime(file.filepath)
+    except OSError:
+        # File may have been deleted
+        return True
+
     time_sleep(interval)
-    current_size = getsize(file.filepath)
+
+    try:
+        current_size = getsize(file.filepath)
+        current_mtime = getmtime(file.filepath)
+    except OSError:
+        # File may have been deleted
+        return True
 
     LOG.debug(
         f'Writing file: "{file.filepath}" '
-        f"({bytes_to_human_readable(last_size)} >"
-        f" {bytes_to_human_readable(current_size)})"
+        f"(size: {bytes_to_human_readable(last_size)} -> "
+        f"{bytes_to_human_readable(current_size)}, "
+        f"mtime: {last_mtime} -> {current_mtime})"
     )
 
-    return last_size == current_size
+    return last_size == current_size and last_mtime == current_mtime
 
 
 # =============================================================================

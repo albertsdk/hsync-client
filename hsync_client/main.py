@@ -36,8 +36,15 @@ from os.path import basename, exists
 from re import sub
 
 from hsync_client.cli import create_argument_parser
-from hsync_client.config import HSYNC_API_KEY, HSYNC_SERVER_URL, HsyncConfig, set_config, set_debug
-from hsync_client.constants import ACTION_LABEL, HSYNC_VERSION
+from hsync_client.config import (
+    HSYNC_API_KEY,
+    HSYNC_SERVER_URL,
+    HSYNC_STABILITY_DELAY,
+    HsyncConfig,
+    set_config,
+    set_debug,
+)
+from hsync_client.constants import ACTION_LABEL, FILE_STABILITY_INTERVAL_DEFAULT, HSYNC_VERSION
 from hsync_client.logger import setup_logging, set_client_id
 from hsync_client.sync import sync
 from hsync_client.utils import get_cid, is_valid_logfile
@@ -46,6 +53,28 @@ from hsync_client.websocket_handler import remote_connect
 
 # Logger instance - initialized in main()
 LOG: logging.Logger = logging.getLogger("hsync")
+
+
+def _get_stability_delay(cli_value: int | None) -> int:
+    """
+    Determine the stability delay value.
+
+    Priority: CLI argument > environment variable > default constant.
+
+    Args:
+        cli_value: Value from command line, or None if not specified.
+
+    Returns:
+        The stability delay in seconds.
+    """
+    if cli_value is not None:
+        return cli_value
+    if HSYNC_STABILITY_DELAY is not None:
+        try:
+            return int(HSYNC_STABILITY_DELAY)
+        except ValueError:
+            pass
+    return FILE_STABILITY_INTERVAL_DEFAULT
 
 
 def main() -> None:
@@ -142,6 +171,8 @@ def main() -> None:
         "SYNC_ORDER": args.sync_order,
         # Filter path for subdirectory sync
         "FILTER_PATH": args.filter_path,
+        # File stability delay in seconds (CLI > env > default)
+        "STABILITY_DELAY": _get_stability_delay(args.stability_delay),
     }
 
     # Set global configuration and debug flag

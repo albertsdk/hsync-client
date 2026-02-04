@@ -48,6 +48,7 @@ mindmap
       -w, --watch
       -i, --interval
       --order-by
+      --stability-delay
     Network
       --retry-delay
       --insecure
@@ -208,6 +209,7 @@ flowchart TD
 | `HSYNC_SERVER` | Default server URL | (use `-s`) |
 | `HSYNC_API_KEY` | API key for authentication | (required) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
+| `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
 
 ### Environment Files
 
@@ -245,3 +247,7 @@ hsync -s https://dev-server:8765 -b mybucket --insecure
 hsync -s http://localhost:8765 -b mybucket -w --retry-delay 10
 ```
 
+### Sync with longer stability delay (for slow storage or large files)
+```bash
+hsync -s http://localhost:8765 -b mybucket -w --stability-delay 10
+```

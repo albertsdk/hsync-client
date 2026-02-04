@@ -156,26 +156,32 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     subgraph "Local Events (Watchdog)"
-        L1[File Created]
-        L2[File Modified]
-        L3[File Deleted]
-        L4[File Moved]
+        L1[on_created]
+        L2[on_closed / on_modified]
+        L3[on_deleted]
+        L4[on_moved]
     end
-    
+
+    subgraph "Processing"
+        STABLE[File Stability Check]
+        UPLOAD[Upload to Server]
+    end
+
     subgraph "Event Queue"
         Q[Queue with Retry]
     end
-    
+
     subgraph "WebSocket"
         WS[Send to Server]
     end
-    
+
     L1 --> Q
-    L2 --> Q
+    L2 --> STABLE
+    STABLE --> UPLOAD
     L3 --> Q
     L4 --> Q
     Q --> WS
-    
+
     subgraph "Remote Events"
         R1[added]
         R2[modified]
@@ -183,14 +189,14 @@ flowchart TD
         R4[renamed]
         R5[symlink]
     end
-    
+
     subgraph "Local Actions"
         A1[Download File]
         A2[Delete File]
         A3[Rename File]
         A4[Create Symlink]
     end
-    
+
     R1 --> A1
     R2 --> A1
     R3 --> A2
@@ -199,6 +205,62 @@ flowchart TD
 ```
 
 ![Event Processing](images/architecture-5.png)
+
+## File Change Detection
+
+The client uses the **watchdog** library to monitor the local file system. The detection mechanism varies by platform:
+
+```mermaid
+flowchart TD
+    subgraph "File Modified"
+        FM[File Write Detected]
+    end
+
+    FM --> P{Platform?}
+
+    subgraph "Linux (inotify)"
+        P -->|Linux| OC[on_closed event]
+        OC --> STABLE[Check file stability]
+    end
+
+    subgraph "macOS / Windows"
+        P -->|macOS/Windows| OM[on_modified event]
+        OM --> DEBOUNCE[Debounce 1 second]
+        DEBOUNCE --> STABLE
+    end
+
+    STABLE --> CHECK{Size & mtime stable?}
+    CHECK -->|No| WAIT[Wait stability delay]
+    WAIT --> CHECK
+    CHECK -->|Yes| UPLOAD[Upload file]
+```
+
+![File Change Detection](images/architecture-8.png)
+
+**Platform-specific behavior:**
+
+| Platform | Event Used | Reason |
+|----------|------------|--------|
+| **Linux** | `on_closed` | Triggered when file is closed after writing, avoiding multiple events during write |
+| **macOS** | `on_modified` + debounce | FSEvents doesn't support `on_closed`, uses 1-second debounce |
+| **Windows** | `on_modified` + debounce | ReadDirectoryChangesW doesn't support `on_closed`, uses 1-second debounce |
+
+**File stability check:**
+
+Before uploading, the client verifies the file has stopped being written by checking:
+1. **File size** - must remain constant over the stability delay period
+2. **Modification time (mtime)** - must remain constant over the stability delay period
+
+The stability delay defaults to **5 seconds** (inspired by Syncthing's default of 10 seconds) and can be configured via:
+- CLI: `--stability-delay SEC`
+- Environment variable: `HSYNC_STABILITY_DELAY`
+
+**When to increase the stability delay:**
+- Large files on slow storage (network filesystems, HDDs)
+- Applications that write in bursts with pauses between writes
+- When experiencing premature uploads of incomplete files
+
+This prevents uploading incomplete files during long write operations.
 
 ## Configuration Flow
 
