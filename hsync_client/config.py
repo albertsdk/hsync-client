@@ -25,6 +25,8 @@ from os import environ
 from pathlib import Path
 from typing import Optional, TypedDict
 
+from dotenv import load_dotenv
+
 
 # =============================================================================
 # Environment File Loading
@@ -33,49 +35,30 @@ from typing import Optional, TypedDict
 
 def load_env_file(file_path: str) -> None:
     """
-    Load environment variables from a file.
+    Load environment variables from a file using python-dotenv.
 
-    The file format is simple key=value pairs, one per line.
-    Lines starting with # are comments and are ignored.
-    Empty lines are ignored.
+    The file format supports:
+    - KEY=value pairs (one per line)
+    - Comments starting with #
+    - Quoted values (single or double quotes)
+    - export KEY=value syntax
+    - Multiline values with quotes
+
+    Environment variables already set (e.g., from CLI or shell) take
+    precedence and are NOT overwritten by the file.
 
     Args:
         file_path: Path to the environment file.
 
     Raises:
         FileNotFoundError: If the file does not exist.
-        ValueError: If a line has invalid format.
     """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Environment file not found: {file_path}")
 
-    with path.open("r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, start=1):
-            line = line.strip()
-
-            # Skip empty lines and comments
-            if not line or line.startswith("#"):
-                continue
-
-            # Parse key=value
-            if "=" not in line:
-                raise ValueError(
-                    f"Invalid format at line {line_num}: expected KEY=value"
-                )
-
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-
-            # Remove surrounding quotes if present
-            if (value.startswith('"') and value.endswith('"')) or \
-               (value.startswith("'") and value.endswith("'")):
-                value = value[1:-1]
-
-            # Only set if not already in environment (CLI/shell takes precedence)
-            if key not in environ:
-                environ[key] = value
+    # override=False ensures CLI/shell variables take precedence
+    load_dotenv(dotenv_path=path, override=False)
 
 
 # =============================================================================
