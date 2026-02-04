@@ -23,7 +23,7 @@ configuration access for the application.
 
 from os import environ
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import Any, Optional, TypedDict, cast
 
 from dotenv import load_dotenv
 
@@ -164,11 +164,14 @@ def set_config(config: HsyncConfig) -> None:
     """
     Set the global configuration.
 
+    Updates the global CONFIG dictionary in-place to ensure all modules
+    that imported CONFIG directly will see the updated values.
+
     Args:
         config: The configuration dictionary to use.
     """
-    global CONFIG
-    CONFIG = config
+    cast(dict[str, Any], CONFIG).clear()
+    CONFIG.update(config)
 
 
 def set_debug(debug: bool) -> None:
