@@ -203,10 +203,25 @@ flowchart TD
 
 ## Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `HSYNC_SERVER_URL` | Default server URL | No |
-| `HSYNC_API_KEY` | API key for authentication | Yes |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HSYNC_SERVER` | Default server URL | (use `-s`) |
+| `HSYNC_API_KEY` | API key for authentication | (required) |
+| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
+
+### Environment Files
+
+Use the provided environment templates for easy setup:
+
+```bash
+# Development (HTTP, localhost)
+source dev.env
+hsync -b mybucket -w
+
+# Production (HTTPS, remote server)
+source prod.env
+hsync -b mybucket -w
+```
 
 ## Examples
 
