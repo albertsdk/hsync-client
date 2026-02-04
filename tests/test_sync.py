@@ -325,4 +325,247 @@ class TestUpdateFile:
             update_file(data)  # Should complete without error
 
 
+class TestSync:
+    """Tests for sync function."""
+
+    @pytest.mark.asyncio
+    async def test_sync_downloads_remote_files(self, tmp_path):
+        """sync downloads files from remote."""
+        from hsync_client.sync import sync
+
+        remote_files = [
+            {
+                "filepath": "remote.txt",
+                "name": "remote.txt",
+                "path": "",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 10,
+                "md5sum": "abc123",
+                "permissions": "-rw-r--r--",
+            }
+        ]
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_ORDER": "mtime",
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get_files_remote", return_value=remote_files), \
+             patch("hsync_client.transfer.download_file") as mock_download, \
+             patch("hsync_client.transfer.upload_file") as mock_upload:
+            await sync()
+            mock_download.assert_called_once()
+            mock_upload.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_uploads_local_files(self, tmp_path):
+        """sync uploads local files not on remote."""
+        from hsync_client.sync import sync
+
+        # Create local file
+        local_file = tmp_path / "local.txt"
+        local_file.write_text("content")
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_ORDER": "mtime",
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get_files_remote", return_value=[]), \
+             patch("hsync_client.transfer.download_file") as mock_download, \
+             patch("hsync_client.transfer.upload_file") as mock_upload:
+            await sync()
+            mock_download.assert_not_called()
+            mock_upload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_auth_error(self, tmp_path):
+        """sync handles authentication errors gracefully."""
+        from hsync_client.sync import sync
+        from hsync_client.exceptions import AuthenticationError
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_ORDER": "mtime",
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get_files_remote", side_effect=AuthenticationError("Invalid API key")), \
+             patch("hsync_client.sync.is_debug", return_value=False):
+            # Should not raise exception
+            await sync()
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_network_error(self, tmp_path):
+        """sync handles network errors gracefully."""
+        from hsync_client.sync import sync
+        from hsync_client.exceptions import NetworkError
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_ORDER": "mtime",
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get_files_remote", side_effect=NetworkError("Connection failed")), \
+             patch("hsync_client.sync.is_debug", return_value=False):
+            # Should not raise exception
+            await sync()
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_unexpected_error(self, tmp_path):
+        """sync handles unexpected errors gracefully."""
+        from hsync_client.sync import sync
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_ORDER": "mtime",
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get_files_remote", side_effect=Exception("Unexpected")), \
+             patch("hsync_client.sync.is_debug", return_value=False):
+            # Should not raise exception
+            await sync()
+
+
+class TestGetFilesRemote:
+    """Tests for get_files_remote function."""
+
+    def test_get_files_remote_success(self):
+        """get_files_remote returns file list on success."""
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{"filepath": "file.txt"}]
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "testbucket",
+            "SYNC_ORDER": "mtime",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get", return_value=mock_response), \
+             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+            result = get_files_remote()
+            assert result == [{"filepath": "file.txt"}]
+
+    def test_get_files_remote_with_filter_path(self):
+        """get_files_remote includes filter path in request."""
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = []
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "testbucket",
+            "SYNC_ORDER": "mtime",
+            "FILTER_PATH": "subdir",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get", return_value=mock_response) as mock_get, \
+             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+            get_files_remote()
+            # Check that path parameter was included
+            call_kwargs = mock_get.call_args[1]
+            assert call_kwargs["params"]["path"] == "subdir"
+
+    def test_get_files_remote_401_raises_auth_error(self):
+        """get_files_remote raises AuthenticationError on 401."""
+        from hsync_client.sync import get_files_remote
+        from hsync_client.exceptions import AuthenticationError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "testbucket",
+            "SYNC_ORDER": "mtime",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get", return_value=mock_response), \
+             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+            with pytest.raises(AuthenticationError):
+                get_files_remote()
+
+    def test_get_files_remote_403_raises_auth_error(self):
+        """get_files_remote raises AuthenticationError on 403."""
+        from hsync_client.sync import get_files_remote
+        from hsync_client.exceptions import AuthenticationError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "testbucket",
+            "SYNC_ORDER": "mtime",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get", return_value=mock_response), \
+             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+            with pytest.raises(AuthenticationError):
+                get_files_remote()
+
+    def test_get_files_remote_500_raises_server_error(self):
+        """get_files_remote raises ServerError on 500."""
+        from hsync_client.sync import get_files_remote
+        from hsync_client.exceptions import ServerError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "testbucket",
+            "SYNC_ORDER": "mtime",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get", return_value=mock_response), \
+             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+            with pytest.raises(ServerError):
+                get_files_remote()
+
+    def test_get_files_remote_network_error(self):
+        """get_files_remote raises NetworkError on connection failure."""
+        from hsync_client.sync import get_files_remote
+        from hsync_client.exceptions import NetworkError
+        from requests.exceptions import RequestException
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "testbucket",
+            "SYNC_ORDER": "mtime",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with patch("hsync_client.sync.CONFIG", config), \
+             patch("hsync_client.sync.get", side_effect=RequestException("Connection failed")), \
+             patch("hsync_client.sync.get_ssl_verify", return_value=False):
+            with pytest.raises(NetworkError):
+                get_files_remote()
 
