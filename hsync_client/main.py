@@ -43,6 +43,7 @@ from hsync_client.config import (
     get_api_key,
     get_discovery_timeout,
     get_heartbeat_interval,
+    get_lan_group,
     get_lan_key,
     get_lan_port,
     get_peer_timeout,
@@ -218,6 +219,7 @@ def main() -> None:
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or 5,
         "PEER_TIMEOUT": get_peer_timeout() or 15,
         "LAN_KEY": getattr(args, 'lan_key', None) or get_lan_key(),
+        "LAN_GROUP": getattr(args, 'lan_group', None) or get_lan_group(),
     }
 
     # Set global configuration and debug flag
@@ -258,6 +260,7 @@ def main() -> None:
             cid=config["CID"],
             bucket=config["REMOTE_BUCKET"],
             port=config["LAN_PORT"],
+            group=config["LAN_GROUP"],
         )
         peer_manager = lan_sync.start()
 

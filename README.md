@@ -155,6 +155,7 @@ source prod.env
 | `--lan-mode` | Enable LAN P2P mode (no server required) |
 | `--lan-port` | Port for LAN HTTP server (0 = random) |
 | `--lan-key` | Shared secret for LAN authentication |
+| `--lan-group` | Group name for peer filtering |
 | `--discovery-timeout` | Peer discovery timeout in seconds |
 
 ### Examples

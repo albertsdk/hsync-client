@@ -102,6 +102,7 @@ class Peer:
     bucket: str
     address: str
     port: int
+    group: Optional[str] = None
     last_seen: float = field(default_factory=time.time)
 
     def is_alive(self) -> bool:
@@ -130,16 +131,20 @@ class PeerManager:
     based on lexicographic CID comparison.
     """
 
-    def __init__(self, local_cid: str, bucket: str) -> None:
+    def __init__(
+        self, local_cid: str, bucket: str, group: Optional[str] = None
+    ) -> None:
         """
         Initialize the peer manager.
 
         Args:
             local_cid: This client's CID.
             bucket: The bucket name for filtering peers.
+            group: Optional group name for filtering peers.
         """
         self._local_cid = local_cid
         self._bucket = bucket
+        self._group = group
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
         self._master_cid: Optional[str] = None
@@ -155,16 +160,48 @@ class PeerManager:
         """Get the bucket name."""
         return self._bucket
 
+    @property
+    def group(self) -> Optional[str]:
+        """Get the group name."""
+        return self._group
+
     def set_master_change_callback(
         self, callback: Callable[[Optional[Peer]], None]
     ) -> None:
         """Set callback to be called when master changes."""
         self._on_master_change = callback
 
+    def _is_group_compatible(self, peer_group: Optional[str]) -> bool:
+        """
+        Check if a peer's group is compatible with this client's group.
+
+        Filtering logic (Option B - backward compatible):
+        - If BOTH have a group defined -> groups must match
+        - If at least one has no group -> compatible (no filtering)
+
+        Args:
+            peer_group: The peer's group (or None if not set).
+
+        Returns:
+            True if the peer is compatible, False otherwise.
+        """
+        # If at least one has no group, they are compatible
+        if self._group is None or peer_group is None:
+            return True
+        # Both have groups, they must match
+        return self._group == peer_group
+
     def add_peer(self, peer: Peer) -> None:
         """Add or update a discovered peer."""
         if peer.bucket != self._bucket:
             LOG.debug(f"Ignoring peer {peer.cid} - different bucket: {peer.bucket}")
+            return
+
+        if not self._is_group_compatible(peer.group):
+            LOG.debug(
+                f"Ignoring peer {peer.cid} - different group: "
+                f"{peer.group} (local: {self._group})"
+            )
             return
 
         if peer.cid == self._local_cid:
@@ -317,6 +354,9 @@ class HsyncServiceListener(ServiceListener):
             properties = info.properties
             cid = properties.get(b"cid", b"").decode("utf-8")
             bucket = properties.get(b"bucket", b"").decode("utf-8")
+            # Group is optional - empty string means no group
+            group_bytes = properties.get(b"group", b"")
+            group = group_bytes.decode("utf-8") if group_bytes else None
 
             if not cid or not bucket:
                 LOG.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -336,6 +376,7 @@ class HsyncServiceListener(ServiceListener):
                 bucket=bucket,
                 address=address,
                 port=port,
+                group=group,
             )
             self._peer_manager.add_peer(peer)
 
@@ -359,7 +400,13 @@ class LANSync:
     - Starting/stopping based on role (master vs client)
     """
 
-    def __init__(self, cid: str, bucket: str, port: int = HSYNC_LAN_PORT) -> None:
+    def __init__(
+        self,
+        cid: str,
+        bucket: str,
+        port: int = HSYNC_LAN_PORT,
+        group: Optional[str] = None,
+    ) -> None:
         """
         Initialize LAN sync coordinator.
 
@@ -367,9 +414,11 @@ class LANSync:
             cid: This client's unique identifier.
             bucket: The bucket name to sync.
             port: Port to use when acting as master. Use 0 for random port.
+            group: Optional group name for peer filtering.
         """
         self._cid = cid
         self._bucket = bucket
+        self._group = group
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
 
@@ -385,6 +434,11 @@ class LANSync:
         return self._port
 
     @property
+    def group(self) -> Optional[str]:
+        """Get the group name."""
+        return self._group
+
+    @property
     def peer_manager(self) -> Optional[PeerManager]:
         """Get the peer manager."""
         return self._peer_manager
@@ -396,13 +450,17 @@ class LANSync:
         Returns:
             PeerManager for monitoring discovered peers and master election.
         """
-        LOG.info(f"Starting LAN mode for bucket '{self._bucket}' (CID: {self._cid})")
+        group_info = f", group='{self._group}'" if self._group else ""
+        LOG.info(
+            f"Starting LAN mode for bucket '{self._bucket}' "
+            f"(CID: {self._cid}{group_info})"
+        )
 
         # Initialize Zeroconf
         self._zeroconf = Zeroconf()
 
         # Initialize peer manager
-        self._peer_manager = PeerManager(self._cid, self._bucket)
+        self._peer_manager = PeerManager(self._cid, self._bucket, self._group)
 
         # Register our service
         self._register_service()
@@ -449,11 +507,14 @@ class LANSync:
         service_name = f"{self._bucket}-{self._cid}.{HSYNC_SERVICE_TYPE}"
 
         # Create TXT record properties
-        properties = {
+        properties: dict[str, str] = {
             "cid": self._cid,
             "bucket": self._bucket,
             "version": "0.1.0",
         }
+        # Add group if specified
+        if self._group:
+            properties["group"] = self._group
 
         # Create service info
         self._service_info = ServiceInfo(
