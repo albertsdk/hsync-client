@@ -52,6 +52,88 @@ LOG = logging.getLogger("hsync.lan_server")
 
 
 # =============================================================================
+# Multipart Parser
+# =============================================================================
+
+
+def _parse_multipart(
+    body: bytes, content_type: str
+) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
+    """
+    Parse multipart/form-data request body.
+
+    This is a simple parser that handles the format sent by requests library.
+    It replaces the deprecated cgi.FieldStorage.
+
+    Args:
+        body: Raw request body bytes.
+        content_type: Content-Type header value.
+
+    Returns:
+        Tuple of (form_fields, file_fields) where:
+        - form_fields: dict of field_name -> value
+        - file_fields: dict of field_name -> (filename, content)
+    """
+    import re
+
+    # Extract boundary from content-type
+    match = re.search(r"boundary=([^\s;]+)", content_type)
+    if not match:
+        raise ValueError("No boundary found in content-type")
+
+    boundary = match.group(1).encode()
+    # Handle quoted boundary
+    if boundary.startswith(b'"') and boundary.endswith(b'"'):
+        boundary = boundary[1:-1]
+
+    form_data: dict[str, str] = {}
+    file_data: dict[str, tuple[str, bytes]] = {}
+
+    # Split by boundary
+    parts = body.split(b"--" + boundary)
+
+    for part in parts:
+        # Skip empty parts and closing boundary
+        if not part or part.strip() in (b"", b"--", b"--\r\n"):
+            continue
+
+        # Remove leading CRLF if present
+        if part.startswith(b"\r\n"):
+            part = part[2:]
+
+        # Remove trailing CRLF and -- if present
+        if part.endswith(b"--\r\n"):
+            part = part[:-4]
+        elif part.endswith(b"\r\n"):
+            part = part[:-2]
+
+        # Split headers from content
+        if b"\r\n\r\n" in part:
+            headers_raw, content = part.split(b"\r\n\r\n", 1)
+        else:
+            continue
+
+        headers_str = headers_raw.decode("utf-8", errors="replace")
+
+        # Parse Content-Disposition header
+        name_match = re.search(r'name="([^"]*)"', headers_str)
+        if not name_match:
+            continue
+        field_name = name_match.group(1)
+
+        filename_match = re.search(r'filename="([^"]*)"', headers_str)
+        if filename_match:
+            # This is a file field
+            filename = filename_match.group(1)
+            file_data[field_name] = (filename, content)
+        else:
+            # This is a regular form field
+            form_data[field_name] = content.decode("utf-8", errors="replace")
+
+    return form_data, file_data
+
+
+# =============================================================================
 # Request Handler
 # =============================================================================
 
@@ -162,12 +244,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 file_obj = File.get(join(root, file))
                 if file_obj:
                     file_dict = file_obj.to_dict()
+                    # Normalize path to be relative to bucket (like server does)
+                    file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
+
                     # Apply path filter if specified
                     if filter_path:
-                        rel_path = file_dict.get("filepath", "")
+                        rel_path = file_normalized.get("filepath", "")
                         if not rel_path.startswith(filter_path):
                             continue
-                    file_list.append(file_dict)
+                    file_list.append(file_normalized)
 
         # Sort by configured order
         file_list.sort(key=lambda x: x.get(sync_order, 0))
@@ -231,35 +316,35 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(400, "Expected multipart/form-data")
             return
 
-        # Parse multipart form data
+        # Parse multipart form data using our custom parser
         try:
-            import cgi
-            from typing import IO, Any, cast
-            form = cgi.FieldStorage(
-                fp=cast(IO[Any], self.rfile),
-                headers=self.headers,
-                environ={
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE": content_type,
-                }
-            )
+            import os
+            from hsync_client.utils import set_permissions
+
+            # Read request body
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length == 0:
+                self._send_error_response(400, "No content")
+                return
+
+            body = self.rfile.read(content_length)
+
+            # Parse multipart data
+            form_data, file_data = _parse_multipart(body, content_type)
 
             # Extract fields
-            cid = form.getvalue("cid", "")
-            path = form.getvalue("path", "")
-            mtime = form.getvalue("mtime", "")
-            ctime = form.getvalue("ctime", "")
-            md5sum = form.getvalue("md5sum", "")
-            permissions = form.getvalue("permissions", "-rw-rw-r--")
+            cid = form_data.get("cid", "")
+            path = form_data.get("path", "")
+            mtime = form_data.get("mtime", "")
+            ctime = form_data.get("ctime", "")
+            permissions = form_data.get("permissions", "-rw-rw-r--")
 
             # Get uploaded file
-            file_item = form["file"]
-            if not file_item.file:
+            if "file" not in file_data:
                 self._send_error_response(400, "No file uploaded")
                 return
 
-            filename = file_item.filename
-            file_content = file_item.file.read()
+            filename, file_content = file_data["file"]
 
             # Build destination path
             local_bucket = CONFIG.get("LOCAL_BUCKET", "")
@@ -269,7 +354,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 dest_dir = local_bucket
 
             # Create directory if needed
-            import os
             os.makedirs(dest_dir, exist_ok=True)
 
             dest_path = join(dest_dir, filename)
@@ -289,7 +373,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if mtime or ctime:
                 try:
                     mtime_val = float(mtime) if mtime else None
-                    # Use mtime for both if ctime not available
                     atime_val = mtime_val or float(ctime) if ctime else None
                     if mtime_val:
                         os.utime(dest_path, (atime_val or mtime_val, mtime_val))
@@ -298,7 +381,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             # Set permissions if provided
             if permissions:
-                from hsync_client.utils import set_permissions
                 set_permissions(dest_path, permissions)
 
             LOG.info(f"Received file from {cid}: {dest_path}")
