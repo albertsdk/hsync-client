@@ -100,6 +100,10 @@ class EnvSettings(BaseSettings):
     discovery_timeout: Optional[int] = Field(default=None, ge=1, description="Discovery timeout in seconds")
     heartbeat_interval: Optional[int] = Field(default=None, ge=1, description="Heartbeat interval in seconds")
     peer_timeout: Optional[int] = Field(default=None, ge=1, description="Peer timeout in seconds")
+    lan_persistent: bool = Field(default=True, description="Stay active indefinitely waiting for peers")
+
+    # Sync Settings
+    ignore_delete: bool = Field(default=False, description="Ignore file deletion events (backup mode)")
 
 
 @lru_cache
@@ -163,6 +167,16 @@ def get_heartbeat_interval() -> Optional[int]:
 def get_peer_timeout() -> Optional[int]:
     """Get peer timeout from environment."""
     return get_env_settings().peer_timeout
+
+
+def get_lan_persistent() -> bool:
+    """Get LAN persistent mode from environment."""
+    return get_env_settings().lan_persistent
+
+
+def get_ignore_delete() -> bool:
+    """Get ignore delete setting from environment."""
+    return get_env_settings().ignore_delete
 
 
 # Legacy exports for backward compatibility (read at import time)
@@ -255,8 +269,12 @@ class HsyncConfig(TypedDict):
     LAN_GROUP: Optional[str]
     # LAN HTTPS mode (self-signed certificate per session)
     LAN_HTTPS: bool
+    # LAN persistent mode (stay active indefinitely waiting for peers)
+    LAN_PERSISTENT: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: Optional[str]
+    # Ignore file deletion events (backup mode)
+    IGNORE_DELETE: bool
 
 
 # =============================================================================

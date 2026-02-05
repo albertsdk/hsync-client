@@ -137,6 +137,7 @@ source prod.env
 | `HSYNC_SERVER` | Server URL | (required or use `-s`) |
 | `HSYNC_API_KEY` | API key for authentication | (required) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
+| `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
 
 ## Usage
 
@@ -160,6 +161,7 @@ source prod.env
 | `-i, --interval` | Force full sync every N seconds (requires `-w`) |
 | `--retry-delay` | Retry connection after N seconds (default: 5) |
 | `-n, --dry-run` | Show what would be done without making changes |
+| `--ignore-delete` | Do not propagate file deletions (useful for backup scenarios) |
 | `-v, --verbose` | Enable verbose output |
 | `-q, --quiet` | Suppress all output |
 | `-o, --output` | Write output to file |
@@ -201,6 +203,12 @@ export HSYNC_API_KEY="your-api-key"
 **With file logging:**
 ```bash
 ./dist/hsync -s http://localhost:8765 -b mybucket -w -o /var/log/hsync.log
+```
+
+**Backup mode (do not propagate deletions):**
+```bash
+# File deletions are not propagated - useful for backup scenarios
+./dist/hsync -s http://localhost:8765 -b mybucket -w --ignore-delete
 ```
 
 ## SSL/TLS (HTTPS/WSS)
@@ -310,34 +318,42 @@ hsync-client/
 ├── hsync_client/           # Main Python package (source code)
 │   ├── __init__.py
 │   ├── __main__.py         # Module entry point
-│   ├── main.py             # Main CLI logic
-│   ├── cli.py              # CLI argument parsing
-│   ├── config.py           # Configuration management
+│   ├── main.py             # Main entry point
+│   ├── main_logic.py       # Core sync orchestration
+│   ├── cli.py              # CLI argument parsing (Typer)
+│   ├── config.py           # Configuration management (pydantic-settings)
 │   ├── constants.py        # Application constants
 │   ├── sync.py             # Sync engine with parallel transfers
 │   ├── transfer.py         # File upload/download operations
 │   ├── websocket_handler.py # WebSocket event handling
-│   ├── logger.py           # Logging configuration
 │   ├── event_queue.py      # Event queue with retry logic
+│   ├── lan.py              # LAN mode discovery (mDNS/Zeroconf)
+│   ├── lan_server.py       # LAN mode HTTP server (master node)
+│   ├── logger.py           # Logging configuration (loguru)
+│   ├── retry.py            # Retry logic (tenacity)
+│   ├── ssl_utils.py        # SSL/TLS utilities
+│   ├── exceptions.py       # Custom exceptions
+│   ├── utils.py            # Utility functions
+│   ├── validators.py       # Input validators
 │   └── models/             # Data models
 │       ├── __init__.py
-│       ├── dir.py
-│       ├── event.py
-│       ├── file.py
+│       ├── dir.py          # Directory model
+│       ├── event.py        # Event model
+│       ├── file.py         # File model
 │       ├── symlink.py      # Symbolic link model
-│       └── sync_action.py
+│       └── sync_action.py  # Sync action model
 ├── docs/                   # Documentation
-│   ├── architecture.md
-│   └── usage.md
+│   ├── architecture.md     # Architecture overview
+│   ├── usage.md            # Usage guide
+│   └── lan-mode.md         # LAN mode (P2P) documentation
 ├── tests/                  # Test files
 ├── dist/                   # Compiled binary (created by compile.sh)
 │   └── hsync               # Standalone executable
-├── build/                  # Build artifacts (created by compile.sh)
 ├── dev.env                 # Development environment template
 ├── prod.env                # Production environment template
-├── compile.sh              # Build script (PyInstaller with optimizations)
-├── pyproject.toml
-├── poetry.lock
+├── compile.sh              # Build script (PyInstaller)
+├── pyproject.toml          # Poetry configuration
+├── poetry.lock             # Locked dependencies
 └── README.md
 ```
 

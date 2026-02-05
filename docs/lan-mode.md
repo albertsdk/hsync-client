@@ -169,6 +169,52 @@ HSYNC_LAN_KEY="mySecretKey123" ./dist/hsync -b photos -p ~/Pictures --lan-mode
 ./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-port 9000
 ```
 
+### Disable Persistent Mode
+
+```bash
+# Exit immediately if no peers are found (one-shot sync)
+./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-persistent
+
+# Or via environment variable
+HSYNC_LAN_PERSISTENT=false ./dist/hsync -b photos -p ~/Pictures --lan-mode
+```
+
+## Persistent Mode (Default)
+
+Persistent mode is **enabled by default** in LAN mode. The client stays active indefinitely, even when no peers are found. This is useful for:
+
+- **Always-on sync services**: Keep a device ready to sync whenever others come online
+- **NAS/Server deployments**: Run as a background service waiting for clients
+- **Intermittent connectivity**: Handle peers that connect and disconnect frequently
+
+Use `--no-lan-persistent` to disable this behavior and exit after a single sync attempt.
+
+### Behavior
+
+| Scenario | Message | Action |
+|----------|---------|--------|
+| No peers ever found | "Waiting for peers to join..." | Retry discovery |
+| Peers disconnected | "All peers disconnected, waiting for new peers..." | Retry discovery |
+| Peer found | Normal sync flow | Sync, then continue discovery |
+| Master role change | "No longer master, switching to client mode..." | Restart as client |
+
+### Example Flow
+
+```
+$ ./dist/hsync -b photos -p ~/Pictures --lan-mode
+
+[INFO] LAN P2P mode enabled
+[INFO] Persistent mode enabled - will wait indefinitely for peers
+[INFO] Generating self-signed certificate for HTTPS...
+[INFO] Certificate fingerprint: a1b2c3d4e5f6...
+[INFO] Waiting for peers to join...
+[INFO] Waiting for peers to join...
+[INFO] Peer discovered: laptop-001 at 192.168.1.100:54321
+[INFO] This client is the MASTER - acting as sync coordinator
+[INFO] Master server listening on port 12345 (HTTPS)
+[INFO] Press Ctrl+C to stop...
+```
+
 ## CLI Options
 
 | Option | Description | Default |
@@ -176,8 +222,9 @@ HSYNC_LAN_KEY="mySecretKey123" ./dist/hsync -b photos -p ~/Pictures --lan-mode
 | `--lan-mode` | Enable LAN P2P mode | `false` |
 | `--lan-port` | Port for HTTP server (0 = random) | `0` |
 | `--lan-group` | Group name for peer filtering | `None` |
-| `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled by default |
+| `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled |
 | `--discovery-timeout` | Peer discovery timeout (seconds) | `10` |
+| `--no-lan-persistent` | Disable persistent mode (exit when no peers) | Persistent enabled |
 
 > **Note**: For security, the LAN authentication key is only available via the `HSYNC_LAN_KEY` environment variable (not as a CLI option).
 
@@ -194,6 +241,7 @@ All LAN options can also be configured via environment variables:
 | `HSYNC_LAN_KEY` | Shared secret for authentication | `None` |
 | `HSYNC_LAN_GROUP` | Group name for peer filtering | `None` |
 | `HSYNC_LAN_HTTPS` | Enable/disable HTTPS (`true`/`false`) | `true` |
+| `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
 
 ### Configuration Priority
 

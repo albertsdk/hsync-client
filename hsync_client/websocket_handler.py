@@ -301,7 +301,16 @@ def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
 
 
 def _handle_delete_event(src: Optional[dict]) -> None:
-    """Handle delete events for files and directories."""
+    """Handle delete events for files and directories.
+
+    If IGNORE_DELETE is enabled, remote deletions are ignored (backup mode).
+    """
+    # Skip remote deletions if ignore_delete is enabled (backup mode)
+    if CONFIG.get("IGNORE_DELETE", False):
+        path = src.get("path") or src.get("filepath") if src else None
+        LOG.debug(f'[IGNORE DEL] "{path}" (ignore-delete mode)')
+        return
+
     if src and "path" in src:
         # Directory deletion event
         dir = Dir.from_dict(src, CONFIG["LOCAL_BUCKET"])
@@ -701,6 +710,7 @@ class FileEventHandler(FileSystemEventHandler):
 
         Broadcasts 'deleted' events when files or directories are removed
         from the local filesystem. Ignores hidden files and directories.
+        If IGNORE_DELETE is enabled, deletions are not propagated (backup mode).
 
         Args:
             event: File system deletion event from watchdog.
@@ -713,6 +723,11 @@ class FileEventHandler(FileSystemEventHandler):
 
         # Skip hidden files
         if not event.is_directory and is_hidden_file(src_path):
+            return
+
+        # Skip deletion propagation if ignore_delete is enabled (backup mode)
+        if CONFIG.get("IGNORE_DELETE", False):
+            LOG.debug(f'[IGNORE DEL] "{src_path}" (ignore-delete mode)')
             return
 
         LOG.info(f'[REMOVE    ] "{src_path}"')
