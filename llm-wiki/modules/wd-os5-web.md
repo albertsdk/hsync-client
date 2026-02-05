@@ -25,10 +25,13 @@ which translates `hsync.env` into CLI flags (see `../../llm-wiki/modules/cli-con
 ## "Connect another device" command generator
 
 `renderConnectCommand()` (`app.js`) builds the `hsync` command to run on a
-second device to join the sync group coordinated by the NAS. It is recomputed
-live from the form fields (`#HSYNC_MODE`, `#HSYNC_BUCKET`, `#HSYNC_LAN_GROUP`,
-`#HSYNC_LAN_KEY`) on `input`/`change` and on mode switches
-(`syncModeVisibility`).
+second device to join the sync group coordinated by the NAS. The command is
+shown in a readonly `#hsync-connect-command` textarea (not `<code>`: the WD
+dashboard / remotewd injector can strip or hide `code` contents). It is
+recomputed live from the form fields (`#HSYNC_MODE`, `#HSYNC_BUCKET`,
+`#HSYNC_LAN_GROUP`, `#HSYNC_LAN_KEY`) on `input`/`change` and on mode switches
+(`syncModeVisibility`), and re-applied on delayed timeouts so a post-inject
+DOM replace cannot leave the field empty.
 
 Scope: **LAN mode only**. In server mode the NAS is a client of a central
 `hsync-server`, so the section shows an explanatory note instead of a command.

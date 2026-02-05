@@ -35,8 +35,27 @@
     let keyRevealed = false;
     let connectUnmasked = '';
 
-    const $  = (sel) => document.querySelector(sel);
-    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+    // ID lookups use getElementById: querySelector can miss nodes while the
+    // WD dashboard is still injecting the fragment (jQuery .load / remotewd).
+    function $(sel) {
+        if (sel.charAt(0) === '#' && /^#[A-Za-z][\w-]*$/.test(sel)) {
+            return document.getElementById(sel.slice(1));
+        }
+        const root = document.getElementById('hsync-app');
+        try {
+            return (root || document).querySelector(sel);
+        } catch (_) {
+            return null;
+        }
+    }
+    function $$ (sel) {
+        const root = document.getElementById('hsync-app');
+        try {
+            return Array.from((root || document).querySelectorAll(sel));
+        } catch (_) {
+            return [];
+        }
+    }
 
     let dict = {};
 
@@ -77,6 +96,7 @@
 
     function buildLangSelect() {
         const sel = $('#hsync-lang-select');
+        if (!sel) return;
         SUPPORTED.forEach((code) => {
             const opt = document.createElement('option');
             opt.value = code;
@@ -100,7 +120,9 @@
             if (el.type === 'checkbox') {
                 el.checked = (cfg[key] === 'true' || cfg[key] === '1');
             } else {
-                el.value = cfg[key] || '';
+                // Firefox throws / logs if <input pattern> is not valid under
+                // the unicodeSets (`v`) flag; never let that abort applyConfig.
+                try { el.value = cfg[key] || ''; } catch (_) { /* ignore */ }
             }
         });
         if (cfg.__VERSION__) $('#hsync-app-version').textContent = cfg.__VERSION__;
@@ -122,9 +144,12 @@
     }
 
     function syncModeVisibility() {
-        const mode = $('#HSYNC_MODE').value;
-        $('#hsync-lan-options').hidden    = (mode !== 'lan');
-        $('#hsync-server-options').hidden = (mode !== 'server');
+        const modeEl = $('#HSYNC_MODE');
+        const mode = modeEl ? modeEl.value : 'lan';
+        const lan = $('#hsync-lan-options');
+        const srv = $('#hsync-server-options');
+        if (lan) lan.hidden = (mode !== 'lan');
+        if (srv) srv.hidden = (mode !== 'server');
         renderConnectCommand();
     }
 
@@ -182,10 +207,15 @@
             connectUnmasked = built.unmasked;
             showKey = built.showKey;
             cmdEl.hidden = false;
-            cmdEl.textContent = keyRevealed ? built.unmasked : built.masked;
+            // textarea uses .value; a <div>/<code> uses textContent. Set both
+            // so the command is visible regardless of which tag the markup uses.
+            const text = keyRevealed ? built.unmasked : built.masked;
+            cmdEl.value = text;
+            cmdEl.textContent = text;
         } else {
             connectUnmasked = '';
             cmdEl.hidden = true;
+            cmdEl.value = '';
             cmdEl.textContent = '';
         }
 
@@ -264,6 +294,7 @@
 
     function toast(msg, kind) {
         const el = $('#hsync-toast');
+        if (!el) return;
         el.textContent = msg;
         el.className = kind ? ('hsync-toast-' + kind) : '';
         el.hidden = false;
@@ -314,16 +345,19 @@
     }
 
     function openLog() {
-        $('#hsync-log-view').textContent = '';
+        const view = $('#hsync-log-view');
+        const modal = $('#hsync-log-modal');
+        if (view) view.textContent = '';
         logOffset = -1;                 // first poll requests the tail window
-        $('#hsync-log-modal').hidden = false;
+        if (modal) modal.hidden = false;
         pollLog();                      // immediate first paint
         startLog();
     }
 
     function closeLog() {
         stopLog();
-        $('#hsync-log-modal').hidden = true;
+        const modal = $('#hsync-log-modal');
+        if (modal) modal.hidden = true;
     }
 
     // -----------------------------------------------------------------
@@ -334,7 +368,12 @@
     // would never run init(). The script is placed at the end of the
     // body, so all referenced elements already exist when it runs.
     async function init() {
-        if (!$('#hsync-app')) return; // not in DOM yet (defensive)
+        // The dashboard may insert the fragment without the #hsync-app wrapper
+        // (jQuery .load('index.html #hsync-app') injects children only). Proceed
+        // as long as the config form or the connect-command node is present.
+        if (!$('#hsync-app') && !$('#hsync-config-form') && !$('#hsync-connect-command')) {
+            return;
+        }
 
         buildLangSelect();
         await loadLang(pickLang());
@@ -342,20 +381,27 @@
         try { applyConfig(await loadConfig()); }
         catch (e) { toast(t('toast.load_error', 'Failed to load configuration') + ': ' + e.message, 'error'); }
         renderConnectCommand();
+        // The dashboard (and remotewd's injectedScript) can replace nodes after
+        // first paint; re-apply so the command survives that pass.
+        [50, 200, 1000].forEach((ms) => setTimeout(renderConnectCommand, ms));
 
-        $('#HSYNC_MODE').addEventListener('change', syncModeVisibility);
+        const modeEl = $('#HSYNC_MODE');
+        if (modeEl) modeEl.addEventListener('change', syncModeVisibility);
         ['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'].forEach((id) => {
             const el = $('#' + id);
             if (el) el.addEventListener('input', renderConnectCommand);
         });
 
-        $('#hsync-btn-copy').addEventListener('click', copyConnectCommand);
-        $('#hsync-btn-reveal-key').addEventListener('click', () => {
+        const copyBtn = $('#hsync-btn-copy');
+        if (copyBtn) copyBtn.addEventListener('click', copyConnectCommand);
+        const revealBtn = $('#hsync-btn-reveal-key');
+        if (revealBtn) revealBtn.addEventListener('click', () => {
             keyRevealed = !keyRevealed;
             renderConnectCommand();
         });
 
-        $('#hsync-btn-save').addEventListener('click', async () => {
+        const saveBtn = $('#hsync-btn-save');
+        if (saveBtn) saveBtn.addEventListener('click', async () => {
             try {
                 await saveConfig(collectConfig());
                 toast(t('toast.saved', 'Configuration saved'), 'ok');
@@ -364,21 +410,32 @@
             }
         });
 
-        $('#hsync-btn-start')  .addEventListener('click', async () => { try { await service('start');   toast(t('toast.started', 'Service started'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
-        $('#hsync-btn-stop')   .addEventListener('click', async () => { try { await service('stop');    toast(t('toast.stopped', 'Service stopped'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
-        $('#hsync-btn-restart').addEventListener('click', async () => { try { await service('restart'); toast(t('toast.restarted', 'Service restarted'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
-
-        $('#hsync-btn-log')   .addEventListener('click', openLog);
-        $('#hsync-log-close') .addEventListener('click', closeLog);
-        $('#hsync-log-clear') .addEventListener('click', () => { $('#hsync-log-view').textContent = ''; });
+        function bind(id, handler) {
+            const el = $('#' + id);
+            if (el) el.addEventListener('click', handler);
+        }
+        bind('hsync-btn-start',   async () => { try { await service('start');   toast(t('toast.started', 'Service started'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+        bind('hsync-btn-stop',    async () => { try { await service('stop');    toast(t('toast.stopped', 'Service stopped'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+        bind('hsync-btn-restart', async () => { try { await service('restart'); toast(t('toast.restarted', 'Service restarted'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+        bind('hsync-btn-log', openLog);
+        bind('hsync-log-close', closeLog);
+        bind('hsync-log-clear', () => { const v = $('#hsync-log-view'); if (v) v.textContent = ''; });
 
         refreshStatus();
         setInterval(refreshStatus, 10000);
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
+    let boots = 0;
+    function boot() {
+        if (!$('#hsync-app') && !$('#hsync-config-form') && !$('#hsync-connect-command')) {
+            if (boots++ < 20) setTimeout(boot, 50);
+            return;
+        }
         init();
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
     }
 })();
