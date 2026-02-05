@@ -20,9 +20,16 @@ Logging configuration for HSYNC Client using Loguru.
 This module provides a standardized logging setup with enterprise-grade features:
 - ISO 8601 timestamps with milliseconds
 - Client ID (CID) for session correlation and distributed tracing
-- Colored console output with action symbol highlighting
+- Colored console output following best practices:
+  - DEBUG: dim/gray for low-priority messages
+  - INFO: default color for normal operations
+  - WARNING: yellow for attention-needed situations
+  - ERROR: red for failures
+  - CRITICAL: bold red for severe issues
+- Action symbol highlighting (↓↑→✕+⚙·)
 - File output support
 - Quiet mode
+- Automatic color detection (disabled for non-TTY)
 
 Log format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
 """
@@ -48,63 +55,71 @@ def set_client_id(client_id: Optional[str]) -> None:
     client_id_var.set(client_id)
 
 
-# ANSI color codes for terminal output
-class Colors:
-    """ANSI escape codes for colored terminal output."""
+# =============================================================================
+# Color Configuration (Best Practices)
+# =============================================================================
+#
+# Following industry-standard log coloring conventions:
+# - Timestamps: dim/muted to reduce visual noise
+# - DEBUG: gray/dim - low priority, verbose information
+# - INFO: default/white - normal operational messages
+# - SUCCESS: green - positive outcomes
+# - WARNING: yellow - attention needed but not critical
+# - ERROR: red - failures that need investigation
+# - CRITICAL: bold red - severe issues requiring immediate action
+#
+# Action symbols use semantic colors:
+# - Download (↓): cyan - incoming data
+# - Upload (↑): green - outgoing data (success-like)
+# - Move (→): blue - neutral operation
+# - Remove (✕): red - destructive action
+# - Create (+): green - additive action
+# - Permission (⚙): magenta - system/config change
+# - Skip (·): gray - no action taken
+# =============================================================================
 
-    # Reset
-    RESET = "\033[0m"
-
-    # Regular colors
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-    WHITE = "\033[37m"
-    GRAY = "\033[90m"
-
-    # Bold colors
-    BOLD_RED = "\033[1;31m"
-    BOLD_GREEN = "\033[1;32m"
-    BOLD_YELLOW = "\033[1;33m"
-    BOLD_BLUE = "\033[1;34m"
-    BOLD_CYAN = "\033[1;36m"
-    BOLD_WHITE = "\033[1;37m"
-
-    # Dim
-    DIM = "\033[2m"
-
-
-# Mapping of log levels to colors
-LEVEL_COLORS: dict[str, str] = {
-    "DEBUG": Colors.GRAY,
-    "INFO": Colors.RESET,
-    "WARNING": Colors.YELLOW,
-    "ERROR": Colors.RED,
-    "CRITICAL": Colors.BOLD_RED,
+# Loguru color tags for terminal output
+# Using loguru's built-in color system for proper terminal compatibility
+LEVEL_STYLES: dict[str, tuple[str, str]] = {
+    "DEBUG": ("<dim>", "</dim>"),
+    "INFO": ("", ""),
+    "SUCCESS": ("<green>", "</green>"),
+    "WARNING": ("<yellow>", "</yellow>"),
+    "ERROR": ("<red>", "</red>"),
+    "CRITICAL": ("<bold><red>", "</red></bold>"),
 }
 
-# Mapping of action symbols to colors
-SYMBOL_COLORS: dict[str, str] = {
-    "↓": Colors.CYAN,      # Download
-    "↑": Colors.GREEN,     # Upload
-    "→": Colors.BLUE,      # Move
-    "✕": Colors.RED,       # Remove
-    "+": Colors.GREEN,     # Create
-    "⚙": Colors.MAGENTA,   # Permission
-    "·": Colors.GRAY,      # Skip
+# Action symbol color mappings using loguru tags
+SYMBOL_STYLES: dict[str, tuple[str, str]] = {
+    "↓": ("<cyan>", "</cyan>"),       # Download
+    "↑": ("<green>", "</green>"),     # Upload
+    "→": ("<blue>", "</blue>"),       # Move
+    "✕": ("<red>", "</red>"),         # Remove
+    "+": ("<green>", "</green>"),     # Create
+    "⚙": ("<magenta>", "</magenta>"), # Permission
+    "·": ("<dim>", "</dim>"),         # Skip
 }
 
 
-def _colorize_symbols(message: str) -> str:
-    """Add color codes to action symbols in message."""
-    for symbol, color in SYMBOL_COLORS.items():
+def _colorize_symbols(message: str, use_colors: bool = True) -> str:
+    """
+    Add color tags to action symbols in message.
+
+    Args:
+        message: The log message to colorize.
+        use_colors: Whether to apply colors (False for plain output).
+
+    Returns:
+        Message with color tags applied to symbols.
+    """
+    if not use_colors:
+        return message
+
+    for symbol, (start_tag, end_tag) in SYMBOL_STYLES.items():
         if symbol in message:
             message = message.replace(
                 f"{symbol} ",
-                f"{color}{symbol}{Colors.RESET} "
+                f"{start_tag}{symbol}{end_tag} "
             )
     return message
 
@@ -113,22 +128,25 @@ def _format_record_colored(record: dict) -> str:
     """
     Custom format function for loguru with colors.
 
-    Produces: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
+    Uses loguru's built-in color tags for proper terminal compatibility
+    and automatic color stripping when output is not a TTY.
+
+    Format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
     """
     client_id = record["extra"].get("client_id", "-")
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
     message = record["message"]
 
-    # Get level color
-    level_color = LEVEL_COLORS.get(level, Colors.RESET)
+    # Get level style tags
+    level_start, level_end = LEVEL_STYLES.get(level, ("", ""))
 
     # Colorize action symbols in message
-    message = _colorize_symbols(message)
+    message = _colorize_symbols(message, use_colors=True)
 
     return (
-        f"{Colors.DIM}{timestamp}{Colors.RESET} - [{record['process'].id}] [{client_id}] "
-        f"{level_color}{level}{Colors.RESET}: {message}\n"
+        f"<dim>{timestamp}</dim> - [{record['process'].id}] [{client_id}] "
+        f"{level_start}{level}{level_end}: {message}\n"
     )
 
 
@@ -136,7 +154,7 @@ def _format_record_plain(record: dict) -> str:
     """
     Custom format function for loguru without colors.
 
-    Produces: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
+    Format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
     """
     client_id = record["extra"].get("client_id", "-")
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -190,6 +208,9 @@ def setup_logging(
         )
     else:
         # Console handler - with colors (unless disabled)
+        # Colors are enabled only when:
+        # 1. --no-color flag is not set
+        # 2. Output is a TTY (terminal)
         use_colors = not no_color and sys.stdout.isatty()
         format_func = _format_record_colored if use_colors else _format_record_plain
 
@@ -197,7 +218,7 @@ def setup_logging(
             sys.stdout,
             level=level,
             format=format_func,
-            colorize=False,  # We handle colors manually
+            colorize=use_colors,  # Enable loguru's color tag processing
         )
 
     return logger

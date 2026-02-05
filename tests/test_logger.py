@@ -11,9 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from hsync_client.logger import (
-    Colors,
-    LEVEL_COLORS,
-    SYMBOL_COLORS,
+    LEVEL_STYLES,
+    SYMBOL_STYLES,
     setup_logging,
     get_client_id,
     set_client_id,
@@ -21,119 +20,99 @@ from hsync_client.logger import (
 )
 
 
-class TestColors:
-    """Tests for the Colors class."""
+class TestLevelStyles:
+    """Tests for LEVEL_STYLES mapping with loguru color tags."""
 
-    def test_reset_code(self):
-        """Test RESET color code."""
-        assert Colors.RESET == "\033[0m"
+    def test_debug_style(self):
+        """Test DEBUG level style uses dim tag."""
+        assert LEVEL_STYLES["DEBUG"] == ("<dim>", "</dim>")
 
-    def test_regular_colors(self):
-        """Test regular color codes."""
-        assert Colors.RED == "\033[31m"
-        assert Colors.GREEN == "\033[32m"
-        assert Colors.YELLOW == "\033[33m"
-        assert Colors.BLUE == "\033[34m"
-        assert Colors.MAGENTA == "\033[35m"
-        assert Colors.CYAN == "\033[36m"
-        assert Colors.WHITE == "\033[37m"
-        assert Colors.GRAY == "\033[90m"
+    def test_info_style(self):
+        """Test INFO level style has no color (default)."""
+        assert LEVEL_STYLES["INFO"] == ("", "")
 
-    def test_bold_colors(self):
-        """Test bold color codes."""
-        assert Colors.BOLD_RED == "\033[1;31m"
-        assert Colors.BOLD_GREEN == "\033[1;32m"
-        assert Colors.BOLD_YELLOW == "\033[1;33m"
-        assert Colors.BOLD_BLUE == "\033[1;34m"
-        assert Colors.BOLD_CYAN == "\033[1;36m"
-        assert Colors.BOLD_WHITE == "\033[1;37m"
+    def test_success_style(self):
+        """Test SUCCESS level style uses green tag."""
+        assert LEVEL_STYLES["SUCCESS"] == ("<green>", "</green>")
 
-    def test_dim_code(self):
-        """Test DIM color code."""
-        assert Colors.DIM == "\033[2m"
+    def test_warning_style(self):
+        """Test WARNING level style uses yellow tag."""
+        assert LEVEL_STYLES["WARNING"] == ("<yellow>", "</yellow>")
+
+    def test_error_style(self):
+        """Test ERROR level style uses red tag."""
+        assert LEVEL_STYLES["ERROR"] == ("<red>", "</red>")
+
+    def test_critical_style(self):
+        """Test CRITICAL level style uses bold red tag."""
+        assert LEVEL_STYLES["CRITICAL"] == ("<bold><red>", "</red></bold>")
 
 
-class TestLevelColors:
-    """Tests for LEVEL_COLORS mapping."""
-
-    def test_debug_color(self):
-        """Test DEBUG level color."""
-        assert LEVEL_COLORS["DEBUG"] == Colors.GRAY
-
-    def test_info_color(self):
-        """Test INFO level color."""
-        assert LEVEL_COLORS["INFO"] == Colors.RESET
-
-    def test_warning_color(self):
-        """Test WARNING level color."""
-        assert LEVEL_COLORS["WARNING"] == Colors.YELLOW
-
-    def test_error_color(self):
-        """Test ERROR level color."""
-        assert LEVEL_COLORS["ERROR"] == Colors.RED
-
-    def test_critical_color(self):
-        """Test CRITICAL level color."""
-        assert LEVEL_COLORS["CRITICAL"] == Colors.BOLD_RED
-
-
-class TestSymbolColors:
-    """Tests for SYMBOL_COLORS mapping."""
+class TestSymbolStyles:
+    """Tests for SYMBOL_STYLES mapping with loguru color tags."""
 
     def test_download_symbol(self):
-        """Test download symbol color."""
-        assert SYMBOL_COLORS["↓"] == Colors.CYAN
+        """Test download symbol uses cyan tag."""
+        assert SYMBOL_STYLES["↓"] == ("<cyan>", "</cyan>")
 
     def test_upload_symbol(self):
-        """Test upload symbol color."""
-        assert SYMBOL_COLORS["↑"] == Colors.GREEN
+        """Test upload symbol uses green tag."""
+        assert SYMBOL_STYLES["↑"] == ("<green>", "</green>")
 
     def test_move_symbol(self):
-        """Test move symbol color."""
-        assert SYMBOL_COLORS["→"] == Colors.BLUE
+        """Test move symbol uses blue tag."""
+        assert SYMBOL_STYLES["→"] == ("<blue>", "</blue>")
 
     def test_remove_symbol(self):
-        """Test remove symbol color."""
-        assert SYMBOL_COLORS["✕"] == Colors.RED
+        """Test remove symbol uses red tag."""
+        assert SYMBOL_STYLES["✕"] == ("<red>", "</red>")
 
     def test_create_symbol(self):
-        """Test create symbol color."""
-        assert SYMBOL_COLORS["+"] == Colors.GREEN
+        """Test create symbol uses green tag."""
+        assert SYMBOL_STYLES["+"] == ("<green>", "</green>")
 
     def test_permission_symbol(self):
-        """Test permission symbol color."""
-        assert SYMBOL_COLORS["⚙"] == Colors.MAGENTA
+        """Test permission symbol uses magenta tag."""
+        assert SYMBOL_STYLES["⚙"] == ("<magenta>", "</magenta>")
 
     def test_skip_symbol(self):
-        """Test skip symbol color."""
-        assert SYMBOL_COLORS["·"] == Colors.GRAY
+        """Test skip symbol uses dim tag."""
+        assert SYMBOL_STYLES["·"] == ("<dim>", "</dim>")
 
 
 class TestColorizeSymbols:
     """Tests for _colorize_symbols function."""
 
     def test_colorize_download_symbol(self):
-        """Test download symbol gets colored."""
+        """Test download symbol gets colored with loguru tags."""
         result = _colorize_symbols("↓ file.txt")
-        assert Colors.CYAN in result
+        assert "<cyan>" in result
+        assert "</cyan>" in result
         assert "↓" in result
 
     def test_colorize_upload_symbol(self):
-        """Test upload symbol gets colored."""
+        """Test upload symbol gets colored with loguru tags."""
         result = _colorize_symbols("↑ file.txt")
-        assert Colors.GREEN in result
+        assert "<green>" in result
+        assert "</green>" in result
         assert "↑" in result
 
     def test_colorize_multiple_symbols(self):
         """Test multiple symbols get colored."""
         result = _colorize_symbols("↓ download and ↑ upload")
-        assert Colors.CYAN in result
-        assert Colors.GREEN in result
+        assert "<cyan>" in result
+        assert "<green>" in result
 
     def test_no_symbols_unchanged(self):
         """Test message without symbols is unchanged."""
         result = _colorize_symbols("Test message")
         assert result == "Test message"
+
+    def test_colorize_disabled(self):
+        """Test colorization can be disabled."""
+        result = _colorize_symbols("↓ file.txt", use_colors=False)
+        assert "<cyan>" not in result
+        assert result == "↓ file.txt"
 
 
 class TestSetupLogging:
