@@ -177,7 +177,7 @@ export HSYNC_LAN_KEY="mySecretKey123"
 | `--lan-port` | Port for HTTP server (0 = random) | `0` |
 | `--lan-key` | Shared secret for authentication | `None` |
 | `--lan-group` | Group name for peer filtering | `None` |
-| `--lan-https` | Enable HTTPS with self-signed certificate | `false` |
+| `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled by default |
 | `--discovery-timeout` | Peer discovery timeout (seconds) | `5` |
 
 ## Environment Variables
@@ -192,7 +192,7 @@ All LAN options can also be configured via environment variables:
 | `HSYNC_PEER_TIMEOUT` | Timeout before marking peer as offline (seconds) | `15` |
 | `HSYNC_LAN_KEY` | Shared secret for authentication | `None` |
 | `HSYNC_LAN_GROUP` | Group name for peer filtering | `None` |
-| `HSYNC_LAN_HTTPS` | Enable HTTPS with self-signed certificate | `false` |
+| `HSYNC_LAN_HTTPS` | Enable/disable HTTPS (`true`/`false`) | `true` |
 
 ### Configuration Priority
 
@@ -301,17 +301,22 @@ LAN mode supports encrypted communication using HTTPS with self-signed certifica
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Enabling HTTPS
+### Usage
+
+HTTPS is **enabled by default** in LAN mode. No additional configuration is needed:
 
 ```bash
-# Enable HTTPS with self-signed certificate
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https
+# HTTPS is enabled by default
+./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 # Combine with authentication for maximum security
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https --lan-key "mySecret"
+./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecret"
 
-# Via environment variable
-export HSYNC_LAN_HTTPS=true
+# Disable HTTPS (use plain HTTP)
+./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
+
+# Disable via environment variable
+export HSYNC_LAN_HTTPS=false
 ./dist/hsync -b photos -p ~/Pictures --lan-mode
 ```
 

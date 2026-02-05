@@ -277,12 +277,13 @@ def create_argument_parser() -> ArgumentParser:
     )
 
     parser.add_argument(
-        "--lan-https",
-        action="store_true",
+        "--no-lan-https",
+        action="store_false",
         dest="lan_https",
-        help="Enable HTTPS for LAN mode communication. "
-             "A self-signed certificate is generated per session. "
-             "The certificate fingerprint is shared via mDNS for verification.",
+        default=True,
+        help="Disable HTTPS for LAN mode communication. "
+             "By default, HTTPS is enabled with a self-signed certificate per session. "
+             "Use this flag to use plain HTTP instead.",
     )
 
     # -------------------------------------------------------------------------
