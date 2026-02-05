@@ -276,6 +276,15 @@ def create_argument_parser() -> ArgumentParser:
              "Can also be set via HSYNC_LAN_GROUP environment variable.",
     )
 
+    parser.add_argument(
+        "--lan-https",
+        action="store_true",
+        dest="lan_https",
+        help="Enable HTTPS for LAN mode communication. "
+             "A self-signed certificate is generated per session. "
+             "The certificate fingerprint is shared via mDNS for verification.",
+    )
+
     # -------------------------------------------------------------------------
     # Output options
     # -------------------------------------------------------------------------

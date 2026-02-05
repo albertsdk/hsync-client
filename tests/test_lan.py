@@ -77,6 +77,42 @@ class TestPeer:
         )
         assert peer.get_server_url() == "http://192.168.1.100:8765"
 
+    def test_peer_get_server_url_https(self):
+        """Test getting the HTTPS server URL for a peer."""
+        peer = Peer(
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            use_https=True,
+            cert_fingerprint="abc123def456",
+        )
+        assert peer.get_server_url() == "https://192.168.1.100:8765"
+
+    def test_peer_https_fields(self):
+        """Test HTTPS-related fields on Peer."""
+        peer = Peer(
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+            use_https=True,
+            cert_fingerprint="abc123def456789",
+        )
+        assert peer.use_https is True
+        assert peer.cert_fingerprint == "abc123def456789"
+
+    def test_peer_defaults_to_http(self):
+        """Test that peer defaults to HTTP."""
+        peer = Peer(
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=8765,
+        )
+        assert peer.use_https is False
+        assert peer.cert_fingerprint is None
+
 
 class TestPeerManager:
     """Tests for PeerManager class."""

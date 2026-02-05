@@ -156,6 +156,7 @@ source prod.env
 | `--lan-port` | Port for LAN HTTP server (0 = random) |
 | `--lan-key` | Shared secret for LAN authentication |
 | `--lan-group` | Group name for peer filtering |
+| `--lan-https` | Enable HTTPS with self-signed certificate |
 | `--discovery-timeout` | Peer discovery timeout in seconds |
 
 ### Examples
@@ -268,12 +269,18 @@ Peer-to-peer synchronization without a centralized server:
 
 # With authentication (recommended)
 ./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecretKey"
+
+# With HTTPS encryption
+./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https
+
+# Maximum security (HTTPS + authentication)
+./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-https --lan-key "mySecretKey"
 ```
 
 **How it works:**
 1. Peers discover each other via mDNS (Bonjour/Avahi)
 2. The peer with the lowest Client ID becomes the master
-3. Other peers sync files with the master via HTTP
+3. Other peers sync files with the master via HTTP/HTTPS
 
 See [LAN Mode documentation](docs/lan-mode.md) for details.
 

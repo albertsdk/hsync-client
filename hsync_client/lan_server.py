@@ -401,39 +401,76 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
 class LANServer:
     """
-    Embedded HTTP server for LAN master mode.
+    Embedded HTTP/HTTPS server for LAN master mode.
 
     Runs in a background thread and serves the hsync API to peer clients.
+    Supports both HTTP and HTTPS (with self-signed certificates).
     """
 
-    def __init__(self, port: int) -> None:
+    def __init__(
+        self,
+        port: int,
+        use_https: bool = False,
+        cert_file: Optional[str] = None,
+        key_file: Optional[str] = None,
+    ) -> None:
         """
         Initialize the LAN server.
 
         Args:
             port: Port to listen on.
+            use_https: Whether to use HTTPS instead of HTTP.
+            cert_file: Path to SSL certificate file (required if use_https=True).
+            key_file: Path to SSL private key file (required if use_https=True).
         """
         self._port = port
+        self._use_https = use_https
+        self._cert_file = cert_file
+        self._key_file = key_file
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
+
+        # Validate HTTPS configuration
+        if use_https and (not cert_file or not key_file):
+            raise ValueError("cert_file and key_file are required when use_https=True")
 
     @property
     def port(self) -> int:
         """Get the server port."""
         return self._port
 
+    @property
+    def use_https(self) -> bool:
+        """Check if HTTPS is enabled."""
+        return self._use_https
+
     def start(self) -> None:
         """Start the server in a background thread."""
+        import ssl
+
         if self._running:
             LOG.warning("LAN server already running")
             return
 
         self._server = HTTPServer(("0.0.0.0", self._port), LANRequestHandler)
+
+        # Wrap socket with SSL if HTTPS is enabled
+        if self._use_https:
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(self._cert_file, self._key_file)  # type: ignore
+            self._server.socket = ssl_context.wrap_socket(
+                self._server.socket,
+                server_side=True,
+            )
+            protocol = "HTTPS"
+        else:
+            protocol = "HTTP"
+
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
         self._running = True
-        LOG.info(f"LAN master server started on port {self._port}")
+        LOG.info(f"LAN master server started on port {self._port} ({protocol})")
 
     def _serve(self) -> None:
         """Server loop (runs in background thread)."""

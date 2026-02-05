@@ -103,6 +103,8 @@ class Peer:
     address: str
     port: int
     group: Optional[str] = None
+    use_https: bool = False
+    cert_fingerprint: Optional[str] = None
     last_seen: float = field(default_factory=time.time)
 
     def is_alive(self) -> bool:
@@ -114,8 +116,9 @@ class Peer:
         self.last_seen = time.time()
 
     def get_server_url(self) -> str:
-        """Get the HTTP server URL for this peer."""
-        return f"http://{self.address}:{self.port}"
+        """Get the HTTP/HTTPS server URL for this peer."""
+        protocol = "https" if self.use_https else "http"
+        return f"{protocol}://{self.address}:{self.port}"
 
 
 # =============================================================================
@@ -357,6 +360,11 @@ class HsyncServiceListener(ServiceListener):
             # Group is optional - empty string means no group
             group_bytes = properties.get(b"group", b"")
             group = group_bytes.decode("utf-8") if group_bytes else None
+            # HTTPS info is optional
+            https_bytes = properties.get(b"https", b"")
+            use_https = https_bytes.decode("utf-8").lower() == "true" if https_bytes else False
+            cert_fp_bytes = properties.get(b"cert_fp", b"")
+            cert_fingerprint = cert_fp_bytes.decode("utf-8") if cert_fp_bytes else None
 
             if not cid or not bucket:
                 LOG.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -377,6 +385,8 @@ class HsyncServiceListener(ServiceListener):
                 address=address,
                 port=port,
                 group=group,
+                use_https=use_https,
+                cert_fingerprint=cert_fingerprint,
             )
             self._peer_manager.add_peer(peer)
 
@@ -406,6 +416,8 @@ class LANSync:
         bucket: str,
         port: int = HSYNC_LAN_PORT,
         group: Optional[str] = None,
+        use_https: bool = False,
+        cert_fingerprint: Optional[str] = None,
     ) -> None:
         """
         Initialize LAN sync coordinator.
@@ -415,10 +427,14 @@ class LANSync:
             bucket: The bucket name to sync.
             port: Port to use when acting as master. Use 0 for random port.
             group: Optional group name for peer filtering.
+            use_https: Whether to use HTTPS for communication.
+            cert_fingerprint: SHA-256 fingerprint of the SSL certificate (if HTTPS).
         """
         self._cid = cid
         self._bucket = bucket
         self._group = group
+        self._use_https = use_https
+        self._cert_fingerprint = cert_fingerprint
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
 
@@ -437,6 +453,16 @@ class LANSync:
     def group(self) -> Optional[str]:
         """Get the group name."""
         return self._group
+
+    @property
+    def use_https(self) -> bool:
+        """Check if HTTPS is enabled."""
+        return self._use_https
+
+    @property
+    def cert_fingerprint(self) -> Optional[str]:
+        """Get the SSL certificate fingerprint."""
+        return self._cert_fingerprint
 
     @property
     def peer_manager(self) -> Optional[PeerManager]:
@@ -515,6 +541,11 @@ class LANSync:
         # Add group if specified
         if self._group:
             properties["group"] = self._group
+        # Add HTTPS info if enabled
+        if self._use_https:
+            properties["https"] = "true"
+            if self._cert_fingerprint:
+                properties["cert_fp"] = self._cert_fingerprint
 
         # Create service info
         self._service_info = ServiceInfo(
