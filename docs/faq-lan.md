@@ -143,6 +143,28 @@ local network. Bandwidth limiting is available.
 Only changed files are transferred. The event-driven architecture avoids
 polling. Compression and delta transfer reduce bandwidth further.
 
+**Q: What are the `.hsynckeep` files that keep appearing in my synced folder?**
+HSYNC creates a small, empty (0-byte) file named `.hsynckeep` in every folder
+that is otherwise empty. It is a marker — like Git's `.gitkeep` — that tells
+sync "this folder exists, keep it".
+
+**Why are they created?** HSYNC synchronizes files, so a folder with nothing
+in it has nothing to transfer and would be lost on your other devices. The
+marker makes the folder visible to sync, so empty folders are preserved
+everywhere.
+
+**When are they created?** At the start of every sync, HSYNC scans your folder
+and adds a `.hsynckeep` to any directory with no files of its own. A directory
+that only contains other directories, or only hidden files, also counts as
+empty. A marker is also added when the last file in a directory is deleted.
+
+**Are they synced to other devices?** No. `.hsynckeep` files are local,
+per-device markers: they are never uploaded or downloaded, and each device
+creates and keeps its own.
+
+**Can I delete them?** You can, but HSYNC will recreate them at the next sync.
+They are harmless: zero bytes, hidden, and excluded from both sync and Git.
+
 ## Debian Package
 
 **Q: How do I configure the systemd service for LAN mode?**
