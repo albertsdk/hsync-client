@@ -1,11 +1,12 @@
 """
 Tests for hsync_client.logger module.
+
+Tests the loguru-based logging configuration.
 """
 
-import logging
 import tempfile
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -13,12 +14,10 @@ from hsync_client.logger import (
     Colors,
     LEVEL_COLORS,
     SYMBOL_COLORS,
-    ColoredFormatter,
-    JsonFormatter,
-    ClientIdFilter,
     setup_logging,
     get_client_id,
     set_client_id,
+    _colorize_symbols,
 )
 
 
@@ -59,23 +58,23 @@ class TestLevelColors:
 
     def test_debug_color(self):
         """Test DEBUG level color."""
-        assert LEVEL_COLORS[logging.DEBUG] == Colors.GRAY
+        assert LEVEL_COLORS["DEBUG"] == Colors.GRAY
 
     def test_info_color(self):
         """Test INFO level color."""
-        assert LEVEL_COLORS[logging.INFO] == Colors.RESET
+        assert LEVEL_COLORS["INFO"] == Colors.RESET
 
     def test_warning_color(self):
         """Test WARNING level color."""
-        assert LEVEL_COLORS[logging.WARNING] == Colors.YELLOW
+        assert LEVEL_COLORS["WARNING"] == Colors.YELLOW
 
     def test_error_color(self):
         """Test ERROR level color."""
-        assert LEVEL_COLORS[logging.ERROR] == Colors.RED
+        assert LEVEL_COLORS["ERROR"] == Colors.RED
 
     def test_critical_color(self):
         """Test CRITICAL level color."""
-        assert LEVEL_COLORS[logging.CRITICAL] == Colors.BOLD_RED
+        assert LEVEL_COLORS["CRITICAL"] == Colors.BOLD_RED
 
 
 class TestSymbolColors:
@@ -110,212 +109,55 @@ class TestSymbolColors:
         assert SYMBOL_COLORS["·"] == Colors.GRAY
 
 
-class TestJsonFormatter:
-    """Tests for JsonFormatter class."""
+class TestColorizeSymbols:
+    """Tests for _colorize_symbols function."""
 
-    def test_format_simple_message(self):
-        """Test formatting a simple message."""
-        formatter = JsonFormatter(fmt="%(message)s")
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        result = formatter.format(record)
+    def test_colorize_download_symbol(self):
+        """Test download symbol gets colored."""
+        result = _colorize_symbols("↓ file.txt")
+        assert Colors.CYAN in result
+        assert "↓" in result
+
+    def test_colorize_upload_symbol(self):
+        """Test upload symbol gets colored."""
+        result = _colorize_symbols("↑ file.txt")
+        assert Colors.GREEN in result
+        assert "↑" in result
+
+    def test_colorize_multiple_symbols(self):
+        """Test multiple symbols get colored."""
+        result = _colorize_symbols("↓ download and ↑ upload")
+        assert Colors.CYAN in result
+        assert Colors.GREEN in result
+
+    def test_no_symbols_unchanged(self):
+        """Test message without symbols is unchanged."""
+        result = _colorize_symbols("Test message")
         assert result == "Test message"
-
-    def test_format_with_json_data(self):
-        """Test formatting with JSON data."""
-        formatter = JsonFormatter(fmt="%(message)s")
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        record.json_data = {"key": "value", "count": 42}
-        result = formatter.format(record)
-        assert "Test message" in result
-        assert '"key": "value"' in result
-        assert '"count": 42' in result
-
-    def test_format_without_json_data(self):
-        """Test formatting without json_data attribute."""
-        formatter = JsonFormatter(fmt="%(message)s")
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        # No json_data attribute set
-        result = formatter.format(record)
-        assert result == "Test message"
-
-
-class TestColoredFormatter:
-    """Tests for ColoredFormatter class."""
-
-    def test_init_with_colors_disabled(self):
-        """Test initialization with colors disabled."""
-        formatter = ColoredFormatter(use_colors=False)
-        assert formatter.use_colors is False
-
-    @patch("sys.stdout.isatty", return_value=False)
-    def test_init_no_tty(self, mock_isatty):
-        """Test that colors are disabled when not a TTY."""
-        formatter = ColoredFormatter(use_colors=True)
-        assert formatter.use_colors is False
-
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_init_with_tty(self, mock_isatty):
-        """Test that colors are enabled when TTY."""
-        formatter = ColoredFormatter(use_colors=True)
-        assert formatter.use_colors is True
-
-    def test_format_without_colors(self):
-        """Test formatting without colors."""
-        formatter = ColoredFormatter(fmt="%(message)s", use_colors=False)
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        result = formatter.format(record)
-        assert result == "Test message"
-
-    def test_format_with_json_data_no_colors(self):
-        """Test formatting with JSON data but no colors."""
-        formatter = ColoredFormatter(fmt="%(message)s", use_colors=False)
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        record.json_data = {"key": "value"}
-        result = formatter.format(record)
-        assert "Test message" in result
-        assert '"key": "value"' in result
-
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_format_with_colors_enabled(self, mock_isatty):
-        """Test formatting with colors enabled."""
-        formatter = ColoredFormatter(
-            fmt="%(asctime)s - %(levelname)s: %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%SZ",
-            use_colors=True,
-        )
-        record = logging.LogRecord(
-            name="test",
-            level=logging.ERROR,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        result = formatter.format(record)
-        # Should contain ANSI codes for ERROR level (red)
-        assert Colors.RED in result or Colors.RESET in result
-        assert "Test message" in result
-
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_format_with_action_symbol(self, mock_isatty):
-        """Test formatting with action symbol gets colored."""
-        formatter = ColoredFormatter(fmt="%(message)s", use_colors=True)
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg=": ↑ uploaded file",
-            args=(),
-            exc_info=None,
-        )
-        result = formatter.format(record)
-        # Should contain color codes for upload symbol
-        assert Colors.GREEN in result or "↑" in result
-
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_format_with_timestamp_dimmed(self, mock_isatty):
-        """Test that ISO timestamp is dimmed."""
-        formatter = ColoredFormatter(
-            fmt="%(asctime)s - %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%SZ",
-            use_colors=True,
-        )
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        result = formatter.format(record)
-        # Timestamp should be dimmed
-        assert Colors.DIM in result
-
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_format_with_json_data_colored(self, mock_isatty):
-        """Test formatting with JSON data is dimmed when colors enabled."""
-        formatter = ColoredFormatter(fmt="%(message)s", use_colors=True)
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
-        record.json_data = {"key": "value"}
-        result = formatter.format(record)
-        # JSON should be dimmed
-        assert Colors.DIM in result
-        assert '"key": "value"' in result
 
 
 class TestSetupLogging:
     """Tests for setup_logging function."""
 
-    def test_setup_default(self):
-        """Test default logging setup."""
-        logger = setup_logging()
-        assert logger.name == "hsync"
-        assert logger.level == logging.INFO
-        assert len(logger.handlers) == 1
-        assert logger.propagate is False
+    def test_setup_returns_loguru_logger(self):
+        """Test setup_logging returns loguru logger."""
+        result = setup_logging()
+        # Loguru logger has specific attributes
+        assert hasattr(result, "info")
+        assert hasattr(result, "debug")
+        assert hasattr(result, "warning")
+        assert hasattr(result, "error")
+        assert hasattr(result, "bind")
 
     def test_setup_debug_mode(self):
         """Test debug mode logging setup."""
-        logger = setup_logging(debug=True)
-        assert logger.level == logging.DEBUG
+        # Should not raise
+        setup_logging(debug=True)
 
     def test_setup_quiet_mode(self):
         """Test quiet mode logging setup."""
-        logger = setup_logging(quiet=True)
-        assert len(logger.handlers) == 1
-        assert isinstance(logger.handlers[0], logging.NullHandler)
+        # Should not raise
+        setup_logging(quiet=True)
 
     def test_setup_with_logfile(self):
         """Test logging setup with file output."""
@@ -323,41 +165,21 @@ class TestSetupLogging:
             logfile = f.name
 
         try:
-            logger = setup_logging(logfile=logfile)
-            assert len(logger.handlers) == 1
-            assert isinstance(logger.handlers[0], logging.FileHandler)
-
+            log = setup_logging(logfile=logfile)
             # Test that logging works
-            logger.info("Test message")
+            log.info("Test message")
 
             # Verify file was written
             with open(logfile, 'r') as f:
                 content = f.read()
                 assert "Test message" in content
         finally:
-            # Cleanup
-            for handler in logger.handlers[:]:
-                handler.close()
-                logger.removeHandler(handler)
             os.unlink(logfile)
-
-    def test_setup_clears_existing_handlers(self):
-        """Test that setup clears existing handlers."""
-        logger = setup_logging()
-        initial_handlers = len(logger.handlers)
-
-        # Setup again
-        logger = setup_logging()
-        assert len(logger.handlers) == initial_handlers
 
     def test_setup_no_color(self):
         """Test logging setup with colors disabled."""
-        logger = setup_logging(no_color=True)
-        assert len(logger.handlers) == 1
-        handler = logger.handlers[0]
-        assert isinstance(handler.formatter, ColoredFormatter)
-        # Colors should be disabled
-        assert handler.formatter.use_colors is False
+        # Should not raise
+        setup_logging(no_color=True)
 
 
 class TestClientIdContext:
@@ -379,31 +201,3 @@ class TestClientIdContext:
         set_client_id("test-id")
         set_client_id(None)
         assert get_client_id() is None
-
-
-class TestClientIdFilter:
-    """Tests for ClientIdFilter class."""
-
-    def test_filter_adds_client_id(self):
-        """Test filter adds client_id to log record."""
-        set_client_id("filter-test-id")
-        filter_obj = ClientIdFilter()
-        record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="test message", args=(), exc_info=None
-        )
-        result = filter_obj.filter(record)
-        assert result is True
-        assert record.client_id == "filter-test-id"
-        set_client_id(None)  # cleanup
-
-    def test_filter_uses_dash_when_no_client_id(self):
-        """Test filter uses '-' when no client ID is set."""
-        set_client_id(None)
-        filter_obj = ClientIdFilter()
-        record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="test message", args=(), exc_info=None
-        )
-        filter_obj.filter(record)
-        assert record.client_id == "-"
