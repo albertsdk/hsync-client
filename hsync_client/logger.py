@@ -27,18 +27,38 @@ This module provides a standardized logging setup with enterprise-grade features
   - ERROR: red for failures
   - CRITICAL: bold red for severe issues
 - Action symbol highlighting (↓↑→✕+⚙·)
-- File output support
+- File output support with log rotation
 - Quiet mode
 - Automatic color detection (disabled for non-TTY)
+
+Log rotation configuration (via environment variables):
+- HSYNC_LOG_ROTATION: When to rotate (e.g., "10 MB", "1 day", "00:00")
+- HSYNC_LOG_RETENTION: How long to keep old logs (e.g., "7 days", "5")
+- HSYNC_LOG_COMPRESSION: Compression format (e.g., "gz", "zip", "bz2")
 
 Log format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
 """
 
+import os
 import sys
 from contextvars import ContextVar
-from typing import Optional
+from typing import Final, Optional
 
 from loguru import logger
+
+
+# =============================================================================
+# Log Rotation Configuration Defaults
+# =============================================================================
+
+# Default rotation: rotate when file reaches 10 MB
+DEFAULT_LOG_ROTATION: Final[str] = "10 MB"
+
+# Default retention: keep logs for 7 days
+DEFAULT_LOG_RETENTION: Final[str] = "7 days"
+
+# Default compression: gzip for space efficiency
+DEFAULT_LOG_COMPRESSION: Final[str] = "gz"
 
 
 # Context variable for client ID - thread-safe storage for per-session data
@@ -167,6 +187,20 @@ def _format_record_plain(record: dict) -> str:
     )
 
 
+def _get_rotation_config() -> dict[str, Optional[str]]:
+    """
+    Get log rotation configuration from environment variables.
+
+    Returns:
+        Dictionary with rotation, retention, and compression settings.
+    """
+    return {
+        "rotation": os.environ.get("HSYNC_LOG_ROTATION", DEFAULT_LOG_ROTATION),
+        "retention": os.environ.get("HSYNC_LOG_RETENTION", DEFAULT_LOG_RETENTION),
+        "compression": os.environ.get("HSYNC_LOG_COMPRESSION", DEFAULT_LOG_COMPRESSION),
+    }
+
+
 def setup_logging(
     debug: bool = False,
     quiet: bool = False,
@@ -177,12 +211,20 @@ def setup_logging(
     Configure and return the HSYNC client logger.
 
     Sets up logging with enterprise-grade features including client ID
-    correlation for session tracing.
+    correlation for session tracing and log rotation for file output.
+
+    Log rotation is configured via environment variables:
+    - HSYNC_LOG_ROTATION: When to rotate (default: "10 MB")
+      Examples: "10 MB", "1 day", "00:00" (midnight), "1 week"
+    - HSYNC_LOG_RETENTION: How long to keep old logs (default: "7 days")
+      Examples: "7 days", "1 month", "5" (keep 5 files)
+    - HSYNC_LOG_COMPRESSION: Compression format (default: "gz")
+      Options: "gz", "bz2", "xz", "lzma", "tar", "tar.gz", "tar.bz2", "tar.xz", "zip"
 
     Args:
         debug: Enable DEBUG level logging.
         quiet: Suppress all output.
-        logfile: Optional path to log file.
+        logfile: Optional path to log file (enables rotation).
         no_color: Disable colored output.
 
     Returns:
@@ -198,13 +240,17 @@ def setup_logging(
     level = "DEBUG" if debug else "INFO"
 
     if logfile:
-        # File handler - no colors
+        # File handler with rotation - no colors
+        rotation_config = _get_rotation_config()
         logger.add(
             logfile,
             level=level,
             format=_format_record_plain,
             colorize=False,
             encoding="utf-8",
+            rotation=rotation_config["rotation"],
+            retention=rotation_config["retention"],
+            compression=rotation_config["compression"],
         )
     else:
         # Console handler - with colors (unless disabled)
@@ -222,5 +268,3 @@ def setup_logging(
         )
 
     return logger
-
-
