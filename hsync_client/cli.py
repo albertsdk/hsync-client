@@ -72,12 +72,13 @@ Examples:
   # LAN mode (no central server, peer-to-peer)
   hsync -b shared --lan-mode
 
-  # LAN mode with authentication
-  hsync -b shared --lan-mode --lan-key mysecret
+  # LAN mode with authentication (set HSYNC_LAN_KEY env var)
+  HSYNC_LAN_KEY=mysecret hsync -b shared --lan-mode
 
 Environment variables:
   HSYNC_SERVER      Server URL (alternative to -s)
   HSYNC_API_KEY     API key for authentication
+  HSYNC_LAN_KEY     Shared secret for LAN mode authentication
 """
 
     parser = ArgumentParser(
@@ -279,16 +280,6 @@ Environment variables:
         metavar="SEC",
         dest="discovery_timeout",
         help="Time to wait for peer discovery (default: 10s).",
-    )
-
-    lan_group.add_argument(
-        "--lan-key",
-        type=str,
-        required=False,
-        default=None,
-        metavar="KEY",
-        dest="lan_key",
-        help="Shared secret key for LAN authentication.",
     )
 
     lan_group.add_argument(

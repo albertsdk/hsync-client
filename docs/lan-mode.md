@@ -154,12 +154,12 @@ sequenceDiagram
 ### With Authentication
 
 ```bash
-# On all devices - use the same key
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecretKey123"
-
-# Or via environment variable
+# On all devices - use the same key via environment variable
 export HSYNC_LAN_KEY="mySecretKey123"
 ./dist/hsync -b photos -p ~/Pictures --lan-mode
+
+# Or inline
+HSYNC_LAN_KEY="mySecretKey123" ./dist/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### With Specific Port
@@ -175,10 +175,11 @@ export HSYNC_LAN_KEY="mySecretKey123"
 |--------|-------------|---------|
 | `--lan-mode` | Enable LAN P2P mode | `false` |
 | `--lan-port` | Port for HTTP server (0 = random) | `0` |
-| `--lan-key` | Shared secret for authentication | `None` |
 | `--lan-group` | Group name for peer filtering | `None` |
 | `--no-lan-https` | Disable HTTPS (use plain HTTP) | HTTPS enabled by default |
 | `--discovery-timeout` | Peer discovery timeout (seconds) | `10` |
+
+> **Note**: For security, the LAN authentication key is only available via the `HSYNC_LAN_KEY` environment variable (not as a CLI option).
 
 ## Environment Variables
 
@@ -215,8 +216,9 @@ By default, LAN mode operates without authentication. This is suitable for trust
 For security, use a shared secret key that all peers must know:
 
 ```bash
-# All peers must use the same key
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecretKey123"
+# All peers must use the same key (via environment variable)
+export HSYNC_LAN_KEY="mySecretKey123"
+./dist/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 The key is transmitted as a Bearer token in HTTP headers:
@@ -310,7 +312,7 @@ HTTPS is **enabled by default** in LAN mode. No additional configuration is need
 ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 # Combine with authentication for maximum security
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-key "mySecret"
+HSYNC_LAN_KEY="mySecret" ./dist/hsync -b photos -p ~/Pictures --lan-mode
 
 # Disable HTTPS (use plain HTTP)
 ./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
@@ -333,7 +335,7 @@ export HSYNC_LAN_HTTPS=false
 
 - **Shared networks**: Office or shared home networks where traffic sniffing is a concern
 - **Sensitive data**: When syncing confidential files
-- **Combined with `--lan-key`**: For both encryption and authentication
+- **Combined with `HSYNC_LAN_KEY`**: For both encryption and authentication
 
 ### Limitations
 
@@ -459,10 +461,10 @@ Sync files to a NAS device on the local network:
 
 ```bash
 # On workstation
-./dist/hsync -b backup -p ~/Documents --lan-mode --lan-key "backup-key"
+HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p ~/Documents --lan-mode
 
 # On NAS
-./dist/hsync -b backup -p /volume1/backups --lan-mode --lan-key "backup-key"
+HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
 ```
 
 ## Troubleshooting
@@ -475,7 +477,7 @@ Sync files to a NAS device on the local network:
 
 ### Authentication Failures
 
-1. **Check key**: Ensure all peers use the exact same `--lan-key`
+1. **Check key**: Ensure all peers use the exact same `HSYNC_LAN_KEY` environment variable
 2. **Check logs**: Look for "401 Unauthorized" errors
 
 ### Port Conflicts

@@ -221,7 +221,7 @@ def main() -> None:
         "DISCOVERY_TIMEOUT": getattr(args, 'discovery_timeout', None) or get_discovery_timeout() or 5,
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or 5,
         "PEER_TIMEOUT": get_peer_timeout() or 15,
-        "LAN_KEY": getattr(args, 'lan_key', None) or get_lan_key(),
+        "LAN_KEY": get_lan_key(),
         "LAN_GROUP": getattr(args, 'lan_group', None) or get_lan_group(),
         "LAN_HTTPS": getattr(args, 'lan_https', False) or get_lan_https(),
         "MASTER_CERT_FINGERPRINT": None,  # Set at runtime when connecting to HTTPS master
@@ -303,7 +303,7 @@ def main() -> None:
             protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
             LOG.info(f"Master server listening on port {lan_sync.port} ({protocol})")
             if config["LAN_KEY"]:
-                LOG.info("Authentication enabled (--lan-key)")
+                LOG.info("Authentication enabled (HSYNC_LAN_KEY)")
             else:
                 LOG.info("No authentication (trust LAN mode)")
 
