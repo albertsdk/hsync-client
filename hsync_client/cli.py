@@ -289,7 +289,7 @@ def main(
 
     [bold]Authors:[/bold]
 
-        Alberto Basso <alberto.basso@proton.me>
+        Alberto Basso
     """
     # Validate sync_order
     if sync_order not in ("mtime", "ctime"):
