@@ -50,6 +50,29 @@ from hsync_client.models.file import File, is_hidden_file
 
 LOG = logging.getLogger("hsync.lan_server")
 
+# API Configuration
+API_VERSION = "v1"
+API_PREFIX = f"/api/{API_VERSION}"
+
+# API endpoint paths
+ENDPOINT_HEALTH = f"{API_PREFIX}/health"
+ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
+ENDPOINT_FILES_SUFFIX = "/files"
+ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
+
+# Content Types
+CONTENT_TYPE_JSON = "application/json"
+CONTENT_TYPE_OCTET_STREAM = "application/octet-stream"
+
+# HTTP Status Codes
+HTTP_OK = 200
+HTTP_CREATED = 201
+HTTP_BAD_REQUEST = 400
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
+HTTP_NOT_FOUND = 404
+HTTP_INTERNAL_ERROR = 500
+
 
 # =============================================================================
 # Multipart Parser
@@ -151,7 +174,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
     def _send_json_response(self, status: int, data: dict | list) -> None:
         """Send a JSON response."""
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", CONTENT_TYPE_JSON)
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
@@ -173,7 +196,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if token == lan_key:
                 return True
 
-        self._send_error_response(401, "Unauthorized")
+        self._send_error_response(HTTP_UNAUTHORIZED, "Unauthorized")
         return False
 
     def do_GET(self) -> None:
@@ -186,21 +209,21 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
 
         # Health check
-        if path == "/api/v1/health":
+        if path == ENDPOINT_HEALTH:
             self._handle_health()
             return
 
         # List files: /api/v1/buckets/{bucket}/files
-        if path.endswith("/files") and "/buckets/" in path:
+        if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_list_files(query)
             return
 
         # Download file: /api/v1/buckets/{bucket}/files/download
-        if path.endswith("/files/download") and "/buckets/" in path:
+        if path.endswith(ENDPOINT_FILES_DOWNLOAD_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_download(query)
             return
 
-        self._send_error_response(404, "Not found")
+        self._send_error_response(HTTP_NOT_FOUND, "Not found")
 
     def do_POST(self) -> None:
         """Handle POST requests."""
@@ -211,15 +234,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         # Upload file: /api/v1/buckets/{bucket}/files
-        if path.endswith("/files") and "/buckets/" in path:
+        if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_upload()
             return
 
-        self._send_error_response(404, "Not found")
+        self._send_error_response(HTTP_NOT_FOUND, "Not found")
 
     def _handle_health(self) -> None:
         """Handle health check endpoint."""
-        self._send_json_response(200, {"status": "ok", "mode": "lan_master"})
+        self._send_json_response(HTTP_OK, {"status": "ok", "mode": "lan_master"})
 
     def _handle_list_files(self, query: dict) -> None:
         """Handle list files endpoint."""
@@ -228,7 +251,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         if not local_bucket or not exists(local_bucket):
-            self._send_error_response(404, "Bucket not found")
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not found")
             return
 
         file_list = []
@@ -257,13 +280,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # Sort by configured order
         file_list.sort(key=lambda x: x.get(sync_order, 0))
 
-        self._send_json_response(200, file_list)
+        self._send_json_response(HTTP_OK, file_list)
 
     def _handle_download(self, query: dict) -> None:
         """Handle file download endpoint."""
         filename = query.get("filename", [None])[0]
         if not filename:
-            self._send_error_response(400, "Missing filename parameter")
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing filename parameter")
             return
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
@@ -274,7 +297,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             filepath = join(local_bucket, filename)
 
         if not exists(filepath):
-            self._send_error_response(404, "File not found")
+            self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
 
         # Security check: ensure file is within bucket
@@ -282,22 +305,22 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         real_bucket = os.path.realpath(local_bucket)
         real_file = os.path.realpath(filepath)
         if not real_file.startswith(real_bucket):
-            self._send_error_response(403, "Access denied")
+            self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
         try:
             # Get file metadata
             file_obj = File.get(filepath)
             if not file_obj:
-                self._send_error_response(404, "File not found")
+                self._send_error_response(HTTP_NOT_FOUND, "File not found")
                 return
 
             # Send file
             with open(filepath, "rb") as f:
                 content = f.read()
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
+            self.send_response(HTTP_OK)
+            self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
             self.send_header("Content-Length", str(len(content)))
             self.send_header("X-MD5", file_obj.md5sum or "")
             self.send_header("X-Permissions", file_obj.permissions or "")
@@ -306,14 +329,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         except IOError as e:
             LOG.error(f"Error reading file {filepath}: {e}")
-            self._send_error_response(500, "Error reading file")
+            self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 
     def _handle_upload(self) -> None:
         """Handle file upload endpoint."""
         content_type = self.headers.get("Content-Type", "")
 
         if "multipart/form-data" not in content_type:
-            self._send_error_response(400, "Expected multipart/form-data")
+            self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
             return
 
         # Parse multipart form data using our custom parser
@@ -362,7 +385,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             real_bucket = os.path.realpath(local_bucket)
             real_dest = os.path.realpath(dest_path)
             if not real_dest.startswith(real_bucket):
-                self._send_error_response(403, "Access denied")
+                self._send_error_response(HTTP_FORBIDDEN, "Access denied")
                 return
 
             # Write file
@@ -384,14 +407,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 set_permissions(dest_path, permissions)
 
             LOG.info(f"Received file from {cid}: {dest_path}")
-            self._send_json_response(201, {
+            self._send_json_response(HTTP_CREATED, {
                 "info": "File uploaded successfully",
                 "file": dest_path,
             })
 
         except Exception as e:
             LOG.error(f"Error handling upload: {e}")
-            self._send_error_response(500, f"Upload error: {e}")
+            self._send_error_response(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
 
 
 # =============================================================================
