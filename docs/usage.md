@@ -8,18 +8,18 @@ This document provides detailed usage instructions for the HSYNC Client.
 
 ```mermaid
 flowchart LR
-    A[Install] --> B[Configure]
-    B --> C[Run]
-    
-    subgraph "1. Install"
+    A[Install] -->|"①→②"| B[Configure]
+    B -->|"②→③"| C[Run]
+
+    subgraph "① Install"
         A1[poetry install]
     end
-    
-    subgraph "2. Configure"
+
+    subgraph "② Configure"
         B1[Set HSYNC_API_KEY]
     end
-    
-    subgraph "3. Run"
+
+    subgraph "③ Run"
         C1[hsync -s URL -b bucket]
     end
 ```
@@ -77,12 +77,12 @@ sequenceDiagram
     participant C as Client
     participant S as Server
 
-    U->>C: hsync -s http://server -b mybucket
-    C->>S: Fetch remote file list
-    C->>C: Compare with local files
-    C->>S: Upload newer local files
-    C->>S: Download newer remote files
-    C->>U: Sync complete, exit
+    U->>C: ① hsync -s http://server -b mybucket
+    C->>S: ② Fetch remote file list
+    C->>C: ③ Compare with local files
+    C->>S: ④ Upload newer local files
+    S->>C: ⑤ Download newer remote files
+    C->>U: ⑥ Sync complete, exit
 ```
 
 ![One-Time Sync](images/usage-3.png)
@@ -103,17 +103,18 @@ sequenceDiagram
     participant C as Client
     participant S as Server
 
-    U->>C: hsync -s http://server -b mybucket -w
-    C->>S: Initial sync
-    C->>S: Connect WebSocket
+    U->>C: ① Start watch mode
+    C->>S: ② Initial sync
+    C->>S: ③ Connect WebSocket
 
-    loop Watch Mode
-        alt Local file changed
-            C->>S: Upload file
-            S->>C: Broadcast to others
-        else Remote event received
-            S->>C: Event notification
-            C->>S: Download file
+    loop ④ Watch Mode
+        alt ④a Local file changed
+            C->>S: ⑤a Upload file
+            S-->>C: Broadcast to others
+        else ④b Remote event received
+            S-->>C: ⑤b Event notification
+            C->>S: ⑥ Request file
+            S->>C: ⑦ Download file
         end
     end
 ```
@@ -134,14 +135,14 @@ gantt
     title Sync Timeline
     dateFormat HH:mm
     axisFormat %H:%M
-    
-    section Initial
+
+    section ① Initial
     Initial Sync     :done, 00:00, 1m
-    
-    section Watch
+
+    section ② Watch
     Real-time events :active, 00:01, 5m
-    
-    section Periodic
+
+    section ③ Periodic
     Full Re-sync     :crit, 00:05, 1m
     Real-time events :active, 00:06, 5m
     Full Re-sync     :crit, 00:10, 1m
@@ -186,18 +187,18 @@ hsync -s http://localhost:8765 -b mybucket -n
 
 ```mermaid
 flowchart TD
-    E[Error Occurs] --> T{Error Type}
-    
-    T -->|Network| N[Retry with backoff]
-    T -->|Auth| A[Check API key]
-    T -->|Not Found| NF[Skip file]
-    T -->|Permission| P[Log warning]
-    
-    N --> R{Retry count}
-    R -->|< 5| W[Wait and retry]
-    R -->|>= 5| F[Mark as failed]
+    E[① Error Occurs] -->|"②"| T{Error Type}
 
-    W --> E
+    T -->|"③a Network"| N[Retry with backoff]
+    T -->|"③b Auth"| A[Check API key]
+    T -->|"③c Not Found"| NF[Skip file]
+    T -->|"③d Permission"| P[Log warning]
+
+    N -->|"④"| R{Retry count}
+    R -->|"⑤a < 5"| W[Wait and retry]
+    R -->|"⑤b >= 5"| F[Mark as failed]
+
+    W -->|"⑥ Retry"| E
 ```
 
 ![Error Handling](images/usage-6.png)

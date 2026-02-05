@@ -21,21 +21,17 @@ flowchart LR
     end
 
     subgraph LocalB["💻 Client B"]
-        FSB["📂 File System"]
         CB["⚙️ HSYNC Client"]
+        FSB["📂 File System"]
     end
 
-    %% Client A changes flow
-    FSA -->|"1️⃣ File changed"| CA
-    CA -->|"2️⃣ Upload"| SERVER
-    SERVER -.->|"3️⃣ Notify"| CB
-    CB -->|"4️⃣ Download"| FSB
-
-    %% Client B changes flow
-    FSB -->|"1️⃣ File changed"| CB
-    CB -->|"2️⃣ Upload"| SERVER
-    SERVER -.->|"3️⃣ Notify"| CA
-    CA -->|"4️⃣ Download"| FSA
+    %% Client A → Server → Client B flow
+    FSA -->|"① Detect"| CA
+    CA -->|"② Upload"| SERVER
+    SERVER -.->|"③ Notify"| CB
+    CB -->|"④ Download"| SERVER
+    SERVER -->|"⑤ Send"| CB
+    CB -->|"⑥ Write"| FSB
 
     style FSA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     style CA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
@@ -51,9 +47,15 @@ flowchart LR
 
 </details>
 
-**Bidirectional Sync:**
-- **Client A → Client B**: A detects change → uploads → server notifies B → B downloads
-- **Client B → Client A**: B detects change → uploads → server notifies A → A downloads
+**Sync Flow (A → B):**
+1. **① Detect** — Client A detects file change via watchdog
+2. **② Upload** — Client A uploads file to server
+3. **③ Notify** — Server broadcasts event to Client B via WebSocket
+4. **④ Download** — Client B requests file from server
+5. **⑤ Send** — Server sends file content to Client B
+6. **⑥ Write** — Client B writes file to local disk
+
+The same flow applies in reverse (B → A) for bidirectional sync.
 
 ## Features
 
