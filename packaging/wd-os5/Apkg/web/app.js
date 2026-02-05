@@ -143,8 +143,10 @@
         const bucket = (bucketEl && bucketEl.value.trim())
             || (bucketEl && bucketEl.placeholder)
             || '<bucket>';
-        const group = $('#HSYNC_LAN_GROUP').value.trim();
-        const key = $('#HSYNC_LAN_KEY').value;
+        const groupEl = $('#HSYNC_LAN_GROUP');
+        const keyEl = $('#HSYNC_LAN_KEY');
+        const group = groupEl ? groupEl.value.trim() : '';
+        const key = keyEl ? keyEl.value : '';
 
         // POSIX single-quote every interpolated value so the generated command
         // is safe to paste into a shell regardless of its contents (no $ /
@@ -167,32 +169,40 @@
 
     function renderConnectCommand() {
         const cmdEl = $('#hsync-connect-command');
-        const copyBtn = $('#hsync-btn-copy');
-        const revealBtn = $('#hsync-btn-reveal-key');
         if (!cmdEl) return;
 
-        const isLan = $('#HSYNC_MODE').value === 'lan';
-        $('#hsync-connect-note-lan').hidden = !isLan;
-        $('#hsync-connect-note-server').hidden = isLan;
+        const modeEl = $('#HSYNC_MODE');
+        const isLan = !!modeEl && modeEl.value === 'lan';
 
-        if (!isLan) {
-            cmdEl.textContent = '';
-            cmdEl.hidden = true;
-            copyBtn.hidden = true;
-            revealBtn.hidden = true;
+        // Resolve the command text first: it is the core of this section, so
+        // a missing optional element (note/button) can never leave it empty.
+        let showKey = false;
+        if (isLan) {
+            const built = buildConnectCommand();
+            connectUnmasked = built.unmasked;
+            showKey = built.showKey;
+            cmdEl.hidden = false;
+            cmdEl.textContent = keyRevealed ? built.unmasked : built.masked;
+        } else {
             connectUnmasked = '';
-            return;
+            cmdEl.hidden = true;
+            cmdEl.textContent = '';
         }
 
-        const { masked, unmasked, showKey } = buildConnectCommand();
-        connectUnmasked = unmasked;
-        cmdEl.hidden = false;
-        cmdEl.textContent = keyRevealed ? unmasked : masked;
-        copyBtn.hidden = false;
-        revealBtn.hidden = !showKey;
-        revealBtn.textContent = keyRevealed
-            ? t('action.hide_key', 'Hide key')
-            : t('action.reveal_key', 'Show key');
+        const noteLan = $('#hsync-connect-note-lan');
+        const noteServer = $('#hsync-connect-note-server');
+        if (noteLan) noteLan.hidden = !isLan;
+        if (noteServer) noteServer.hidden = isLan;
+
+        const copyBtn = $('#hsync-btn-copy');
+        const revealBtn = $('#hsync-btn-reveal-key');
+        if (copyBtn) copyBtn.hidden = !isLan;
+        if (revealBtn) {
+            revealBtn.hidden = !isLan || !showKey;
+            revealBtn.textContent = keyRevealed
+                ? t('action.hide_key', 'Hide key')
+                : t('action.reveal_key', 'Show key');
+        }
     }
 
     async function copyConnectCommand() {
@@ -245,6 +255,7 @@
 
     function setStatus(running) {
         const b = $('#hsync-status-badge');
+        if (!b) return;
         b.classList.remove('hsync-badge-running', 'hsync-badge-stopped', 'hsync-badge-unknown');
         if (running === true)       { b.classList.add('hsync-badge-running'); b.textContent = t('status.running', 'running'); }
         else if (running === false) { b.classList.add('hsync-badge-stopped'); b.textContent = t('status.stopped', 'stopped'); }
