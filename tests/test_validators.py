@@ -7,6 +7,7 @@ from argparse import ArgumentTypeError
 import pytest
 
 from hsync_client.validators import (
+    valid_max_wait_timeout,
     valid_reconnect_delay,
     valid_resync,
     valid_bucket,
@@ -89,3 +90,33 @@ class TestValidBucket:
         with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
             valid_bucket("my bucket")
 
+
+class TestValidMaxWaitTimeout:
+    """Tests for valid_max_wait_timeout function."""
+
+    def test_valid_value(self):
+        """Test valid max wait timeout values."""
+        assert valid_max_wait_timeout("60") == 60
+        assert valid_max_wait_timeout("120") == 120
+        assert valid_max_wait_timeout("3599") == 3599
+
+    def test_boundary_too_low(self):
+        """Test value below lower boundary is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be between 9 and 3601"):
+            valid_max_wait_timeout("9")
+        with pytest.raises(ArgumentTypeError, match="must be between 9 and 3601"):
+            valid_max_wait_timeout("5")
+
+    def test_boundary_too_high(self):
+        """Test value above upper boundary is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be between 9 and 3601"):
+            valid_max_wait_timeout("3601")
+        with pytest.raises(ArgumentTypeError, match="must be between 9 and 3601"):
+            valid_max_wait_timeout("4000")
+
+    def test_non_integer(self):
+        """Test non-integer value is rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
+            valid_max_wait_timeout("abc")
+        with pytest.raises(ArgumentTypeError, match="must be an integer"):
+            valid_max_wait_timeout("120.5")
