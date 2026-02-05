@@ -17,45 +17,36 @@
 """
 Command-line interface for HSYNC Client.
 
-This module provides the argument parser and related utilities for
-the HSYNC command-line interface.
+This module provides the Typer-based CLI for the HSYNC command-line interface.
 """
 
-from argparse import ArgumentParser
+from os import getcwd
+from typing import Optional
+from typing_extensions import Annotated
 
-from hsync_client.constants import HSYNC_VERSION
-from hsync_client.validators import (
-    valid_bucket,
-    valid_http_timeout,
-    valid_max_wait_timeout,
-    valid_reconnect_delay,
-    valid_resync,
-    valid_stability_delay,
+import typer
+
+from hsync_client.constants import (
+    HSYNC_VERSION,
+    HTTP_TIMEOUT_MAX,
+    HTTP_TIMEOUT_MIN,
+    MAX_WAIT_TIMEOUT_MAX,
+    MAX_WAIT_TIMEOUT_MIN,
+    RECONNECT_DELAY_MAX,
+    RECONNECT_DELAY_MIN,
+    RESYNC_MAX,
+    RESYNC_MIN,
+    STABILITY_DELAY_MAX,
+    STABILITY_DELAY_MIN,
 )
 
 
-def create_argument_parser() -> ArgumentParser:
-    """
-    Create and configure the argument parser for HSYNC client.
+# =============================================================================
+# Typer Application
+# =============================================================================
 
-    Returns:
-        Configured ArgumentParser instance.
-    """
-    from os import getcwd
-    from argparse import RawDescriptionHelpFormatter
-
-    # Custom formatter that combines sorting with raw description
-    class CustomHelpFormatter(RawDescriptionHelpFormatter):
-        def add_arguments(self, actions):
-            actions = sorted(
-                actions,
-                key=lambda action: tuple(action.option_strings)
-                if action.option_strings
-                else (),
-            )
-            super().add_arguments(actions)
-
-    epilog = """
+EPILOG = """
+\b
 Examples:
   # Basic sync with a remote server
   hsync -b photos -s https://server.example.com
@@ -81,267 +72,238 @@ Environment variables:
   HSYNC_LAN_KEY     Shared secret for LAN mode authentication
 """
 
-    parser = ArgumentParser(
-        prog="hsync",
-        description="HSYNC - HTTP-based file synchronization client",
-        formatter_class=CustomHelpFormatter,
-        epilog=epilog,
-    )
+app = typer.Typer(
+    name="hsync",
+    help="HSYNC - HTTP-based file synchronization client",
+    epilog=EPILOG,
+    add_completion=False,
+    rich_markup_mode=None,  # Disable rich formatting for plain output
+)
 
-    # -------------------------------------------------------------------------
+
+def version_callback(value: bool) -> None:
+    """Print version and exit."""
+    if value:
+        typer.echo(f"hsync {HSYNC_VERSION}")
+        raise typer.Exit()
+
+
+def _validate_bucket(value: str) -> str:
+    """Validate bucket name is alphanumeric."""
+    if not value.isalnum():
+        raise typer.BadParameter("The bucket name must be alphanumeric.")
+    return value
+
+
+def _validate_int_range(value: int, min_val: int, max_val: int, name: str) -> int:
+    """Validate integer is within range."""
+    if value < min_val or value > max_val:
+        raise typer.BadParameter(f"The {name} must be between {min_val} and {max_val}.")
+    return value
+
+
+@app.command()
+def main(
     # Required arguments
-    # -------------------------------------------------------------------------
-    parser.add_argument(
-        "-b",
-        "--bucket",
-        type=valid_bucket,
-        required=True,
-        metavar="NAME",
+    bucket: Annotated[str, typer.Option(
+        "-b", "--bucket",
         help="Remote bucket name.",
-    )
-
-    parser.add_argument(
+        metavar="NAME",
+        callback=lambda v: _validate_bucket(v),
+    )],
+    # Configuration
+    env_file: Annotated[Optional[str], typer.Option(
         "--env-file",
-        type=str,
-        required=False,
-        metavar="PATH",
-        dest="env_file",
         help="Load environment variables from file.",
-    )
-
-    parser.add_argument(
-        "-V",
-        "--version",
-        action="version",
-        version=f"%(prog)s {HSYNC_VERSION}",
-    )
-
-    # -------------------------------------------------------------------------
-    # Connection options
-    # -------------------------------------------------------------------------
-    conn_group = parser.add_argument_group("Connection")
-
-    conn_group.add_argument(
-        "-s",
-        "--server",
-        type=str,
-        required=False,
-        metavar="URL",
-        dest="server_url",
-        help="Server URL (or set HSYNC_SERVER).",
-    )
-
-    conn_group.add_argument(
-        "--insecure",
-        action="store_false",
-        dest="verify_ssl",
-        help="Skip SSL certificate verification.",
-    )
-
-    conn_group.add_argument(
-        "--ca-cert",
-        type=str,
-        required=False,
-        default=None,
-        metavar="FILE",
-        dest="ca_cert",
-        help="Path to CA certificate file for self-signed server certs.",
-    )
-
-    conn_group.add_argument(
-        "--timeout",
-        type=valid_http_timeout,
-        required=False,
-        default=30,
-        metavar="SEC",
-        dest="http_timeout",
-        help="HTTP request timeout in seconds (default: 30).",
-    )
-
-    # -------------------------------------------------------------------------
-    # Sync options
-    # -------------------------------------------------------------------------
-    sync_group = parser.add_argument_group("Sync")
-
-    sync_group.add_argument(
-        "-p",
-        "--path",
-        type=str,
-        required=False,
-        default=getcwd(),
-        metavar="DIR",
-        dest="local_path",
-        help="Local directory path (default: cwd).",
-    )
-
-    sync_group.add_argument(
-        "-w",
-        "--watch",
-        action="store_true",
-        dest="continuous",
-        help="Watch for changes and sync continuously.",
-    )
-
-    sync_group.add_argument(
-        "--compare-by",
-        type=str,
-        required=False,
-        default="mtime",
-        choices=["mtime", "ctime"],
-        metavar="FIELD",
-        dest="sync_order",
-        help="Compare files by: mtime, ctime (default: mtime).",
-    )
-
-    sync_group.add_argument(
-        "-i",
-        "--interval",
-        type=valid_resync,
-        required=False,
-        metavar="SEC",
-        dest="resync",
-        help="Force full sync every SEC seconds (requires -w).",
-    )
-
-    sync_group.add_argument(
-        "--retry-delay",
-        type=valid_reconnect_delay,
-        required=False,
-        default=5,
-        metavar="SEC",
-        dest="reconnect_delay",
-        help="Retry connection after SEC seconds (default: 5).",
-    )
-
-    sync_group.add_argument(
-        "--stability-delay",
-        type=valid_stability_delay,
-        required=False,
-        default=None,
-        metavar="SEC",
-        dest="stability_delay",
-        help="Seconds to wait before uploading modified files (default: 5).",
-    )
-
-    sync_group.add_argument(
-        "--max-wait-timeout",
-        type=valid_max_wait_timeout,
-        required=False,
-        default=120,
-        metavar="SEC",
-        dest="max_wait_timeout",
-        help="Maximum time to wait for file stabilization (default: 120s).",
-    )
-
-    sync_group.add_argument(
-        "--filter-path",
-        type=str,
-        required=False,
-        default=None,
         metavar="PATH",
-        help="Sync only files within this subdirectory path.",
-    )
-
-    sync_group.add_argument(
-        "-n",
-        "--dry-run",
-        action="store_true",
-        dest="dryrun",
-        help="Show what would be done without making changes.",
-    )
-
-    # -------------------------------------------------------------------------
-    # LAN P2P options
-    # -------------------------------------------------------------------------
-    lan_group = parser.add_argument_group("LAN Mode")
-
-    lan_group.add_argument(
-        "--lan-mode",
-        action="store_true",
-        dest="lan_mode",
-        help="Enable LAN peer-to-peer mode without central server.",
-    )
-
-    lan_group.add_argument(
-        "--lan-port",
-        type=int,
-        required=False,
-        default=0,
-        metavar="PORT",
-        dest="lan_port",
-        help="Port to use when acting as LAN master (default: random).",
-    )
-
-    lan_group.add_argument(
-        "--discovery-timeout",
-        type=int,
-        required=False,
-        default=10,
-        metavar="SEC",
-        dest="discovery_timeout",
-        help="Time to wait for peer discovery (default: 10s).",
-    )
-
-    lan_group.add_argument(
-        "--lan-group",
-        type=str,
-        required=False,
-        default=None,
-        metavar="GROUP",
-        dest="lan_group",
-        help="Group name for LAN peer filtering.",
-    )
-
-    lan_group.add_argument(
-        "--no-lan-https",
-        action="store_false",
-        dest="lan_https",
-        default=True,
-        help="Disable HTTPS for LAN mode (use plain HTTP).",
-    )
-
-    # -------------------------------------------------------------------------
-    # Output options
-    # -------------------------------------------------------------------------
-    output_group = parser.add_argument_group("Output")
-
-    output_group.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        dest="debug",
-        help="Enable verbose output.",
-    )
-
-    output_group.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="Suppress all output.",
-    )
-
-    output_group.add_argument(
-        "-o",
-        "--output",
-        type=str,
-        required=False,
+    )] = None,
+    version: Annotated[Optional[bool], typer.Option(
+        "-V", "--version",
+        help="Show version and exit.",
+        is_eager=True,
+        callback=version_callback,
+    )] = None,
+    # Connection options
+    server_url: Annotated[Optional[str], typer.Option(
+        "-s", "--server",
+        help="Server URL (or set HSYNC_SERVER).",
+        metavar="URL",
+    )] = None,
+    insecure: Annotated[bool, typer.Option(
+        "--insecure",
+        help="Skip SSL certificate verification.",
+        show_default=False,
+    )] = False,
+    ca_cert: Annotated[Optional[str], typer.Option(
+        "--ca-cert",
+        help="Path to CA certificate file for self-signed server certs.",
         metavar="FILE",
-        dest="logfile",
+    )] = None,
+    http_timeout: Annotated[int, typer.Option(
+        "--timeout",
+        help="HTTP request timeout in seconds.",
+        metavar="SEC",
+    )] = 30,
+    # Sync options
+    local_path: Annotated[str, typer.Option(
+        "-p", "--path",
+        help="Local directory path.",
+        metavar="DIR",
+    )] = getcwd(),
+    continuous: Annotated[bool, typer.Option(
+        "-w", "--watch",
+        help="Watch for changes and sync continuously.",
+    )] = False,
+    sync_order: Annotated[str, typer.Option(
+        "--compare-by",
+        help="Compare files by: mtime, ctime.",
+        metavar="FIELD",
+    )] = "mtime",
+    resync: Annotated[Optional[int], typer.Option(
+        "-i", "--interval",
+        help="Force full sync every SEC seconds (requires -w).",
+        metavar="SEC",
+    )] = None,
+    reconnect_delay: Annotated[int, typer.Option(
+        "--retry-delay",
+        help="Retry connection after SEC seconds.",
+        metavar="SEC",
+    )] = 5,
+    stability_delay: Annotated[Optional[int], typer.Option(
+        "--stability-delay",
+        help="Seconds to wait before uploading modified files.",
+        metavar="SEC",
+    )] = None,
+    max_wait_timeout: Annotated[int, typer.Option(
+        "--max-wait-timeout",
+        help="Maximum time to wait for file stabilization.",
+        metavar="SEC",
+    )] = 120,
+    filter_path: Annotated[Optional[str], typer.Option(
+        "--filter-path",
+        help="Sync only files within this subdirectory path.",
+        metavar="PATH",
+    )] = None,
+    dryrun: Annotated[bool, typer.Option(
+        "-n", "--dry-run",
+        help="Show what would be done without making changes.",
+    )] = False,
+    # LAN Mode options
+    lan_mode: Annotated[bool, typer.Option(
+        "--lan-mode",
+        help="Enable LAN peer-to-peer mode without central server.",
+    )] = False,
+    lan_port: Annotated[int, typer.Option(
+        "--lan-port",
+        help="Port to use when acting as LAN master.",
+        metavar="PORT",
+    )] = 0,
+    discovery_timeout: Annotated[int, typer.Option(
+        "--discovery-timeout",
+        help="Time to wait for peer discovery.",
+        metavar="SEC",
+    )] = 10,
+    lan_group: Annotated[Optional[str], typer.Option(
+        "--lan-group",
+        help="Group name for LAN peer filtering.",
+        metavar="GROUP",
+    )] = None,
+    lan_https: Annotated[bool, typer.Option(
+        "--no-lan-https/",
+        help="Disable HTTPS for LAN mode (use plain HTTP).",
+        show_default=False,
+    )] = True,
+    # Output options
+    debug: Annotated[bool, typer.Option(
+        "-v", "--verbose",
+        help="Enable verbose output.",
+    )] = False,
+    quiet: Annotated[bool, typer.Option(
+        "-q", "--quiet",
+        help="Suppress all output.",
+    )] = False,
+    logfile: Annotated[Optional[str], typer.Option(
+        "-o", "--output",
         help="Write output to FILE.",
-    )
-
-    output_group.add_argument(
+        metavar="FILE",
+    )] = None,
+    no_color: Annotated[bool, typer.Option(
         "--no-color",
-        action="store_true",
         help="Disable colored output.",
-    )
-
-    output_group.add_argument(
+    )] = False,
+    legend: Annotated[bool, typer.Option(
         "--help-symbols",
-        action="store_true",
-        dest="legend",
         help="Show output symbols legend.",
+    )] = False,
+) -> None:
+    """
+    HSYNC - HTTP-based file synchronization client.
+
+    Synchronize files between local directory and remote bucket.
+    """
+    # Validate sync_order
+    if sync_order not in ("mtime", "ctime"):
+        raise typer.BadParameter(
+            "Invalid value for '--compare-by': must be 'mtime' or 'ctime'."
+        )
+
+    # Validate numeric ranges
+    if http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX:
+        raise typer.BadParameter(
+            f"HTTP timeout must be between {HTTP_TIMEOUT_MIN} and {HTTP_TIMEOUT_MAX}."
+        )
+    if resync is not None:
+        if resync < RESYNC_MIN or resync > RESYNC_MAX:
+            raise typer.BadParameter(
+                f"Resync interval must be between {RESYNC_MIN} and {RESYNC_MAX}."
+            )
+    if reconnect_delay < RECONNECT_DELAY_MIN or reconnect_delay > RECONNECT_DELAY_MAX:
+        raise typer.BadParameter(
+            f"Retry delay must be between {RECONNECT_DELAY_MIN} and {RECONNECT_DELAY_MAX}."
+        )
+    if stability_delay is not None:
+        if stability_delay < STABILITY_DELAY_MIN or stability_delay > STABILITY_DELAY_MAX:
+            raise typer.BadParameter(
+                f"Stability delay must be between {STABILITY_DELAY_MIN} and {STABILITY_DELAY_MAX}."
+            )
+    if max_wait_timeout < MAX_WAIT_TIMEOUT_MIN or max_wait_timeout > MAX_WAIT_TIMEOUT_MAX:
+        raise typer.BadParameter(
+            f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}."
+        )
+
+    # Import and call the actual main logic
+    from hsync_client.main_logic import run_sync
+
+    run_sync(
+        bucket=bucket,
+        env_file=env_file,
+        server_url=server_url,
+        verify_ssl=not insecure,
+        ca_cert=ca_cert,
+        http_timeout=http_timeout,
+        local_path=local_path,
+        continuous=continuous,
+        sync_order=sync_order,
+        resync=resync,
+        reconnect_delay=reconnect_delay,
+        stability_delay=stability_delay,
+        max_wait_timeout=max_wait_timeout,
+        filter_path=filter_path,
+        dryrun=dryrun,
+        lan_mode=lan_mode,
+        lan_port=lan_port,
+        discovery_timeout=discovery_timeout,
+        lan_group=lan_group,
+        lan_https=lan_https,
+        debug=debug,
+        quiet=quiet,
+        logfile=logfile,
+        no_color=no_color,
+        legend=legend,
     )
 
-    return parser
+
+def run() -> None:
+    """Entry point for the CLI application."""
+    app()
 
