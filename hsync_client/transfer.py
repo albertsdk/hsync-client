@@ -347,7 +347,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
         filename = f"{path}/{basename(file.filepath)}" if path else basename(file.filepath)
 
         # Check for resumable upload
-        status, offset = _get_upload_status(filename, file.md5sum, file.size)
+        if file.md5sum is None:
+            status, offset = "new", 0
+        else:
+            status, offset = _get_upload_status(filename, file.md5sum, file.size)
 
         if status == "complete":
             LOG.debug(f'"{file.filepath}" (already present on server)')
