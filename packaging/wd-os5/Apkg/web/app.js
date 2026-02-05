@@ -385,11 +385,16 @@
         // first paint; re-apply so the command survives that pass.
         [50, 200, 1000].forEach((ms) => setTimeout(renderConnectCommand, ms));
 
-        const modeEl = $('#HSYNC_MODE');
-        if (modeEl) modeEl.addEventListener('change', syncModeVisibility);
-        ['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'].forEach((id) => {
-            const el = $('#' + id);
-            if (el) el.addEventListener('input', renderConnectCommand);
+        // Delegate on document: the WD dashboard / remotewd can re-inject input
+        // nodes after init(), which would orphan per-element listeners. A
+        // delegated listener survives node replacement.
+        document.addEventListener('input', (e) => {
+            if (['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'].includes(e.target.id)) {
+                renderConnectCommand();
+            }
+        });
+        document.addEventListener('change', (e) => {
+            if (e.target.id === 'HSYNC_MODE') syncModeVisibility();
         });
 
         const copyBtn = $('#hsync-btn-copy');
