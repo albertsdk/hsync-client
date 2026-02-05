@@ -1,13 +1,11 @@
 # HSYNC Client
 
-CLI application for HTTP-based file synchronization with WebSocket support for real-time events.
+**HSYNC** - HTTP-based file synchronization client.
 
-A **bucket** is a shared directory that can be hosted on:
-- A **central HSYNC server** (Server Mode)
-- **Another peer client** acting as master (LAN Mode / P2P)
+Synchronize files between a local directory and a remote **bucket**. A bucket is a shared directory hosted on a central HSYNC server or on another peer in LAN Mode.
 
-In **Server Mode**, clients connect to a centralized HSYNC server to sync files.
-In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no external server required.
+- In **Server Mode**, clients connect to a centralized server.
+- In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no central server required.
 
 ## Synchronization Overview
 
