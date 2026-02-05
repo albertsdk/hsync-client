@@ -54,11 +54,14 @@ LOG = logging.getLogger(__name__)
 
 def download_file(file: File) -> None:
     """
-    Download a file from the remote server.
+    Download a file from the remote server with resume support.
 
-    Streams the file to a temporary location, verifies MD5 checksum,
-    then moves it to the final destination. Preserves timestamps and
-    permissions from the remote file.
+    Streams the file to a partial file location (.part extension), verifies
+    MD5 checksum, then moves it to the final destination. Preserves timestamps
+    and permissions from the remote file.
+
+    If a partial file exists from a previous interrupted download, resumes
+    from where it left off using HTTP Range requests.
 
     Args:
         file: File object with remote metadata (filepath, md5sum, etc.).
@@ -73,11 +76,49 @@ def download_file(file: File) -> None:
         LOG.error("Invalid file metadata: missing filepath or name")
         return
 
+    # Prepare destination directory and partial file path
+    relative_dir = dirname(file.filepath)
+    dest_dir = join(CONFIG["LOCAL_BUCKET"], relative_dir.lstrip("/"))
+    makedirs(dest_dir, exist_ok=True)
+
+    full_save_path = join(dest_dir, file.name.lstrip("/"))
+    partial_file_path = f"{full_save_path}.part"
+
+    # Check if local file is already up-to-date
+    if exists(full_save_path):
+        local_mtime = getmtime(full_save_path)
+        if file.mtime is not None and local_mtime >= file.mtime:
+            nothing_to_do(file)
+            return
+
+    # Check for existing partial file and determine resume offset
+    resume_offset = 0
+    if exists(partial_file_path):
+        resume_offset = getsize(partial_file_path)
+        # Don't resume if partial file is larger than expected
+        if resume_offset >= file.size:
+            LOG.warning(
+                f'Partial file larger than expected for "{file.filepath}", '
+                f"restarting download"
+            )
+            remove(partial_file_path)
+            resume_offset = 0
+        elif resume_offset > 0:
+            LOG.info(
+                f'[RESUME    ] "{file.filepath}" from '
+                f"{bytes_to_human_readable(resume_offset)}/{bytes_to_human_readable(file.size)}"
+            )
+
+    # Prepare request headers with Range if resuming
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/download"
+    headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
+    if resume_offset > 0:
+        headers["Range"] = f"bytes={resume_offset}-"
+
     try:
         response = get(
             uri,
-            headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
+            headers=headers,
             params={"filename": file.filepath},
             stream=True,
             verify=get_ssl_verify(),
@@ -88,7 +129,8 @@ def download_file(file: File) -> None:
         return
 
     LOG.debug(f"Request URI: {uri}")
-    LOG.debug(f"Request Header: {CONFIG['REQUEST_HEADERS']}")
+    LOG.debug(f"Request Header: {headers}")
+    LOG.debug(f"Response status: {response.status_code}")
 
     if response.status_code == 401:
         LOG.error(f'Authentication failed downloading "{file.filepath}"')
@@ -96,50 +138,50 @@ def download_file(file: File) -> None:
     if response.status_code == 404:
         LOG.error(f'File not found on server: "{file.filepath}"')
         return
-    if response.status_code != 200:
+    if response.status_code == 416:
+        # Range Not Satisfiable - partial file is invalid, restart
+        LOG.warning(f'Range not satisfiable for "{file.filepath}", restarting download')
+        if exists(partial_file_path):
+            remove(partial_file_path)
+        # Retry without Range header
+        download_file(file)
+        return
+    if response.status_code not in (200, 206):
         LOG.error(f'Server error downloading "{file.filepath}": {response.status_code}')
         return
 
-    # Create temporary file for download
-    with NamedTemporaryFile(delete=False) as temp_file:
-        temp_file_path = temp_file.name
+    # If server returned 200 instead of 206, it doesn't support Range - restart
+    if resume_offset > 0 and response.status_code == 200:
+        LOG.debug(f'Server does not support Range requests, restarting download')
+        resume_offset = 0
+        if exists(partial_file_path):
+            remove(partial_file_path)
 
     try:
         # Calculate optimal chunk size based on file size
         chunk_size = get_chunk_size(file.size)
 
-        # Stream file content to temporary file
-        with open(temp_file_path, "wb") as f:
+        # Stream file content to partial file (append if resuming)
+        write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
+        with open(partial_file_path, write_mode) as f:
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if not chunk:
                     break
                 f.write(chunk)
 
-        # Verify MD5 checksum
-        md5sum = compute_md5(temp_file_path)
+        # Verify MD5 checksum of complete file
+        md5sum = compute_md5(partial_file_path)
         if md5sum != file.md5sum:
             LOG.error(
                 f'"{file.filepath}" '
                 f"(Invalid checksum: expected {file.md5sum}, "
                 f"{md5sum} given)"
             )
+            # Keep partial file for potential manual inspection, but rename it
             return
 
-        # Prepare destination directory
-        relative_dir = dirname(file.filepath)
-        dest_dir = join(CONFIG["LOCAL_BUCKET"], relative_dir.lstrip("/"))
-        makedirs(dest_dir, exist_ok=True)
-
-        # Check if local file is already up-to-date
-        full_save_path = join(dest_dir, file.name.lstrip("/"))
-        if exists(full_save_path):
-            local_mtime = getmtime(full_save_path)
-            if file.mtime is not None and local_mtime >= file.mtime:
-                nothing_to_do(file)
-                return
-
-        # Move temporary file to final destination
-        move(temp_file_path, full_save_path)
+        # Move partial file to final destination
+        move(partial_file_path, full_save_path)
         LOG.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
         # Preserve timestamps from remote file
@@ -154,10 +196,6 @@ def download_file(file: File) -> None:
         LOG.error(f'Permission denied saving "{file.filepath}": {e}')
     except OSError as e:
         LOG.error(f'Error saving file "{file.filepath}": {e}')
-    finally:
-        # Clean up temporary file
-        if exists(temp_file_path):
-            remove(temp_file_path)
 
 
 # =============================================================================
@@ -219,13 +257,46 @@ def is_file_stable(file: File, interval: int | None = None) -> bool:
 # =============================================================================
 
 
+def _get_upload_status(filename: str, md5sum: str, size: int) -> tuple[str, int]:
+    """
+    Check upload status for resumable uploads.
+
+    Args:
+        filename: Path to the file within the bucket.
+        md5sum: Expected MD5 checksum of the complete file.
+        size: Total file size.
+
+    Returns:
+        Tuple of (status, offset) where:
+        - status: "complete", "resumable", or "new"
+        - offset: Number of bytes already uploaded (0 if new)
+    """
+    try:
+        uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/upload-status"
+        response = get(
+            uri,
+            headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
+            params={"filename": filename, "md5sum": md5sum, "size": size},
+            verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("status", "new"), data.get("offset", 0)
+    except RequestException:
+        pass
+    return "new", 0
+
+
 def upload_file(file: File, check_size: bool = True) -> None:
     """
-    Upload a file to the remote server.
+    Upload a file to the remote server with resume support.
 
     If check_size is True, waits for the file to stop being written
     to before uploading. Sends file with metadata including timestamps,
     MD5 checksum, and permissions.
+
+    If a previous upload was interrupted, resumes from where it left off.
 
     Args:
         file: File object to upload.
@@ -273,6 +344,20 @@ def upload_file(file: File, check_size: bool = True) -> None:
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
         prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
         path = dirname(file.filepath).rstrip("/").removeprefix(prefix).lstrip("/")
+        filename = f"{path}/{basename(file.filepath)}" if path else basename(file.filepath)
+
+        # Check for resumable upload
+        status, offset = _get_upload_status(filename, file.md5sum, file.size)
+
+        if status == "complete":
+            LOG.debug(f'"{file.filepath}" (already present on server)')
+            return
+
+        if status == "resumable" and offset > 0:
+            LOG.info(
+                f'[RESUME    ] "{file.filepath}" from '
+                f"{bytes_to_human_readable(offset)}/{bytes_to_human_readable(file.size)}"
+            )
 
         # Build form data with file metadata
         data = {
@@ -283,6 +368,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             "size": file.size,
             "md5sum": file.md5sum,
             "permissions": file.permissions,
+            "offset": offset,
         }
 
         LOG.debug(f"Upload file: {file.filepath}")
@@ -291,6 +377,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
         LOG.debug(f"       data: {data}")
 
         with open(file.filepath, "rb") as upload:
+            # Seek to offset if resuming
+            if offset > 0:
+                upload.seek(offset)
+
             files = {"file": (basename(file.filepath), upload)}
             response = post(
                 uri,
@@ -302,6 +392,15 @@ def upload_file(file: File, check_size: bool = True) -> None:
             )
             if response.status_code == 201:
                 LOG.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+            elif response.status_code == 202:
+                # Partial upload received - file still incomplete
+                result = response.json()
+                new_offset = result.get("offset", 0)
+                remaining = result.get("remaining", 0)
+                LOG.debug(
+                    f'Partial upload: {new_offset} bytes uploaded, '
+                    f'{remaining} bytes remaining'
+                )
             elif response.status_code == 401:
                 LOG.error(f'Authentication failed uploading "{file.filepath}"')
             elif response.status_code == 403:

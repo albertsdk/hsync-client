@@ -67,10 +67,12 @@ CONTENT_TYPE_OCTET_STREAM = "application/octet-stream"
 # HTTP Status Codes
 HTTP_OK = 200
 HTTP_CREATED = 201
+HTTP_PARTIAL_CONTENT = 206
 HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+HTTP_RANGE_NOT_SATISFIABLE = 416
 HTTP_INTERNAL_ERROR = 500
 
 
@@ -282,8 +284,55 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json_response(HTTP_OK, file_list)
 
+    def _parse_range_header(self, range_header: str, file_size: int) -> Optional[tuple[int, int]]:
+        """
+        Parse HTTP Range header.
+
+        Args:
+            range_header: The Range header value (e.g., "bytes=1000-" or "bytes=1000-2000").
+            file_size: Total size of the file.
+
+        Returns:
+            Tuple of (start, end) byte positions, or None if invalid.
+        """
+        if not range_header or not range_header.startswith("bytes="):
+            return None
+
+        try:
+            range_spec = range_header[6:]  # Remove "bytes="
+            if "-" not in range_spec:
+                return None
+
+            start_str, end_str = range_spec.split("-", 1)
+
+            if start_str == "":
+                # Suffix range: "-500" means last 500 bytes
+                suffix_length = int(end_str)
+                start = max(0, file_size - suffix_length)
+                end = file_size
+            elif end_str == "":
+                # Range from start to end: "1000-"
+                start = int(start_str)
+                end = file_size
+            else:
+                # Explicit range: "1000-2000"
+                start = int(start_str)
+                end = int(end_str) + 1  # HTTP ranges are inclusive
+
+            # Validate range
+            if start < 0 or start >= file_size:
+                return None
+            if end > file_size:
+                end = file_size
+            if start >= end:
+                return None
+
+            return (start, end)
+        except (ValueError, IndexError):
+            return None
+
     def _handle_download(self, query: dict) -> None:
-        """Handle file download endpoint."""
+        """Handle file download endpoint with Range request support."""
         filename = query.get("filename", [None])[0]
         if not filename:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing filename parameter")
@@ -315,17 +364,47 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 self._send_error_response(HTTP_NOT_FOUND, "File not found")
                 return
 
-            # Send file
-            with open(filepath, "rb") as f:
-                content = f.read()
+            file_size = file_obj.size or 0
 
-            self.send_response(HTTP_OK)
-            self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-            self.send_header("Content-Length", str(len(content)))
-            self.send_header("X-MD5", file_obj.md5sum or "")
-            self.send_header("X-Permissions", file_obj.permissions or "")
-            self.end_headers()
-            self.wfile.write(content)
+            # Check for Range header
+            range_header = self.headers.get("Range")
+            range_tuple = self._parse_range_header(range_header, file_size) if range_header else None
+
+            if range_header and range_tuple is None:
+                # Invalid range requested
+                self.send_response(HTTP_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"*/{file_size}")
+                self.end_headers()
+                return
+
+            with open(filepath, "rb") as f:
+                if range_tuple:
+                    # Partial content
+                    start, end = range_tuple
+                    f.seek(start)
+                    content = f.read(end - start)
+
+                    self.send_response(HTTP_PARTIAL_CONTENT)
+                    self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                    self.send_header("Content-Length", str(len(content)))
+                    self.send_header("Content-Range", f"bytes {start}-{end - 1}/{file_size}")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("X-MD5", file_obj.md5sum or "")
+                    self.send_header("X-Permissions", file_obj.permissions or "")
+                    self.end_headers()
+                    self.wfile.write(content)
+                else:
+                    # Full file
+                    content = f.read()
+
+                    self.send_response(HTTP_OK)
+                    self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                    self.send_header("Content-Length", str(len(content)))
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("X-MD5", file_obj.md5sum or "")
+                    self.send_header("X-Permissions", file_obj.permissions or "")
+                    self.end_headers()
+                    self.wfile.write(content)
 
         except IOError as e:
             LOG.error(f"Error reading file {filepath}: {e}")
