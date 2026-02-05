@@ -126,6 +126,8 @@ def main() -> None:
         no_color=args.no_color,
     )
 
+    LOG.info(f"HSYNC Client v{HSYNC_VERSION}")
+
     # Validate local directory exists
     if not exists(args.local_path):
         LOG.error(f"Directory '{args.local_path}' does not exist")
