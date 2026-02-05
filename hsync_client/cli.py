@@ -151,7 +151,7 @@ def create_argument_parser() -> ArgumentParser:
     )
 
     parser.add_argument(
-        "--order-by",
+        "--compare-by",
         type=str,
         required=False,
         default="mtime",

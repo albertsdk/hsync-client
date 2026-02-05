@@ -174,21 +174,21 @@ class TestCreateArgumentParser:
         args = parser.parse_args(['-b', 'test', '--help-symbols'])
         assert args.legend is True
 
-    def test_order_by_choices(self):
-        """Parser accepts only valid order-by choices."""
+    def test_compare_by_choices(self):
+        """Parser accepts only valid compare-by choices."""
         parser = create_argument_parser()
 
         # Valid choice: mtime
-        args = parser.parse_args(['-b', 'test', '--order-by', 'mtime'])
+        args = parser.parse_args(['-b', 'test', '--compare-by', 'mtime'])
         assert args.sync_order == 'mtime'
 
         # Valid choice: ctime
-        args = parser.parse_args(['-b', 'test', '--order-by', 'ctime'])
+        args = parser.parse_args(['-b', 'test', '--compare-by', 'ctime'])
         assert args.sync_order == 'ctime'
 
         # Invalid choice should fail
         with pytest.raises(SystemExit):
-            parser.parse_args(['-b', 'test', '--order-by', 'invalid'])
+            parser.parse_args(['-b', 'test', '--compare-by', 'invalid'])
 
     def test_path_option(self):
         """Parser accepts -p/--path option."""

@@ -47,7 +47,7 @@ mindmap
     Sync Options
       -w, --watch
       -i, --interval
-      --order-by
+      --compare-by
       --stability-delay
     Network
       --retry-delay
