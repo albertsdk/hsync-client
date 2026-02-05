@@ -2,7 +2,12 @@
 
 CLI application for HTTP-based file synchronization with WebSocket support for real-time events.
 
-In **Server Mode**, it acts as a client connecting to a centralized HSYNC server. In **LAN Mode**, it operates in peer-to-peer fashion where one instance automatically becomes the master (acting as server) while others sync with it—no external server required.
+A **bucket** is a shared directory that can be hosted on:
+- A **central HSYNC server** (Server Mode)
+- **Another peer client** acting as master (LAN Mode / P2P)
+
+In **Server Mode**, clients connect to a centralized HSYNC server to sync files.
+In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no external server required.
 
 ## Synchronization Overview
 
