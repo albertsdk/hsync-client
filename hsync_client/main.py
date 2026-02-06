@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # HSYNC Client - HTTP-based file synchronization client
-# Copyright (C) 2025 Alberto Basso <alberto.sdk [at] gmail [dot] com>
+# Copyright (C) 2025 Alberto Basso
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
