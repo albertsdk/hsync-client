@@ -5,17 +5,21 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-WebSocket Server for LAN Master Mode.
+WebSocket Server and Client for LAN Mode.
 
-This module provides real-time event synchronization between LAN peers.
-The master runs a WebSocket server that broadcasts file system events
-to all connected slaves.
+This module provides real-time bidirectional event synchronization between LAN peers.
+The master runs a WebSocket server that broadcasts file system events to all
+connected slaves. Slaves also monitor their local file systems and upload changes
+to the master for propagation to other peers.
 
 Features:
-- WebSocket server for real-time event broadcasting
-- File system watching using watchdog
+- WebSocket server for real-time event broadcasting (master)
+- WebSocket client for receiving events (slave)
+- Bidirectional sync: slaves can upload changes to master
+- File system watching using watchdog (both master and slave)
 - Event handling for file/directory create, modify, delete, rename
 - SSL/TLS support for secure connections
+- Echo loop prevention for files received from master
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ import threading
 from copy import deepcopy
 from os.path import exists, islink
 from time import time
-from typing import Optional, Set
+from typing import Any, Optional, Set
 from watchdog.events import FileSystemEventHandler, DirCreatedEvent, DirDeletedEvent
 from watchdog.observers import Observer
 
@@ -80,7 +84,7 @@ class LANWebSocketServer:
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
-        self._clients: Set[asyncio.Future] = set()
+        self._clients: Set[Any] = set()  # WebSocket connections
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._server: Optional[asyncio.Future] = None
@@ -224,9 +228,10 @@ class LANWebSocketServer:
             watch_path = CONFIG["LOCAL_BUCKET"]
 
         self._event_handler = LANFileEventHandler(self)
-        self._observer = Observer()
-        self._observer.schedule(self._event_handler, watch_path, recursive=True)
-        self._observer.start()
+        observer = Observer()
+        observer.schedule(self._event_handler, watch_path, recursive=True)
+        observer.start()
+        self._observer = observer
         LOG.info(f"File watcher started for: {watch_path}")
 
     def stop(self) -> None:
@@ -486,6 +491,8 @@ async def lan_websocket_client(
     Connect to the LAN master's WebSocket server and handle events.
 
     This function runs until the connection is closed or an error occurs.
+    Also starts a local file watcher to upload changes to the master
+    (bidirectional sync).
 
     Note: Certificate fingerprint verification is not performed here because
     it was already verified during the initial HTTP sync. The WebSocket
@@ -493,15 +500,26 @@ async def lan_websocket_client(
 
     Args:
         host: Master's IP address or hostname.
-        port: Master's WebSocket port.
+        port: Master's WebSocket port (HTTP port is port - 1).
         use_https: Whether to use WSS instead of WS.
     """
+    global _slave_event_handler
     import websockets
 
     protocol = "wss" if use_https else "ws"
     uri = f"{protocol}://{host}:{port}"
 
     LOG.info(f"Connecting to master WebSocket: {uri}")
+
+    # Start local file watcher for bidirectional sync
+    # HTTP port is WebSocket port - 1
+    http_port = port - 1
+    _slave_event_handler = SlaveFileEventHandler(host, http_port, use_https)
+    observer = Observer()
+    watch_path = CONFIG["LOCAL_BUCKET"]
+    observer.schedule(_slave_event_handler, watch_path, recursive=True)
+    observer.start()
+    LOG.info(f"Slave file watcher started for bidirectional sync: {watch_path}")
 
     # Set up SSL context for WSS
     # Note: Certificate fingerprint was already verified during initial HTTP sync.
@@ -541,7 +559,7 @@ async def lan_websocket_client(
             async for message in websocket:
                 try:
                     event_data = json.loads(message)
-                    await _handle_lan_event(event_data)
+                    await _handle_lan_event(event_data, _slave_event_handler)
                 except json.JSONDecodeError as e:
                     LOG.warning(f"Invalid JSON from master: {e}")
                 except Exception as e:
@@ -552,14 +570,24 @@ async def lan_websocket_client(
         raise
     except Exception as e:
         LOG.error(f"WebSocket connection error: {e}")
+    finally:
+        # Stop the file watcher
+        observer.stop()
+        observer.join(timeout=2.0)
+        _slave_event_handler = None
+        LOG.info("Slave file watcher stopped")
 
 
-async def _handle_lan_event(event_data: dict) -> None:
+async def _handle_lan_event(
+    event_data: dict,
+    slave_handler: Optional[SlaveFileEventHandler] = None,
+) -> None:
     """
     Handle an event received from the LAN master.
 
     Args:
         event_data: Event dictionary from the master.
+        slave_handler: Optional slave event handler for marking files as receiving.
     """
     from hsync_client.sync import update_file, update_dir
     from hsync_client.models.dir import Dir
@@ -578,14 +606,35 @@ async def _handle_lan_event(event_data: dict) -> None:
         LOG.warning("Event missing 'src' field")
         return
 
+    # Helper to mark/unmark files as receiving to prevent echo
+    def mark_receiving(filepath: str) -> None:
+        if slave_handler:
+            slave_handler.mark_receiving(filepath)
+
+    def unmark_receiving(filepath: str) -> None:
+        if slave_handler:
+            slave_handler.unmark_receiving(filepath)
+
     # Handle Added / Modified events
     if event_name in {"added", "modified"}:
         if "path" in src:
             # Directory event
-            update_dir(src)
+            dir_obj = Dir.from_dict(src, CONFIG["LOCAL_BUCKET"])
+            if dir_obj.path:
+                mark_receiving(dir_obj.path)
+                try:
+                    update_dir(src)
+                finally:
+                    unmark_receiving(dir_obj.path)
         elif "filepath" in src:
             # File event - download the file
-            update_file(src)
+            file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
+            if file_obj.filepath:
+                mark_receiving(file_obj.filepath)
+                try:
+                    update_file(src)
+                finally:
+                    unmark_receiving(file_obj.filepath)
 
     # Handle Renamed events
     elif event_name == "renamed":
@@ -598,23 +647,35 @@ async def _handle_lan_event(event_data: dict) -> None:
             src_dir = Dir.from_dict(src, CONFIG["LOCAL_BUCKET"])
             dst_dir = Dir.from_dict(dst, CONFIG["LOCAL_BUCKET"])
             if src_dir.path and dst_dir.path and exists(src_dir.path):
-                LOG.info(f'[LAN RENAME] "{src_dir.path}" -> "{dst_dir.path}"')
-                # Create parent directory if needed
-                parent = dirname(dst_dir.path)
-                if parent and not exists(parent):
-                    makedirs(parent, exist_ok=True)
-                rename(src_dir.path, dst_dir.path)
+                mark_receiving(src_dir.path)
+                mark_receiving(dst_dir.path)
+                try:
+                    LOG.info(f'[LAN RENAME] "{src_dir.path}" -> "{dst_dir.path}"')
+                    # Create parent directory if needed
+                    parent = dirname(dst_dir.path)
+                    if parent and not exists(parent):
+                        makedirs(parent, exist_ok=True)
+                    rename(src_dir.path, dst_dir.path)
+                finally:
+                    unmark_receiving(src_dir.path)
+                    unmark_receiving(dst_dir.path)
         elif "filepath" in src:
             # File rename
             src_file = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
             dst_file = File.from_dict(dst, CONFIG["LOCAL_BUCKET"], False)
             if src_file.filepath and dst_file.filepath and exists(src_file.filepath):
-                LOG.info(f'[LAN RENAME] "{src_file.filepath}" -> "{dst_file.filepath}"')
-                # Create parent directory if needed
-                parent = dirname(dst_file.filepath)
-                if parent and not exists(parent):
-                    makedirs(parent, exist_ok=True)
-                rename(src_file.filepath, dst_file.filepath)
+                mark_receiving(src_file.filepath)
+                mark_receiving(dst_file.filepath)
+                try:
+                    LOG.info(f'[LAN RENAME] "{src_file.filepath}" -> "{dst_file.filepath}"')
+                    # Create parent directory if needed
+                    parent = dirname(dst_file.filepath)
+                    if parent and not exists(parent):
+                        makedirs(parent, exist_ok=True)
+                    rename(src_file.filepath, dst_file.filepath)
+                finally:
+                    unmark_receiving(src_file.filepath)
+                    unmark_receiving(dst_file.filepath)
 
     # Handle Deleted events
     elif event_name == "deleted":
@@ -627,18 +688,331 @@ async def _handle_lan_event(event_data: dict) -> None:
             # Directory deletion
             dir_obj = Dir.from_dict(src, CONFIG["LOCAL_BUCKET"])
             if dir_obj.path and exists(dir_obj.path):
-                LOG.info(f'[LAN DELETE] "{dir_obj.path}"')
-                rmtree(dir_obj.path, ignore_errors=False)
+                mark_receiving(dir_obj.path)
+                try:
+                    LOG.info(f'[LAN DELETE] "{dir_obj.path}"')
+                    rmtree(dir_obj.path, ignore_errors=False)
+                finally:
+                    unmark_receiving(dir_obj.path)
         elif "filepath" in src:
             # File deletion
             file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
             if file_obj.filepath and exists(file_obj.filepath):
-                LOG.info(f'[LAN DELETE] "{file_obj.filepath}"')
-                remove(file_obj.filepath)
+                mark_receiving(file_obj.filepath)
+                try:
+                    LOG.info(f'[LAN DELETE] "{file_obj.filepath}"')
+                    remove(file_obj.filepath)
+                finally:
+                    unmark_receiving(file_obj.filepath)
 
     # Handle Symlink events
     elif event_name == "symlink":
         if "filepath" in src:
             # Symlink creation - download the file
-            update_file(src)
+            file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
+            if file_obj.filepath:
+                mark_receiving(file_obj.filepath)
+                try:
+                    update_file(src)
+                finally:
+                    unmark_receiving(file_obj.filepath)
+
+
+# =============================================================================
+# Slave File Event Handler (for bidirectional sync)
+# =============================================================================
+
+
+class SlaveFileEventHandler(FileSystemEventHandler):
+    """
+    File system event handler for LAN slave mode.
+
+    Monitors the local bucket directory for file system changes and
+    uploads changes to the master server for propagation to other slaves.
+    """
+
+    def __init__(
+        self,
+        master_host: str,
+        master_port: int,
+        use_https: bool = False,
+    ) -> None:
+        """
+        Initialize the slave file event handler.
+
+        Args:
+            master_host: Master's IP address or hostname.
+            master_port: Master's HTTP port (not WebSocket port).
+            use_https: Whether to use HTTPS for uploads.
+        """
+        self._master_host = master_host
+        self._master_port = master_port
+        self._use_https = use_https
+        self._last_modified: dict[str, float] = {}
+        # Track files we're currently receiving from master to avoid echo
+        self._receiving_files: set[str] = set()
+        self._receiving_lock = threading.Lock()
+
+    def mark_receiving(self, filepath: str) -> None:
+        """Mark a file as being received from master (to avoid upload echo)."""
+        with self._receiving_lock:
+            self._receiving_files.add(filepath)
+
+    def unmark_receiving(self, filepath: str) -> None:
+        """Unmark a file after receiving is complete."""
+        with self._receiving_lock:
+            self._receiving_files.discard(filepath)
+
+    def is_receiving(self, filepath: str) -> bool:
+        """Check if a file is currently being received from master."""
+        with self._receiving_lock:
+            return filepath in self._receiving_files
+
+    def _upload_to_master(self, file_obj: File) -> None:
+        """Upload a file to the master server."""
+        from hsync_client.transfer import upload_file
+
+        try:
+            LOG.info(f'[SLAVE UP  ] "{file_obj.filepath}"')
+            upload_file(file_obj, check_size=True)
+        except Exception as e:
+            LOG.error(f"Failed to upload to master: {e}")
+
+    def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
+        """Notify master about a file/directory deletion."""
+        import requests
+
+        try:
+            protocol = "https" if self._use_https else "http"
+            # Use the files endpoint with DELETE method
+            prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
+            rel_path = filepath.removeprefix(prefix).lstrip("/")
+
+            url = (
+                f"{protocol}://{self._master_host}:{self._master_port}"
+                f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}/files"
+            )
+
+            params = {"path": rel_path, "is_dir": str(is_dir).lower()}
+            headers: dict[str, str] = {}
+            req_headers = CONFIG.get("REQUEST_HEADERS")
+            if req_headers and isinstance(req_headers, dict):
+                for k, v in req_headers.items():
+                    if isinstance(k, str) and isinstance(v, str):
+                        headers[k] = v
+
+            LOG.info(f'[SLAVE DEL ] "{filepath}"')
+            response = requests.delete(
+                url,
+                params=params,
+                headers=headers,
+                verify=False,  # Self-signed cert
+                timeout=30,
+            )
+
+            if response.status_code not in (200, 204, 404):
+                LOG.warning(f"Delete request failed: {response.status_code}")
+
+        except Exception as e:
+            LOG.error(f"Failed to delete on master: {e}")
+
+    def _rename_on_master(self, src_path: str, dst_path: str) -> None:
+        """Notify master about a file/directory rename."""
+        import requests
+
+        try:
+            protocol = "https" if self._use_https else "http"
+            prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
+            src_rel = src_path.removeprefix(prefix).lstrip("/")
+            dst_rel = dst_path.removeprefix(prefix).lstrip("/")
+
+            url = (
+                f"{protocol}://{self._master_host}:{self._master_port}"
+                f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}/files"
+            )
+
+            params = {"src": src_rel, "dst": dst_rel}
+            headers: dict[str, str] = {}
+            req_headers = CONFIG.get("REQUEST_HEADERS")
+            if req_headers and isinstance(req_headers, dict):
+                for k, v in req_headers.items():
+                    if isinstance(k, str) and isinstance(v, str):
+                        headers[k] = v
+
+            LOG.info(f'[SLAVE REN ] "{src_path}" -> "{dst_path}"')
+            response = requests.patch(
+                url,
+                params=params,
+                headers=headers,
+                verify=False,  # Self-signed cert
+                timeout=30,
+            )
+
+            if response.status_code not in (200, 204):
+                LOG.warning(f"Rename request failed: {response.status_code}")
+
+        except Exception as e:
+            LOG.error(f"Failed to rename on master: {e}")
+
+    def on_created(self, event) -> None:
+        """Handle file/directory creation events."""
+        src_path = ensure_str_path(event.src_path)
+
+        # Skip if we're receiving this file from master
+        if self.is_receiving(src_path):
+            return
+
+        if event.is_directory and not is_hidden_dir(src_path):
+            # Directory creation - master will see it when files are added
+            LOG.debug(f'[SLAVE DIR ] "{src_path}"')
+        elif not event.is_directory and not is_hidden_file(src_path):
+            # Check if it's a symlink
+            if islink(src_path):
+                # Symlink - upload immediately
+                self._handle_file_upload(src_path)
+            # Regular file creation - will be handled by on_modified or on_closed
+
+    def on_modified(self, event) -> None:
+        """Handle file/directory modification events."""
+        src_path = ensure_str_path(event.src_path)
+
+        # Skip if we're receiving this file from master
+        if self.is_receiving(src_path):
+            return
+
+        if event.is_directory:
+            return
+
+        if is_hidden_file(src_path):
+            return
+
+        # Debounce rapid modifications
+        now = time()
+        last_time = self._last_modified.get(src_path, 0)
+        if now - last_time < MODIFIED_DEBOUNCE_INTERVAL:
+            return
+        self._last_modified[src_path] = now
+
+        # On non-Linux, use on_modified as fallback for file completion
+        if not SUPPORTS_ON_CLOSED:
+            self._handle_file_upload(src_path)
+
+    def on_closed(self, event) -> None:
+        """Handle file close events (Linux only)."""
+        if not SUPPORTS_ON_CLOSED:
+            return
+
+        src_path = ensure_str_path(event.src_path)
+
+        # Skip if we're receiving this file from master
+        if self.is_receiving(src_path):
+            return
+
+        if event.is_directory or is_hidden_file(src_path):
+            return
+
+        self._handle_file_upload(src_path)
+
+    def _handle_file_upload(self, src_path: str) -> None:
+        """Handle a file modification - upload to master."""
+        if not exists(src_path):
+            return
+
+        file_obj = File.get(src_path)
+        if file_obj:
+            # Run upload in a separate thread to not block the watcher
+            thread = threading.Thread(
+                target=self._upload_to_master,
+                args=(file_obj,),
+                daemon=True,
+            )
+            thread.start()
+
+    def on_deleted(self, event) -> None:
+        """Handle file/directory deletion events."""
+        src_path = ensure_str_path(event.src_path)
+
+        # Skip hidden files/dirs
+        if event.is_directory and is_hidden_dir(src_path):
+            return
+        if not event.is_directory and is_hidden_file(src_path):
+            return
+
+        # Skip if in ignore-delete mode
+        if CONFIG.get("IGNORE_DELETE", False):
+            LOG.debug(f"[SLAVE IGN ] Deletion ignored (ignore-delete mode)")
+            return
+
+        # Notify master about deletion
+        thread = threading.Thread(
+            target=self._delete_on_master,
+            args=(src_path, event.is_directory),
+            daemon=True,
+        )
+        thread.start()
+
+    def on_moved(self, event) -> None:
+        """Handle file/directory move/rename events."""
+        src_path = ensure_str_path(event.src_path)
+        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+
+        if not dest_path:
+            return
+
+        # Skip if we're receiving these files from master
+        if self.is_receiving(src_path) or self.is_receiving(dest_path):
+            return
+
+        # Handle hidden file/dir scenarios
+        if event.is_directory:
+            src_hidden = is_hidden_dir(src_path)
+            dest_hidden = is_hidden_dir(dest_path)
+        else:
+            src_hidden = is_hidden_file(src_path)
+            dest_hidden = is_hidden_file(dest_path)
+
+        # Both hidden - ignore
+        if src_hidden and dest_hidden:
+            return
+
+        # Hidden to visible - treat as creation
+        if src_hidden and not dest_hidden:
+            if not event.is_directory and exists(dest_path):
+                file_obj = File.get(dest_path)
+                if file_obj:
+                    thread = threading.Thread(
+                        target=self._upload_to_master,
+                        args=(file_obj,),
+                        daemon=True,
+                    )
+                    thread.start()
+            return
+
+        # Visible to hidden - treat as deletion
+        if not src_hidden and dest_hidden:
+            if not CONFIG.get("IGNORE_DELETE", False):
+                thread = threading.Thread(
+                    target=self._delete_on_master,
+                    args=(src_path, event.is_directory),
+                    daemon=True,
+                )
+                thread.start()
+            return
+
+        # Normal rename - use PATCH endpoint
+        thread = threading.Thread(
+            target=self._rename_on_master,
+            args=(src_path, dest_path),
+            daemon=True,
+        )
+        thread.start()
+
+
+# Global slave event handler for marking files as receiving
+_slave_event_handler: Optional[SlaveFileEventHandler] = None
+
+
+def get_slave_event_handler() -> Optional[SlaveFileEventHandler]:
+    """Get the global slave event handler."""
+    return _slave_event_handler
 

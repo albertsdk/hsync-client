@@ -65,10 +65,15 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
+        # Get the message and escape curly braces to prevent loguru from
+        # interpreting them as format placeholders (e.g., websockets library logs JSON)
+        message = record.getMessage()
+        message = message.replace("{", "{{").replace("}", "}}")
+
         # Bind client_id to the log context
         client_id = get_client_id()
         log = logger.bind(client_id=client_id or "-")
-        log.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        log.opt(depth=depth, exception=record.exc_info).log(level, message)
 
 
 # =============================================================================
@@ -168,6 +173,30 @@ def _colorize_symbols(message: str, use_colors: bool = True) -> str:
     return message
 
 
+def _get_json_data(record: dict) -> dict | None:
+    """
+    Extract json_data from record extra, handling different loguru API patterns.
+
+    Loguru handles extra data differently depending on how it's passed:
+    - LOG.bind(json_data=...).debug(...) -> record["extra"]["json_data"]
+    - LOG.debug(..., json_data=...) via opt() -> record["extra"]["json_data"]
+    - LOG.debug(..., extra={...}) -> record["extra"]["extra"]["json_data"]
+
+    This function normalizes access to json_data regardless of how it was passed.
+    """
+    extra = record.get("extra", {})
+
+    # Check direct access (from bind() or opt())
+    if "json_data" in extra:
+        return extra["json_data"]
+
+    # Check nested access (from extra={...} parameter)
+    if "extra" in extra and isinstance(extra["extra"], dict):
+        return extra["extra"].get("json_data")
+
+    return None
+
+
 def _format_record_colored(record: dict) -> str:
     """
     Custom format function for loguru with colors.
@@ -191,9 +220,11 @@ def _format_record_colored(record: dict) -> str:
     message = _colorize_symbols(message, use_colors=True)
 
     # Check for json_data in extra
-    json_data = record["extra"].get("json_data")
+    json_data = _get_json_data(record)
     if json_data:
         json_str = json.dumps(json_data, indent=2, default=str)
+        # Escape curly braces to prevent loguru from interpreting them as format placeholders
+        json_str = json_str.replace("{", "{{").replace("}", "}}")
         message = f"{message}\n{json_str}"
 
     return (
@@ -216,9 +247,11 @@ def _format_record_plain(record: dict) -> str:
     message = record["message"]
 
     # Check for json_data in extra
-    json_data = record["extra"].get("json_data")
+    json_data = _get_json_data(record)
     if json_data:
         json_str = json.dumps(json_data, indent=2, default=str)
+        # Escape curly braces to prevent loguru from interpreting them as format placeholders
+        json_str = json_str.replace("{", "{{").replace("}", "}}")
         message = f"{message}\n{json_str}"
 
     return (
