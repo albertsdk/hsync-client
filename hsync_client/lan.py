@@ -539,9 +539,14 @@ class LANSync:
         """Get the peer manager."""
         return self._peer_manager
 
-    def start(self) -> PeerManager:
+    def start(self, register_service: bool = True) -> PeerManager:
         """
-        Start LAN discovery and service registration.
+        Start LAN discovery and optionally register service.
+
+        Args:
+            register_service: If True, register mDNS service immediately.
+                If False, call register_service() later (e.g., after starting
+                the HTTP server when becoming master).
 
         Returns:
             PeerManager for monitoring discovered peers and master election.
@@ -558,8 +563,9 @@ class LANSync:
         # Initialize peer manager
         self._peer_manager = PeerManager(self._cid, self._bucket, self._group)
 
-        # Register our service
-        self._register_service()
+        # Register our service (can be deferred if register_service=False)
+        if register_service:
+            self._register_service()
 
         # Start listening for other services
         listener = HsyncServiceListener(self._peer_manager, self._zeroconf)
@@ -571,6 +577,18 @@ class LANSync:
         LOG.info("LAN discovery started")
 
         return self._peer_manager
+
+    def register_service(self) -> None:
+        """
+        Register this client's mDNS service.
+
+        Call this after starting the HTTP server when becoming master,
+        or immediately for non-master peers.
+        """
+        if self._service_info is not None:
+            LOG.debug("Service already registered")
+            return
+        self._register_service()
 
     def stop(self) -> None:
         """Stop LAN discovery and unregister service."""
