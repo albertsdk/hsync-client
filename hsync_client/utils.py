@@ -47,6 +47,18 @@ LOG = logging.getLogger(__name__)
 # SSL Utilities
 # =============================================================================
 
+# Track if we've already suppressed the InsecureRequestWarning
+_insecure_warning_suppressed = False
+
+
+def _suppress_insecure_warning() -> None:
+    """Suppress urllib3 InsecureRequestWarning when using fingerprint verification."""
+    global _insecure_warning_suppressed
+    if not _insecure_warning_suppressed:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        _insecure_warning_suppressed = True
+
 
 def get_ssl_verify() -> bool | str:
     """
@@ -65,6 +77,8 @@ def get_ssl_verify() -> bool | str:
     # In LAN mode with fingerprint, we disable standard SSL verification
     # and verify the fingerprint manually before each request
     if CONFIG.get("MASTER_CERT_FINGERPRINT"):
+        # Suppress the InsecureRequestWarning since we verify via fingerprint
+        _suppress_insecure_warning()
         return False
     if CONFIG.get("CA_CERT"):
         return str(CONFIG["CA_CERT"])
