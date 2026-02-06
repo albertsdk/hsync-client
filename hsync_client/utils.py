@@ -52,15 +52,71 @@ def get_ssl_verify() -> bool | str:
     """
     Get the SSL verification setting for requests library.
 
+    For LAN mode with MASTER_CERT_FINGERPRINT, returns False to disable
+    standard SSL verification (fingerprint verification is done separately).
+
     Returns:
-        - False if SSL verification is disabled (--insecure)
+        - False if SSL verification is disabled (--insecure or LAN fingerprint mode)
         - Path to CA certificate if --ca-cert is provided
         - True for default SSL verification
     """
     if CONFIG.get("NO_VERIFY_SSL"):
         return False
+    # In LAN mode with fingerprint, we disable standard SSL verification
+    # and verify the fingerprint manually before each request
+    if CONFIG.get("MASTER_CERT_FINGERPRINT"):
+        return False
     if CONFIG.get("CA_CERT"):
         return str(CONFIG["CA_CERT"])
+    return True
+
+
+def verify_master_fingerprint(url: str) -> bool:
+    """
+    Verify the master's SSL certificate fingerprint before making a request.
+
+    This should be called before making HTTPS requests to the LAN master
+    when MASTER_CERT_FINGERPRINT is set.
+
+    Args:
+        url: The URL to verify (used to extract host and port).
+
+    Returns:
+        True if fingerprint matches or no fingerprint verification needed.
+        False if fingerprint doesn't match.
+    """
+    expected_fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
+    if not expected_fingerprint:
+        return True  # No fingerprint verification needed
+
+    from urllib.parse import urlparse
+    from hsync_client.ssl_utils import get_server_cert_fingerprint
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return True  # Not HTTPS, no fingerprint to verify
+
+    host = parsed.hostname
+    port = parsed.port or 443
+
+    if not host:
+        LOG.warning("Cannot verify fingerprint: no host in URL")
+        return False
+
+    actual_fingerprint = get_server_cert_fingerprint(host, port)
+    if not actual_fingerprint:
+        LOG.warning(f"Cannot get certificate from {host}:{port}")
+        return False
+
+    if actual_fingerprint.lower() != expected_fingerprint.lower():
+        LOG.error(
+            f"Certificate fingerprint mismatch!\n"
+            f"  Expected: {expected_fingerprint}\n"
+            f"  Actual:   {actual_fingerprint}"
+        )
+        return False
+
+    LOG.debug(f"Certificate fingerprint verified: {actual_fingerprint[:16]}...")
     return True
 
 

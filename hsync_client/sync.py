@@ -30,7 +30,12 @@ from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
 from hsync_client.models.sync_action import SyncAction, SyncActionName
 from hsync_client.retry import retry_on_network_error
-from hsync_client.utils import bytes_to_human_readable, get_ssl_verify, set_permissions
+from hsync_client.utils import (
+    bytes_to_human_readable,
+    get_ssl_verify,
+    set_permissions,
+    verify_master_fingerprint,
+)
 
 
 # Logger instance for this module
@@ -203,6 +208,13 @@ def get_files_remote() -> list[dict]:
     """
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
     try:
+        # Verify master certificate fingerprint for LAN HTTPS mode
+        if not verify_master_fingerprint(uri):
+            raise NetworkError(
+                message="Master certificate fingerprint verification failed",
+                details={"url": uri},
+            )
+
         # Build query parameters
         params = {"sync_order": CONFIG["SYNC_ORDER"]}
         # Add path filter if specified

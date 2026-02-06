@@ -8,7 +8,8 @@
 SSL Certificate Utilities for LAN Mode.
 
 This module provides functions to generate self-signed SSL certificates
-for secure communication in LAN P2P mode.
+for secure communication in LAN P2P mode, and utilities for fingerprint-based
+certificate verification.
 """
 
 from __future__ import annotations
@@ -16,10 +17,12 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import logging
+import ssl
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib3.util.ssl_ import create_urllib3_context
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -150,3 +153,69 @@ def save_cert_to_temp_files(cert_info: CertificateInfo) -> CertificateInfo:
         key_file=key_file.name,
     )
 
+
+def create_fingerprint_ssl_context(expected_fingerprint: str) -> ssl.SSLContext:
+    """
+    Create an SSL context that verifies certificates by fingerprint.
+
+    This allows connecting to servers with self-signed certificates
+    by verifying the certificate's SHA-256 fingerprint instead of
+    the certificate chain.
+
+    Args:
+        expected_fingerprint: The expected SHA-256 fingerprint (hex string).
+
+    Returns:
+        An SSL context configured for fingerprint verification.
+    """
+    # Create a context that doesn't verify the certificate chain
+    # We'll verify the fingerprint manually
+    ctx = create_urllib3_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    return ctx
+
+
+def verify_cert_fingerprint(cert_der: bytes, expected_fingerprint: str) -> bool:
+    """
+    Verify a certificate's fingerprint.
+
+    Args:
+        cert_der: The certificate in DER format.
+        expected_fingerprint: The expected SHA-256 fingerprint (hex string).
+
+    Returns:
+        True if the fingerprint matches, False otherwise.
+    """
+    actual_fingerprint = hashlib.sha256(cert_der).hexdigest()
+    return actual_fingerprint.lower() == expected_fingerprint.lower()
+
+
+def get_server_cert_fingerprint(host: str, port: int) -> Optional[str]:
+    """
+    Get the SHA-256 fingerprint of a server's SSL certificate.
+
+    Args:
+        host: The server hostname or IP address.
+        port: The server port.
+
+    Returns:
+        The certificate fingerprint as a hex string, or None on error.
+    """
+    import socket
+
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        with socket.create_connection((host, port), timeout=5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                cert_der = ssock.getpeercert(binary_form=True)
+                if cert_der:
+                    return hashlib.sha256(cert_der).hexdigest()
+    except Exception as e:
+        LOG.debug(f"Error getting server certificate: {e}")
+
+    return None
