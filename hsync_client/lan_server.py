@@ -31,7 +31,7 @@ from os.path import join, exists
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
-from loguru import logger as LOG
+from loguru import logger as log
 
 from hsync_client.compression import (
     compress_data,
@@ -169,7 +169,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args) -> None:
         """Override to use our logger instead of stderr."""
-        LOG.debug(f"{self.address_string()} - {format % args}")
+        log.debug(f"{self.address_string()} - {format % args}")
 
     def _send_json_response(self, status: int, data: dict | list) -> None:
         """Send a JSON response."""
@@ -316,13 +316,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if dst_parent and not exists(dst_parent):
                 makedirs(dst_parent, exist_ok=True)
 
-            LOG.info(f"Renaming from slave request: {src_path} -> {dst_path}")
+            log.info(f"Renaming from slave request: {src_path} -> {dst_path}")
             rename(src_path, dst_path)
 
             self._send_json_response(HTTP_OK, {"info": "Renamed successfully"})
 
         except Exception as e:
-            LOG.error(f"Error renaming {src_path} -> {dst_path}: {e}")
+            log.error(f"Error renaming {src_path} -> {dst_path}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Rename error: {e}")
 
     def _handle_delete(self, query: dict) -> None:
@@ -362,16 +362,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         try:
             if is_dir:
-                LOG.info(f"Deleting directory from slave request: {full_path}")
+                log.info(f"Deleting directory from slave request: {full_path}")
                 rmtree(full_path, ignore_errors=False)
             else:
-                LOG.info(f"Deleting file from slave request: {full_path}")
+                log.info(f"Deleting file from slave request: {full_path}")
                 os.remove(full_path)
 
             self._send_json_response(HTTP_OK, {"info": "Deleted successfully"})
 
         except Exception as e:
-            LOG.error(f"Error deleting {full_path}: {e}")
+            log.error(f"Error deleting {full_path}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Delete error: {e}")
 
     def _handle_health(self) -> None:
@@ -538,7 +538,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
                     if use_compression:
                         compressed_content = compress_data(content)
-                        LOG.debug(
+                        log.debug(
                             f"Compressed download: {len(content)} -> "
                             f"{len(compressed_content)} bytes"
                         )
@@ -561,7 +561,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                         self.wfile.write(content)
 
         except IOError as e:
-            LOG.error(f"Error reading file {filepath}: {e}")
+            log.error(f"Error reading file {filepath}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 
     def _handle_upload(self) -> None:
@@ -605,7 +605,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             # Decompress if compressed
             if is_compressed:
-                LOG.debug(f"Decompressing uploaded file: {len(file_content)} bytes")
+                log.debug(f"Decompressing uploaded file: {len(file_content)} bytes")
                 file_content = decompress_data(file_content)
 
             # Build destination path
@@ -645,14 +645,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if permissions:
                 set_permissions(dest_path, permissions)
 
-            LOG.info(f"Received file from {cid}: {dest_path}")
+            log.info(f"Received file from {cid}: {dest_path}")
             self._send_json_response(HTTP_CREATED, {
                 "info": "File uploaded successfully",
                 "file": dest_path,
             })
 
         except Exception as e:
-            LOG.error(f"Error handling upload: {e}")
+            log.error(f"Error handling upload: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
 
 
@@ -712,7 +712,7 @@ class LANServer:
         import ssl
 
         if self._running:
-            LOG.warning("LAN server already running")
+            log.warning("LAN server already running")
             return
 
         self._server = HTTPServer(("0.0.0.0", self._port), LANRequestHandler)
@@ -732,7 +732,7 @@ class LANServer:
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
         self._running = True
-        LOG.info(f"LAN master server started on port {self._port} ({protocol})")
+        log.info(f"LAN master server started on port {self._port} ({protocol})")
 
     def _serve(self) -> None:
         """Server loop (runs in background thread)."""
@@ -749,7 +749,7 @@ class LANServer:
             self._server.server_close()
 
         self._running = False
-        LOG.info("LAN master server stopped")
+        log.info("LAN master server stopped")
 
     def is_running(self) -> bool:
         """Check if server is running."""

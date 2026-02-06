@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from loguru import logger as LOG
+from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
@@ -229,27 +229,27 @@ class PeerManager:
     def add_peer(self, peer: Peer) -> None:
         """Add or update a discovered peer."""
         if peer.bucket != self._bucket:
-            LOG.debug(f"Ignoring peer {peer.cid} - different bucket: {peer.bucket}")
+            log.debug(f"Ignoring peer {peer.cid} - different bucket: {peer.bucket}")
             return
 
         if not self._is_group_compatible(peer.group):
-            LOG.debug(
+            log.debug(
                 f"Ignoring peer {peer.cid} - different group: "
                 f"{peer.group} (local: {self._group})"
             )
             return
 
         if peer.cid == self._local_cid:
-            LOG.debug("Ignoring self from peer discovery")
+            log.debug("Ignoring self from peer discovery")
             return
 
         with self._lock:
             if peer.cid in self._peers:
                 self._peers[peer.cid].update_last_seen()
-                LOG.debug(f"Updated peer: {peer.cid}")
+                log.debug(f"Updated peer: {peer.cid}")
             else:
                 self._peers[peer.cid] = peer
-                LOG.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")
+                log.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")
 
             self._elect_master()
 
@@ -258,7 +258,7 @@ class PeerManager:
         with self._lock:
             if cid in self._peers:
                 del self._peers[cid]
-                LOG.info(f"Peer disconnected: {cid}")
+                log.info(f"Peer disconnected: {cid}")
                 self._elect_master()
 
     def get_peer(self, cid: str) -> Optional[Peer]:
@@ -297,10 +297,10 @@ class PeerManager:
             self._master_cid = new_master_cid
 
             if new_master_cid == self._local_cid:
-                LOG.info(f"This client elected as MASTER (CID: {self._local_cid})")
+                log.info(f"This client elected as MASTER (CID: {self._local_cid})")
             else:
                 master_peer = self._peers.get(new_master_cid) if new_master_cid else None
-                LOG.info(
+                log.info(
                     f"Master changed: {old_master} -> {new_master_cid} "
                     f"(at {master_peer.address if master_peer else 'unknown'})"
                 )
@@ -380,7 +380,7 @@ class HsyncServiceListener(ServiceListener):
                     cid = service_name.rsplit("-", 1)[-1]
                     self._peer_manager.remove_peer(cid)
         except Exception as e:
-            LOG.debug(f"Error parsing service name on removal: {e}")
+            log.debug(f"Error parsing service name on removal: {e}")
 
     def _register_peer_from_info(self, info: ServiceInfo) -> None:
         """Extract peer information from ServiceInfo and register it."""
@@ -416,25 +416,25 @@ class HsyncServiceListener(ServiceListener):
             )
 
             if not cid or not bucket:
-                LOG.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
+                log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
                 return
 
             # Check version compatibility
             is_compatible, reason = check_version_compatibility(HSYNC_VERSION, version)
             if not is_compatible:
-                LOG.warning(
+                log.warning(
                     f"Ignoring peer {cid} with incompatible version {version} "
                     f"(local: {HSYNC_VERSION}, reason: {reason})"
                 )
                 return
 
             if reason == "minor_mismatch":
-                LOG.warning(
+                log.warning(
                     f"Peer {cid} has different minor version {version} "
                     f"(local: {HSYNC_VERSION}). Sync may have issues."
                 )
             elif reason == "parse_error":
-                LOG.warning(
+                log.warning(
                     f"Could not parse version for peer {cid}: {version}. "
                     "Proceeding with caution."
                 )
@@ -442,7 +442,7 @@ class HsyncServiceListener(ServiceListener):
             # Get address and port
             addresses = info.parsed_addresses()
             if not addresses:
-                LOG.debug(f"No addresses for service: {info.name}")
+                log.debug(f"No addresses for service: {info.name}")
                 return
 
             address = addresses[0]  # Use first available address
@@ -463,7 +463,7 @@ class HsyncServiceListener(ServiceListener):
             self._peer_manager.add_peer(peer)
 
         except Exception as e:
-            LOG.error(f"Error registering peer from service info: {e}")
+            log.error(f"Error registering peer from service info: {e}")
 
 
 # =============================================================================
@@ -554,7 +554,7 @@ class LANSync:
             PeerManager for monitoring discovered peers and master election.
         """
         group_info = f", group='{self._group}'" if self._group else ""
-        LOG.info(
+        log.info(
             f"Starting LAN mode for bucket '{self._bucket}' "
             f"(CID: {self._cid}{group_info})"
         )
@@ -576,7 +576,7 @@ class LANSync:
         )
 
         self._running = True
-        LOG.info("LAN discovery started")
+        log.info("LAN discovery started")
 
         return self._peer_manager
 
@@ -590,7 +590,7 @@ class LANSync:
                 when becoming master.
         """
         if self._service_info is not None:
-            LOG.debug("Service already registered")
+            log.debug("Service already registered")
             return
         self._register_service(server_ready=server_ready)
 
@@ -602,7 +602,7 @@ class LANSync:
         This re-registers the service with server_ready=true.
         """
         if not self._zeroconf or not self._service_info:
-            LOG.warning("Cannot update service: not registered")
+            log.warning("Cannot update service: not registered")
             return
 
         # Unregister old service
@@ -611,26 +611,26 @@ class LANSync:
 
         # Re-register with server_ready=true
         self._register_service(server_ready=True)
-        LOG.info("Updated mDNS service: server_ready=true")
+        log.info("Updated mDNS service: server_ready=true")
 
     def stop(self) -> None:
         """Stop LAN discovery and unregister service."""
         if not self._running:
             return
 
-        LOG.info("Stopping LAN mode")
+        log.info("Stopping LAN mode")
 
         # Unregister our service
         if self._zeroconf and self._service_info:
             self._zeroconf.unregister_service(self._service_info)
-            LOG.debug("Service unregistered")
+            log.debug("Service unregistered")
 
         # Close zeroconf
         if self._zeroconf:
             self._zeroconf.close()
 
         self._running = False
-        LOG.info("LAN mode stopped")
+        log.info("LAN mode stopped")
 
     def _register_service(self, server_ready: bool = False) -> None:
         """Register this client as an mDNS service.
@@ -679,7 +679,7 @@ class LANSync:
 
         # Register the service
         self._zeroconf.register_service(self._service_info)
-        LOG.info(f"Registered mDNS service: {service_name} at {local_ip}:{self._port}")
+        log.info(f"Registered mDNS service: {service_name} at {local_ip}:{self._port}")
 
     def _get_local_ip(self) -> str:
         """Get the local IP address for LAN communication."""
@@ -697,7 +697,7 @@ class LANSync:
                 s.close()
             return local_ip
         except Exception as e:
-            LOG.warning(f"Could not determine local IP: {e}, using 127.0.0.1")
+            log.warning(f"Could not determine local IP: {e}, using 127.0.0.1")
             return "127.0.0.1"
 
     def wait_for_discovery(self, timeout: float = DISCOVERY_TIMEOUT) -> None:
@@ -707,17 +707,17 @@ class LANSync:
         Args:
             timeout: Maximum time to wait for discovery in seconds.
         """
-        LOG.info(f"Waiting {timeout}s for peer discovery...")
+        log.info(f"Waiting {timeout}s for peer discovery...")
         time.sleep(timeout)
 
         if self._peer_manager:
             peers = self._peer_manager.get_alive_peers()
             if peers:
-                LOG.info(f"Discovered {len(peers)} peer(s)")
+                log.info(f"Discovered {len(peers)} peer(s)")
                 for peer in peers:
-                    LOG.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
+                    log.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
             else:
-                LOG.info("No other peers discovered - this client is alone")
+                log.info("No other peers discovered - this client is alone")
 
     def is_running(self) -> bool:
         """Check if LAN sync is running."""

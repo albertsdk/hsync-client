@@ -25,7 +25,7 @@ from shutil import move
 from tempfile import NamedTemporaryFile
 from time import sleep as time_sleep
 
-from loguru import logger as LOG
+from loguru import logger as log
 
 from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
@@ -71,7 +71,7 @@ def download_file(file: File) -> None:
     """
     # Validate required file attributes
     if not file.filepath or not file.name:
-        LOG.error("Invalid file metadata: missing filepath or name")
+        log.error("Invalid file metadata: missing filepath or name")
         return
 
     # Prepare destination directory and partial file path
@@ -95,14 +95,14 @@ def download_file(file: File) -> None:
         resume_offset = getsize(partial_file_path)
         # Don't resume if partial file is larger than expected
         if resume_offset >= file.size:
-            LOG.warning(
+            log.warning(
                 f'Partial file larger than expected for "{file.filepath}", '
                 f"restarting download"
             )
             remove(partial_file_path)
             resume_offset = 0
         elif resume_offset > 0:
-            LOG.info(
+            log.info(
                 f'[RESUME    ] "{file.filepath}" from '
                 f"{bytes_to_human_readable(resume_offset)}/{bytes_to_human_readable(file.size)}"
             )
@@ -115,7 +115,7 @@ def download_file(file: File) -> None:
 
     # Verify master certificate fingerprint for LAN HTTPS mode
     if not verify_master_fingerprint(uri):
-        LOG.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
+        log.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
         return
 
     try:
@@ -128,34 +128,34 @@ def download_file(file: File) -> None:
             timeout=CONFIG.get("HTTP_TIMEOUT", 30),
         )
     except RequestException as e:
-        LOG.error(f'Network error downloading "{file.filepath}": {e}')
+        log.error(f'Network error downloading "{file.filepath}": {e}')
         return
 
-    LOG.debug(f"Request URI: {uri}")
-    LOG.debug(f"Request Header: {_safe_json(headers)}")
-    LOG.debug(f"Response status: {response.status_code}")
+    log.debug(f"Request URI: {uri}")
+    log.debug(f"Request Header: {_safe_json(headers)}")
+    log.debug(f"Response status: {response.status_code}")
 
     if response.status_code == 401:
-        LOG.error(f'Authentication failed downloading "{file.filepath}"')
+        log.error(f'Authentication failed downloading "{file.filepath}"')
         return
     if response.status_code == 404:
-        LOG.error(f'File not found on server: "{file.filepath}"')
+        log.error(f'File not found on server: "{file.filepath}"')
         return
     if response.status_code == 416:
         # Range Not Satisfiable - partial file is invalid, restart
-        LOG.warning(f'Range not satisfiable for "{file.filepath}", restarting download')
+        log.warning(f'Range not satisfiable for "{file.filepath}", restarting download')
         if exists(partial_file_path):
             remove(partial_file_path)
         # Retry without Range header
         download_file(file)
         return
     if response.status_code not in (200, 206):
-        LOG.error(f'Server error downloading "{file.filepath}": {response.status_code}')
+        log.error(f'Server error downloading "{file.filepath}": {response.status_code}')
         return
 
     # If server returned 200 instead of 206, it doesn't support Range - restart
     if resume_offset > 0 and response.status_code == 200:
-        LOG.debug(f'Server does not support Range requests, restarting download')
+        log.debug(f'Server does not support Range requests, restarting download')
         resume_offset = 0
         if exists(partial_file_path):
             remove(partial_file_path)
@@ -172,7 +172,7 @@ def download_file(file: File) -> None:
             # Compressed response - download all and decompress
             # (compression is not used with resume)
             compressed_data = response.content
-            LOG.debug(
+            log.debug(
                 f"Decompressing {bytes_to_human_readable(len(compressed_data))} "
                 f"-> ~{bytes_to_human_readable(file.size)}"
             )
@@ -191,7 +191,7 @@ def download_file(file: File) -> None:
         # Verify MD5 checksum of complete file
         md5sum = compute_md5(partial_file_path)
         if md5sum != file.md5sum:
-            LOG.error(
+            log.error(
                 f'"{file.filepath}" '
                 f"(Invalid checksum: expected {file.md5sum}, "
                 f"{md5sum} given)"
@@ -201,7 +201,7 @@ def download_file(file: File) -> None:
 
         # Move partial file to final destination
         move(partial_file_path, full_save_path)
-        LOG.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
+        log.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
         # Preserve timestamps from remote file
         if file.ctime is not None and file.mtime is not None:
@@ -212,9 +212,9 @@ def download_file(file: File) -> None:
             set_permissions(full_save_path, file.permissions)
 
     except PermissionError as e:
-        LOG.error(f'Permission denied saving "{file.filepath}": {e}')
+        log.error(f'Permission denied saving "{file.filepath}": {e}')
     except OSError as e:
-        LOG.error(f'Error saving file "{file.filepath}": {e}')
+        log.error(f'Error saving file "{file.filepath}": {e}')
 
 
 # =============================================================================
@@ -261,7 +261,7 @@ def is_file_stable(file: File, interval: int | None = None) -> bool:
         # File may have been deleted
         return True
 
-    LOG.debug(
+    log.debug(
         f'Writing file: "{file.filepath}" '
         f"(size: {bytes_to_human_readable(last_size)} -> "
         f"{bytes_to_human_readable(current_size)}, "
@@ -333,7 +333,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
     """
     # Validate required file attributes
     if not file.filepath:
-        LOG.error("Cannot upload file: missing filepath")
+        log.error("Cannot upload file: missing filepath")
         return
 
     if check_size:
@@ -342,7 +342,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
         elapsed = 0
         while not is_file_stable(file):
             if elapsed >= max_wait:
-                LOG.warning(
+                log.warning(
                     f'File "{file.filepath}" did not stabilize within {max_wait}s, '
                     f"uploading anyway"
                 )
@@ -354,7 +354,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
         file.size = getsize(file.filepath)
         file.md5sum = compute_md5(file.filepath)
 
-        LOG.debug(
+        log.debug(
             f'Written file: "{file.filepath}" '
             f"({bytes_to_human_readable(file.size)})"
         )
@@ -372,7 +372,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
         # Verify master certificate fingerprint for LAN HTTPS mode
         if not verify_master_fingerprint(uri):
-            LOG.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
+            log.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
             return
 
         # Check for resumable upload
@@ -382,11 +382,11 @@ def upload_file(file: File, check_size: bool = True) -> None:
             status, offset = _get_upload_status(filename, file.md5sum, file.size)
 
         if status == "complete":
-            LOG.debug(f'"{file.filepath}" (already present on server)')
+            log.debug(f'"{file.filepath}" (already present on server)')
             return
 
         if status == "resumable" and offset > 0:
-            LOG.info(
+            log.info(
                 f'[RESUME    ] "{file.filepath}" from '
                 f"{bytes_to_human_readable(offset)}/{bytes_to_human_readable(file.size)}"
             )
@@ -403,10 +403,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
             "offset": offset,
         }
 
-        LOG.debug(f"Upload file: {file.filepath}")
-        LOG.debug(f"        URI: {uri}")
-        LOG.debug(f"     Header: {_safe_json(CONFIG['REQUEST_HEADERS'])}")
-        LOG.debug(f"       data: {_safe_json(data)}")
+        log.debug(f"Upload file: {file.filepath}")
+        log.debug(f"        URI: {uri}")
+        log.debug(f"     Header: {_safe_json(CONFIG['REQUEST_HEADERS'])}")
+        log.debug(f"       data: {_safe_json(data)}")
 
         # Determine if compression should be used
         # Don't compress if: resuming, client disabled, server disabled, or file not compressible
@@ -425,7 +425,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 file_data = f.read()
             compressed_data = compress_data(file_data)
             compression_ratio = len(compressed_data) / len(file_data) * 100
-            LOG.debug(
+            log.debug(
                 f"Compressed {bytes_to_human_readable(len(file_data))} -> "
                 f"{bytes_to_human_readable(len(compressed_data))} "
                 f"({compression_ratio:.1f}%)"
@@ -465,32 +465,32 @@ def upload_file(file: File, check_size: bool = True) -> None:
                     timeout=CONFIG.get("HTTP_TIMEOUT", 30),
                 )
             if response.status_code == 201:
-                LOG.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
             elif response.status_code == 202:
                 # Partial upload received - file still incomplete
                 result = response.json()
                 new_offset = result.get("offset", 0)
                 remaining = result.get("remaining", 0)
-                LOG.debug(
+                log.debug(
                     f'Partial upload: {new_offset} bytes uploaded, '
                     f'{remaining} bytes remaining'
                 )
             elif response.status_code == 401:
-                LOG.error(f'Authentication failed uploading "{file.filepath}"')
+                log.error(f'Authentication failed uploading "{file.filepath}"')
             elif response.status_code == 403:
-                LOG.error(f'Access denied uploading "{file.filepath}"')
+                log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
-                LOG.debug(f'"{file.filepath}" (already present)')
+                log.debug(f'"{file.filepath}" (already present)')
             elif response.status_code >= 500:
-                LOG.error(f'Server error uploading "{file.filepath}": {response.status_code}')
+                log.error(f'Server error uploading "{file.filepath}": {response.status_code}')
             else:
                 response.raise_for_status()
     except FileNotFoundError:
-        LOG.error(f'File not found: "{file.filepath}"')
+        log.error(f'File not found: "{file.filepath}"')
     except PermissionError:
-        LOG.error(f'Permission denied reading: "{file.filepath}"')
+        log.error(f'Permission denied reading: "{file.filepath}"')
     except RequestException as e:
-        LOG.error(f'Network error uploading "{file.filepath}": {e}')
+        log.error(f'Network error uploading "{file.filepath}": {e}')
 
 
 # =============================================================================
@@ -505,5 +505,5 @@ def nothing_to_do(file: File) -> None:
     Args:
         file: File that is already synchronized.
     """
-    LOG.debug(f'"{file.filepath}"')
+    log.debug(f'"{file.filepath}"')
 

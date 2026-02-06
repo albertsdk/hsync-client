@@ -36,7 +36,7 @@ from watchdog.events import (
 from watchdog.observers import Observer
 from websockets import connect, ConnectionClosed
 
-from loguru import logger as LOG
+from loguru import logger as log
 
 # Check if on_closed event is supported (Linux with inotify)
 # On macOS (FSEvents) and Windows, on_closed is not triggered
@@ -77,7 +77,7 @@ async def remote_events() -> None:
 
     This function runs until the WebSocket connection is closed.
     """
-    LOG.info("Continuous sync starting…")
+    log.info("Continuous sync starting…")
 
     # Build WebSocket URI (no token in URL for security)
     api_base = CONFIG["API"]["events"]
@@ -111,7 +111,7 @@ async def remote_events() -> None:
         ping_timeout=10,
         close_timeout=5,
     ) as websocket:
-        LOG.info(f"WebSocket connected to {uri}")
+        log.info(f"WebSocket connected to {uri}")
 
         # Authenticate via first message (more secure than URL token)
         # Include client version for compatibility checking
@@ -126,10 +126,10 @@ async def remote_events() -> None:
         auth_response = await websocket.recv()
         auth_result = loads(auth_response)
         if auth_result.get("type") != "auth" or auth_result.get("status") != "ok":
-            LOG.error(f"WebSocket authentication failed: {auth_result}")
+            log.error(f"WebSocket authentication failed: {auth_result}")
             # Check if it's a version incompatibility error
             if auth_result.get("error") == "version_incompatible":
-                LOG.error(
+                log.error(
                     f"Server version {auth_result.get('server_version')} is "
                     f"incompatible with client version {HSYNC_VERSION}"
                 )
@@ -142,13 +142,13 @@ async def remote_events() -> None:
                 HSYNC_VERSION, server_version
             )
             if not is_compatible:
-                LOG.error(
+                log.error(
                     f"Server version {server_version} is incompatible with "
                     f"client version {HSYNC_VERSION} (reason: {reason})"
                 )
                 return
             if reason == "minor_mismatch":
-                LOG.warning(
+                log.warning(
                     f"Server version {server_version} differs from client "
                     f"version {HSYNC_VERSION}. Sync may have issues."
                 )
@@ -157,15 +157,15 @@ async def remote_events() -> None:
         server_compression = auth_result.get("compression_enabled", False)
         CONFIG["SERVER_COMPRESSION_ENABLED"] = server_compression
         compression_status = "enabled" if server_compression else "disabled"
-        LOG.info(
+        log.info(
             f"WebSocket authenticated successfully "
             f"(server: {server_version or 'unknown'}, compression: {compression_status})"
         )
 
-        LOG.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")
-        LOG.debug(f"Force resync: {CONFIG['RESYNC']} sec.")
+        log.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")
+        log.debug(f"Force resync: {CONFIG['RESYNC']} sec.")
 
-        LOG.info(f"Client ID (CID): {CONFIG['CID']}")
+        log.info(f"Client ID (CID): {CONFIG['CID']}")
 
         # Set up event queue for reliable message delivery
         loop = get_running_loop()
@@ -186,12 +186,12 @@ async def remote_events() -> None:
         except ConnectionClosed as e:
             # WebSocket connection was closed
             if e.reason:
-                LOG.warning(f"Connection closed: {e.reason}")
+                log.warning(f"Connection closed: {e.reason}")
             else:
-                LOG.warning("Connection closed.")
+                log.warning("Connection closed.")
         except Exception as e:
             # Unexpected error during event processing
-            LOG.error(f"Exception: {e}")
+            log.error(f"Exception: {e}")
         finally:
             # Stop event queue processor
             event_queue.stop()
@@ -217,7 +217,7 @@ async def _process_websocket_events(websocket, bucket: str) -> None:
         data = await websocket.recv()
         message = loads(data)
 
-        LOG.debug(f"Received message for CID {CONFIG['CID']}: {_safe_json(message)}")
+        log.debug(f"Received message for CID {CONFIG['CID']}: {_safe_json(message)}")
 
         # Validate event type
         if message.get("name") not in {
@@ -226,17 +226,17 @@ async def _process_websocket_events(websocket, bucket: str) -> None:
             EventName.renamed.value,
             EventName.deleted.value,
         }:
-            LOG.error(f"Invalid event: {message.get('name')}")
+            log.error(f"Invalid event: {message.get('name')}")
             continue
 
         # Skip events from this client (echo prevention)
         if message.get("cid") == CONFIG["CID"]:
-            LOG.debug("Same CID, dropped.")
+            log.debug("Same CID, dropped.")
             continue
 
         # Skip events from different buckets
         if message.get("bucket") != bucket:
-            LOG.debug("Different bucket, dropped.")
+            log.debug("Different bucket, dropped.")
             continue
 
         # Extract event data
@@ -278,8 +278,8 @@ def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
             rename(src_dir.path, dst_dir.path)
         else:
             # Source doesn't exist - log warning and create destination
-            LOG.warning(f"Cannot rename: {src_dir.path} -> {dst_dir.path}")
-            LOG.warning(f"Not found: {src_dir.path}")
+            log.warning(f"Cannot rename: {src_dir.path} -> {dst_dir.path}")
+            log.warning(f"Not found: {src_dir.path}")
             update_dir(dst)
 
     elif src and "filepath" in src and dst:
@@ -292,10 +292,10 @@ def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
             rename(src_file.filepath, dst_file.filepath)
         else:
             # Source doesn't exist - log warning and download destination
-            LOG.warning(
+            log.warning(
                 f'Cannot rename: "{src_file.filepath}" -> "{dst_file.filepath}"'
             )
-            LOG.warning(f'Not found: "{src_file.filepath}"')
+            log.warning(f'Not found: "{src_file.filepath}"')
             download_file(dst_file)
 
 
@@ -307,7 +307,7 @@ def _handle_delete_event(src: Optional[dict]) -> None:
     # Skip remote deletions if ignore_delete is enabled (backup mode)
     if CONFIG.get("IGNORE_DELETE", False):
         path = src.get("path") or src.get("filepath") if src else None
-        LOG.debug(f'[IGNORE DEL] "{path}" (ignore-delete mode)')
+        log.debug(f'[IGNORE DEL] "{path}" (ignore-delete mode)')
         return
 
     if src and "path" in src:
@@ -317,8 +317,8 @@ def _handle_delete_event(src: Optional[dict]) -> None:
             # Directory exists - remove recursively
             rmtree(dir.path, ignore_errors=False)
         else:
-            LOG.warning(f'Cannot delete: "{dir.path}"')
-            LOG.warning(f'Not found: "{dir.path}"')
+            log.warning(f'Cannot delete: "{dir.path}"')
+            log.warning(f'Not found: "{dir.path}"')
 
     elif src and "filepath" in src:
         # File deletion event
@@ -327,8 +327,8 @@ def _handle_delete_event(src: Optional[dict]) -> None:
             # File exists - remove it
             remove(file.filepath)
         else:
-            LOG.warning(f'Cannot delete: "{file.filepath}"')
-            LOG.warning(f'Not found: "{file.filepath}"')
+            log.warning(f'Cannot delete: "{file.filepath}"')
+            log.warning(f'Not found: "{file.filepath}"')
 
 
 def _handle_symlink_event(src: Optional[dict]) -> None:
@@ -340,7 +340,7 @@ def _handle_symlink_event(src: Optional[dict]) -> None:
         target = link.target
 
         if link.filepath and target:
-            LOG.info(f'[SYMLINK   ] Creating symlink: "{link.filepath}" -> "{target}"')
+            log.info(f'[SYMLINK   ] Creating symlink: "{link.filepath}" -> "{target}"')
             # Ensure parent directory exists
             parent_dir = dirname(link.filepath)
             if not exists(parent_dir):
@@ -370,11 +370,11 @@ async def resync() -> None:
     try:
         while True:
             await sleep(CONFIG["RESYNC"] or 60)
-            LOG.info(f"Force sync ({CONFIG['RESYNC']} sec.)")
+            log.info(f"Force sync ({CONFIG['RESYNC']} sec.)")
             await sync()
     except Exception as e:
         # Task was cancelled or error occurred
-        LOG.debug(f"Resync task stopped: {e}")
+        log.debug(f"Resync task stopped: {e}")
 
 
 async def remote_connect() -> None:
@@ -414,11 +414,11 @@ async def remote_connect() -> None:
 
         except Exception as e:
             # Unexpected error - log and retry
-            LOG.error(f"An unexpected error occurred: {e}.")
+            log.error(f"An unexpected error occurred: {e}.")
             await sleep(CONFIG["RECONNECT_DELAY"])
 
         finally:
-            LOG.info(f"Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
+            log.info(f"Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
 
 
 # =============================================================================
@@ -465,7 +465,7 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             message: Event to send.
         """
-        LOG.debug(f"Send message: {message}")
+        log.debug(f"Send message: {message}")
 
         message_dict = message.to_dict()
 
@@ -500,7 +500,7 @@ class FileEventHandler(FileSystemEventHandler):
                 (event.is_directory and is_hidden_dir(path))
                 or (not event.is_directory and is_hidden_file(path))
             ):
-                LOG.debug(f"Skip hidden {kind} {hidden_prefix}: {path}")
+                log.debug(f"Skip hidden {kind} {hidden_prefix}: {path}")
 
     def on_created(self, event) -> None:
         """
@@ -516,7 +516,7 @@ class FileEventHandler(FileSystemEventHandler):
 
         if event.is_directory and not is_hidden_dir(src_path):
             # Directory created - broadcast event
-            LOG.info(f'[CREATE    ] "{src_path}"')
+            log.info(f'[CREATE    ] "{src_path}"')
             dir = Dir.get(src_path)
             if dir:
                 message = Event(
@@ -529,7 +529,7 @@ class FileEventHandler(FileSystemEventHandler):
                 self._send_message(message)
         elif not is_hidden_file(src_path) and islink(src_path):
             # Symlink created - broadcast symlink event
-            LOG.info(f'[SYMLINK   ] "{src_path}"')
+            log.info(f'[SYMLINK   ] "{src_path}"')
             symlink = Symlink.get(src_path)
             if symlink:
                 message = Event(
@@ -561,7 +561,7 @@ class FileEventHandler(FileSystemEventHandler):
                 and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
             ):
                 # Directory modified (permissions change) - broadcast event
-                LOG.info(f'[MOVE      ] "{src_path}"')
+                log.info(f'[MOVE      ] "{src_path}"')
                 dir = Dir.get(src_path)
                 if dir:
                     message = Event(
@@ -585,13 +585,13 @@ class FileEventHandler(FileSystemEventHandler):
                         if exists(src_path):
                             file = File.get(src_path)
                             if file:
-                                LOG.debug(
+                                log.debug(
                                     f'[MODIFIED  ] "{src_path}" '
                                     f"(fallback for non-Linux system)"
                                 )
                                 upload_file(file)
                     except Exception as e:
-                        LOG.error(
+                        log.error(
                             f'Error handling modified event for "{src_path}": {e}'
                         )
 
@@ -617,12 +617,12 @@ class FileEventHandler(FileSystemEventHandler):
                         upload_file(file)
                 else:
                     # File was deleted before we could upload
-                    LOG.warning(
+                    log.warning(
                         f'File "{src_path}" not found. '
                         f"It might have been altered by an external tool."
                     )
             except Exception as e:
-                LOG.error(f'Error handling closed event for "{src_path}": {e}')
+                log.error(f'Error handling closed event for "{src_path}": {e}')
 
     def on_moved(self, event) -> None:
         """
@@ -638,9 +638,9 @@ class FileEventHandler(FileSystemEventHandler):
         dest_path = ensure_str_path(getattr(event, 'dest_path', None))
 
         if dest_path:
-            LOG.debug(f'[MOVE      ] "{src_path}" -> "{dest_path}"')
+            log.debug(f'[MOVE      ] "{src_path}" -> "{dest_path}"')
         else:
-            LOG.debug(f'[MOVE      ] "{src_path}"')
+            log.debug(f'[MOVE      ] "{src_path}"')
 
         message = None
 
@@ -654,13 +654,13 @@ class FileEventHandler(FileSystemEventHandler):
                 return
             if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
                 # Hidden to visible - treat as creation of visible directory
-                LOG.debug(f"Switch event to created: {dest_path}")
+                log.debug(f"Switch event to created: {dest_path}")
                 created_event = DirCreatedEvent(dest_path)
                 self.on_created(created_event)
                 return
             if is_hidden_dir(dest_path):
                 # Moving to hidden directory - treat as deletion
-                LOG.warning(f"Switch event to deleted: {dest_path}")
+                log.warning(f"Switch event to deleted: {dest_path}")
                 deleted_event = DirDeletedEvent(dest_path)
                 self.on_deleted(deleted_event)
                 return
@@ -726,10 +726,10 @@ class FileEventHandler(FileSystemEventHandler):
 
         # Skip deletion propagation if ignore_delete is enabled (backup mode)
         if CONFIG.get("IGNORE_DELETE", False):
-            LOG.debug(f'[IGNORE DEL] "{src_path}" (ignore-delete mode)')
+            log.debug(f'[IGNORE DEL] "{src_path}" (ignore-delete mode)')
             return
 
-        LOG.info(f'[REMOVE    ] "{src_path}"')
+        log.info(f'[REMOVE    ] "{src_path}"')
 
         # Create appropriate object type for the deleted item
         obj = Dir(src_path) if event.is_directory else File(src_path)

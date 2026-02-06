@@ -14,7 +14,7 @@ handling transient network failures gracefully.
 import logging
 from typing import Any, Callable
 
-from loguru import logger as LOG
+from loguru import logger as log
 from requests import RequestException
 from tenacity import (
     before_sleep_log,
@@ -65,7 +65,7 @@ def retry_on_network_error(
         retry=retry_if_exception_type((RequestException, NetworkError)),
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(LOG, logging.WARNING),
+        before_sleep=before_sleep_log(log, logging.WARNING),
         reraise=True,
     )
 
@@ -92,7 +92,7 @@ def retry_on_connection_error(
         retry=retry_if_exception_type(RequestException),
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        before_sleep=before_sleep_log(LOG, logging.WARNING),
+        before_sleep=before_sleep_log(log, logging.WARNING),
         reraise=True,
     )
 

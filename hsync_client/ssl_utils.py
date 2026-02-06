@@ -27,7 +27,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from loguru import logger as LOG
+from loguru import logger as log
 
 # Certificate validity period (1 day for session-based certificates)
 CERT_VALIDITY_DAYS = 1
@@ -61,7 +61,7 @@ def generate_self_signed_cert(
     Returns:
         CertificateInfo containing the certificate, key, and fingerprint.
     """
-    LOG.debug(f"Generating self-signed certificate with CN={common_name}")
+    log.debug(f"Generating self-signed certificate with CN={common_name}")
 
     # Generate RSA private key
     private_key = rsa.generate_private_key(
@@ -107,7 +107,7 @@ def generate_self_signed_cert(
     # Calculate SHA-256 fingerprint
     fingerprint = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
 
-    LOG.info(f"Generated self-signed certificate with fingerprint: {fingerprint[:16]}...")
+    log.info(f"Generated self-signed certificate with fingerprint: {fingerprint[:16]}...")
 
     return CertificateInfo(
         cert_pem=cert_pem,
@@ -140,8 +140,8 @@ def save_cert_to_temp_files(cert_info: CertificateInfo) -> CertificateInfo:
     key_file.write(cert_info.key_pem)
     key_file.close()
 
-    LOG.debug(f"Saved certificate to {cert_file.name}")
-    LOG.debug(f"Saved key to {key_file.name}")
+    log.debug(f"Saved certificate to {cert_file.name}")
+    log.debug(f"Saved key to {key_file.name}")
 
     return CertificateInfo(
         cert_pem=cert_info.cert_pem,
@@ -214,6 +214,6 @@ def get_server_cert_fingerprint(host: str, port: int) -> Optional[str]:
                 if cert_der:
                     return hashlib.sha256(cert_der).hexdigest()
     except Exception as e:
-        LOG.debug(f"Error getting server certificate: {e}")
+        log.debug(f"Error getting server certificate: {e}")
 
     return None

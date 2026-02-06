@@ -14,7 +14,7 @@ with intelligent decision-making on when compression is beneficial.
 from os.path import splitext
 
 import zstandard as zstd
-from loguru import logger as LOG
+from loguru import logger as log
 
 # Compression level (1-22, default 3 is a good balance of speed/ratio)
 COMPRESSION_LEVEL = 3
@@ -120,7 +120,7 @@ def should_compress(
 
     # Too small to benefit from compression
     if size < threshold:
-        LOG.debug(
+        log.debug(
             f"Skip compression ({context}): {filepath} "
             f"below threshold ({size} < {threshold} bytes)"
         )
@@ -129,7 +129,7 @@ def should_compress(
     # Check if file extension indicates pre-compressed format
     ext = splitext(filepath.lower())[1]
     if ext in PRECOMPRESSED_EXTENSIONS:
-        LOG.debug(f"Skip compression: {filepath} already compressed ({ext})")
+        log.debug(f"Skip compression: {filepath} already compressed ({ext})")
         return False
 
     return True
@@ -175,5 +175,5 @@ def compress_file(filepath: str) -> bytes:
         return compress_data(f.read())
 
 
-LOG.debug(f"Module {__name__} loaded")
+log.debug(f"Module {__name__} loaded")
 

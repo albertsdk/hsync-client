@@ -36,7 +36,7 @@ from typing import Any, Optional, Set
 from watchdog.events import FileSystemEventHandler, DirCreatedEvent, DirDeletedEvent
 from watchdog.observers import Observer
 
-from loguru import logger as LOG
+from loguru import logger as log
 
 from hsync_client.config import CONFIG
 from hsync_client.models.dir import Dir, is_hidden_dir
@@ -105,7 +105,7 @@ class LANWebSocketServer:
     async def _handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection."""
         client_addr = websocket.remote_address
-        LOG.info(f"WebSocket client connected: {client_addr}")
+        log.info(f"WebSocket client connected: {client_addr}")
         
         # Check for authentication if LAN_KEY is set
         lan_key = CONFIG.get("LAN_KEY")
@@ -115,18 +115,18 @@ class LANWebSocketServer:
                 auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_data = json.loads(auth_msg)
                 if auth_data.get("type") != "auth" or auth_data.get("key") != lan_key:
-                    LOG.warning(f"WebSocket auth failed from {client_addr}")
+                    log.warning(f"WebSocket auth failed from {client_addr}")
                     await websocket.send(json.dumps({"type": "auth", "status": "failed"}))
                     await websocket.close()
                     return
                 await websocket.send(json.dumps({"type": "auth", "status": "ok"}))
-                LOG.info(f"WebSocket client authenticated: {client_addr}")
+                log.info(f"WebSocket client authenticated: {client_addr}")
             except asyncio.TimeoutError:
-                LOG.warning(f"WebSocket auth timeout from {client_addr}")
+                log.warning(f"WebSocket auth timeout from {client_addr}")
                 await websocket.close()
                 return
             except Exception as e:
-                LOG.warning(f"WebSocket auth error from {client_addr}: {e}")
+                log.warning(f"WebSocket auth error from {client_addr}: {e}")
                 await websocket.close()
                 return
         
@@ -138,12 +138,12 @@ class LANWebSocketServer:
             async for message in websocket:
                 # Currently we don't expect messages from slaves
                 # but we keep the connection alive
-                LOG.debug(f"Received from {client_addr}: {_escape_braces(message)}")
+                log.debug(f"Received from {client_addr}: {_escape_braces(message)}")
         except Exception as e:
-            LOG.debug(f"WebSocket client {client_addr} disconnected: {e}")
+            log.debug(f"WebSocket client {client_addr} disconnected: {e}")
         finally:
             self._clients.discard(websocket)
-            LOG.info(f"WebSocket client disconnected: {client_addr}")
+            log.info(f"WebSocket client disconnected: {client_addr}")
     
     async def broadcast(self, event_dict: dict) -> None:
         """Broadcast an event to all connected clients."""
@@ -151,7 +151,7 @@ class LANWebSocketServer:
             return
 
         message = json.dumps(event_dict)
-        LOG.debug(f"Broadcasting to {len(self._clients)} clients: {event_dict.get('name')}")
+        log.debug(f"Broadcasting to {len(self._clients)} clients: {event_dict.get('name')}")
 
         # Send to all clients, removing disconnected ones
         disconnected = set()
@@ -187,7 +187,7 @@ class LANWebSocketServer:
         ) as server:
             self._server = server
             protocol = "WSS" if self._use_https else "WS"
-            LOG.info(f"LAN WebSocket server started on port {self._port} ({protocol})")
+            log.info(f"LAN WebSocket server started on port {self._port} ({protocol})")
 
             # Wait until stopped
             while self._running:
@@ -201,7 +201,7 @@ class LANWebSocketServer:
         try:
             self._loop.run_until_complete(self._run_server())
         except Exception as e:
-            LOG.error(f"WebSocket server error: {e}")
+            log.error(f"WebSocket server error: {e}")
         finally:
             self._loop.close()
 
@@ -213,7 +213,7 @@ class LANWebSocketServer:
             watch_path: Path to watch for file changes. Defaults to LOCAL_BUCKET.
         """
         if self._running:
-            LOG.warning("LAN WebSocket server already running")
+            log.warning("LAN WebSocket server already running")
             return
 
         self._running = True
@@ -237,7 +237,7 @@ class LANWebSocketServer:
         observer.schedule(self._event_handler, watch_path, recursive=True)
         observer.start()
         self._observer = observer
-        LOG.info(f"File watcher started for: {watch_path}")
+        log.info(f"File watcher started for: {watch_path}")
 
     def stop(self) -> None:
         """Stop the WebSocket server and file watcher."""
@@ -267,7 +267,7 @@ class LANWebSocketServer:
             self._thread.join(timeout=2.0)
             self._thread = None
 
-        LOG.info("LAN WebSocket server stopped")
+        log.info("LAN WebSocket server stopped")
 
     def is_running(self) -> bool:
         """Check if server is running."""
@@ -309,14 +309,14 @@ class LANFileEventHandler(FileSystemEventHandler):
             return
         if not event.is_directory and is_hidden_file(src_path):
             return
-        LOG.debug(f"[LAN EVENT ] {event.event_type}: {src_path}")
+        log.debug(f"[LAN EVENT ] {event.event_type}: {src_path}")
 
     def on_created(self, event) -> None:
         """Handle file/directory creation events."""
         src_path = ensure_str_path(event.src_path)
 
         if event.is_directory and not is_hidden_dir(src_path):
-            LOG.info(f'[LAN CREATE] "{src_path}"')
+            log.info(f'[LAN CREATE] "{src_path}"')
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 message = Event(
@@ -328,7 +328,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                 )
                 self._send_event(message)
         elif not is_hidden_file(src_path) and islink(src_path):
-            LOG.info(f'[LAN SYMLINK] "{src_path}"')
+            log.info(f'[LAN SYMLINK] "{src_path}"')
             symlink = Symlink.get(src_path)
             if symlink:
                 message = Event(
@@ -349,7 +349,7 @@ class LANFileEventHandler(FileSystemEventHandler):
             and not is_hidden_dir(src_path)
             and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
         ):
-            LOG.info(f'[LAN MODIFY] "{src_path}"')
+            log.info(f'[LAN MODIFY] "{src_path}"')
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 message = Event(
@@ -381,7 +381,7 @@ class LANFileEventHandler(FileSystemEventHandler):
         if not exists(src_path):
             return
 
-        LOG.info(f'[LAN FILE  ] "{src_path}"')
+        log.info(f'[LAN FILE  ] "{src_path}"')
         file_obj = File.get(src_path)
         if file_obj:
             message = Event(
@@ -418,7 +418,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                 self.on_deleted(deleted_event)
                 return
 
-            LOG.info(f'[LAN RENAME] "{src_path}" -> "{dest_path}"')
+            log.info(f'[LAN RENAME] "{src_path}" -> "{dest_path}"')
             dst = Dir.get(dest_path)
             if dst:
                 src = deepcopy(dst)
@@ -436,7 +436,7 @@ class LANFileEventHandler(FileSystemEventHandler):
             if is_hidden_file(src_path):
                 return
 
-            LOG.info(f'[LAN RENAME] "{src_path}" -> "{dest_path}"')
+            log.info(f'[LAN RENAME] "{src_path}" -> "{dest_path}"')
             dst = File.get(dest_path)
             if dst:
                 src = deepcopy(dst)
@@ -464,10 +464,10 @@ class LANFileEventHandler(FileSystemEventHandler):
 
         # Skip deletion propagation if ignore_delete is enabled
         if CONFIG.get("IGNORE_DELETE", False):
-            LOG.debug(f'[LAN IGNORE] "{src_path}" (ignore-delete mode)')
+            log.debug(f'[LAN IGNORE] "{src_path}" (ignore-delete mode)')
             return
 
-        LOG.info(f'[LAN DELETE] "{src_path}"')
+        log.info(f'[LAN DELETE] "{src_path}"')
 
         # Create appropriate object type for the deleted item
         obj = Dir(src_path) if event.is_directory else File(src_path)
@@ -514,7 +514,7 @@ async def lan_websocket_client(
     protocol = "wss" if use_https else "ws"
     uri = f"{protocol}://{host}:{port}"
 
-    LOG.info(f"Connecting to master WebSocket: {uri}")
+    log.info(f"Connecting to master WebSocket: {uri}")
 
     # Start local file watcher for bidirectional sync
     # HTTP port is WebSocket port - 1
@@ -524,7 +524,7 @@ async def lan_websocket_client(
     watch_path = CONFIG["LOCAL_BUCKET"]
     observer.schedule(_slave_event_handler, watch_path, recursive=True)
     observer.start()
-    LOG.info(f"Slave file watcher started for bidirectional sync: {watch_path}")
+    log.info(f"Slave file watcher started for bidirectional sync: {watch_path}")
 
     # Set up SSL context for WSS
     # Note: Certificate fingerprint was already verified during initial HTTP sync.
@@ -543,7 +543,7 @@ async def lan_websocket_client(
             ping_timeout=10,
             close_timeout=5,
         ) as websocket:
-            LOG.info("WebSocket connected to master")
+            log.info("WebSocket connected to master")
 
             # Authenticate if LAN_KEY is set
             lan_key = CONFIG.get("LAN_KEY")
@@ -554,11 +554,11 @@ async def lan_websocket_client(
                 response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 auth_result = json.loads(response)
                 if auth_result.get("status") != "ok":
-                    LOG.error("WebSocket authentication failed")
+                    log.error("WebSocket authentication failed")
                     return
-                LOG.info("WebSocket authenticated with master")
+                log.info("WebSocket authenticated with master")
 
-            LOG.info("Listening for events from master...")
+            log.info("Listening for events from master...")
 
             # Process incoming events
             async for message in websocket:
@@ -566,21 +566,21 @@ async def lan_websocket_client(
                     event_data = json.loads(message)
                     await _handle_lan_event(event_data, _slave_event_handler)
                 except json.JSONDecodeError as e:
-                    LOG.warning(f"Invalid JSON from master: {e}")
+                    log.warning(f"Invalid JSON from master: {e}")
                 except Exception as e:
-                    LOG.error(f"Error handling event: {e}")
+                    log.error(f"Error handling event: {e}")
 
     except asyncio.CancelledError:
-        LOG.info("WebSocket connection cancelled")
+        log.info("WebSocket connection cancelled")
         raise
     except Exception as e:
-        LOG.error(f"WebSocket connection error: {e}")
+        log.error(f"WebSocket connection error: {e}")
     finally:
         # Stop the file watcher
         observer.stop()
         observer.join(timeout=2.0)
         _slave_event_handler = None
-        LOG.info("Slave file watcher stopped")
+        log.info("Slave file watcher stopped")
 
 
 async def _handle_lan_event(
@@ -605,10 +605,10 @@ async def _handle_lan_event(
     src = event_data.get("src")
     dst = event_data.get("dst")
 
-    LOG.debug(f"Received event: {event_name}")
+    log.debug(f"Received event: {event_name}")
 
     if not src:
-        LOG.warning("Event missing 'src' field")
+        log.warning("Event missing 'src' field")
         return
 
     # Helper to mark/unmark files as receiving to prevent echo
@@ -644,7 +644,7 @@ async def _handle_lan_event(
     # Handle Renamed events
     elif event_name == "renamed":
         if not dst:
-            LOG.warning("Rename event missing 'dst' field")
+            log.warning("Rename event missing 'dst' field")
             return
 
         if "path" in src:
@@ -655,7 +655,7 @@ async def _handle_lan_event(
                 mark_receiving(src_dir.path)
                 mark_receiving(dst_dir.path)
                 try:
-                    LOG.info(f'[LAN RENAME] "{src_dir.path}" -> "{dst_dir.path}"')
+                    log.info(f'[LAN RENAME] "{src_dir.path}" -> "{dst_dir.path}"')
                     # Create parent directory if needed
                     parent = dirname(dst_dir.path)
                     if parent and not exists(parent):
@@ -672,7 +672,7 @@ async def _handle_lan_event(
                 mark_receiving(src_file.filepath)
                 mark_receiving(dst_file.filepath)
                 try:
-                    LOG.info(f'[LAN RENAME] "{src_file.filepath}" -> "{dst_file.filepath}"')
+                    log.info(f'[LAN RENAME] "{src_file.filepath}" -> "{dst_file.filepath}"')
                     # Create parent directory if needed
                     parent = dirname(dst_file.filepath)
                     if parent and not exists(parent):
@@ -686,7 +686,7 @@ async def _handle_lan_event(
     elif event_name == "deleted":
         # Check ignore_delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            LOG.debug(f"[LAN IGNORE] Deletion ignored (ignore-delete mode)")
+            log.debug(f"[LAN IGNORE] Deletion ignored (ignore-delete mode)")
             return
 
         if "path" in src:
@@ -695,7 +695,7 @@ async def _handle_lan_event(
             if dir_obj.path and exists(dir_obj.path):
                 mark_receiving(dir_obj.path)
                 try:
-                    LOG.info(f'[LAN DELETE] "{dir_obj.path}"')
+                    log.info(f'[LAN DELETE] "{dir_obj.path}"')
                     rmtree(dir_obj.path, ignore_errors=False)
                 finally:
                     unmark_receiving(dir_obj.path)
@@ -705,7 +705,7 @@ async def _handle_lan_event(
             if file_obj.filepath and exists(file_obj.filepath):
                 mark_receiving(file_obj.filepath)
                 try:
-                    LOG.info(f'[LAN DELETE] "{file_obj.filepath}"')
+                    log.info(f'[LAN DELETE] "{file_obj.filepath}"')
                     remove(file_obj.filepath)
                 finally:
                     unmark_receiving(file_obj.filepath)
@@ -783,10 +783,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            LOG.info(f'[SLAVE UP  ] "{file_obj.filepath}"')
+            log.info(f'[SLAVE UP  ] "{file_obj.filepath}"')
             upload_file(file_obj, check_size=True)
         except Exception as e:
-            LOG.error(f"Failed to upload to master: {e}")
+            log.error(f"Failed to upload to master: {e}")
 
     def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
         """Notify master about a file/directory deletion."""
@@ -811,7 +811,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            LOG.info(f'[SLAVE DEL ] "{filepath}"')
+            log.info(f'[SLAVE DEL ] "{filepath}"')
             response = requests.delete(
                 url,
                 params=params,
@@ -821,10 +821,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             )
 
             if response.status_code not in (200, 204, 404):
-                LOG.warning(f"Delete request failed: {response.status_code}")
+                log.warning(f"Delete request failed: {response.status_code}")
 
         except Exception as e:
-            LOG.error(f"Failed to delete on master: {e}")
+            log.error(f"Failed to delete on master: {e}")
 
     def _rename_on_master(self, src_path: str, dst_path: str) -> None:
         """Notify master about a file/directory rename."""
@@ -849,7 +849,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            LOG.info(f'[SLAVE REN ] "{src_path}" -> "{dst_path}"')
+            log.info(f'[SLAVE REN ] "{src_path}" -> "{dst_path}"')
             response = requests.patch(
                 url,
                 params=params,
@@ -859,10 +859,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             )
 
             if response.status_code not in (200, 204):
-                LOG.warning(f"Rename request failed: {response.status_code}")
+                log.warning(f"Rename request failed: {response.status_code}")
 
         except Exception as e:
-            LOG.error(f"Failed to rename on master: {e}")
+            log.error(f"Failed to rename on master: {e}")
 
     def on_created(self, event) -> None:
         """Handle file/directory creation events."""
@@ -878,7 +878,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
         if event.is_directory and not is_hidden_dir(src_path):
             # Directory creation - master will see it when files are added
-            LOG.debug(f'[SLAVE DIR ] "{src_path}"')
+            log.debug(f'[SLAVE DIR ] "{src_path}"')
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
             if islink(src_path):
@@ -966,7 +966,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip if in ignore-delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            LOG.debug(f"[SLAVE IGN ] Deletion ignored (ignore-delete mode)")
+            log.debug(f"[SLAVE IGN ] Deletion ignored (ignore-delete mode)")
             return
 
         # Notify master about deletion
