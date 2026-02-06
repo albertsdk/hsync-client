@@ -24,6 +24,14 @@
         'HSYNC_AUTOTUNE',
     ];
 
+    // Fields whose values are interpolated into the generated connect command;
+    // editing any of them must re-render the section.
+    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'];
+
+    function isConnectField(id) {
+        return CONNECT_FIELDS.includes(id);
+    }
+
     // Placeholder shown for the local folder on the *other* device (unknowable
     // from the NAS) and the fixed mask used for the LAN shared key in the
     // generated connect command (fixed length so it does not leak the key length).
@@ -387,14 +395,18 @@
 
         // Delegate on document: the WD dashboard / remotewd can re-inject input
         // nodes after init(), which would orphan per-element listeners. A
-        // delegated listener survives node replacement.
+        // delegated listener survives node replacement. Listen to input,
+        // change and keyup: old WebKit builds (OS5 dashboard) can miss `input`
+        // events on some fields (autofill, password managers, select helpers).
         document.addEventListener('input', (e) => {
-            if (['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'].includes(e.target.id)) {
-                renderConnectCommand();
-            }
+            if (isConnectField(e.target.id)) renderConnectCommand();
         });
         document.addEventListener('change', (e) => {
-            if (e.target.id === 'HSYNC_MODE') syncModeVisibility();
+            if (e.target.id === 'HSYNC_MODE') { syncModeVisibility(); return; }
+            if (isConnectField(e.target.id)) renderConnectCommand();
+        });
+        document.addEventListener('keyup', (e) => {
+            if (isConnectField(e.target.id)) renderConnectCommand();
         });
 
         const copyBtn = $('#hsync-btn-copy');
@@ -410,6 +422,13 @@
             try {
                 await saveConfig(collectConfig());
                 toast(t('toast.saved', 'Configuration saved'), 'ok');
+                // Re-sync the connect command with what config_set.php actually
+                // persisted: the backend normalizes values (bucket fallback,
+                // boolean true/false, empty invalid numerics), so rebuild the
+                // command from the reloaded config after every successful save.
+                try { applyConfig(await loadConfig()); }
+                catch (_) { /* keep the current form values */ }
+                renderConnectCommand();
             } catch (e) {
                 toast(t('toast.save_error', 'Failed to save') + ': ' + e.message, 'error');
             }

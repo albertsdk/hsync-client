@@ -184,7 +184,11 @@ on another device to join the sync group coordinated by the NAS instead of
 assembling the flags by hand.
 
 The command is built client-side from the current form values and contains
-only the connection-matching fields:
+only the connection-matching fields. It is recomputed whenever the bucket,
+group or LAN-key fields change, and after pressing **Save** it is rebuilt from
+the configuration actually persisted by the backend (which normalizes inputs
+such as an invalid bucket or boolean fields), so the command always matches
+what the NAS runs with:
 
 ```
 HSYNC_LAN_KEY='<masked>' hsync -b '<bucket>' -p '<local-folder>' --lan-mode [--lan-group '<group>']

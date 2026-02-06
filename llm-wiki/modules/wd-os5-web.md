@@ -29,9 +29,15 @@ second device to join the sync group coordinated by the NAS. The command is
 shown in a readonly `#hsync-connect-command` textarea (not `<code>`: the WD
 dashboard / remotewd injector can strip or hide `code` contents). It is
 recomputed live from the form fields (`#HSYNC_MODE`, `#HSYNC_BUCKET`,
-`#HSYNC_LAN_GROUP`, `#HSYNC_LAN_KEY`) on `input`/`change` and on mode switches
-(`syncModeVisibility`), and re-applied on delayed timeouts so a post-inject
-DOM replace cannot leave the field empty.
+`#HSYNC_LAN_GROUP`, `#HSYNC_LAN_KEY`) on `input`/`change`/`keyup` — delegated
+on `document` so they survive dashboard node replacement (`app.js:396`) — and
+on mode switches (`syncModeVisibility`), and re-applied on delayed timeouts so
+a post-inject DOM replace cannot leave the field empty. After a successful
+**Save** the command is rebuilt from the persisted configuration
+(`applyConfig(await loadConfig())` + `renderConnectCommand()`, `app.js:420`):
+`config_set.php` normalizes inputs (invalid bucket → fallback, booleans →
+`true`/`false`, invalid numerics → empty), so the section always reflects what
+`hsync.env` actually contains, not just the pre-save form values.
 
 Scope: **LAN mode only**. In server mode the NAS is a client of a central
 `hsync-server`, so the section shows an explanatory note instead of a command.
