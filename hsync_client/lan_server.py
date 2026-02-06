@@ -404,9 +404,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     content = f.read()
 
                     # Use compression if enabled and beneficial
+                    # In LAN mode, use higher threshold (100KB) since local network is fast
                     use_compression = (
                         CONFIG.get("COMPRESSION_ENABLED", False)
-                        and should_compress(filepath, file_size)
+                        and should_compress(filepath, file_size, is_lan=True)
                     )
 
                     if use_compression:

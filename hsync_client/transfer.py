@@ -406,7 +406,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             offset == 0
             and CONFIG.get("COMPRESSION_ENABLED", False)
             and CONFIG.get("SERVER_COMPRESSION_ENABLED", False)
-            and should_compress(file.filepath, file.size)
+            and should_compress(file.filepath, file.size, transfer_type="upload")
         )
 
         headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
