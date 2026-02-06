@@ -180,27 +180,35 @@ class TestIsSamePaths:
 
 
 class TestGetCid:
-    """Tests for get_cid function."""
+    """Tests for get_cid function (NanoID-style)."""
 
     def test_default_length(self):
-        """Test default CID length is 10."""
+        """Test default CID length is 21 (NanoID standard)."""
         cid = get_cid()
-        assert len(cid) == 10
+        assert len(cid) == 21
 
     def test_custom_length(self):
         """Test custom CID length."""
-        cid = get_cid(length=20)
-        assert len(cid) == 20
+        cid = get_cid(length=32)
+        assert len(cid) == 32
 
-    def test_alphanumeric_only(self):
-        """Test CID contains only alphanumeric characters."""
+    def test_url_safe_characters(self):
+        """Test CID contains only URL-safe characters (a-zA-Z0-9-_)."""
         cid = get_cid(length=100)
-        assert cid.isalnum()
+        valid_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        assert all(c in valid_chars for c in cid)
 
     def test_unique_cids(self):
-        """Test CIDs are unique."""
+        """Test CIDs are unique (cryptographically secure)."""
         cids = [get_cid() for _ in range(100)]
         assert len(set(cids)) == 100
+
+    def test_contains_special_chars(self):
+        """Test CID can contain - and _ characters."""
+        # Generate many CIDs to statistically ensure we get special chars
+        cids = "".join(get_cid() for _ in range(100))
+        # With 64-char alphabet and 2100 chars, probability of no - or _ is negligible
+        assert "-" in cids or "_" in cids
 
 
 class TestBytesToHumanReadable:

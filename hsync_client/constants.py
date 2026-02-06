@@ -23,8 +23,10 @@ HSYNC_VERSION = "1.0.0"
 # Client ID Generation
 # =============================================================================
 
-# Length of generated client IDs
-CID_LENGTH = 10
+# Client ID Generation (NanoID-style)
+# 21 characters with 64-char alphabet = 126 bits of entropy
+CID_LENGTH = 21
+CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
 
 # =============================================================================
