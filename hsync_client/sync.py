@@ -15,7 +15,7 @@ import asyncio
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from os import makedirs, walk
+from os import makedirs, remove, walk
 from os.path import exists, join
 from requests import get, RequestException
 from sys import exc_info
@@ -44,15 +44,19 @@ from hsync_client.utils import (
 # =============================================================================
 
 
-async def sync() -> None:
+async def sync(lan_mode: bool = False) -> None:
     """
     Perform a full synchronization between local and remote files.
 
     Compares local and remote file lists, determines required actions,
-    and executes them in parallel (download, upload, or skip).
+    and executes them in parallel (download, upload, delete, or skip).
 
     Uses a thread pool executor with semaphore to limit concurrent
     transfers and avoid overwhelming the server.
+
+    Args:
+        lan_mode: If True, master is source of truth - files existing only
+            locally will be deleted instead of uploaded.
     """
     # Import here to avoid circular import
     from hsync_client.transfer import nothing_to_do
@@ -63,18 +67,28 @@ async def sync() -> None:
         remote_files = get_files_remote()
 
         # Determine what actions need to be taken
-        sync_actions = get_sync_actions(remote_files, local_files)
+        sync_actions = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
 
         LOG.info(f"Sync actions: {len(sync_actions)} files to process")
 
         # Separate actions by type
         downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
         uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload]
+        deletes = [a.file for a in sync_actions if a.name == SyncActionName.delete]
         nothing = [a.file for a in sync_actions if a.name == SyncActionName.nothing]
 
         # Log files that are already in sync (no I/O needed)
         for file in nothing:
             nothing_to_do(file)
+
+        # Handle deletions (files that exist only locally in LAN mode)
+        for file in deletes:
+            if file.filepath and exists(file.filepath):
+                try:
+                    remove(file.filepath)
+                    LOG.info(f'[DELETE    ] "{file.filepath}" (not on master)')
+                except OSError as e:
+                    LOG.error(f'Error deleting "{file.filepath}": {e}')
 
         # Execute transfers in parallel using thread pool
         if downloads or uploads:
@@ -252,6 +266,7 @@ def get_files_remote() -> list[dict]:
 def get_sync_actions(
     remote_files: Optional[list[dict]] = None,
     local_files: Optional[list[dict]] = None,
+    lan_mode: bool = False,
 ) -> list[SyncAction]:
     """
     Determine sync actions by comparing local and remote file lists.
@@ -263,6 +278,8 @@ def get_sync_actions(
     Args:
         remote_files: List of file metadata from server.
         local_files: List of file metadata from local filesystem.
+        lan_mode: If True, master is source of truth - files existing only
+            locally will be deleted instead of uploaded.
 
     Returns:
         List of SyncAction objects describing required operations.
@@ -318,10 +335,14 @@ def get_sync_actions(
     for local_file_dict in local_files:
         local_file_info = File.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
-            # File exists only locally - upload it
             file = File.get(local_file_dict["filepath"])
             if file:
-                sync_actions.append(SyncAction(file, SyncActionName.upload))
+                if lan_mode:
+                    # In LAN mode, master is source of truth - delete local files not on master
+                    sync_actions.append(SyncAction(file, SyncActionName.delete))
+                else:
+                    # In server mode, upload local files not on server
+                    sync_actions.append(SyncAction(file, SyncActionName.upload))
 
     return sync_actions
 

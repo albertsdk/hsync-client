@@ -423,8 +423,8 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
 
                     set_config(config)
 
-                    # Perform initial sync
-                    run(sync())
+                    # Perform initial sync (master is source of truth in LAN mode)
+                    run(sync(lan_mode=True))
 
                     if not persistent:
                         break
