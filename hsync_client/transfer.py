@@ -11,6 +11,7 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
+from json import dumps as json_dumps
 from os import makedirs, remove, utime
 from typing import cast
 from os.path import basename, dirname, exists, getmtime, getsize, join
@@ -126,7 +127,7 @@ def download_file(file: File) -> None:
         return
 
     LOG.debug(f"Request URI: {uri}")
-    LOG.debug(f"Request Header: {headers}")
+    LOG.debug(f"Request Header: {json_dumps(headers)}")
     LOG.debug(f"Response status: {response.status_code}")
 
     if response.status_code == 401:
@@ -399,8 +400,8 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
         LOG.debug(f"Upload file: {file.filepath}")
         LOG.debug(f"        URI: {uri}")
-        LOG.debug(f"     Header: {CONFIG['REQUEST_HEADERS']}")
-        LOG.debug(f"       data: {data}")
+        LOG.debug(f"     Header: {json_dumps(CONFIG['REQUEST_HEADERS'])}")
+        LOG.debug(f"       data: {json_dumps(data)}")
 
         # Determine if compression should be used
         # Don't compress if: resuming, client disabled, server disabled, or file not compressible
