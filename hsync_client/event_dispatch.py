@@ -50,7 +50,7 @@ from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.sync import update_dir, update_file
 from hsync_client.transfer import download_file
-from hsync_client.utils import path_lock, safe_rmdir_if_empty
+from hsync_client.utils import cid_suffix, path_lock, safe_rmdir_if_empty
 
 
 def _path_present(filepath: str) -> bool:
@@ -340,7 +340,7 @@ async def _apply_add_or_modify(
                     log.debug(f'{_tag(label)} Duplicate directory event: "{path_key}"')
                     return
                 ctx.dir_dedup.record(path_key, permissions)
-            log.info(f'{_tag(label)} "{path_key}"{_cid_suffix(origin_cid)}')
+            log.info(f'{_tag(label)} "{path_key}"{cid_suffix(origin_cid)}')
             emit_event(
                 UiEventName.transfer,
                 op="create" if label == "CREATE" else "modify",
@@ -403,11 +403,6 @@ async def _apply_rename(
         )
 
 
-def _cid_suffix(origin_cid: object) -> str:
-    """Return a ``(CID: xxx)`` suffix for log lines, or ``""`` when unknown."""
-    return f" (CID: {origin_cid})" if origin_cid else ""
-
-
 def _ensure_parent_dir(path: str) -> None:
     """Create the parent directory of *path* if it does not exist."""
     parent = str(Path(path).parent)
@@ -436,7 +431,7 @@ async def _rename_path(
     _mark(ctx, dst_path)
     try:
         if _path_present(src_path):
-            log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{_cid_suffix(origin_cid)}')
+            log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{cid_suffix(origin_cid)}')
             emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             _ensure_parent_dir(dst_path)
             await asyncio.to_thread(rename, src_path, dst_path)
@@ -475,7 +470,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         _mark(ctx, local)
         try:
             if _path_present(local):
-                log.info(f'{_tag("DELETE")} "{local}"{_cid_suffix(origin_cid)}')
+                log.info(f'{_tag("DELETE")} "{local}"{cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 if Path(local).is_symlink():
                     # A symlinked directory arrives as a LINK entry: remove
@@ -504,7 +499,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         _mark(ctx, local)
         try:
             if _path_present(local):
-                log.info(f'{_tag("DELETE")} "{local}"{_cid_suffix(origin_cid)}')
+                log.info(f'{_tag("DELETE")} "{local}"{cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(_remove_locked, local)
                 if Path(local).name == HSYNCKEEP_FILENAME:
@@ -558,9 +553,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
                 return
         except OSError:
             pass
-    log.info(
-        f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{_cid_suffix(origin_cid)}'
-    )
+    log.info(f'{_tag("SYMLINK")} Creating symlink: "{local}" -> "{target}"{cid_suffix(origin_cid)}')
     _ensure_parent_dir(local)
     # Mark the path as being mutated on behalf of a peer so the local
     # watcher can suppress the resulting deleted/created events instead of
@@ -578,7 +571,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
             except OSError:
                 log.warning(
                     f"{_tag('SECURITY')} Refusing to replace non-empty directory with symlink: "
-                    f'"{local}"{_cid_suffix(origin_cid)}'
+                    f'"{local}"{cid_suffix(origin_cid)}'
                 )
                 return
         elif Path(local).is_symlink() or Path(local).exists():

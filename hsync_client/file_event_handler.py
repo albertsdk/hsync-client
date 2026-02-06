@@ -43,7 +43,7 @@ from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHan
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
-from hsync_client.utils import ensure_str_path, is_same_paths
+from hsync_client.utils import cid_suffix, ensure_str_path, is_same_paths
 
 if TYPE_CHECKING:
     from watchdog.observers.api import BaseObserver as Observer
@@ -122,8 +122,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
     def _cid_suffix(self, src_path: str | None = None, dst_path: str | None = None) -> str:
         """Return a ``(CID: xxx)`` suffix for log lines, or ``""`` when unknown."""
-        cid = self._origin_cid(src_path, dst_path)
-        return f" (CID: {cid})" if cid else ""
+        return cid_suffix(self._origin_cid(src_path, dst_path))
 
     def _make_event(self, name: EventName, src, dst=None) -> Event:
         """Build an ``Event`` with the three CONFIG identity fields."""

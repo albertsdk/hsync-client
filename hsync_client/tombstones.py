@@ -44,6 +44,12 @@ def _bucket_dir() -> str:
     return str(CONFIG.get("LOCAL_BUCKET", "") or "")
 
 
+def _persist(store: TombstoneStore) -> None:
+    """Prune expired markers and persist *store* to disk."""
+    store.prune()
+    store.save()
+
+
 def get_tombstone_store() -> TombstoneStore:
     """Return the cached store for the local bucket, loading/pruning on first use."""
     with _lock:
@@ -91,8 +97,7 @@ def record_deletion(
             prev_vclock=prev_vclock,
             timestamp=timestamp,
         )
-        store.prune()
-        store.save()
+        _persist(store)
 
 
 def record_deletion_by_key(
@@ -121,8 +126,7 @@ def record_deletion_by_key(
             prev_vclock=prev_vclock,
             timestamp=timestamp,
         )
-        store.prune()
-        store.save()
+        _persist(store)
 
 
 def clear_deletion(abs_path: str) -> None:
@@ -143,8 +147,7 @@ def merge_payload(payload: dict[str, TombstoneEntry] | None) -> int:
         store = get_tombstone_store()
         changed = store.merge(payload)
         if changed:
-            store.prune()
-            store.save()
+            _persist(store)
         return changed
 
 

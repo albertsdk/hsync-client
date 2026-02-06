@@ -19,7 +19,7 @@ from hsync_common.models.file import clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, SYNC_DIRECTIONS, ActionLabel
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.presence import reemit_presence
 from hsync_client.stdin_commands import StdinCommandHandler
@@ -198,9 +198,8 @@ async def _with_stdin_commands(log, coro) -> None:
 
     async def _handle_set_sync_direction(**kw: object) -> None:
         direction = str(kw.get("direction", "bidirectional"))
-        valid = ("bidirectional", "upload-only", "download-only")
-        if direction not in valid:
-            log.warning(f"Invalid sync direction: {direction!r}. Must be one of {valid}.")
+        if direction not in SYNC_DIRECTIONS:
+            log.warning(f"Invalid sync direction: {direction!r}. Must be one of {SYNC_DIRECTIONS}.")
             return
         old = CONFIG.get("SYNC_DIRECTION", "bidirectional")
         if direction == old:

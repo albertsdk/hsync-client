@@ -73,7 +73,7 @@ from hsync_client.file_event_handler import (
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
 )
-from hsync_client.utils import ensure_str_path, warn_if_inotify_watch_limit_low
+from hsync_client.utils import cid_suffix, ensure_str_path, warn_if_inotify_watch_limit_low
 
 # Conservative minimum effective LAN bandwidth used to derive the dynamic
 # ``wait_pending`` timeout from the total bytes still in flight (10 MB/s).
@@ -2027,10 +2027,9 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             src_path, dest_path
         ):
             own_cid = CONFIG.get("CID")
-            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
             log.debug(
                 f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dest_path}"'
-                f"{cid_suffix} (redundant rename, skipped)"
+                f"{cid_suffix(own_cid)} (redundant rename, skipped)"
             )
             return
 

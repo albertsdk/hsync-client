@@ -61,7 +61,7 @@ from hsync_client.multipart import (
     _CappedBytesWriter,
     _StreamingMultipartParser,
 )
-from hsync_client.utils import inbound_size_cap, open_partial_no_follow
+from hsync_client.utils import cid_suffix, inbound_size_cap, open_partial_no_follow
 
 # =============================================================================
 # Constants
@@ -75,6 +75,21 @@ LAN_SERVER_MAX_THREADS = 32
 # the client transfer module so the master never reads more than necessary
 # into RAM per iteration.
 _LAN_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+def _extract_multipart_boundary(content_type: str) -> bytes | None:
+    """Return the multipart boundary bytes from a Content-Type header, or None.
+
+    Strips the surrounding double quotes some clients add around the boundary
+    value. Shared by the upload and delta-apply handlers.
+    """
+    match = _MULTIPART_BOUNDARY_RE.search(content_type)
+    if not match:
+        return None
+    boundary = match.group(1).encode()
+    if boundary.startswith(b'"') and boundary.endswith(b'"'):
+        boundary = boundary[1:-1]
+    return boundary
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -1029,8 +1044,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing filename parameter")
             return
         origin_cid = query.get("cid", [None])[0]
-        cid_suffix = f" (CID: {origin_cid})" if origin_cid else ""
-        log.info(f'{ActionLabel.REMOTE_DOWNLOAD} "{filename}"{cid_suffix}')
+        log.info(f'{ActionLabel.REMOTE_DOWNLOAD} "{filename}"{cid_suffix(origin_cid)}')
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         # Peer-supplied path is untrusted: validate and confine to the bucket
@@ -1279,13 +1293,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
             return
 
-        match = _MULTIPART_BOUNDARY_RE.search(content_type)
-        if not match:
+        boundary = _extract_multipart_boundary(content_type)
+        if boundary is None:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
             return
-        boundary = match.group(1).encode()
-        if boundary.startswith(b'"') and boundary.endswith(b'"'):
-            boundary = boundary[1:-1]
 
         try:
             content_length = int(self.headers.get("Content-Length", 0))
@@ -1656,13 +1667,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         if "multipart/form-data" not in content_type:
             self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
             return
-        match = _MULTIPART_BOUNDARY_RE.search(content_type)
-        if not match:
+        boundary = _extract_multipart_boundary(content_type)
+        if boundary is None:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
             return
-        boundary = match.group(1).encode()
-        if boundary.startswith(b'"') and boundary.endswith(b'"'):
-            boundary = boundary[1:-1]
 
         try:
             content_length = int(self.headers.get("Content-Length", 0))

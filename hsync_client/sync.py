@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from errno import EACCES, EBUSY, EIO, ENOENT
 from os import cpu_count, remove, walk
@@ -897,8 +897,6 @@ def get_files_local() -> list[dict]:
     Returns:
         List of file metadata dictionaries.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     # Check if local directory exists before walking
     if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.warning(

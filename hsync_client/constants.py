@@ -53,6 +53,26 @@ HEADER_PROTOCOL_VERSION: Final[Literal["X-Protocol-Version"]] = _HEADER_PROTOCOL
 
 
 # =============================================================================
+# Sync Direction
+# =============================================================================
+
+# The sync-direction vocabulary lives in hsync_common.protocol.pairing (the wire
+# SSOT); importing it here keeps the client's CLI/preview validators from
+# drifting from the canonical set.
+from hsync_common.protocol.pairing import (  # noqa: E402
+    SYNC_DIRECTION_BIDIRECTIONAL,
+    SYNC_DIRECTION_DOWNLOAD_ONLY,
+    SYNC_DIRECTION_UPLOAD_ONLY,
+)
+
+SYNC_DIRECTIONS: tuple[str, ...] = (
+    SYNC_DIRECTION_BIDIRECTIONAL,
+    SYNC_DIRECTION_UPLOAD_ONLY,
+    SYNC_DIRECTION_DOWNLOAD_ONLY,
+)
+
+
+# =============================================================================
 # Client ID Generation
 # =============================================================================
 

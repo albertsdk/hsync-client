@@ -231,10 +231,9 @@ def get_api_key() -> str:
     return get_env_settings().api_key.get_secret_value()
 
 
-def get_stability_delay() -> str | None:
+def get_stability_delay() -> int | None:
     """Get stability delay from environment."""
-    delay = get_env_settings().stability_delay
-    return str(delay) if delay is not None else None
+    return get_env_settings().stability_delay
 
 
 def get_resync() -> int | None:

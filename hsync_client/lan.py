@@ -23,7 +23,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
@@ -92,6 +92,16 @@ def get_free_port() -> int:
 # =============================================================================
 
 
+def _tx_bool(properties: Mapping[bytes, bytes | None], key: bytes) -> bool:
+    """Read a TXT boolean flag (present-only-when-true) from mDNS properties.
+
+    Per the lan-protocol.md rule, boolean TXT flags are advertised only when
+    true, so an absent/empty key means false.
+    """
+    raw = properties.get(key, b"")
+    return raw.decode("utf-8").lower() == "true" if raw else False
+
+
 @dataclass
 class Peer:
     """Represents a discovered peer on the LAN."""
@@ -106,8 +116,6 @@ class Peer:
     cert_fingerprint: str | None = None
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
-    vector_clocks: bool = False  # causal version metadata support (ADR-0022)
-    tombstones_enabled: bool = False  # deletion-marker gossip support (ADR-0003)
     server_ready: bool = False  # True when HTTP server is listening
     connected: int = 0  # slaves currently connected to the master's WebSocket
     last_seen: float = field(default_factory=time.time)
@@ -293,8 +301,6 @@ class PeerManager:
                     or existing.connected != peer.connected
                     or existing.compression_enabled != peer.compression_enabled
                     or existing.delta_enabled != peer.delta_enabled
-                    or existing.vector_clocks != peer.vector_clocks
-                    or existing.tombstones_enabled != peer.tombstones_enabled
                 )
                 # Update all properties from the new peer object
                 existing.address = peer.address
@@ -305,8 +311,6 @@ class PeerManager:
                 existing.cert_fingerprint = peer.cert_fingerprint
                 existing.compression_enabled = peer.compression_enabled
                 existing.delta_enabled = peer.delta_enabled
-                existing.vector_clocks = peer.vector_clocks
-                existing.tombstones_enabled = peer.tombstones_enabled
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
@@ -594,51 +598,18 @@ class HsyncServiceListener(ServiceListener):
             group_bytes = properties.get(b"group", b"")
             group = group_bytes.decode("utf-8") if group_bytes else None
             # HTTPS info is optional
-            https_bytes = properties.get(b"https", b"")
-            use_https = https_bytes.decode("utf-8").lower() == "true" if https_bytes else False
+            use_https = _tx_bool(properties, b"https")
             cert_fp_bytes = properties.get(b"cert_fp", b"")
             cert_fingerprint = cert_fp_bytes.decode("utf-8") if cert_fp_bytes else None
-            # Compression capability is optional
-            compression_bytes = properties.get(b"compression", b"")
-            compression_enabled = (
-                compression_bytes.decode("utf-8").lower() == "true" if compression_bytes else False
-            )
-            # Delta transfer capability is optional
-            delta_bytes = properties.get(b"delta", b"")
-            delta_enabled = delta_bytes.decode("utf-8").lower() == "true" if delta_bytes else False
-            # Vector-clock causal version metadata (ADR-0022); absent ⇒ false.
-            vector_clocks_bytes = properties.get(b"vector_clocks", b"")
-            vector_clocks = (
-                vector_clocks_bytes.decode("utf-8").lower() == "true"
-                if vector_clocks_bytes
-                else False
-            )
-            # Tombstone gossip capability (ADR-0003); absent ⇒ false.
-            tombstones_bytes = properties.get(b"tombstones", b"")
-            tombstones_enabled = (
-                tombstones_bytes.decode("utf-8").lower() == "true" if tombstones_bytes else False
-            )
+            # Optional transfer capabilities (advertised only when enabled)
+            compression_enabled = _tx_bool(properties, b"compression")
+            delta_enabled = _tx_bool(properties, b"delta")
             # Server ready flag (indicates HTTP server is listening)
-            server_ready_bytes = properties.get(b"server_ready", b"")
-            server_ready = (
-                server_ready_bytes.decode("utf-8").lower() == "true"
-                if server_ready_bytes
-                else False
-            )
+            server_ready = _tx_bool(properties, b"server_ready")
             # Force master flag (for master election)
-            force_master_bytes = properties.get(b"force_master", b"")
-            force_master = (
-                force_master_bytes.decode("utf-8").lower() == "true"
-                if force_master_bytes
-                else False
-            )
+            force_master = _tx_bool(properties, b"force_master")
             # Never-master flag (peer refuses to ever be master)
-            never_master_bytes = properties.get(b"never_master", b"")
-            never_master = (
-                never_master_bytes.decode("utf-8").lower() == "true"
-                if never_master_bytes
-                else False
-            )
+            never_master = _tx_bool(properties, b"never_master")
             # Startup time for master election (earlier startup wins)
             startup_time_bytes = properties.get(b"startup_time", b"")
             startup_time = float(startup_time_bytes.decode("utf-8")) if startup_time_bytes else 0.0
@@ -694,8 +665,6 @@ class HsyncServiceListener(ServiceListener):
                 cert_fingerprint=cert_fingerprint,
                 compression_enabled=compression_enabled,
                 delta_enabled=delta_enabled,
-                vector_clocks=vector_clocks,
-                tombstones_enabled=tombstones_enabled,
                 server_ready=server_ready,
                 connected=connected,
                 force_master=force_master,
@@ -1035,12 +1004,6 @@ class LANSync:
         # Add delta transfer capability
         if CONFIG.get("DELTA_ENABLED", False):
             properties["delta"] = "true"
-        # Causal version metadata is a hard dependency of the conflict model
-        # (ADR-0022): every build supports it, so it is always advertised.
-        properties["vector_clocks"] = "true"
-        # Deletion-marker gossip is always implemented by this client
-        # (ADR-0003): the LAN master serves /tombstones unconditionally.
-        properties["tombstones"] = "true"
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"

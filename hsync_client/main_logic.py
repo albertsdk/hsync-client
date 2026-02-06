@@ -123,10 +123,7 @@ def _get_stability_delay_value(cli_value: int | None) -> int:
         return cli_value
     env_value = get_stability_delay()
     if env_value is not None:
-        try:
-            return int(env_value)
-        except ValueError:
-            pass
+        return env_value
     return FILE_STABILITY_INTERVAL_DEFAULT
 
 

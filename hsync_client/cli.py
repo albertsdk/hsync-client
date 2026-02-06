@@ -41,6 +41,7 @@ from hsync_client.constants import (
     RESYNC_MIN,
     STABILITY_DELAY_MAX,
     STABILITY_DELAY_MIN,
+    SYNC_DIRECTIONS,
 )
 
 # =============================================================================
@@ -665,11 +666,8 @@ def main(
         )
     if discovery_timeout is not None and discovery_timeout < 0:
         raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
-    _VALID_SYNC_DIRECTIONS = ("bidirectional", "upload-only", "download-only")
-    if sync_direction not in _VALID_SYNC_DIRECTIONS:
-        raise typer.BadParameter(
-            f"sync-direction must be one of: {', '.join(_VALID_SYNC_DIRECTIONS)}."
-        )
+    if sync_direction not in SYNC_DIRECTIONS:
+        raise typer.BadParameter(f"sync-direction must be one of: {', '.join(SYNC_DIRECTIONS)}.")
 
     # --force-master is incompatible with directional sync (upload/download-only)
     if force_master and sync_direction != "bidirectional":

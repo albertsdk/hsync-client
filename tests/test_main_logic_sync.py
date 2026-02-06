@@ -75,12 +75,6 @@ class TestGetStabilityDelayValue:
                 os.environ["HSYNC_STABILITY_DELAY"] = old
             get_env_settings.cache_clear()
 
-    def test_invalid_env_value_falls_back_to_default(self):
-        """Invalid (non-integer) env value falls back to default."""
-        with patch("hsync_client.main_logic.get_stability_delay", return_value="not_a_number"):
-            result = _get_stability_delay_value(None)
-            assert result == FILE_STABILITY_INTERVAL_DEFAULT
-
     def test_cli_value_overrides_env(self):
         """CLI argument overrides environment variable."""
         get_env_settings.cache_clear()

@@ -345,6 +345,11 @@ def ensure_str_path(path: str | bytes | None) -> str:
     return str(path)
 
 
+def cid_suffix(cid: object) -> str:
+    """Return a ``" (CID: <cid>)"`` log suffix, or ``""`` when *cid* is falsy."""
+    return f" (CID: {cid})" if cid else ""
+
+
 # =============================================================================
 # File-System Watcher Diagnostics
 # =============================================================================
