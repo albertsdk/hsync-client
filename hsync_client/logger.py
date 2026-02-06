@@ -91,17 +91,40 @@ DEFAULT_LOG_COMPRESSION: Final[str] = "gz"
 
 
 # Context variable for client ID - thread-safe storage for per-session data
+# ContextVar is used for async/thread-local context, but we also need a global
+# fallback for threads that don't inherit the context (watchdog, HTTP server, etc.)
 client_id_var: ContextVar[Optional[str]] = ContextVar("client_id", default=None)
+
+# Global fallback for threads that don't inherit ContextVar
+# This is safe because HSYNC client is a single-client application (one CID per process)
+_global_client_id: Optional[str] = None
 
 
 def get_client_id() -> Optional[str]:
-    """Get the current client ID from context."""
-    return client_id_var.get()
+    """
+    Get the current client ID.
+
+    First tries the ContextVar (for async/thread-local context),
+    then falls back to the global variable (for child threads).
+    """
+    # Try ContextVar first (works in same thread/async context)
+    cid = client_id_var.get()
+    if cid:
+        return cid
+    # Fall back to global (works across all threads)
+    return _global_client_id
 
 
 def set_client_id(client_id: Optional[str]) -> None:
-    """Set the client ID in context for the current session."""
+    """
+    Set the client ID for the current session.
+
+    Sets both the ContextVar (for async context) and the global
+    variable (for child threads like watchdog, HTTP server, etc.).
+    """
+    global _global_client_id
     client_id_var.set(client_id)
+    _global_client_id = client_id
 
 
 # =============================================================================
