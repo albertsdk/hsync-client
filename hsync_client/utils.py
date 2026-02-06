@@ -11,7 +11,6 @@ This module provides common utility functions for path handling,
 file operations, and data formatting.
 """
 
-import logging
 import stat
 
 from hashlib import md5
@@ -21,6 +20,8 @@ from pathlib import Path
 from random import choices
 from string import ascii_letters, digits
 from typing import Optional
+
+from loguru import logger as LOG
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
@@ -37,10 +38,6 @@ from hsync_client.constants import (
     PROBLEMATIC_TRAILING_CHARS,
     RESERVED_FILENAMES,
 )
-
-
-# Logger instance for this module
-LOG = logging.getLogger(__name__)
 
 
 # =============================================================================

@@ -29,12 +29,46 @@ Log rotation configuration (via environment variables):
 Log format: 2024-01-15T10:30:45.123Z - [12345] [cid-abc123] INFO: message
 """
 
+import logging
 import os
 import sys
 from contextvars import ContextVar
 from typing import Final, Optional
 
 from loguru import logger
+
+
+# =============================================================================
+# Intercept Handler for stdlib logging
+# =============================================================================
+
+
+class InterceptHandler(logging.Handler):
+    """
+    Handler that intercepts standard logging and redirects to loguru.
+
+    This allows modules using standard logging (logging.getLogger)
+    to have their logs processed through loguru with consistent formatting.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Redirect log record to loguru."""
+        # Get corresponding loguru level
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        # Find caller from where originated the logged message
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        # Bind client_id to the log context
+        client_id = get_client_id()
+        log = logger.bind(client_id=client_id or "-")
+        log.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 # =============================================================================
@@ -272,5 +306,19 @@ def setup_logging(
             format=format_func,
             colorize=use_colors,  # Enable loguru's color tag processing
         )
+
+    # Intercept standard logging (for modules using logging.getLogger)
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+
+    # Configure specific loggers to use intercept handler
+    for logger_name in (
+        "hsync",
+        "hsync_client",
+        "hsync.lan",
+        "hsync.lan_server",
+        "hsync.lan_websocket",
+    ):
+        logging.getLogger(logger_name).handlers = [InterceptHandler()]
+        logging.getLogger(logger_name).propagate = False
 
     return logger

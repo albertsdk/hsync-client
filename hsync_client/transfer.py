@@ -11,8 +11,6 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
-import logging
-
 from os import makedirs, remove, utime
 from typing import cast
 from os.path import basename, dirname, exists, getmtime, getsize, join
@@ -20,6 +18,8 @@ from requests import get, post, RequestException
 from shutil import move
 from tempfile import NamedTemporaryFile
 from time import sleep as time_sleep
+
+from loguru import logger as LOG
 
 from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
@@ -37,10 +37,6 @@ from hsync_client.utils import (
 
 # Content-Encoding header value for zstd compression
 CONTENT_ENCODING_ZSTD = "zstd"
-
-
-# Logger instance for this module
-LOG = logging.getLogger(__name__)
 
 
 # =============================================================================

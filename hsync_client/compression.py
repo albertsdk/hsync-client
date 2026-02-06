@@ -11,14 +11,10 @@ This module provides file compression/decompression using Zstandard (zstd),
 with intelligent decision-making on when compression is beneficial.
 """
 
-import logging
 from os.path import splitext
 
 import zstandard as zstd
-
-
-# Logger instance for this module
-LOG = logging.getLogger(__name__)
+from loguru import logger as LOG
 
 # Compression level (1-22, default 3 is a good balance of speed/ratio)
 COMPRESSION_LEVEL = 3

@@ -12,7 +12,6 @@ file comparison, action determination, and sync execution.
 """
 
 import asyncio
-import logging
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -22,6 +21,8 @@ from requests import get, RequestException
 from sys import exc_info
 from traceback import print_tb
 from typing import Callable, Mapping, Optional, cast
+
+from loguru import logger as LOG
 
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import ACTION_LABEL, MAX_CONCURRENT_TRANSFERS
@@ -36,10 +37,6 @@ from hsync_client.utils import (
     set_permissions,
     verify_master_fingerprint,
 )
-
-
-# Logger instance for this module
-LOG = logging.getLogger(__name__)
 
 
 # =============================================================================
