@@ -39,6 +39,12 @@ from os.path import join, exists, dirname
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
+from hsync_client.compression import (
+    compress_data,
+    decompress_data,
+    should_compress,
+    CONTENT_ENCODING_ZSTD,
+)
 from hsync_client.config import CONFIG
 from hsync_client.models.dir import is_hidden_dir
 from hsync_client.models.file import File, is_hidden_file
@@ -394,17 +400,38 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(content)
                 else:
-                    # Full file
+                    # Full file - check if compression should be used
                     content = f.read()
 
-                    self.send_response(HTTP_OK)
-                    self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                    self.send_header("Content-Length", str(len(content)))
-                    self.send_header("Accept-Ranges", "bytes")
-                    self.send_header("X-MD5", file_obj.md5sum or "")
-                    self.send_header("X-Permissions", file_obj.permissions or "")
-                    self.end_headers()
-                    self.wfile.write(content)
+                    # Use compression if enabled and beneficial
+                    use_compression = (
+                        CONFIG.get("COMPRESSION_ENABLED", False)
+                        and should_compress(filepath, file_size)
+                    )
+
+                    if use_compression:
+                        compressed_content = compress_data(content)
+                        LOG.debug(
+                            f"Compressed download: {len(content)} -> "
+                            f"{len(compressed_content)} bytes"
+                        )
+                        self.send_response(HTTP_OK)
+                        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                        self.send_header("Content-Length", str(len(compressed_content)))
+                        self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
+                        self.send_header("X-MD5", file_obj.md5sum or "")
+                        self.send_header("X-Permissions", file_obj.permissions or "")
+                        self.end_headers()
+                        self.wfile.write(compressed_content)
+                    else:
+                        self.send_response(HTTP_OK)
+                        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                        self.send_header("Content-Length", str(len(content)))
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("X-MD5", file_obj.md5sum or "")
+                        self.send_header("X-Permissions", file_obj.permissions or "")
+                        self.end_headers()
+                        self.wfile.write(content)
 
         except IOError as e:
             LOG.error(f"Error reading file {filepath}: {e}")
@@ -440,6 +467,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             mtime = form_data.get("mtime", "")
             ctime = form_data.get("ctime", "")
             permissions = form_data.get("permissions", "-rw-rw-r--")
+            is_compressed = form_data.get("compressed", "false").lower() == "true"
 
             # Get uploaded file
             if "file" not in file_data:
@@ -447,6 +475,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 return
 
             filename, file_content = file_data["file"]
+
+            # Decompress if compressed
+            if is_compressed:
+                LOG.debug(f"Decompressing uploaded file: {len(file_content)} bytes")
+                file_content = decompress_data(file_content)
 
             # Build destination path
             local_bucket = CONFIG.get("LOCAL_BUCKET", "")

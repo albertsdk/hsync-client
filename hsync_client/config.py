@@ -104,6 +104,7 @@ class EnvSettings(BaseSettings):
 
     # Sync Settings
     ignore_delete: bool = Field(default=False, description="Ignore file deletion events (backup mode)")
+    compression_enabled: bool = Field(default=True, description="Enable zstd compression for file transfers")
 
 
 @lru_cache
@@ -177,6 +178,11 @@ def get_lan_persistent() -> bool:
 def get_ignore_delete() -> bool:
     """Get ignore delete setting from environment."""
     return get_env_settings().ignore_delete
+
+
+def get_compression_enabled() -> bool:
+    """Get compression enabled setting from environment."""
+    return get_env_settings().compression_enabled
 
 
 # Legacy exports for backward compatibility (read at import time)
@@ -275,6 +281,10 @@ class HsyncConfig(TypedDict):
     MASTER_CERT_FINGERPRINT: Optional[str]
     # Ignore file deletion events (backup mode)
     IGNORE_DELETE: bool
+    # Enable zstd compression for file transfers
+    COMPRESSION_ENABLED: bool
+    # Server compression capability (set at runtime after handshake)
+    SERVER_COMPRESSION_ENABLED: bool
 
 
 # =============================================================================

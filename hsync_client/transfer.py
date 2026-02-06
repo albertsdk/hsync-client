@@ -31,6 +31,7 @@ from shutil import move
 from tempfile import NamedTemporaryFile
 from time import sleep as time_sleep
 
+from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
 from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.models.file import File
@@ -41,6 +42,10 @@ from hsync_client.utils import (
     get_ssl_verify,
     set_permissions,
 )
+
+
+# Content-Encoding header value for zstd compression
+CONTENT_ENCODING_ZSTD = "zstd"
 
 
 # Logger instance for this module
@@ -158,16 +163,32 @@ def download_file(file: File) -> None:
             remove(partial_file_path)
 
     try:
+        # Check if response is compressed
+        content_encoding = response.headers.get("Content-Encoding", "")
+        is_compressed = content_encoding.lower() == CONTENT_ENCODING_ZSTD
+
         # Calculate optimal chunk size based on file size
         chunk_size = get_chunk_size(file.size)
 
-        # Stream file content to partial file (append if resuming)
-        write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
-        with open(partial_file_path, write_mode) as f:
-            for chunk in response.iter_content(chunk_size=chunk_size):
-                if not chunk:
-                    break
-                f.write(chunk)
+        if is_compressed and resume_offset == 0:
+            # Compressed response - download all and decompress
+            # (compression is not used with resume)
+            compressed_data = response.content
+            LOG.debug(
+                f"Decompressing {bytes_to_human_readable(len(compressed_data))} "
+                f"-> ~{bytes_to_human_readable(file.size)}"
+            )
+            decompressed_data = decompress_data(compressed_data)
+            with open(partial_file_path, "wb") as f:
+                f.write(decompressed_data)
+        else:
+            # Stream file content to partial file (append if resuming)
+            write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
+            with open(partial_file_path, write_mode) as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        break
+                    f.write(chunk)
 
         # Verify MD5 checksum of complete file
         md5sum = compute_md5(partial_file_path)
@@ -379,20 +400,62 @@ def upload_file(file: File, check_size: bool = True) -> None:
         LOG.debug(f"     Header: {CONFIG['REQUEST_HEADERS']}")
         LOG.debug(f"       data: {data}")
 
-        with open(file.filepath, "rb") as upload:
-            # Seek to offset if resuming
-            if offset > 0:
-                upload.seek(offset)
+        # Determine if compression should be used
+        # Don't compress if: resuming, client disabled, server disabled, or file not compressible
+        use_compression = (
+            offset == 0
+            and CONFIG.get("COMPRESSION_ENABLED", False)
+            and CONFIG.get("SERVER_COMPRESSION_ENABLED", False)
+            and should_compress(file.filepath, file.size)
+        )
 
-            files = {"file": (basename(file.filepath), upload)}
+        headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
+
+        if use_compression:
+            # Read and compress file data
+            with open(file.filepath, "rb") as f:
+                file_data = f.read()
+            compressed_data = compress_data(file_data)
+            compression_ratio = len(compressed_data) / len(file_data) * 100
+            LOG.debug(
+                f"Compressed {bytes_to_human_readable(len(file_data))} -> "
+                f"{bytes_to_human_readable(len(compressed_data))} "
+                f"({compression_ratio:.1f}%)"
+            )
+
+            # Add compression header and flag
+            headers["Content-Encoding"] = CONTENT_ENCODING_ZSTD
+            data["compressed"] = "true"
+            data["compressed_size"] = len(compressed_data)
+
+            # Send compressed data as file
+            from io import BytesIO
+            compressed_file = BytesIO(compressed_data)
+            files = {"file": (basename(file.filepath), compressed_file)}
             response = post(
                 uri,
-                headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
+                headers=headers,
                 data=data,
                 files=files,
                 verify=get_ssl_verify(),
                 timeout=CONFIG.get("HTTP_TIMEOUT", 30),
             )
+        else:
+            # Standard upload (streaming, supports resume)
+            with open(file.filepath, "rb") as upload:
+                # Seek to offset if resuming
+                if offset > 0:
+                    upload.seek(offset)
+
+                files = {"file": (basename(file.filepath), upload)}
+                response = post(
+                    uri,
+                    headers=headers,
+                    data=data,
+                    files=files,
+                    verify=get_ssl_verify(),
+                    timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+                )
             if response.status_code == 201:
                 LOG.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
             elif response.status_code == 202:

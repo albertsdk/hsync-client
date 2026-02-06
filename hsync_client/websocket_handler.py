@@ -161,7 +161,14 @@ async def remote_events() -> None:
                     f"version {HSYNC_VERSION}. Sync may have issues."
                 )
 
-        LOG.info(f"WebSocket authenticated successfully (server: {server_version or 'unknown'})")
+        # Store server compression capability for file transfer decisions
+        server_compression = auth_result.get("compression_enabled", False)
+        CONFIG["SERVER_COMPRESSION_ENABLED"] = server_compression
+        compression_status = "enabled" if server_compression else "disabled"
+        LOG.info(
+            f"WebSocket authenticated successfully "
+            f"(server: {server_version or 'unknown'}, compression: {compression_status})"
+        )
 
         LOG.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")
         LOG.debug(f"Force resync: {CONFIG['RESYNC']} sec.")

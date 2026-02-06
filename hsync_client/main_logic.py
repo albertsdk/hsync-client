@@ -31,6 +31,7 @@ from typing import Optional
 
 from hsync_client.config import (
     get_api_key,
+    get_compression_enabled,
     get_discovery_timeout,
     get_heartbeat_interval,
     get_ignore_delete,
@@ -91,6 +92,7 @@ def run_sync(
     filter_path: Optional[str],
     dryrun: bool,
     ignore_delete: bool,
+    compression_enabled: bool,
     lan_mode: bool,
     lan_port: int,
     discovery_timeout: int,
@@ -202,6 +204,8 @@ def run_sync(
         "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),
         "MASTER_CERT_FINGERPRINT": None,
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
+        "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
+        "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
     }
 
     set_config(config)
@@ -392,6 +396,9 @@ def _run_lan_mode(config: HsyncConfig, LOG) -> None:
 
                     if config["LAN_KEY"]:
                         config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
+
+                    # Set compression capability based on master peer
+                    config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
 
                     set_config(config)
                     run(sync())

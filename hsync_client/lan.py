@@ -151,6 +151,7 @@ class Peer:
     group: Optional[str] = None
     use_https: bool = False
     cert_fingerprint: Optional[str] = None
+    compression_enabled: bool = False
     last_seen: float = field(default_factory=time.time)
 
     def is_alive(self) -> bool:
@@ -414,6 +415,13 @@ class HsyncServiceListener(ServiceListener):
             use_https = https_bytes.decode("utf-8").lower() == "true" if https_bytes else False
             cert_fp_bytes = properties.get(b"cert_fp", b"")
             cert_fingerprint = cert_fp_bytes.decode("utf-8") if cert_fp_bytes else None
+            # Compression capability is optional
+            compression_bytes = properties.get(b"compression", b"")
+            compression_enabled = (
+                compression_bytes.decode("utf-8").lower() == "true"
+                if compression_bytes
+                else False
+            )
 
             if not cid or not bucket:
                 LOG.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -457,6 +465,7 @@ class HsyncServiceListener(ServiceListener):
                 group=group,
                 use_https=use_https,
                 cert_fingerprint=cert_fingerprint,
+                compression_enabled=compression_enabled,
             )
             self._peer_manager.add_peer(peer)
 
@@ -616,6 +625,9 @@ class LANSync:
             properties["https"] = "true"
             if self._cert_fingerprint:
                 properties["cert_fp"] = self._cert_fingerprint
+        # Add compression capability
+        if CONFIG.get("COMPRESSION_ENABLED", False):
+            properties["compression"] = "true"
 
         # Create service info
         self._service_info = ServiceInfo(
