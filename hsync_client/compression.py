@@ -1,15 +1,8 @@
-# SPDX-FileCopyrightText: 2024 Alberto Basso
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #
-# SPDX-License-Identifier: GPL-3.0-or-later
-
-# Copyright (C) 2024 Alberto Basso
-#
-# This file is part of HSYNC Client.
-#
-# HSYNC Client is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Copyright (C) 2025 Alberto Basso
 
 """
 Compression utilities for HSYNC Client.
@@ -105,8 +98,8 @@ def should_compress(
     Determine if a file should be compressed before transfer.
 
     Uses different thresholds based on transfer direction and network type:
-    - Download (server→client): 10KB threshold
-    - Upload (client→server): 32KB threshold
+    - Download (server to client): 10KB threshold
+    - Upload (client to server): 32KB threshold
     - LAN mode: 100KB threshold (local network is fast)
 
     Args:
