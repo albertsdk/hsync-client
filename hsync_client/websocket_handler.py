@@ -17,6 +17,11 @@ from asyncio import create_task, get_running_loop, sleep, Task
 from asyncio import run_coroutine_threadsafe
 from copy import deepcopy
 from json import dumps, loads
+
+
+def _safe_json(obj: object) -> str:
+    """Serialize object to JSON and escape braces for loguru."""
+    return dumps(obj).replace("{", "{{").replace("}", "}}")
 from os import makedirs, remove, rename, symlink as os_symlink, unlink
 from os.path import dirname, exists, islink
 from shutil import rmtree
@@ -212,7 +217,7 @@ async def _process_websocket_events(websocket, bucket: str) -> None:
         data = await websocket.recv()
         message = loads(data)
 
-        LOG.debug(f"Received message for CID {CONFIG['CID']}: {message}")
+        LOG.debug(f"Received message for CID {CONFIG['CID']}: {_safe_json(message)}")
 
         # Validate event type
         if message.get("name") not in {

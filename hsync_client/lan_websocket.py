@@ -51,6 +51,11 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
 
+def _escape_braces(s: str) -> str:
+    """Escape curly braces in string for loguru format."""
+    return s.replace("{", "{{").replace("}", "}}")
+
+
 # =============================================================================
 # WebSocket Server
 # =============================================================================
@@ -133,7 +138,7 @@ class LANWebSocketServer:
             async for message in websocket:
                 # Currently we don't expect messages from slaves
                 # but we keep the connection alive
-                LOG.debug(f"Received from {client_addr}: {message}")
+                LOG.debug(f"Received from {client_addr}: {_escape_braces(message)}")
         except Exception as e:
             LOG.debug(f"WebSocket client {client_addr} disconnected: {e}")
         finally:
