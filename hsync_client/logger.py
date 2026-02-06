@@ -208,7 +208,8 @@ def _format_record_colored(record: dict) -> str:
     """
     import json
 
-    client_id = record["extra"].get("client_id", "-")
+    # Get client_id from record extra (if bound) or from context variable
+    client_id = record["extra"].get("client_id") or get_client_id() or "-"
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
     message = record["message"]
@@ -241,7 +242,8 @@ def _format_record_plain(record: dict) -> str:
     """
     import json
 
-    client_id = record["extra"].get("client_id", "-")
+    # Get client_id from record extra (if bound) or from context variable
+    client_id = record["extra"].get("client_id") or get_client_id() or "-"
     timestamp = record["time"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record["level"].name
     message = record["message"]
