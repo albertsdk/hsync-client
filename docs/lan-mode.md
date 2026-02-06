@@ -126,9 +126,11 @@ sequenceDiagram
 
 ### Synchronization Flow
 
+During initial sync (when a slave connects or reconnects), the **master is the source of truth**:
+
 ```mermaid
 sequenceDiagram
-    participant C as Client
+    participant C as Client (Slave)
     participant M as Master
 
     Note over C,M: List Remote Files
@@ -138,17 +140,29 @@ sequenceDiagram
     Note over C,M: Compare with Local
     C->>C: Determine sync actions
 
-    Note over C,M: Download Newer Files
+    Note over C,M: Download Files (remote newer or remote-only)
     C->>M: GET /api/v1/buckets/{bucket}/files/download?filename=doc.txt
     M->>C: [file content]
 
-    Note over C,M: Upload Newer Files
-    C->>M: POST /api/v1/buckets/{bucket}/files
-    Note right of C: multipart/form-data<br/>with file content
-    M->>C: 201 Created
+    Note over C,M: Delete Local Files (not on master)
+    C->>C: Remove files that exist only locally
+    Note right of C: Master is source of truth<br/>Local-only files are deleted
 ```
 
 ![Sync Flow](images/lan-mode-4.png)
+
+> **Important**: In LAN mode, files that exist only on the slave (not on master) are **deleted locally** during initial sync. This ensures that if a file was deleted on the master while the slave was offline, the deletion is correctly propagated when the slave reconnects.
+
+### Reconnection Behavior
+
+When a slave reconnects after being offline:
+
+1. **Master state is authoritative** - The master's file list is the source of truth
+2. **Missing files are downloaded** - Files on master but not on slave are downloaded
+3. **Extra files are deleted** - Files on slave but not on master are deleted locally
+4. **Modified files are synced** - Files with different mtimes are synced (newer wins)
+
+This ensures consistent state across all peers, even after network interruptions.
 
 ### Real-Time Bidirectional Sync
 
@@ -616,6 +630,8 @@ HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
 | **Authentication** | API Key | Shared Secret |
 | **Real-time Sync** | ✅ Yes (WebSocket) | ✅ Yes (WebSocket) |
 | **Bidirectional Sync** | ✅ Yes | ✅ Yes |
+| **Source of Truth** | Server | Master (lowest CID) |
+| **Reconnection Behavior** | Upload local changes | Sync to master state |
 
 ## Technical Details
 
