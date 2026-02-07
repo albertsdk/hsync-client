@@ -76,14 +76,34 @@ class TestValidBucket:
         assert valid_bucket("test") == "test"
         assert valid_bucket("123") == "123"
 
+    def test_valid_with_hyphens_and_underscores(self):
+        """Test bucket names with hyphens and underscores are accepted."""
+        assert valid_bucket("bucket-name") == "bucket-name"
+        assert valid_bucket("bucket_name") == "bucket_name"
+        assert valid_bucket("my-bucket-123") == "my-bucket-123"
+        assert valid_bucket("my_bucket_123") == "my_bucket_123"
+        assert valid_bucket("a-b") == "a-b"
+        assert valid_bucket("a_b") == "a_b"
+
     def test_invalid_special_chars(self):
         """Test bucket names with special characters are rejected."""
         with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
-            valid_bucket("bucket-name")
-        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
-            valid_bucket("bucket_name")
-        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
             valid_bucket("bucket.name")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket@name")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket/name")
+
+    def test_invalid_start_end_with_hyphen_or_underscore(self):
+        """Test bucket names starting/ending with hyphen or underscore are rejected."""
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("-bucket")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket-")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("_bucket")
+        with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
+            valid_bucket("bucket_")
 
     def test_invalid_with_spaces(self):
         """Test bucket names with spaces are rejected."""

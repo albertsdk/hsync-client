@@ -380,7 +380,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_list_files(self, query: dict) -> None:
         """Handle list files endpoint."""
-        sync_order = query.get("sync_order", ["mtime"])[0]
         filter_path = query.get("path", [None])[0]
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
@@ -411,8 +410,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                             continue
                     file_list.append(file_normalized)
 
-        # Sort by configured order
-        file_list.sort(key=lambda x: x.get(sync_order, 0))
+        # Sort by mtime ascending (oldest first) to prioritize updating older files
+        file_list.sort(key=lambda x: x.get("mtime", 0))
 
         self._send_json_response(HTTP_OK, file_list)
 

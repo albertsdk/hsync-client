@@ -239,8 +239,6 @@ class HsyncConfig(TypedDict):
     RECONNECT_DELAY: int
     # Periodic resync interval in seconds (optional)
     RESYNC: Optional[int]
-    # Sync ordering field (mtime or ctime)
-    SYNC_ORDER: str
     # Filter path for subdirectory sync (optional)
     FILTER_PATH: Optional[str]
     # File stability delay in seconds

@@ -53,6 +53,9 @@ HEARTBEAT_INTERVAL = 5
 # Peer timeout (no heartbeat) in seconds
 PEER_TIMEOUT = 15
 
+# Clock skew warning threshold in seconds
+CLOCK_SKEW_THRESHOLD = 5
+
 
 # =============================================================================
 # Helper Functions
@@ -137,6 +140,7 @@ class Peer:
     cert_fingerprint: Optional[str] = None
     compression_enabled: bool = False
     server_ready: bool = False  # True when HTTP server is listening
+    clock_offset: float = 0.0  # Estimated clock offset vs local (seconds)
     last_seen: float = field(default_factory=time.time)
 
     def is_alive(self) -> bool:
@@ -414,6 +418,13 @@ class HsyncServiceListener(ServiceListener):
                 if server_ready_bytes
                 else False
             )
+            # Peer timestamp for clock skew detection
+            timestamp_bytes = properties.get(b"timestamp", b"")
+            peer_timestamp = (
+                float(timestamp_bytes.decode("utf-8"))
+                if timestamp_bytes
+                else 0.0
+            )
 
             if not cid or not bucket:
                 log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -448,6 +459,18 @@ class HsyncServiceListener(ServiceListener):
             address = addresses[0]  # Use first available address
             port = info.port
 
+            # Detect clock skew between peers
+            clock_offset = 0.0
+            if peer_timestamp > 0:
+                clock_offset = peer_timestamp - time.time()
+                if abs(clock_offset) > CLOCK_SKEW_THRESHOLD:
+                    log.warning(
+                        f"Clock skew detected with peer {cid}: "
+                        f"offset={clock_offset:.1f}s. "
+                        f"File comparison will use MD5 fallback for "
+                        f"mtime differences within tolerance."
+                    )
+
             peer = Peer(
                 cid=cid,
                 bucket=bucket,
@@ -459,6 +482,7 @@ class HsyncServiceListener(ServiceListener):
                 cert_fingerprint=cert_fingerprint,
                 compression_enabled=compression_enabled,
                 server_ready=server_ready,
+                clock_offset=clock_offset,
             )
             self._peer_manager.add_peer(peer)
 
@@ -667,6 +691,8 @@ class LANSync:
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"
+        # Add current timestamp for clock skew detection
+        properties["timestamp"] = str(time.time())
 
         # Create service info
         self._service_info = ServiceInfo(
