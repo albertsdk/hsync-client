@@ -216,4 +216,4 @@ merge is preferred once a base is established.
 - [Sync Flow](sync-flow.md) — client-side sync flow with conflict handling diagrams.
 - [Architecture](architecture.md) — high-level system overview.
 - [Developer Guide](developer.md) — performance optimizations and internals.
-- [HSYNC Common → Version models](../../hsync-common/docs/architecture.md) — shared version store.
+- [HSYNC Common → Version models](https://github.com/albertobasso/hsync-common/blob/main/docs/architecture.md) — shared version store.

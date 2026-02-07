@@ -324,4 +324,4 @@ multiple untrusted devices share the same network.
 - [Sync Flow](sync-flow.md) — client-side sync flow.
 - [LAN Internals](lan-internals.md) — deep dive into the LAN protocol.
 - [Contributing](../CONTRIBUTING.md) — development setup and guidelines.
-- [HSYNC Common docs](../../hsync-common/docs/README.md) — shared models and protocol.
+- [HSYNC Common docs](https://github.com/albertobasso/hsync-common/blob/main/docs/README.md) — shared models and protocol.
