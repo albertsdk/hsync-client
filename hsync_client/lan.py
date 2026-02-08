@@ -142,6 +142,8 @@ class Peer:
     server_ready: bool = False  # True when HTTP server is listening
     clock_offset: float = 0.0  # Estimated clock offset vs local (seconds)
     last_seen: float = field(default_factory=time.time)
+    force_master: bool = False  # True if peer wants to force master role
+    startup_time: float = 0.0  # Unix timestamp when peer started
 
     def is_alive(self) -> bool:
         """Check if peer is still considered alive based on last_seen time."""
@@ -166,12 +168,21 @@ class PeerManager:
     """
     Manages discovered peers and master election.
 
-    Thread-safe peer tracking with automatic master election
-    based on lexicographic CID comparison.
+    Thread-safe peer tracking with automatic master election.
+
+    Election priority (highest to lowest):
+    1. force_master flag (if set, that peer wins)
+    2. Earliest startup_time (first started wins)
+    3. Lowest CID lexicographically (tiebreaker)
     """
 
     def __init__(
-        self, local_cid: str, bucket: str, group: Optional[str] = None
+        self,
+        local_cid: str,
+        bucket: str,
+        group: Optional[str] = None,
+        force_master: bool = False,
+        startup_time: float = 0.0,
     ) -> None:
         """
         Initialize the peer manager.
@@ -180,10 +191,14 @@ class PeerManager:
             local_cid: This client's CID.
             bucket: The bucket name for filtering peers.
             group: Optional group name for filtering peers.
+            force_master: If True, this client will always try to be master.
+            startup_time: Unix timestamp when this client started.
         """
         self._local_cid = local_cid
         self._bucket = bucket
         self._group = group
+        self._force_master = force_master
+        self._startup_time = startup_time if startup_time > 0 else time.time()
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
         self._master_cid: Optional[str] = None
@@ -203,6 +218,16 @@ class PeerManager:
     def group(self) -> Optional[str]:
         """Get the group name."""
         return self._group
+
+    @property
+    def force_master(self) -> bool:
+        """Get the force_master flag."""
+        return self._force_master
+
+    @property
+    def startup_time(self) -> float:
+        """Get the startup timestamp."""
+        return self._startup_time
 
     def set_master_change_callback(
         self, callback: Callable[[Optional[Peer]], None]
@@ -284,29 +309,53 @@ class PeerManager:
         """
         Elect the master peer.
 
-        The peer with the lowest CID (lexicographically) becomes master.
+        Election priority (highest to lowest):
+        1. force_master flag (if set, that peer wins)
+        2. Earliest startup_time (first started wins)
+        3. Lowest CID lexicographically (tiebreaker)
+
         This includes the local client in the election.
         """
-        # Collect all CIDs (local + remote peers)
-        all_cids = [self._local_cid] + [
-            p.cid for p in self._peers.values() if p.is_alive()
+        # Build list of candidates with their election criteria
+        # Each candidate: (cid, force_master, startup_time)
+        candidates: list[tuple[str, bool, float]] = [
+            (self._local_cid, self._force_master, self._startup_time)
         ]
 
-        # Sort lexicographically and pick the lowest
-        all_cids.sort()
-        new_master_cid = all_cids[0] if all_cids else None
+        for peer in self._peers.values():
+            if peer.is_alive():
+                candidates.append((peer.cid, peer.force_master, peer.startup_time))
+
+        if not candidates:
+            new_master_cid = None
+        else:
+            # Sort by: force_master (desc), startup_time (asc), cid (asc)
+            # not force_master: False=0 < True=1, so force_master=True comes first
+            candidates.sort(key=lambda c: (not c[1], c[2], c[0]))
+            new_master_cid = candidates[0][0]
 
         if new_master_cid != self._master_cid:
             old_master = self._master_cid
             self._master_cid = new_master_cid
 
             if new_master_cid == self._local_cid:
-                log.info(f"This client elected as MASTER (CID: {self._local_cid})")
+                reason = "force_master" if self._force_master else "earliest startup"
+                log.info(
+                    f"This client elected as MASTER (CID: {self._local_cid}, "
+                    f"reason: {reason})"
+                )
             else:
                 master_peer = self._peers.get(new_master_cid) if new_master_cid else None
+                if master_peer:
+                    reason = (
+                        "force_master" if master_peer.force_master else "earliest startup"
+                    )
+                else:
+                    reason = "unknown"
                 log.info(
                     f"Master changed: {old_master} -> {new_master_cid} "
-                    f"(at {master_peer.address if master_peer else 'unknown'})"
+                    f"(at {master_peer.address if master_peer else 'unknown'}, "
+                    f"reason: {reason})"
                 )
 
             # Notify callback
@@ -425,6 +474,20 @@ class HsyncServiceListener(ServiceListener):
                 if timestamp_bytes
                 else 0.0
             )
+            # Force master flag (for master election)
+            force_master_bytes = properties.get(b"force_master", b"")
+            force_master = (
+                force_master_bytes.decode("utf-8").lower() == "true"
+                if force_master_bytes
+                else False
+            )
+            # Startup time for master election (earlier startup wins)
+            startup_time_bytes = properties.get(b"startup_time", b"")
+            startup_time = (
+                float(startup_time_bytes.decode("utf-8"))
+                if startup_time_bytes
+                else 0.0
+            )
 
             if not cid or not bucket:
                 log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -483,6 +546,8 @@ class HsyncServiceListener(ServiceListener):
                 compression_enabled=compression_enabled,
                 server_ready=server_ready,
                 clock_offset=clock_offset,
+                force_master=force_master,
+                startup_time=startup_time,
             )
             self._peer_manager.add_peer(peer)
 
@@ -514,6 +579,8 @@ class LANSync:
         group: Optional[str] = None,
         use_https: bool = False,
         cert_fingerprint: Optional[str] = None,
+        force_master: bool = False,
+        startup_time: float = 0.0,
     ) -> None:
         """
         Initialize LAN sync coordinator.
@@ -525,12 +592,16 @@ class LANSync:
             group: Optional group name for peer filtering.
             use_https: Whether to use HTTPS for communication.
             cert_fingerprint: SHA-256 fingerprint of the SSL certificate (if HTTPS).
+            force_master: If True, this client will always try to be master.
+            startup_time: Unix timestamp when this client started.
         """
         self._cid = cid
         self._bucket = bucket
         self._group = group
         self._use_https = use_https
         self._cert_fingerprint = cert_fingerprint
+        self._force_master = force_master
+        self._startup_time = startup_time if startup_time > 0 else time.time()
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
 
@@ -587,7 +658,13 @@ class LANSync:
         self._zeroconf = Zeroconf()
 
         # Initialize peer manager
-        self._peer_manager = PeerManager(self._cid, self._bucket, self._group)
+        self._peer_manager = PeerManager(
+            self._cid,
+            self._bucket,
+            self._group,
+            force_master=self._force_master,
+            startup_time=self._startup_time,
+        )
 
         # Register our service (can be deferred if register_service=False)
         if register_service:
@@ -693,6 +770,11 @@ class LANSync:
             properties["server_ready"] = "true"
         # Add current timestamp for clock skew detection
         properties["timestamp"] = str(time.time())
+        # Add force_master flag for master election
+        if self._force_master:
+            properties["force_master"] = "true"
+        # Add startup time for master election (earlier startup wins)
+        properties["startup_time"] = str(self._startup_time)
 
         # Create service info
         self._service_info = ServiceInfo(
