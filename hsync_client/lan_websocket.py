@@ -29,8 +29,11 @@ import contextlib
 import hmac
 import json
 import ssl
+import sys
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from functools import partial
 from os import listdir
 from pathlib import Path
 from time import time
@@ -73,6 +76,7 @@ from hsync_client.file_event_handler import (
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
 )
+from hsync_client.pools import log_future_error
 from hsync_client.utils import cid_suffix, ensure_str_path, warn_if_inotify_watch_limit_low
 
 # Conservative minimum effective LAN bandwidth used to derive the dynamic
@@ -90,6 +94,37 @@ MAX_WAIT_PENDING_SECONDS = 30 * 60
 # directory) never receive ``on_closed``, so after this window the deferred
 # upload fires as a fallback via the conservative stability poll.
 CREATE_UPLOAD_DEFER_S = STABILITY_DELAY_ON_CLOSED
+
+# Maximum concurrent realtime operations (uploads to the master, inbound
+# event downloads, deletes, renames) executed on behalf of the watcher.
+# Replaces the previous thread-per-event model: a bounded pool keeps worker
+# threads (and their per-thread keep-alive HTTP sessions) alive, so a burst
+# of events no longer opens a fresh TCP+TLS connection per file, and the
+# parallelism against the master stays predictable.
+REALTIME_MAX_WORKERS = 8
+
+_realtime_executor: ThreadPoolExecutor | None = None
+
+
+def _get_realtime_executor() -> ThreadPoolExecutor:
+    """Return the process-wide realtime-operation pool (lazy singleton).
+
+    One pool is shared by every ``LANSlaveFileEventHandler`` instance: only
+    one slave handler is active at a time, and keeping the pool process-wide
+    means the workers — and their warm keep-alive sessions to the master —
+    survive handler recreation (e.g. after a master change). The
+    lazy-singleton machinery is shared by every hsync pool:
+    ``hsync_client.pools`` (the reference stays a module attribute so the
+    test-suite isolation fixture can reset it).
+    """
+    from hsync_client.pools import get_singleton_executor
+
+    return get_singleton_executor(
+        sys.modules[__name__],
+        "_realtime_executor",
+        max_workers=REALTIME_MAX_WORKERS,
+        thread_name_prefix="hsync-lan-op",
+    )
 
 
 # =============================================================================
@@ -1106,10 +1141,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._inbound_deletes_lock = threading.Lock()
         self._INBOUND_DELETE_TTL_S: float = 10.0
         # Track pending operations (rename, upload, delete) for graceful
-        # shutdown.  Each entry is ``(thread, bytes_estimate)`` so that
+        # shutdown.  Each entry is ``(future, bytes_estimate)`` so that
         # ``wait_pending`` can derive a timeout proportional to the volume
         # still in flight (large uploads can legitimately take minutes).
-        self._pending_ops: list[tuple[threading.Thread, int]] = []
+        self._pending_ops: list[tuple[Future, int]] = []
         self._pending_ops_lock = threading.Lock()
         # Deferred ``on_created`` uploads: a short daemon ``Timer`` per path
         # that fires only if no ``on_closed`` arrives in time. ``on_closed``
@@ -1271,30 +1306,36 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         kwargs: dict | None = None,
         name: str | None = None,
         bytes_estimate: int = 0,
-    ) -> threading.Thread:
-        """Start a background operation and track it for graceful shutdown.
+    ) -> Future:
+        """Schedule a background operation on the bounded realtime pool.
+
+        The pool (``REALTIME_MAX_WORKERS`` workers) replaces the previous
+        thread-per-event model: long-lived workers reuse their keep-alive
+        HTTP sessions to the master instead of opening a fresh TCP+TLS
+        connection per event, and bursts are queued instead of spawning
+        unbounded threads.
 
         Args:
-            target: Callable to run in the thread.
+            target: Callable to run on the pool.
             args: Arguments to pass to target.
             kwargs: Keyword arguments to pass to target.
-            name: Optional thread name for debugging.
+            name: Accepted for call-site compatibility; pooled workers are
+                pre-named via the executor's ``thread_name_prefix`` so this
+                value is unused.
             bytes_estimate: Expected payload size in bytes (used by
                 ``wait_pending`` to derive a proportional timeout).
                 Defaults to 0 for fast metadata operations (delete/rename).
 
         Returns:
-            The started thread.
+            The Future for the scheduled operation.
         """
-        thread = threading.Thread(
-            target=target, args=args, kwargs=kwargs or {}, daemon=True, name=name
-        )
+        future = _get_realtime_executor().submit(target, *args, **(kwargs or {}))
+        future.add_done_callback(partial(log_future_error, label="Realtime operation failed"))
         with self._pending_ops_lock:
-            # Clean up completed threads
-            self._pending_ops = [(t, b) for t, b in self._pending_ops if t.is_alive()]
-            self._pending_ops.append((thread, max(bytes_estimate, 0)))
-        thread.start()
-        return thread
+            # Clean up completed futures
+            self._pending_ops = [(f, b) for f, b in self._pending_ops if not f.done()]
+            self._pending_ops.append((future, max(bytes_estimate, 0)))
+        return future
 
     def wait_pending(self, timeout: float = 30.0) -> int:
         """Wait for all pending operations to complete.
@@ -1313,7 +1354,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             Number of operations that timed out (0 = all completed).
         """
         with self._pending_ops_lock:
-            active = [(t, b) for t, b in self._pending_ops if t.is_alive()]
+            active = [(f, b) for f, b in self._pending_ops if not f.done()]
 
         if not active:
             return 0
@@ -1333,16 +1374,11 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             effective_timeout = timeout
             log.info(f"Waiting for {len(active)} pending operation(s) to complete...")
 
-        timed_out = 0
-        deadline = time() + effective_timeout
-        for thread, _ in active:
-            remaining = max(deadline - time(), 0)
-            if remaining <= 0:
-                timed_out += 1
-                continue
-            thread.join(timeout=remaining)
-            if thread.is_alive():
-                timed_out += 1
+        _, not_done = wait(
+            fs=[future for future, _ in active],
+            timeout=effective_timeout,
+        )
+        timed_out = len(not_done)
 
         if timed_out:
             log.warning(f"{timed_out} pending operation(s) timed out")

@@ -25,6 +25,32 @@ from .lan_helpers import (  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
+def _reset_realtime_pools():
+    """Give every test a fresh realtime/transfer pool (test isolation).
+
+    The realtime operation pools (``lan_websocket`` slave ops, ``remote_websocket``
+    realtime uploads, ``sync`` transfer executor) are process-wide singletons.
+    Without a reset, an operation queued but not yet executed by test A could
+    run during test B — reading test B's patched CONFIG — and slow tests would
+    see workers still busy from earlier tests.
+    """
+    from hsync_client import lan_websocket, remote_websocket
+    from hsync_client import sync as sync_mod
+
+    yield
+
+    for module, attr in (
+        (lan_websocket, "_realtime_executor"),
+        (remote_websocket, "_remote_upload_executor"),
+        (sync_mod, "_transfer_executor"),
+    ):
+        executor = getattr(module, attr, None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+            setattr(module, attr, None)
+
+
+@pytest.fixture(autouse=True)
 def _prevent_os_environ_leakage(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     """Snapshot ``os.environ`` before each test and remove any keys added
     by the test afterwards.

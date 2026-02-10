@@ -12,7 +12,7 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 | `remote_connect` | `:373` | top-level: initial full sync + optional `resync` task + `remote_events`; reconnect loop with `RECONNECT_DELAY` |
 | `_process_remote_events` | `:221` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:216`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop. Accepts `added`/`modified`/`renamed`/`deleted`/`symlink`: symlink events are propagated by the server (`handle_symlink_event` returns the Event and `ConnectionManager.send_message` broadcasts it to every peer except the sender), so remote-mode clients now replicate symlinks in real time (parity with LAN mode) instead of waiting for the next full sync |
 | `resync` | `:296` | periodic/triggered full re-reconcile |
-| `RemoteFileEventHandler` | `:425` | watchdog → `upload_file` (threads `from_closed`) |
+| `RemoteFileEventHandler` | `:499` | watchdog → `upload_file` (threads `from_closed`); realtime uploads run on a process-wide bounded pool (`_get_remote_upload_executor:70`, `REALTIME_UPLOAD_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of inline on the watchdog dispatch thread — a large upload no longer blocks the processing of every subsequent event |
 
 ## WS handshake (shared SSOT)
 

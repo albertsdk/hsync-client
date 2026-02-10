@@ -17,7 +17,7 @@ and LAN modes.
 | `_parse_advertised_version` | `sync.py:1108` | shared wire `version` parser (vclock + corrected mtime) used by the remote-only branch, the two-sided compare, and `update_file` — third use extracted per the Rule of Three |
 | `_compare_files` | `sync.py:1388` | per-file decision via `resolve_three_way` (ADR-0022/0023): content identity → causal dominance → **corrected_mtime** tie-break on true concurrency → SHA-256 if mtime missing or tied. Raw wall clock is never consulted |
 | `_save_conflict_copy` | `sync.py:1228` | write a conflict copy on `conflict_download` (remote won the causal tie-break); resolves bucket-relative action paths against `LOCAL_BUCKET` before reading/preserving the local file (raw relative paths were silently skipped) |
-| `_execute_parallel_transfers` | `sync.py:357` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError` |
+| `_execute_parallel_transfers` | `sync.py:669` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`); catches `PermanentDownloadError`. Threads come from a **process-wide persistent executor** (`_get_transfer_executor:649`, resizable, lazy singleton from the shared `hsync_client.pools.get_singleton_executor`): worker threads — and their per-thread `requests.Session` keep-alive connections — survive across sync cycles instead of being rebuilt (fresh TLS handshake) at every cycle |
 | `_mass_deletion_blocked` | `sync.py:134` | §12 guard: pause when deletions exceed threshold/percent or empty master |
 | `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `sync.py:79` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
 | `update_file` / `update_dir` | `sync.py:1159` / `:1111` | apply inbound metadata; reject unsafe remote paths |
@@ -86,8 +86,8 @@ caller falls back to a full transfer.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `download_file` / `_download_file_attempt` | `transfer.py:280` / `:326` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta`; the up-to-date shortcut is content-aware (equal/newer local mtime is trusted only when the expected hash matches — required to deliver the master's version after a preserved conflict) |
-| `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta` |
+| `download_file` / `_download_file_attempt` | `transfer.py:280` / `:326` | retry wrapper + one attempt (raises transient → retry); delta download attempted first via `delta_transfer.download_delta`; the up-to-date shortcut is content-aware (equal/newer local mtime is trusted only when the expected hash matches — required to deliver the master's version after a preserved conflict). The checksum is computed **incrementally while streaming** (a resumed download ingests the on-disk `.part` prefix into the hasher first): no second full read of the partial file after the write |
+| `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta`. The compressed branch **stream-compresses to a temp file** (`_compress_to_temp_file` → `hsync_common.compress_file_to_file`) and streams it as a regular file part: neither the source nor the zstd frame is ever fully resident in RAM (the old implementation read the whole file into memory before sending) |
 | `_get_upload_status` | `transfer.py:680` | query server for resume offset |
 | `is_file_stable` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` |
 | `_reschedule_upload` | `transfer.py:764` | §15: defer torn-file uploads (bounded) |
@@ -453,4 +453,4 @@ stall the queue with head-of-line blocking — so the event is dropped immediate
 by the next full sync. Transient `send` failures are retried as before.
 
 > Human-facing: event processing + stability + parallel transfers in
-> `../../docs/architecture.md`; modes in `../../docs/sync-modes-server.md` and `../../docs/sync-modes-lan.md`.
+> `../../docs/internal/architecture.md`; modes in `../../docs/sync-modes-server.md` and `../../docs/sync-modes-lan.md`.

@@ -62,6 +62,7 @@ see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 - [Auto-tuning internals](internal/autotune.md) — environment-adaptive defaults.
 - [Developer Guide](internal/developer.md) — for contributors.
 - [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.
+- [Stress Test Plan](internal/stress-test-plan.md) — load/replication stress harness for LAN P2P and server mode (design + resume checklist).
 
 ## Related projects
 

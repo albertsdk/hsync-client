@@ -262,10 +262,20 @@ class TestDownloadFileResume:
     """Tests for download resume functionality."""
 
     def test_download_with_existing_partial_file(self, tmp_path):
-        """Test download resumes from existing partial file."""
+        """Test download resumes from existing partial file.
+
+        The checksum is verified with the real incremental digest (no
+        ``compute_sha256`` mock — the hash is computed while streaming), so
+        ``sha256sum`` is the true hash of the resumed file: the on-disk
+        partial prefix plus the newly downloaded chunk.
+        """
+        import hashlib
+
+        partial_prefix = b"partial content"
+        new_chunk = b"more content"
         file = File(
             filepath="file.txt",
-            sha256sum="abc123def",
+            sha256sum=hashlib.sha256(partial_prefix + new_chunk).hexdigest(),
             size=1000,
             mtime=1000,
             ctime=1000,
@@ -273,12 +283,12 @@ class TestDownloadFileResume:
 
         # Create partial file
         partial_file = tmp_path / "file.txt.part"
-        partial_file.write_text("partial content")
+        partial_file.write_bytes(partial_prefix)
 
         mock_response = MagicMock()
         mock_response.status_code = 206
         mock_response.headers = {"Content-Encoding": ""}
-        mock_response.iter_content = MagicMock(return_value=[b"more content"])
+        mock_response.iter_content = MagicMock(return_value=[new_chunk])
 
         with (
             patch(
@@ -292,15 +302,15 @@ class TestDownloadFileResume:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
             patch("hsync_client.transfer.replace"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),
         ):
             download_file(file)
-            # Should append to partial file
+            # Should append to partial file, not restart it
             mock_remove.assert_not_called()
+            assert partial_file.read_bytes() == partial_prefix + new_chunk
 
     def test_download_partial_file_larger_than_expected(self, tmp_path):
         """Test download restarts when partial file is too large."""
@@ -478,19 +488,26 @@ class TestDownloadCompressed:
         assert (tmp_path / "file.txt").read_bytes() == content
 
     def test_download_compressed_response(self, tmp_path):
-        """Test download handles compressed response."""
+        """Test download handles compressed response.
+
+        The checksum is verified with the real incremental digest (no
+        ``compute_sha256`` mock — the hash is computed while decompressing),
+        so ``sha256sum`` is the true hash of the decompressed content.
+        """
+        import hashlib
+
         import zstandard as zstd
 
+        original_content = b"test content for compression"
         file = File(
             filepath="file.txt",
-            sha256sum="a" * 64,
-            size=100,
+            sha256sum=hashlib.sha256(original_content).hexdigest(),
+            size=len(original_content),
             mtime=1000,
             ctime=1000,
         )
 
         # Compress test content
-        original_content = b"test content for compression"
         compressor = zstd.ZstdCompressor()
         compressed_content = compressor.compress(original_content)
 
@@ -511,7 +528,6 @@ class TestDownloadCompressed:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_sha256", return_value="a" * 64),
             patch("hsync_client.transfer.replace") as mock_replace,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),

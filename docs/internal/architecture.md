@@ -304,7 +304,7 @@ When `-y` / `--yes` is passed, the warning is still logged but the interactive p
 
 ## Parallel File Transfers
 
-The sync engine uses a thread pool with semaphore-based concurrency control:
+The sync engine uses a **process-wide, persistent** thread pool with semaphore-based concurrency control:
 
 ```mermaid
 flowchart TB
@@ -314,7 +314,7 @@ flowchart TB
         PARALLEL[_execute_parallel_transfers]
     end
 
-    subgraph "② Thread Pool"
+    subgraph "② Thread Pool (persistent; warm keep-alive sessions)"
         SEM[Semaphore<br/>max=5]
         T1[Thread 1]
         T2[Thread 2]
@@ -348,7 +348,7 @@ flowchart TB
 **Configuration:**
 - `HSYNC_MAX_CONCURRENT_TRANSFERS`: Controls maximum parallel transfers (default: 5)
 - Uses `asyncio.Semaphore` to limit concurrent operations
-- Uses `ThreadPoolExecutor` for I/O-bound operations
+- Uses a `ThreadPoolExecutor` for I/O-bound operations; the pool is **process-wide and persistent** — worker threads (and their per-thread keep-alive HTTP sessions) survive across sync cycles instead of being rebuilt (fresh TLS handshake) at every cycle. The pool is transparently resized when an autotune concurrency refresh changes the worker count
 
 
 > For module structure, performance optimizations, error handling internals, and

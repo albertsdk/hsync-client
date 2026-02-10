@@ -31,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
 from pathlib import Path
 from shutil import disk_usage
+from sys import exc_info
 from typing import IO
 from urllib.parse import parse_qs, urlparse
 
@@ -55,7 +56,7 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_INBOUND_SIZE_MB_DEFAULT, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
     _CappedBytesWriter,
@@ -68,13 +69,38 @@ from hsync_client.utils import cid_suffix, inbound_size_cap, open_partial_no_fol
 # =============================================================================
 
 # Maximum number of concurrent request threads the LAN master will spawn.
-# Bounds resource consumption against a flood of peer connections.
-LAN_SERVER_MAX_THREADS = 32
+# Bounds resource consumption against a flood of peer connections. Sized
+# ABOVE the sum of realistic per-slave connection pools: with HTTP/1.1
+# keep-alive every connection — idle ones included — holds its thread and its
+# semaphore slot for the whole connection lifetime, so the cap must
+# accommodate the transfer workers of all peers plus headroom, not just
+# in-flight requests.
+LAN_SERVER_MAX_THREADS = 64
+
+# Seconds of socket-read silence after which an idle keep-alive connection is
+# reaped. With ``protocol_version = "HTTP/1.1"`` a connection holds one thread
+# and one ``BoundedThreadingHTTPServer`` slot until it closes: without this
+# reap timeout, connections parked idle in the clients' pools would pin master
+# slots forever and eventually starve the bounded backlog.
+# 300 s is deliberately large: the reap must NEVER fire on a connection that
+# is merely throttled. A maximally-throttled upload (``MAX_BANDWIDTH_UPLOAD``
+# at the 1 KB/s CLI floor) can legitimately sit silent between two 256 KiB
+# chunk writes for ~262 s, so anything below that would kill a live transfer;
+# it stays comfortably above the client HTTP timeout (30 s default) too.
+LAN_HANDLER_IDLE_TIMEOUT_S = 300
 
 # Chunk size (bytes) for streaming file reads on the download path. Mirrors
 # the client transfer module so the master never reads more than necessary
 # into RAM per iteration.
-_LAN_UPLOAD_CHUNK_SIZE = 64 * 1024
+_LAN_UPLOAD_CHUNK_SIZE = 256 * 1024
+
+# Cap (bytes) on the file size the compressed download branch accepts. That
+# branch buffers the whole file in RAM to build the zstd frame, so beyond
+# this size the master serves the streaming UNCOMPRESSED path instead of
+# spiking its memory (the old fallback read up to MAX_INBOUND_SIZE — 10 GB by
+# default — into RAM). The threshold also keeps Range-resume available for
+# huge files, which a zstd response cannot offer.
+LAN_COMPRESSION_MAX_FILE_BYTES = 256 * 1024 * 1024
 
 
 def _extract_multipart_boundary(content_type: str) -> bytes | None:
@@ -125,6 +151,19 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
         finally:
             # Release the slot held for the duration of the request.
             self._thread_semaphore.release()
+
+    def handle_error(self, request, client_address) -> None:
+        """Log client-connection teardown errors quietly.
+
+        With HTTP/1.1 keep-alive a peer resetting or closing an idle
+        connection is routine (client pools reap idle sockets); surface
+        those at debug level instead of the default stderr traceback.
+        """
+        exc = exc_info()[1]
+        if isinstance(exc, (ConnectionError, TimeoutError)):
+            log.debug(f"LAN peer connection {client_address} ended: {type(exc).__name__}")
+            return
+        super().handle_error(request, client_address)
 
 
 # API Configuration
@@ -182,16 +221,44 @@ class LANRequestHandler(BaseHTTPRequestHandler):
     # Reference to the server instance for accessing config
     server: LANServer  # type: ignore[assignment]
 
+    # HTTP/1.1 keep-alive: connections are reused across requests instead of
+    # paying a TCP+TLS handshake per request (the dominant per-file cost for
+    # many-small-files LAN syncs). Every response path MUST frame its body
+    # with an accurate Content-Length (or close the connection) to stay
+    # persistent-connection compliant — _send_json_response always sets it.
+    # Idle connections are reaped by ``timeout`` below.
+    protocol_version = "HTTP/1.1"
+
+    # TCP_NODELAY on every accepted connection: with keep-alive the response
+    # body is a second small write on a socket whose header segment is not
+    # yet ACKed, so Nagle would park it behind the peer's delayed ACK — a
+    # ~40 ms stall on EVERY small response (measured by
+    # scripts/dev/benchmark_lan_transfers.py: 24 req/s with Nagle vs hundreds
+    # without). HTTP/1.0's close-per-request masked this because each request
+    # started on a fresh socket with no unacknowledged data.
+    disable_nagle_algorithm = True
+
+    # Seconds of read-silence after which an idle keep-alive connection is
+    # closed (see LAN_HANDLER_IDLE_TIMEOUT_S).
+    timeout = LAN_HANDLER_IDLE_TIMEOUT_S
+
     def log_message(self, format: str, *args) -> None:
         """Override to use our logger instead of stderr."""
         log.debug(f"{self.address_string()} - {format % args}")
 
     def _send_json_response(self, status: int, data: dict | list) -> None:
-        """Send a JSON response."""
+        """Send a JSON response.
+
+        The body is framed with an exact ``Content-Length``: required for the
+        HTTP/1.1 persistent connection (a body-less framing would leave the
+        client unable to tell where the response ends).
+        """
+        body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", CONTENT_TYPE_JSON)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(json.dumps(data).encode("utf-8"))
+        self.wfile.write(body)
 
     def _send_error_response(self, status: int, message: str) -> None:
         """Send an error response."""
@@ -1103,9 +1170,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             )
 
             if range_header and range_tuple is None:
-                # Invalid range requested
+                # Invalid range requested. Content-Length: 0 keeps the
+                # HTTP/1.1 connection persistent (a body-less framing would
+                # leave the client waiting for the body).
                 self.send_response(HTTP_RANGE_NOT_SATISFIABLE)
                 self.send_header("Content-Range", f"*/{file_size}")
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
 
@@ -1135,28 +1205,24 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 else:
                     # Full file — stream in chunks, never load the whole
                     # file into RAM (master LAN RAM exhaustion).
-                    # Use compression if enabled and beneficial.
-                    # In LAN mode, use higher threshold (100KB) since local network is fast
-                    use_compression = CONFIG.get("COMPRESSION_ENABLED", False) and should_compress(
-                        filepath, file_size, is_lan=True
+                    # Compression is capped at LAN_COMPRESSION_MAX_FILE_BYTES:
+                    # the zstd branch buffers the whole file in RAM to build
+                    # the frame, so larger compressible files fall back to
+                    # the streaming UNCOMPRESSED path below instead of
+                    # spiking the master's memory — and Range-resume, which
+                    # a zstd response cannot offer, stays available for them.
+                    use_compression = (
+                        CONFIG.get("COMPRESSION_ENABLED", False)
+                        and should_compress(filepath, file_size, is_lan=True)
+                        and file_size <= LAN_COMPRESSION_MAX_FILE_BYTES
                     )
 
                     if use_compression:
-                        # Compression requires the full content to compute the
-                        # zstd frame; cap the in-memory size to MAX_INBOUND_SIZE
-                        # so a hostile huge file cannot OOM the master. When the
-                        # cap is not configured (0), fall back to the default
-                        # max download size so an unbounded f.read() is never
-                        # possible on the compressed branch.
-                        max_inbound = CONFIG.get("MAX_INBOUND_SIZE", 0) or (
-                            MAX_INBOUND_SIZE_MB_DEFAULT * 1024 * 1024
-                        )
-                        if max_inbound and file_size > max_inbound:
-                            self._send_error_response(
-                                HTTP_FORBIDDEN, "File too large for compressed transfer"
-                            )
-                            return
-                        content = f.read(max_inbound)
+                        # Bounded by LAN_COMPRESSION_MAX_FILE_BYTES: the
+                        # buffered read plus the compressed copy stay within
+                        # roughly twice that threshold, whatever the peer
+                        # requests.
+                        content = f.read(file_size)
                         compressed_content = compress_data(content)
                         log.debug(
                             f"Compressed download: {len(content)} -> "
@@ -1626,33 +1692,45 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             response_sent = True
 
         except PermissionError:
+            self._discard_temp_artifact(tmp_path, out_file, raw_file)
             self._send_error_response_safe(HTTP_FORBIDDEN, "Access denied")
             response_sent = True
         except ValueError as e:
             # Malformed upload metadata (e.g. missing size on a compressed
             # upload) or decompressed bytes beyond the declared size.
+            self._discard_temp_artifact(tmp_path, out_file, raw_file)
             self._send_error_response_safe(HTTP_BAD_REQUEST, f"Invalid upload: {e}")
             response_sent = True
         except Exception as e:
             log.error(f"Error handling upload: {e}")
+            self._discard_temp_artifact(tmp_path, out_file, raw_file)
             if not response_sent:
                 self._send_error_response_safe(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
         finally:
-            # Cleanup tmp file on failure
-            if tmp_path and Path(tmp_path).exists():
+            # Idempotent safety net for paths that did not go through an
+            # error branch (on success tmp_path/raw_file/out_file are None).
+            self._discard_temp_artifact(tmp_path, out_file, raw_file)
+
+    @staticmethod
+    def _discard_temp_artifact(path: str | None, *files) -> None:
+        """Remove a failed upload's temp artifact and close its handles.
+
+        Every upload/delta-apply error path calls this BEFORE the error
+        response is sent: with a persistent connection the client can observe
+        the response the moment it arrives, so the artifact must already be
+        gone — a cleanup that only runs after the send would race the client
+        and leave a torn artifact visible. Safe to call twice (idempotent);
+        double closes are swallowed.
+        """
+        if path and Path(path).exists():
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        for fh in files:
+            if fh is not None:
                 try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
-            # Close any still-open file handle from a failed stream
-            if out_file is not None:
-                try:
-                    out_file.close()
-                except Exception:
-                    pass
-            if raw_file is not None and raw_file is not out_file:
-                try:
-                    raw_file.close()
+                    fh.close()
                 except Exception:
                     pass
 
@@ -1720,21 +1798,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             handle_delta_apply(self, form_fields, literal_path)
         except ValueError as e:
+            self._discard_temp_artifact(literal_path, raw_file)
             self._send_error_response_safe(HTTP_BAD_REQUEST, f"Invalid delta apply: {e}")
         except Exception as e:
             log.error(f"Error handling delta apply: {e}")
+            self._discard_temp_artifact(literal_path, raw_file)
             self._send_error_response_safe(HTTP_INTERNAL_ERROR, "Delta apply error")
         finally:
-            if raw_file is not None:
-                try:
-                    raw_file.close()
-                except Exception:
-                    pass
-            if literal_path and Path(literal_path).exists():
-                try:
-                    os.remove(literal_path)
-                except OSError:
-                    pass
+            self._discard_temp_artifact(literal_path, raw_file)
 
 
 # =============================================================================

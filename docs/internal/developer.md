@@ -109,6 +109,35 @@ Upload and download bandwidth can be limited via `--max-bandwidth-upload` and `-
 
 For usage details, see [Configuration > Bandwidth Limiting](../configuration.md#bandwidth-limiting).
 
+### Transfer Throughput Optimizations
+
+Transfers are optimized end-to-end; the effects are measurable with
+`scripts/benchmark_lan_transfers.py` (HTTP-level micro-benchmark against
+the LAN master — sequential requests run ~3× faster with keep-alive):
+
+- **HTTP/1.1 keep-alive on the LAN master** (`lan_server.py`): connections
+  are reused across requests, so no TCP+TLS handshake is paid per file;
+  every response is framed with an exact `Content-Length` and idle
+  connections are reaped after 300 s.
+- **TCP_NODELAY on every master connection**: without it, Nagle parks the
+  small response body behind the peer's delayed ACK — a ~40 ms stall per
+  response on persistent connections (24 vs 5500 req/s in the benchmark).
+- **Persistent worker pools**: the transfer executor and both realtime
+  pools (LAN slave ops, remote uploads) are process-wide singletons
+  (`pools.py`), keeping per-thread keep-alive `requests.Session`s warm
+  across sync cycles instead of paying a fresh TLS handshake per worker.
+- **Streaming compressed upload**: the zstd frame is built incrementally
+  into a temp file (`hsync_common.compress_file_to_file`) and streamed as
+  a regular file part — neither the source nor the compressed payload is
+  ever fully resident in RAM.
+- **Fused/incremental SHA-256**: the client hashes downloads while
+  streaming (resumed downloads ingest the `.part` prefix into the hasher
+  first) and the server hashes uploads during the copy loop — no second
+  full read of the file after the write in either direction.
+- **256 KiB I/O chunks** on the upload/download streaming loops (matching
+  the `CHUNK_SIZE_LARGE` download tier), reducing per-chunk syscall
+  overhead on fast links.
+
 ## Error Handling & Retries
 
 Errors are classified by type and handled independently so a single failing file

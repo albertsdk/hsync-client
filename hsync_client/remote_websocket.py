@@ -11,6 +11,7 @@ This module provides WebSocket connection management and event handling
 for real-time synchronization with the server.
 """
 
+import sys
 from asyncio import (
     CancelledError,
     Task,
@@ -20,7 +21,9 @@ from asyncio import (
     sleep,
     to_thread,
 )
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from functools import partial
 from json import JSONDecodeError, dumps, loads
 from ssl import CERT_NONE, Purpose, create_default_context
 from typing import Any, cast
@@ -44,6 +47,7 @@ from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_even
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
+from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
 from hsync_client.sync import is_sync_cycle_active, sync
 from hsync_client.transfer import upload_file
@@ -51,6 +55,33 @@ from hsync_client.utils import warn_if_inotify_watch_limit_low
 
 # Global resync task reference for cancellation on reconnect
 _resync_task: Task[None] | None = None
+
+# Maximum concurrent realtime uploads to the central server. Watchdog
+# dispatches every filesystem event on a single thread: before the pool, the
+# full upload ran inline on that thread, serializing realtime propagation
+# behind the slowest in-flight transfer (including the stability-wait sleep).
+# A bounded pool parallelizes uploads while long-lived workers keep their
+# per-thread keep-alive HTTP sessions warm.
+REALTIME_UPLOAD_MAX_WORKERS = 8
+
+_remote_upload_executor: ThreadPoolExecutor | None = None
+
+
+def _get_remote_upload_executor() -> ThreadPoolExecutor:
+    """Return the process-wide realtime-upload pool (lazy singleton).
+
+    The lazy-singleton machinery is shared by every hsync pool:
+    ``hsync_client.pools`` (the reference stays a module attribute so the
+    test-suite isolation fixture can reset it).
+    """
+    from hsync_client.pools import get_singleton_executor
+
+    return get_singleton_executor(
+        sys.modules[__name__],
+        "_remote_upload_executor",
+        max_workers=REALTIME_UPLOAD_MAX_WORKERS,
+        thread_name_prefix="hsync-remote-op",
+    )
 
 
 # =============================================================================
@@ -507,8 +538,15 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         *,
         trigger: str | None = None,
     ) -> None:
-        """Upload the file via HTTP to the central server."""
-        upload_file(file, from_closed=from_closed)
+        """Upload the file via HTTP to the central server.
+
+        Scheduled on the bounded realtime pool instead of running inline:
+        this handler runs on the single watchdog dispatch thread, and a
+        synchronous upload (including the stability-wait sleep) would stall
+        the processing of every subsequent filesystem event.
+        """
+        future = _get_remote_upload_executor().submit(upload_file, file, from_closed=from_closed)
+        future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
 
     def _on_permissions_changed(self, file: File, src_path: str) -> None:
         """Propagate a permission-only change (chmod) to the central server.
@@ -519,4 +557,5 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         bypasses the upload-status "complete" early-return so the mode change
         actually reaches the server.
         """
-        upload_file(file, permissions_only=True)
+        future = _get_remote_upload_executor().submit(upload_file, file, permissions_only=True)
+        future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))

@@ -15,6 +15,7 @@ thresholds (download/upload/LAN) live in hsync-common.
 from hsync_common.compression import (  # noqa: F401
     CONTENT_ENCODING_ZSTD,
     compress_data,
+    compress_file_to_file,
     decompress_stream,
     should_compress,
 )

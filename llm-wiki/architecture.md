@@ -85,7 +85,7 @@ Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:425`) and
 ```
 constants / exceptions / logger / compression                  (leaf)
         │
-utils (http session + pinning, path_lock, perms, bandwidth) / retry / ssl_utils
+utils (http session + pinning, path_lock, perms, bandwidth) / retry / ssl_utils / pools
         │
 config (CONFIG SSOT) / events (UI event emitter)
         │
@@ -106,5 +106,5 @@ main_logic (orchestration) ← cli ← main
 | TOFU pins | `pinning.py:56` | pin store (0o600) | LAN master fingerprint trust |
 | LAN master identity | `ssl_utils.py:98` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
-> Human diagrams (modes, event processing, stability, bandwidth): `../docs/architecture.md`.
+> Human diagrams (modes, event processing, stability, bandwidth): `../docs/internal/architecture.md`.
 > Decision rationale: [decisions.md](decisions.md) → `https://github.com/albertobasso/hsync-common/blob/main/docs/adr/`.

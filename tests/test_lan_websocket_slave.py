@@ -151,7 +151,9 @@ class TestSlaveFileEventHandler:
             time.sleep(0.1)
 
         thread = handler._start_operation(quick_operation, name="test-op")
-        assert thread.is_alive()
+        # Deterministic wait on the returned Future (pooled execution is
+        # asynchronous by design).
+        assert thread.result(timeout=2.0) is None
 
         timed_out = handler.wait_pending(timeout=2.0)
         assert timed_out == 0
@@ -1188,6 +1190,10 @@ class TestSlaveFileEventHandler:
         ):
             handler.on_deleted(event)
             handler._flush_pending_deletes()
+            # The flush schedules the DELETE on the realtime pool: wait for
+            # the submitted futures before asserting.
+            for future, _ in handler._pending_ops:
+                future.result(timeout=2.0)
         mock_delete.assert_called_once()
 
     def test_on_deleted_inbound_echo_expired_goes_through(self, handler, tmp_path):
@@ -1209,6 +1215,10 @@ class TestSlaveFileEventHandler:
         ):
             handler.on_deleted(event)
             handler._flush_pending_deletes()
+            # The flush schedules the DELETE on the realtime pool: wait for
+            # the submitted futures before asserting.
+            for future, _ in handler._pending_ops:
+                future.result(timeout=2.0)
         mock_delete.assert_called_once()
 
     def test_duplicate_delete_buffered_once(self, handler, tmp_path):

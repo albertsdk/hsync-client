@@ -333,6 +333,14 @@ GET /api/v1/buckets/photos/files/download?filename=vacation/photo1.jpg HTTP/1.1
 Authorization: Bearer mySecretKey123
 ```
 
+> **Compression**: when compression is enabled, compressible files of at
+> least 100 KB are served with `Content-Encoding: zstd` (the client
+> transparently stream-decompresses). Files above **256 MB** are always
+> served UNCOMPRESSED — the zstd branch buffers the whole file in the
+> master's memory to build the frame, so it is capped, and the raw path
+> keeps `Range`-resume support, which a compressed response cannot offer.
+> `Range` requests are never compressed either.
+
 > All peer-supplied paths (download `filename`, delete `path`, rename
 > `src`/`dst`, upload `path` + filename) are validated and confined to the
 > bucket root; traversal (`..`), absolute paths, backslashes and internal
@@ -496,7 +504,7 @@ flowchart TB
 
     subgraph "② Background Threads"
         MDNS[mDNS Listener]
-        HTTP[HTTP Server]
+        HTTP["HTTP Server<br/>(64-thread bounded pool)"]
         HB[Heartbeat Timer]
     end
 
@@ -508,6 +516,15 @@ flowchart TB
     HTTP -.->|"⑤ Requests"| MAIN
     HB -.->|"⑥ Peer Timeout"| MAIN
 ```
+
+> The HTTP server is a bounded pool of request threads
+> (`LAN_SERVER_MAX_THREADS`, 64). Connections are **HTTP/1.1 keep-alive**
+> with `TCP_NODELAY` — no TCP+TLS handshake per request, and no Nagle stall
+> on small responses — and idle connections are reaped after 300 s so they
+> cannot pin pool slots forever. On the slave side, realtime operations
+> (uploads, inbound event downloads, deletes, renames) run on a
+> process-wide bounded pool of 8 workers instead of one thread per
+> filesystem event, so worker keep-alive sessions to the master are reused.
 
 > The canonical discovery/election protocol is specified in
 > `hsync-common/docs/lan-protocol.md` and shared across the Python client and

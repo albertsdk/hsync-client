@@ -13,6 +13,7 @@ file comparison, action determination, and sync execution.
 
 import asyncio
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -636,6 +637,36 @@ def _count_transfer_failure(counters: dict[str, int] | None) -> None:
         counters["failed"] = counters.get("failed", 0) + 1
 
 
+# Process-wide transfer executor (see _get_transfer_executor). Kept across
+# sync cycles so worker threads — and their per-thread requests.Session
+# keep-alive connections — are not torn down at the end of every cycle.
+# The lazy-singleton machinery is shared by every hsync pool:
+# ``hsync_client.pools`` (the reference stays a module attribute so the
+# test-suite isolation fixture can reset it).
+_transfer_executor: ThreadPoolExecutor | None = None
+
+
+def _get_transfer_executor(max_workers: int) -> ThreadPoolExecutor:
+    """Return the process-wide transfer executor, resizing it if needed.
+
+    A persistent pool keeps its worker threads (and therefore their
+    per-thread ``requests.Session`` keep-alive connections) alive across sync
+    cycles: recreating the pool per cycle discarded every warm TLS session
+    and forced a fresh handshake for each worker's first transfer. The pool
+    is resized (old instance shut down without waiting) when the requested
+    worker count changes, e.g. after an autotune concurrency refresh.
+    """
+    from hsync_client.pools import get_singleton_executor
+
+    return get_singleton_executor(
+        sys.modules[__name__],
+        "_transfer_executor",
+        max_workers=max_workers,
+        thread_name_prefix="hsync-transfer",
+        resizable=True,
+    )
+
+
 async def _execute_parallel_transfers(
     downloads: list[File],
     uploads: list[File],
@@ -667,65 +698,68 @@ async def _execute_parallel_transfers(
     # Get the current event loop
     loop = asyncio.get_running_loop()
 
-    # Create a thread pool for I/O-bound operations
-    with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+    # Persistent process-wide thread pool for I/O-bound operations: keeping
+    # the workers alive across cycles keeps their per-thread keep-alive
+    # sessions warm instead of paying a fresh TLS handshake per worker at
+    # the start of every sync cycle.
+    executor = _get_transfer_executor(max_concurrent)
 
-        async def transfer_with_semaphore(func: Callable[[File], None], file: File) -> None:
-            """Execute a transfer function with semaphore limiting."""
-            async with semaphore:
-                # Skip downloads that already failed permanently in this
-                # cycle (the skip-set is consulted here too because a realtime
-                # event can enqueue a file after the full-sync pre-filter ran).
-                if func is download_file and _is_permanently_failed(file):
-                    return
-                t0 = monotonic()
-                try:
-                    # Run synchronous function in thread pool
-                    await loop.run_in_executor(executor, func, file)
-                except PermanentDownloadError as e:
-                    # Permanent failure (e.g. over the size cap): record it so
-                    # the file is not retried on every resync tick, and notify
-                    # the UI. The partial file is already dropped in transfer.py.
-                    _count_transfer_failure(counters)
-                    _record_permanent_download_failure(file, e)
-                except Exception as e:
-                    _count_transfer_failure(counters)
-                    log.error(f"Transfer error for {file.filepath}: {e}")
-                else:
-                    file_size = file.size or 0
-                    if file_size > 0:
-                        elapsed = monotonic() - t0
-                        if elapsed > 0:
-                            update_bw_ema(file_size, elapsed)
+    async def transfer_with_semaphore(func: Callable[[File], None], file: File) -> None:
+        """Execute a transfer function with semaphore limiting."""
+        async with semaphore:
+            # Skip downloads that already failed permanently in this
+            # cycle (the skip-set is consulted here too because a realtime
+            # event can enqueue a file after the full-sync pre-filter ran).
+            if func is download_file and _is_permanently_failed(file):
+                return
+            t0 = monotonic()
+            try:
+                # Run synchronous function in thread pool
+                await loop.run_in_executor(executor, func, file)
+            except PermanentDownloadError as e:
+                # Permanent failure (e.g. over the size cap): record it so
+                # the file is not retried on every resync tick, and notify
+                # the UI. The partial file is already dropped in transfer.py.
+                _count_transfer_failure(counters)
+                _record_permanent_download_failure(file, e)
+            except Exception as e:
+                _count_transfer_failure(counters)
+                log.error(f"Transfer error for {file.filepath}: {e}")
+            else:
+                file_size = file.size or 0
+                if file_size > 0:
+                    elapsed = monotonic() - t0
+                    if elapsed > 0:
+                        update_bw_ema(file_size, elapsed)
 
-        # Create tasks for all transfers
-        tasks = []
+    # Create tasks for all transfers
+    tasks = []
 
-        # Add download tasks
-        for file in downloads:
-            tasks.append(transfer_with_semaphore(download_file, file))
+    # Add download tasks
+    for file in downloads:
+        tasks.append(transfer_with_semaphore(download_file, file))
 
-        # Add upload tasks
-        for file in uploads:
-            tasks.append(transfer_with_semaphore(upload_file, file))
+    # Add upload tasks
+    for file in uploads:
+        tasks.append(transfer_with_semaphore(upload_file, file))
 
-        # Permission-only uploads skip the content dedup on the peer (same-SHA
-        # branch applies the new mode); they re-use the same upload machinery.
-        if permission_uploads:
-            from functools import partial
+    # Permission-only uploads skip the content dedup on the peer (same-SHA
+    # branch applies the new mode); they re-use the same upload machinery.
+    if permission_uploads:
+        from functools import partial
 
-            perm_upload = partial(upload_file, permissions_only=True)
-            for file in permission_uploads:
-                tasks.append(transfer_with_semaphore(perm_upload, file))
+        perm_upload = partial(upload_file, permissions_only=True)
+        for file in permission_uploads:
+            tasks.append(transfer_with_semaphore(perm_upload, file))
 
-        # Execute all transfers concurrently
-        if tasks:
-            log.info(
-                f"Starting parallel transfers: {len(downloads)} downloads, "
-                f"{len(uploads)} uploads ({len(permission_uploads or [])} permission-only), "
-                f"max {max_concurrent} concurrent"
-            )
-            await asyncio.gather(*tasks, return_exceptions=True)
+    # Execute all transfers concurrently
+    if tasks:
+        log.info(
+            f"Starting parallel transfers: {len(downloads)} downloads, "
+            f"{len(uploads)} uploads ({len(permission_uploads or [])} permission-only), "
+            f"max {max_concurrent} concurrent"
+        )
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # =============================================================================

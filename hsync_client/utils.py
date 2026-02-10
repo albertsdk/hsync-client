@@ -418,14 +418,20 @@ _path_locks_guard = threading.Lock()
 
 
 def open_partial_no_follow(path: str, write_mode: str) -> IO[bytes]:
-    """Open a ``.part`` file for writing without following planted symlinks.
+    """Open a ``.part`` file without following planted symlinks.
 
-    Uses ``O_NOFOLLOW`` where the platform supports it so a symlink raced in
-    between path validation and file creation cannot redirect the write
-    outside the bucket. On platforms without ``O_NOFOLLOW`` (Windows) the
-    flag is omitted and the confinement checks remain the defense.
+    Supports write modes (``wb``/``ab``) and read mode (``rb``) — the latter is
+    used by download resume to ingest the already-downloaded prefix into the
+    incremental hasher. Uses ``O_NOFOLLOW`` where the platform supports it so
+    a symlink raced in between path validation and file creation cannot
+    redirect the access outside the bucket. On platforms without
+    ``O_NOFOLLOW`` (Windows) the flag is omitted and the confinement checks
+    remain the defense.
     """
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if "a" in write_mode else os.O_TRUNC)
+    if "r" in write_mode:
+        flags = os.O_RDONLY
+    else:
+        flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if "a" in write_mode else os.O_TRUNC)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     return os.fdopen(os.open(path, flags, 0o666), write_mode)
 

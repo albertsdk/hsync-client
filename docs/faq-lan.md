@@ -143,6 +143,16 @@ local network. Bandwidth limiting is available.
 Only changed files are transferred. The event-driven architecture avoids
 polling. Compression and delta transfer reduce bandwidth further.
 
+**Q: Why are very large files transferred uncompressed over the LAN?**
+Compressible files below 256 MB are transferred with zstd compression, but
+above that size the master serves them raw. The compressed branch has to
+buffer the whole file in the master's memory to build the zstd frame, so it
+is capped to protect the master; on a LAN the wire is usually the fast side
+anyway, and the raw path additionally keeps download-resume (`Range`)
+support, which a compressed response cannot offer. If you want large files
+compressed on slow links, use client-server mode (its compression is fully
+streamed with no size cap).
+
 **Q: What are the `.hsynckeep` files that keep appearing in my synced folder?**
 HSYNC creates a small, empty (0-byte) file named `.hsynckeep` in every folder
 that is otherwise empty. It is a marker — like Git's `.gitkeep` — that tells

@@ -10,7 +10,8 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 > `usage`, `configuration`, `configuration-server`, `configuration-lan`,
 > `sync-modes-server`, `sync-modes-lan`, `server-mode`, `lan-mode`,
 > `sync-flow-server`, `sync-flow-lan`, `examples-server`, `examples-lan`,
-> `faq-server`, `faq-lan`). This wiki is the **first search surface**:
+> `faq-server`, `faq-lan`, `internal/stress-test-plan`). This wiki is the
+> **first search surface**:
 > start here, follow the `path/to/file.py:line` references to reach code directly.
 
 ## Map

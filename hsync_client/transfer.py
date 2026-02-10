@@ -11,14 +11,16 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
+import hashlib
 import hmac
 import threading
 from collections.abc import Iterator
-from io import BytesIO
-from os import fsync, remove, replace, stat_result, utime
+from contextlib import suppress
+from os import close, fsync, remove, replace, stat_result, utime
 from pathlib import Path
 from shutil import disk_usage
 from sys import maxsize
+from tempfile import mkstemp
 from time import monotonic
 from time import sleep as time_sleep
 from time import time as wall_time
@@ -41,7 +43,7 @@ from requests import RequestException
 
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
-    compress_data,
+    compress_file_to_file,
     decompress_stream,
     should_compress,
 )
@@ -202,8 +204,32 @@ class _ThrottledFileReader:
         return data
 
 
-# Upload streaming chunk size
-_UPLOAD_CHUNK_SIZE = 64 * 1024
+# Upload streaming chunk size (multipart bodies, plain and compressed spool).
+# 256 KiB matches the download tier (CHUNK_SIZE_LARGE): on fast links the
+# per-chunk syscall overhead of smaller chunks is measurable while memory
+# stays bounded.
+_UPLOAD_CHUNK_SIZE = 256 * 1024
+
+
+def _compress_to_temp_file(filepath: str) -> str:
+    """Stream-compress *filepath* into a temporary file; return its path.
+
+    Used by the compressed-upload branch so neither the original content nor
+    the zstd frame is ever fully buffered in RAM: the previous implementation
+    read the whole file and compressed it in memory, which delayed the first
+    network byte by the full read+compress time and spiked memory on large
+    files. The caller owns the returned path and must delete it; on
+    compression failure the temp file is removed before raising.
+    """
+    fd, tmp_path = mkstemp(prefix="hsync-upload-", suffix=".zst")
+    close(fd)
+    try:
+        compress_file_to_file(filepath, tmp_path)
+    except BaseException:
+        with suppress(OSError):
+            remove(tmp_path)
+        raise
+    return tmp_path
 
 
 class _SizedStreamingBody:
@@ -559,6 +585,11 @@ def _download_file_attempt(file: File) -> None:
             remove(partial_file_path)
 
     cleanup_partial = True
+    # Incremental digest of the file being written, updated per chunk so the
+    # final checksum needs no second full read of the .part file. On a resumed
+    # (append) download the already-downloaded prefix is ingested first, so
+    # the digest still covers the complete file.
+    sha256 = hashlib.sha256()
     try:
         # Check if response is compressed
         content_encoding = response.headers.get("Content-Encoding", "")
@@ -593,6 +624,7 @@ def _download_file_attempt(file: File) -> None:
                     response.raw, max_output_size=write_cap if write_cap is not None else 0
                 ):
                     f.write(chunk)
+                    sha256.update(chunk)
                 # Flush OS buffers to disk before the file is considered written
                 f.flush()
                 fsync(f.fileno())
@@ -604,6 +636,13 @@ def _download_file_attempt(file: File) -> None:
             if write_cap is None:
                 write_cap = maxsize
             written = resume_offset
+            if write_mode == "ab":
+                # Resume: ingest the already-downloaded prefix into the
+                # incremental hasher so the final digest covers the whole
+                # file without a second full pass after the write.
+                with _open_partial_no_follow(partial_file_path, "rb") as prefix:
+                    while prefix_chunk := prefix.read(chunk_size):
+                        sha256.update(prefix_chunk)
             with _open_partial_no_follow(partial_file_path, write_mode) as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if not chunk:
@@ -625,6 +664,7 @@ def _download_file_attempt(file: File) -> None:
                             f"({write_cap} bytes)"
                         )
                     f.write(chunk)
+                    sha256.update(chunk)
                     # Throttle download if bandwidth limit is set
                     delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")
                     if delay > 0:
@@ -633,8 +673,9 @@ def _download_file_attempt(file: File) -> None:
                 f.flush()
                 fsync(f.fileno())
 
-        # Verify SHA-256 checksum of complete file
-        sha256sum = compute_sha256(partial_file_path)
+        # Verify SHA-256 checksum of the complete file (computed incrementally
+        # while streaming: no second full read of the .part file).
+        sha256sum = sha256.hexdigest()
         server_sha256 = response.headers.get("X-Checksum-SHA256")
 
         # Check 1: Client-computed hash vs. server-asserted current hash.
@@ -1494,41 +1535,43 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
 
         if use_compression:
-            # Read and compress file data
-            with open(file.filepath, "rb") as f:
-                file_data = f.read()
-            compressed_data = compress_data(file_data)
-            compression_ratio = len(compressed_data) / len(file_data) * 100
-            log.debug(
-                f"Compressed {format_bytes(len(file_data))} -> "
-                f"{format_bytes(len(compressed_data))} "
-                f"({compression_ratio:.1f}%)"
-            )
+            # Compress STREAMING to a temporary file (memory stays bounded by
+            # one chunk), then send it as a regular file part: a real file
+            # object lets requests frame the multipart body with an exact
+            # Content-Length while still streaming each chunk from disk.
+            compressed_tmp = _compress_to_temp_file(file.filepath)
+            try:
+                compressed_size = Path(compressed_tmp).stat().st_size
+                if file.size:
+                    compression_ratio = compressed_size / file.size * 100
+                    log.debug(
+                        f"Compressed {format_bytes(file.size)} -> "
+                        f"{format_bytes(compressed_size)} "
+                        f"({compression_ratio:.1f}%)"
+                    )
 
-            # Add compression header and flag
-            headers["Content-Encoding"] = CONTENT_ENCODING_ZSTD
-            data["compressed"] = "true"
-            data["compressed_size"] = len(compressed_data)
+                # Add compression header and flag
+                headers["Content-Encoding"] = CONTENT_ENCODING_ZSTD
+                data["compressed"] = "true"
+                data["compressed_size"] = compressed_size
 
-            # Send compressed data as file
-
-            compressed_file = BytesIO(compressed_data)
-            ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-            fh = (
-                _ThrottledFileReader(compressed_file, ul_bw_limit)
-                if ul_bw_limit
-                else compressed_file
-            )
-            files = {"file": (Path(file.filepath).name, fh)}
-            response = post(
-                uri,
-                headers=headers,
-                data=data,
-                files=files,
-                verify=get_ssl_verify(),
-                timeout=_upload_timeout(),
-            )
-            _handle_upload_response(file, response, t0)
+                # Send compressed data as a streamed file part
+                with open(compressed_tmp, "rb") as fh:
+                    ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
+                    reader = _ThrottledFileReader(fh, ul_bw_limit) if ul_bw_limit else fh
+                    files = {"file": (Path(file.filepath).name, reader)}
+                    response = post(
+                        uri,
+                        headers=headers,
+                        data=data,
+                        files=files,
+                        verify=get_ssl_verify(),
+                        timeout=_upload_timeout(),
+                    )
+                    _handle_upload_response(file, response, t0)
+            finally:
+                with suppress(OSError):
+                    remove(compressed_tmp)
         else:
             # Standard upload: stream the multipart body directly from disk
             # so files of arbitrary size do not need to be loaded into RAM.
