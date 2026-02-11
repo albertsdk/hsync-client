@@ -5,12 +5,14 @@ Tests for utility functions in hsync_client.utils module.
 import os
 import stat
 import tempfile
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
+    _suppress_insecure_warning,
+    ensure_str_path,
     is_valid_filename,
     is_valid_logfile,
     is_same_paths,
@@ -21,6 +23,7 @@ from hsync_client.utils import (
     get_chunk_size,
     set_permissions,
     get_ssl_verify,
+    verify_master_fingerprint,
 )
 
 
@@ -415,3 +418,138 @@ class TestGetSslVerify:
         finally:
             set_config(original)
 
+
+
+class TestEnsureStrPath:
+    """Tests for ensure_str_path function."""
+
+    def test_string_passthrough(self):
+        """String path is returned as-is."""
+        assert ensure_str_path("/tmp/file.txt") == "/tmp/file.txt"
+
+    def test_bytes_decoded(self):
+        """Bytes path is decoded to string."""
+        assert ensure_str_path(b"/tmp/file.txt") == "/tmp/file.txt"
+
+    def test_none_returns_empty(self):
+        """None returns empty string."""
+        assert ensure_str_path(None) == ""
+
+    def test_empty_string(self):
+        """Empty string is returned as-is."""
+        assert ensure_str_path("") == ""
+
+    def test_unicode_path(self):
+        """Unicode path is handled correctly."""
+        assert ensure_str_path("/tmp/résumé.txt") == "/tmp/résumé.txt"
+
+    def test_bytes_unicode(self):
+        """Bytes with unicode are decoded correctly."""
+        assert ensure_str_path("/tmp/résumé.txt".encode("utf-8")) == "/tmp/résumé.txt"
+
+
+class TestSuppressInsecureWarning:
+    """Tests for _suppress_insecure_warning function."""
+
+    def test_suppresses_warning(self):
+        """Calling _suppress_insecure_warning does not raise."""
+        import hsync_client.utils as utils_mod
+        old_flag = utils_mod._insecure_warning_suppressed
+        try:
+            utils_mod._insecure_warning_suppressed = False
+            _suppress_insecure_warning()
+            assert utils_mod._insecure_warning_suppressed is True
+        finally:
+            utils_mod._insecure_warning_suppressed = old_flag
+
+    def test_idempotent(self):
+        """Calling twice does not raise."""
+        import hsync_client.utils as utils_mod
+        old_flag = utils_mod._insecure_warning_suppressed
+        try:
+            utils_mod._insecure_warning_suppressed = False
+            _suppress_insecure_warning()
+            _suppress_insecure_warning()
+            assert utils_mod._insecure_warning_suppressed is True
+        finally:
+            utils_mod._insecure_warning_suppressed = old_flag
+
+
+class TestVerifyMasterFingerprint:
+    """Tests for verify_master_fingerprint function."""
+
+    def test_no_fingerprint_returns_true(self):
+        """Returns True when no MASTER_CERT_FINGERPRINT is configured."""
+        original = CONFIG.copy()
+        try:
+            CONFIG.pop("MASTER_CERT_FINGERPRINT", None)
+            assert verify_master_fingerprint("https://192.168.1.100:8443") is True
+        finally:
+            set_config(original)
+
+    def test_http_url_returns_true(self):
+        """Returns True for HTTP (non-HTTPS) URL even with fingerprint set."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["MASTER_CERT_FINGERPRINT"] = "abc123"
+            assert verify_master_fingerprint("http://192.168.1.100:8080") is True
+        finally:
+            set_config(original)
+
+    def test_fingerprint_match_returns_true(self):
+        """Returns True when fingerprint matches."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["MASTER_CERT_FINGERPRINT"] = "deadbeef" * 8
+            with patch(
+                "hsync_client.ssl_utils.get_server_cert_fingerprint",
+                return_value="deadbeef" * 8,
+            ):
+                assert verify_master_fingerprint("https://192.168.1.100:8443") is True
+        finally:
+            set_config(original)
+
+    def test_fingerprint_mismatch_returns_false(self):
+        """Returns False when fingerprint does not match."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["MASTER_CERT_FINGERPRINT"] = "deadbeef" * 8
+            with patch(
+                "hsync_client.ssl_utils.get_server_cert_fingerprint",
+                return_value="cafebabe" * 8,
+            ):
+                assert verify_master_fingerprint("https://192.168.1.100:8443") is False
+        finally:
+            set_config(original)
+
+    def test_server_unreachable_returns_false(self):
+        """Returns False when server certificate cannot be retrieved."""
+        original = CONFIG.copy()
+        try:
+            CONFIG["MASTER_CERT_FINGERPRINT"] = "abc123"
+            with patch(
+                "hsync_client.ssl_utils.get_server_cert_fingerprint",
+                return_value=None,
+            ):
+                assert verify_master_fingerprint("https://192.168.1.100:8443") is False
+        finally:
+            set_config(original)
+
+
+class TestGetSslVerifyWithFingerprint:
+    """Tests for get_ssl_verify with fingerprint verification."""
+
+    def test_returns_false_with_fingerprint(self):
+        """Returns False when MASTER_CERT_FINGERPRINT is set."""
+        import hsync_client.utils as utils_mod
+        original = CONFIG.copy()
+        old_flag = utils_mod._insecure_warning_suppressed
+        try:
+            CONFIG["NO_VERIFY_SSL"] = False
+            CONFIG["CA_CERT"] = None
+            CONFIG["MASTER_CERT_FINGERPRINT"] = "abc123"
+            result = get_ssl_verify()
+            assert result is False
+        finally:
+            set_config(original)
+            utils_mod._insecure_warning_suppressed = old_flag
