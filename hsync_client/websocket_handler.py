@@ -22,8 +22,8 @@ from json import dumps, loads
 def _safe_json(obj: object) -> str:
     """Serialize object to JSON and escape braces for loguru."""
     return dumps(obj).replace("{", "{{").replace("}", "}}")
-from os import makedirs, remove, rename, symlink as os_symlink, unlink
-from os.path import dirname, exists, islink
+from os import listdir, makedirs, remove, rename, rmdir, symlink as os_symlink, unlink
+from os.path import basename, dirname, exists, islink
 from shutil import rmtree
 from ssl import create_default_context, Purpose, CERT_NONE, CERT_REQUIRED
 from time import time
@@ -46,7 +46,7 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
 from hsync_client.config import CONFIG, HSYNC_API_KEY
-from hsync_client.constants import HSYNC_VERSION
+from hsync_client.constants import HSYNCKEEP_FILENAME, HSYNC_VERSION
 from hsync_client.event_queue import EventQueue
 from hsync_client.lan import check_version_compatibility
 from hsync_client.models.dir import Dir, is_hidden_dir
@@ -276,6 +276,7 @@ def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
         if src_dir.path and dst_dir.path and exists(src_dir.path):
             # Source exists - perform rename
             rename(src_dir.path, dst_dir.path)
+            log.info(f'[RENAME    ] "{src_dir.path}" -> "{dst_dir.path}"')
         else:
             # Source doesn't exist - log warning and create destination
             log.warning(f"Cannot rename: {src_dir.path} -> {dst_dir.path}")
@@ -290,6 +291,7 @@ def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
         if src_file.filepath and dst_file.filepath and exists(src_file.filepath):
             # Source exists - perform rename
             rename(src_file.filepath, dst_file.filepath)
+            log.info(f'[RENAME    ] "{src_file.filepath}" -> "{dst_file.filepath}"')
         else:
             # Source doesn't exist - log warning and download destination
             log.warning(
@@ -326,6 +328,15 @@ def _handle_delete_event(src: Optional[dict]) -> None:
         if file.filepath and exists(file.filepath):
             # File exists - remove it
             remove(file.filepath)
+            if basename(file.filepath) == HSYNCKEEP_FILENAME:
+                # Sentinel removed — clean up the now-empty directory
+                parent = dirname(file.filepath)
+                try:
+                    if exists(parent) and not listdir(parent):
+                        rmdir(parent)
+                        log.debug(f'Removed empty directory "{parent}"')
+                except OSError:
+                    pass
         else:
             log.warning(f'Cannot delete: "{file.filepath}"')
             log.warning(f'Not found: "{file.filepath}"')

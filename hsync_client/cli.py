@@ -107,6 +107,20 @@ def main(
         metavar="SEC",
         rich_help_panel="Connection",
     )] = 30,
+    api_key_fd: Annotated[Optional[int], typer.Option(
+        "--api-key-fd",
+        help="Read API key from the given file descriptor (for secure passing from a parent process).",
+        metavar="FD",
+        hidden=True,
+        rich_help_panel="Connection",
+    )] = None,
+    lan_key_fd: Annotated[Optional[int], typer.Option(
+        "--lan-key-fd",
+        help="Read LAN key from the given file descriptor (for secure passing from a parent process).",
+        metavar="FD",
+        hidden=True,
+        rich_help_panel="Connection",
+    )] = None,
     # -------------------------------------------------------------------------
     # Sync
     # -------------------------------------------------------------------------
@@ -334,6 +348,8 @@ def main(
         verify_ssl=not insecure,
         ca_cert=ca_cert,
         http_timeout=http_timeout,
+        api_key_fd=api_key_fd,
+        lan_key_fd=lan_key_fd,
         local_path=local_path,
         continuous=continuous,
         resync=resync,

@@ -274,7 +274,22 @@ class PeerManager:
 
         with self._lock:
             if peer.cid in self._peers:
-                self._peers[peer.cid].update_last_seen()
+                existing = self._peers[peer.cid]
+                # Update all properties from the new peer object
+                existing.address = peer.address
+                existing.port = peer.port
+                existing.version = peer.version
+                existing.group = peer.group
+                existing.use_https = peer.use_https
+                existing.cert_fingerprint = peer.cert_fingerprint
+                existing.compression_enabled = peer.compression_enabled
+                if not existing.server_ready and peer.server_ready:
+                    log.info(f"Peer {peer.cid} server is now ready")
+                existing.server_ready = peer.server_ready
+                existing.clock_offset = peer.clock_offset
+                existing.force_master = peer.force_master
+                existing.startup_time = peer.startup_time
+                existing.update_last_seen()
                 log.debug(f"Updated peer: {peer.cid}")
             else:
                 self._peers[peer.cid] = peer
@@ -333,6 +348,49 @@ class PeerManager:
             # not force_master: False=0 < True=1, so force_master=True comes first
             candidates.sort(key=lambda c: (not c[1], c[2], c[0]))
             new_master_cid = candidates[0][0]
+
+        # Detect force_master conflicts
+        force_master_candidates = [c for c in candidates if c[1]]
+        if len(force_master_candidates) > 1:
+            winner_cid = force_master_candidates[0][0]
+            for loser_cid, _, _ in force_master_candidates[1:]:
+                loser_peer = self._peers.get(loser_cid)
+                winner_peer = self._peers.get(winner_cid)
+                if loser_cid == self._local_cid:
+                    # We lost: another force_master peer won
+                    winner_addr = winner_peer.address if winner_peer else "unknown"
+                    log.warning(
+                        f"[MASTER_CONFLICT] force_master conflict: "
+                        f"another master {winner_cid} at {winner_addr} "
+                        f"has priority (started earlier). "
+                        f"This client will operate as slave."
+                    )
+                elif winner_cid == self._local_cid:
+                    # We won: a remote force_master peer lost
+                    loser_addr = loser_peer.address if loser_peer else "unknown"
+                    log.warning(
+                        f"[MASTER_CONFLICT] force_master conflict: "
+                        f"peer {loser_cid} at {loser_addr} also has "
+                        f"force_master enabled. This client wins "
+                        f"(started earlier)."
+                    )
+
+        # Detect force_master takeover: remote force_master peer overrides
+        # local non-force_master master
+        if (
+            new_master_cid is not None
+            and new_master_cid != self._local_cid
+            and not self._force_master
+            and self._master_cid == self._local_cid
+        ):
+            new_peer = self._peers.get(new_master_cid)
+            if new_peer and new_peer.force_master:
+                log.warning(
+                    f"[MASTER_TAKEOVER] peer {new_master_cid} at "
+                    f"{new_peer.address} has force_master enabled "
+                    f"and is taking over as master. "
+                    f"This client will switch to slave."
+                )
 
         if new_master_cid != self._master_cid:
             old_master = self._master_cid
@@ -467,13 +525,6 @@ class HsyncServiceListener(ServiceListener):
                 if server_ready_bytes
                 else False
             )
-            # Peer timestamp for clock skew detection
-            timestamp_bytes = properties.get(b"timestamp", b"")
-            peer_timestamp = (
-                float(timestamp_bytes.decode("utf-8"))
-                if timestamp_bytes
-                else 0.0
-            )
             # Force master flag (for master election)
             force_master_bytes = properties.get(b"force_master", b"")
             force_master = (
@@ -522,18 +573,6 @@ class HsyncServiceListener(ServiceListener):
             address = addresses[0]  # Use first available address
             port = info.port
 
-            # Detect clock skew between peers
-            clock_offset = 0.0
-            if peer_timestamp > 0:
-                clock_offset = peer_timestamp - time.time()
-                if abs(clock_offset) > CLOCK_SKEW_THRESHOLD:
-                    log.warning(
-                        f"Clock skew detected with peer {cid}: "
-                        f"offset={clock_offset:.1f}s. "
-                        f"File comparison will use MD5 fallback for "
-                        f"mtime differences within tolerance."
-                    )
-
             peer = Peer(
                 cid=cid,
                 bucket=bucket,
@@ -545,7 +584,6 @@ class HsyncServiceListener(ServiceListener):
                 cert_fingerprint=cert_fingerprint,
                 compression_enabled=compression_enabled,
                 server_ready=server_ready,
-                clock_offset=clock_offset,
                 force_master=force_master,
                 startup_time=startup_time,
             )
@@ -768,8 +806,6 @@ class LANSync:
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"
-        # Add current timestamp for clock skew detection
-        properties["timestamp"] = str(time.time())
         # Add force_master flag for master election
         if self._force_master:
             properties["force_master"] = "true"
