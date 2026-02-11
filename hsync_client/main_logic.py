@@ -97,10 +97,41 @@ def _run_preview(log) -> None:
         deletes = [a for a in sync_actions if a.name == SyncActionName.delete and not _is_sentinel(a)]
         synced = [a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)]
 
+        # Detect renames: DELETE + DOWNLOAD pairs with same md5sum and size.
+        # When a file is renamed on the master, the client sees a delete of
+        # the old path and a download of the new path.  If both share the
+        # same md5 checksum and size the operation is really just a rename.
+        renames: list[tuple] = []  # (delete_action, download_action)
+        if deletes and downloads:
+            delete_by_hash: dict[tuple, list] = {}
+            for action in deletes:
+                key = (action.file.md5sum, action.file.size or 0)
+                if key[0]:  # md5sum must be available
+                    delete_by_hash.setdefault(key, []).append(action)
+
+            matched_download_idx: set[int] = set()
+            matched_delete_ids: set[int] = set()
+            for i, dl_action in enumerate(downloads):
+                key = (dl_action.file.md5sum, dl_action.file.size or 0)
+                if key[0] and key in delete_by_hash:
+                    for del_action in delete_by_hash[key]:
+                        if id(del_action) not in matched_delete_ids:
+                            renames.append((del_action, dl_action))
+                            matched_download_idx.add(i)
+                            matched_delete_ids.add(id(del_action))
+                            break
+
+            # Remove matched items so they are not emitted as separate events
+            downloads = [a for i, a in enumerate(downloads) if i not in matched_download_idx]
+            deletes = [a for a in deletes if id(a) not in matched_delete_ids]
+
         # Emit structured messages for each file status
         for action in synced:
             size_str = bytes_to_human_readable(action.file.size or 0)
             log.info(f'[SYNCED      ] "{action.file.filepath}" ({size_str})')
+        for del_action, dl_action in renames:
+            size_str = bytes_to_human_readable(dl_action.file.size or 0)
+            log.info(f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({size_str})')
         for action in downloads:
             size_str = bytes_to_human_readable(action.file.size or 0)
             log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({size_str})')
@@ -113,7 +144,8 @@ def _run_preview(log) -> None:
 
         log.info(
             f"Preview: {len(synced)} synced, {len(downloads)} downloads, "
-            f"{len(uploads)} uploads, {len(deletes)} deletes"
+            f"{len(uploads)} uploads, {len(deletes)} deletes, "
+            f"{len(renames)} renames"
         )
     except Exception as e:
         log.error(f"Preview failed: {e}")
@@ -363,7 +395,12 @@ def run_sync(
 
     # Execute Sync
     if config["DRYRUN"] and continuous:
-        log.warning("Continuous sync is disabled due to dryrun option set")
+        # Dry-run + continuous: show preview, wait for SYNC command,
+        # then switch to continuous sync.
+        _run_preview(log)
+        run(_run_stdin_wait(log))
+        # After SYNC command: DRYRUN is now False, run continuous sync
+        run(_run_with_stdin_commands(log))
     elif not config["DRYRUN"] and continuous:
         run(_run_with_stdin_commands(log))
     else:
@@ -374,8 +411,8 @@ async def _with_stdin_commands(log, coro) -> None:
     """Run *coro* with a background stdin command reader.
 
     The reader listens for JSON commands on stdin (one per line) and
-    dispatches them to the appropriate handler.  Currently only the
-    ``PREVIEW`` command is registered.
+    dispatches them to the appropriate handler.  ``PREVIEW`` triggers
+    a dry-run preview and ``SYNC`` runs a full synchronisation.
 
     When *coro* finishes (or raises), the reader is cancelled.
     """
@@ -383,6 +420,12 @@ async def _with_stdin_commands(log, coro) -> None:
 
     handler = StdinCommandHandler(log)
     handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+
+    async def _handle_sync(**_kw: object) -> None:
+        lan = CONFIG.get("LAN_MODE", False)
+        await sync(lan_mode=lan)
+
+    handler.register("SYNC", _handle_sync)
 
     stdin_task = asyncio.create_task(handler.run())
 
@@ -402,13 +445,23 @@ async def _run_with_stdin_commands(log) -> None:
 
 
 async def _run_stdin_wait(log) -> None:
-    """Block reading stdin commands until EOF or cancellation.
+    """Block reading stdin commands until EOF or SYNC.
 
-    Used in LAN persistent dry-run mode where there is no WebSocket
-    connection to keep the event loop alive.
+    Used in persistent dry-run mode (LAN or server) where there is no
+    WebSocket connection yet.  When a ``SYNC`` command arrives the
+    handler performs the full sync, then stops the reader so the caller
+    can proceed to the next phase (e.g. WebSocket connection).
     """
     handler = StdinCommandHandler(log)
     handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+
+    async def _handle_sync(**_kw: object) -> None:
+        CONFIG["DRYRUN"] = False
+        lan = CONFIG.get("LAN_MODE", False)
+        await sync(lan_mode=lan)
+        handler.stop()
+
+    handler.register("SYNC", _handle_sync)
     await handler.run()
 
 
@@ -666,8 +719,8 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
                         _run_preview(log)
                         if not persistent:
                             break
-                        # In persistent mode with dry-run, wait for stdin commands or Ctrl+C
-                        log.info("Dry-run mode: waiting for preview requests (stdin) or Ctrl+C to exit...")
+                        # In persistent mode with dry-run, wait for SYNC/PREVIEW commands
+                        log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
                         run(_run_stdin_wait(log))
                     else:
                         # Perform initial sync (master is source of truth in LAN mode)

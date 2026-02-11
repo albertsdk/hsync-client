@@ -36,8 +36,13 @@ class StdinCommandHandler:
     def __init__(self, log: Any) -> None:
         self._log = log
         self._handlers: Dict[str, Callable[..., Any]] = {}
+        self._should_stop = False
 
     # ── public API ────────────────────────────────────────────────────
+
+    def stop(self) -> None:
+        """Signal the run loop to exit after the current handler returns."""
+        self._should_stop = True
 
     def register(self, cmd: str, handler: Callable[..., Any]) -> None:
         """Register *handler* for *cmd*.
@@ -109,6 +114,9 @@ class StdinCommandHandler:
                         handler(**data)
                 except Exception as exc:
                     self._log.error(f"stdin command '{cmd}' failed: {exc}")
+
+                if self._should_stop:
+                    break
 
             except asyncio.CancelledError:
                 break
