@@ -855,7 +855,7 @@ def _start_watch_client(
     log_path: str | None = None,
     *extra: str,
 ) -> "subprocess.Popen":
-    """Start the real client in watch mode as a subprocess (shared harness).
+    """Start the real client in continuous mode as a subprocess (shared harness).
 
     The env is scrubbed of every pre-existing ``HSYNC_*`` variable so the
     developer's own configuration can never leak into the run; the instance-
@@ -890,7 +890,6 @@ def _start_watch_client(
         base_url,
         "-p",
         local_path,
-        "-w",
         "--yes",
         "--insecure",
         "--min-free-disk-space",
@@ -912,10 +911,10 @@ def _start_watch_client(
 
 @pytest.fixture
 def watch_sync(live_server, tmp_path):
-    """Return a callable that starts the client in watch mode as a subprocess.
+    """Return a callable that starts the client in continuous mode as a subprocess.
 
     The caller receives the :class:`subprocess.Popen` handle and must terminate
-    it. Watch mode blocks forever, so it cannot be driven through CliRunner.
+    it. Continuous mode blocks forever, so it cannot be driven through CliRunner.
     """
     base_url, api_key = live_server
 
@@ -1033,6 +1032,7 @@ def run_sync_once(live_server):
                 base_url,
                 "-p",
                 local_path,
+                "--once",
                 "--yes",
                 "--insecure",
                 "--min-free-disk-space",
@@ -1077,7 +1077,7 @@ def run_cli(live_server):
         os.environ["HSYNC_API_KEY"] = api_key
         get_env_settings.cache_clear()
         try:
-            args = ["-b", bucket, "-s", base_url, "-p", local_path, "--insecure", *extra]
+            args = ["-b", bucket, "-s", base_url, "-p", local_path, "--once", "--insecure", *extra]
             with _ClientGlobalsGuard():
                 result = runner.invoke(__import__("hsync_client.cli", fromlist=["app"]).app, args)
             # CliRunner captures all client output; echo it so pytest includes

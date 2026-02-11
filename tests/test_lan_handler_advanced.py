@@ -2,8 +2,8 @@
 Advanced tests for hsync_client.lan_handler module.
 
 Tests for:
-- _run_as_master persistent mode
-- _run_as_slave persistent mode with WebSocket
+- _run_as_master continuous mode
+- _run_as_slave continuous/one-shot modes with WebSocket
 - _with_stdin_commands handler
 - _run_stdin_wait handler
 - Master election scenarios
@@ -33,7 +33,7 @@ def _make_lan_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "LAN_KEY": None,
         "DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
-        "LAN_PERSISTENT": False,
+        "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
         "API": {"buckets": "", "events": ""},
         "SERVER_COMPRESSION_ENABLED": False,
@@ -117,7 +117,7 @@ class TestRunAsMaster:
         """Master runs indefinitely until keyboard interrupt."""
         from hsync_client.lan_handler import _run_as_master
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         mock_log = MagicMock()
 
         mock_lan_sync = MagicMock()
@@ -153,7 +153,7 @@ class TestRunAsMaster:
         except KeyboardInterrupt:
             pass
 
-        # Verify sleep was called (persistent mode runs loop)
+        # Verify sleep was called (continuous mode runs loop)
         assert len(sleep_calls) > 0
 
     def test_run_as_master_with_auth_key(self, tmp_path):
@@ -260,7 +260,7 @@ class TestRunAsMaster:
         mock_server_instance = MagicMock()
         mock_ws_instance = MagicMock()
 
-        # In persistent=True mode the inner loop is `while True: sleep; break`,
+        # In continuous mode the inner loop is `while True: sleep; break`,
         # so the function returns after a single sleep call.
         with (
             patch(
@@ -289,7 +289,7 @@ class TestRunAsMaster:
         )
 
     def test_run_as_master_idempotent_across_iterations(self, tmp_path):
-        """Two consecutive calls in persistent mode must not re-create servers.
+        """Two consecutive calls in continuous mode must not re-create servers.
 
         Simulates the discovery-loop behaviour: the tuple returned by the first
         call is fed back into the second call; no new server instance must be
@@ -382,12 +382,12 @@ class TestRunAsMaster:
         assert len(ready_msgs) == 1, f"[READY] must log once, got {ready_msgs!r}"
 
 
-class TestRunAsMasterPersistentSemantics:
+class TestRunAsMasterContinuousSemantics:
     """Regression tests for the consolidated master loop.
 
     The master role is intrinsically continuous: it must remain
     available to serve any peer that joins.  After the refactor that
-    collapsed the duplicated persistent/non-persistent branches in
+    collapsed the duplicated continuous/one-shot branches in
     :func:`_run_as_master`, the function must:
 
     * Always sleep once and return (no infinite ``while True`` inside).
@@ -399,7 +399,7 @@ class TestRunAsMasterPersistentSemantics:
         """Master must not block forever: it returns after one sleep."""
         from hsync_client.lan_handler import _run_as_master
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        config = _make_lan_config(tmp_path, ONE_SHOT=True)
         mock_log = MagicMock()
         mock_lan_sync = MagicMock()
         mock_lan_sync.port = 9000
@@ -431,20 +431,16 @@ class TestRunAsMasterPersistentSemantics:
 class TestRunLanModeOuterLoopMasterPath:
     """Regression tests for the outer discovery loop on the master path.
 
-    Previously the loop contained ``if not persistent: break`` right
-    after ``_run_as_master`` returned.  Since the master is inherently
-    continuous, that branch was either dead code (when the inner master
-    loop blocked forever) or, after the refactor, would have shut the
-    master down immediately - leaving no time for slaves to sync.  The
-    branch was removed; the loop now only exits via KeyboardInterrupt
-    or by losing the master role.
+    The master path must never exit the outer loop on its own: since the
+    master is inherently continuous, the loop only exits via
+    KeyboardInterrupt or by losing the master role.
     """
 
-    def test_master_loop_does_not_exit_on_non_persistent(self, tmp_path):
-        """Outer loop on master path must keep iterating even with persistent=False."""
+    def test_master_loop_does_not_exit_on_one_shot(self, tmp_path):
+        """Outer loop on master path must keep iterating even with ONE_SHOT=True."""
         from hsync_client.lan_handler import run_lan_mode
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        config = _make_lan_config(tmp_path, ONE_SHOT=True)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -470,13 +466,13 @@ class TestRunLanModeOuterLoopMasterPath:
         ):
             run_lan_mode(config, mock_log)
 
-        # If the outer loop had broken on the first non-persistent master
+        # If the outer loop had broken on the first one-shot master
         # iteration, only one sleep would have been recorded.  The fact
         # that we reached three sleeps proves the loop kept re-entering
         # _run_as_master.
         assert len(sleep_calls) >= 3, (
             "Outer loop must keep calling _run_as_master while the master role "
-            "is held, regardless of LAN_PERSISTENT"
+            "is held, regardless of ONE_SHOT"
         )
 
 
@@ -492,7 +488,7 @@ class TestRunLanModeNoMasterWarning:
         from hsync_client import lan_handler
         from hsync_client.lan_handler import NO_MASTER_WARNING_TIMEOUT, run_lan_mode
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -540,7 +536,7 @@ class TestRunLanModeDiscoveryTimeout:
         """DISCOVERY_TIMEOUT=0 keeps waiting but still sleeps in finite polling windows."""
         from hsync_client.lan_handler import run_lan_mode
 
-        config = _make_lan_config(tmp_path, DISCOVERY_TIMEOUT=0, LAN_PERSISTENT=False)
+        config = _make_lan_config(tmp_path, DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -604,7 +600,7 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
         assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] == "f" * 40
@@ -633,7 +629,7 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
         assert PinStore(pin_file).get("master-1", "test-bucket") == "a" * 40
 
@@ -662,7 +658,7 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler.sync", new=mock_sync),
             patch("asyncio.run") as mock_run,
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
 
         assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] is None
@@ -692,7 +688,7 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
 
         assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] is None
@@ -715,18 +711,18 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
 
         assert result == (False, 0)
         assert "Authorization" not in config["REQUEST_HEADERS"]
         mock_run.assert_not_called()
         assert any("INSECURE MASTER" in str(c) for c in mock_log.warning.call_args_list)
 
-    def test_no_master_non_persistent_wait_indefinitely_keeps_looping(self, tmp_path):
-        """Non-persistent mode can still wait indefinitely for the first peer."""
+    def test_no_master_one_shot_wait_indefinitely_keeps_looping(self, tmp_path):
+        """One-shot mode can still wait indefinitely for the first peer."""
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        config = _make_lan_config(tmp_path, ONE_SHOT=True)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = None
         mock_log = MagicMock()
@@ -736,7 +732,7 @@ class TestRunAsSlave:
             mock_log,
             MagicMock(),
             None,
-            False,
+            True,
             peer_mgr,
             wait_indefinitely_for_peer=True,
         )
@@ -744,11 +740,11 @@ class TestRunAsSlave:
         assert result[0] is True
         assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
 
-    def test_persistent_connects_websocket(self, tmp_path):
-        """Persistent slave connects via WebSocket and returns True to loop again."""
+    def test_continuous_connects_websocket(self, tmp_path):
+        """Continuous slave connects via WebSocket and returns True to loop again."""
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _make_master()
 
@@ -760,16 +756,16 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()) as mock_wsc,
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
         assert result[0] is True
         mock_wsc.assert_called_once()
 
-    def test_persistent_websocket_error_is_swallowed(self, tmp_path):
+    def test_continuous_websocket_error_is_swallowed(self, tmp_path):
         """A WebSocket failure is logged but still re-enters the discovery loop."""
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _make_master()
         mock_log = MagicMock()
@@ -783,42 +779,23 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
 
         assert result[0] is True
         assert any("WebSocket connection ended" in str(c) for c in mock_log.warning.call_args_list)
 
-    def test_persistent_sync_exception_reenters_loop(self, tmp_path):
-        """A transport failure in persistent mode must not terminate the run.
+    def test_continuous_sync_exception_reenters_loop(self, tmp_path):
+        """A transport failure in continuous mode must not terminate the run.
 
         When the master goes offline mid-sync, ``sync()`` raises a transport
-        error; a persistent run must re-enter the discovery loop (return True)
+        error; a continuous run must re-enter the discovery loop (return True)
         so the peer stays alive and re-detects the master (or a newly elected
         one) on the next iteration instead of exiting with "LAN mode stopped".
         """
         from hsync_client.exceptions import NetworkError
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
-        peer_mgr = MagicMock()
-        peer_mgr.get_master.return_value = _make_master()
-
-        with (
-            patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
-            patch("hsync_client.lan_handler.sync", new=MagicMock()),
-            patch("asyncio.run", side_effect=NetworkError("boom")),
-        ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
-
-        assert result == (True, 0)
-
-    def test_nonpersistent_sync_exception_is_fatal(self, tmp_path):
-        """A transport failure in one-shot mode still maps to a fatal exit."""
-        from hsync_client.exceptions import NetworkError
-        from hsync_client.lan_handler import _run_as_slave
-
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=False)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _make_master()
 
@@ -830,17 +807,36 @@ class TestRunAsSlave:
         ):
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
+        assert result == (True, 0)
+
+    def test_one_shot_sync_exception_is_fatal(self, tmp_path):
+        """A transport failure in one-shot mode still maps to a fatal exit."""
+        from hsync_client.exceptions import NetworkError
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, ONE_SHOT=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run", side_effect=NetworkError("boom")),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+
         assert result == (False, 1)
 
-    def test_persistent_unexpected_exception_is_fatal(self, tmp_path):
-        """An unexpected (non-transport) error stays fatal even in persistent mode.
+    def test_continuous_unexpected_exception_is_fatal(self, tmp_path):
+        """An unexpected (non-transport) error stays fatal even in continuous mode.
 
         A genuine programming bug must surface as a fatal exit rather than be
         masked into an endless retry loop.
         """
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _make_master()
 
@@ -850,15 +846,15 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run", side_effect=RuntimeError("boom")),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
         assert result == (False, 1)
 
-    def test_dryrun_persistent_runs_preview_and_stdin_wait(self, tmp_path):
-        """Dry-run persistent slave shows a preview then waits on stdin."""
+    def test_dryrun_continuous_runs_preview_and_stdin_wait(self, tmp_path):
+        """Dry-run continuous slave shows a preview then waits on stdin."""
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True, DRYRUN=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False, DRYRUN=True)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _make_master()
 
@@ -871,21 +867,21 @@ class TestRunAsSlave:
             patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
 
         assert result[0] is True
         mock_preview.assert_called_once()
 
-    def test_no_master_persistent_waits(self, tmp_path):
-        """No master and persistent: keep looping, logging a wait message."""
+    def test_no_master_continuous_waits(self, tmp_path):
+        """No master and continuous: keep looping, logging a wait message."""
         from hsync_client.lan_handler import _run_as_slave
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = None
         mock_log = MagicMock()
 
-        result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+        result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
 
         assert result[0] is True
         assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
@@ -972,7 +968,7 @@ class TestMasterElection:
         """Test scenario where client transitions from client to master."""
         from hsync_client.lan_handler import run_lan_mode
 
-        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
         mock_log = MagicMock()
 
         # First iteration: is_master = False (client)
@@ -1005,7 +1001,7 @@ class TestMasterElection:
             patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             # Mocked asyncio.run must not receive real coroutines: the
-            # persistent slave path would create un-awaited _with_stdin_commands
+            # continuous slave path would create un-awaited _with_stdin_commands
             # / lan_websocket_client coroutine objects that trigger
             # "coroutine was never awaited" RuntimeWarnings at GC time.
             patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),

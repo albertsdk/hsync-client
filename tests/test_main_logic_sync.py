@@ -428,7 +428,6 @@ class _RunSyncKwargs(TypedDict, total=False):
     lan_port: int
     discovery_timeout: int | None
     lan_group: str | None
-    lan_persistent: bool
     force_master: bool
     never_master: bool
     debug: bool
@@ -468,7 +467,6 @@ def _default_run_sync_kwargs(
         "lan_port": 0,
         "discovery_timeout": 5,
         "lan_group": None,
-        "lan_persistent": False,
         "force_master": False,
         "never_master": False,
         "debug": False,
@@ -566,6 +564,31 @@ class TestRunSync:
         config_arg = mock_lan.call_args.args[0]
         assert config_arg["DISCOVERY_TIMEOUT"] == DISCOVERY_TIMEOUT_DEFAULT
 
+    def test_lan_mode_derives_one_shot_from_continuous(self, tmp_path):
+        """ONE_SHOT mirrors --once: continuous=False -> True, True -> False."""
+        for continuous_value, expected in ((False, True), (True, False)):
+            kwargs = _default_run_sync_kwargs(
+                tmp_path,
+                server_url=None,
+                lan_mode=True,
+                continuous=continuous_value,
+            )
+            with (
+                patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+                patch("hsync_client.main_logic.set_config"),
+                patch("hsync_client.main_logic.set_debug"),
+                patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+            ):
+                mock_lan.return_value = 0
+                mock_log_setup.return_value = MagicMock()
+                with pytest.raises(SystemExit) as exc_info:
+                    run_sync(**kwargs)
+                assert exc_info.value.code == 0
+            config_arg = mock_lan.call_args.args[0]
+            assert config_arg["ONE_SHOT"] is expected
+
     def test_lan_mode_preserves_zero_discovery_timeout(self, tmp_path):
         """LAN discovery timeout of 0 is preserved as wait-indefinitely."""
         kwargs = _default_run_sync_kwargs(
@@ -622,6 +645,29 @@ class TestRunSync:
                 run_sync(**kwargs)
             assert exc_info.value.code != 0
             # Should not call sync since connectivity failed
+
+    def test_continuous_connectivity_failure_does_not_exit(self, tmp_path):
+        """Continuous mode (default) keeps running when the server is unreachable."""
+        kwargs = _default_run_sync_kwargs(
+            tmp_path, continuous=True, dryrun=False, server_url="https://localhost:8000"
+        )
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=False),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic._run_with_stdin_commands", new=lambda log: None),
+            patch("hsync_client.main_logic.run"),
+        ):
+            mock_logger = MagicMock()
+            mock_log_setup.return_value = mock_logger
+            # Must NOT raise SystemExit: the reconnect loop takes over.
+            run_sync(**kwargs)
+            assert any(
+                "keeping the client alive" in str(c) for c in mock_logger.warning.call_args_list
+            )
 
     def test_single_sync_mode(self, tmp_path):
         """run_sync runs a single sync when not continuous and not dryrun."""

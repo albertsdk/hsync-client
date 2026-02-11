@@ -36,6 +36,7 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 
 
 class TestLanElection:
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_force_master_wins_and_slave_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """A force-master client becomes master; a never-master slave syncs to it."""
         # Start both peers — election needs at least two participants

@@ -35,7 +35,7 @@ On device B (the slave):
 hsync -b shared -p ~/Shared --lan-mode
 ```
 
-Watch mode is implicit in LAN Mode: changes appear in real time.
+Continuous mode is implicit in LAN Mode: changes appear in real time.
 
 ## 2.2 Sync photo library across devices without internet
 
@@ -73,7 +73,7 @@ Useful for devices that are intermittently connected or have low resources.
 hsync -b shared -p ~/Shared --lan-mode
 ```
 
-Without `-w` (watch is implicit in LAN), the client syncs once and exits.
+With `--once` the client syncs once and exits.
 
 ## 2.6 Read-only LAN slave (download-only)
 

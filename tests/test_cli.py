@@ -104,35 +104,36 @@ class TestTyperCli:
         assert call_kwargs["server_url"] == "http://test:8000"
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_watch_flag(self, mock_run_sync):
-        """CLI accepts -w/--watch flag."""
-        result = runner.invoke(app, ["-b", "test", "-w", "-s", "http://test:8000"])
+    def test_default_is_continuous(self, mock_run_sync):
+        """Without --once the client runs continuously (infinite retry)."""
+        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["continuous"] is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_once_flag(self, mock_run_sync):
-        """CLI accepts --once as the explicit one-shot form."""
+        """CLI accepts --once as the sole one-shot form."""
         result = runner.invoke(app, ["-b", "test", "--once", "-s", "http://test:8000"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["once"] is True
         assert call_kwargs["continuous"] is False
 
-    def test_once_and_watch_are_mutually_exclusive(self):
-        """--once is the explicit default behaviour and cannot combine with -w."""
-        result = runner.invoke(app, ["-b", "test", "--once", "-w", "-s", "http://test:8000"])
-        assert result.exit_code != 0
-        assert "--once" in result.output
+    @patch("hsync_client.main_logic.run_sync")
+    def test_once_in_lan_is_one_shot(self, mock_run_sync):
+        """--once in LAN mode selects a one-shot slave run."""
+        result = runner.invoke(app, ["--lan-mode", "--once", "-b", "test", "-s", "http://t:8000"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["continuous"] is False
 
-    def test_once_and_lan_persistent_are_mutually_exclusive(self):
-        """In LAN mode the one-shot form is --no-lan-persistent, not --once."""
+    @patch("hsync_client.main_logic.run_sync")
+    def test_no_lan_persistent_flags_exist(self, mock_run_sync):
+        """--lan-persistent/--no-lan-persistent are not CLI flags (--once only)."""
         result = runner.invoke(
-            app, ["-b", "test", "--once", "--lan-mode", "--lan-persistent", "-s", "http://t:8000"]
+            app, ["--lan-mode", "--lan-persistent", "-b", "test", "-s", "http://t:8000"]
         )
         assert result.exit_code != 0
-        assert "--once" in result.output
 
     @patch("hsync_client.main_logic.run_sync")
     def test_verbose_flag(self, mock_run_sync):
@@ -232,7 +233,7 @@ class TestTyperCli:
         result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["continuous"] is False
+        assert call_kwargs["continuous"] is True
         assert call_kwargs["debug"] is False
         assert call_kwargs["quiet"] is False
         assert call_kwargs["dryrun"] is False
@@ -340,9 +341,7 @@ class TestCLIValidation:
 
     def test_rejects_resync_interval_below_min(self):
         """CLI rejects --interval below minimum."""
-        result = runner.invoke(
-            app, ["-b", "test", "-s", "http://test:8000", "-w", "--interval", "0"]
-        )
+        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--interval", "0"])
         assert result.exit_code != 0
         assert "interval" in result.output.lower()
 
@@ -351,7 +350,7 @@ class TestCLIValidation:
         from hsync_client.constants import RESYNC_MAX
 
         result = runner.invoke(
-            app, ["-b", "test", "-s", "http://test:8000", "-w", "--interval", str(RESYNC_MAX + 1)]
+            app, ["-b", "test", "-s", "http://test:8000", "--interval", str(RESYNC_MAX + 1)]
         )
         assert result.exit_code != 0
         assert "interval" in result.output.lower()

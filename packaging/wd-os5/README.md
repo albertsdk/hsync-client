@@ -141,11 +141,9 @@ option to configure.
 | LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
 | Strict pairing      | `--require-pairing`                            | off                              |
 | Group               | `--lan-group`                                  | _empty_                          |
-| Discovery timeout   | `--discovery-timeout`                          | `10` (`0` = wait indefinitely)   |
-| Persistent LAN      | `--lan-persistent/--no-lan-persistent`         | enabled                          |
+| Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
 | Server URL          | `-s / --server`                                | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
-| Watch mode          | `-w / --watch`                                 | on (service mode)                |
 | Resync interval     | `-i / --interval`                              | `0` (off)                        |
 | Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |
 | Bandwidth limits    | `--max-bandwidth-upload/--download`            | unlimited                        |
@@ -200,10 +198,10 @@ HSYNC_LAN_KEY='<masked>' hsync -b '<bucket>' -p '<local-folder>' --lan-mode [--l
   safe to paste even if a value contains `$`, `"`, backticks, or spaces.
 - The LAN shared key (when set) is shown **masked** with a *Show key* toggle;
   the *Copy* button copies the full command including the real key value.
-- Per-device sync behaviour (watch, ignore-delete, compression, delta,
-  bandwidth, …) and the NAS role are intentionally omitted: watch is implicit
-  in LAN mode and master election resolves the remote device's role
-  automatically.
+- Per-device sync behaviour (ignore-delete, compression, delta,
+  bandwidth, …) and the NAS role are intentionally omitted: continuous mode
+  is the default in both LAN and server mode, and master election resolves
+  the remote device's role automatically.
 
 In **server mode** the NAS is itself a client of a central `hsync-server`, so
 there is no direct "connect to the NAS" command; the section shows a note

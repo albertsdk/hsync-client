@@ -12,9 +12,8 @@ Shared configuration options that apply to both Server Mode and LAN P2P Mode.
 |---|---|---|
 | `-b, --bucket` | Bucket name | (required) |
 | `-p, --path` | Local directory path | cwd |
-| `-w, --watch` | Watch for changes and sync continuously (implicit in LAN mode) | `false` |
-| `--once` | Run a single sync cycle and exit (explicit form of the default). Incompatible with `-w`; in LAN mode use `--no-lan-persistent` | `false` |
-| `-i, --interval` | Force full sync every N seconds (requires `-w`) | — |
+| `--once` | Run a single sync cycle and exit. Without it the client runs continuously and retries an unreachable server indefinitely (the default). In LAN mode it runs one slave sync cycle and exits (the master role stays continuous) | `false` |
+| `-i, --interval` | Force full sync every N seconds (continuous mode only) | — |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--ignore-delete` | Do not propagate file deletions (backup mode) | `false` |
 | `--dry-run` | Dry run: show what would change without applying | `false` |
@@ -121,11 +120,11 @@ When file logging is enabled with `-o/--output`:
 |---|---|---|
 | `HSYNC_AUTOTUNE` | Enable auto-tuning of timeout, retry, and concurrency | `true` |
 | `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300); CLI `--timeout` | auto |
-| `HSYNC_RECONNECT_DELAY` | WS reconnection delay in seconds (1-60); CLI `--retry-delay` | auto (`5`) |
+| `HSYNC_RECONNECT_DELAY` | Base of the full-jitter exponential reconnect backoff in seconds (1-60); CLI `--retry-delay` | auto (`5`) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | auto (`5`-`20`) |
 | `HSYNC_TRANSFER_RETRY_MIN_WAIT` | Per-file retry min wait in seconds | auto |
 | `HSYNC_TRANSFER_RETRY_MAX_WAIT` | Per-file retry max wait in seconds | auto |
-| `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` | Server connectivity check retry attempts (1–20) | `7` |
+| `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` | Startup connectivity check retry attempts for **one-shot (`--once`) runs** (1–20); continuous mode retries forever instead | `7` |
 | `HSYNC_CONNECTIVITY_RETRY_MIN_WAIT` | Connectivity check retry min wait in seconds | `1` |
 | `HSYNC_CONNECTIVITY_RETRY_MAX_WAIT` | Connectivity check retry max wait in seconds | `30` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
@@ -173,7 +172,7 @@ or `export` / `source` variables in the shell before launching `hsync`.
 
 `--env-file` only applies keys recognised by the settings model (the
 `HSYNC_*` variables listed in this page and the server/LAN guides). It does
-**not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `-w/--watch`,
+**not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `--once`,
 `--sync-direction`, `--lan-mode`, or `--force-master`.
 
 Repo templates `dev.env` / `prod.env` are meant to be sourced or passed to
@@ -181,12 +180,12 @@ Repo templates `dev.env` / `prod.env` are meant to be sourced or passed to
 
 ```bash
 # Load recognised HSYNC_* keys, then pass CLI-only flags
-hsync --env-file ./prod.env -s https://hsync.example.com:9753 -b documents -p ~/Documents -w
+hsync --env-file ./prod.env -s https://hsync.example.com:9753 -b documents -p ~/Documents
 ```
 
 ## Periodic resync and the inotify watch limit (Linux)
 
-In continuous mode (`-w`) the client runs a periodic full sync every
+In continuous mode (the default) the client runs a periodic full sync every
 `HSYNC_RESYNC` seconds (default `300`, set `0` to disable). This is a safety
 net: it recovers any file-system events the watcher may have missed.
 

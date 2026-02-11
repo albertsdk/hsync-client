@@ -355,10 +355,6 @@
     <div class="hsync-section" id="hsync-lan-options">
         <div class="hsync-legend" data-i18n="section.lan">LAN options</div>
         <p class="hsync-note" data-i18n="note.lan_secure">LAN transport is always encrypted (HTTPS/WSS). The master keeps a persistent identity and peers pin its certificate on first contact.</p>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_LAN_PERSISTENT" id="HSYNC_LAN_PERSISTENT">
-            <span data-i18n="field.lan_persistent">Persistent (keep retrying when no peer is found)</span>
-        </label>
         <label class="hsync-label">
             <span data-i18n="field.lan_key">LAN shared key (optional)</span>
             <input type="password" name="HSYNC_LAN_KEY" id="HSYNC_LAN_KEY" autocomplete="new-password">
@@ -405,10 +401,6 @@
     <!-- Sync behaviour --------------------------------------------- -->
     <div class="hsync-section">
         <div class="hsync-legend" data-i18n="section.behaviour">Sync behaviour</div>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_WATCH" id="HSYNC_WATCH">
-            <span data-i18n="field.watch">Watch for changes continuously</span>
-        </label>
         <label class="hsync-label">
             <span data-i18n="field.interval">Forced re-sync interval (s, 0 = off)</span>
             <input type="number" name="HSYNC_INTERVAL" id="HSYNC_INTERVAL" min="0">

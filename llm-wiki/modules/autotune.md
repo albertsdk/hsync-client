@@ -63,15 +63,15 @@ stale snapshots.
 
 ### Startup (`main_logic.run_sync`)
 
-`main_logic.py:835-874` — when autotune is enabled, probes run and
+`main_logic.py:734-788` — when autotune is enabled, probes run and
 `derive_profile()` produces a `TuningProfile`. Each field is passed as the
 `autotune` parameter to the `_get_*_value` resolvers.
 
 **LAN placeholder**: in LAN mode without a configured server URL the startup
-RTT probe is skipped (`rtt_ms=None`, `main_logic.py:858`) — there is no server
+RTT probe is skipped (`rtt_ms=None`, `main_logic.py:758`) — there is no server
 to measure yet, and probing the placeholder URL would always fail with a
 spurious warning. The placeholder URL is also not emitted as a `server` UI
-event (`main_logic.py:793`).
+event (`main_logic.py:681`).
 
 ### LAN post-discovery refresh (`lan_handler._refresh_lan_network_tuning`)
 
@@ -90,7 +90,7 @@ Updates are written to both the global `CONFIG` and the local config dict
 
 ### Remote per-connection refresh (`remote_websocket._refresh_network_tuning`)
 
-`remote_websocket.py:318`, called from `remote_connect` (`:425`) at the top of
+`remote_websocket.py:355`, called from `remote_connect` (`:458`) at the top of
 its reconnect loop, **before every `sync()`** — including the first. Re-derives
 `HTTP_TIMEOUT`, `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT` and
 `RECONNECT_DELAY` from a fresh `measure_rtt`, so a cold start whose startup
@@ -116,8 +116,9 @@ survives the per-cycle refresh, preserving CLI > env > autotune > default.
 
 ### WS reconnect (`remote_websocket.py`)
 
-`remote_websocket.py:288-329` — re-evaluates RTT on reconnect to catch
-network changes.
+`remote_websocket.py:355-441` — re-evaluates RTT on reconnect to catch
+network changes; the reconnect wait itself is the full-jitter exponential
+backoff `_reconnect_delay` (`remote_websocket.py:443`).
 
 ## Resolver chain
 
@@ -130,11 +131,11 @@ Resolvers in `main_logic.py` (all five return `(value, provenance)`; provenance
 
 | Resolver | Location | Returns |
 | --- | --- | --- |
-| `_get_http_timeout_value` | `main_logic.py:295` | `(int, TuningSource)` |
-| `_get_reconnect_delay_value` | `main_logic.py:316` | `(int, TuningSource)` |
-| `_get_max_concurrent_transfers_value` | `main_logic.py:277` | `(int, TuningSource)` |
-| `_get_transfer_retry_min_wait_value` | `main_logic.py:335` | `(float, TuningSource)` |
-| `_get_transfer_retry_max_wait_value` | `main_logic.py:351` | `(float, TuningSource)` |
+| `_get_http_timeout_value` | `main_logic.py:188` | `(int, TuningSource)` |
+| `_get_reconnect_delay_value` | `main_logic.py:211` | `(int, TuningSource)` |
+| `_get_max_concurrent_transfers_value` | `main_logic.py:165` | `(int, TuningSource)` |
+| `_get_transfer_retry_min_wait_value` | `main_logic.py:232` | `(float, TuningSource)` |
+| `_get_transfer_retry_max_wait_value` | `main_logic.py:248` | `(float, TuningSource)` |
 
 ## Kill switch
 

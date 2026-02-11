@@ -38,7 +38,6 @@ from hsync_client.config import (
     get_ignore_patterns,
     get_lan_group,
     get_lan_key,
-    get_lan_persistent,
     get_lan_port,
     get_lan_require_pairing,
     get_mass_delete_guard,
@@ -560,7 +559,6 @@ def run_sync(
     lan_port: int,
     discovery_timeout: int | None,
     lan_group: str | None,
-    lan_persistent: bool | None,
     force_master: bool,
     never_master: bool,
     debug: bool,
@@ -568,7 +566,6 @@ def run_sync(
     logfile: str | None,
     no_color: bool,
     legend: bool,
-    once: bool = False,
     lan_require_pairing: bool = False,
     api_key_fd: int | None = None,
     lan_key_fd: int | None = None,
@@ -595,12 +592,11 @@ def run_sync(
     - Validating configuration
     - Running sync (single or continuous)
 
-    ``once`` is an explicit alias for the default one-shot behaviour (omit
-    ``-w``). It carries no additional logic: one-shot is already the
-    default. The parameter exists so the CLI surface can advertise the
-    intent through a dedicated flag and scripts can state it explicitly.
+    By default the client runs continuously (daemon): it keeps the connection
+    up and retries an unreachable server forever, mirroring LAN mode. A
+    one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
+    a single cycle (or after the finite startup connectivity retries).
     """
-    del once  # documented alias only - one-shot is the default without -w
     # Read secrets from file descriptors if provided (secure passing from parent)
     api_key_from_fd = _read_secret_from_fd(api_key_fd)
     lan_key_from_fd = _read_secret_from_fd(lan_key_fd)
@@ -877,7 +873,9 @@ def run_sync(
         "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
         "LAN_KEY": lan_key_from_fd or get_lan_key(),
         "LAN_GROUP": lan_group or get_lan_group(),
-        "LAN_PERSISTENT": (lan_persistent if lan_persistent is not None else get_lan_persistent()),
+        # One-shot is derived solely from --once: continuous is the default
+        # and no env/flag knob for "persistence" exists.
+        "ONE_SHOT": not continuous,
         "LAN_FORCE_MASTER": force_master,
         "LAN_NEVER_MASTER": never_master or get_never_master(),
         "LAN_REQUIRE_PAIRING": lan_require_pairing or get_lan_require_pairing(),
@@ -1042,16 +1040,23 @@ def run_sync(
             _warn_if_lan_in_container(log)
             sys.exit(run_lan_mode(config, log))
 
-        # Server Connectivity Check with retry
+        # Server Connectivity Check with retry. In one-shot mode an
+        # unreachable server is a failed run: exit non-zero instead of
+        # returning silently with a success exit code. In continuous mode
+        # (the default) the client stays alive and the reconnect loop below
+        # retries the connection forever, mirroring LAN mode.
         if not _check_server_connectivity(
             server_url=effective_server_url,
             timeout=min(config["HTTP_TIMEOUT"], 10),
             verify_ssl=not config["NO_VERIFY_SSL"],
             logger=log,
         ):
-            # An unreachable server is a failed run: exit non-zero instead of
-            # returning silently with a success exit code.
-            sys.exit(1)
+            if not continuous:
+                sys.exit(1)
+            log.warning(
+                "Server unreachable at startup; keeping the client alive and "
+                "retrying (continuous mode)."
+            )
 
         # Clock offset (ADR-0023): the server is the time authority; failures
         # degrade to offset 0 and never block the run.

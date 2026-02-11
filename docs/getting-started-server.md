@@ -7,11 +7,11 @@ Connect your HSYNC client to a central HSYNC server.
 ## Basic Usage
 
 ```bash
-# Single sync
-hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
+# Single sync (one-shot)
+hsync --once -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 
-# Continuous sync (watch mode)
-hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir -w
+# Continuous sync (the default: keeps retrying if the server is unreachable)
+hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 ```
 
 > For local development with a self-signed certificate, add `--insecure` and
@@ -42,16 +42,16 @@ mkdir -p /tmp/hsync-a /tmp/hsync-b
 echo "hello hsync" > /tmp/hsync-a/hello.txt
 
 # 6. Sync folder A → server (one-shot, self-signed cert)
-hsync -s https://localhost:9753 -b demo -p /tmp/hsync-a --insecure
+hsync --once -s https://localhost:9753 -b demo -p /tmp/hsync-a --insecure
 
 # 7. Sync server → folder B (one-shot, self-signed cert)
-hsync -s https://localhost:9753 -b demo -p /tmp/hsync-b --insecure
+hsync --once -s https://localhost:9753 -b demo -p /tmp/hsync-b --insecure
 
 # 8. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
 ```
 
-For continuous, real-time sync, add `-w` to both commands and edit files in
+For continuous, real-time sync, omit `--once` (the default) and edit files in
 either folder — changes propagate within seconds.
 
 ## Environment Configuration

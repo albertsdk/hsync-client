@@ -7,7 +7,7 @@ Sync files directly between devices on your local network — no server needed.
 ## Basic Usage
 
 ```bash
-# Peers discover each other via mDNS; watch mode is implicit
+# Peers discover each other via mDNS; continuous mode is implicit
 hsync -b mybucket -p /path/to/dir --lan-mode
 ```
 
@@ -44,7 +44,7 @@ HSYNC_DEVICE_DIR=/tmp/hsync-lan-b-device \
 cat /tmp/hsync-lan-b/hello.txt   # → hello hsync lan
 ```
 
-Watch mode is **implicit** in LAN Mode: edit or create a file in either folder
+Continuous mode is **implicit** in LAN Mode: edit or create a file in either folder
 and the change propagates to the other peer in real time. Press `Ctrl+C` in
 both terminals to stop.
 

@@ -26,9 +26,8 @@ option is not part of the interactive CLI.
 | `HSYNC_SERVER` | Server URL (alternative to `-s`) | (required or use `-s`) |
 | `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
 
-Bucket, local path, watch mode, and sync direction are **CLI flags**, not
-environment variables. Putting `HSYNC_BUCKET` or `HSYNC_WATCH` in an env
-file has no effect.
+Bucket, local path, sync mode (`--once`), and sync direction are **CLI flags**, not
+environment variables. Putting `HSYNC_BUCKET` in an env file has no effect.
 
 ## Environment files
 
@@ -36,7 +35,7 @@ The client does **not** load `./.env` by itself. Pass a file explicitly:
 
 ```bash
 export HSYNC_API_KEY="hs_…"
-hsync --env-file ./hsync.env -s https://hsync.example.com:9753 -b documents -p "$HOME/Documents" -w
+hsync --env-file ./hsync.env -s https://hsync.example.com:9753 -b documents -p "$HOME/Documents"
 ```
 
 `--env-file` only applies `HSYNC_*` keys recognised by the client settings

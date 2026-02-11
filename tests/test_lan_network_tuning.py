@@ -54,7 +54,7 @@ def _make_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "LAN_KEY": None,
         "DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
-        "LAN_PERSISTENT": False,
+        "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
         "API": {"buckets": "", "events": ""},
         "SERVER_COMPRESSION_ENABLED": False,
@@ -244,7 +244,7 @@ class TestSlaveTuningRefreshOrdering:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
         assert result == (False, 0)
         assert calls == ["pin", "refresh"]

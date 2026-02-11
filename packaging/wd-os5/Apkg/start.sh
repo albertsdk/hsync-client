@@ -67,14 +67,12 @@ fi
 : "${HSYNC_PATH:=${HSYNC_DATA_DIR}}"
 : "${HSYNC_BUCKET:=hsync}"
 : "${HSYNC_ROLE:=master}"
-: "${HSYNC_LAN_PERSISTENT:=true}"
 : "${HSYNC_LAN_GROUP:=}"
 : "${HSYNC_LAN_KEY:=}"
 : "${HSYNC_LAN_REQUIRE_PAIRING:=false}"
-: "${HSYNC_DISCOVERY_TIMEOUT:=10}"
+: "${HSYNC_DISCOVERY_TIMEOUT:=0}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
-: "${HSYNC_WATCH:=true}"
 : "${HSYNC_INTERVAL:=0}"
 : "${HSYNC_IGNORE_DELETE:=true}"
 : "${HSYNC_NO_COMPRESSION:=false}"
@@ -110,7 +108,6 @@ case "${HSYNC_MODE}" in
         # its certificate fingerprint, which slaves pin (TOFU). There is no
         # plain-HTTP option.
         set -- "$@" --lan-mode
-        [ "${HSYNC_LAN_PERSISTENT}" = "false" ]       && set -- "$@" --no-lan-persistent
         [ "${HSYNC_LAN_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
         [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --lan-group "${HSYNC_LAN_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
@@ -134,7 +131,6 @@ case "${HSYNC_MODE}" in
         ;;
 esac
 
-[ "${HSYNC_WATCH}" = "true" ]          && set -- "$@" --watch
 [ "${HSYNC_INTERVAL}" -gt 0 ] 2>/dev/null && set -- "$@" --interval "${HSYNC_INTERVAL}"
 [ "${HSYNC_IGNORE_DELETE}" = "true" ]  && set -- "$@" --ignore-delete
 [ "${HSYNC_NO_COMPRESSION}" = "true" ] && set -- "$@" --no-compression

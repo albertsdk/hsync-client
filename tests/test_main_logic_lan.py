@@ -26,7 +26,7 @@ def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
         "LAN_KEY": None,
         "DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
-        "LAN_PERSISTENT": False,
+        "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
         "API": {"buckets": "", "events": ""},
         "SERVER_COMPRESSION_ENABLED": False,
@@ -40,8 +40,8 @@ def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
 class TestRunLanMode:
     """Tests for run_lan_mode function."""
 
-    def test_no_peers_non_persistent_exits(self, tmp_path):
-        """Non-persistent mode with no peers exits with warning."""
+    def test_no_peers_one_shot_exits(self, tmp_path):
+        """One-shot mode with no peers exits with warning."""
         config = _make_lan_config(tmp_path)
         mock_log = MagicMock()
 

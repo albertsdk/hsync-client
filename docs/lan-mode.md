@@ -41,7 +41,7 @@ flowchart TB
 | **No Server Required** | Works without internet or central server |
 | **Automatic Master Election** | Priority: `force_master` > bidirectional preference > earliest startup > lowest CID |
 | **Passive Peers** | `--never-master` keeps a peer out of the election; it syncs but never becomes master |
-| **Real-Time Sync** | WebSocket-based instant event propagation (implicit `--watch`) |
+| **Real-Time Sync** | WebSocket-based instant event propagation (implicit; continuous mode is the default) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
 | **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
 | **Optional Authentication** | Shared secret key for security |
@@ -84,9 +84,9 @@ In plain terms, LAN mode works in three steps:
 > ports, and every other LAN option live in
 > [Configuration — LAN P2P Mode](configuration-lan.md).
 
-## Persistent Mode (Default)
+## Continuous Mode (Default)
 
-Persistent mode is **enabled by default** in LAN mode. The client stays active indefinitely, even when no peers are found. In this mode, the `--watch` behavior is **implicit**: the client automatically starts a file system watcher and propagates events in real-time.
+Continuous mode is the default in LAN mode. The client stays active indefinitely, even when no peers are found, and automatically starts a file system watcher that propagates events in real time. Discovery waits indefinitely by default (`--discovery-timeout 0`), mirroring the server-mode default of retrying an unreachable server forever.
 
 This is useful for:
 
@@ -94,7 +94,7 @@ This is useful for:
 - **NAS/Server deployments**: Run as a background service waiting for clients
 - **Intermittent connectivity**: Handle peers that connect and disconnect frequently
 
-Use `--no-lan-persistent` to disable this behavior and exit after a single sync attempt.
+Pass `--once` to disable this behavior and exit after a single sync attempt.
 
 ### Behavior
 
@@ -111,7 +111,7 @@ Use `--no-lan-persistent` to disable this behavior and exit after a single sync 
 $ hsync -b photos -p ~/Pictures --lan-mode
 
 [INFO] LAN P2P mode enabled
-[INFO] Persistent mode enabled - will wait indefinitely for peers
+[INFO] Continuous mode enabled - will wait indefinitely for peers
 [INFO] Loading persistent LAN master certificate...
 [INFO] Certificate fingerprint: a1b2c3d4e5f6...
 [INFO] Waiting for peers to join...

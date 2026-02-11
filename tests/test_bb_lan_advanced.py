@@ -210,18 +210,18 @@ class TestLanMultiSlave:
 
 
 # =============================================================================
-# Persistent mode control
+# One-shot control
 # =============================================================================
 
 
-class TestLanPersistent:
-    def test_no_lan_persistent_exits_when_alone(self, lan_master_dir, lan_bucket):
-        """--no-lan-persistent exits instead of waiting when no peers are found."""
-        # Given a LAN client started with --no-lan-persistent and no peers
+class TestOneShot:
+    def test_once_exits_when_alone(self, lan_master_dir, lan_bucket):
+        """--once exits instead of waiting when no peers are found."""
+        # Given a LAN client started with --once and no peers
         proc = _lan_start(
             lan_master_dir,
             lan_bucket,
-            extra_args=("--no-lan-persistent",),
+            extra_args=("--once",),
         )
         try:
             # When no peers are discovered within the discovery timeout
@@ -230,7 +230,7 @@ class TestLanPersistent:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-                pytest.fail("--no-lan-persistent did not exit when no peers were found")
+                pytest.fail("--once did not exit when no peers were found")
             # Then the client exits (0 = clean, 5 = LAN_NO_PEER)
             assert exit_code in (0, 5), f"Unexpected exit code: {exit_code}"
         finally:

@@ -8,25 +8,27 @@ examples.
 
 ## One-shot mode at a glance
 
-One-shot is the **default** behaviour (omit `-w` / `--watch`). The dedicated
-`--once` flag makes the intent explicit in scripts:
+Continuous/daemon mode is the **default**; for automation pass the dedicated
+`--once` flag to run a single cycle and exit:
 
 ```bash
-# Equivalent invocations — both run one cycle and exit
+# One-shot: run one cycle and exit (required for cron/systemd timers)
 hsync -b docs -s https://server.example.com --once
-hsync -b docs -s https://server.example.com
 ```
 
-In **LAN P2P Mode** the one-shot form is
-`--lan-mode --no-lan-persistent` (the peer exits after one slave sync cycle):
+Without `--once` the client keeps running and retries an unreachable server
+forever, so schedulers must always pass `--once`.
+
+In **LAN P2P Mode** the same `--once` flag runs one slave sync cycle and
+exits:
 
 ```bash
-hsync -b docs -p ~/Sync --lan-mode --no-lan-persistent
+hsync -b docs -p ~/Sync --lan-mode --once
 ```
 
 > **Note:** the LAN master role is inherently continuous (it must stay
 > available to serve peers). One-shot LAN runs apply to the slave side:
-> keep the master running and start the slave with `--no-lan-persistent`.
+> keep the master running and start the slave with `--once`.
 
 Flags that make a run non-interactive and safe for schedulers:
 
@@ -132,11 +134,12 @@ Notes:
 ### LAN one-shot via cron
 
 Schedules a slave that syncs against the LAN master and exits (exit `5`
-means "no peer found"):
+means "no peer found"). A finite `--discovery-timeout` bounds the wait for
+the first peer (the default is to wait indefinitely):
 
 ```cron
 0 2 * * * hsyncuser HSYNC_LAN_KEY="shared-secret" hsync -b shared \
-    -p /data/shared --lan-mode --no-lan-persistent --discovery-timeout 30 -y
+    -p /data/shared --lan-mode --once --discovery-timeout 30 -y
 ```
 
 ## systemd timer
@@ -229,5 +232,5 @@ systemctl list-timers hsync-documents.timer
 
 - [CLI Options](configuration.md) — full reference of every flag.
 - [Sync Modes](sync-modes.md) — one-shot vs continuous watch.
-- [LAN Mode](lan-mode.md) — peer discovery and `--no-lan-persistent`.
+- [LAN Mode](lan-mode.md) — peer discovery and one-shot `--once` runs.
 - [Server Mode](server-mode.md) — server-mode setup.

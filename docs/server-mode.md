@@ -36,7 +36,7 @@ flowchart TB
 | Feature | Description |
 |---------|-------------|
 | **Central Hub** | One server, many clients; the server relays sync (transport hub, not an authority) |
-| **Real-Time Sync** | WebSocket-based instant event propagation in watch mode (`-w`) |
+| **Real-Time Sync** | WebSocket-based instant event propagation in continuous mode (the default) |
 | **Delta Transfer** | Rsync-style block sync for large files with small changes |
 | **Compression** | Automatic zstd compression (skips already-compressed formats) |
 | **Bandwidth Limiting** | Token-bucket throttling for upload and download |
@@ -54,9 +54,11 @@ In plain terms, server mode works in four steps:
    authenticates with `HSYNC_API_KEY` (Bearer token).
 2. **Reconcile** — the client fetches the remote file list (REST), scans the
    local directory, and uploads/downloads every difference.
-3. **Watch** — if `-w` (watch mode) is set, the client opens a WebSocket and
-   receives remote events (add/modify/delete/rename) in real time. A periodic
-   full resync (`-i`) runs as a safety net.
+3. **Watch** — in continuous mode (the default) the client opens a WebSocket
+   and receives remote events (add/modify/delete/rename) in real time. A
+   periodic full resync (`-i`) runs as a safety net. If the server is
+   unreachable, the client keeps retrying forever; pass `--once` for a single
+   cycle that exits.
 4. **Stay in sync** — as long as the client is running, every local change is
    pushed to the server and every remote change is pulled locally.
 
@@ -66,7 +68,7 @@ sequenceDiagram
     participant S as Server
     participant C2 as Client B
 
-    Note over C1,C2: Both connected via WebSocket (watch mode)
+    Note over C1,C2: Both connected via WebSocket (continuous mode)
 
     C1->>C1: ① Edit file.txt
     C1->>S: ② POST file.txt
@@ -85,9 +87,9 @@ sequenceDiagram
 > [Getting Started — Server Mode](getting-started-server.md) guide; this page
 > explains how Server Mode works.
 
-## Watch Mode & Auto-Sync
+## Continuous Mode & Auto-Sync
 
-Watch mode (`-w`) keeps a persistent WebSocket connection open. The server
+Continuous mode (the default) keeps a persistent WebSocket connection open. The server
 pushes every remote change (add, modify, delete, rename) to all connected
 clients instantly — no polling.
 
@@ -96,19 +98,19 @@ disable) as a safety net: it catches any file-system events the watcher may
 have missed (e.g. the inotify watch limit on Linux, sleep/wake cycles).
 
 ```bash
-# Watch mode with a 5-minute resync interval
-hsync -s https://server:9753 -b mybucket -p /path/to/dir -w -i 300
+# Continuous mode with a 5-minute resync interval
+hsync -s https://server:9753 -b mybucket -p /path/to/dir -i 300
 
-# Watch mode with a longer stability delay (safe for slow storage)
-hsync -s https://server:9753 -b media -p /srv/media -w --stability-delay 30
+# Continuous mode with a longer stability delay (safe for slow storage)
+hsync -s https://server:9753 -b media -p /srv/media --stability-delay 30
 ```
 
 For scheduled background sync (cron, systemd timer, Task Scheduler) use
-one-shot mode (`-y` to skip interactive prompts):
+one-shot mode (`--once`; `-y` skips interactive prompts):
 
 ```bash
 # Cron entry: sync every hour
-0 * * * * HSYNC_API_KEY="hs_<id>_<secret>" hsync -s https://server:9753 -b mybucket -p /path -y
+0 * * * * HSYNC_API_KEY="hs_<id>_<secret>" hsync --once -s https://server:9753 -b mybucket -p /path -y
 ```
 
 ## Delta Transfer, Compression & Bandwidth
@@ -125,7 +127,7 @@ automatically falls back to a full transfer on any failure.
 
 ```bash
 # Delta is enabled by default; disable it:
-hsync -s https://server:9753 -b media -p ~/Media -w --no-delta
+hsync -s https://server:9753 -b media -p ~/Media --no-delta
 ```
 
 > Full conditions, configuration and the fallback model are documented in
@@ -135,16 +137,16 @@ hsync -s https://server:9753 -b media -p ~/Media -w --no-delta
 
 ```bash
 # Compression is enabled by default; disable it for fast local networks:
-hsync -s https://server:9753 -b media -p ~/Media -w --no-compression
+hsync -s https://server:9753 -b media -p ~/Media --no-compression
 ```
 
 ### Bandwidth limiting (token bucket)
 
 ```bash
 # Cap upload to 1 MB/s
-hsync -s https://server:9753 -b mybucket -w --max-bandwidth-upload 1MB
+hsync -s https://server:9753 -b mybucket --max-bandwidth-upload 1MB
 # Cap download to 500 KB/s
-hsync -s https://server:9753 -b mybucket -w --max-bandwidth-download 500KB
+hsync -s https://server:9753 -b mybucket --max-bandwidth-download 500KB
 ```
 
 ## File Filtering & Ignore Rules
@@ -294,7 +296,7 @@ limits, cron/systemd scheduling, mass-deletion guard — are in
 
 ## Technical Internals
 
-For the deep client-side flow — the initial-sync and watch-mode **sequence
+For the deep client-side flow — the initial-sync and continuous-mode **sequence
 diagrams**, the event-handling flow chart, the conflict-resolution tree, the
 delta-transfer protocol and the retry/timeout model — see [Sync
 Flow](sync-flow.md). The server-side flow (file storage, event broadcast,

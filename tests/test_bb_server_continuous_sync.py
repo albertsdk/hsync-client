@@ -6,7 +6,7 @@
 
 """Black-box tests for the continuous (watch-mode) sync use case.
 
-Drives the real client as a subprocess in watch mode against the real
+Drives the real client as a subprocess in continuous mode against the real
 in-process server. Verifies observable filesystem convergence — no internals
 are imported or mocked.
 
@@ -128,7 +128,7 @@ class TestContinuousSyncServerRestart:
         watch_sync_restartable,
         bb_restartable_server_files,
     ):
-        """A client in watch mode must re-connect and re-converge after the
+        """A client in continuous mode must re-connect and re-converge after the
         server process is restarted: changes made while the server was down
         (and the WS disconnected) are reconciled by the periodic full sync.
 
@@ -137,7 +137,7 @@ class TestContinuousSyncServerRestart:
         WS was disconnected and could not be broadcast as events.
         """
 
-        # Given a client running in watch mode against a bucket (periodic
+        # Given a client running in continuous mode against a bucket (periodic
         # full resync every 20s)
         log_path = str(Path(local_dir).parent / "client.log")
         proc = watch_sync_restartable(
@@ -145,7 +145,7 @@ class TestContinuousSyncServerRestart:
         )
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
             # Prove the local→server watcher pipeline before the real writes.
@@ -191,7 +191,7 @@ class TestContinuousSyncMore:
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
@@ -228,12 +228,12 @@ class TestContinuousSync:
     def test_local_change_uploaded_to_server(
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_files
     ):
-        # Given a client running in watch mode against an empty bucket
+        # Given a client running in continuous mode against an empty bucket
         log_path = _client_log_path(local_dir)
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
             # Prove the local→server watcher pipeline before the real writes.
@@ -260,7 +260,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+                "continuous mode did not become ready"
             )
 
             # Upload while the client is watching — the server broadcasts an
@@ -281,7 +281,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+                "continuous mode did not become ready"
             )
 
             # Upload while the client is watching so the initial download is
@@ -318,11 +318,11 @@ class TestContinuousSync:
     def test_remote_file_downloaded_to_local(
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
-        # Given a client running in watch mode against an empty bucket
+        # Given a client running in continuous mode against an empty bucket
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+                "continuous mode did not become ready"
             )
 
             # When a file is created on the server (broadcasts an "added" event)
@@ -351,7 +351,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
@@ -385,7 +385,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+                "continuous mode did not become ready"
             )
 
             # Upload while watching so the file reaches the client via
@@ -409,7 +409,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
@@ -434,7 +434,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+                "continuous mode did not become ready"
             )
 
             # Upload while watching so the file reaches the client via
@@ -476,7 +476,7 @@ class TestContinuousSync:
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path, "--ignore-delete")
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
 
@@ -518,7 +518,7 @@ class TestContinuousSyncSymlinkStable:
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
-                "watch mode did not become ready"
+                "continuous mode did not become ready"
             )
             # Given a target file and an in-bucket symlink created locally
             (Path(local_dir) / "tgt.txt").write_bytes(b"target\n")
@@ -566,7 +566,7 @@ class TestContinuousSyncHsyncignoreReload:
         proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
-                "watch mode did not become ready\n"
+                "continuous mode did not become ready\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
             # Prove the local→server watcher pipeline before the real writes.

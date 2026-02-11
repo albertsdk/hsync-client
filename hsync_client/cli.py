@@ -204,20 +204,15 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = getcwd(),
-    continuous: Annotated[
-        bool,
-        typer.Option(
-            "-w",
-            "--watch",
-            help="Watch for changes and sync continuously.",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
     once: Annotated[
         bool,
         typer.Option(
             "--once",
-            help="Run a single sync cycle and exit (explicit form of the default behaviour).",
+            help=(
+                "Run a single sync cycle and exit. Without --once, the client "
+                "keeps running and retries the connection indefinitely (the "
+                "default). In LAN mode it runs one slave sync cycle and exits."
+            ),
             rich_help_panel="Sync",
         ),
     ] = False,
@@ -226,7 +221,7 @@ def main(
         typer.Option(
             "-i",
             "--interval",
-            help="Force full sync every SEC seconds (requires -w).",
+            help="Force full sync every SEC seconds (continuous mode only).",
             metavar="SEC",
             rich_help_panel="Sync",
         ),
@@ -235,7 +230,10 @@ def main(
         int | None,
         typer.Option(
             "--retry-delay",
-            help="Retry connection after SEC seconds (default: auto-detected).",
+            help=(
+                "Base of the reconnect backoff in seconds (exponential with "
+                "jitter, capped at 60; default: auto-detected)."
+            ),
             metavar="SEC",
             rich_help_panel="Sync",
         ),
@@ -460,18 +458,6 @@ def main(
             rich_help_panel="LAN Mode",
         ),
     ] = None,
-    lan_persistent: Annotated[
-        bool | None,
-        typer.Option(
-            "--lan-persistent/--no-lan-persistent",
-            help=(
-                "Stay active waiting for peers (default) or exit when no peers "
-                "are found (--no-lan-persistent)."
-            ),
-            show_default=False,
-            rich_help_panel="LAN Mode",
-        ),
-    ] = None,
     force_master: Annotated[
         bool,
         typer.Option(
@@ -610,10 +596,11 @@ def main(
         [dim]# Sync a specific local directory[/dim]
         $ hsync -b documents -s https://server.example.com -p ~/Documents
 
-        [dim]# Continuous sync (watch for changes)[/dim]
-        $ hsync -b projects -s https://server.example.com -w
+        [dim]# Continuous sync (the default: keeps retrying if the
+        # server is unreachable, like LAN mode)[/dim]
+        $ hsync -b projects -s https://server.example.com
 
-        [dim]# Explicit one-shot sync (the default behaviour)[/dim]
+        [dim]# One-shot sync (single cycle, then exit)[/dim]
         $ hsync -b projects -s https://server.example.com --once
 
         [dim]# Dry run to see what would be synced[/dim]
@@ -683,18 +670,8 @@ def main(
             "cannot be forced to be master and forbidden from being master at once."
         )
 
-    # --once is the explicit form of the default one-shot behaviour and is
-    # therefore incompatible with continuous watch and LAN persistence.
-    if once and continuous:
-        raise typer.BadParameter(
-            "--once and --watch are mutually exclusive: --once is the explicit "
-            "form of the default one-shot behaviour (omit -w)."
-        )
-    if once and lan_persistent:
-        raise typer.BadParameter(
-            "--once is incompatible with --lan-persistent: in LAN mode a "
-            "one-shot run is expressed with --no-lan-persistent."
-        )
+    # --once selects a one-shot run in every topology; the default is
+    # continuous/infinite.
     if (
         min_free_disk_space < MIN_FREE_DISK_SPACE_MB_MIN
         or min_free_disk_space > MIN_FREE_DISK_SPACE_MB_MAX
@@ -775,8 +752,7 @@ def main(
         lan_key_fd=lan_key_fd,
         events_json_fd=events_json_fd,
         local_path=local_path,
-        continuous=continuous,
-        once=once,
+        continuous=not once,
         resync=resync,
         reconnect_delay=reconnect_delay,
         stability_delay=stability_delay,
@@ -795,7 +771,6 @@ def main(
         lan_port=lan_port,
         discovery_timeout=discovery_timeout,
         lan_group=lan_group,
-        lan_persistent=lan_persistent,
         force_master=force_master,
         never_master=never_master,
         lan_require_pairing=require_pairing,

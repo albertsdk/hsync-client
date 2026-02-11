@@ -5,17 +5,17 @@ framework; asyncio event loop + watchdog observer + a thread pool for transfers.
 
 ## Entry & orchestration
 
-`main.main` (`main.py:25`) invokes the Typer app `cli.main` (`cli.py:101`), which
+`main.main` (`main.py:25`) invokes the Typer app `cli.main` (`cli.py:108`), which
 parses flags, sets up logging, builds `CONFIG`, and calls `run_sync`
-(`main_logic.py:501`). `run_sync` validates inputs, runs pre-sync safety checks,
+(`main_logic.py:539`). `run_sync` validates inputs, runs pre-sync safety checks,
 then branches by mode and starts the watcher loop. Console script: `cli.run`
-(`cli.py:674`).
+(`cli.py:809`).
 
 ## The two run modes
 
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
-| **Remote (server)** | default; `--server-url` set | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:59`) |
+| **Remote (server)** | default; `--server-url` set; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:97`) |
 | **LAN (P2P)** | `--lan-mode` | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `lan_handler.run_lan_mode` (`lan_handler.py:109`) |
 
 LAN sub-roles: `_run_as_master` (`lan_handler.py:273`) starts `LANServer`
@@ -34,12 +34,12 @@ getters (`config.py:154`–`:265`). Input validation is inline in `cli.py`
 ## Pre-sync safety
 
 `run_sync` runs guards before touching files:
-- `_check_deletion_risk` (`main_logic.py:262`) — warns/prompts when settings could
+- `_check_deletion_risk` (`main_logic.py:285`) — warns/prompts when settings could
   delete local data (gated by `--yes`).
-- `_check_lan_write_policy` (`main_logic.py:344`) — requires a LAN key for
+- `_check_lan_write_policy` (`main_logic.py:379`) — requires a LAN key for
   write-capable LAN sync in non-interactive mode.
-- `_check_disk_space` (`main_logic.py:388`), `_check_server_connectivity`
-  (`main_logic.py:954`).
+- `_check_disk_space` (`main_logic.py:441`), `_check_server_connectivity`
+  (`main_logic.py:1142`).
 - Runtime mass-deletion guard during sync: `_mass_deletion_blocked` (`sync.py:94`).
 
 ## Readiness threshold (`[READY]`, shared label SSOT)
@@ -50,7 +50,7 @@ established:
 
 | Mode | Emission point |
 | ---- | -------------- |
-| Remote (watch) | `remote_websocket.py:179` — after WS auth + `observer.start()` |
+| Remote (continuous, default) | `remote_websocket.py:212` — after WS auth + `observer.start()` |
 | LAN master | `lan_handler.py:346` — after HTTP + WS servers up, mDNS `server_ready`, watcher running |
 | LAN slave | `lan_websocket.py:875` — after watcher start **and** completed master handshake (a failed auth never reaches it) |
 
@@ -75,7 +75,7 @@ watchdog Observer ──> BaseFileEventHandler (file_event_handler.py:49)
                           execute in parallel (_execute_parallel_transfers:267)
 ```
 
-Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:425`) and
+Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:526`) and
 `LANMasterFileEventHandler` (`lan_websocket.py:546`) subclass `BaseFileEventHandler`;
 `LANSlaveFileEventHandler` (`lan_websocket.py:1003`) is a separate watchdog
 `FileSystemEventHandler` for the slave→master upload path.

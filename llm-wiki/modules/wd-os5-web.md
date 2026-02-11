@@ -43,8 +43,9 @@ Scope: **LAN mode only**. In server mode the NAS is a client of a central
 `hsync-server`, so the section shows an explanatory note instead of a command.
 
 Only connection-matching fields are emitted — bucket, mode, group, LAN key.
-Per-device sync behaviour and the NAS role are omitted: watch is implicit in
-LAN mode and master election resolves the remote role automatically. The LAN
+Per-device sync behaviour and the NAS role are omitted: continuous mode is
+the default in both LAN and server mode, and master election resolves the
+remote role automatically. The LAN
 shared key is rendered masked (`KEY_MASK`, fixed length) with a reveal toggle
 (`keyRevealed`); the Copy button copies the unmasked command via
 `navigator.clipboard` with an `execCommand` fallback. Every interpolated value

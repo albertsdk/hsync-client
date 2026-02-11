@@ -101,9 +101,6 @@ class EnvSettings(BaseSettings):
         default=None, ge=1, description="Heartbeat interval in seconds"
     )
     peer_timeout: int | None = Field(default=None, ge=1, description="Peer timeout in seconds")
-    lan_persistent: bool = Field(
-        default=True, description="Stay active indefinitely waiting for peers"
-    )
     never_master: bool = Field(
         default=False,
         description="Never become master in LAN mode (always remain a client/slave)",
@@ -279,11 +276,6 @@ def get_peer_timeout() -> int | None:
 def get_tombstone_ttl_days() -> int:
     """Get tombstone retention window in days from environment (late binding)."""
     return get_env_settings().tombstone_ttl_days
-
-
-def get_lan_persistent() -> bool:
-    """Get LAN persistent mode from environment."""
-    return get_env_settings().lan_persistent
 
 
 def get_never_master() -> bool:
@@ -472,8 +464,8 @@ class HsyncConfig(TypedDict):
     LAN_KEY: str | None
     # LAN group name for peer filtering (None = no filtering)
     LAN_GROUP: str | None
-    # LAN persistent mode (stay active indefinitely waiting for peers)
-    LAN_PERSISTENT: bool
+    # One-shot run: a single sync cycle then exit (False = continuous, the default)
+    ONE_SHOT: bool
     # Force this client to be master in LAN mode
     LAN_FORCE_MASTER: bool
     # Never let this client become master in LAN mode (always client/slave)

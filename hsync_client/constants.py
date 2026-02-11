@@ -194,9 +194,11 @@ HTTP_TIMEOUT_DEFAULT = 30
 HEARTBEAT_INTERVAL = 5
 PEER_TIMEOUT = 15
 
-# LAN discovery timeout (seconds)
-# 0 is reserved as the CLI/env sentinel for "wait indefinitely".
-DISCOVERY_TIMEOUT_DEFAULT = 10
+# LAN discovery timeout (seconds). Default is 0 = "wait indefinitely",
+# mirroring the client-server behaviour (the client keeps retrying the
+# connection forever by default). A finite positive value bounds how long
+# the client waits for the initial peer discovery before reporting no peer.
+DISCOVERY_TIMEOUT_DEFAULT = 0
 # Polling window used when discovery waits indefinitely (timeout == 0): how often
 # the LAN loop wakes up to re-evaluate peer/master state. Matches the LAN
 # heartbeat cadence so we react within one announce cycle without busy-spinning

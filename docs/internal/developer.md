@@ -196,20 +196,24 @@ For usage and configuration, see [Configuration > Compression](../configuration.
 
 ## WebSocket Reconnection
 
-When the WebSocket connection drops in watch mode, `remote_connect` loops
-forever: sleep a **fixed** `RECONNECT_DELAY`, refresh autotune RTT, then
-run a full `sync()` and re-enter `remote_events`. There is no attempt
-counter, no exponential backoff, and no fatal exit after N failures.
+When the WebSocket connection drops in continuous mode, `remote_connect`
+loops forever: sleep a **full-jitter exponential backoff**, refresh autotune
+RTT, then run a full `sync()` and re-enter `remote_events`. There is no
+attempt cap and no fatal exit after N failures. The backoff is
+`random.uniform(0, min(RECONNECT_DELAY * 2**attempts, RECONNECT_DELAY_MAX))`
+and the attempt counter resets after a healthy loop, so an immediately
+available server is not missed while simultaneous daemons stay spread out
+(no thundering herd).
 
 ```
-Connected ──(disconnect)──► sleep RECONNECT_DELAY
-                         ──► full sync() ──► Connected
+Connected ──(disconnect)──► sleep backoff(attempts++)
+                         ──► full sync() ──► Connected (attempts=0)
 ```
 
-`RECONNECT_DELAY` defaults to 5 seconds (range 1–60). Autotune may change
-the value from measured RTT; each wait still uses that single interval.
-Exponential backoff belongs to per-file transfer retries (`retry.py`) and
-the outbound `EventQueue`, not this loop.
+`RECONNECT_DELAY` defaults to 5 seconds (range 1–60) and feeds the backoff
+base; `RECONNECT_DELAY_MAX` (60) caps the worst case. Autotune may change
+the base from measured RTT. Exponential backoff also covers per-file
+transfer retries (`retry.py`) and the outbound `EventQueue`.
 
 ### Reconnect vs. periodic resync
 
@@ -219,7 +223,7 @@ re-reconciles while the connection stays up, in case events were missed.
 
 ## Stdin Command Protocol
 
-In watch mode, the client accepts runtime commands via stdin. Each command is a
+In continuous mode, the client accepts runtime commands via stdin. Each command is a
 single JSON line:
 
 ```json

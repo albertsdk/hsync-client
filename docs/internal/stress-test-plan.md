@@ -354,7 +354,7 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
    modes) and the client-side converge runs only when
    `SYNC_DIRECTION == "download-only"` (`sync.py:362-367`,
    `converge_directory_permissions:1247`). Permissions ARE applied from inbound
-   directory events in LAN watch mode (event handler → `set_permissions_on_dir`,
+   directory events in LAN continuous mode (event handler → `set_permissions_on_dir`,
    `utils.py:635`). → server-mode dir assertion = **floor-only**; LAN dir
    assertion = **strict** and generation must happen **after** the slave is
    `[READY]` (§14 LAN flow).
@@ -408,9 +408,9 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
 
 | Concern | Reference |
 | --- | --- |
-| BB server fixtures | `hsync-client/tests/conftest.py:462` (`live_server`), `:707` (`bb_bucket`), `:734` (`bb_server_upload`), `:762` (`bb_server_files`), `:782` (`bb_server_download`), `:803` (`local_dir`), `:982` (`run_sync_once`) |
+| BB server fixtures | `hsync-client/tests/conftest.py:462` (`live_server`), `:733` (`bb_bucket`), `:760` (`bb_server_upload`), `:788` (`bb_server_files`), `:808` (`bb_server_download`), `:829` (`local_dir`), `:1007` (`run_sync_once`) |
 | BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:96`, `_lan_start:131`, `_terminate:187`, `_wait_for_file:229`, `_wait_for_text_in_stderr:239`, `_wait_for_slave_events:258` (`[READY]` marker), `_wait_for_master:358`; fixtures `lan_master_dir:392`, `lan_slave_dir:400`, `lan_bucket:408` |
-| CLI flags | `hsync-client/hsync_client/cli.py` — `--once:219`, `--watch:211`, `--insecure:139`, `--no-autotune:359`, `--max-concurrent-transfers:350`, `--min-free-disk-space:367`, `--lan-mode:427`, `--force-master:478`, `--never-master:486`, `--sync-direction:290` |
+| CLI flags | `hsync-client/hsync_client/cli.py` — `--once:210`, `--insecure:139`, `--no-autotune:354`, `--max-concurrent-transfers:345`, `--min-free-disk-space:362`, `--lan-mode:422`, `--force-master:473`, `--never-master:481`, `--sync-direction:285` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
 | Permissions apply (client) | `hsync-client/hsync_client/utils.py:616` (`set_permissions`), `:635` (`set_permissions_on_dir`); download `transfer.py:452,678`; dir converge `sync.py:1213-1282` |

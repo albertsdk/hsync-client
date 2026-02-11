@@ -51,10 +51,10 @@ manually via SSH for advanced options:
 
 ```bash
 # One-shot server-mode sync
-hsync -s https://server:9753 -b mybucket -p /path/to/dir
+hsync --once -s https://server:9753 -b mybucket -p /path/to/dir
 
-# Continuous watch mode
-hsync -s https://server:9753 -b mybucket -p /path/to/dir -w
+# Continuous mode (the default)
+hsync -s https://server:9753 -b mybucket -p /path/to/dir
 
 # LAN mode (peer-to-peer, no server)
 hsync -b mybucket -p /path/to/dir --lan-mode

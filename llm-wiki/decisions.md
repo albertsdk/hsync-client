@@ -9,11 +9,11 @@ implements it, plus client-only operational rules.
 
 | ADR | Client implementation |
 | --- | --------------------- |
-| [0001 server-vs-lan-modes](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:459`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
+| [0001 server-vs-lan-modes](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:539`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
 | [0002 lan-master-election](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0002-lan-master-election.md) | `PeerManager._elect_master` (`lan.py:129`) → calls common `elect_master` |
 | [0003 tombstone-gossip](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
-| [0004 desktop-subprocess-contract](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:76`) |
-| [0005 protocol-versioning](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:275`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
+| [0004 desktop-subprocess-contract](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:83`) |
+| [0005 protocol-versioning](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:291`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
 | [0006 master-authoritative-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0006-master-authoritative-conflict-model.md) | **Superseded by ADR-0022** (causal vector clocks). `_compare_files` (`sync.py:989`) now uses `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`) on `conflict_download`. Upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server). |
 | [0017 lan-slave-outbound-event-reliability](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
 | [0023 corrected-mtime-tie-break](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `lan_handler.run_lan_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `lan_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
@@ -24,6 +24,19 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
 `pinning.py` + `ssl_utils.py` ([lan-mode.md](modules/lan-mode.md)).
 
 ## Client-only operational rules
+- **Continuous/daemon mode is the default in both topologies**: the client
+  runs indefinitely, retries an unreachable server forever (`run_sync`
+  connectivity gate is non-fatal in continuous mode; `remote_connect`
+  (`remote_websocket.py`) loops forever with full-jitter exponential
+  backoff), and LAN discovery waits indefinitely by default
+  (`DISCOVERY_TIMEOUT_DEFAULT = 0`). There is no watch flag, no
+  `--lan-persistent` flag and no `HSYNC_LAN_PERSISTENT`/`HSYNC_PERSISTENT`
+  environment variable: continuous is the default and `--once` is the single
+  one-shot selector in both topologies (in LAN mode it runs one slave sync
+  cycle and exits; the master role stays continuous). Rationale: sync
+  daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
+  connectivity loss; schedulers want the explicit one-shot + exit-code
+  contract.
 
 - **One device identity per installation (Syncthing model)**: LAN mode identifies
   with the persistent device ID from `identity.py` (anchored in
@@ -51,7 +64,7 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
 - **Mandatory TLS in LAN mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
 - **Write-policy gate**: non-interactive write-capable LAN sync requires a LAN key
-  (`_check_lan_write_policy`, `main_logic.py:344`).
+  (`_check_lan_write_policy`, `main_logic.py:379`).
 - **Mass-deletion guard (§12)**: bulk deletes pause the cycle
   (`_mass_deletion_blocked`, `sync.py:94`) unless explicitly allowed.
 - **Per-path serialization (§14)**: all transfers take `utils.path_lock`

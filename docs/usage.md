@@ -19,7 +19,7 @@ HSYNC runs in one of two mutually exclusive operating modes:
 # Server Mode — connect to a central HSYNC server
 hsync -s <server_url> -b <bucket_name> [options]
 
-# LAN Mode — peer-to-peer, no server (mDNS discovery, implicit watch)
+# LAN Mode — peer-to-peer, no server (mDNS discovery, implicit continuous mode)
 hsync --lan-mode -b <bucket_name> [options]
 ```
 
@@ -82,7 +82,7 @@ documented in the single configuration reference:
 ## Symlinks
 
 Symbolic links are **replicated structurally**, both on the first sync and
-during continuous watching, in server mode and LAN mode alike:
+during continuous operation, in server mode and LAN mode alike:
 
 - A symlink whose target stays inside the synced folder is copied **as a
   link**: the target is not followed and its content is not transferred.

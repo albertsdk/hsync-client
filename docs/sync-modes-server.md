@@ -20,8 +20,9 @@ hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 1. The client connects to the server over HTTPS/WSS.
 2. Authenticates with `HSYNC_API_KEY`.
 3. Performs an initial full sync (bidirectional by default).
-4. Enters watch mode: monitors the local folder and receives real-time events
-   from the server via WebSocket.
+4. Enters continuous mode: monitors the local folder and receives real-time
+   events from the server via WebSocket. If the server is unreachable at
+   startup, it keeps retrying forever (like LAN mode) instead of exiting.
 
 ### Sync Directions
 
@@ -31,24 +32,26 @@ hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 | **Upload-only** | `--sync-direction upload-only` | Send local changes, ignore remote. |
 | **Download-only** | `--sync-direction download-only` | Receive remote changes, ignore local. |
 
-### Watch Mode
+### Continuous / daemon mode
 
-When `--watch` is enabled:
+Continuous mode is the **default**. The client runs as a daemon:
 
-- The client monitors the local folder for changes (create, modify, delete, rename).
+- It monitors the local folder for changes (create, modify, delete, rename).
 - Changes are immediately uploaded to the server.
 - The WebSocket pushes remote changes to the client in real time.
+- If the server is unreachable, it retries the connection indefinitely
+  instead of exiting — matching LAN mode.
 
 ```bash
-hsync --watch -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
 
 ### Single Sync (one-shot)
 
-One-shot mode is the **default** — when you omit `-w` / `--watch`, the client
-runs **one full sync cycle** and exits. It compares local and remote files,
-uploads changes, downloads updates, deletes obsolete files (unless
-`--ignore-delete` is set), then shuts down.
+Pass `--once` to run **one full sync cycle** and exit. It compares local and
+remote files, uploads changes, downloads updates, deletes obsolete files
+(unless `--ignore-delete` is set), then shuts down. If the server is
+unreachable, it exits non-zero after the startup retries.
 
 This is ideal for:
 - **Cron jobs** — schedule periodic sync with `cron` or systemd timers
@@ -56,11 +59,8 @@ This is ideal for:
 - **Manual "sync now"** — run on demand without a persistent process
 
 ```bash
-hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync --once -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
-
-To keep the client running and reacting to changes in real time, add `-w` /
-`--watch`.
 
 ### Dry Run
 

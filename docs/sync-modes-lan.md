@@ -42,20 +42,20 @@ In LAN mode, the **slave**'s sync direction controls what it sends to the master
 | **Upload-only** | `--sync-direction upload-only` | Send changes, ignore what other peers do. |
 | **Download-only** | `--sync-direction download-only` | Only receive from master, never upload. |
 
-### Watch Mode
+### Continuous Mode
 
-In LAN mode watch is **implicit**: persistent peers monitor the local folder
-and the master's event stream even without `-w`. The `--watch` flag still
-exists; it is the explicit form used in server mode.
+Continuous operation is the **default** in both LAN and server mode. In LAN
+mode it is also implicit: peers monitor the local folder and the master's
+event stream without any extra flag.
 
 ### Single Sync (one-shot)
 
-In LAN Mode, the client is **persistent by default**: it stays connected and
-reacts to changes continuously (watch mode is implicit). To run a **single
-sync cycle and exit**, use `--no-lan-persistent`:
+In LAN Mode, the client **runs continuously by default**: it stays connected
+and reacts to changes (continuous mode is implicit). To run a **single
+sync cycle and exit**, pass `--once` (the universal one-shot selector):
 
 ```bash
-hsync -b mybucket -p ~/Sync --lan-mode --no-lan-persistent
+hsync -b mybucket -p ~/Sync --lan-mode --once
 ```
 
 This compares local and remote files, syncs changes, and shuts down — useful

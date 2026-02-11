@@ -15,8 +15,7 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | `--force-master` | Force this device to be the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
-| `--discovery-timeout` | Seconds to wait for LAN peer discovery (`0` = wait indefinitely) | `10` |
-| `--lan-persistent` / `--no-lan-persistent` | Keep waiting for peers, or exit after one attempt when none are found | persistent |
+| `--discovery-timeout` | Seconds to wait for LAN peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
 
 There is **no** `--lan-key` flag. The shared secret is read from the
 `HSYNC_LAN_KEY` environment variable. Parent processes (desktop GUI) may
@@ -55,8 +54,7 @@ pass it on a pipe with the hidden `--lan-key-fd` flag.
 | `HSYNC_LAN_PORT` | LAN master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
-| `HSYNC_LAN_PERSISTENT` | Keep waiting for peers (`false` ≈ `--no-lan-persistent`) | `true` |
-| `HSYNC_DISCOVERY_TIMEOUT` | LAN peer discovery timeout in seconds (`0` = indefinitely) | `10` |
+| `HSYNC_DISCOVERY_TIMEOUT` | LAN peer discovery timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Min file size for delta transfer in LAN mode | `1048576` (1 MB) |
 

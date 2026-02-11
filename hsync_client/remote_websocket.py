@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from functools import partial
 from json import JSONDecodeError, dumps, loads
+from random import uniform
 from ssl import CERT_NONE, Purpose, create_default_context
 from typing import Any, cast
 
@@ -42,7 +43,12 @@ from websockets import ConnectionClosed, connect
 
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG, get_api_key
-from hsync_client.constants import HSYNC_VERSION, WS_MAX_MESSAGE_BYTES, ActionLabel
+from hsync_client.constants import (
+    HSYNC_VERSION,
+    RECONNECT_DELAY_MAX,
+    WS_MAX_MESSAGE_BYTES,
+    ActionLabel,
+)
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
@@ -435,6 +441,20 @@ async def _refresh_network_tuning() -> None:
         log.debug(f"autotune: reconnect RTT probe failed ({e}); keeping current values")
 
 
+def _reconnect_delay(base: float, attempts: int) -> float:
+    """Full-jitter exponential backoff for reconnect attempts.
+
+    Returns a uniformly random delay in ``[0, min(base * 2**attempts,
+    RECONNECT_DELAY_MAX)]``. Repeating full jitter keeps the expected retry
+    window short while spreading simultaneous daemons on a shared server, and
+    the hard cap bounds the worst case. ``attempts`` counts consecutive
+    failures since the last successful connection (0 returns a small random
+    sniff so an immediately-available server is not missed).
+    """
+    cap = min(base * (2**attempts), float(RECONNECT_DELAY_MAX))
+    return uniform(0, max(cap, base))
+
+
 async def remote_connect() -> None:
     """
     Manage WebSocket connection with automatic reconnection.
@@ -446,6 +466,7 @@ async def remote_connect() -> None:
     """
     global _resync_task
 
+    _attempts = 0
     while True:
         try:
             # Re-measure RTT before each sync — not only on reconnect — so the
@@ -473,17 +494,24 @@ async def remote_connect() -> None:
             # Enter continuous event monitoring
             await remote_events()
 
+            # A healthy loop reached: reset the backoff for any future outage.
+            _attempts = 0
+
         except ConnectionClosed:
             # WebSocket disconnected - wait before reconnecting
-            await sleep(CONFIG["RECONNECT_DELAY"])
+            delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], _attempts)
+            _attempts += 1
+            log.info(f"WebSocket disconnected; reconnecting in {delay:.1f}s…")
+            await sleep(delay)
 
         except Exception as e:
-            # Unexpected error - log and retry
+            # Unexpected error - log and retry (transient failures never end
+            # the daemon; permanent errors such as auth are already excluded)
             log.error(f"An unexpected error occurred: {e}.")
-            await sleep(CONFIG["RECONNECT_DELAY"])
-
-        finally:
-            log.info(f"Reconnecting in {CONFIG['RECONNECT_DELAY']} sec.…")
+            delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], _attempts)
+            _attempts += 1
+            log.info(f"Reconnecting in {delay:.1f}s…")
+            await sleep(delay)
 
 
 # =============================================================================

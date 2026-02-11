@@ -58,7 +58,7 @@ tests/
 ├── lan_helpers.py                      # Shared LAN test helpers
 ├── test_autotune.py                    # Autotune concurrency heuristics
 ├── test_bb_server_remote_sync.py       # Black‑Box: client‑server sync
-├── test_bb_server_continuous_sync.py   # Black‑Box: continuous (watch) sync
+├── test_bb_server_continuous_sync.py   # Black‑Box: continuous sync
 ├── test_bb_server_offline_changes.py   # Black‑Box: offline change reconciliation
 ├── test_bb_server_safety_guards.py     # Black‑Box: mass‑delete guard, disk‑space
 ├── test_bb_server_cli_surface.py       # Black‑Box: CLI help / error messages
@@ -157,7 +157,7 @@ Used by `test_bb_server_remote_sync.py`, `test_bb_server_continuous_sync.py`,
 | `local_dir` | function | Creates a temp directory used as the client's local sync path. |
 | `run_sync_once` | function | Returns a callable that runs a **one‑shot** client sync via `CliRunner` (Typer) with `--yes --insecure --min-free-disk-space 0`. Wraps the invocation in `_ClientGlobalsGuard`. |
 | `run_cli` | function | Like `run_sync_once` but adds no safety flags of its own — used by tests that must control `--yes` / `--sync-direction` / `--min-free-disk-space` precisely. |
-| `watch_sync` | function | Returns a callable that starts the client in **watch mode** as a subprocess. The caller receives the `Popen` handle and must terminate it. |
+| `watch_sync` | function | Returns a callable that starts the client in **continuous mode** as a subprocess. The caller receives the `Popen` handle and must terminate it. |
 | `bb_server_upload` | function | Helper to upload a file directly to the live server (skips the client). |
 | `bb_server_files` | function | Helper to list files on the live server for a bucket. |
 
@@ -327,8 +327,8 @@ poetry install --with blackbox
 | File | What it covers |
 |------|---------------|
 | `test_bb_server_remote_sync.py` | Full sync cycle: upload, download, deletion, rename, directory sync, Unicode filenames, feature flags (compression, delta, autotune), dry‑run, ignore patterns. |
-| `test_bb_server_continuous_sync.py` | Watch‑mode (`--watch`): file creation, modification, and deletion are propagated while the client runs continuously. |
-| `test_bb_server_offline_changes.py` | Watch‑mode resilience: local changes made during a server outage are reconciled after reconnection. |
+| `test_bb_server_continuous_sync.py` | Continuous mode (default daemon): file creation, modification, and deletion are propagated while the client runs continuously. |
+| `test_bb_server_offline_changes.py` | Continuous-mode resilience: local changes made during a server outage are reconciled after reconnection. |
 | `test_bb_server_safety_guards.py` | Mass‑deletion guard, mass‑deletion percent guard, insufficient disk‑space abort, download‑only interactive prompts. |
 | `test_bb_server_cli_surface.py` | CLI help output, error messages, and surface‑level argument validation. |
 | `test_bb_server_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break: the corrected mtime decides conflicts, never the raw clock; the losing content is preserved as a conflicted copy. |
@@ -383,7 +383,7 @@ constant to inject the `hsync-common` source directory into
 | Process | Readiness signal |
 |---------|------------------|
 | `hsync-server` subprocess | Poll `GET /health` until 200 (real readiness probe). |
-| Client in watch mode (`-w`) | `HSYNC_READY_FILE` PID file, written after the first completed sync cycle. |
+| Client in continuous mode | `HSYNC_READY_FILE` PID file, written after the first completed sync cycle. |
 | LAN master | `HSYNC_READY_FILE` PID file, written once its HTTP+WSS servers are up. |
 | LAN slave | `HSYNC_READY_FILE` PID file, written after the initial sync. |
 

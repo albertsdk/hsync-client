@@ -178,7 +178,8 @@ They are harmless: zero bytes, hidden, and excluded from both sync and Git.
 ## Debian Package
 
 **Q: How do I configure the systemd service for LAN mode?**
-The packaged unit already passes `--lan-mode --watch` on `ExecStart`. Edit
+The packaged unit runs `--lan-mode` on `ExecStart` in continuous mode (the
+client default). Edit
 `/etc/hsync/hsync.conf` (not `hsync.env`):
 ```
 HSYNC_BUCKET="mybucket"

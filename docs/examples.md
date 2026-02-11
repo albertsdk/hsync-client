@@ -29,7 +29,7 @@ hsync -v -b mybucket -p ~/Sync
 ### 3.3 Log to file
 
 ```bash
-hsync -o /var/log/hsync.log -b mybucket -p ~/Sync -w
+hsync -o /var/log/hsync.log -b mybucket -p ~/Sync
 ```
 
 ### 3.4 File stability tuning
@@ -47,7 +47,7 @@ hsync -y -b artifacts -p ./build
 ### 3.6 Ignore patterns
 
 ```bash
-HSYNC_IGNORE_PATTERNS="*.tmp,*.log,/build/" hsync -b mybucket -p ~/Sync -w
+HSYNC_IGNORE_PATTERNS="*.tmp,*.log,/build/" hsync -b mybucket -p ~/Sync
 ```
 
 Or create a `.hsyncignore` file in the bucket root.
@@ -55,19 +55,19 @@ Or create a `.hsyncignore` file in the bucket root.
 ### 3.7 Delta transfer for large files
 
 ```bash
-HSYNC_DELTA_ENABLED=true HSYNC_DELTA_MIN_FILE_SIZE=262144 hsync -b large -p ~/Large -w
+HSYNC_DELTA_ENABLED=true HSYNC_DELTA_MIN_FILE_SIZE=262144 hsync -b large -p ~/Large
 ```
 
 ### 3.8 Backup mode (never delete)
 
 ```bash
-hsync --ignore-delete -b backup -p ~/Backup -w
+hsync --ignore-delete -b backup -p ~/Backup
 ```
 
 ### 3.9 Resync interval
 
 ```bash
-HSYNC_RESYNC=600 hsync -b mybucket -p ~/Sync -w
+HSYNC_RESYNC=600 hsync -b mybucket -p ~/Sync
 ```
 
 Full resync every 10 minutes as a safety net for missed events.

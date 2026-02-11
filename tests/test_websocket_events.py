@@ -451,6 +451,38 @@ class TestResync:
             assert call_count >= 2
 
 
+class TestReconnectDelay:
+    """Full-jitter exponential backoff helper used by remote_connect."""
+
+    def _delay(self):
+        from hsync_client.remote_websocket import _reconnect_delay
+
+        return _reconnect_delay
+
+    def test_zero_attempts_is_small_sniff(self, monkeypatch):
+        """Attempt 0 returns a uniform value in (0, base] — a quick retry."""
+        delay = self._delay()
+        monkeypatch.setattr("hsync_client.remote_websocket.uniform", lambda lo, hi: hi)
+        assert delay(5, 0) == 5
+
+    def test_capped_by_reconnect_delay_max(self, monkeypatch):
+        """Deep backoff never exceeds RECONNECT_DELAY_MAX."""
+        from hsync_client.constants import RECONNECT_DELAY_MAX
+
+        delay = self._delay()
+        monkeypatch.setattr("hsync_client.remote_websocket.uniform", lambda lo, hi: hi)
+        assert delay(5, 100) == float(RECONNECT_DELAY_MAX)
+
+    def test_backoff_grows_with_attempts(self, monkeypatch):
+        """Successive attempts expand the upper bound (until the cap)."""
+        delay = self._delay()
+        monkeypatch.setattr("hsync_client.remote_websocket.uniform", lambda lo, hi: hi)
+        first = delay(2, 0)
+        second = delay(2, 1)
+        third = delay(2, 2)
+        assert first < second < third
+
+
 class TestRemoteConnect:
     """Tests for remote_connect function."""
 

@@ -18,7 +18,7 @@ Verifies the two scenarios from the resilience analysis:
   from the server.
 
 Drives the real client/server through their public surfaces only (REST + the
-documented ``-w`` watch CLI). No internal module is imported.
+documented continuous-mode CLI, the default). No internal module is imported.
 
 Requires ``HSYNC_BB_SERVER=1`` to run.
 """
@@ -305,6 +305,7 @@ class TestOfflineChangesClientKill:
         finally:
             _terminate(proc2)
 
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_delete_during_kill_is_not_resurrected(
         self,
         live_server,

@@ -47,19 +47,20 @@ deletes. See [Conflict Resolution](conflict-resolution.md).
 ## Sync Behavior
 
 **Q: How often does HSYNC sync?**
-In watch mode, syncing is near-instant — changes are detected by the file
+In continuous mode (the default), syncing is near-instant — changes are detected by the file
 watcher and pushed immediately. You can also configure periodic full resyncs
 with `HSYNC_RESYNC`.
 
 **Q: What happens if the server goes offline?**
-The client retries the WebSocket connection after a **fixed** delay
-(`--retry-delay` / `HSYNC_RECONNECT_DELAY`, default 5 seconds, range
-1–60). Autotune may pick that interval from network RTT, but each wait is
-still the same value — not exponential backoff. (Exponential backoff is used
-for per-file transfer retries, not for the WebSocket reconnect loop.) When
-the connection succeeds again, a full sync reconciles changes made during
-the downtime — including files deleted while offline, which are removed from
-the server instead of being downloaded back.
+The client retries the WebSocket connection forever with a **full-jitter
+exponential backoff**: each consecutive failure doubles the upper bound of
+the wait window (base `--retry-delay` / `HSYNC_RECONNECT_DELAY`, default
+5 seconds), capped at 60 seconds, with a uniformly random delay inside that
+window. Autotune may adjust the base from network RTT. The daemon never
+exits on a lost connection; per-file transfer retries use a separate
+exponential backoff. When the connection succeeds again, a full sync
+reconciles changes made during the downtime — including files deleted while
+offline, which are removed from the server instead of being downloaded back.
 
 **Q: What happens if the client process is killed?**
 On restart, a full sync reconciles any changes made while the process was
@@ -114,11 +115,11 @@ They are harmless: zero bytes, hidden, and excluded from both sync and Git.
 ## Debian Package
 
 **Q: How do I configure the systemd service for server mode?**
-The packaged unit starts **LAN** mode (`--lan-mode --watch`) and reads
-`/etc/hsync/hsync.conf`. `HSYNC_BUCKET` / `HSYNC_PATH` in that file are
-expanded by systemd into `--bucket` / `--path`; they are not client settings
-keys. `HSYNC_WATCH` is not read.
+The packaged unit starts **LAN** mode (`--lan-mode`, continuous by default)
+and reads `/etc/hsync/hsync.conf`. `HSYNC_BUCKET` / `HSYNC_PATH` in that file
+are expanded by systemd into `--bucket` / `--path`; they are not client
+settings keys.
 
 To run server mode, override `ExecStart` (for example with `systemctl edit
-hsync`) so it calls `hsync` with `-s` / `-b` / `-p` / `-w` and set
+hsync`) so it calls `hsync` with `-s` / `-b` / `-p` and set
 `HSYNC_API_KEY` in `hsync.conf`. See [Debian package](debian-package.md).

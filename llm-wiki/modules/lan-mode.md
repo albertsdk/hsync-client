@@ -57,8 +57,10 @@ election-relevant field changes, and discovery-relevant metadata updates
 `PeerManager.wait_for_change(timeout)` instead of `time.sleep(timeout)`. A
 peer already advertising (or a master flipping to `server_ready`) therefore
 wakes the loop in mDNS time (~1 s) rather than after the full
-`DISCOVERY_TIMEOUT` window. With no change the wait still blocks for the full
-window, so the polling cadence is unchanged in steady state.
+`DISCOVERY_TIMEOUT` window (default `0` = wait indefinitely, matching the
+server-mode default of retrying an unreachable server forever). With no
+change the wait still blocks for the full window, so the polling cadence is
+unchanged in steady state.
 
 ## Master server (`lan_server.py`, `lan_websocket.py`)
 

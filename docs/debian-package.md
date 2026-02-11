@@ -187,13 +187,12 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_BUCKET` † | `hsync` | Remote bucket name |
 | `HSYNC_PATH` † | `/var/lib/hsync` | Local directory to synchronise |
 | `HSYNC_LAN_HTTPS` | `true` | Use HTTPS for LAN peer communication (always on, not configurable) |
-| `HSYNC_LAN_PERSISTENT` | `true` | Stay active indefinitely waiting for peers |
 | `HSYNC_LAN_GROUP` | *(empty)* | Restrict discovery to a group |
 | `HSYNC_LAN_KEY` | *(empty)* | Shared secret for peer authentication |
 | `HSYNC_DEVICE_DIR` | `/var/lib/hsync/device` | Directory for the persistent device identity (device ID + LAN keypair) |
 | `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Directory for `syncstate.db` (causal versions and tombstones) |
 | `HSYNC_LAN_PIN_FILE` | `/var/lib/hsync/lan_known_peers.json` | File storing pinned fingerprints of known LAN peers (TOFU) |
-| `HSYNC_DISCOVERY_TIMEOUT` | `10` | Seconds to wait for the first peer (0 = indefinite) |
+| `HSYNC_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |
 | `HSYNC_SERVER` | *(empty)* | Server URL (for server mode) |
 | `HSYNC_API_KEY` | *(empty)* | API key (for server mode) |

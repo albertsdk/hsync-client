@@ -86,9 +86,14 @@ class TestEnvSettings:
         assert settings.lan_group is None
         assert settings.lan_port is None
         assert settings.discovery_timeout is None
-        assert settings.lan_persistent is True
         assert settings.ignore_delete is False
         assert settings.compression_enabled is True
+
+    def test_no_persistent_setting_exists(self):
+        """There is no persistence knob: continuous is the default, --once opts out."""
+        get_env_settings.cache_clear()
+        settings = EnvSettings()
+        assert not hasattr(settings, "lan_persistent")
 
     def test_discovery_timeout_zero_is_valid(self):
         """HSYNC_DISCOVERY_TIMEOUT=0 means wait indefinitely and is valid."""

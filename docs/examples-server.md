@@ -19,12 +19,11 @@ server URL), then pass bucket, path, and watch on the CLI:
 ```bash
 export HSYNC_SERVER="https://hsync.example.com:9753"
 export HSYNC_API_KEY="hs_<id>_<secret>"
-hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents" -w
+hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents"
 ```
 
 `--env-file` loads recognised `HSYNC_*` keys only (`HSYNC_SERVER`,
-`HSYNC_API_KEY`, …). `HSYNC_BUCKET`, `HSYNC_PATH`, and `HSYNC_WATCH` are
-not settings keys.
+`HSYNC_API_KEY`, …). `HSYNC_BUCKET` and `HSYNC_PATH` are not settings keys.
 
 > **Buckets must exist before the first sync.** Create them on the server
 > (once) with `hsync-server admin bucket create --bucket <name>` — see the
@@ -37,28 +36,28 @@ not settings keys.
 hsync -s "$HSYNC_SERVER" -b personal -p ~/Documents
 ```
 
-## 1.2 Continuous workstation sync (watch mode)
+## 1.2 Continuous workstation sync
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b work -p ~/Work -w
+hsync -s "$HSYNC_SERVER" -b work -p ~/Work
 ```
 
 ## 1.3 Push-only backup to a remote server
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b backup -p ~/Backup --sync-direction upload-only -w
+hsync -s "$HSYNC_SERVER" -b backup -p ~/Backup --sync-direction upload-only
 ```
 
 ## 1.4 Read-only mirror from the server
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b shared -p ~/Shared --sync-direction download-only -w
+hsync -s "$HSYNC_SERVER" -b shared -p ~/Shared --sync-direction download-only
 ```
 
-## 1.5 Periodic full re-sync alongside watch mode
+## 1.5 Periodic full re-sync alongside continuous mode
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -w --interval 3600
+hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs --interval 3600
 ```
 
 ## 1.6 Multi-device sync via central server
@@ -67,10 +66,10 @@ On each device, configure the same bucket with its own local path:
 
 ```bash
 # Laptop
-hsync -s "$HSYNC_SERVER" -b team -p ~/Team -w
+hsync -s "$HSYNC_SERVER" -b team -p ~/Team
 
 # Desktop
-hsync -s "$HSYNC_SERVER" -b team -p ~/Team -w
+hsync -s "$HSYNC_SERVER" -b team -p ~/Team
 ```
 
 Changes made on one device propagate through the server to all others.
@@ -78,13 +77,13 @@ Changes made on one device propagate through the server to all others.
 ## 1.7 Bandwidth-limited sync over a slow connection
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -w --max-bandwidth-upload 1MB
+hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs --max-bandwidth-upload 1MB
 ```
 
 ## 1.8 Long-running unattended service
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -w -y
+hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -y
 ```
 
 The `-y` flag skips confirmation prompts. Combine with a systemd service for

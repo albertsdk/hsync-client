@@ -135,14 +135,14 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
 
     start_ntp_clock_offset_probe(logger=log)
 
-    persistent = config.get("LAN_PERSISTENT", False)
-    if persistent:
-        log.info("Persistent mode enabled - will wait indefinitely for peers")
+    one_shot = config.get("ONE_SHOT", False)
+    if not one_shot:
+        log.info("Continuous mode enabled - will wait indefinitely for peers")
 
     discovery_timeout = config["DISCOVERY_TIMEOUT"]
     wait_indefinitely_for_peer = discovery_timeout == 0
     discovery_wait = DISCOVERY_POLL_INTERVAL if wait_indefinitely_for_peer else discovery_timeout
-    if wait_indefinitely_for_peer and not persistent:
+    if wait_indefinitely_for_peer and one_shot:
         log.info("Discovery timeout disabled - waiting indefinitely for the first LAN peer/master")
 
     from hsync_client.identity import load_or_create_device_identity
@@ -218,10 +218,10 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                         lan_ws_server = None
                     lan_sync.set_connected_clients_provider(None)
                 # NOTE: the master role is inherently continuous: it must
-                # stay available to serve peers regardless of the
-                # ``persistent`` flag (which only applies to slaves).  The
-                # loop only exits via KeyboardInterrupt or by losing the
-                # master role and being elected slave on a later iteration.
+                # stay available to serve peers regardless of the one-shot
+                # flag (which only applies to slaves). The loop only exits
+                # via KeyboardInterrupt or by losing the master role and
+                # being elected slave on a later iteration.
             else:
                 # Warn (once) if no master has been elected for a while: this
                 # happens when every reachable peer is in never-master mode.
@@ -252,7 +252,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     log=log,
                     lan_sync=lan_sync,
                     cert_info=cert_info,
-                    persistent=persistent,
+                    one_shot=one_shot,
                     peer_manager=peer_manager,
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
                 )
@@ -283,10 +283,10 @@ def _run_as_master(
     """Run as master (sync coordinator).
 
     The master role is inherently continuous: the master must stay
-    available to serve any peer that joins. The ``persistent`` flag only
-    affects slave behaviour (one-shot vs. continuous sync); the master loop
-    always yields back to the outer discovery loop after a brief idle window
-    so master/peer election can be re-evaluated.
+    available to serve any peer that joins. The one-shot flag only affects
+    slave behaviour (one-shot vs. continuous sync); the master loop always
+    yields back to the outer discovery loop after a brief idle window so
+    master/peer election can be re-evaluated.
 
     Returns the (lan_server, lan_ws_server) tuple so the caller can persist
     the running server instances across discovery loop iterations and avoid
@@ -417,7 +417,7 @@ def _run_as_slave(
     log,
     lan_sync: LANSync,
     cert_info,
-    persistent: bool,
+    one_shot: bool,
     peer_manager,
     wait_indefinitely_for_peer: bool = False,
 ) -> tuple[bool, int]:
@@ -447,17 +447,17 @@ def _run_as_slave(
                 f"endpoint with a certificate fingerprint. Refusing to connect "
                 f"(LAN transport is HTTPS-only)."
             )
-            return persistent or wait_indefinitely_for_peer, int(ExitCode.OK)
+            return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
 
         master_url = master.get_server_url()
         log.info(f"Connecting to master: {master.cid} at {master_url}")
         emit_event(UiEventName.server, url=master_url)
 
         if not _evaluate_master_pin(config, master, log):
-            # Stay in the discovery loop (persistent) rather than connecting to
+            # Stay in the discovery loop (continuous) rather than connecting to
             # a master whose identity can no longer be verified or which has not
             # yet been paired out of band.
-            return persistent or wait_indefinitely_for_peer, int(ExitCode.OK)
+            return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
         config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
@@ -483,9 +483,9 @@ def _run_as_slave(
         if config["DRYRUN"]:
             # In dry-run mode, only show preview without syncing
             _run_preview(log)
-            if not persistent:
+            if one_shot:
                 return False, exit_code
-            # In persistent mode with dry-run, wait for SYNC/PREVIEW commands
+            # In continuous mode with dry-run, wait for SYNC/PREVIEW commands
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
             run(_run_stdin_wait(log))
         else:
@@ -494,17 +494,16 @@ def _run_as_slave(
                 result = run(sync(lan_mode=True))
             except (AuthenticationError, NetworkError, ServerError):
                 # sync() already logged the failure and emitted the structured
-                # event. A one-shot (non-persistent) run maps a transport
-                # failure to a fatal exit; a persistent run must survive a
-                # transient failure (e.g. the master going offline mid-sync)
-                # and re-enter the discovery loop so the master is re-detected
-                # or a new one is elected.
-                if persistent or wait_indefinitely_for_peer:
+                # event. A one-shot run maps a transport failure to a fatal
+                # exit; a continuous run must survive a transient failure (e.g.
+                # the master going offline mid-sync) and re-enter the discovery
+                # loop so the master is re-detected or a new one is elected.
+                if (not one_shot) or wait_indefinitely_for_peer:
                     return True, int(ExitCode.OK)
                 return False, int(ExitCode.FATAL)
             except Exception:
                 # An unexpected error (a genuine bug) must never be masked as a
-                # retryable condition, even in persistent mode: surface it as a
+                # retryable condition, even in continuous mode: surface it as a
                 # fatal exit instead of looping forever.
                 return False, int(ExitCode.FATAL)
             if isinstance(result, SyncCycleResult):
@@ -518,10 +517,10 @@ def _run_as_slave(
                 # doubles, defensive paths) reports a clean exit.
                 exit_code = int(ExitCode.OK)
 
-        if not persistent:
+        if one_shot:
             return False, exit_code
 
-        # In persistent mode, connect via WebSocket for real-time events
+        # In continuous mode, connect via WebSocket for real-time events
         log.info("Initial sync complete, connecting to WebSocket for real-time events...")
         ws_port = master.port + 1  # WebSocket is on next port
         try:
@@ -542,7 +541,7 @@ def _run_as_slave(
         return True, int(ExitCode.OK)
     else:
         # No master and no peers
-        if persistent or wait_indefinitely_for_peer:
+        if (not one_shot) or wait_indefinitely_for_peer:
             log.info("Waiting for peers to join...")
             return True, int(ExitCode.OK)  # Continue the discovery loop
         else:

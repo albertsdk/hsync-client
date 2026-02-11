@@ -15,9 +15,9 @@ connected to a central server.
 4. **Initial Sync**: The client performs a full bidirectional sync — comparing
    local files with the server's file list and transferring differences.
 
-## 2. Real-Time Watch Mode
+## 2. Real-Time Continuous Mode
 
-Once the initial sync completes, the client enters watch mode:
+Once the initial sync completes, the client enters continuous mode (the default):
 
 1. **File Watcher (watchdog)**: Monitors the local bucket for create, modify,
    delete, rename events.
@@ -57,9 +57,10 @@ See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
 
 ## 4. Connection Recovery
 
-- If the WebSocket connection drops, the client waits a **fixed**
-  `--retry-delay` (default 5 seconds) and tries again. That interval is
-  not exponential; per-file transfers use exponential backoff separately.
+- If the WebSocket connection drops, the client waits a **full-jitter
+  exponential backoff** based on `--retry-delay` (default 5 seconds, capped at
+  60) and tries again, forever — the daemon never exits on a lost connection.
+  Per-file transfers use exponential backoff separately.
 - On reconnect, a full sync is triggered to reconcile any missed events.
 - Changes made while the connection was down (files created, modified, or
   deleted, plus new directories) are all reconciled by that full sync: new and

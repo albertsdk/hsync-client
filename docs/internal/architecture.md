@@ -89,7 +89,7 @@ stateDiagram-v2
     Execute --> [*]: ⑥ Complete
 ```
 
-### Watch Mode (Continuous)
+### Continuous Mode (daemon, the default)
 
 ```mermaid
 stateDiagram-v2
@@ -119,7 +119,7 @@ stateDiagram-v2
 The `--sync-direction` option controls which operations are executed. Filtering is applied at two levels:
 
 1. **Initial sync** — `get_sync_actions()` removes actions that don't match the direction before execution
-2. **Watch mode** — Inline runtime checks skip events that don't match the direction
+2. **Continuous mode** — Inline runtime checks skip events that don't match the direction
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -192,7 +192,7 @@ flowchart TD
     R5 -->|"⑤→⑥"| A4
 ```
 
-**Sync direction filtering in watch mode:**
+**Sync direction filtering in continuous mode:**
 
 - When `upload-only`: remote events (⑤) are **skipped** — only local events (①) are processed and uploaded
 - When `download-only`: local events (①) are **skipped** — only remote events (⑤) are processed and downloaded

@@ -18,8 +18,8 @@
 
     const SUPPORTED = ['en', 'it', 'de', 'es', 'fr'];
     const CHECKBOX_KEYS = [
-        'HSYNC_LAN_PERSISTENT', 'HSYNC_LAN_REQUIRE_PAIRING',
-        'HSYNC_WATCH', 'HSYNC_IGNORE_DELETE',
+        'HSYNC_LAN_REQUIRE_PAIRING',
+        'HSYNC_IGNORE_DELETE',
         'HSYNC_NO_COMPRESSION', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
         'HSYNC_AUTOTUNE',
     ];
@@ -167,7 +167,7 @@
     // Builds the hsync command to run on a second device to join the sync
     // group coordinated by this NAS. Only the connection-matching fields are
     // emitted (bucket, mode, group, LAN key); per-device sync-behaviour flags
-    // (watch, ignore-delete, compression, ...) are intentionally omitted — they
+    // (ignore-delete, compression, ...) are intentionally omitted — they
     // do not need to match between peers. The NAS role is also omitted: LAN
     // master election resolves the remote device's role automatically regardless
     // of the NAS role (auto/master/slave/never-master).

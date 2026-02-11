@@ -45,9 +45,9 @@ and caveats to watch for.
    ```
    Using an empty directory on new peers prevents accidental overwrites.
 
-5. **Replace your rsync cron job or script** with HSYNC in watch mode:
+5. **Replace your rsync cron job or script** with HSYNC in continuous mode:
    ```bash
-   hsync -s https://server.example.com:9753 -b mybucket -p /path/to/files -w
+   hsync -s https://server.example.com:9753 -b mybucket -p /path/to/files
    ```
 
 ### Caveats
@@ -172,7 +172,7 @@ drives), HSYNC automates the entire process:
 2. **Upload your files once** from each device. HSYNC handles deduplication
    automatically — files with the same SHA-256 hash are not re-uploaded.
 
-3. **Run in watch mode** (`-w`) on each device. HSYNC will detect changes in
+3. **Run in continuous mode** (the default) on each device. HSYNC will detect changes in
    real time and propagate them automatically.
 
 4. **For LAN-only sync**, use `--lan-mode` without a server — devices
@@ -192,7 +192,7 @@ drives), HSYNC automates the entire process:
 - [ ] Old sync tool has been stopped and uninstalled
 - [ ] Sync direction is configured correctly (`--sync-direction`)
 - [ ] Bandwidth limits are set if needed (`--max-bandwidth-*`)
-- [ ] Watch mode (`-w`) is enabled on devices that need real-time sync
+- [ ] Continuous mode is used on devices that need real-time sync
 - [ ] Backup strategy is in place (see [Operations Guide](https://github.com/albertobasso/hsync-server/blob/main/docs/operations.md))
 
 ## See also

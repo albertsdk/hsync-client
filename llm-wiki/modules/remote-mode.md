@@ -8,11 +8,11 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `remote_events` | `remote_websocket.py:59` | WS connect + auth handshake + watchdog watcher, then the inbound processing loop. **Readiness threshold**: after `observer.start()` it logs `[READY] Client ready for sync — watching …` (`:179`) — the observable marker that the watcher is live and the WS is authenticated |
+| `remote_events` | `remote_websocket.py:97` | WS connect + auth handshake + watchdog watcher, then the inbound processing loop. **Readiness threshold**: after `observer.start()` it logs `[READY] Client ready for sync — watching …` (`:179`) — the observable marker that the watcher is live and the WS is authenticated |
 | `remote_connect` | `:373` | top-level: initial full sync + optional `resync` task + `remote_events`; reconnect loop with `RECONNECT_DELAY` |
-| `_process_remote_events` | `:221` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:216`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop. Accepts `added`/`modified`/`renamed`/`deleted`/`symlink`: symlink events are propagated by the server (`handle_symlink_event` returns the Event and `ConnectionManager.send_message` broadcasts it to every peer except the sender), so remote-mode clients now replicate symlinks in real time (parity with LAN mode) instead of waiting for the next full sync |
-| `resync` | `:296` | periodic/triggered full re-reconcile |
-| `RemoteFileEventHandler` | `:499` | watchdog → `upload_file` (threads `from_closed`); realtime uploads run on a process-wide bounded pool (`_get_remote_upload_executor:70`, `REALTIME_UPLOAD_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of inline on the watchdog dispatch thread — a large upload no longer blocks the processing of every subsequent event |
+| `_process_remote_events` | `:253` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:216`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop. Accepts `added`/`modified`/`renamed`/`deleted`/`symlink`: symlink events are propagated by the server (`handle_symlink_event` returns the Event and `ConnectionManager.send_message` broadcasts it to every peer except the sender), so remote-mode clients now replicate symlinks in real time (parity with LAN mode) instead of waiting for the next full sync |
+| `resync` | `:328` | periodic/triggered full re-reconcile |
+| `RemoteFileEventHandler` | `:526` | watchdog → `upload_file` (threads `from_closed`); realtime uploads run on a process-wide bounded pool (`_get_remote_upload_executor:70`, `REALTIME_UPLOAD_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of inline on the watchdog dispatch thread — a large upload no longer blocks the processing of every subsequent event |
 
 ## WS handshake (shared SSOT)
 
@@ -39,25 +39,29 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
 
 ## Reconnect & resilience
 
-- `remote_connect` (`remote_websocket.py:407`) is an infinite loop: each
+- `remote_connect` (`remote_websocket.py:438`) is an infinite loop: each
   iteration re-measures RTT and re-seeds bandwidth (`_refresh_network_tuning()`,
-  `:425`) and runs a full `sync()` before `remote_events`; on `ConnectionClosed`
-  or unexpected error it `await sleep(CONFIG["RECONNECT_DELAY"])` and loops
-  again. The delay is **fixed** (default 5 s, clamp 1–60), not exponential and
-  not attempt-capped. Autotune may rewrite `RECONNECT_DELAY` from RTT; each
-  wait still uses that one value. The per-iteration refresh means the first
-  sync after a cold start (startup probes failed while the server was still
-  down) also runs on freshly measured RTT/bandwidth rather than the startup
-  safe defaults.
+  `:355`) and runs a full `sync()` before `remote_events`; on `ConnectionClosed`
+  or unexpected error it sleeps a **full-jitter exponential backoff**
+  (`_reconnect_delay`: `uniform(0, min(base*2**attempts, RECONNECT_DELAY_MAX))`,
+  base = `RECONNECT_DELAY`) and loops again; the attempt counter resets after
+  a healthy loop. Not attempt-capped: the daemon never exits on connectivity.
+  Autotune may rewrite `RECONNECT_DELAY` (the backoff base) from RTT. The
+  per-iteration refresh means the first sync after a cold start (startup
+  probes failed while the server was still down) also runs on freshly
+  measured RTT/bandwidth rather than the startup safe defaults.
 - **Initial connectivity check** (`main_logic._check_server_connectivity`
-  `main_logic.py:1103`) runs before the WS loop and uses exponential backoff
+  `main_logic.py:1142`) runs before the WS loop and uses exponential backoff
   with **7 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,
   overridable via `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` /
   `HSYNC_CONNECTIVITY_RETRY_MIN_WAIT` / `HSYNC_CONNECTIVITY_RETRY_MAX_WAIT`
   environment variables). The backoff sequence is 1 s → 2 s → 4 s → 8 s → 16 s
   (~31 s cumulative), covering a typical server restart window. Each retry logs
-  the attempt number (e.g. "attempt 2/5") so users can gauge progress.
-- Exponential backoff is **not** this loop: per-file transfers use `retry.py`;
+  the attempt number (e.g. "attempt 2/5") so users can gauge progress. On
+  failure **one-shot mode exits non-zero**; **continuous mode (the default)**
+  logs a warning, keeps the client alive and delegates the infinite retry to
+  `remote_connect` — a startup outage never terminates the daemon (LAN parity).
+- Per-file transfers also use exponential backoff (`retry.py`);
   outbound WS events use `EventQueue` (see [sync-core.md](sync-core.md)).
 - Transfers retry on transient errors (`retry.py:105`) and emit `transfer_failed`
   on exhaustion.

@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-08-25" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-08-30" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -13,7 +13,6 @@ hsync \- file synchronization client (Server and LAN P2P modes)
 .OP \-b NAME
 .OP \-s URL
 .OP \-p DIR
-.OP \-w
 .RI [ OPTIONS ]
 .YS
 .
@@ -117,29 +116,25 @@ Hidden option intended for GUI integration.
 .BR \-p ", " \-\-path =\fIDIR\fP
 Local directory to synchronize (default: current directory).
 .TP
-.BR \-w ", " \-\-watch
-Watch for file changes and sync continuously.
-.TP
 .B \-\-once
-Run a single sync cycle and exit (explicit form of the default one-shot
-behaviour). Incompatible with
-.BR \-w .
-In LAN mode a one-shot run also requires
-.BR \-\-no\-lan\-persistent .
+Run a single sync cycle and exit. Without
+.B \-\-once
+the client runs continuously (daemon mode, the default): it keeps the
+connection open, syncs changes in real time, and retries an unreachable
+server indefinitely instead of exiting. In LAN mode it runs one slave sync
+cycle and exits (the master role stays continuous regardless).
 .TP
 .BR \-i ", " \-\-interval =\fISEC\fP
 Force a full re-scan every
 .I SEC
-seconds (requires
-.BR \-w ;
-range: 20\(en3600).
+seconds in continuous mode (range: 20\(en3600).
 .TP
 .BR \-\-retry\-delay =\fISEC\fP
-Wait
-.I SEC
-seconds before retrying a failed connection. When auto-tuning is enabled
-(default), the delay is derived from RTT if not set explicitly.
-Range: 1\(en60.
+Base interval (seconds) for the full-jitter exponential reconnect backoff:
+each consecutive failed reconnect doubles the upper bound, capped at 60 s,
+with a uniform random delay in that window. The client never gives up.
+When auto-tuning is enabled (default), the base is derived from RTT if not
+set explicitly. Range: 1\(en60.
 .TP
 .BR \-\-stability\-delay =\fISEC\fP
 Seconds a file must stay unchanged before it is uploaded
@@ -256,18 +251,13 @@ Port to use when acting as LAN master (default: 0 = auto).
 .BR \-\-discovery\-timeout =\fISEC\fP
 Time to wait for initial LAN peer discovery
 (default:
-.BR 10 ;
-0 = wait indefinitely).
+.BR 0 ;
+wait indefinitely, matching the server-mode default of retrying an
+unreachable server forever).
 .TP
 .BR \-\-lan\-group =\fIGROUP\fP
 Group name for LAN peer filtering. Only peers with the same group
 will discover each other.
-.TP
-.BR \-\-lan\-persistent " / " \-\-no\-lan\-persistent
-Stay active waiting for peers (default:
-.BR on )
-or exit when no LAN peers are found
-.RB ( \-\-no\-lan\-persistent ).
 .TP
 .B \-\-force\-master
 Force this client to always act as master in LAN mode.
@@ -433,12 +423,9 @@ Group name for LAN peer filtering (default: empty = no filter).
 .TP
 .B HSYNC_DISCOVERY_TIMEOUT
 Seconds to wait for the first LAN peer (default:
-.BR 10 ;
-0 = wait indefinitely).
-.TP
-.B HSYNC_LAN_PERSISTENT
-Stay active indefinitely waiting for peers (default:
-.BR true ).
+.BR 0 ;
+wait indefinitely, mirroring the server-mode default of retrying an
+unreachable server forever).
 .TP
 .B HSYNC_NEVER_MASTER
 Never become master in LAN mode (default:
@@ -565,10 +552,17 @@ hsync \-b documents \-s https://server.example.com \-p ~/Documents
 .EE
 .RE
 .TP
-Continuous watch mode:
+Continuous (default) mode:
 .RS
 .EX
-hsync \-b projects \-s https://server.example.com \-w
+hsync \-b projects \-s https://server.example.com
+.EE
+.RE
+.TP
+One-shot sync:
+.RS
+.EX
+hsync \-b projects \-s https://server.example.com \-\-once
 .EE
 .RE
 .TP
@@ -617,12 +611,10 @@ transfers before exiting.
 .\" ---------------------------------------------------------------------
 .SH EXIT STATUS
 One-shot runs
-.RB ( \-\-once ,
-or LAN
-.BR \-\-no\-lan\-persistent )
+.RB ( \-\-once )
 return these codes (see
 .IR docs/scheduling.md ).
-Watch/persistent daemons typically exit 0 or 1.
+Continuous/daemon runs typically exit 0 or 1.
 .TP
 .B 0
 Synchronisation completed with no anomalies (also a successful dry-run),

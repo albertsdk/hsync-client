@@ -255,7 +255,7 @@ async def _with_stdin_commands(log, coro) -> None:
 async def _run_stdin_wait(log) -> None:
     """Block reading stdin commands until EOF or SYNC.
 
-    Used in persistent dry-run mode (LAN or server) where there is no
+    Used in continuous dry-run mode (LAN or server) where there is no
     WebSocket connection yet.  When a ``SYNC`` command arrives the
     handler performs the full sync, then stops the reader so the caller
     can proceed to the next phase (e.g. WebSocket connection).
