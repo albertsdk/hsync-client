@@ -7,6 +7,7 @@ Tests the loguru-based logging configuration.
 import logging
 import tempfile
 import os
+from typing import Any, cast
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -215,34 +216,34 @@ class TestGetJsonData:
 
     def test_returns_none_without_extra(self):
         """Returns None when no extra data."""
-        record = {"extra": {}}
+        record = cast(Any, {"extra": {}})
         assert _get_json_data(record) is None
 
     def test_returns_json_data_from_direct_extra(self):
         """Returns json_data from record extra (bind/opt pattern)."""
-        record = {"extra": {"json_data": {"key": "value"}}}
+        record = cast(Any, {"extra": {"json_data": {"key": "value"}}})
         assert _get_json_data(record) == {"key": "value"}
 
     def test_returns_json_data_from_nested_extra(self):
         """Returns json_data from nested extra dict."""
-        record = {"extra": {"extra": {"json_data": {"nested": True}}}}
+        record = cast(Any, {"extra": {"extra": {"json_data": {"nested": True}}}})
         assert _get_json_data(record) == {"nested": True}
 
     def test_returns_none_for_missing_json_data(self):
         """Returns None when extra exists but no json_data."""
-        record = {"extra": {"other_key": 123}}
+        record = cast(Any, {"extra": {"other_key": 123}})
         assert _get_json_data(record) is None
 
     def test_returns_none_for_empty_record(self):
         """Returns None for record with no extra at all."""
-        record = {}
+        record = cast(Any, {})
         assert _get_json_data(record) is None
 
 
 class TestFormatRecordColored:
     """Tests for _format_record_colored function."""
 
-    def _make_record(self, message="test", level="INFO", extra=None):
+    def _make_record(self, message: str = "test", level: str = "INFO", extra: Any = None) -> Any:
         """Create a mock loguru record."""
         from datetime import datetime, timezone
         record = {
@@ -275,7 +276,7 @@ class TestFormatRecordColored:
 class TestFormatRecordPlain:
     """Tests for _format_record_plain function."""
 
-    def _make_record(self, message="test", level="INFO", extra=None):
+    def _make_record(self, message: str = "test", level: str = "INFO", extra: Any = None) -> Any:
         """Create a mock loguru record."""
         from datetime import datetime, timezone
         record = {
