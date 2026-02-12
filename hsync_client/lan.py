@@ -144,6 +144,7 @@ class Peer:
     last_seen: float = field(default_factory=time.time)
     force_master: bool = False  # True if peer wants to force master role
     startup_time: float = 0.0  # Unix timestamp when peer started
+    sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
 
     def is_alive(self) -> bool:
         """Check if peer is still considered alive based on last_seen time."""
@@ -172,8 +173,9 @@ class PeerManager:
 
     Election priority (highest to lowest):
     1. force_master flag (if set, that peer wins)
-    2. Earliest startup_time (first started wins)
-    3. Lowest CID lexicographically (tiebreaker)
+    2. Bidirectional sync_direction preference (bidirectional wins)
+    3. Earliest startup_time (first started wins)
+    4. Lowest CID lexicographically (tiebreaker)
     """
 
     def __init__(
@@ -183,6 +185,7 @@ class PeerManager:
         group: Optional[str] = None,
         force_master: bool = False,
         startup_time: float = 0.0,
+        sync_direction: str = "bidirectional",
     ) -> None:
         """
         Initialize the peer manager.
@@ -193,12 +196,15 @@ class PeerManager:
             group: Optional group name for filtering peers.
             force_master: If True, this client will always try to be master.
             startup_time: Unix timestamp when this client started.
+            sync_direction: This client's sync direction
+                ("bidirectional", "upload-only", "download-only").
         """
         self._local_cid = local_cid
         self._bucket = bucket
         self._group = group
         self._force_master = force_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
+        self._sync_direction = sync_direction
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
         self._master_cid: Optional[str] = None
@@ -289,6 +295,7 @@ class PeerManager:
                 existing.clock_offset = peer.clock_offset
                 existing.force_master = peer.force_master
                 existing.startup_time = peer.startup_time
+                existing.sync_direction = peer.sync_direction
                 existing.update_last_seen()
                 log.debug(f"Updated peer: {peer.cid}")
             else:
@@ -326,34 +333,43 @@ class PeerManager:
 
         Election priority (highest to lowest):
         1. force_master flag (if set, that peer wins)
-        2. Earliest startup_time (first started wins)
-        3. Lowest CID lexicographically (tiebreaker)
+        2. Bidirectional sync_direction preference (bidirectional wins)
+        3. Earliest startup_time (first started wins)
+        4. Lowest CID lexicographically (tiebreaker)
 
         This includes the local client in the election.
         """
         # Build list of candidates with their election criteria
-        # Each candidate: (cid, force_master, startup_time)
-        candidates: list[tuple[str, bool, float]] = [
-            (self._local_cid, self._force_master, self._startup_time)
+        # Each candidate: (cid, force_master, startup_time, sync_direction)
+        candidates: list[tuple[str, bool, float, str]] = [
+            (self._local_cid, self._force_master, self._startup_time,
+             self._sync_direction)
         ]
 
         for peer in self._peers.values():
             if peer.is_alive():
-                candidates.append((peer.cid, peer.force_master, peer.startup_time))
+                candidates.append(
+                    (peer.cid, peer.force_master, peer.startup_time,
+                     peer.sync_direction)
+                )
 
         if not candidates:
             new_master_cid = None
         else:
-            # Sort by: force_master (desc), startup_time (asc), cid (asc)
-            # not force_master: False=0 < True=1, so force_master=True comes first
-            candidates.sort(key=lambda c: (not c[1], c[2], c[0]))
+            # Sort by: force_master (desc), bidirectional preference,
+            #          startup_time (asc), cid (asc)
+            # not force_master: False=0 < True=1, so force_master=True first
+            # sync_direction != "bidirectional": False=0 < True=1,
+            #   so bidirectional peers come first
+            candidates.sort(key=lambda c: (not c[1], c[3] != "bidirectional",
+                                           c[2], c[0]))
             new_master_cid = candidates[0][0]
 
         # Detect force_master conflicts
         force_master_candidates = [c for c in candidates if c[1]]
         if len(force_master_candidates) > 1:
             winner_cid = force_master_candidates[0][0]
-            for loser_cid, _, _ in force_master_candidates[1:]:
+            for loser_cid, _, _, _ in force_master_candidates[1:]:
                 loser_peer = self._peers.get(loser_cid)
                 winner_peer = self._peers.get(winner_cid)
                 if loser_cid == self._local_cid:
@@ -397,17 +413,38 @@ class PeerManager:
             self._master_cid = new_master_cid
 
             if new_master_cid == self._local_cid:
-                reason = "force_master" if self._force_master else "earliest startup"
+                if self._force_master:
+                    reason = "force_master"
+                elif self._sync_direction == "bidirectional":
+                    reason = "bidirectional preference"
+                else:
+                    reason = "earliest startup"
                 log.info(
                     f"This client elected as MASTER (CID: {self._local_cid}, "
                     f"reason: {reason})"
                 )
+                if self._sync_direction != "bidirectional":
+                    log.warning(
+                        f"This client is master with "
+                        f"sync_direction={self._sync_direction}. "
+                        f"This may limit synchronization capabilities "
+                        f"for other peers."
+                    )
             else:
                 master_peer = self._peers.get(new_master_cid) if new_master_cid else None
                 if master_peer:
-                    reason = (
-                        "force_master" if master_peer.force_master else "earliest startup"
-                    )
+                    if master_peer.force_master:
+                        reason = "force_master"
+                    elif master_peer.sync_direction == "bidirectional":
+                        reason = "bidirectional preference"
+                    else:
+                        reason = "earliest startup"
+                    if master_peer.sync_direction != "bidirectional":
+                        log.warning(
+                            f"Master {new_master_cid} has "
+                            f"sync_direction={master_peer.sync_direction}. "
+                            f"This may limit synchronization capabilities."
+                        )
                 else:
                     reason = "unknown"
                 log.info(
@@ -539,6 +576,13 @@ class HsyncServiceListener(ServiceListener):
                 if startup_time_bytes
                 else 0.0
             )
+            # Sync direction for master election (bidirectional preferred)
+            sync_direction_bytes = properties.get(b"sync_direction", b"")
+            sync_direction = (
+                sync_direction_bytes.decode("utf-8")
+                if sync_direction_bytes
+                else "bidirectional"
+            )
 
             if not cid or not bucket:
                 log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -586,6 +630,7 @@ class HsyncServiceListener(ServiceListener):
                 server_ready=server_ready,
                 force_master=force_master,
                 startup_time=startup_time,
+                sync_direction=sync_direction,
             )
             self._peer_manager.add_peer(peer)
 
@@ -619,6 +664,7 @@ class LANSync:
         cert_fingerprint: Optional[str] = None,
         force_master: bool = False,
         startup_time: float = 0.0,
+        sync_direction: str = "bidirectional",
     ) -> None:
         """
         Initialize LAN sync coordinator.
@@ -632,6 +678,8 @@ class LANSync:
             cert_fingerprint: SHA-256 fingerprint of the SSL certificate (if HTTPS).
             force_master: If True, this client will always try to be master.
             startup_time: Unix timestamp when this client started.
+            sync_direction: This client's sync direction
+                ("bidirectional", "upload-only", "download-only").
         """
         self._cid = cid
         self._bucket = bucket
@@ -640,6 +688,7 @@ class LANSync:
         self._cert_fingerprint = cert_fingerprint
         self._force_master = force_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
+        self._sync_direction = sync_direction
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
 
@@ -702,6 +751,7 @@ class LANSync:
             self._group,
             force_master=self._force_master,
             startup_time=self._startup_time,
+            sync_direction=self._sync_direction,
         )
 
         # Register our service (can be deferred if register_service=False)
@@ -811,6 +861,8 @@ class LANSync:
             properties["force_master"] = "true"
         # Add startup time for master election (earlier startup wins)
         properties["startup_time"] = str(self._startup_time)
+        # Add sync direction for master election (bidirectional preferred)
+        properties["sync_direction"] = self._sync_direction
 
         # Create service info
         self._service_info = ServiceInfo(

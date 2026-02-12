@@ -48,6 +48,8 @@ mindmap
       -w, --watch
       -i, --interval
       --stability-delay
+      --sync-direction
+      --ignore-delete
     Network
       --retry-delay
       --insecure
@@ -169,6 +171,72 @@ hsync -s http://localhost:8765 -b mybucket -n
 [✕] Would delete: old/deprecated.txt
 ```
 
+### Scenario 5: Upload-Only Sync (Backup Source)
+
+Push local files to the server without downloading remote changes — useful for backup sources:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Client
+    participant S as Server
+
+    U->>C: ① hsync --sync-direction upload-only
+    C->>S: ② Fetch remote file list
+    C->>C: ③ Compare with local files
+    C->>S: ④ Upload newer local files
+    Note right of C: ⑤ Downloads are SKIPPED
+    C->>U: ⑥ Sync complete
+```
+
+**Command:**
+```bash
+# Only upload local changes — remote-only files are ignored
+hsync -s http://localhost:8765 -b backup -p /path/to/source -w --sync-direction upload-only
+```
+
+### Scenario 6: Download-Only Sync (Read-Only Mirror)
+
+Pull remote files locally without uploading local changes — useful for read-only clients:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Client
+    participant S as Server
+
+    U->>C: ① hsync --sync-direction download-only
+    C->>S: ② Fetch remote file list
+    C->>C: ③ Compare with local files
+    Note left of C: ④ Uploads are SKIPPED
+    S->>C: ⑤ Download newer remote files
+    C->>U: ⑥ Sync complete
+```
+
+**Command:**
+```bash
+# Only download from server — local-only files are never uploaded
+hsync -s http://localhost:8765 -b shared -p /path/to/mirror -w --sync-direction download-only
+```
+
+### Scenario 7: Multi-Client with Different Directions
+
+Multiple clients can connect to the same bucket with different sync directions:
+
+```mermaid
+flowchart LR
+    A["🖥️ Client A<br/><small>upload-only</small>"] -->|"Upload"| S["🗄️ Server<br/><small>Bucket: photos</small>"]
+    S -->|"Download"| B["💻 Client B<br/><small>download-only</small>"]
+    C["📱 Client C<br/><small>bidirectional</small>"] <-->|"Upload & Download"| S
+
+    style A fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style B fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style C fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
+    style S fill:#fff3e0,stroke:#e65100,color:#e65100
+```
+
+The server is a **blind relay** — it broadcasts all events to all connected clients. Each client independently decides which events to process based on its own `--sync-direction` setting.
+
 ## Log Symbols
 
 | Symbol | Meaning | Description |
@@ -251,3 +319,21 @@ hsync -s http://localhost:8765 -b mybucket -w --retry-delay 10
 ```bash
 hsync -s http://localhost:8765 -b mybucket -w --stability-delay 10
 ```
+
+### Upload-only sync (backup source)
+```bash
+hsync -s http://localhost:8765 -b backup -w --sync-direction upload-only
+```
+
+### Download-only sync (read-only mirror)
+```bash
+hsync -s http://localhost:8765 -b shared -w --sync-direction download-only
+```
+
+### LAN mode with download-only slave
+```bash
+# Slave only receives files from master, never uploads local changes
+hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
+```
+
+> **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. See [LAN Mode > Master Election](docs/lan-mode.md#master-election) for the full election algorithm.

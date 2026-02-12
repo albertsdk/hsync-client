@@ -256,6 +256,112 @@ class TestPeerManager:
         pm.remove_peer("temp")
         assert pm.is_master() is True
 
+    def test_bidirectional_preferred_over_upload_only(self):
+        """Test that bidirectional peer wins over upload-only with same startup_time."""
+        # Local is upload-only, remote is bidirectional — remote should win
+        pm = PeerManager(
+            local_cid="aaa111", bucket="photos",
+            startup_time=100.0, sync_direction="upload-only",
+        )
+        pm.add_peer(Peer(
+            cid="zzz999", bucket="photos", address="192.168.1.100", port=8765,
+            startup_time=100.0, sync_direction="bidirectional",
+        ))
+        assert pm.is_master() is False
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_bidirectional_preferred_over_download_only(self):
+        """Test that bidirectional peer wins over download-only with same startup_time."""
+        pm = PeerManager(
+            local_cid="aaa111", bucket="photos",
+            startup_time=100.0, sync_direction="download-only",
+        )
+        pm.add_peer(Peer(
+            cid="zzz999", bucket="photos", address="192.168.1.100", port=8765,
+            startup_time=100.0, sync_direction="bidirectional",
+        ))
+        assert pm.is_master() is False
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_force_master_overrides_sync_direction(self):
+        """Test that force_master takes priority over sync_direction preference."""
+        # Local is upload-only but has force_master — should still win
+        pm = PeerManager(
+            local_cid="zzz999", bucket="photos",
+            startup_time=200.0, force_master=True, sync_direction="upload-only",
+        )
+        pm.add_peer(Peer(
+            cid="aaa111", bucket="photos", address="192.168.1.100", port=8765,
+            startup_time=100.0, sync_direction="bidirectional",
+        ))
+        assert pm.is_master() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_both_non_bidirectional_falls_back_to_startup_time(self):
+        """Test election between two non-bidirectional peers uses startup_time."""
+        pm = PeerManager(
+            local_cid="zzz999", bucket="photos",
+            startup_time=100.0, sync_direction="upload-only",
+        )
+        pm.add_peer(Peer(
+            cid="aaa111", bucket="photos", address="192.168.1.100", port=8765,
+            startup_time=200.0, sync_direction="download-only",
+        ))
+        # Local started earlier, so local wins
+        assert pm.is_master() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_non_bidirectional_master_logs_warning(self):
+        """Test that a warning is logged when non-bidirectional master is elected."""
+        pm = PeerManager(
+            local_cid="aaa111", bucket="photos",
+            startup_time=100.0, sync_direction="upload-only",
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(Peer(
+                cid="zzz999", bucket="photos", address="192.168.1.100", port=8765,
+                startup_time=200.0, sync_direction="download-only",
+            ))
+            # Local is master (earlier startup, both non-bidirectional)
+            assert pm.is_master() is True
+            # Should have logged a warning about non-bidirectional master
+            warning_calls = [
+                call for call in mock_log.warning.call_args_list
+                if "sync_direction=" in str(call)
+            ]
+            assert len(warning_calls) > 0
+
+    def test_bidirectional_local_wins_over_earlier_non_bidirectional(self):
+        """Test that bidirectional local wins even if remote started earlier."""
+        pm = PeerManager(
+            local_cid="zzz999", bucket="photos",
+            startup_time=200.0, sync_direction="bidirectional",
+        )
+        pm.add_peer(Peer(
+            cid="aaa111", bucket="photos", address="192.168.1.100", port=8765,
+            startup_time=100.0, sync_direction="upload-only",
+        ))
+        # Local is bidirectional and should win despite later startup
+        assert pm.is_master() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_peer_sync_direction_default(self):
+        """Test that peer sync_direction defaults to bidirectional."""
+        peer = Peer(
+            cid="abc123", bucket="photos",
+            address="192.168.1.100", port=8765,
+        )
+        assert peer.sync_direction == "bidirectional"
+
+    def test_peer_sync_direction_custom(self):
+        """Test creating a peer with custom sync_direction."""
+        peer = Peer(
+            cid="abc123", bucket="photos",
+            address="192.168.1.100", port=8765,
+            sync_direction="upload-only",
+        )
+        assert peer.sync_direction == "upload-only"
+
 
 class TestGetFreePort:
     """Tests for get_free_port function."""

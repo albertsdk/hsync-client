@@ -185,6 +185,7 @@ def run_sync(
     filter_path: Optional[str],
     dryrun: bool,
     ignore_delete: bool,
+    sync_direction: str,
     compression_enabled: bool,
     lan_mode: bool,
     lan_port: int,
@@ -347,6 +348,7 @@ def run_sync(
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
+        "SYNC_DIRECTION": sync_direction,
     }
 
     set_config(config)
@@ -426,6 +428,24 @@ async def _with_stdin_commands(log, coro) -> None:
         await sync(lan_mode=lan)
 
     handler.register("SYNC", _handle_sync)
+
+    async def _handle_set_sync_direction(**kw: object) -> None:
+        direction = str(kw.get("direction", "bidirectional"))
+        valid = ("bidirectional", "upload-only", "download-only")
+        if direction not in valid:
+            log.warning(f"Invalid sync direction: {direction!r}. Must be one of {valid}.")
+            return
+        old = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+        if direction == old:
+            log.debug(f"Sync direction already set to {direction!r}, no change.")
+            return
+        CONFIG["SYNC_DIRECTION"] = direction
+        log.info(f"Sync direction changed: {old!r} → {direction!r}")
+        # Trigger an immediate resync with the new direction
+        lan = CONFIG.get("LAN_MODE", False)
+        await sync(lan_mode=lan)
+
+    handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
 
     stdin_task = asyncio.create_task(handler.run())
 
@@ -600,6 +620,7 @@ def _run_lan_mode(config: HsyncConfig, log) -> None:
         use_https=config["LAN_HTTPS"],
         cert_fingerprint=cert_info.fingerprint if cert_info else None,
         force_master=config["LAN_FORCE_MASTER"],
+        sync_direction=config["SYNC_DIRECTION"],
     )
     # Start discovery and register service for peer discovery
     peer_manager = lan_sync.start(register_service=True)

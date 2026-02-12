@@ -275,6 +275,8 @@ class HsyncConfig(TypedDict):
     COMPRESSION_ENABLED: bool
     # Server compression capability (set at runtime after handshake)
     SERVER_COMPRESSION_ENABLED: bool
+    # Sync direction: "bidirectional", "upload-only", or "download-only"
+    SYNC_DIRECTION: str
 
 
 # =============================================================================

@@ -239,6 +239,11 @@ async def _process_websocket_events(websocket, bucket: str) -> None:
             log.debug("Different bucket, dropped.")
             continue
 
+        # Skip remote events when in upload-only mode (no downloads)
+        if CONFIG.get("SYNC_DIRECTION") == "upload-only":
+            log.debug("Upload-only mode: remote event ignored.")
+            continue
+
         # Extract event data
         src = message.get("src", None)
         dst = message.get("dst", None)
@@ -472,10 +477,16 @@ class FileEventHandler(FileSystemEventHandler):
 
         Uses event queue if available for reliable delivery with retry,
         otherwise sends directly via WebSocket.
+        Skipped entirely when SYNC_DIRECTION is "download-only".
 
         Args:
             message: Event to send.
         """
+        # In download-only mode, never broadcast local changes
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            log.debug("Download-only mode: local event not broadcast.")
+            return
+
         log.debug(f"Send message: {message}")
 
         message_dict = message.to_dict()
@@ -587,6 +598,9 @@ class FileEventHandler(FileSystemEventHandler):
             # Fallback for macOS/Windows where on_closed is not supported
             # Use debouncing to avoid multiple uploads during file writes
             if not is_hidden_file(src_path):
+                # Skip uploads in download-only mode
+                if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                    return
                 current_time = time()
                 last_time = self._last_modified.get(src_path, 0)
 
@@ -620,6 +634,9 @@ class FileEventHandler(FileSystemEventHandler):
 
         # Only process files, not directories or hidden files
         if not event.is_directory and not is_hidden_file(src_path):
+            # Skip uploads in download-only mode
+            if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                return
             try:
                 if exists(src_path):
                     # File exists - upload it
