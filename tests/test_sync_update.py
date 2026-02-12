@@ -179,6 +179,7 @@ class TestSync:
 
         with patch("hsync_client.sync.CONFIG", config), \
              patch("hsync_client.sync.get_files_remote", return_value=remote_files), \
+             patch("hsync_client.sync.ensure_hsynckeep_files"), \
              patch("hsync_client.transfer.download_file") as mock_download, \
              patch("hsync_client.transfer.upload_file") as mock_upload:
             await sync()
