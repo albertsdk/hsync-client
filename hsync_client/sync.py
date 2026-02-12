@@ -260,6 +260,18 @@ class SyncCycleResult:
     guard_tripped: bool
 
 
+def log_initial_sync_start() -> None:
+    """Emit the colored ``[INITIAL SYNC]`` phase marker for a run's first sync.
+
+    Called by the three initial-sync entry points (LAN slave handler, remote
+    reconnect loop, one-shot CLI run) immediately before the first ``sync()``,
+    so the log marks the "initial reconciliation" phase explicitly ahead of the
+    per-file ``[DOWNLOAD]``/``[UPLOAD]`` lines and before the trailing
+    "Initial sync complete" message.
+    """
+    log.info(f"{ActionLabel.INITIAL_SYNC} Initial sync started")
+
+
 async def sync(lan_mode: bool = False) -> SyncCycleResult:
     """
     Perform a full synchronization between local and remote files.

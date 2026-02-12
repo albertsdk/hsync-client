@@ -36,7 +36,7 @@ from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
-from hsync_client.sync import SyncCycleResult, sync
+from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
 
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
@@ -471,6 +471,7 @@ def _run_as_slave(
         else:
             # Perform initial sync (the master is the transport coordinator)
             try:
+                log_initial_sync_start()
                 result = run(sync(lan_mode=True))
             except (AuthenticationError, NetworkError, ServerError):
                 # sync() already logged the failure and emitted the structured

@@ -7,7 +7,8 @@ and LAN modes.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `sync` | `sync.py:172` | one full reconcile cycle (lan_mode flag) |
+| `sync` | `sync.py:263` | one full reconcile cycle (lan_mode flag) |
+| `log_initial_sync_start` | `sync.py:263` (above `sync`) | emits the colored `[INITIAL SYNC]` phase marker; called by the three initial-sync entry points (`lan_handler._run_as_slave`, `remote_websocket.remote_connect`, `main_logic` one-shot) right before the first `sync()` of a run |
 | `periodic_resync` | `sync.py:105` | shared RESYNC loop for remote + LAN slave; re-raises `CancelledError` |
 | `get_files_local` | `sync.py:863` | scan local tree (parallel, adaptive workers `_get_optimal_workers:816`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed. `_get_optimal_workers` bounds the `ThreadPoolExecutor` by the cgroup CPU quota **and**, when a cgroup memory limit is detected (containers), by `get_memory_limit_bytes` / `WORKER_MEMORY_BUDGET_BYTES` (8 MiB/worker); on bare metal the memory probe is `None` and only the CPU quota applies |
 | `get_files_remote` | `sync.py:661` | fetch remote file list |

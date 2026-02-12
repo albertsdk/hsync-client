@@ -81,6 +81,7 @@ from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.remote_websocket import remote_connect
 from hsync_client.sync import (
+    log_initial_sync_start,
     sync,
 )
 from hsync_client.utils import (
@@ -976,6 +977,7 @@ def run_sync(
             ActionLabel.REMOTE_SECURITY: "Peer-caused: unsafe path rejected",
             ActionLabel.REMOTE_ECHO: "Peer event echo suppressed (debug)",
             ActionLabel.REMOTE_DOWNLOAD: "Master serving file bytes to a peer",
+            ActionLabel.INITIAL_SYNC: "Initial synchronization started (first full reconcile of a run)",
         }
         for label, description in log_labels.items():
             log.info(f"  {label} {description}")
@@ -1046,6 +1048,7 @@ def run_sync(
             # fatal failures already logged by sync() become FATAL (1)
             # without a raw traceback on stderr.
             try:
+                log_initial_sync_start()
                 result = run(sync())
             except SystemExit:
                 raise

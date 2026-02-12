@@ -55,7 +55,7 @@ from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
-from hsync_client.sync import periodic_resync, sync
+from hsync_client.sync import log_initial_sync_start, periodic_resync, sync
 from hsync_client.transfer import upload_file
 from hsync_client.utils import warn_if_inotify_watch_limit_low
 
@@ -431,6 +431,7 @@ async def remote_connect() -> None:
             await _refresh_network_tuning()
 
             # Perform initial sync before entering event loop
+            log_initial_sync_start()
             await sync()
 
             # Cancel previous resync task if it exists. CancelledError is a
