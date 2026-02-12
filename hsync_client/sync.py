@@ -102,6 +102,33 @@ def is_sync_cycle_active() -> bool:
     return _sync_cycle_active.is_set()
 
 
+async def periodic_resync(*, lan_mode: bool = False) -> None:
+    """Run full sync cycles at ``CONFIG["RESYNC"]`` until cancelled.
+
+    Shared by remote continuous mode and the LAN slave. ``CancelledError`` is
+    re-raised so task cancellation actually stops the loop.
+    """
+    label = "LAN force resync" if lan_mode else "Force sync"
+    skip_msg = (
+        "LAN force resync skipped: sync already in progress"
+        if lan_mode
+        else "Force sync skipped: a sync cycle is already in progress"
+    )
+    stop_msg = "LAN resync task stopped" if lan_mode else "Resync task stopped"
+    try:
+        while True:
+            await asyncio.sleep(CONFIG["RESYNC"] or 60)
+            if is_sync_cycle_active():
+                log.debug(skip_msg)
+                continue
+            log.info(f"{label} ({CONFIG['RESYNC']} sec.)")
+            await sync(lan_mode=lan_mode)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.debug(f"{stop_msg}: {e}")
+
+
 from hsync_client.utils import (
     http_get as get,
 )

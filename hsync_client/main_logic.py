@@ -112,170 +112,122 @@ def _read_secret_from_fd(fd: int | None) -> str | None:
 TuningSource = Literal["cli", "env", "autotune", "default"]
 
 
-def _get_stability_delay_value(cli_value: int | None) -> int:
-    """
-    Determine the stability delay value.
+def _first_defined[T](cli: T | None, env: T | None, default: T) -> T:
+    """CLI > env > default."""
+    if cli is not None:
+        return cli
+    if env is not None:
+        return env
+    return default
 
-    Priority: CLI argument > environment variable > default constant.
-    """
-    if cli_value is not None:
-        return cli_value
-    env_value = get_stability_delay()
-    if env_value is not None:
-        return env_value
-    return FILE_STABILITY_INTERVAL_DEFAULT
+
+def _resolve_with_provenance[T](
+    cli: T | None,
+    env: T | None,
+    default: T,
+    autotune: T | None = None,
+) -> tuple[T, TuningSource]:
+    """CLI > env > autotune > default, with a provenance tag."""
+    if cli is not None:
+        return cli, "cli"
+    if env is not None:
+        return env, "env"
+    if autotune is not None:
+        return autotune, "autotune"
+    return default, "default"
+
+
+def _get_stability_delay_value(cli_value: int | None) -> int:
+    """Priority: CLI argument > environment variable > default constant."""
+    return _first_defined(cli_value, get_stability_delay(), FILE_STABILITY_INTERVAL_DEFAULT)
 
 
 def _get_discovery_timeout_value(cli_value: int | None) -> int:
-    """
-    Determine the LAN discovery timeout value.
-
-    Priority: CLI argument > environment variable > default constant.
-    A value of 0 is valid and means "wait indefinitely".
-    """
-    if cli_value is not None:
-        return cli_value
-
-    env_value = get_discovery_timeout()
-    if env_value is not None:
-        return env_value
-
-    return DISCOVERY_TIMEOUT_DEFAULT
+    """Priority: CLI > env > default. ``0`` means wait indefinitely."""
+    return _first_defined(cli_value, get_discovery_timeout(), DISCOVERY_TIMEOUT_DEFAULT)
 
 
 def _get_resync_value(cli_value: int | None) -> int | None:
-    """
-    Determine the periodic resync interval (seconds).
-
-    Priority: CLI argument > environment variable > default constant.
-    Periodic resync is enabled by default as a safety net for missed
-    file-system events; a value of 0 (env only) disables it.
-    """
+    """Priority: CLI > env > default. Env ``0`` disables periodic resync."""
     if cli_value is not None:
         return cli_value
-
     env_value = get_resync()
     if env_value is not None:
-        return env_value or None  # 0 disables periodic resync
-
+        return env_value or None
     return RESYNC_DEFAULT
 
 
 def _get_max_concurrent_transfers_value(
     cli_value: int | None, autotune: int | None = None
 ) -> tuple[int, TuningSource]:
-    """
-    Determine the max concurrent transfers value and its provenance.
-
-    Priority: CLI argument > environment variable > autotune > default constant.
-    The provenance tag feeds ``AUTOTUNE_MANAGED_KEYS``: only a value resolved
-    from autotune/default may be re-derived by the per-cycle queue refresh in
-    ``sync._refresh_concurrency_from_queue`` (CLI/env overrides are preserved).
-    """
+    """Priority: CLI > env > autotune > default. Provenance feeds AUTOTUNE_MANAGED_KEYS."""
     from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
 
-    if cli_value is not None:
-        return cli_value, "cli"
-    env_value = get_max_concurrent_transfers()
-    if env_value is not None:
-        return env_value, "env"
-    if autotune is not None:
-        return autotune, "autotune"
-    return MAX_CONCURRENT_TRANSFERS_DEFAULT, "default"
+    return _resolve_with_provenance(
+        cli_value, get_max_concurrent_transfers(), MAX_CONCURRENT_TRANSFERS_DEFAULT, autotune
+    )
 
 
 def _get_http_timeout_value(
     cli_value: int | None, autotune: int | None = None
 ) -> tuple[int, TuningSource]:
-    """
-    Determine the HTTP timeout value and its provenance.
-
-    Priority: CLI argument > environment variable > autotune > default constant.
-    The provenance tag feeds ``AUTOTUNE_MANAGED_KEYS``: only keys resolved from
-    autotune/default may be re-derived by the LAN post-discovery refresh.
-    """
+    """Priority: CLI > env > autotune > default."""
     from hsync_client.config import get_http_timeout
     from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
 
-    if cli_value is not None:
-        return cli_value, "cli"
-    env_value = get_http_timeout()
-    if env_value is not None:
-        return env_value, "env"
-    if autotune is not None:
-        return autotune, "autotune"
-    return HTTP_TIMEOUT_DEFAULT, "default"
+    return _resolve_with_provenance(cli_value, get_http_timeout(), HTTP_TIMEOUT_DEFAULT, autotune)
 
 
 def _get_reconnect_delay_value(
     cli_value: int | None, autotune: int | None = None
 ) -> tuple[int, TuningSource]:
-    """
-    Determine the reconnection delay value and its provenance.
-
-    Priority: CLI argument > environment variable > autotune > default constant.
-    """
+    """Priority: CLI > env > autotune > default."""
     from hsync_client.config import get_reconnect_delay
     from hsync_client.constants import RECONNECT_DELAY_DEFAULT
 
-    if cli_value is not None:
-        return cli_value, "cli"
-    env_value = get_reconnect_delay()
-    if env_value is not None:
-        return env_value, "env"
-    if autotune is not None:
-        return autotune, "autotune"
-    return RECONNECT_DELAY_DEFAULT, "default"
+    return _resolve_with_provenance(
+        cli_value, get_reconnect_delay(), RECONNECT_DELAY_DEFAULT, autotune
+    )
 
 
 def _get_transfer_retry_min_wait_value(autotune: int | None = None) -> tuple[float, TuningSource]:
-    """
-    Determine the per-file retry minimum wait value and its provenance.
-
-    Priority: environment variable > autotune > default constant (no CLI flag).
-    """
+    """Priority: env > autotune > default (no CLI flag)."""
     from hsync_client.config import get_transfer_retry_min_wait
 
     env_value = get_transfer_retry_min_wait()
-    if env_value is not None:
-        return env_value, "env"
-    if autotune is not None:
-        return float(autotune), "autotune"
-    return TRANSFER_RETRY_MIN_WAIT_DEFAULT, "default"
+    value, source = _resolve_with_provenance(
+        None, env_value, TRANSFER_RETRY_MIN_WAIT_DEFAULT, autotune
+    )
+    return float(value), source
 
 
 def _get_transfer_retry_max_wait_value(autotune: int | None = None) -> tuple[float, TuningSource]:
-    """
-    Determine the per-file retry maximum wait value and its provenance.
-
-    Priority: environment variable > autotune > default constant (no CLI flag).
-    """
+    """Priority: env > autotune > default (no CLI flag)."""
     from hsync_client.config import get_transfer_retry_max_wait
 
     env_value = get_transfer_retry_max_wait()
-    if env_value is not None:
-        return env_value, "env"
-    if autotune is not None:
-        return float(autotune), "autotune"
-    return TRANSFER_RETRY_MAX_WAIT_DEFAULT, "default"
+    value, source = _resolve_with_provenance(
+        None, env_value, TRANSFER_RETRY_MAX_WAIT_DEFAULT, autotune
+    )
+    return float(value), source
 
 
 def _get_mass_delete_guard_value(cli_value: bool | None) -> bool:
-    """Determine mass-deletion guard on/off. Priority: CLI > env > default."""
+    """Priority: CLI > env > default."""
     if cli_value is not None:
         return cli_value
     return get_mass_delete_guard()
 
 
 def _get_mass_delete_threshold_value(cli_value: int | None) -> int:
-    """Determine mass-deletion absolute threshold. Priority: CLI > env > default."""
+    """Priority: CLI > env > default."""
     if cli_value is not None:
         return cli_value
     return get_mass_delete_threshold()
 
 
 def _get_mass_delete_percent_value(cli_value: int | None) -> int:
-    """Determine mass-deletion percentage threshold. Priority: CLI > env > default."""
+    """Priority: CLI > env > default."""
     if cli_value is not None:
         return cli_value
     return get_mass_delete_percent()

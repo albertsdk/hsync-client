@@ -23,10 +23,13 @@ from mutation so a full sync flushes once instead of per file.
 import json
 import os
 import threading
+from pathlib import Path
 
 from hsync_common.clock import correct_mtime
+from hsync_common.models.file import File
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.models.version import SyncStateStore, merge_vclocks, new_version_id, tick_vclock
+from loguru import logger as log
 
 from hsync_client.config import CONFIG
 from hsync_client.state_backend import resolve_bucket_folder
@@ -239,6 +242,13 @@ def get_vclock(abs_path: str) -> dict[str, int] | None:
         return entry["vclock"] if entry else None
 
 
+def abs_in_bucket(filepath: str) -> str:
+    """Resolve *filepath* against ``LOCAL_BUCKET`` when it is relative."""
+    if Path(filepath).is_absolute():
+        return filepath
+    return str(Path(_bucket_dir()) / filepath)
+
+
 def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str, str, int]:
     """Return ``(vclock_json, version_id, corrected_mtime)`` upload form values.
 
@@ -255,6 +265,21 @@ def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str,
             eff.get("version_id", "") or "",
             int(eff.get("corrected_mtime", 0) or 0),
         )
+    return "{}", "", 0
+
+
+def resolve_upload_version_fields(file: File) -> tuple[str, str, int]:
+    """Resolve upload version fields for *file*, never raising.
+
+    Joins a relative ``file.filepath`` against the local bucket, then delegates
+    to :func:`upload_version_fields`. Bookkeeping failures return the empty
+    clock so a transfer is never aborted for a version lookup.
+    """
+    try:
+        if file.filepath:
+            return upload_version_fields(abs_in_bucket(file.filepath), file.sha256sum)
+    except Exception as e:  # pragma: no cover - bookkeeping must never break transfer
+        log.debug(f'Could not resolve upload version for "{file.filepath}": {e}')
     return "{}", "", 0
 
 

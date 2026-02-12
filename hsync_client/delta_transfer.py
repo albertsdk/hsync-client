@@ -66,12 +66,14 @@ from hsync_client.config import (
     get_delta_min_file_size,
     get_delta_min_file_size_lan,
 )
-from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
 from hsync_client.exceptions import ServerError
-from hsync_client.sync_state import get_base_hash, upload_version_fields
+from hsync_client.sync_state import get_base_hash, resolve_upload_version_fields
 from hsync_client.utils import (
     get_ssl_verify,
     inbound_size_cap,
+)
+from hsync_client.utils import (
+    http_connect_timeout as _timeout,
 )
 from hsync_client.utils import (
     http_get as get,
@@ -79,26 +81,19 @@ from hsync_client.utils import (
 from hsync_client.utils import (
     http_post as post,
 )
+from hsync_client.utils import (
+    upload_timeout as _upload_timeout,
+)
 
 
 def _resolve_delta_version_fields(file: File) -> tuple[str, str, int]:
     """Return ``(vclock_json, version_id, corrected_mtime)`` delta-apply fields.
 
-    Delegates to :func:`sync_state.upload_version_fields` (the SSOT shared with
-    the full-upload path) so both transfer channels advertise the same
-    effective causal version and the ADR-0023 corrected mtime.
+    Delegates to :func:`sync_state.resolve_upload_version_fields` (the SSOT
+    shared with the full-upload path) so both transfer channels advertise the
+    same effective causal version and the ADR-0023 corrected mtime.
     """
-    try:
-        if file.filepath:
-            abs_path = (
-                file.filepath
-                if Path(file.filepath).is_absolute()
-                else str(Path(CONFIG["LOCAL_BUCKET"]) / file.filepath)
-            )
-            return upload_version_fields(abs_path, file.sha256sum)
-    except Exception as e:  # pragma: no cover - bookkeeping must never break delta
-        log.debug(f'Could not resolve delta version for "{file.filepath}": {e}')
-    return "{}", "", 0
+    return resolve_upload_version_fields(file)
 
 
 class DeltaTransferError(Exception):
@@ -184,16 +179,6 @@ def prepare_delta_download(file: File, local_path: str) -> DeltaDownloadContext 
     return DeltaDownloadContext(
         base_hash=base_hash, local_path=local_path, local_sha256=local_file.sha256sum
     )
-
-
-def _timeout() -> float:
-    """HTTP timeout honouring the configured value."""
-    return float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
-
-
-def _upload_timeout() -> tuple[float, None]:
-    """Upload-style timeout: connect-bounded, read-unbounded."""
-    return (_timeout(), None)
 
 
 def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:

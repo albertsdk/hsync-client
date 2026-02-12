@@ -77,7 +77,12 @@ from hsync_client.file_event_handler import (
     BaseFileEventHandler,
 )
 from hsync_client.pools import log_future_error
-from hsync_client.utils import cid_suffix, ensure_str_path, warn_if_inotify_watch_limit_low
+from hsync_client.utils import (
+    cid_suffix,
+    ensure_str_path,
+    request_headers,
+    warn_if_inotify_watch_limit_low,
+)
 
 # Conservative minimum effective LAN bandwidth used to derive the dynamic
 # ``wait_pending`` timeout from the total bytes still in flight (10 MB/s).
@@ -997,29 +1002,10 @@ async def lan_websocket_client(
 
 
 async def _lan_periodic_resync() -> None:
-    """Periodic full resync for the LAN slave (safety net for missed events).
+    """Periodic full resync for the LAN slave (safety net for missed events)."""
+    from hsync_client.sync import periodic_resync
 
-    Runs as a background task while connected to the master, performing a
-    full sync at the configured ``RESYNC`` interval to recover any
-    file-system events dropped by the watcher (e.g. inotify overflow).
-    """
-    from hsync_client.sync import is_sync_cycle_active, sync
-
-    try:
-        while True:
-            await asyncio.sleep(CONFIG["RESYNC"] or 60)
-            # Skip if a sync cycle is already in progress (reconnect,
-            # watcher-induced resync, etc.). Prevents two concurrent sync()
-            # cycles from racing on the same stores.
-            if is_sync_cycle_active():
-                log.debug("LAN force resync skipped: sync already in progress")
-                continue
-            log.info(f"LAN force resync ({CONFIG['RESYNC']} sec.)")
-            await sync(lan_mode=True)
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug(f"LAN resync task stopped: {e}")
+    await periodic_resync(lan_mode=True)
 
 
 def _build_lan_dispatch_ctx(
@@ -1073,6 +1059,54 @@ async def _handle_lan_event(
 # =============================================================================
 
 
+class _TtlMap[K]:
+    """Lock-guarded map with prune-on-write TTL."""
+
+    def __init__(self, ttl: float) -> None:
+        self._ttl = ttl
+        self._lock = threading.Lock()
+        self._items: dict[K, float] = {}
+
+    def record(self, key: K) -> None:
+        now = time()
+        with self._lock:
+            self._items[key] = now
+            cutoff = now - self._ttl
+            expired = [k for k, ts in self._items.items() if ts < cutoff]
+            for k in expired:
+                del self._items[k]
+
+    def get_live(self, key: K) -> float | None:
+        now = time()
+        with self._lock:
+            ts = self._items.get(key)
+            if ts is None:
+                return None
+            if now - ts > self._ttl:
+                del self._items[key]
+                return None
+            return ts
+
+    def live_items(self) -> list[tuple[K, float]]:
+        now = time()
+        live: list[tuple[K, float]] = []
+        with self._lock:
+            for k, ts in list(self._items.items()):
+                if now - ts > self._ttl:
+                    del self._items[k]
+                else:
+                    live.append((k, ts))
+        return live
+
+
+def _rename_descendant_match(src: str, dst: str, r_src: str, r_dst: str) -> bool:
+    """True when ``(src, dst)`` is the same-suffix descendant of ``(r_src, r_dst)``."""
+    if not dst.startswith(r_dst):
+        return False
+    suffix = dst[len(r_dst) :]
+    return (not suffix or suffix.startswith("/")) and src == r_src + suffix
+
+
 class LANSlaveFileEventHandler(FileSystemEventHandler):
     """
     File system event handler for LAN client mode.
@@ -1117,9 +1151,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # 404 divergence when the slave re-sends it to the master.  The echo
         # always carries the identical (src,dst) of the inbound rename; a
         # genuine user rename that collides with the source path does not.
-        self._inbound_renames: dict[tuple[str, str], float] = {}
-        self._inbound_renames_lock = threading.Lock()
-        self._INBOUND_RENAME_TTL_S: float = 10.0
+        self._inbound_renames: _TtlMap[tuple[str, str]] = _TtlMap(10.0)
         # Track directory renames this slave has just sent to the master (or
         # about to send). When the local watcher renames a directory it emits
         # an `on_moved` for the directory AND one for each child (e.g. the
@@ -1127,9 +1159,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # the master already renames the whole tree, so the child PATCHes are
         # redundant and fail with 404. This map lets `on_moved` skip those
         # redundant child PATCHes (outbound direction, same `/`-suffix guard).
-        self._outbound_dir_renames: dict[tuple[str, str], float] = {}
-        self._outbound_dir_renames_lock = threading.Lock()
-        self._OUTBOUND_DIR_RENAME_TTL_S: float = 10.0
+        self._outbound_dir_renames: _TtlMap[tuple[str, str]] = _TtlMap(10.0)
         # Track inbound directory deletes this slave just applied on behalf of
         # the master (recursive `deleted` → `rmtree`). The `rmtree` only
         # marks the tree root for echo suppression, so the slave's own
@@ -1137,9 +1167,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # must not be re-sent to the master. A path equal to, or under, a
         # cached directory delete is recognised as a benign echo (same
         # `/`-suffix guard as the rename descendant match).
-        self._inbound_deletes: dict[str, float] = {}
-        self._inbound_deletes_lock = threading.Lock()
-        self._INBOUND_DELETE_TTL_S: float = 10.0
+        self._inbound_deletes: _TtlMap[str] = _TtlMap(10.0)
         # Track pending operations (rename, upload, delete) for graceful
         # shutdown.  Each entry is ``(future, bytes_estimate)`` so that
         # ``wait_pending`` can derive a timeout proportional to the volume
@@ -1185,12 +1213,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         rename that re-uses one of the paths will have a different pair and
         will not match.
         """
-        now = time()
-        with self._inbound_renames_lock:
-            self._inbound_renames[(src, dst)] = now
-            cutoff = now - self._INBOUND_RENAME_TTL_S
-            for key in [k for k, ts in self._inbound_renames.items() if ts < cutoff]:
-                del self._inbound_renames[key]
+        self._inbound_renames.record((src, dst))
 
     def is_inbound_rename_echo(self, src: str, dst: str) -> bool:
         """Return True if ``(src, dst)`` matches a recent inbound rename.
@@ -1205,25 +1228,12 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         sides, so a genuine rename that merely shares a path prefix
         (``ABC-keeper -> ABC-123-keeper``) is never suppressed.
         """
-        with self._inbound_renames_lock:
-            now = time()
-            # Exact match first (fast path).
-            ts = self._inbound_renames.get((src, dst))
-            if ts is not None:
-                if now - ts <= self._INBOUND_RENAME_TTL_S:
-                    return True
-                del self._inbound_renames[(src, dst)]
-
-            # Descendant match: iterate over cached directory renames.
-            for (r_src, r_dst), ts in list(self._inbound_renames.items()):
-                if now - ts > self._INBOUND_RENAME_TTL_S:
-                    del self._inbound_renames[(r_src, r_dst)]
-                    continue
-                if dst.startswith(r_dst):
-                    suffix = dst[len(r_dst) :]
-                    if (not suffix or suffix.startswith("/")) and src == r_src + suffix:
-                        return True
-            return False
+        if self._inbound_renames.get_live((src, dst)) is not None:
+            return True
+        return any(
+            _rename_descendant_match(src, dst, r_src, r_dst)
+            for (r_src, r_dst), _ts in self._inbound_renames.live_items()
+        )
 
     def record_inbound_delete(self, path: str) -> None:
         """Record a directory delete applied locally on behalf of an inbound event.
@@ -1233,12 +1243,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         watcher outside the mark/unmark window of the tree root) is
         recognised as benign and not re-sent to the master.
         """
-        now = time()
-        with self._inbound_deletes_lock:
-            self._inbound_deletes[path] = now
-            cutoff = now - self._INBOUND_DELETE_TTL_S
-            for key in [k for k, ts in self._inbound_deletes.items() if ts < cutoff]:
-                del self._inbound_deletes[key]
+        self._inbound_deletes.record(path)
 
     def is_inbound_delete_echo(self, path: str) -> bool:
         """Return True if *path* is an echo of a recent inbound directory delete.
@@ -1249,18 +1254,13 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         starts with ``/``, so a genuine deletion that merely shares a path
         prefix (``ABC -> ABC-1``) is never suppressed.
         """
-        with self._inbound_deletes_lock:
-            now = time()
-            for root, ts in list(self._inbound_deletes.items()):
-                if now - ts > self._INBOUND_DELETE_TTL_S:
-                    del self._inbound_deletes[root]
-                    continue
-                if path == root:
-                    return True
-                suffix = path.removeprefix(root)
-                if suffix != path and (suffix.startswith("/") or not suffix):
-                    return True
-            return False
+        for root, _ts in self._inbound_deletes.live_items():
+            if path == root:
+                return True
+            suffix = path.removeprefix(root)
+            if suffix != path and (suffix.startswith("/") or not suffix):
+                return True
+        return False
 
     def _record_outbound_dir_rename(self, src: str, dst: str) -> None:
         """Record a directory rename this slave is about to send to the master.
@@ -1270,12 +1270,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         subsequent child events be recognised as redundant (the single PATCH
         of the directory already renamed the whole tree on the master).
         """
-        now = time()
-        with self._outbound_dir_renames_lock:
-            self._outbound_dir_renames[(src, dst)] = now
-            cutoff = now - self._OUTBOUND_DIR_RENAME_TTL_S
-            for key in [k for k, ts in self._outbound_dir_renames.items() if ts < cutoff]:
-                del self._outbound_dir_renames[key]
+        self._outbound_dir_renames.record((src, dst))
 
     def is_outbound_dir_descendant(self, src: str, dst: str) -> bool:
         """Return True if ``(src, dst)`` is a child of a recent outbound dir rename.
@@ -1287,17 +1282,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         rename sharing a path prefix (``ABC-keeper -> ABC-123-keeper``) is
         never suppressed.
         """
-        with self._outbound_dir_renames_lock:
-            now = time()
-            for (r_src, r_dst), ts in list(self._outbound_dir_renames.items()):
-                if now - ts > self._OUTBOUND_DIR_RENAME_TTL_S:
-                    del self._outbound_dir_renames[(r_src, r_dst)]
-                    continue
-                if dst.startswith(r_dst):
-                    suffix = dst[len(r_dst) :]
-                    if (not suffix or suffix.startswith("/")) and src == r_src + suffix:
-                        return True
-            return False
+        return any(
+            _rename_descendant_match(src, dst, r_src, r_dst)
+            for (r_src, r_dst), _ts in self._outbound_dir_renames.live_items()
+        )
 
     def _start_operation(
         self,
@@ -1406,6 +1394,35 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
 
+    def _rel_in_bucket(self, abs_path: str) -> str:
+        prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
+        return abs_path.removeprefix(prefix).lstrip("/")
+
+    def _master_url(self, suffix: str) -> str:
+        protocol = "https" if self._use_https else "http"
+        return (
+            f"{protocol}://{self._master_host}:{self._master_port}"
+            f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}{suffix}"
+        )
+
+    def _master_params(self, **extra: str) -> dict[str, str]:
+        params = dict(extra)
+        own_cid = CONFIG.get("CID")
+        if own_cid:
+            params["cid"] = str(own_cid)
+        return params
+
+    def _call_master(self, http_fn, suffix: str, params: dict[str, str]):
+        from hsync_client.utils import get_ssl_verify
+
+        return http_fn(
+            self._master_url(suffix),
+            params=params,
+            headers=request_headers(),
+            verify=get_ssl_verify(),
+            timeout=30,
+        )
+
     def _create_dir_on_master(self, dir_path: str, permissions: str | None = None) -> None:
         """Notify master about a directory creation.
 
@@ -1416,48 +1433,19 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         applies the mode to the already-existing directory (owner-floor
         preserved) and re-broadcasts it.
         """
-        from hsync_client.utils import get_ssl_verify, http_post
+        from hsync_client.utils import http_post
 
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
 
         try:
-            protocol = "https" if self._use_https else "http"
-            prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
-            rel_path = dir_path.removeprefix(prefix).lstrip("/")
-
-            url = (
-                f"{protocol}://{self._master_host}:{self._master_port}"
-                f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}/dirs"
-            )
-
-            params = {"path": rel_path}
+            params = self._master_params(path=self._rel_in_bucket(dir_path))
             if permissions:
                 params["permissions"] = permissions
-            # Include our CID so the master can attribute the resulting
-            # filesystem event back to us and suppress the echo broadcast.
-            own_cid = CONFIG.get("CID")
-            if own_cid:
-                params["cid"] = own_cid
-            headers: dict[str, str] = {}
-            req_headers = CONFIG.get("REQUEST_HEADERS")
-            if req_headers and isinstance(req_headers, dict):
-                for k, v in req_headers.items():
-                    if isinstance(k, str) and isinstance(v, str):
-                        headers[k] = v
-
             log.info(f'{ActionLabel.LOCAL_CREATE} "{dir_path}" (dir)')
-            response = http_post(
-                url,
-                params=params,
-                headers=headers,
-                verify=get_ssl_verify(),
-                timeout=30,
-            )
-
+            response = self._call_master(http_post, "/dirs", params)
             if response.status_code not in (200, 201, 204):
                 log.warning(f"Create dir request failed: {response.status_code}")
-
         except Exception as e:
             log.error(f"Failed to create dir on master: {e}")
 
@@ -1495,102 +1483,40 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
     def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
         """Notify master about a file/directory deletion."""
-        from hsync_client.utils import get_ssl_verify, http_delete
+        from hsync_client.utils import http_delete
 
         try:
-            protocol = "https" if self._use_https else "http"
-            # Use the files endpoint with DELETE method
-            prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
-            rel_path = filepath.removeprefix(prefix).lstrip("/")
-
-            url = (
-                f"{protocol}://{self._master_host}:{self._master_port}"
-                f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}/files"
+            params = self._master_params(
+                path=self._rel_in_bucket(filepath), is_dir=str(is_dir).lower()
             )
-
-            params = {"path": rel_path, "is_dir": str(is_dir).lower()}
-            # Include our CID so the master can attribute the resulting
-            # filesystem event back to us and suppress the echo broadcast.
-            own_cid = CONFIG.get("CID")
-            if own_cid:
-                params["cid"] = own_cid
-            headers: dict[str, str] = {}
-            req_headers = CONFIG.get("REQUEST_HEADERS")
-            if req_headers and isinstance(req_headers, dict):
-                for k, v in req_headers.items():
-                    if isinstance(k, str) and isinstance(v, str):
-                        headers[k] = v
-
             log.info(f'{ActionLabel.LOCAL_DELETE} "{filepath}"')
-            response = http_delete(
-                url,
-                params=params,
-                headers=headers,
-                verify=get_ssl_verify(),
-                timeout=30,
-            )
-
+            response = self._call_master(http_delete, "/files", params)
             if response.status_code not in (200, 204, 404):
                 log.warning(f"Delete request failed: {response.status_code}")
-
         except Exception as e:
             log.error(f"Failed to delete on master: {e}")
 
     def _rename_on_master(self, src_path: str, dst_path: str) -> None:
         """Notify master about a file/directory rename."""
-        from hsync_client.utils import get_ssl_verify, http_patch
+        from hsync_client.utils import http_patch
 
         try:
-            protocol = "https" if self._use_https else "http"
-            prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
-            src_rel = src_path.removeprefix(prefix).lstrip("/")
-            dst_rel = dst_path.removeprefix(prefix).lstrip("/")
-
-            url = (
-                f"{protocol}://{self._master_host}:{self._master_port}"
-                f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}/files"
+            params = self._master_params(
+                src=self._rel_in_bucket(src_path), dst=self._rel_in_bucket(dst_path)
             )
-
-            params = {"src": src_rel, "dst": dst_rel}
-            # Include our CID so the master can attribute the resulting
-            # filesystem event back to us and suppress the echo broadcast.
-            own_cid = CONFIG.get("CID")
-            if own_cid:
-                params["cid"] = own_cid
-            headers: dict[str, str] = {}
-            req_headers = CONFIG.get("REQUEST_HEADERS")
-            if req_headers and isinstance(req_headers, dict):
-                for k, v in req_headers.items():
-                    if isinstance(k, str) and isinstance(v, str):
-                        headers[k] = v
-
             log.info(f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dst_path}"')
-            response = http_patch(
-                url,
-                params=params,
-                headers=headers,
-                verify=get_ssl_verify(),
-                timeout=30,
-            )
-
+            response = self._call_master(http_patch, "/files", params)
             if response.status_code not in (200, 204):
                 if response.status_code == 404 and (
                     self.is_inbound_rename_echo(src_path, dst_path)
                     or self.is_outbound_dir_descendant(src_path, dst_path)
                 ):
-                    # Source no longer exists on master. This is benign when
-                    # the rename was already applied there: either it was an
-                    # inbound `renamed` event we just applied locally, or it
-                    # is a child of a directory rename this slave already
-                    # sent (the single PATCH of the directory renamed the
-                    # whole tree). Nothing left to rename.
                     log.debug(
                         f"Rename source already gone on master (redundant echo): "
                         f'"{src_path}" -> "{dst_path}"'
                     )
                 else:
                     log.warning(f"Rename request failed: {response.status_code}")
-
         except Exception as e:
             log.error(f"Failed to rename on master: {e}")
 

@@ -22,14 +22,10 @@ from hsync_common.protocol.pairing import (
 )
 from hsync_common.text import safe_json_for_log
 
-from hsync_client.autotune import classify_network, derive_retry, derive_timeout, measure_rtt
+from hsync_client.autotune import classify_network, derive_managed_rtt_updates, measure_rtt
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     DISCOVERY_POLL_INTERVAL,
-    HTTP_TIMEOUT_MAX,
-    HTTP_TIMEOUT_MIN,
-    RECONNECT_DELAY_MAX,
-    RECONNECT_DELAY_MIN,
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
@@ -78,24 +74,7 @@ def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
         log.debug("autotune (LAN): RTT to master not measurable; keeping startup tuning")
         return
 
-    net_class = classify_network(rtt_ms)
-    updates: dict[str, int | float] = {}
-
-    if "HTTP_TIMEOUT" in managed:
-        updates["HTTP_TIMEOUT"] = derive_timeout(
-            rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX
-        )
-    if managed & {"TRANSFER_RETRY_MIN_WAIT", "TRANSFER_RETRY_MAX_WAIT", "RECONNECT_DELAY"}:
-        min_wait, max_wait, reconnect = derive_retry(
-            rtt_ms, net_class, RECONNECT_DELAY_MIN, RECONNECT_DELAY_MAX
-        )
-        if "TRANSFER_RETRY_MIN_WAIT" in managed:
-            updates["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
-        if "TRANSFER_RETRY_MAX_WAIT" in managed:
-            updates["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
-        if "RECONNECT_DELAY" in managed:
-            updates["RECONNECT_DELAY"] = reconnect
-
+    updates = derive_managed_rtt_updates(rtt_ms, managed)
     if not updates:
         return
 
@@ -103,7 +82,8 @@ def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
         cast(dict[str, Any], CONFIG)[key] = value
         cast(dict[str, Any], config)[key] = value
     log.info(
-        f"autotune (LAN): rtt={rtt_ms:.1f}ms net={net_class.value} -> {safe_json_for_log(updates)}"
+        f"autotune (LAN): rtt={rtt_ms:.1f}ms net={classify_network(rtt_ms).value} "
+        f"-> {safe_json_for_log(updates)}"
     )
 
 

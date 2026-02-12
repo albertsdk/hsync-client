@@ -75,7 +75,12 @@ from hsync_client.exceptions import (
     ServerError,
 )
 from hsync_client.retry import retry_on_transient_transfer_error
-from hsync_client.sync_state import get_sync_state_store, local_version_for_compare
+from hsync_client.sync_state import (
+    abs_in_bucket,
+    get_sync_state_store,
+    local_version_for_compare,
+    resolve_upload_version_fields,
+)
 from hsync_client.utils import (
     get_ssl_verify,
     get_throttle_delay,
@@ -94,6 +99,9 @@ from hsync_client.utils import (
 )
 from hsync_client.utils import (
     open_partial_no_follow as _open_partial_no_follow,
+)
+from hsync_client.utils import (
+    upload_timeout as _upload_timeout,
 )
 
 
@@ -330,17 +338,6 @@ def _build_multipart_streaming(
         yield closing
 
     return _SizedStreamingBody(_generator(), content_length), content_type
-
-
-def _upload_timeout() -> tuple[float, float | None]:
-    """Return (connect_timeout, read_timeout) for upload requests.
-
-    Read timeout is disabled because large file uploads can legitimately
-    keep the socket busy for many minutes; the connect timeout still
-    catches unreachable servers quickly.
-    """
-    connect = float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
-    return connect, None
 
 
 # =============================================================================
@@ -1163,11 +1160,7 @@ def _resolve_effective_version(file: File) -> dict | None:
     try:
         if not file.filepath:
             return None
-        abs_path = (
-            file.filepath
-            if Path(file.filepath).is_absolute()
-            else str(Path(CONFIG["LOCAL_BUCKET"]) / file.filepath)
-        )
+        abs_path = abs_in_bucket(file.filepath)
         eff = local_version_for_compare(abs_path, file.sha256sum)
         if eff is not None:
             return eff
@@ -1285,19 +1278,7 @@ def _upload_version_fields(file: File) -> tuple[str, str, int]:
     the ADR-0023 corrected mtime. The server arbitrates this against its stored
     version (ADR-0022).
     """
-    try:
-        from hsync_client.sync_state import upload_version_fields
-
-        if file.filepath:
-            abs_path = (
-                file.filepath
-                if Path(file.filepath).is_absolute()
-                else str(Path(CONFIG["LOCAL_BUCKET"]) / file.filepath)
-            )
-            return upload_version_fields(abs_path, file.sha256sum)
-    except Exception as e:  # pragma: no cover - bookkeeping must never break upload
-        log.debug(f'Could not resolve upload version for "{file.filepath}": {e}')
-    return "{}", "", 0
+    return resolve_upload_version_fields(file)
 
 
 def _record_201_upload(file: File, response) -> None:

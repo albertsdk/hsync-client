@@ -435,7 +435,7 @@ class TestResync:
 
         call_count = 0
 
-        async def mock_sync():
+        async def mock_sync(lan_mode: bool = False):
             nonlocal call_count
             call_count += 1
             if call_count >= 2:
@@ -444,7 +444,8 @@ class TestResync:
         with (
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
-            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.sync", mock_sync),
         ):
             with contextlib.suppress(_StopLoop):
                 await resync()

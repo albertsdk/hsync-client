@@ -42,6 +42,7 @@ from hsync_client.config import CONFIG
 from hsync_client.constants import (
     CID_ALPHABET,
     CID_LENGTH,
+    HTTP_TIMEOUT_DEFAULT,
     INOTIFY_MAX_USER_WATCHES_PATH,
     INOTIFY_WATCH_WARN_RATIO,
     OWNER_DIRECTORY_ACCESS,
@@ -64,6 +65,27 @@ def _suppress_insecure_warning() -> None:
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         _insecure_warning_suppressed = True
+
+
+def request_headers() -> dict[str, str]:
+    """Return a str-only copy of ``CONFIG["REQUEST_HEADERS"]``."""
+    headers: dict[str, str] = {}
+    req_headers = CONFIG.get("REQUEST_HEADERS")
+    if req_headers and isinstance(req_headers, dict):
+        for k, v in req_headers.items():
+            if isinstance(k, str) and isinstance(v, str):
+                headers[k] = v
+    return headers
+
+
+def http_connect_timeout() -> float:
+    """Connect timeout honouring the configured HTTP timeout."""
+    return float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
+
+
+def upload_timeout() -> tuple[float, None]:
+    """Upload-style timeout: connect-bounded, read-unbounded."""
+    return (http_connect_timeout(), None)
 
 
 def redact_headers[T: Mapping[str, object]](headers: T) -> T:

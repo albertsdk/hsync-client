@@ -55,7 +55,7 @@ from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
-from hsync_client.sync import is_sync_cycle_active, sync
+from hsync_client.sync import periodic_resync, sync
 from hsync_client.transfer import upload_file
 from hsync_client.utils import warn_if_inotify_watch_limit_low
 
@@ -327,29 +327,8 @@ async def _process_remote_events(websocket, bucket: str) -> None:
 
 
 async def resync() -> None:
-    """
-    Periodic resynchronization task.
-
-    Runs as a background task during continuous sync mode,
-    performing full sync cycles at configured intervals to
-    catch any missed events or resolve inconsistencies.
-    """
-    try:
-        while True:
-            await sleep(CONFIG["RESYNC"] or 60)
-            # Skip this cycle if a sync is already in progress (e.g. triggered
-            # by a reconnect or a watcher-induced resync). This prevents two
-            # concurrent sync() cycles from racing on the same merge-base /
-            # tombstone stores. The flag is advisory and non-blocking: a
-            # missed cycle just means the next interval picks up the changes.
-            if is_sync_cycle_active():
-                log.debug("Force sync skipped: a sync cycle is already in progress")
-                continue
-            log.info(f"Force sync ({CONFIG['RESYNC']} sec.)")
-            await sync()
-    except Exception as e:
-        # Task was cancelled or error occurred
-        log.debug(f"Resync task stopped: {e}")
+    """Periodic resynchronization task for remote continuous mode."""
+    await periodic_resync(lan_mode=False)
 
 
 async def _refresh_network_tuning() -> None:
@@ -375,17 +354,10 @@ async def _refresh_network_tuning() -> None:
         import hsync_client.autotune as autotune_mod
         from hsync_client.autotune import (
             classify_network,
-            derive_retry,
-            derive_timeout,
+            derive_managed_rtt_updates,
             measure_bandwidth_active,
             measure_rtt,
             seed_bw_ema,
-        )
-        from hsync_client.constants import (
-            HTTP_TIMEOUT_MAX,
-            HTTP_TIMEOUT_MIN,
-            RECONNECT_DELAY_MAX,
-            RECONNECT_DELAY_MIN,
         )
 
         api_url = CONFIG["API"]["buckets"]
@@ -397,27 +369,9 @@ async def _refresh_network_tuning() -> None:
         if rtt_ms is None:
             log.debug("autotune (reconnect): RTT not measurable; keeping current tuning")
             return
+
+        updates = derive_managed_rtt_updates(rtt_ms, managed)
         net_class = classify_network(rtt_ms)
-
-        updates: dict[str, int | float] = {}
-        if "HTTP_TIMEOUT" in managed:
-            updates["HTTP_TIMEOUT"] = derive_timeout(
-                rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX
-            )
-        if managed & {"TRANSFER_RETRY_MIN_WAIT", "TRANSFER_RETRY_MAX_WAIT", "RECONNECT_DELAY"}:
-            min_wait, max_wait, reconnect = derive_retry(
-                rtt_ms,
-                net_class,
-                RECONNECT_DELAY_MIN,
-                RECONNECT_DELAY_MAX,
-            )
-            if "TRANSFER_RETRY_MIN_WAIT" in managed:
-                updates["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
-            if "TRANSFER_RETRY_MAX_WAIT" in managed:
-                updates["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
-            if "RECONNECT_DELAY" in managed:
-                updates["RECONNECT_DELAY"] = reconnect
-
         for key, value in updates.items():
             cast(dict[str, Any], CONFIG)[key] = value
         if updates:

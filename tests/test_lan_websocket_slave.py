@@ -76,11 +76,8 @@ class TestSlaveFileEventHandler:
         """An expired entry is evicted and no longer matches."""
         handler.record_inbound_rename("/b/old.txt", "/b/new.txt")
         # Force expiry by backdating the recorded timestamp
-        with handler._inbound_renames_lock:
-            key = ("/b/old.txt", "/b/new.txt")
-            handler._inbound_renames[key] = handler._inbound_renames[key] - (
-                handler._INBOUND_RENAME_TTL_S + 1
-            )
+        key = ("/b/old.txt", "/b/new.txt")
+        handler._inbound_renames._items[key] -= handler._inbound_renames._ttl + 1
         assert not handler.is_inbound_rename_echo("/b/old.txt", "/b/new.txt")
 
     def test_inbound_rename_echo_descendant_match(self, handler):
@@ -1201,7 +1198,7 @@ class TestSlaveFileEventHandler:
         root = str(tmp_path / "a")
         handler.record_inbound_delete(root)
         # Expire the cache entry (recorded `now`); simulate an old timestamp.
-        handler._inbound_deletes[root] = time.time() - (handler._INBOUND_DELETE_TTL_S + 1)
+        handler._inbound_deletes._items[root] = time.time() - (handler._inbound_deletes._ttl + 1)
 
         event = DirDeletedEvent(root)
         config = {

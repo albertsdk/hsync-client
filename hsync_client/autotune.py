@@ -33,8 +33,12 @@ from loguru import logger as log
 
 from hsync_client.constants import (
     HTTP_TIMEOUT_DEFAULT,
+    HTTP_TIMEOUT_MAX,
+    HTTP_TIMEOUT_MIN,
     MAX_CONCURRENT_TRANSFERS_DEFAULT,
     RECONNECT_DELAY_DEFAULT,
+    RECONNECT_DELAY_MAX,
+    RECONNECT_DELAY_MIN,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
 )
 
@@ -423,6 +427,34 @@ def derive_profile(results: ProbeResults) -> TuningProfile:
 
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
+
+
+def derive_managed_rtt_updates(rtt_ms: float, managed: set[str]) -> dict[str, int | float]:
+    """Derive autotune-managed timeout/retry keys from a measured RTT.
+
+    Only keys present in *managed* are included. Callers write the result onto
+    ``CONFIG`` (and, in LAN mode, the local config dict).
+    """
+    net_class = classify_network(rtt_ms)
+    updates: dict[str, int | float] = {}
+    if "HTTP_TIMEOUT" in managed:
+        updates["HTTP_TIMEOUT"] = derive_timeout(
+            rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX
+        )
+    if managed & {"TRANSFER_RETRY_MIN_WAIT", "TRANSFER_RETRY_MAX_WAIT", "RECONNECT_DELAY"}:
+        min_wait, max_wait, reconnect = derive_retry(
+            rtt_ms,
+            net_class,
+            RECONNECT_DELAY_MIN,
+            RECONNECT_DELAY_MAX,
+        )
+        if "TRANSFER_RETRY_MIN_WAIT" in managed:
+            updates["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
+        if "TRANSFER_RETRY_MAX_WAIT" in managed:
+            updates["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
+        if "RECONNECT_DELAY" in managed:
+            updates["RECONNECT_DELAY"] = reconnect
+    return updates
 
 
 def derive_timeout(
