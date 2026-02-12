@@ -20,7 +20,17 @@ Features:
   resurrect the file).
 """
 
-from asyncio import Event, Queue, ensure_future, wait, wait_for
+from asyncio import (
+    FIRST_COMPLETED,
+    Event,
+    Queue,
+    Task,
+    create_task,
+    current_task,
+    wait,
+    wait_for,
+)
+from collections.abc import Iterable
 from dataclasses import dataclass
 from json import dumps
 from logging import getLogger
@@ -44,6 +54,35 @@ MAX_RETRIES = 5
 INITIAL_BACKOFF = 1.0  # seconds
 MAX_BACKOFF = 60.0  # seconds
 BACKOFF_MULTIPLIER = 2.0
+
+
+async def _await_cancelled(tasks: Iterable[Task]) -> None:
+    """Cancel unfinished tasks and wait so they are not GC'd while pending.
+
+    ``process()`` is often cancelled in the same tick as ``stop()``
+    (``remote_events`` finally). Without this, the inner ``Queue.get()``
+    waiter is orphaned and later logs ``Task was destroyed but it is pending!``.
+    ``Task.uncancel`` lets the wait finish even when the outer task is already
+    cancelling (Python 3.11+ sticky cancellation).
+    """
+    pending = [task for task in tasks if not task.done()]
+    for task in pending:
+        task.cancel()
+    to_wait = [task for task in tasks if not task.done()]
+    if not to_wait:
+        return
+    me = current_task()
+    if me is None:
+        await wait(to_wait)
+        return
+    held = me.cancelling()
+    for _ in range(held):
+        me.uncancel()
+    try:
+        await wait(to_wait)
+    finally:
+        for _ in range(held):
+            me.cancel()
 
 
 @dataclass
@@ -161,15 +200,20 @@ class EventQueue:
         The loop idles here instead of polling: ``enqueue()`` wakes it
         immediately (zero latency), and ``stop()`` wakes it through
         ``_stop_event`` so the task never hangs on an empty queue.
+
+        Both waiters are always cancelled-and-awaited (including when
+        ``process()`` itself is cancelled) so a ``Queue.get()`` task is never
+        garbage-collected while pending.
         """
-        get_task = ensure_future(self.queue.get())
-        stop_task = ensure_future(self._stop_event.wait())
-        done, _ = await wait((get_task, stop_task), return_when="FIRST_COMPLETED")
-        if get_task in done:
-            stop_task.cancel()
-            return get_task.result()
-        get_task.cancel()
-        return None
+        get_task = create_task(self.queue.get())
+        stop_task = create_task(self._stop_event.wait())
+        try:
+            done, _ = await wait((get_task, stop_task), return_when=FIRST_COMPLETED)
+            if get_task in done and not get_task.cancelled():
+                return get_task.result()
+            return None
+        finally:
+            await _await_cancelled((get_task, stop_task))
 
     async def process(self) -> None:
         """

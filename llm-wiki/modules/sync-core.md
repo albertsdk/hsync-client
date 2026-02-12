@@ -441,16 +441,23 @@ broadcasts normally.
 
 ## event_queue.py — outbound WS event retries
 
-`EventQueue` (`event_queue.py:77`) buffers `QueuedEvent` (`:50`) and retries
-sending over the WS with exponential backoff (`MAX_RETRIES` `:43`, `INITIAL/MAX/_
-MULTIPLIER` `:44`–`:46`). `WebSocketProtocol` (`:31`) is the minimal send interface.
+`EventQueue` (`event_queue.py:111`) buffers `QueuedEvent` (`:86`) and retries
+sending over the WS with exponential backoff (`MAX_RETRIES` `:53`, `INITIAL/MAX/_
+MULTIPLIER` `:54`–`:56`). `WebSocketProtocol` (`:41`) is the minimal send interface.
 
-`_send_event` (`event_queue.py:120`) serializes **before** sending: a payload
+`_send_event` (`event_queue.py:157`) serializes **before** sending: a payload
 that cannot be JSON-serialized (`TypeError`/`ValueError` from `dumps`) is a
 **permanent** failure — retries would re-serialize the same broken payload and
 stall the queue with head-of-line blocking — so the event is dropped immediately
 (terminal outcome) and the next event proceeds; the affected file is picked up
 by the next full sync. Transient `send` failures are retried as before.
+
+`_await_event` (`:194`) races `queue.get()` against `_stop_event`. Both waiters
+are always cancelled-and-awaited via `_await_cancelled` (`:59`), including when
+`process()` itself is cancelled in the same tick as `stop()` (`remote_events`
+finally). Leaving a `Queue.get()` task pending and dropping the queue used to
+log `Task was destroyed but it is pending!` during later GC (e.g. a large
+upload).
 
 > Human-facing: event processing + stability + parallel transfers in
 > `../../docs/internal/architecture.md`; modes in `../../docs/sync-modes-server.md` and `../../docs/sync-modes-lan.md`.

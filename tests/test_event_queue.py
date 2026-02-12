@@ -3,6 +3,7 @@ Tests for EventQueue.
 """
 
 import asyncio
+import gc
 from time import time
 from unittest.mock import AsyncMock
 
@@ -269,3 +270,73 @@ class TestEventQueue:
 
         # The doomed event is dropped and no longer held.
         assert queue._pending_retry is None
+
+
+async def _collect_destroyed_task_messages(fn) -> list[str]:
+    """Run ``fn`` then GC; return asyncio 'Task was destroyed' messages."""
+    caught: list[str] = []
+    loop = asyncio.get_running_loop()
+    previous = loop.get_exception_handler()
+
+    def hook(_loop, context):
+        msg = str(context.get("message", ""))
+        if "destroyed" in msg:
+            caught.append(msg)
+        elif previous is not None:
+            previous(_loop, context)
+
+    loop.set_exception_handler(hook)
+    try:
+        await fn()
+        await asyncio.sleep(0)
+        gc.collect()
+        gc.collect()
+        await asyncio.sleep(0)
+        return caught
+    finally:
+        loop.set_exception_handler(previous)
+
+
+class TestAwaitEventCleanup:
+    """Regression: cancelled process() must not orphan Queue.get() waiters."""
+
+    @pytest.fixture
+    def mock_websocket(self):
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_cancel_process_does_not_leak_pending_queue_get(self, mock_websocket):
+        """Cancelling process() while idle must not GC a pending Queue.get()."""
+
+        async def scenario():
+            queue = EventQueue(mock_websocket)
+            task = asyncio.create_task(queue.process())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            del queue, task
+
+        assert await _collect_destroyed_task_messages(scenario) == []
+
+    @pytest.mark.asyncio
+    async def test_stop_and_cancel_does_not_leak_pending_queue_get(self, mock_websocket):
+        """Mirrors remote_events finally: stop() then cancel process()."""
+
+        async def scenario():
+            queue = EventQueue(mock_websocket)
+            task = asyncio.create_task(queue.process())
+            await asyncio.sleep(0.05)
+            queue.stop()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            del queue, task
+
+        assert await _collect_destroyed_task_messages(scenario) == []
