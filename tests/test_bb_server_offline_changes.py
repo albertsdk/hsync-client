@@ -328,8 +328,16 @@ class TestOfflineChangesClientKill:
         """
         # interval=3600 guarantees no periodic flush between the watcher upload
         # and the kill, making the resurrection deterministic before the fix.
+        # --verbose enables the DEBUG-level durable-persistence marker
+        # ("Merge base persisted for ...") that this test waits for before the
+        # SIGKILL: the file can appear in the server listing a moment before the
+        # client finishes flushing the merge base, and killing in that window
+        # loses the base and makes the deletion resurrect on restart.
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--interval", "3600", "--output", log_path)
+        kill_me_path = str(Path(local_dir) / "kill_me.txt")
+        proc = watch_sync(
+            bb_bucket, local_dir, "--interval", "3600", "--output", log_path, "--verbose"
+        )
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
                 f"watch mode did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
@@ -343,6 +351,12 @@ class TestOfflineChangesClientKill:
             (Path(local_dir) / "kill_me.txt").write_bytes(b"kill\n")
             assert _wait_for(lambda: "kill_me.txt" in bb_server_files(bb_bucket), timeout=40), (
                 "watcher-uploaded file did not reach the server"
+            )
+            # Wait for the merge base to be durable before the SIGKILL, so the
+            # offline-deletion minting on restart has a base to mint from.
+            assert _wait_for_log_text(local_dir, f'Merge base persisted for "{kill_me_path}"'), (
+                "merge base was not durably persisted before the kill\n"
+                f"--- client log tail ---\n{_full_log(local_dir)}"
             )
         finally:
             _kill(proc)

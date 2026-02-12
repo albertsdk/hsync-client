@@ -182,6 +182,12 @@ def _record_synced_base(
 
             if not is_sync_cycle_active():
                 flush()
+                # Durable-persistence marker: emitted only after the flush
+                # actually hit disk. Black-box offline-change tests wait for it
+                # before SIGKILLing the process so the offline-deletion minting
+                # on restart has a merge base to mint from (deterministic kill
+                # point; see test_bb_server_offline_changes).
+                log.debug(f'Merge base persisted for "{file.filepath}"')
     except Exception as e:  # pragma: no cover - bookkeeping must never break sync
         log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
 
