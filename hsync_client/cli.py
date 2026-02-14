@@ -253,6 +253,10 @@ def main(
     # -------------------------------------------------------------------------
     # General
     # -------------------------------------------------------------------------
+    yes: Annotated[bool, typer.Option(
+        "-y", "--yes",
+        help="Skip interactive confirmation prompts (still shows warnings).",
+    )] = False,
     env_file: Annotated[Optional[str], typer.Option(
         "--env-file",
         help="Load environment variables from file.",
@@ -383,6 +387,7 @@ def main(
         logfile=logfile,
         no_color=no_color,
         legend=legend,
+        auto_confirm=yes,
     )
 
 

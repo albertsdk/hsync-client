@@ -16,7 +16,7 @@ import time
 from asyncio import run
 from os.path import basename, exists
 from re import sub
-from typing import Optional
+from typing import Any, Optional
 
 
 
@@ -169,6 +169,77 @@ def _get_stability_delay_value(cli_value: Optional[int]) -> int:
     return FILE_STABILITY_INTERVAL_DEFAULT
 
 
+def _check_deletion_risk(
+    local_path: str,
+    lan_mode: bool,
+    force_master: bool,
+    sync_direction: str,
+    auto_confirm: bool,
+    logger: Any,
+) -> None:
+    """Check if sync settings could delete local files and warn the user.
+
+    If the local directory is non-empty and the sync mode could cause
+    file deletions, a warning is printed and – unless *auto_confirm* is
+    True – the user is prompted for confirmation.  When *auto_confirm* is
+    True the warning is still logged but no interactive prompt is shown.
+
+    Raises SystemExit if the user declines to continue.
+    """
+    from os import listdir
+
+    # upload-only never deletes local files
+    if sync_direction == "upload-only":
+        return
+
+    # force_master in LAN mode means this client is authoritative – safe
+    if lan_mode and force_master:
+        return
+
+    # Check if directory has any content
+    try:
+        entries = listdir(local_path)
+    except OSError:
+        return
+    if not entries:
+        return
+
+    # Determine risk reason
+    if lan_mode and not force_master:
+        reason = (
+            "LAN mode without force-master: the master peer is the source "
+            "of truth and local files not present on the master will be deleted"
+        )
+    elif sync_direction == "download-only":
+        reason = (
+            "download-only mode: remote deletions will be applied locally "
+            "and local-only files may be removed"
+        )
+    else:
+        # bidirectional server mode – remote delete events can remove local files
+        # but this is expected normal behaviour; no warning needed
+        return
+
+    logger.warning(
+        f"The shared directory '{local_path}' is not empty and the current "
+        f"sync settings could DELETE local files."
+    )
+    logger.warning(f"Reason: {reason}")
+
+    if auto_confirm:
+        logger.warning("--yes flag set – proceeding without confirmation.")
+        return
+
+    try:
+        response = input("Do you want to continue? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        response = ""
+
+    if response not in ("y", "yes"):
+        logger.info("Sync cancelled by user.")
+        raise SystemExit(0)
+
+
 def run_sync(
     bucket: str,
     env_file: Optional[str],
@@ -201,6 +272,7 @@ def run_sync(
     legend: bool,
     api_key_fd: Optional[int] = None,
     lan_key_fd: Optional[int] = None,
+    auto_confirm: bool = False,
 ) -> None:
     """
     Main synchronization logic.
@@ -358,6 +430,17 @@ def run_sync(
     if not exists(local_path):
         log.error(f"Local directory '{local_path}' does not exist")
         return
+
+    # Check for file deletion risk before syncing
+    if not dryrun and exists(local_path):
+        _check_deletion_risk(
+            local_path=local_path,
+            lan_mode=lan_mode,
+            force_master=force_master,
+            sync_direction=sync_direction,
+            auto_confirm=auto_confirm,
+            logger=log,
+        )
 
     # Mask sensitive values before logging
     _safe_config = {**config}

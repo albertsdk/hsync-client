@@ -213,3 +213,27 @@ class TestTyperCli:
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["lan_mode"] is True
 
+    @patch("hsync_client.main_logic.run_sync")
+    def test_yes_flag_long(self, mock_run_sync):
+        """CLI accepts --yes flag."""
+        result = runner.invoke(app, ["-b", "test", "--yes", "-s", "http://test:8000"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["auto_confirm"] is True
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_yes_flag_short(self, mock_run_sync):
+        """CLI accepts -y shorthand flag."""
+        result = runner.invoke(app, ["-b", "test", "-y", "-s", "http://test:8000"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["auto_confirm"] is True
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_yes_flag_defaults_false(self, mock_run_sync):
+        """--yes flag defaults to False when not provided."""
+        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000"])
+        assert result.exit_code == 0
+        call_kwargs = mock_run_sync.call_args.kwargs
+        assert call_kwargs["auto_confirm"] is False
+

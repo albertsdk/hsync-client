@@ -18,6 +18,7 @@ from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.main_logic import (
     _get_stability_delay_value,
     _check_server_connectivity,
+    _check_deletion_risk,
     _measure_clock_offset,
     _run_preview,
     run_sync,
@@ -1074,3 +1075,264 @@ class TestRunLanMode:
 
         # wait_for_discovery should be called twice (first loop: not ready, second: ready)
         assert mock_lan_sync.wait_for_discovery.call_count == 2
+
+
+class TestCheckDeletionRisk:
+    """Tests for _check_deletion_risk function."""
+
+    # ── Safe scenarios (no warning expected) ─────────────────────────
+
+    def test_empty_directory_no_warning(self, tmp_path):
+        """No warning when directory is empty."""
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=True,
+            force_master=False,
+            sync_direction="bidirectional",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    def test_upload_only_no_warning(self, tmp_path):
+        """No warning for upload-only mode (never deletes local files)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=True,
+            force_master=False,
+            sync_direction="upload-only",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    def test_lan_force_master_no_warning(self, tmp_path):
+        """No warning when LAN mode with force-master (this client is authoritative)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=True,
+            force_master=True,
+            sync_direction="bidirectional",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    def test_bidirectional_server_mode_no_warning(self, tmp_path):
+        """No warning for bidirectional server mode (normal behaviour)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=False,
+            force_master=False,
+            sync_direction="bidirectional",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    def test_nonexistent_directory_no_warning(self, tmp_path):
+        """No warning when directory does not exist (OSError on listdir)."""
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path / "nonexistent"),
+            lan_mode=True,
+            force_master=False,
+            sync_direction="download-only",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
+    # ── Risky scenarios ──────────────────────────────────────────────
+
+    def test_lan_no_force_master_warns(self, tmp_path):
+        """Warns when LAN mode without force-master and non-empty dir."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value="y"):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert mock_logger.warning.call_count >= 2
+        warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "DELETE" in warning_texts
+        assert "LAN" in warning_texts
+
+    def test_download_only_warns(self, tmp_path):
+        """Warns when download-only mode and non-empty dir."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value="y"):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=False,
+                force_master=False,
+                sync_direction="download-only",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert mock_logger.warning.call_count >= 2
+        warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "DELETE" in warning_texts
+        assert "download-only" in warning_texts
+
+    # ── auto_confirm behaviour ───────────────────────────────────────
+
+    def test_auto_confirm_skips_prompt(self, tmp_path):
+        """auto_confirm=True logs warning but doesn't prompt."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        # Should NOT call input() at all
+        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=True,
+                logger=mock_logger,
+            )
+
+        warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "--yes flag set" in warning_texts
+
+    # ── User response handling ───────────────────────────────────────
+
+    def test_user_accepts_with_y(self, tmp_path):
+        """User typing 'y' allows sync to proceed (no SystemExit)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value="y"):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+        # No exception raised – test passes
+
+    def test_user_accepts_with_yes(self, tmp_path):
+        """User typing 'yes' allows sync to proceed."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value="yes"):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+    def test_user_declines_with_n_raises_system_exit(self, tmp_path):
+        """User typing 'n' raises SystemExit(0)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value="n"), \
+             pytest.raises(SystemExit) as exc_info:
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert exc_info.value.code == 0
+        mock_logger.info.assert_called()
+
+    def test_user_declines_with_empty_raises_system_exit(self, tmp_path):
+        """Empty input (just Enter) raises SystemExit(0)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", return_value=""), \
+             pytest.raises(SystemExit) as exc_info:
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert exc_info.value.code == 0
+
+    def test_eof_raises_system_exit(self, tmp_path):
+        """EOFError (piped input) raises SystemExit(0)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", side_effect=EOFError), \
+             pytest.raises(SystemExit) as exc_info:
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert exc_info.value.code == 0
+
+    def test_keyboard_interrupt_raises_system_exit(self, tmp_path):
+        """KeyboardInterrupt (Ctrl+C) raises SystemExit(0)."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with patch("builtins.input", side_effect=KeyboardInterrupt), \
+             pytest.raises(SystemExit) as exc_info:
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert exc_info.value.code == 0
+
+    def test_download_only_with_auto_confirm(self, tmp_path):
+        """download-only + auto_confirm logs warning and proceeds."""
+        (tmp_path / "data.bin").write_bytes(b"\x00" * 100)
+        mock_logger = MagicMock()
+
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=False,
+            force_master=False,
+            sync_direction="download-only",
+            auto_confirm=True,
+            logger=mock_logger,
+        )
+
+        warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "--yes flag set" in warning_texts
+        assert "download-only" in warning_texts
