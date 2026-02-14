@@ -161,37 +161,50 @@ LEVEL_STYLES: dict[str, tuple[str, str]] = {
     "CRITICAL": ("<bold><red>", "</red></bold>"),
 }
 
-# Action symbol color mappings using loguru tags
-SYMBOL_STYLES: dict[str, tuple[str, str]] = {
-    "↓": ("<cyan>", "</cyan>"),       # Download
-    "↑": ("<green>", "</green>"),     # Upload
-    "→": ("<blue>", "</blue>"),       # Move
-    "✕": ("<red>", "</red>"),         # Remove
-    "+": ("<green>", "</green>"),     # Create
-    "⚙": ("<magenta>", "</magenta>"), # Permission
-    "·": ("<dim>", "</dim>"),         # Skip
+# Action label color mappings using loguru tags
+LABEL_STYLES: dict[str, tuple[str, str]] = {
+    # Sync operations
+    "[DOWNLOAD  ]": ("<cyan>", "</cyan>"),
+    "[UPLOAD    ]": ("<green>", "</green>"),
+    "[RESUME    ]": ("<cyan>", "</cyan>"),
+    "[MOVE      ]": ("<blue>", "</blue>"),
+    "[REMOVE    ]": ("<red>", "</red>"),
+    "[DELETE    ]": ("<red>", "</red>"),
+    "[CREATE    ]": ("<green>", "</green>"),
+    "[PERMISSION]": ("<magenta>", "</magenta>"),
+    "[SYMLINK   ]": ("<blue>", "</blue>"),
+    "[IN SYNC   ]": ("<dim>", "</dim>"),
+    "[SKIP      ]": ("<dim>", "</dim>"),
+    "[IGNORE DEL]": ("<yellow>", "</yellow>"),
+    # LAN slave operations
+    "[SLAVE UP  ]": ("<green>", "</green>"),
+    "[SLAVE DEL ]": ("<red>", "</red>"),
+    "[SLAVE REN ]": ("<blue>", "</blue>"),
+    "[SLAVE DIR ]": ("<green>", "</green>"),
+    "[SLAVE KEEP]": ("<dim>", "</dim>"),
+    "[SLAVE IGN ]": ("<yellow>", "</yellow>"),
 }
 
 
-def _colorize_symbols(message: str, use_colors: bool = True) -> str:
+def _colorize_labels(message: str, use_colors: bool = True) -> str:
     """
-    Add color tags to action symbols in message.
+    Add color tags to action labels in message.
 
     Args:
         message: The log message to colorize.
         use_colors: Whether to apply colors (False for plain output).
 
     Returns:
-        Message with color tags applied to symbols.
+        Message with color tags applied to action labels.
     """
     if not use_colors:
         return message
 
-    for symbol, (start_tag, end_tag) in SYMBOL_STYLES.items():
-        if symbol in message:
+    for label, (start_tag, end_tag) in LABEL_STYLES.items():
+        if label in message:
             message = message.replace(
-                f"{symbol} ",
-                f"{start_tag}{symbol}{end_tag} "
+                label,
+                f"{start_tag}{label}{end_tag}"
             )
     return message
 
@@ -238,8 +251,8 @@ def _format_record_colored(record: "Record") -> str:
     # Get level style tags
     level_start, level_end = LEVEL_STYLES.get(level, ("", ""))
 
-    # Colorize action symbols in message
-    message = _colorize_symbols(message, use_colors=True)
+    # Colorize action labels in message
+    message = _colorize_labels(message, use_colors=True)
 
     # Check for json_data in extra
     json_data = _get_json_data(record)
