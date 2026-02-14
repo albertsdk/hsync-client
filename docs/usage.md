@@ -239,18 +239,37 @@ flowchart LR
 
 The server is a **blind relay** — it broadcasts all events to all connected clients. Each client independently decides which events to process based on its own `--sync-direction` setting.
 
-## Log Symbols
+## Log Labels
 
-| Symbol | Meaning | Description |
-|--------|---------|-------------|
-| `·` | Skip | File unchanged |
-| `↓` | Download | Downloading from server |
-| `↑` | Upload | Uploading to server |
-| `→` | Move | Renaming/moving file |
-| `✕` | Delete | Removing file |
-| `+` | Create | Creating directory |
-| `⚙` | Permissions | Setting file permissions |
-| `L` | Symlink | Creating symbolic link |
+Use `--help-symbols` to display this legend in the terminal.
+
+### Sync Operations
+
+| Label | Meaning | Description |
+|-------|---------|-------------|
+| `[IN SYNC   ]` | In sync | File already in sync (no action required) |
+| `[SKIP      ]` | Skip | File skipped |
+| `[DOWNLOAD  ]` | Download | Downloading from server / master |
+| `[UPLOAD    ]` | Upload | Uploading to server / master |
+| `[RESUME    ]` | Resume | Resuming partial upload or download |
+| `[MOVE      ]` | Move | Renaming / moving file or directory |
+| `[REMOVE    ]` | Remove | Removing file or directory |
+| `[CREATE    ]` | Create | Creating directory |
+| `[DELETE    ]` | Delete | Deleting local file not present on master (LAN mode) |
+| `[PERMISSION]` | Permissions | Setting file / directory permissions |
+| `[SYMLINK   ]` | Symlink | Creating symbolic link |
+| `[IGNORE DEL]` | Ignore delete | Deletion ignored (backup / ignore-delete mode) |
+
+### LAN Slave Operations
+
+| Label | Meaning | Description |
+|-------|---------|-------------|
+| `[SLAVE UP  ]` | Slave upload | Slave uploads file to master |
+| `[SLAVE DEL ]` | Slave delete | Slave deletes file on master |
+| `[SLAVE REN ]` | Slave rename | Slave renames file on master |
+| `[SLAVE DIR ]` | Slave dir | Slave creates directory on master |
+| `[SLAVE KEEP]` | Slave sentinel | Slave creates sentinel file (`.hsynckeep`) |
+| `[SLAVE IGN ]` | Slave ignore | Slave ignores deletion (ignore-delete mode) |
 
 ## Error Handling
 

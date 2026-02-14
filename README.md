@@ -324,16 +324,35 @@ Compression is automatically skipped for:
 
 ## Log Legend
 
-| Symbol | Meaning |
-|--------|---------|
-| `·` | File unchanged (skipped) |
-| `↓` | Download file |
-| `↑` | Upload file |
-| `→` | Move/Rename file/dir |
-| `✕` | Remove file/dir |
-| `+` | Create directory |
-| `⚙` | Set permissions |
-| `L` | Create/update symlink |
+Use `--help-symbols` to display this legend in the terminal.
+
+### Sync Operations
+
+| Label | Meaning |
+|-------|---------|
+| `[IN SYNC   ]` | File already in sync (no action required) |
+| `[SKIP      ]` | File skipped |
+| `[DOWNLOAD  ]` | Download file from server / master |
+| `[UPLOAD    ]` | Upload file to server / master |
+| `[RESUME    ]` | Resume partial upload or download |
+| `[MOVE      ]` | Move / rename file or directory |
+| `[REMOVE    ]` | Remove file or directory |
+| `[CREATE    ]` | Create directory |
+| `[DELETE    ]` | Delete local file not present on master (LAN mode) |
+| `[PERMISSION]` | Set file / directory permissions |
+| `[SYMLINK   ]` | Create symbolic link |
+| `[IGNORE DEL]` | Deletion ignored (backup / ignore-delete mode) |
+
+### LAN Slave Operations
+
+| Label | Meaning |
+|-------|---------|
+| `[SLAVE UP  ]` | Slave uploads file to master |
+| `[SLAVE DEL ]` | Slave deletes file on master |
+| `[SLAVE REN ]` | Slave renames file on master |
+| `[SLAVE DIR ]` | Slave creates directory on master |
+| `[SLAVE KEEP]` | Slave creates sentinel file (`.hsynckeep`) |
+| `[SLAVE IGN ]` | Slave ignores deletion (ignore-delete mode) |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 
