@@ -57,6 +57,31 @@ flowchart LR
 
 The same flow applies in reverse (B → A) for bidirectional sync.
 
+## Why HSYNC?
+
+HSYNC is designed to synchronize files using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
+
+Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
+
+| Tool | Required Protocol | Default Port(s) | Works over HTTP only? |
+|------|-------------------|------------------|-----------------------|
+| **HSYNC** | HTTP / HTTPS | 80 / 443 | ✅ **Yes** |
+| **rsync** | SSH or rsync daemon | 22 / 873 | ❌ No |
+| **scp / sftp** | SSH | 22 | ❌ No |
+| **Unison** | SSH or direct socket | 22 / custom | ❌ No |
+| **Syncthing** | BEP (custom protocol) | 22000 | ❌ No |
+| **FTP / FTPS** | FTP | 20–21 / 990 | ❌ No |
+| **Rclone** | Varies (S3, SFTP, etc.) | Varies | ⚠️ Partial (backend-dependent) |
+
+**When to choose HSYNC:**
+
+- 🏢 **Corporate networks** — only ports 80/443 are open through the firewall
+- ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
+- 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
+- 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
+
+Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate proxies, reverse proxies, load balancers, and CDNs without any special configuration.
+
 ## Features
 
 ### Core
