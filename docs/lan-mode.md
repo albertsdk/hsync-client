@@ -294,6 +294,7 @@ $ ./dist/hsync -b photos -p ~/Pictures --lan-mode
 | `--no-lan-persistent` | Disable persistent mode (exit when no peers) | Persistent enabled |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--force-master` | Force this peer to be the LAN master | `false` |
+| `-y, --yes` | Skip deletion risk confirmation prompt (still shows the warning) | `false` |
 
 > **Note**: For security, the LAN authentication key is only available via the `HSYNC_LAN_KEY` environment variable (not as a CLI option).
 
@@ -658,6 +659,25 @@ Use `--sync-direction` on slave nodes to control the direction of synchronizatio
 ```
 
 > **Note**: During automatic master election, peers with bidirectional sync are preferred. If `--force-master` is used, the peer must have bidirectional sync direction (the client will refuse to start otherwise).
+
+### Deletion Risk Warning
+
+When running in LAN mode **without `--force-master`** and the shared directory is non-empty, the client warns that local files could be deleted — because the master peer is the authoritative source of truth and files not present on the master will be removed during initial sync.
+
+```bash
+# The client will show a warning and ask for confirmation
+./dist/hsync -b photos -p ~/Pictures --lan-mode
+
+# Skip the interactive confirmation (e.g. in scripts or systemd services)
+./dist/hsync -b photos -p ~/Pictures --lan-mode -y
+```
+
+The warning is **not shown** when:
+- The shared directory is empty (nothing to lose)
+- `--force-master` is set (this peer is authoritative)
+- `--sync-direction upload-only` is set (local files are never deleted)
+
+See also: [Architecture > Pre-Sync Safety Check](architecture.md#pre-sync-safety-check-deletion-risk)
 
 ## Troubleshooting
 

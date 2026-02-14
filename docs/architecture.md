@@ -306,7 +306,8 @@ flowchart LR
     ENV -->|"②"| CFG[Configuration]
     CLI -->|"②"| CFG
     CFG -->|"③"| VALIDATE[Validation]
-    VALIDATE -->|"④"| RUN[Run Client]
+    VALIDATE -->|"④"| SAFETY[Deletion Risk Check]
+    SAFETY -->|"⑤"| RUN[Run Client]
 
     subgraph "⑤ Config Values"
         S[Server URL]
@@ -324,6 +325,21 @@ flowchart LR
 ```
 
 ![Configuration Flow](images/architecture-6.png)
+
+### Pre-Sync Safety Check (Deletion Risk)
+
+Before starting synchronization, the client runs a **deletion risk check** (`_check_deletion_risk()` in `main_logic.py`). If the local directory is non-empty and the sync settings could cause file deletions, the user is warned and asked for confirmation:
+
+| Condition | Risk Level | Behavior |
+|-----------|------------|----------|
+| `--sync-direction upload-only` | ✅ Safe | No warning |
+| LAN mode + `--force-master` | ✅ Safe | No warning |
+| Bidirectional server mode | ✅ Safe | No warning (normal behavior) |
+| LAN mode without `--force-master` | ⚠️ Risky | Warning + confirmation prompt |
+| `--sync-direction download-only` | ⚠️ Risky | Warning + confirmation prompt |
+| Empty directory | ✅ Safe | No warning (nothing to delete) |
+
+When `-y` / `--yes` is passed, the warning is still logged but the interactive prompt is skipped. The desktop client (`hsync-desktop`) shows its own confirmation dialog and always passes `--yes` to the CLI process.
 
 ## Parallel File Transfers
 
