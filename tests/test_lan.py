@@ -588,6 +588,7 @@ class TestPeerManagerAdvanced:
 
         # Update the peer - should still be master
         peer = pm.get_peer("aaa111")
+        assert peer is not None
         peer.update_last_seen()
         assert pm.get_master_cid() == "aaa111"
 
