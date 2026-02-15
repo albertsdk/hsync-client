@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from json import dumps
 from logging import getLogger
 from time import time
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Protocol
 
 
 class WebSocketProtocol(Protocol):

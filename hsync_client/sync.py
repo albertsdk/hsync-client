@@ -14,7 +14,6 @@ file comparison, action determination, and sync execution.
 import asyncio
 
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from os import listdir, makedirs, remove, rmdir, walk
 from os.path import basename, dirname, exists, join
 from requests import get, RequestException
@@ -26,7 +25,6 @@ from loguru import logger as log
 
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import (
-    ACTION_LABEL,
     HSYNCKEEP_FILENAME,
     MAX_CONCURRENT_TRANSFERS,
 )
@@ -36,7 +34,6 @@ from hsync_client.models.file import File, is_hidden_file
 from hsync_client.models.sync_action import SyncAction, SyncActionName
 from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import (
-    bytes_to_human_readable,
     get_ssl_verify,
     set_permissions,
     verify_master_fingerprint,
