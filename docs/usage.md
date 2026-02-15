@@ -271,6 +271,8 @@ Use `--help-symbols` to display this legend in the terminal.
 | `[SLAVE KEEP]` | Slave sentinel | Slave creates sentinel file (`.hsynckeep`) |
 | `[SLAVE IGN ]` | Slave ignore | Slave ignores deletion (ignore-delete mode) |
 
+Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
+
 ## Error Handling
 
 ```mermaid

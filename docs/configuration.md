@@ -42,7 +42,8 @@ source prod.env
 | `--ca-cert` | Path to CA certificate for self-signed server certs |
 | `--insecure` | Skip SSL certificate verification |
 | `--no-color` | Disable colored output |
-| `-y, --yes` | Skip interactive confirmation prompts |
+| `--help-symbols` | Show output symbols legend |
+| `-y, --yes` | Skip interactive confirmation prompts (still shows warnings) |
 | `-V, --version` | Show version |
 
 ## LAN Mode Options
@@ -56,29 +57,82 @@ source prod.env
 | `--no-lan-https` | Disable HTTPS (enabled by default) |
 | `--discovery-timeout` | Peer discovery timeout in seconds |
 
-## SSL/TLS Options
+## SSL/TLS (HTTPS/WSS)
 
-### Connecting with Valid Certificate
+The client supports encrypted communication via HTTPS and WSS (WebSocket Secure).
+
+### Connecting to a Server with Valid SSL Certificate
 
 ```bash
+# Standard HTTPS connection (certificate verified against system CA store)
 ./dist/hsync -s https://server.example.com:8765 -b mybucket
 ```
 
-### Connecting with Self-Signed Certificate
+### Connecting to a Server with Self-Signed Certificate
+
+When the server uses a self-signed certificate, you have two options:
+
+**Option 1: Trust the server certificate (recommended)**
 
 ```bash
-# Using CA certificate
-./dist/hsync -s https://server:8765 -b mybucket --ca-cert server.crt
+# Copy the server's certificate to the client machine
+scp server:/path/to/certs/server.crt ./server.crt
 
-# Skip verification (not recommended)
+# Connect using the CA certificate
+./dist/hsync -s https://server:8765 -b mybucket --ca-cert server.crt
+```
+
+**Option 2: Disable SSL verification (not recommended for production)**
+
+```bash
+# Skip certificate verification (insecure!)
 ./dist/hsync -s https://server:8765 -b mybucket --insecure
 ```
 
-## Compression Options
+> ⚠️ **Warning**: Using `--insecure` disables all SSL certificate verification, making the connection vulnerable to man-in-the-middle attacks. Only use this for testing.
+
+### SSL Examples
+
+**Watch mode with self-signed certificate:**
+```bash
+./dist/hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
+```
+
+**Dry-run with HTTPS:**
+```bash
+./dist/hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
+```
+
+## File Compression
+
+HSYNC supports automatic file compression to optimize transfers using **Zstandard (zstd)**.
+
+### How It Works
+
+- Files are compressed before transfer and decompressed on receipt
+- Compression is enabled by default and can be disabled via `--no-compression`
+- Server informs client about compression support during WebSocket handshake
+- In LAN mode, peers advertise compression capability via mDNS
+
+### Compression Thresholds
+
+Different thresholds are used based on network characteristics:
+
+| Context | Threshold | Rationale |
+|---------|-----------|-----------|
+| **Download** (Server→Client) | 10 KB | Server CPU is acceptable, clear benefit above this size |
+| **Upload** (Client→Server) | 32 KB | Client CPU is more precious, typical production threshold |
+| **LAN mode** | 100 KB | Local network is fast (1Gbps+), only compress large files |
+
+### Skipped Files
+
+Compression is automatically skipped for:
+- Files below the threshold (depends on context)
+- Pre-compressed formats: `.jpg`, `.png`, `.mp4`, `.zip`, `.gz`, `.pdf`, `.docx`, etc.
+
+### Configuration
 
 | Option | Description |
 |--------|-------------|
 | `--no-compression` | Disable compression for this session |
-| `HSYNC_COMPRESSION_ENABLED` | Environment variable to disable compression |
-
-Compression is enabled by default. See [Usage](usage.md) for details.
+| `HSYNC_COMPRESSION_ENABLED` | Environment variable to disable compression (default: `true`) |
