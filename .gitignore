@@ -4,24 +4,56 @@ __pycache__/
 *$py.class
 **/*.pyc
 **/__pycache__
+*.pyo
+
+# Virtual environment
+.env
+.venv
+venv/
+ENV/
 
 # Git
 .git
-
-# Virtualenv
-.env
-.venv
+.gitignore
+.gitattributes
 
 # Unit test / coverage
 .coverage
-coverage
-htmlcov
-.pytest_cache
+coverage/
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
 
-/build
-/dist
-/tmp
-/test
+# Build / Distribution
+/build/
+/dist/
+/tmp/
+*.egg-info/
+*.egg
+*.whl
 
 # IDE settings
-.vscode
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Project specific
+/buckets/
+/certs/
+
+# Logs
+*.log
+
+# Qt specific (for hsync-desktop)
+*.qmlc
+*.jsc
+
+# Python compiled
+*.spec (PyInstaller)
