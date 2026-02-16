@@ -26,9 +26,9 @@ fi
 
 # Create directories for demo
 rm -rf /tmp/hsync-a /tmp/hsync-b "$HOME/.local/state/hsync"
-mkdir -p /tmp/hsync-a /tmp/hsync-b /tmp/demo-bin
 rm -rf /tmp/hsync-a-device /tmp/hsync-b-device
 rm -f "$READY_A" "$READY_B"
+mkdir -p /tmp/hsync-a /tmp/hsync-b /tmp/demo-bin
 
 # Link hsync binary
 REPO_ROOT="/home/albertobasso/Projects/hsync/hsync-client"
@@ -69,3 +69,6 @@ tmux -S "$SOCKET" set-option -t "$SESSION" status off
 WATCHER_PID=$!
 disown 2>/dev/null || true
 echo "$WATCHER_PID" > "$WATCHER_PIDFILE"
+
+# Generate GIF
+vhs demo-lan.tape

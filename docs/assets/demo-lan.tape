@@ -1,7 +1,7 @@
 # HSYNC — LAN P2P demo for the README (docs/assets/demo-lan.gif)
 #
 # Regenerate from the hsync-client repository root:
-#   vhs docs/assets/demo-lan.tape
+#   vhs demo-lan.tape
 #
 # The tape simulates two devices on one machine (stacked tmux panes):
 #   top pane    = Device A (master, --force-master)
@@ -18,7 +18,7 @@
 # Temporary state lives under /tmp and throwaway HSYNC_DEVICE_DIRs, so the
 # host's real device identity is never touched.
 
-Output docs/assets/demo-lan.gif
+Output demo-lan.gif
 
 Set Shell bash
 Set FontSize 11
@@ -55,7 +55,7 @@ Sleep 800ms
 Type "ls -l /tmp/hsync-b" Enter
 Sleep 1200ms
 Type "cat /tmp/hsync-b/hello.txt" Enter
-Sleep 2500ms
+Sleep 7000ms
 
 # --- hidden teardown ---------------------------------------------------------
 # Stop the watcher (best-effort: it exits on its own after writing hello.txt)
