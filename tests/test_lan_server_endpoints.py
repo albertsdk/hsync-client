@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
 
@@ -861,3 +862,30 @@ class TestLANRequestHandlerUpload:
 
             response = requests.post(url, data=data, files=files, timeout=5)
             assert response.status_code == 400
+
+
+class TestLANServerEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    def test_server_start_already_running(self):
+        """Test starting an already running server logs warning."""
+        port = get_free_port()
+        server = LANServer(port=port)
+        server.start()
+        time.sleep(0.1)
+
+        with patch("hsync_client.lan_server.log") as mock_log:
+            server.start()
+            warning_calls = [
+                call
+                for call in mock_log.warning.call_args_list
+                if "already running" in str(call).lower()
+            ]
+            assert len(warning_calls) > 0
+
+        server.stop()
+
+    def test_server_stop_not_running(self):
+        """Test stopping a not running server is safe."""
+        server = LANServer(port=9999)
+        server.stop()  # Should not raise
