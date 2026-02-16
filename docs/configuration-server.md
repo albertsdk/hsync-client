@@ -25,6 +25,7 @@ option is not part of the interactive CLI.
 |---|---|---|
 | `HSYNC_SERVER` | Server URL (alternative to `-s`) | (required or use `-s`) |
 | `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
+| `HSYNC_DELTA_MIN_FILE_SIZE` | Min file size for delta transfer in server mode | `262144` (256 KB) |
 
 Bucket, local path, sync mode (`--once`), and sync direction are **CLI flags**, not
 environment variables. Putting `HSYNC_BUCKET` in an env file has no effect.

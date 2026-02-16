@@ -58,6 +58,13 @@ class TestTyperCli:
         assert result.exit_code == 0
         assert "hsync" in result.output
 
+    def test_help_symbols_prints_legend_without_other_options(self):
+        """--help-symbols is eager: prints the legend and exits 0 without -b/-s."""
+        result = runner.invoke(app, ["--help-symbols"])
+        assert result.exit_code == 0
+        assert "Log legend:" in result.output
+        assert "Upload file to server/master" in result.output
+
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_bucket_short_option(self, mock_run_sync):
         """CLI accepts -b bucket option."""
@@ -177,11 +184,11 @@ class TestTyperCli:
 
     @patch("hsync_client.main_logic.run_sync")
     def test_help_symbols_flag(self, mock_run_sync):
-        """CLI accepts --help-symbols flag."""
+        """--help-symbols is eager: prints the legend and exits before run_sync."""
         result = runner.invoke(app, ["-b", "test", "--help-symbols", "-s", "http://test:8000"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["legend"] is True
+        assert "Log legend:" in result.output
+        mock_run_sync.assert_not_called()
 
     @patch("hsync_client.main_logic.run_sync")
     def test_path_option(self, mock_run_sync):

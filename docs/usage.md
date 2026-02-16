@@ -45,7 +45,7 @@ deployments.
 
 `hsync-client` tags every log line with a bracketed action label
 (e.g. `[DOWNLOAD]`, `[NO MASTER]`) to show what kind of operation it is. Use
-`--help-symbols` (or `--legend`) to print the legend in the terminal.
+`--help-symbols` to print the legend in the terminal.
 
 The complete list of labels, their color category, and what each means is in
 the dedicated [Log Labels reference](log-labels.md). Log levels (ERROR,

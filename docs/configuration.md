@@ -55,6 +55,7 @@ state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `LAN_KEY`,
 |---|---|---|
 | `-y, --yes` | Non-interactive mode (skip confirmations) | `false` |
 | `--env-file` | Load recognised `HSYNC_*` keys from a file (does not load `./.env` by itself) | — |
+| `--capabilities-json` | Print the binary's capabilities document as JSON and exit | — |
 | `-V, --version` | Show version and exit | — |
 | `--help` | Show help and exit | — |
 
@@ -70,9 +71,14 @@ state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `LAN_KEY`,
 |---|---|---|
 | `HSYNC_DELTA_ENABLED` | Enable delta transfer for large files | `true` |
 
-The minimum file size for delta transfer differs by mode (256 KB server, 1 MB LAN).
-See [Configuration — Server Mode](configuration-server.md) and
-[Configuration — LAN P2P Mode](configuration-lan.md) for mode-specific defaults.
+| Option | Description | Default |
+|---|---|---|
+| `--delta-min-file-size` | Min file size in bytes for delta transfer in Server Mode | `262144` (256 KB) |
+| `--delta-min-file-size-lan` | Min file size in bytes for delta transfer in LAN Mode | `1048576` (1 MB) |
+
+The environment equivalents are documented per mode:
+`HSYNC_DELTA_MIN_FILE_SIZE` in [Configuration — Server Mode](configuration-server.md)
+and `HSYNC_DELTA_MIN_FILE_SIZE_LAN` in [Configuration — LAN P2P Mode](configuration-lan.md).
 
 ## Bandwidth Limiting
 

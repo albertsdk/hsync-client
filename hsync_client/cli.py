@@ -43,6 +43,7 @@ from hsync_client.constants import (
     STABILITY_DELAY_MIN,
     SYNC_DIRECTIONS,
 )
+from hsync_client.log_labels import legend_lines
 
 # =============================================================================
 # Typer Application
@@ -60,6 +61,14 @@ def version_callback(value: bool) -> None:
     """Print version and exit."""
     if value:
         typer.echo(f"hsync {HSYNC_VERSION}")
+        raise typer.Exit()
+
+
+def legend_callback(value: bool) -> None:
+    """Print the output-symbols legend and exit."""
+    if value:
+        for line in legend_lines():
+            typer.echo(line)
         raise typer.Exit()
 
 
@@ -529,6 +538,8 @@ def main(
         typer.Option(
             "--help-symbols",
             help="Show output symbols legend.",
+            is_eager=True,
+            callback=legend_callback,
             rich_help_panel="Output",
         ),
     ] = False,

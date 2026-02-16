@@ -77,6 +77,7 @@ from hsync_client.constants import (
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan_handler import run_lan_mode
+from hsync_client.log_labels import legend_lines
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.remote_websocket import remote_connect
@@ -937,50 +938,10 @@ def run_sync(
     # Mask sensitive values before logging (shared helper, DRY with transfer.py)
     log.debug("Local configuration:", extra={"json_data": _safe_config_for_log(config, env_file)})
 
-    # Display legend if requested
+    # Display legend if requested (same lines as the --help-symbols output)
     if legend:
-        log.info("Log legend:")
-        log.info("  While watching, [LOCAL ...] marks events originated by this node's")
-        log.info("  watcher, [REMOTE ...] events caused by a peer (master, slave or server).")
-        log.info("  Unprefixed labels belong to full-sync reconciliation and transfers.")
-        log_labels = {
-            ActionLabel.READY: "Client ready for sync (watcher active + event channel up)",
-            ActionLabel.IN_SYNC: "File already in sync (no action required)",
-            ActionLabel.SKIP: "File skipped",
-            ActionLabel.DOWNLOAD: "Download file from server/master",
-            ActionLabel.UPLOAD: "Upload file to server/master",
-            ActionLabel.RESUME: "Resume partial download/upload",
-            ActionLabel.CREATE: "Create directory (reconcile or server log)",
-            ActionLabel.MODIFY: "Modify file or directory content (reconcile/server)",
-            ActionLabel.RENAME: "Rename/move file or directory (reconcile/server)",
-            ActionLabel.MOVE: "Move/rename detected (debug trace)",
-            ActionLabel.DELETE: "Delete file or directory (reconcile/server)",
-            ActionLabel.PERMISSION: "Set file/directory permission",
-            ActionLabel.SYMLINK: "Create symbolic link (reconcile/server)",
-            ActionLabel.GUARD: "Mass-deletion guard tripped",
-            ActionLabel.SECURITY: "Unsafe remote path rejected",
-            ActionLabel.CONFLICT: "Conflict with remote version",
-            ActionLabel.TOMBSTONE: "Deletion recorded while offline",
-            ActionLabel.LOCAL_CREATE: "Local watcher: file/directory created",
-            ActionLabel.LOCAL_MODIFY: "Local watcher: file/directory content modified",
-            ActionLabel.LOCAL_RENAME: "Local watcher: file/directory renamed",
-            ActionLabel.LOCAL_DELETE: "Local watcher: file/directory deleted",
-            ActionLabel.LOCAL_SYMLINK: "Local watcher: symbolic link created",
-            ActionLabel.LOCAL_IGNORE_DEL: "Local watcher: deletion skipped (ignore-delete mode)",
-            ActionLabel.LOCAL_KEEP: "Local watcher: .hsynckeep sentinel created",
-            ActionLabel.REMOTE_CREATE: "Peer-caused: file/directory created or applied",
-            ActionLabel.REMOTE_MODIFY: "Peer-caused: file/directory content modified",
-            ActionLabel.REMOTE_RENAME: "Peer-caused: file/directory renamed",
-            ActionLabel.REMOTE_DELETE: "Peer-caused: file/directory deleted",
-            ActionLabel.REMOTE_SYMLINK: "Peer-caused: symbolic link created",
-            ActionLabel.REMOTE_IGNORE_DEL: "Peer-caused: deletion skipped (ignore-delete mode)",
-            ActionLabel.REMOTE_SECURITY: "Peer-caused: unsafe path rejected",
-            ActionLabel.REMOTE_ECHO: "Peer event echo suppressed (debug)",
-            ActionLabel.REMOTE_DOWNLOAD: "Master serving file bytes to a peer",
-            ActionLabel.INITIAL_SYNC: "Initial synchronization started (first full reconcile of a run)",
-        }
-        for label, description in log_labels.items():
-            log.info(f"  {label} {description}")
+        for line in legend_lines():
+            log.info(line)
 
     # Cross-process instance lock: two hsync processes must never sync the
     # same local directory — they would race the same folder UUID in

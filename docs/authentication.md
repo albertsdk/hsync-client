@@ -186,7 +186,9 @@ Slave                                Master
 |---|---|---|
 | `HSYNC_API_KEY` | Server | Account token (`hs_<id>_<secret>`) for central server authentication |
 | `HSYNC_LAN_KEY` | LAN P2P | Shared secret for LAN peer authentication (optional) |
-| `HSYNC_CID` | Both | Client ID (auto-generated if not set) |
+
+The `cid` carried in the LAN auth frames is derived from the local **device
+identity** — it is not configurable via environment.
 
 When `HSYNC_LAN_KEY` is set and non-empty:
 - The **master** sends `{"type": "auth_required"}` to incoming slaves
