@@ -13,6 +13,7 @@ used with argparse's 'type' parameter.
 
 from argparse import ArgumentTypeError
 from collections.abc import Callable
+from pathlib import Path
 
 from hsync_client.constants import (
     HTTP_TIMEOUT_MAX,
@@ -211,3 +212,79 @@ def valid_max_wait_timeout(value: str) -> int:
         "max wait timeout",
     )
     return validator(value)
+
+
+def valid_bucket_path(value: str) -> str:
+    """
+    Validate bucket path argument for path traversal attacks.
+
+    Checks that the provided path:
+    - Is a valid directory path
+    - Does not contain path traversal sequences (..)
+    - Resolves to a path within the expected base directory
+
+    Args:
+        value: Path to the local bucket directory.
+
+    Returns:
+        Validated and normalized path.
+
+    Raises:
+        ArgumentTypeError: If path is invalid or contains traversal sequences.
+    """
+    from os.path import normpath
+
+    # Normalize the path to resolve any .. or . components
+    normalized = normpath(value)
+
+    # Check for path traversal attempts
+    if ".." in normalized:
+        raise ArgumentTypeError(
+            "Path contains invalid traversal sequence (..). "
+            "Paths outside the bucket directory are not allowed."
+        )
+
+    # Convert to Path object for validation
+    try:
+        Path(normalized).resolve()
+    except (ValueError, OSError) as e:
+        raise ArgumentTypeError(f"Invalid path: {e}")
+
+    return value
+
+
+def validate_path_safe(path: str, base_dir: str) -> bool:
+    """
+    Validate that a path is safe and within the base directory.
+
+    This is a runtime security check to prevent path traversal attacks.
+    It verifies that the resolved path is within the specified base directory.
+
+    Args:
+        path: The path to validate.
+        base_dir: The base directory that the path should be within.
+
+    Returns:
+        True if the path is safe, False otherwise.
+    """
+    try:
+        base = Path(base_dir).resolve()
+        target = (Path(base_dir) / path).resolve()
+
+        # Ensure the resolved path is within the base directory
+        return target.is_relative_to(base)
+    except (ValueError, OSError):
+        return False
+
+
+__all__ = [
+    "create_int_range_validator",
+    "valid_reconnect_delay",
+    "valid_resync",
+    "valid_bucket",
+    "valid_stability_delay",
+    "valid_http_timeout",
+    "valid_max_wait_timeout",
+    "valid_bucket_path",
+    "validate_path_safe",
+]
