@@ -31,7 +31,8 @@ rm -f "$READY_A" "$READY_B"
 mkdir -p /tmp/hsync-a /tmp/hsync-b /tmp/demo-bin
 
 # Link hsync binary
-REPO_ROOT="/home/albertobasso/Projects/hsync/hsync-client"
+SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+REPO_ROOT=$(realpath "$SCRIPT_PATH/../../")
 ln -sf "$REPO_ROOT/.venv/bin/hsync" /tmp/demo-bin/hsync
 
 # Create tmux session with two stacked panes
@@ -39,12 +40,12 @@ ln -sf "$REPO_ROOT/.venv/bin/hsync" /tmp/demo-bin/hsync
 # HSYNC_READY_FILE makes the master write its PID to $READY_A once its HTTP+WSS
 # servers and filesystem watcher are up (see hsync_client/lan_handler.py).
 tmux -S "$SOCKET" new-session -d -s "$SESSION" -x 200 -y 50 \
-  "export PS1='user@host $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; HSYNC_DEVICE_DIR=/tmp/hsync-a-device hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master"
+  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; HSYNC_DEVICE_DIR=/tmp/hsync-a-device hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master"
 
 # Bottom pane: Device B (client) - shows clean prompt, hsync started manually later.
 # HSYNC_READY_FILE=$READY_B is exported by the tape when Device B is launched.
 tmux -S "$SOCKET" split-window -v -t "$SESSION" \
-  "export PS1='user@host $ '; export PATH=/tmp/demo-bin:\$PATH; bash --norc"
+  "export PS1='user@host-b $ '; export PATH=/tmp/demo-bin:\$PATH; bash --norc"
 
 # Disable status bar
 tmux -S "$SOCKET" set-option -t "$SESSION" status off
@@ -71,4 +72,4 @@ disown 2>/dev/null || true
 echo "$WATCHER_PID" > "$WATCHER_PIDFILE"
 
 # Generate GIF
-vhs demo-lan.tape
+vhs "$SCRIPT_PATH/demo-lan.tape"
