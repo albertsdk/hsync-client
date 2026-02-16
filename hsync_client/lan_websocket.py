@@ -81,6 +81,7 @@ from hsync_client.utils import (
     cid_suffix,
     ensure_str_path,
     request_headers,
+    start_observer_guarded,
     warn_if_inotify_watch_limit_low,
 )
 
@@ -516,8 +517,7 @@ class LANWebSocketServer:
         observer = Observer()
         self._event_handler = LANMasterFileEventHandler(self, observer)
         warn_if_inotify_watch_limit_low(watch_path)
-        observer.schedule(self._event_handler, watch_path, recursive=True)
-        observer.start()
+        start_observer_guarded(observer, self._event_handler, watch_path)
         self._observer = observer
         log.info(f"File watcher started for: {watch_path}")
 
@@ -843,8 +843,7 @@ async def lan_websocket_client(
         Path(watch_path).mkdir(parents=True, exist_ok=True)
 
     warn_if_inotify_watch_limit_low(watch_path)
-    observer.schedule(_slave_event_handler, watch_path, recursive=True)
-    observer.start()
+    start_observer_guarded(observer, _slave_event_handler, watch_path)
 
     # Periodic full resync as a safety net against silently missed
     # file-system events (e.g. inotify queue overflow). The master is the

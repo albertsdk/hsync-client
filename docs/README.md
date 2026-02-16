@@ -46,7 +46,7 @@ see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 | Practical recipes (backup, mirror, multi-device, bandwidth) | [Examples](examples.md) → `examples-server.md` / `examples-lan.md` |
 | Schedule one-shot syncs (cron, systemd timers, alerts) | [Scheduling](scheduling.md) |
 | Read the client logs | [Log Labels](log-labels.md) |
-| Troubleshooting | [FAQ](faq.md) → `faq-server.md` / `faq-lan.md` |
+| Troubleshooting | [Troubleshooting](troubleshooting.md) — [FAQ](faq.md) → `faq-server.md` / `faq-lan.md` |
 
 ### 5. Understand
 
@@ -64,7 +64,7 @@ see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 - [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.
 - [Stress Test Plan](internal/stress-test-plan.md) — load/replication stress harness for LAN P2P and server mode (design + resume checklist).
 
-## Related projects
+## Associated Ecosystem Components
 
 - [HSYNC Common](https://github.com/albertobasso/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
 - [HSYNC Server](https://github.com/albertobasso/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)

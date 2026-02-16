@@ -45,7 +45,11 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
   or unexpected error it sleeps a **full-jitter exponential backoff**
   (`_reconnect_delay`: `uniform(0, min(base*2**attempts, RECONNECT_DELAY_MAX))`,
   base = `RECONNECT_DELAY`) and loops again; the attempt counter resets after
-  a healthy loop. Not attempt-capped: the daemon never exits on connectivity.
+  a healthy loop. `WatcherStartError` (local watcher refused by the inotify
+  kernel limits — see [modules/sync-core.md](sync-core.md), "Watcher start")
+  has its own branch: same exponential backoff, but a dedicated log line so
+  the retry is not mistaken for a transport failure. Not attempt-capped: the
+  daemon never exits on connectivity.
   Autotune may rewrite `RECONNECT_DELAY` (the backoff base) from RTT. The
   per-iteration refresh means the first sync after a cold start (startup
   probes failed while the server was still down) also runs on freshly

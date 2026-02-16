@@ -26,10 +26,16 @@ from hsync_client.autotune import classify_network, derive_managed_rtt_updates, 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     DISCOVERY_POLL_INTERVAL,
+    WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
+from hsync_client.exceptions import (
+    AuthenticationError,
+    NetworkError,
+    ServerError,
+    WatcherStartError,
+)
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
@@ -302,7 +308,21 @@ def _run_as_master(
             cert_file=cert_info.cert_file,
             key_file=cert_info.key_file,
         )
-        lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
+        try:
+            lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
+        except WatcherStartError:
+            # The master watcher could not start (inotify kernel limits). The
+            # parsable [WATCHER ERROR] line was already logged at the watcher
+            # start site. Tear the half-started WSS server down (its thread is
+            # running) and back off: without the watcher the master cannot
+            # serve realtime events, but the retry must be slow because a
+            # kernel limit never clears at the discovery cadence. server_ready
+            # is NOT advertised, so slaves keep waiting instead of connecting
+            # to a master that cannot watch.
+            lan_ws_server.stop()
+            lan_ws_server = None
+            time.sleep(WATCHER_START_RETRY_DELAY_S)
+            return lan_server, None
         log.info(f"Master WebSocket server on port {ws_port} (WSS)")
 
         if config["LAN_KEY"]:
@@ -515,6 +535,20 @@ def _run_as_slave(
                     ),
                 )
             )
+        except WatcherStartError:
+            # The slave's local watcher could not start (inotify kernel
+            # limits). The parsable [WATCHER ERROR] line and remediation hint
+            # were already logged at the watcher start site. Re-entering the
+            # discovery loop at its normal cadence would immediately retry
+            # the full initial sync + watcher against the same saturated
+            # limit, so back off once before returning to the loop: another
+            # process may free inotify resources in the meantime.
+            log.info(
+                f"Watcher start failed; backing off "
+                f"{WATCHER_START_RETRY_DELAY_S:.0f}s before retrying."
+            )
+            time.sleep(WATCHER_START_RETRY_DELAY_S)
+            return True, int(ExitCode.OK)
         except Exception as e:
             log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
         # If WebSocket disconnects, re-enter discovery loop

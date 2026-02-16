@@ -88,7 +88,14 @@ reduces transfer size further. You can also set bandwidth limits.
 **Q: Can HSYNC handle many small files?**
 Yes, but initial sync of thousands of small files may take time due to
 per-file overhead. The event-driven architecture handles ongoing changes to
-many files efficiently.
+many small files efficiently.
+
+**Q: Why does the log say the file watcher cannot start (`[WATCHER ERROR]`, inotify limits)?**
+The machine's per-user kernel inotify limits are exhausted — a condition of
+the host, not of HSYNC (editors, browsers and desktop services each hold
+watcher instances). See
+[The file watcher cannot start (inotify limits)](troubleshooting.md) for the
+diagnosis commands and the two remedies (raise the limits or free some up).
 
 **Q: What are the `.hsynckeep` files that keep appearing in my synced folder?**
 HSYNC creates a small, empty (0-byte) file named `.hsynckeep` in every folder

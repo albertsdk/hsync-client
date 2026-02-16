@@ -126,3 +126,23 @@ class InsufficientDiskSpaceError(FileOperationError):
 
     error_code = "HSYNC-C4004"
     default_message = "Insufficient disk space"
+
+
+class WatcherStartError(FileOperationError):
+    """The local file watcher (watchdog) could not start.
+
+    Raised by :func:`hsync_client.utils.start_observer_guarded` when the
+    kernel refuses the watcher because an inotify limit is exhausted
+    (``Errno 24`` instance limit / ``Errno 28`` watch limit). The message is
+    the human-readable remediation hint and ``original`` keeps the raw
+    :class:`OSError` raised by watchdog, so callers can special-case the
+    retry policy (a kernel limit cannot clear by retrying fast) without
+    re-parsing the kernel error string.
+    """
+
+    error_code = "HSYNC-C4100"
+    default_message = "File watcher could not start"
+
+    def __init__(self, message: str = "", original: "OSError | None" = None) -> None:
+        super().__init__(message or self.default_message)
+        self.original = original

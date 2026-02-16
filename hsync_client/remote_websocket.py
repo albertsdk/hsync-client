@@ -52,12 +52,13 @@ from hsync_client.constants import (
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.exceptions import WatcherStartError
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
 from hsync_client.sync import log_initial_sync_start, periodic_resync, sync
 from hsync_client.transfer import upload_file
-from hsync_client.utils import warn_if_inotify_watch_limit_low
+from hsync_client.utils import start_observer_guarded, warn_if_inotify_watch_limit_low
 
 # Global resync task reference for cancellation on reconnect
 _resync_task: Task[None] | None = None
@@ -203,8 +204,7 @@ async def remote_events() -> None:
         observer = Observer()
         event_handler = RemoteFileEventHandler(websocket, loop, event_queue, observer)
         warn_if_inotify_watch_limit_low(CONFIG["LOCAL_BUCKET"])
-        observer.schedule(event_handler, CONFIG["LOCAL_BUCKET"], recursive=True)
-        observer.start()
+        start_observer_guarded(observer, event_handler, CONFIG["LOCAL_BUCKET"])
 
         # Readiness threshold: the filesystem watcher is live and the
         # WebSocket is authenticated — the node now reacts to events.
@@ -451,6 +451,17 @@ async def remote_connect() -> None:
 
             # A healthy loop reached: reset the backoff for any future outage.
             _attempts = 0
+
+        except WatcherStartError:
+            # The local watcher could not start (inotify kernel limits). The
+            # parsable [WATCHER ERROR] line and the remediation hint were already
+            # logged at the watcher start site; the exponential backoff below is
+            # the dedicated retry policy — a kernel limit cannot clear by
+            # reconnecting at the normal cadence.
+            delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], _attempts)
+            _attempts += 1
+            log.info(f"Watcher start failed; reconnecting in {delay:.1f}s…")
+            await sleep(delay)
 
         except ConnectionClosed:
             # WebSocket disconnected - wait before reconnecting

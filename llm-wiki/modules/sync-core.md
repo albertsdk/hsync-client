@@ -248,6 +248,23 @@ same value).
 
 ## file_event_handler.py — watchdog adapter
 
+**Watcher start (inotify limits, Linux)** — every observer in the client (LAN
+master `lan_websocket.py:516`, LAN slave `:836`, remote continuous
+`remote_websocket.py:203`, `.hsyncignore` hot-reload `main_logic.py`) is
+started through `utils.start_observer_guarded`: it schedules + starts and, on
+an inotify-limit `OSError` (`EMFILE` instances / `ENOSPC` watches, detected by
+`utils.inotify_exhaustion_hint`), logs the parsable `[WATCHER ERROR]` line with
+the remediation hint and raises `exceptions.WatcherStartError` (carrying the
+raw kernel error in `.original`). The retry policies treat it specially
+because a kernel limit never clears at the normal cadence: the LAN slave
+(`lan_handler._run_as_slave`) and the LAN master (tearing down the
+half-started WSS server, `lan_handler._run_as_master`) sleep
+`WATCHER_START_RETRY_DELAY_S` (60 s, `constants.py`) before re-entering their
+loops; remote mode reuses its exponential backoff with a dedicated log line;
+the `.hsyncignore` hot-reload simply stays off (a restart re-reads the file).
+User-facing diagnosis/remedies: `docs/troubleshooting.md`; parsable log row in
+`hsync-common/docs/log-labels.md` (`[WATCHER ERROR]`, client-only).
+
 `BaseFileEventHandler` (`file_event_handler.py:54`) maps watchdog callbacks to the
 transfer pipeline. Linux uses `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other
 platforms fall back to `on_modified`. Subclasses implement `_on_file_ready`

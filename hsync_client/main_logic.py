@@ -452,9 +452,14 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
             return None
 
         observer = Observer()
-        observer.schedule(_HsyncignoreHandler(), path=bucket_root, recursive=False)
         observer.daemon = True
-        observer.start()
+        from hsync_client.utils import start_observer_guarded
+
+        # Optional helper: on an inotify-limit failure the parsable
+        # [WATCHER ERROR] remediation is logged by the guarded helper and the
+        # .hsyncignore hot-reload simply stays off (matcher rules continue to
+        # apply; editing .hsyncignore then requires a client restart).
+        start_observer_guarded(observer, _HsyncignoreHandler(), bucket_root, recursive=False)
         _log.debug(f"Hot-reload watcher started for {HSYNCIGNORE_FILENAME} in {bucket_root}")
         return observer
     except Exception as exc:  # pragma: no cover

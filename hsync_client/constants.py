@@ -243,3 +243,11 @@ WORKER_MEMORY_BUDGET_BYTES = 8 * 1024 * 1024  # 8 MiB
 INOTIFY_MAX_USER_WATCHES_PATH = "/proc/sys/fs/inotify/max_user_watches"
 # Fraction of the limit at which we emit the warning.
 INOTIFY_WATCH_WARN_RATIO = 0.9
+
+# Seconds to back off before attempting to start the file watcher again after a
+# WatcherStartError (kernel inotify limits exhausted — Errno 24 instances /
+# Errno 28 watches). Retrying at the normal discovery cadence cannot clear a
+# per-user kernel limit, and each attempt re-runs an initial sync against the
+# master/server, so a long bounded wait keeps the log readable and avoids
+# hammering the peer while another process frees inotify resources.
+WATCHER_START_RETRY_DELAY_S = 60.0
