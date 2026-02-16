@@ -6,16 +6,15 @@ file system events that need to be synchronized between client and server.
 Events include file additions, modifications, renames, and deletions.
 """
 
-from enum import Enum
+from enum import StrEnum
 from os.path import join
-from typing import Optional, Union
 
 from .dir import Dir
 from .file import File
 from .symlink import Symlink
 
 
-class EventName(str, Enum):
+class EventName(StrEnum):
     """
     Enumeration of file system event types.
 
@@ -58,8 +57,8 @@ class Event:
         localpath: str,
         bucket: str,
         name: EventName,
-        src: Union[File, Dir, Symlink],
-        dst: Optional[Union[File, Dir, Symlink]] = None,
+        src: File | Dir | Symlink,
+        dst: File | Dir | Symlink | None = None,
         strip_localpath: bool = True,
     ):
         """
@@ -82,7 +81,7 @@ class Event:
         self.name = name.value
 
         def correct_path(
-            entity: Union[File, Dir, Symlink], localpath: str, strip_localpath: bool
+            entity: File | Dir | Symlink, localpath: str, strip_localpath: bool
         ) -> None:
             """
             Normalize the path of a File, Dir, or Symlink entity.

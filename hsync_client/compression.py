@@ -54,30 +54,114 @@ MIN_SIZE_FOR_LAN = 100 * 1024  # 100 KB
 MIN_SIZE_FOR_COMPRESSION = MIN_SIZE_FOR_DOWNLOAD
 
 # File extensions that are already compressed (compression won't help)
-PRECOMPRESSED_EXTENSIONS = frozenset({
-    # Archives
-    ".zip", ".gz", ".gzip", ".bz2", ".xz", ".7z", ".rar", ".tar.gz", ".tgz",
-    ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".zst", ".zstd", ".lz4", ".lzma",
-    ".cab", ".dmg", ".pkg", ".msi", ".deb", ".rpm", ".apk", ".ipa",
-    ".jar", ".war", ".ear", ".nupkg",
-    # Images
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif",
-    ".jp2", ".j2k", ".jpf", ".jpm", ".jpx",
-    ".tiff", ".tif", ".psd", ".ico", ".icns",
-    ".raw", ".cr2", ".nef", ".arw", ".dng", ".orf", ".rw2",
-    # Audio
-    ".mp3", ".aac", ".ogg", ".opus", ".flac", ".m4a", ".wma", ".alac",
-    # Video
-    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
-    ".mpeg", ".mpg", ".3gp", ".m2ts", ".mts", ".vob", ".ogv",
-    # Documents (already compressed internally)
-    ".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".epub",
-    ".pages", ".numbers", ".keynote", ".xps", ".cbz", ".cbr",
-    # Fonts
-    ".woff", ".woff2", ".eot", ".ttc",
-    # Other
-    ".sqlite", ".db",
-})
+PRECOMPRESSED_EXTENSIONS = frozenset(
+    {
+        # Archives
+        ".zip",
+        ".gz",
+        ".gzip",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".tar.gz",
+        ".tgz",
+        ".tar.bz2",
+        ".tbz2",
+        ".tar.xz",
+        ".txz",
+        ".zst",
+        ".zstd",
+        ".lz4",
+        ".lzma",
+        ".cab",
+        ".dmg",
+        ".pkg",
+        ".msi",
+        ".deb",
+        ".rpm",
+        ".apk",
+        ".ipa",
+        ".jar",
+        ".war",
+        ".ear",
+        ".nupkg",
+        # Images
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".avif",
+        ".heic",
+        ".heif",
+        ".jp2",
+        ".j2k",
+        ".jpf",
+        ".jpm",
+        ".jpx",
+        ".tiff",
+        ".tif",
+        ".psd",
+        ".ico",
+        ".icns",
+        ".raw",
+        ".cr2",
+        ".nef",
+        ".arw",
+        ".dng",
+        ".orf",
+        ".rw2",
+        # Audio
+        ".mp3",
+        ".aac",
+        ".ogg",
+        ".opus",
+        ".flac",
+        ".m4a",
+        ".wma",
+        ".alac",
+        # Video
+        ".mp4",
+        ".mkv",
+        ".avi",
+        ".mov",
+        ".wmv",
+        ".flv",
+        ".webm",
+        ".m4v",
+        ".mpeg",
+        ".mpg",
+        ".3gp",
+        ".m2ts",
+        ".mts",
+        ".vob",
+        ".ogv",
+        # Documents (already compressed internally)
+        ".pdf",
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".odt",
+        ".ods",
+        ".odp",
+        ".epub",
+        ".pages",
+        ".numbers",
+        ".keynote",
+        ".xps",
+        ".cbz",
+        ".cbr",
+        # Fonts
+        ".woff",
+        ".woff2",
+        ".eot",
+        ".ttc",
+        # Other
+        ".sqlite",
+        ".db",
+    }
+)
 
 # Create reusable compressor/decompressor for efficiency
 _compressor = zstd.ZstdCompressor(level=COMPRESSION_LEVEL)
@@ -121,8 +205,7 @@ def should_compress(
     # Too small to benefit from compression
     if size < threshold:
         log.debug(
-            f"Skip compression ({context}): {filepath} "
-            f"below threshold ({size} < {threshold} bytes)"
+            f"Skip compression ({context}): {filepath} below threshold ({size} < {threshold} bytes)"
         )
         return False
 
@@ -176,4 +259,3 @@ def compress_file(filepath: str) -> bytes:
 
 
 log.debug(f"Module {__name__} loaded")
-

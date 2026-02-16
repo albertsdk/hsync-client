@@ -5,8 +5,6 @@ Tests for Symlink model.
 import os
 import tempfile
 
-import pytest
-
 from hsync_client.models.symlink import Symlink
 
 
@@ -42,7 +40,7 @@ class TestSymlinkModel:
             mtime=1705320700.0,
         )
         d = symlink.to_dict()
-        
+
         assert d["type"] == "symlink"
         assert d["filepath"] == "/path/to/link"
         assert d["name"] == "link"
@@ -60,7 +58,7 @@ class TestSymlinkModel:
             "mtime": 1705320700.0,
         }
         symlink = Symlink.from_dict(data)
-        
+
         assert symlink.filepath == "/path/to/link"
         assert symlink.name == "link"
         assert symlink.target == "../target"
@@ -69,7 +67,7 @@ class TestSymlinkModel:
         """Test string representation."""
         symlink = Symlink(filepath="/test/link", target="target")
         repr_str = repr(symlink)
-        
+
         assert "Symlink" in repr_str
         assert "/test/link" in repr_str
         assert "target" in repr_str
@@ -79,14 +77,14 @@ class TestSymlinkModel:
         with tempfile.TemporaryDirectory() as temp_dir:
             target_file = os.path.join(temp_dir, "target.txt")
             link_path = os.path.join(temp_dir, "link")
-            
+
             # Create target file
             with open(target_file, "w") as f:
                 f.write("target content")
-            
+
             # Create symlink
             os.symlink(target_file, link_path)
-            
+
             symlink = Symlink.get(link_path)
             assert symlink is not None
             assert symlink.filepath == link_path
@@ -100,13 +98,13 @@ class TestSymlinkModel:
         with tempfile.TemporaryDirectory() as temp_dir:
             target_file = os.path.join(temp_dir, "target.txt")
             link_path = os.path.join(temp_dir, "link")
-            
+
             with open(target_file, "w") as f:
                 f.write("content")
-            
+
             # Create symlink with relative target
             os.symlink("target.txt", link_path)
-            
+
             symlink = Symlink.get(link_path)
             assert symlink is not None
             assert symlink.target == "target.txt"
@@ -121,7 +119,7 @@ class TestSymlinkModel:
         with tempfile.NamedTemporaryFile(delete=False) as f:
             f.write(b"test")
             temp_path = f.name
-        
+
         try:
             symlink = Symlink.get(temp_path)
             assert symlink is None  # Regular file, not a symlink
@@ -133,17 +131,16 @@ class TestSymlinkModel:
         with tempfile.TemporaryDirectory() as temp_dir:
             target_file = os.path.join(temp_dir, "target.txt")
             link_path = os.path.join(temp_dir, "broken_link")
-            
+
             # Create target and symlink
             with open(target_file, "w") as f:
                 f.write("content")
             os.symlink(target_file, link_path)
-            
+
             # Delete target to break the symlink
             os.unlink(target_file)
-            
+
             # Symlink.get should still work for broken symlinks
             symlink = Symlink.get(link_path)
             assert symlink is not None
             assert symlink.target == target_file
-

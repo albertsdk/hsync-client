@@ -9,11 +9,9 @@
 import os
 from unittest.mock import patch
 
-import pytest
-
-from hsync_client.sync import get_files_local, get_sync_actions
 from hsync_client.models.file import File
 from hsync_client.models.sync_action import SyncActionName
+from hsync_client.sync import get_files_local, get_sync_actions
 
 
 class TestGetFilesLocal:
@@ -92,15 +90,17 @@ class TestGetSyncActions:
 
     def test_download_action_for_remote_only_file(self, tmp_path):
         """File on remote only triggers download."""
-        remote_files = [{
-            "filepath": str(tmp_path / "remote_file.txt"),
-            "name": "remote_file.txt",
-            "mtime": 1000,
-            "ctime": 1000,
-            "size": 100,
-            "md5sum": "abc123",
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": str(tmp_path / "remote_file.txt"),
+                "name": "remote_file.txt",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 100,
+                "md5sum": "abc123",
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [])
@@ -132,15 +132,17 @@ class TestGetSyncActions:
         assert local_file_obj is not None
         local_file_dict = local_file_obj.to_dict()
         # Use relative filepath - the function will join with LOCAL_BUCKET
-        remote_files = [{
-            "filepath": "same_file.txt",
-            "name": "same_file.txt",
-            "mtime": mtime,
-            "ctime": mtime,
-            "size": 7,
-            "md5sum": local_file_dict["md5sum"],
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": "same_file.txt",
+                "name": "same_file.txt",
+                "mtime": mtime,
+                "ctime": mtime,
+                "size": 7,
+                "md5sum": local_file_dict["md5sum"],
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict])
@@ -156,15 +158,17 @@ class TestGetSyncActions:
         local_file_obj = File.get(str(local_file))
         assert local_file_obj is not None
         local_file_dict = local_file_obj.to_dict()
-        remote_files = [{
-            "filepath": "file.txt",
-            "name": "file.txt",
-            "mtime": local_mtime + 1000,  # Remote is newer
-            "ctime": local_mtime + 1000,
-            "size": 7,
-            "md5sum": "different_md5",
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": "file.txt",
+                "name": "file.txt",
+                "mtime": local_mtime + 1000,  # Remote is newer
+                "ctime": local_mtime + 1000,
+                "size": 7,
+                "md5sum": "different_md5",
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict])
@@ -180,15 +184,17 @@ class TestGetSyncActions:
         local_file_obj = File.get(str(local_file))
         assert local_file_obj is not None
         local_file_dict = local_file_obj.to_dict()
-        remote_files = [{
-            "filepath": "file.txt",
-            "name": "file.txt",
-            "mtime": local_mtime - 1000,  # Remote is older
-            "ctime": local_mtime - 1000,
-            "size": 7,
-            "md5sum": "different_md5",
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": "file.txt",
+                "name": "file.txt",
+                "mtime": local_mtime - 1000,  # Remote is older
+                "ctime": local_mtime - 1000,
+                "size": 7,
+                "md5sum": "different_md5",
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict])
@@ -229,15 +235,17 @@ class TestGetSyncActionsLanMode:
 
     def test_download_action_for_remote_only_file_in_lan_mode(self, tmp_path):
         """Remote-only file triggers download action in LAN mode."""
-        remote_files = [{
-            "filepath": "remote_only.txt",
-            "name": "remote_only.txt",
-            "mtime": 1000000,
-            "ctime": 1000000,
-            "size": 10,
-            "md5sum": "abc123",
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": "remote_only.txt",
+                "name": "remote_only.txt",
+                "mtime": 1000000,
+                "ctime": 1000000,
+                "size": 10,
+                "md5sum": "abc123",
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [], lan_mode=True)
@@ -255,15 +263,17 @@ class TestGetSyncActionsLanMode:
         local_file_dict = local_file_obj.to_dict()
 
         # Remote file with same mtime
-        remote_files = [{
-            "filepath": "both_sides.txt",
-            "name": "both_sides.txt",
-            "mtime": mtime,
-            "ctime": mtime,
-            "size": 7,
-            "md5sum": local_file_dict["md5sum"],
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": "both_sides.txt",
+                "name": "both_sides.txt",
+                "mtime": mtime,
+                "ctime": mtime,
+                "size": 7,
+                "md5sum": local_file_dict["md5sum"],
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
@@ -281,18 +291,19 @@ class TestGetSyncActionsLanMode:
         local_file_dict = local_file_obj.to_dict()
 
         # Remote file is newer
-        remote_files = [{
-            "filepath": "file.txt",
-            "name": "file.txt",
-            "mtime": local_mtime + 100,
-            "ctime": local_mtime + 100,
-            "size": 11,
-            "md5sum": "different",
-            "permissions": "-rw-r--r--",
-        }]
+        remote_files = [
+            {
+                "filepath": "file.txt",
+                "name": "file.txt",
+                "mtime": local_mtime + 100,
+                "ctime": local_mtime + 100,
+                "size": 11,
+                "md5sum": "different",
+                "permissions": "-rw-r--r--",
+            }
+        ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
-

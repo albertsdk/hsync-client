@@ -5,28 +5,27 @@ Tests the loguru-based logging configuration.
 """
 
 import logging
-import tempfile
 import os
+import tempfile
+from datetime import UTC
 from typing import Any, cast
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock
 
 from hsync_client.logger import (
-    DEFAULT_LOG_ROTATION,
-    DEFAULT_LOG_RETENTION,
     DEFAULT_LOG_COMPRESSION,
-    InterceptHandler,
+    DEFAULT_LOG_RETENTION,
+    DEFAULT_LOG_ROTATION,
     LABEL_STYLES,
     LEVEL_STYLES,
-    setup_logging,
-    get_client_id,
-    set_client_id,
+    InterceptHandler,
     _colorize_labels,
-    _get_json_data,
     _format_record_colored,
     _format_record_plain,
+    _get_json_data,
     _get_rotation_config,
+    get_client_id,
+    set_client_id,
+    setup_logging,
 )
 
 
@@ -154,7 +153,7 @@ class TestColorizeLabels:
 
     def test_colorize_multiple_labels(self):
         """Test message is unchanged when it has no labels."""
-        result = _colorize_labels('[DOWNLOAD  ] then [UPLOAD    ]')
+        result = _colorize_labels("[DOWNLOAD  ] then [UPLOAD    ]")
         assert "<cyan>" in result
         assert "<green>" in result
 
@@ -200,7 +199,7 @@ class TestSetupLogging:
 
     def test_setup_with_logfile(self):
         """Test logging setup with file output."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
             logfile = f.name
 
         try:
@@ -209,7 +208,7 @@ class TestSetupLogging:
             log.info("Test message")
 
             # Verify file was written
-            with open(logfile, 'r') as f:
+            with open(logfile) as f:
                 content = f.read()
                 assert "Test message" in content
         finally:
@@ -254,8 +253,13 @@ class TestInterceptHandler:
         """emit() redirects standard log records to loguru."""
         handler = InterceptHandler()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="test.py",
-            lineno=1, msg="test message", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="test message",
+            args=(),
+            exc_info=None,
         )
         # Should not raise
         handler.emit(record)
@@ -295,9 +299,10 @@ class TestFormatRecordColored:
 
     def _make_record(self, message: str = "test", level: str = "INFO", extra: Any = None) -> Any:
         """Create a mock loguru record."""
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         record = {
-            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc),
+            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC),
             "level": MagicMock(name=level),
             "message": message,
             "process": MagicMock(id=12345),
@@ -328,9 +333,10 @@ class TestFormatRecordPlain:
 
     def _make_record(self, message: str = "test", level: str = "INFO", extra: Any = None) -> Any:
         """Create a mock loguru record."""
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         record = {
-            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc),
+            "time": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC),
             "level": MagicMock(name=level),
             "message": message,
             "process": MagicMock(id=12345),

@@ -33,7 +33,7 @@ import logging
 import os
 import sys
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Final, Optional
+from typing import TYPE_CHECKING, Final
 
 from loguru import logger
 
@@ -93,14 +93,14 @@ DEFAULT_LOG_COMPRESSION: Final[str] = "gz"
 # Context variable for client ID - thread-safe storage for per-session data
 # ContextVar is used for async/thread-local context, but we also need a global
 # fallback for threads that don't inherit the context (watchdog, HTTP server, etc.)
-client_id_var: ContextVar[Optional[str]] = ContextVar("client_id", default=None)
+client_id_var: ContextVar[str | None] = ContextVar("client_id", default=None)
 
 # Global fallback for threads that don't inherit ContextVar
 # This is safe because HSYNC client is a single-client application (one CID per process)
-_global_client_id: Optional[str] = None
+_global_client_id: str | None = None
 
 
-def get_client_id() -> Optional[str]:
+def get_client_id() -> str | None:
     """
     Get the current client ID.
 
@@ -115,7 +115,7 @@ def get_client_id() -> Optional[str]:
     return _global_client_id
 
 
-def set_client_id(client_id: Optional[str]) -> None:
+def set_client_id(client_id: str | None) -> None:
     """
     Set the client ID for the current session.
 
@@ -202,10 +202,7 @@ def _colorize_labels(message: str, use_colors: bool = True) -> str:
 
     for label, (start_tag, end_tag) in LABEL_STYLES.items():
         if label in message:
-            message = message.replace(
-                label,
-                f"{start_tag}{label}{end_tag}"
-            )
+            message = message.replace(label, f"{start_tag}{label}{end_tag}")
     return message
 
 
@@ -288,13 +285,10 @@ def _format_record_plain(record: "Record") -> str:
         json_str = json_str.replace("{", "{{").replace("}", "}}")
         message = f"{message}\n{json_str}"
 
-    return (
-        f"{timestamp} - [{record['process'].id}] "
-        f"{level}: {message}\n"
-    )
+    return f"{timestamp} - [{record['process'].id}] {level}: {message}\n"
 
 
-def _get_rotation_config() -> dict[str, Optional[str]]:
+def _get_rotation_config() -> dict[str, str | None]:
     """
     Get log rotation configuration from environment variables.
 
@@ -311,7 +305,7 @@ def _get_rotation_config() -> dict[str, Optional[str]]:
 def setup_logging(
     debug: bool = False,
     quiet: bool = False,
-    logfile: Optional[str] = None,
+    logfile: str | None = None,
     no_color: bool = False,
 ) -> "logger":  # type: ignore[valid-type]
     """

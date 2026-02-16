@@ -7,17 +7,14 @@ Tests compression decision logic, compress/decompress functions, and file compre
 import os
 import tempfile
 
-import pytest
-
 from hsync_client.compression import (
     MIN_SIZE_FOR_DOWNLOAD,
-    MIN_SIZE_FOR_UPLOAD,
     MIN_SIZE_FOR_LAN,
-    PRECOMPRESSED_EXTENSIONS,
-    should_compress,
+    MIN_SIZE_FOR_UPLOAD,
     compress_data,
-    decompress_data,
     compress_file,
+    decompress_data,
+    should_compress,
 )
 
 
@@ -164,4 +161,3 @@ class TestCompressFile:
             assert decompressed == content
         finally:
             os.unlink(temp_path)
-

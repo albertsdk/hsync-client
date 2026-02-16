@@ -6,13 +6,11 @@
 
 """Tests for the CLI module using Typer's CliRunner."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
 from hsync_client.cli import app
-
 
 runner = CliRunner()
 
@@ -150,7 +148,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_ca_cert_option(self, mock_run_sync):
         """CLI accepts --ca-cert option."""
-        result = runner.invoke(app, ["-b", "test", "--ca-cert", "/path/to/ca.crt", "-s", "http://test:8000"])
+        result = runner.invoke(
+            app, ["-b", "test", "--ca-cert", "/path/to/ca.crt", "-s", "http://test:8000"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["ca_cert"] == "/path/to/ca.crt"
@@ -166,7 +166,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_filter_path_option(self, mock_run_sync):
         """CLI accepts --filter-path option."""
-        result = runner.invoke(app, ["-b", "test", "--filter-path", "subdir", "-s", "http://test:8000"])
+        result = runner.invoke(
+            app, ["-b", "test", "--filter-path", "subdir", "-s", "http://test:8000"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["filter_path"] == "subdir"
@@ -200,7 +202,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_env_file_option(self, mock_run_sync):
         """CLI accepts --env-file option."""
-        result = runner.invoke(app, ["-b", "test", "--env-file", "/path/to/env", "-s", "http://test:8000"])
+        result = runner.invoke(
+            app, ["-b", "test", "--env-file", "/path/to/env", "-s", "http://test:8000"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["env_file"] == "/path/to/env"
@@ -250,20 +254,28 @@ class TestCLIValidation:
     def test_rejects_http_timeout_above_max(self):
         """CLI rejects --timeout above maximum."""
         from hsync_client.constants import HTTP_TIMEOUT_MAX
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--timeout", str(HTTP_TIMEOUT_MAX + 1)])
+
+        result = runner.invoke(
+            app, ["-b", "test", "-s", "http://test:8000", "--timeout", str(HTTP_TIMEOUT_MAX + 1)]
+        )
         assert result.exit_code != 0
         assert "timeout" in result.output.lower()
 
     def test_rejects_resync_interval_below_min(self):
         """CLI rejects --interval below minimum."""
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "-w", "--interval", "0"])
+        result = runner.invoke(
+            app, ["-b", "test", "-s", "http://test:8000", "-w", "--interval", "0"]
+        )
         assert result.exit_code != 0
         assert "interval" in result.output.lower()
 
     def test_rejects_resync_interval_above_max(self):
         """CLI rejects --interval above maximum."""
         from hsync_client.constants import RESYNC_MAX
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "-w", "--interval", str(RESYNC_MAX + 1)])
+
+        result = runner.invoke(
+            app, ["-b", "test", "-s", "http://test:8000", "-w", "--interval", str(RESYNC_MAX + 1)]
+        )
         assert result.exit_code != 0
         assert "interval" in result.output.lower()
 
@@ -276,51 +288,105 @@ class TestCLIValidation:
     def test_rejects_retry_delay_above_max(self):
         """CLI rejects --retry-delay above maximum."""
         from hsync_client.constants import RECONNECT_DELAY_MAX
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--retry-delay", str(RECONNECT_DELAY_MAX + 1)])
+
+        result = runner.invoke(
+            app,
+            ["-b", "test", "-s", "http://test:8000", "--retry-delay", str(RECONNECT_DELAY_MAX + 1)],
+        )
         assert result.exit_code != 0
         assert "retry" in result.output.lower()
 
     def test_rejects_stability_delay_below_min(self):
         """CLI rejects --stability-delay below minimum."""
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--stability-delay", "0"])
+        result = runner.invoke(
+            app, ["-b", "test", "-s", "http://test:8000", "--stability-delay", "0"]
+        )
         assert result.exit_code != 0
         assert "stability" in result.output.lower()
 
     def test_rejects_stability_delay_above_max(self):
         """CLI rejects --stability-delay above maximum."""
         from hsync_client.constants import STABILITY_DELAY_MAX
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--stability-delay", str(STABILITY_DELAY_MAX + 1)])
+
+        result = runner.invoke(
+            app,
+            [
+                "-b",
+                "test",
+                "-s",
+                "http://test:8000",
+                "--stability-delay",
+                str(STABILITY_DELAY_MAX + 1),
+            ],
+        )
         assert result.exit_code != 0
         assert "stability" in result.output.lower()
 
     def test_rejects_max_wait_timeout_below_min(self):
         """CLI rejects --max-wait-timeout below minimum."""
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--max-wait-timeout", "0"])
+        result = runner.invoke(
+            app, ["-b", "test", "-s", "http://test:8000", "--max-wait-timeout", "0"]
+        )
         assert result.exit_code != 0
         assert "max wait" in result.output.lower() or "timeout" in result.output.lower()
 
     def test_rejects_max_wait_timeout_above_max(self):
         """CLI rejects --max-wait-timeout above maximum."""
         from hsync_client.constants import MAX_WAIT_TIMEOUT_MAX
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--max-wait-timeout", str(MAX_WAIT_TIMEOUT_MAX + 1)])
+
+        result = runner.invoke(
+            app,
+            [
+                "-b",
+                "test",
+                "-s",
+                "http://test:8000",
+                "--max-wait-timeout",
+                str(MAX_WAIT_TIMEOUT_MAX + 1),
+            ],
+        )
         assert result.exit_code != 0
         assert "max wait" in result.output.lower() or "timeout" in result.output.lower()
 
     def test_rejects_invalid_sync_direction(self):
         """CLI rejects invalid --sync-direction value."""
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--sync-direction", "invalid"])
+        result = runner.invoke(
+            app, ["-b", "test", "-s", "http://test:8000", "--sync-direction", "invalid"]
+        )
         assert result.exit_code != 0
         assert "sync-direction" in result.output.lower()
 
     def test_rejects_force_master_with_upload_only(self):
         """CLI rejects --force-master with --sync-direction=upload-only."""
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--force-master", "--sync-direction", "upload-only"])
+        result = runner.invoke(
+            app,
+            [
+                "-b",
+                "test",
+                "-s",
+                "http://test:8000",
+                "--force-master",
+                "--sync-direction",
+                "upload-only",
+            ],
+        )
         assert result.exit_code != 0
         assert "force-master" in result.output.lower()
 
     def test_rejects_force_master_with_download_only(self):
         """CLI rejects --force-master with --sync-direction=download-only."""
-        result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--force-master", "--sync-direction", "download-only"])
+        result = runner.invoke(
+            app,
+            [
+                "-b",
+                "test",
+                "-s",
+                "http://test:8000",
+                "--force-master",
+                "--sync-direction",
+                "download-only",
+            ],
+        )
         assert result.exit_code != 0
         assert "force-master" in result.output.lower()
 
@@ -328,7 +394,17 @@ class TestCLIValidation:
         """CLI accepts --force-master with --sync-direction=bidirectional."""
         from unittest.mock import patch as mock_patch
 
-        with mock_patch("hsync_client.main_logic.run_sync") as mock_run_sync:
-            result = runner.invoke(app, ["-b", "test", "-s", "http://test:8000", "--force-master", "--sync-direction", "bidirectional"])
+        with mock_patch("hsync_client.main_logic.run_sync"):
+            result = runner.invoke(
+                app,
+                [
+                    "-b",
+                    "test",
+                    "-s",
+                    "http://test:8000",
+                    "--force-master",
+                    "--sync-direction",
+                    "bidirectional",
+                ],
+            )
             assert result.exit_code == 0
-

@@ -7,10 +7,10 @@ from argparse import ArgumentTypeError
 import pytest
 
 from hsync_client.validators import (
+    valid_bucket,
     valid_max_wait_timeout,
     valid_reconnect_delay,
     valid_resync,
-    valid_bucket,
 )
 
 

@@ -11,8 +11,7 @@ This module provides the Typer-based CLI for the HSYNC command-line interface.
 """
 
 from os import getcwd
-from typing import Optional
-from typing_extensions import Annotated
+from typing import Annotated
 
 import typer
 
@@ -29,7 +28,6 @@ from hsync_client.constants import (
     STABILITY_DELAY_MAX,
     STABILITY_DELAY_MIN,
 )
-
 
 # =============================================================================
 # Typer Application
@@ -53,6 +51,7 @@ def version_callback(value: bool) -> None:
 def _validate_bucket(value: str) -> str:
     """Validate bucket name (alphanumeric, hyphens and underscores allowed)."""
     import re
+
     if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
         raise typer.BadParameter(
             "The bucket name must be alphanumeric (hyphens and underscores allowed, "
@@ -66,208 +65,318 @@ def main(
     # -------------------------------------------------------------------------
     # Required
     # -------------------------------------------------------------------------
-    bucket: Annotated[str, typer.Option(
-        "-b", "--bucket",
-        help="Remote bucket name.",
-        metavar="NAME",
-        callback=lambda v: _validate_bucket(v),
-        rich_help_panel="Required",
-    )],
+    bucket: Annotated[
+        str,
+        typer.Option(
+            "-b",
+            "--bucket",
+            help="Remote bucket name.",
+            metavar="NAME",
+            callback=lambda v: _validate_bucket(v),
+            rich_help_panel="Required",
+        ),
+    ],
     # -------------------------------------------------------------------------
     # Connection
     # -------------------------------------------------------------------------
-    server_url: Annotated[Optional[str], typer.Option(
-        "-s", "--server",
-        help="Server URL (or set HSYNC_SERVER).",
-        metavar="URL",
-        rich_help_panel="Connection",
-    )] = None,
-    insecure: Annotated[bool, typer.Option(
-        "--insecure",
-        help="Skip SSL certificate verification.",
-        show_default=False,
-        rich_help_panel="Connection",
-    )] = False,
-    ca_cert: Annotated[Optional[str], typer.Option(
-        "--ca-cert",
-        help="Path to CA certificate file for self-signed server certs.",
-        metavar="FILE",
-        rich_help_panel="Connection",
-    )] = None,
-    http_timeout: Annotated[int, typer.Option(
-        "--timeout",
-        help="HTTP request timeout in seconds.",
-        metavar="SEC",
-        rich_help_panel="Connection",
-    )] = 30,
-    api_key_fd: Annotated[Optional[int], typer.Option(
-        "--api-key-fd",
-        help="Read API key from the given file descriptor (for secure passing from a parent process).",
-        metavar="FD",
-        hidden=True,
-        rich_help_panel="Connection",
-    )] = None,
-    lan_key_fd: Annotated[Optional[int], typer.Option(
-        "--lan-key-fd",
-        help="Read LAN key from the given file descriptor (for secure passing from a parent process).",
-        metavar="FD",
-        hidden=True,
-        rich_help_panel="Connection",
-    )] = None,
+    server_url: Annotated[
+        str | None,
+        typer.Option(
+            "-s",
+            "--server",
+            help="Server URL (or set HSYNC_SERVER).",
+            metavar="URL",
+            rich_help_panel="Connection",
+        ),
+    ] = None,
+    insecure: Annotated[
+        bool,
+        typer.Option(
+            "--insecure",
+            help="Skip SSL certificate verification.",
+            show_default=False,
+            rich_help_panel="Connection",
+        ),
+    ] = False,
+    ca_cert: Annotated[
+        str | None,
+        typer.Option(
+            "--ca-cert",
+            help="Path to CA certificate file for self-signed server certs.",
+            metavar="FILE",
+            rich_help_panel="Connection",
+        ),
+    ] = None,
+    http_timeout: Annotated[
+        int,
+        typer.Option(
+            "--timeout",
+            help="HTTP request timeout in seconds.",
+            metavar="SEC",
+            rich_help_panel="Connection",
+        ),
+    ] = 30,
+    api_key_fd: Annotated[
+        int | None,
+        typer.Option(
+            "--api-key-fd",
+            help="Read API key from the given file descriptor (for secure passing from a parent process).",
+            metavar="FD",
+            hidden=True,
+            rich_help_panel="Connection",
+        ),
+    ] = None,
+    lan_key_fd: Annotated[
+        int | None,
+        typer.Option(
+            "--lan-key-fd",
+            help="Read LAN key from the given file descriptor (for secure passing from a parent process).",
+            metavar="FD",
+            hidden=True,
+            rich_help_panel="Connection",
+        ),
+    ] = None,
     # -------------------------------------------------------------------------
     # Sync
     # -------------------------------------------------------------------------
-    local_path: Annotated[str, typer.Option(
-        "-p", "--path",
-        help="Local directory path.",
-        metavar="DIR",
-        rich_help_panel="Sync",
-    )] = getcwd(),
-    continuous: Annotated[bool, typer.Option(
-        "-w", "--watch",
-        help="Watch for changes and sync continuously.",
-        rich_help_panel="Sync",
-    )] = False,
-    resync: Annotated[Optional[int], typer.Option(
-        "-i", "--interval",
-        help="Force full sync every SEC seconds (requires -w).",
-        metavar="SEC",
-        rich_help_panel="Sync",
-    )] = None,
-    reconnect_delay: Annotated[int, typer.Option(
-        "--retry-delay",
-        help="Retry connection after SEC seconds.",
-        metavar="SEC",
-        rich_help_panel="Sync",
-    )] = 5,
-    stability_delay: Annotated[Optional[int], typer.Option(
-        "--stability-delay",
-        help="Seconds to wait before uploading modified files.",
-        metavar="SEC",
-        rich_help_panel="Sync",
-    )] = None,
-    max_wait_timeout: Annotated[int, typer.Option(
-        "--max-wait-timeout",
-        help="Maximum time to wait for file stabilization.",
-        metavar="SEC",
-        rich_help_panel="Sync",
-    )] = 120,
-    filter_path: Annotated[Optional[str], typer.Option(
-        "--filter-path",
-        help="Sync only files within this subdirectory path.",
-        metavar="PATH",
-        rich_help_panel="Sync",
-    )] = None,
-    dryrun: Annotated[bool, typer.Option(
-        "-n", "--dry-run",
-        help="Show what would be done without making changes.",
-        rich_help_panel="Sync",
-    )] = False,
-    ignore_delete: Annotated[bool, typer.Option(
-        "--ignore-delete",
-        help="Do not propagate file deletions (useful for backup scenarios).",
-        rich_help_panel="Sync",
-    )] = False,
-    sync_direction: Annotated[str, typer.Option(
-        "--sync-direction",
-        help="Sync direction: bidirectional, upload-only, or download-only.",
-        rich_help_panel="Sync",
-    )] = "bidirectional",
-    no_compression: Annotated[bool, typer.Option(
-        "--no-compression",
-        help="Disable zstd compression for file transfers.",
-        rich_help_panel="Sync",
-    )] = False,
+    local_path: Annotated[
+        str,
+        typer.Option(
+            "-p",
+            "--path",
+            help="Local directory path.",
+            metavar="DIR",
+            rich_help_panel="Sync",
+        ),
+    ] = getcwd(),
+    continuous: Annotated[
+        bool,
+        typer.Option(
+            "-w",
+            "--watch",
+            help="Watch for changes and sync continuously.",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
+    resync: Annotated[
+        int | None,
+        typer.Option(
+            "-i",
+            "--interval",
+            help="Force full sync every SEC seconds (requires -w).",
+            metavar="SEC",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    reconnect_delay: Annotated[
+        int,
+        typer.Option(
+            "--retry-delay",
+            help="Retry connection after SEC seconds.",
+            metavar="SEC",
+            rich_help_panel="Sync",
+        ),
+    ] = 5,
+    stability_delay: Annotated[
+        int | None,
+        typer.Option(
+            "--stability-delay",
+            help="Seconds to wait before uploading modified files.",
+            metavar="SEC",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    max_wait_timeout: Annotated[
+        int,
+        typer.Option(
+            "--max-wait-timeout",
+            help="Maximum time to wait for file stabilization.",
+            metavar="SEC",
+            rich_help_panel="Sync",
+        ),
+    ] = 120,
+    filter_path: Annotated[
+        str | None,
+        typer.Option(
+            "--filter-path",
+            help="Sync only files within this subdirectory path.",
+            metavar="PATH",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    dryrun: Annotated[
+        bool,
+        typer.Option(
+            "-n",
+            "--dry-run",
+            help="Show what would be done without making changes.",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
+    ignore_delete: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-delete",
+            help="Do not propagate file deletions (useful for backup scenarios).",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
+    sync_direction: Annotated[
+        str,
+        typer.Option(
+            "--sync-direction",
+            help="Sync direction: bidirectional, upload-only, or download-only.",
+            rich_help_panel="Sync",
+        ),
+    ] = "bidirectional",
+    no_compression: Annotated[
+        bool,
+        typer.Option(
+            "--no-compression",
+            help="Disable zstd compression for file transfers.",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
     # -------------------------------------------------------------------------
     # LAN Mode
     # -------------------------------------------------------------------------
-    lan_mode: Annotated[bool, typer.Option(
-        "--lan-mode",
-        help="Enable LAN peer-to-peer mode without central server.",
-        rich_help_panel="LAN Mode",
-    )] = False,
-    lan_port: Annotated[int, typer.Option(
-        "--lan-port",
-        help="Port to use when acting as LAN master.",
-        metavar="PORT",
-        rich_help_panel="LAN Mode",
-    )] = 0,
-    discovery_timeout: Annotated[int, typer.Option(
-        "--discovery-timeout",
-        help="Time to wait for peer discovery.",
-        metavar="SEC",
-        rich_help_panel="LAN Mode",
-    )] = 10,
-    lan_group: Annotated[Optional[str], typer.Option(
-        "--lan-group",
-        help="Group name for LAN peer filtering.",
-        metavar="GROUP",
-        rich_help_panel="LAN Mode",
-    )] = None,
-    lan_https: Annotated[bool, typer.Option(
-        "--no-lan-https/",
-        help="Disable HTTPS for LAN mode (use plain HTTP).",
-        show_default=False,
-        rich_help_panel="LAN Mode",
-    )] = True,
-    lan_persistent: Annotated[bool, typer.Option(
-        "--no-lan-persistent/",
-        help="Disable persistent mode (exit when no peers found).",
-        show_default=False,
-        rich_help_panel="LAN Mode",
-    )] = True,
-    force_master: Annotated[bool, typer.Option(
-        "--force-master",
-        help="Force this client to always be master in LAN mode.",
-        rich_help_panel="LAN Mode",
-    )] = False,
+    lan_mode: Annotated[
+        bool,
+        typer.Option(
+            "--lan-mode",
+            help="Enable LAN peer-to-peer mode without central server.",
+            rich_help_panel="LAN Mode",
+        ),
+    ] = False,
+    lan_port: Annotated[
+        int,
+        typer.Option(
+            "--lan-port",
+            help="Port to use when acting as LAN master.",
+            metavar="PORT",
+            rich_help_panel="LAN Mode",
+        ),
+    ] = 0,
+    discovery_timeout: Annotated[
+        int,
+        typer.Option(
+            "--discovery-timeout",
+            help="Time to wait for peer discovery.",
+            metavar="SEC",
+            rich_help_panel="LAN Mode",
+        ),
+    ] = 10,
+    lan_group: Annotated[
+        str | None,
+        typer.Option(
+            "--lan-group",
+            help="Group name for LAN peer filtering.",
+            metavar="GROUP",
+            rich_help_panel="LAN Mode",
+        ),
+    ] = None,
+    lan_https: Annotated[
+        bool,
+        typer.Option(
+            "--no-lan-https/",
+            help="Disable HTTPS for LAN mode (use plain HTTP).",
+            show_default=False,
+            rich_help_panel="LAN Mode",
+        ),
+    ] = True,
+    lan_persistent: Annotated[
+        bool,
+        typer.Option(
+            "--no-lan-persistent/",
+            help="Disable persistent mode (exit when no peers found).",
+            show_default=False,
+            rich_help_panel="LAN Mode",
+        ),
+    ] = True,
+    force_master: Annotated[
+        bool,
+        typer.Option(
+            "--force-master",
+            help="Force this client to always be master in LAN mode.",
+            rich_help_panel="LAN Mode",
+        ),
+    ] = False,
     # -------------------------------------------------------------------------
     # Output
     # -------------------------------------------------------------------------
-    debug: Annotated[bool, typer.Option(
-        "-v", "--verbose",
-        help="Enable verbose output.",
-        rich_help_panel="Output",
-    )] = False,
-    quiet: Annotated[bool, typer.Option(
-        "-q", "--quiet",
-        help="Suppress all output.",
-        rich_help_panel="Output",
-    )] = False,
-    logfile: Annotated[Optional[str], typer.Option(
-        "-o", "--output",
-        help="Write output to FILE.",
-        metavar="FILE",
-        rich_help_panel="Output",
-    )] = None,
-    no_color: Annotated[bool, typer.Option(
-        "--no-color",
-        help="Disable colored output.",
-        rich_help_panel="Output",
-    )] = False,
-    legend: Annotated[bool, typer.Option(
-        "--help-symbols",
-        help="Show output symbols legend.",
-        rich_help_panel="Output",
-    )] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "-v",
+            "--verbose",
+            help="Enable verbose output.",
+            rich_help_panel="Output",
+        ),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "-q",
+            "--quiet",
+            help="Suppress all output.",
+            rich_help_panel="Output",
+        ),
+    ] = False,
+    logfile: Annotated[
+        str | None,
+        typer.Option(
+            "-o",
+            "--output",
+            help="Write output to FILE.",
+            metavar="FILE",
+            rich_help_panel="Output",
+        ),
+    ] = None,
+    no_color: Annotated[
+        bool,
+        typer.Option(
+            "--no-color",
+            help="Disable colored output.",
+            rich_help_panel="Output",
+        ),
+    ] = False,
+    legend: Annotated[
+        bool,
+        typer.Option(
+            "--help-symbols",
+            help="Show output symbols legend.",
+            rich_help_panel="Output",
+        ),
+    ] = False,
     # -------------------------------------------------------------------------
     # General
     # -------------------------------------------------------------------------
-    yes: Annotated[bool, typer.Option(
-        "-y", "--yes",
-        help="Skip interactive confirmation prompts (still shows warnings).",
-    )] = False,
-    env_file: Annotated[Optional[str], typer.Option(
-        "--env-file",
-        help="Load environment variables from file.",
-        metavar="PATH",
-    )] = None,
-    version: Annotated[Optional[bool], typer.Option(
-        "-V", "--version",
-        help="Show version and exit.",
-        is_eager=True,
-        callback=version_callback,
-    )] = None,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "-y",
+            "--yes",
+            help="Skip interactive confirmation prompts (still shows warnings).",
+        ),
+    ] = False,
+    env_file: Annotated[
+        str | None,
+        typer.Option(
+            "--env-file",
+            help="Load environment variables from file.",
+            metavar="PATH",
+        ),
+    ] = None,
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "-V",
+            "--version",
+            help="Show version and exit.",
+            is_eager=True,
+            callback=version_callback,
+        ),
+    ] = None,
 ) -> None:
     """
     HSYNC - HTTP-based file synchronization client.
@@ -321,20 +430,18 @@ def main(
         raise typer.BadParameter(
             f"HTTP timeout must be between {HTTP_TIMEOUT_MIN} and {HTTP_TIMEOUT_MAX}."
         )
-    if resync is not None:
-        if resync < RESYNC_MIN or resync > RESYNC_MAX:
-            raise typer.BadParameter(
-                f"Resync interval must be between {RESYNC_MIN} and {RESYNC_MAX}."
-            )
+    if resync is not None and (resync < RESYNC_MIN or resync > RESYNC_MAX):
+        raise typer.BadParameter(f"Resync interval must be between {RESYNC_MIN} and {RESYNC_MAX}.")
     if reconnect_delay < RECONNECT_DELAY_MIN or reconnect_delay > RECONNECT_DELAY_MAX:
         raise typer.BadParameter(
             f"Retry delay must be between {RECONNECT_DELAY_MIN} and {RECONNECT_DELAY_MAX}."
         )
-    if stability_delay is not None:
-        if stability_delay < STABILITY_DELAY_MIN or stability_delay > STABILITY_DELAY_MAX:
-            raise typer.BadParameter(
-                f"Stability delay must be between {STABILITY_DELAY_MIN} and {STABILITY_DELAY_MAX}."
-            )
+    if stability_delay is not None and (
+        stability_delay < STABILITY_DELAY_MIN or stability_delay > STABILITY_DELAY_MAX
+    ):
+        raise typer.BadParameter(
+            f"Stability delay must be between {STABILITY_DELAY_MIN} and {STABILITY_DELAY_MAX}."
+        )
     if max_wait_timeout < MAX_WAIT_TIMEOUT_MIN or max_wait_timeout > MAX_WAIT_TIMEOUT_MAX:
         raise typer.BadParameter(
             f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}."
@@ -394,4 +501,3 @@ def main(
 def run() -> None:
     """Entry point for the CLI application."""
     app()
-

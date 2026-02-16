@@ -95,19 +95,19 @@ sequenceDiagram
     participant A as Client A<br/>(CID: abc123)
     participant B as Client B<br/>(CID: xyz789)
     participant C as Client C<br/>(CID: def456)
-    
+
     Note over A,C: Phase 1: Discovery
     A->>A: Register mDNS service
     B->>B: Register mDNS service
     C->>C: Register mDNS service
-    
+
     A-->>B: mDNS announcement
     A-->>C: mDNS announcement
     B-->>A: mDNS announcement
     B-->>C: mDNS announcement
     C-->>A: mDNS announcement
     C-->>B: mDNS announcement
-    
+
     Note over A,C: Phase 2: Election
     A->>A: Evaluate candidates
     B->>B: Evaluate candidates
@@ -116,7 +116,7 @@ sequenceDiagram
     Note over A: All bidirectional, same startup<br/>abc123 < def456 < xyz789<br/>I am MASTER!
     Note over B: All bidirectional, same startup<br/>abc123 < def456 < xyz789<br/>A is MASTER
     Note over C: All bidirectional, same startup<br/>abc123 < def456 < xyz789<br/>A is MASTER
-    
+
     Note over A,C: Phase 3: Sync
     A->>A: Start HTTP Server
     B->>A: Sync files via HTTP
@@ -750,4 +750,3 @@ flowchart TB
 ```
 
 ![Thread Model](images/lan-mode-6.png)
-

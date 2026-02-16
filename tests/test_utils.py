@@ -5,24 +5,22 @@ Tests for utility functions in hsync_client.utils module.
 import os
 import stat
 import tempfile
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
     _suppress_insecure_warning,
-    ensure_str_path,
-    is_valid_filename,
-    is_valid_logfile,
-    is_same_paths,
-    get_cid,
     bytes_to_human_readable,
     compute_md5,
-    get_permissions,
+    ensure_str_path,
     get_chunk_size,
-    set_permissions,
+    get_cid,
+    get_permissions,
     get_ssl_verify,
+    is_same_paths,
+    is_valid_filename,
+    is_valid_logfile,
+    set_permissions,
     verify_master_fingerprint,
 )
 
@@ -235,11 +233,11 @@ class TestBytesToHumanReadable:
 
     def test_gigabytes(self):
         """Test gigabytes formatting."""
-        assert bytes_to_human_readable(1024 ** 3) == "1.00GB"
+        assert bytes_to_human_readable(1024**3) == "1.00GB"
 
     def test_terabytes(self):
         """Test terabytes formatting."""
-        assert bytes_to_human_readable(1024 ** 4) == "1.00TB"
+        assert bytes_to_human_readable(1024**4) == "1.00TB"
 
 
 class TestComputeMd5:
@@ -419,7 +417,6 @@ class TestGetSslVerify:
             set_config(original)
 
 
-
 class TestEnsureStrPath:
     """Tests for ensure_str_path function."""
 
@@ -445,7 +442,7 @@ class TestEnsureStrPath:
 
     def test_bytes_unicode(self):
         """Bytes with unicode are decoded correctly."""
-        assert ensure_str_path("/tmp/résumé.txt".encode("utf-8")) == "/tmp/résumé.txt"
+        assert ensure_str_path("/tmp/résumé.txt".encode()) == "/tmp/résumé.txt"
 
 
 class TestSuppressInsecureWarning:
@@ -454,6 +451,7 @@ class TestSuppressInsecureWarning:
     def test_suppresses_warning(self):
         """Calling _suppress_insecure_warning does not raise."""
         import hsync_client.utils as utils_mod
+
         old_flag = utils_mod._insecure_warning_suppressed
         try:
             utils_mod._insecure_warning_suppressed = False
@@ -465,6 +463,7 @@ class TestSuppressInsecureWarning:
     def test_idempotent(self):
         """Calling twice does not raise."""
         import hsync_client.utils as utils_mod
+
         old_flag = utils_mod._insecure_warning_suppressed
         try:
             utils_mod._insecure_warning_suppressed = False
@@ -542,6 +541,7 @@ class TestGetSslVerifyWithFingerprint:
     def test_returns_false_with_fingerprint(self):
         """Returns False when MASTER_CERT_FINGERPRINT is set."""
         import hsync_client.utils as utils_mod
+
         original = CONFIG.copy()
         old_flag = utils_mod._insecure_warning_suppressed
         try:

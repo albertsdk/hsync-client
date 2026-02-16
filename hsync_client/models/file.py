@@ -6,8 +6,7 @@ and utility functions for file handling during synchronization.
 """
 
 import stat
-
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import md5
 from os import stat as os_stat
 from os.path import (
@@ -19,7 +18,7 @@ from os.path import (
     join,
 )
 from re import match
-from typing import Optional, Union
+from typing import Optional
 
 
 def is_hidden_file(file_path: str) -> bool:
@@ -81,12 +80,12 @@ class File:
 
     def __init__(
         self,
-        filepath: Optional[str] = None,
-        ctime: Optional[Union[str, int, float, datetime]] = None,
-        mtime: Optional[Union[str, int, float, datetime]] = None,
+        filepath: str | None = None,
+        ctime: str | int | float | datetime | None = None,
+        mtime: str | int | float | datetime | None = None,
         size: int = 0,
-        md5sum: Optional[str] = None,
-        permissions: Optional[str] = None,
+        md5sum: str | None = None,
+        permissions: str | None = None,
     ):
         """
         Initialize a File instance.
@@ -120,9 +119,7 @@ class File:
             f"permissions={self.permissions})"
         )
 
-    def _parse_time(
-        self, time: Optional[Union[str, int, float, datetime]]
-    ) -> Optional[int]:
+    def _parse_time(self, time: str | int | float | datetime | None) -> int | None:
         """
         Parse various time formats to Unix timestamp.
 
@@ -139,10 +136,8 @@ class File:
             return int(time.timestamp())
         elif isinstance(time, str):
             return int(datetime.fromisoformat(time).timestamp())
-        elif isinstance(time, int):
-            return int(datetime.fromtimestamp(time, timezone.utc).timestamp())
-        elif isinstance(time, float):
-            return int(datetime.fromtimestamp(time, timezone.utc).timestamp())
+        elif isinstance(time, (int, float)):
+            return int(datetime.fromtimestamp(time, UTC).timestamp())
         return None
 
     @staticmethod
@@ -194,7 +189,7 @@ class File:
         }
 
     @classmethod
-    def get(cls, file_path: str, buckets_dir: Optional[str] = None) -> Optional["File"]:
+    def get(cls, file_path: str, buckets_dir: str | None = None) -> Optional["File"]:
         """
         Get a File instance for an existing file.
 
@@ -208,9 +203,7 @@ class File:
         Returns:
             File instance if file exists, None otherwise.
         """
-        file_path = (
-            join(buckets_dir, file_path.lstrip("/")) if buckets_dir else file_path
-        )
+        file_path = join(buckets_dir, file_path.lstrip("/")) if buckets_dir else file_path
         if exists(file_path):
             return cls(
                 filepath=file_path,
@@ -227,7 +220,7 @@ class File:
     def from_dict(
         cls,
         data: dict,
-        dir_prefix: Optional[str] = None,
+        dir_prefix: str | None = None,
         strip_dir_prefix: bool = True,
     ) -> "File":
         """

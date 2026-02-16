@@ -11,24 +11,23 @@ This module provides common utility functions for path handling,
 file operations, and data formatting.
 """
 
+import secrets
 import stat
-
 from hashlib import md5
-from os import chmod, stat as os_stat
+from os import chmod
+from os import stat as os_stat
 from os.path import abspath, exists, normpath
 from pathlib import Path
-import secrets
-from typing import Optional
 
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
-    CID_ALPHABET,
-    CID_LENGTH,
     CHUNK_SIZE_LARGE,
     CHUNK_SIZE_MEDIUM,
     CHUNK_SIZE_SMALL,
+    CID_ALPHABET,
+    CID_LENGTH,
     CONTROL_CHARS,
     FILE_SIZE_MEDIUM,
     FILE_SIZE_SMALL,
@@ -38,7 +37,6 @@ from hsync_client.constants import (
     PROBLEMATIC_TRAILING_CHARS,
     RESERVED_FILENAMES,
 )
-
 
 # =============================================================================
 # SSL Utilities
@@ -53,6 +51,7 @@ def _suppress_insecure_warning() -> None:
     global _insecure_warning_suppressed
     if not _insecure_warning_suppressed:
         import urllib3
+
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         _insecure_warning_suppressed = True
 
@@ -101,6 +100,7 @@ def verify_master_fingerprint(url: str) -> bool:
         return True  # No fingerprint verification needed
 
     from urllib.parse import urlparse
+
     from hsync_client.ssl_utils import get_server_cert_fingerprint
 
     parsed = urlparse(url)
@@ -191,10 +191,7 @@ def is_valid_filename(filename: str) -> bool:
     if _is_reserved_name(filename):
         return False
 
-    if _has_problematic_trailing(filename):
-        return False
-
-    return True
+    return not _has_problematic_trailing(filename)
 
 
 def is_valid_logfile(path_string: str) -> bool:
@@ -286,7 +283,7 @@ def ensure_str_path(path: str | bytes | None) -> str:
     if path is None:
         return ""
     if isinstance(path, bytes):
-        return path.decode('utf-8')
+        return path.decode("utf-8")
     return str(path)
 
 
@@ -383,7 +380,7 @@ def get_permissions(obj_path: str) -> str:
     return stat.filemode(permissions)
 
 
-def get_chunk_size(file_size: Optional[int]) -> int:
+def get_chunk_size(file_size: int | None) -> int:
     """
     Calculate optimal chunk size based on file size.
 
@@ -399,12 +396,12 @@ def get_chunk_size(file_size: Optional[int]) -> int:
     if file_size is None:
         return CHUNK_SIZE_MEDIUM  # Default 64KB for unknown size
 
-    if file_size < FILE_SIZE_SMALL:      # < 1MB
-        return CHUNK_SIZE_SMALL          # 8KB
-    elif file_size < FILE_SIZE_MEDIUM:   # < 100MB
-        return CHUNK_SIZE_MEDIUM         # 64KB
+    if file_size < FILE_SIZE_SMALL:  # < 1MB
+        return CHUNK_SIZE_SMALL  # 8KB
+    elif file_size < FILE_SIZE_MEDIUM:  # < 100MB
+        return CHUNK_SIZE_MEDIUM  # 64KB
     else:
-        return CHUNK_SIZE_LARGE          # 256KB
+        return CHUNK_SIZE_LARGE  # 256KB
 
 
 def set_permissions(file_path: str, permissions: str) -> None:
@@ -425,13 +422,10 @@ def set_permissions(file_path: str, permissions: str) -> None:
     # Parse symbolic permissions to octal mode
     mode = 0
     permission_types = {"r": 4, "w": 2, "x": 1}
-    for i, section in enumerate(
-        [permissions[1:4], permissions[4:7], permissions[7:10]]
-    ):
+    for i, section in enumerate([permissions[1:4], permissions[4:7], permissions[7:10]]):
         for char in section:
             if char in permission_types:
                 mode |= permission_types[char] << (6 - (i * 3))
 
     log.debug(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
     chmod(file_path, mode)
-

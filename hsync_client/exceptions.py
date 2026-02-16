@@ -18,7 +18,7 @@ Error Code Format: HSYNC-CXXXX (C = Client)
 - C4XXX: File operation errors
 """
 
-from typing import Any, Optional
+from typing import Any
 
 
 class HSyncClientError(Exception):
@@ -36,8 +36,8 @@ class HSyncClientError(Exception):
 
     def __init__(
         self,
-        message: Optional[str] = None,
-        details: Optional[dict[str, Any]] = None,
+        message: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         self.message = message or self.default_message
         self.details = details or {}
@@ -181,4 +181,3 @@ class PermissionError(FileOperationError):
 
     error_code = "HSYNC-C4003"
     default_message = "Permission denied"
-

@@ -18,13 +18,15 @@ from os import makedirs, remove, utime
 def _safe_json(obj: object) -> str:
     """Serialize object to JSON and escape braces for loguru."""
     return _json_dumps(obj).replace("{", "{{").replace("}", "}}")
-from typing import cast
+
+
 from os.path import basename, dirname, exists, getmtime, getsize, join
-from requests import get, post, RequestException
 from shutil import move
 from time import sleep as time_sleep
+from typing import cast
 
 from loguru import logger as log
+from requests import RequestException, get, post
 
 from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
@@ -38,7 +40,6 @@ from hsync_client.utils import (
     set_permissions,
     verify_master_fingerprint,
 )
-
 
 # Content-Encoding header value for zstd compression
 CONTENT_ENCODING_ZSTD = "zstd"
@@ -95,8 +96,7 @@ def download_file(file: File) -> None:
         # Don't resume if partial file is larger than expected
         if resume_offset >= file.size:
             log.warning(
-                f'Partial file larger than expected for "{file.filepath}", '
-                f"restarting download"
+                f'Partial file larger than expected for "{file.filepath}", restarting download'
             )
             remove(partial_file_path)
             resume_offset = 0
@@ -154,7 +154,7 @@ def download_file(file: File) -> None:
 
     # If server returned 200 instead of 206, it doesn't support Range - restart
     if resume_offset > 0 and response.status_code == 200:
-        log.debug(f'Server does not support Range requests, restarting download')
+        log.debug("Server does not support Range requests, restarting download")
         resume_offset = 0
         if exists(partial_file_path):
             remove(partial_file_path)
@@ -191,9 +191,7 @@ def download_file(file: File) -> None:
         md5sum = compute_md5(partial_file_path)
         if md5sum != file.md5sum:
             log.error(
-                f'"{file.filepath}" '
-                f"(Invalid checksum: expected {file.md5sum}, "
-                f"{md5sum} given)"
+                f'"{file.filepath}" (Invalid checksum: expected {file.md5sum}, {md5sum} given)'
             )
             # Keep partial file for potential manual inspection, but rename it
             return
@@ -342,8 +340,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
         while not is_file_stable(file):
             if elapsed >= max_wait:
                 log.warning(
-                    f'File "{file.filepath}" did not stabilize within {max_wait}s, '
-                    f"uploading anyway"
+                    f'File "{file.filepath}" did not stabilize within {max_wait}s, uploading anyway'
                 )
                 break
             time_sleep(1)
@@ -353,10 +350,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
         file.size = getsize(file.filepath)
         file.md5sum = compute_md5(file.filepath)
 
-        log.debug(
-            f'Written file: "{file.filepath}" '
-            f"({bytes_to_human_readable(file.size)})"
-        )
+        log.debug(f'Written file: "{file.filepath}" ({bytes_to_human_readable(file.size)})')
 
         # Recursive call with check_size=False to do actual upload
         upload_file(file, False)
@@ -437,6 +431,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
             # Send compressed data as file
             from io import BytesIO
+
             compressed_file = BytesIO(compressed_data)
             files = {"file": (basename(file.filepath), compressed_file)}
             response = post(
@@ -483,8 +478,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 new_offset = result.get("offset", 0)
                 remaining = result.get("remaining", 0)
                 log.debug(
-                    f'Partial upload: {new_offset} bytes uploaded, '
-                    f'{remaining} bytes remaining'
+                    f"Partial upload: {new_offset} bytes uploaded, {remaining} bytes remaining"
                 )
             elif response.status_code == 401:
                 log.error(f'Authentication failed uploading "{file.filepath}"')
@@ -517,4 +511,3 @@ def nothing_to_do(file: File) -> None:
         file: File that is already synchronized.
     """
     log.debug(f'"{file.filepath}"')
-

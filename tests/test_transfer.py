@@ -6,12 +6,12 @@
 
 """Tests for transfer module."""
 
-import pytest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import MagicMock, patch
+
 from requests import RequestException
 
 from hsync_client.models.file import File
-from hsync_client.transfer import download_file, upload_file, nothing_to_do, is_file_stable
+from hsync_client.transfer import download_file, is_file_stable, nothing_to_do, upload_file
 
 
 class TestDownloadFile:
@@ -21,13 +21,19 @@ class TestDownloadFile:
         """Network error during download is logged."""
         file = File(filepath="/path/to/file.txt", md5sum="abc123", size=100)
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get") as mock_get, \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get") as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             mock_get.side_effect = RequestException("Connection error")
             download_file(file)
             mock_get.assert_called_once()
@@ -39,13 +45,19 @@ class TestDownloadFile:
         mock_response = MagicMock()
         mock_response.status_code = 401
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             download_file(file)
 
     def test_not_found_404_returns(self, tmp_path):
@@ -55,13 +67,19 @@ class TestDownloadFile:
         mock_response = MagicMock()
         mock_response.status_code = 404
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             download_file(file)
 
     def test_server_error_500_returns(self, tmp_path):
@@ -71,13 +89,19 @@ class TestDownloadFile:
         mock_response = MagicMock()
         mock_response.status_code = 500
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             download_file(file)
 
     def test_successful_download_with_md5_verification(self, tmp_path):
@@ -95,18 +119,26 @@ class TestDownloadFile:
         mock_response.status_code = 200
         mock_response.iter_content = MagicMock(return_value=[b""])
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.compute_md5", return_value="d41d8cd98f00b204e9800998ecf8427e"), \
-             patch("hsync_client.transfer.move") as mock_move, \
-             patch("hsync_client.transfer.utime") as mock_utime, \
-             patch("hsync_client.transfer.set_permissions") as mock_set_perms, \
-             patch("hsync_client.transfer.remove"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch(
+                "hsync_client.transfer.compute_md5", return_value="d41d8cd98f00b204e9800998ecf8427e"
+            ),
+            patch("hsync_client.transfer.move") as mock_move,
+            patch("hsync_client.transfer.utime") as mock_utime,
+            patch("hsync_client.transfer.set_permissions") as mock_set_perms,
+            patch("hsync_client.transfer.remove"),
+        ):
             download_file(file)
             mock_move.assert_called_once()
             mock_utime.assert_called_once()
@@ -120,16 +152,22 @@ class TestDownloadFile:
         mock_response.status_code = 200
         mock_response.iter_content = MagicMock(return_value=[b"test content"])
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.compute_md5", return_value="different_md5"), \
-             patch("hsync_client.transfer.move") as mock_move, \
-             patch("hsync_client.transfer.remove"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.compute_md5", return_value="different_md5"),
+            patch("hsync_client.transfer.move") as mock_move,
+            patch("hsync_client.transfer.remove"),
+        ):
             download_file(file)
             mock_move.assert_not_called()
 
@@ -162,14 +200,20 @@ class TestUploadFile:
         mock_response = MagicMock()
         mock_response.status_code = 201
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=False)
 
     def test_auth_error_401(self, tmp_path):
@@ -182,14 +226,20 @@ class TestUploadFile:
         mock_response = MagicMock()
         mock_response.status_code = 401
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=False)
 
     def test_access_denied_403(self, tmp_path):
@@ -202,14 +252,20 @@ class TestUploadFile:
         mock_response = MagicMock()
         mock_response.status_code = 403
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=False)
 
     def test_conflict_409_already_exists(self, tmp_path):
@@ -222,14 +278,20 @@ class TestUploadFile:
         mock_response = MagicMock()
         mock_response.status_code = 409
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=False)
 
     def test_server_error_500(self, tmp_path):
@@ -242,27 +304,39 @@ class TestUploadFile:
         mock_response = MagicMock()
         mock_response.status_code = 500
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=False)
 
     def test_file_not_found(self, tmp_path):
         """FileNotFoundError is caught and logged."""
         file = File(filepath="/nonexistent/file.txt", md5sum="abc123", size=12)
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=False)  # Should not raise
 
     def test_network_error(self, tmp_path):
@@ -272,14 +346,20 @@ class TestUploadFile:
 
         file = File(filepath=str(test_file), md5sum="abc123", size=12)
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post") as mock_post, \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post") as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             mock_post.side_effect = RequestException("Connection error")
             upload_file(file, check_size=False)
 
@@ -324,16 +404,22 @@ class TestUploadFileMaxWaitTimeout:
         mock_response = MagicMock()
         mock_response.status_code = 201
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-            "MAX_WAIT_TIMEOUT": 120,
-        }), patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "MAX_WAIT_TIMEOUT": 120,
+                },
+            ),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=True)
 
     def test_upload_times_out_after_max_wait(self, tmp_path):
@@ -362,17 +448,23 @@ class TestUploadFileMaxWaitTimeout:
             return mock_response
 
         # is_file_stable always returns False to simulate unstable file
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-            "MAX_WAIT_TIMEOUT": 2,  # Short timeout for test
-        }), patch("hsync_client.transfer.is_file_stable", return_value=False), \
-             patch("hsync_client.transfer.time_sleep"), \
-             patch("hsync_client.transfer.post", side_effect=mock_post), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "MAX_WAIT_TIMEOUT": 2,  # Short timeout for test
+                },
+            ),
+            patch("hsync_client.transfer.is_file_stable", return_value=False),
+            patch("hsync_client.transfer.time_sleep"),
+            patch("hsync_client.transfer.post", side_effect=mock_post),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             upload_file(file, check_size=True)
             # Verify upload was called even though file never stabilized
             # (this proves the timeout mechanism worked)
@@ -396,15 +488,21 @@ class TestUploadFileMaxWaitTimeout:
         mock_response.status_code = 201
 
         # CONFIG without MAX_WAIT_TIMEOUT should use default (120)
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             # Should not raise, uses default timeout
             upload_file(file, check_size=True)
 
@@ -441,18 +539,24 @@ class TestDownloadFileResume:
         mock_response.headers = {"Content-Encoding": ""}
         mock_response.iter_content = MagicMock(return_value=[b"more content"])
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123def"), \
-             patch("hsync_client.transfer.move") as mock_move, \
-             patch("hsync_client.transfer.remove") as mock_remove, \
-             patch("hsync_client.transfer.utime"), \
-             patch("hsync_client.transfer.set_permissions"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.move"),
+            patch("hsync_client.transfer.remove") as mock_remove,
+            patch("hsync_client.transfer.utime"),
+            patch("hsync_client.transfer.set_permissions"),
+        ):
             download_file(file)
             # Should append to partial file
             mock_remove.assert_not_called()
@@ -477,18 +581,24 @@ class TestDownloadFileResume:
         mock_response.iter_content = MagicMock(return_value=[b"content"])
         mock_response.content = b"content"
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123def"), \
-             patch("hsync_client.transfer.move"), \
-             patch("hsync_client.transfer.remove") as mock_remove, \
-             patch("hsync_client.transfer.utime"), \
-             patch("hsync_client.transfer.set_permissions"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.move"),
+            patch("hsync_client.transfer.remove") as mock_remove,
+            patch("hsync_client.transfer.utime"),
+            patch("hsync_client.transfer.set_permissions"),
+        ):
             download_file(file)
             # Should remove the too-large partial file
             mock_remove.assert_called()
@@ -508,16 +618,23 @@ class TestDownloadFileResume:
         )
 
         import os
+
         # Set mtime to be newer than file.mtime
         os.utime(test_file, (2000, 2000))
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get") as mock_get, \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get") as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
             download_file(file)
             # Should not download
             mock_get.assert_not_called()
@@ -546,18 +663,24 @@ class TestDownloadFileResume:
         mock_response_200.iter_content = MagicMock(return_value=[b"content"])
         mock_response_200.content = b"content"
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", side_effect=[mock_response_416, mock_response_200]), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123def"), \
-             patch("hsync_client.transfer.move"), \
-             patch("hsync_client.transfer.remove") as mock_remove, \
-             patch("hsync_client.transfer.utime"), \
-             patch("hsync_client.transfer.set_permissions"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", side_effect=[mock_response_416, mock_response_200]),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.move"),
+            patch("hsync_client.transfer.remove") as mock_remove,
+            patch("hsync_client.transfer.utime"),
+            patch("hsync_client.transfer.set_permissions"),
+        ):
             download_file(file)
             # Should remove partial file and retry
             mock_remove.assert_called()
@@ -588,17 +711,23 @@ class TestDownloadCompressed:
         mock_response.headers = {"Content-Encoding": "zstd"}
         mock_response.content = compressed_content
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "LOCAL_BUCKET": str(tmp_path),
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123def"), \
-             patch("hsync_client.transfer.move") as mock_move, \
-             patch("hsync_client.transfer.utime"), \
-             patch("hsync_client.transfer.set_permissions"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.move") as mock_move,
+            patch("hsync_client.transfer.utime"),
+            patch("hsync_client.transfer.set_permissions"),
+        ):
             download_file(file)
             mock_move.assert_called()
 
@@ -614,12 +743,18 @@ class TestGetUploadStatus:
         mock_response.status_code = 200
         mock_response.json.return_value = {"status": "complete", "offset": 1000}
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=True):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=True),
+        ):
             status, offset = _get_upload_status("file.txt", "abc123", 1000)
             assert status == "complete"
             assert offset == 1000
@@ -632,27 +767,40 @@ class TestGetUploadStatus:
         mock_response.status_code = 200
         mock_response.json.return_value = {"status": "resumable", "offset": 500}
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-        }), patch("hsync_client.transfer.get", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=True):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                },
+            ),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=True),
+        ):
             status, offset = _get_upload_status("file.txt", "abc123", 1000)
             assert status == "resumable"
             assert offset == 500
 
     def test_get_upload_status_network_error(self, tmp_path):
         """Test getting upload status returns new on network error."""
-        from hsync_client.transfer import _get_upload_status
         from requests import RequestException
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-        }), patch("hsync_client.transfer.get", side_effect=RequestException()), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=True):
+        from hsync_client.transfer import _get_upload_status
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                },
+            ),
+            patch("hsync_client.transfer.get", side_effect=RequestException()),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=True),
+        ):
             status, offset = _get_upload_status("file.txt", "abc123", 1000)
             assert status == "new"
             assert offset == 0
@@ -663,7 +811,6 @@ class TestUploadCompressed:
 
     def test_upload_with_compression(self, tmp_path):
         """Test upload uses compression when enabled."""
-        import zstandard as zstd
 
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content for compression")
@@ -680,18 +827,24 @@ class TestUploadCompressed:
         mock_response = MagicMock()
         mock_response.status_code = 201
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-            "COMPRESSION_ENABLED": True,
-            "SERVER_COMPRESSION_ENABLED": True,
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "COMPRESSION_ENABLED": True,
+                    "SERVER_COMPRESSION_ENABLED": True,
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+        ):
             upload_file(file, check_size=False)
 
     def test_upload_compression_skipped_when_resuming(self, tmp_path):
@@ -712,19 +865,25 @@ class TestUploadCompressed:
         mock_response = MagicMock()
         mock_response.status_code = 201
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-            "COMPRESSION_ENABLED": True,
-            "SERVER_COMPRESSION_ENABLED": True,
-        }), patch("hsync_client.transfer._get_upload_status", return_value=("resumable", 5)), \
-             patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "COMPRESSION_ENABLED": True,
+                    "SERVER_COMPRESSION_ENABLED": True,
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("resumable", 5)),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+        ):
             upload_file(file, check_size=False)
 
 
@@ -749,16 +908,22 @@ class TestUploadResumable:
         mock_response.status_code = 202
         mock_response.json.return_value = {"offset": 6, "remaining": 6}
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", return_value=mock_response), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+        ):
             upload_file(file, check_size=False)
 
     def test_upload_resume_from_offset(self, tmp_path):
@@ -778,17 +943,23 @@ class TestUploadResumable:
         mock_response = MagicMock()
         mock_response.status_code = 201
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer._get_upload_status", return_value=("resumable", 10)), \
-             patch("hsync_client.transfer.post", return_value=mock_response) as mock_post, \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("resumable", 10)),
+            patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+        ):
             upload_file(file, check_size=False)
             # Check that post was called with offset in data
             call_kwargs = mock_post.call_args
@@ -813,16 +984,22 @@ class TestUploadEdgeCases:
             ctime=1000,
         )
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer.post", side_effect=PermissionError("Access denied")), \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer.post", side_effect=PermissionError("Access denied")),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+        ):
             # Should not raise
             upload_file(file, check_size=False)
 
@@ -839,18 +1016,23 @@ class TestUploadEdgeCases:
             ctime=1000,
         )
 
-        with patch("hsync_client.transfer.CONFIG", {
-            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
-            "REMOTE_BUCKET": "test",
-            "LOCAL_BUCKET": str(tmp_path),
-            "REQUEST_HEADERS": {"X-API-Key": "test"},
-            "CID": "test-client",
-        }), patch("hsync_client.transfer._get_upload_status", return_value=("complete", 0)), \
-             patch("hsync_client.transfer.post") as mock_post, \
-             patch("hsync_client.transfer.get_ssl_verify", return_value=False), \
-             patch("hsync_client.transfer.is_file_stable", return_value=True), \
-             patch("hsync_client.transfer.compute_md5", return_value="abc123"):
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("complete", 0)),
+            patch("hsync_client.transfer.post") as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_md5", return_value="abc123"),
+        ):
             upload_file(file, check_size=False)
             # Should not call post
             mock_post.assert_not_called()
-

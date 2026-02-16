@@ -6,25 +6,24 @@ Tests _get_stability_delay_value and other testable functions.
 
 import os
 import time
-from typing import Optional, cast
-from unittest.mock import patch, MagicMock, AsyncMock
-
-from typing_extensions import TypedDict, Unpack
+from typing import Unpack, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from typing_extensions import TypedDict
 
 from hsync_client.config import HsyncConfig, get_env_settings
 from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.main_logic import (
-    _get_stability_delay_value,
-    _check_server_connectivity,
     _check_deletion_risk,
+    _check_server_connectivity,
+    _get_stability_delay_value,
     _measure_clock_offset,
-    _run_preview,
-    run_sync,
-    _with_stdin_commands,
-    _run_stdin_wait,
     _run_lan_mode,
+    _run_preview,
+    _run_stdin_wait,
+    _with_stdin_commands,
+    run_sync,
 )
 
 
@@ -101,7 +100,7 @@ class TestCheckServerConnectivity:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        with patch('requests.get', return_value=mock_response):
+        with patch("requests.get", return_value=mock_response):
             result = _check_server_connectivity(
                 server_url="http://localhost:8000",
                 timeout=10,
@@ -118,7 +117,7 @@ class TestCheckServerConnectivity:
         mock_response = MagicMock()
         mock_response.status_code = 500
 
-        with patch('requests.get', return_value=mock_response):
+        with patch("requests.get", return_value=mock_response):
             result = _check_server_connectivity(
                 server_url="http://localhost:8000",
                 timeout=10,
@@ -135,7 +134,7 @@ class TestCheckServerConnectivity:
         mock_response = MagicMock()
         mock_response.status_code = 503
 
-        with patch('requests.get', return_value=mock_response):
+        with patch("requests.get", return_value=mock_response):
             result = _check_server_connectivity(
                 server_url="http://localhost:8000",
                 timeout=10,
@@ -151,7 +150,7 @@ class TestCheckServerConnectivity:
 
         mock_logger = MagicMock()
 
-        with patch('requests.get', side_effect=RequestException("Connection refused")):
+        with patch("requests.get", side_effect=RequestException("Connection refused")):
             result = _check_server_connectivity(
                 server_url="http://localhost:8000",
                 timeout=10,
@@ -168,7 +167,7 @@ class TestCheckServerConnectivity:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        with patch('requests.get', return_value=mock_response) as mock_get:
+        with patch("requests.get", return_value=mock_response) as mock_get:
             result = _check_server_connectivity(
                 server_url="https://localhost:8000",
                 timeout=5,
@@ -180,7 +179,7 @@ class TestCheckServerConnectivity:
             # Verify that verify=False was passed
             mock_get.assert_called_once()
             call_kwargs = mock_get.call_args[1]
-            assert call_kwargs['verify'] is False
+            assert call_kwargs["verify"] is False
 
     def test_status_code_404_is_ok(self):
         """Test that 404 is considered successful (server is reachable)."""
@@ -188,7 +187,7 @@ class TestCheckServerConnectivity:
         mock_response = MagicMock()
         mock_response.status_code = 404
 
-        with patch('requests.get', return_value=mock_response):
+        with patch("requests.get", return_value=mock_response):
             result = _check_server_connectivity(
                 server_url="http://localhost:8000",
                 timeout=10,
@@ -202,10 +201,13 @@ class TestCheckServerConnectivity:
 
 def _make_clock_config() -> HsyncConfig:
     """Return a minimal HsyncConfig for _measure_clock_offset tests."""
-    return cast(HsyncConfig, {
-        "REQUEST_HEADERS": {"Authorization": "Bearer test"},
-        "HTTP_TIMEOUT": 30,
-    })
+    return cast(
+        HsyncConfig,
+        {
+            "REQUEST_HEADERS": {"Authorization": "Bearer test"},
+            "HTTP_TIMEOUT": 30,
+        },
+    )
 
 
 class TestMeasureClockOffset:
@@ -224,12 +226,14 @@ class TestMeasureClockOffset:
         mock_response.status_code = 200
         mock_response.json.return_value = {"timestamp": time.time()}
 
-        with patch('requests.get', return_value=mock_response), \
-             patch('hsync_client.utils.get_ssl_verify', return_value=True):
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch("hsync_client.utils.get_ssl_verify", return_value=True),
+        ):
             _measure_clock_offset(mock_master, config, mock_logger)
 
             # Should set clock_offset on master
-            assert hasattr(mock_master, 'clock_offset')
+            assert hasattr(mock_master, "clock_offset")
 
     def test_clock_skew_warning(self):
         """Test warning when clock skew exceeds threshold."""
@@ -245,8 +249,10 @@ class TestMeasureClockOffset:
         mock_response.status_code = 200
         mock_response.json.return_value = {"timestamp": time.time() + 100}
 
-        with patch('requests.get', return_value=mock_response), \
-             patch('hsync_client.utils.get_ssl_verify', return_value=True):
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch("hsync_client.utils.get_ssl_verify", return_value=True),
+        ):
             _measure_clock_offset(mock_master, config, mock_logger)
 
             # Should log warning
@@ -263,8 +269,10 @@ class TestMeasureClockOffset:
         mock_response = MagicMock()
         mock_response.status_code = 404
 
-        with patch('requests.get', return_value=mock_response), \
-             patch('hsync_client.utils.get_ssl_verify', return_value=True):
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch("hsync_client.utils.get_ssl_verify", return_value=True),
+        ):
             _measure_clock_offset(mock_master, config, mock_logger)
 
             # Should log debug message and return early
@@ -282,8 +290,10 @@ class TestMeasureClockOffset:
         mock_response.status_code = 200
         mock_response.json.return_value = {}  # No timestamp
 
-        with patch('requests.get', return_value=mock_response), \
-             patch('hsync_client.utils.get_ssl_verify', return_value=True):
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch("hsync_client.utils.get_ssl_verify", return_value=True),
+        ):
             _measure_clock_offset(mock_master, config, mock_logger)
 
             # Should log debug and return
@@ -299,8 +309,10 @@ class TestMeasureClockOffset:
 
         config = _make_clock_config()
 
-        with patch('requests.get', side_effect=RequestException("Network error")), \
-             patch('hsync_client.utils.get_ssl_verify', return_value=True):
+        with (
+            patch("requests.get", side_effect=RequestException("Network error")),
+            patch("hsync_client.utils.get_ssl_verify", return_value=True),
+        ):
             _measure_clock_offset(mock_master, config, mock_logger)
 
             # Should log debug message
@@ -318,8 +330,10 @@ class TestMeasureClockOffset:
         mock_response.status_code = 200
         mock_response.json.side_effect = ValueError("Invalid JSON")
 
-        with patch('requests.get', return_value=mock_response), \
-             patch('hsync_client.utils.get_ssl_verify', return_value=True):
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch("hsync_client.utils.get_ssl_verify", return_value=True),
+        ):
             _measure_clock_offset(mock_master, config, mock_logger)
 
             # Should log debug message
@@ -337,11 +351,13 @@ class TestRunPreview:
             "LAN_MODE": False,
         }
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=[]),
+        ):
             _run_preview(mock_logger)
 
             # Should log preview start and end
@@ -363,11 +379,13 @@ class TestRunPreview:
         file_obj.size = 1024
         download_action = SyncAction(file_obj, SyncActionName.download)
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[download_action]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=[download_action]),
+        ):
             _run_preview(mock_logger)
 
             # Should log download action
@@ -389,11 +407,13 @@ class TestRunPreview:
         file_obj.size = 2048
         upload_action = SyncAction(file_obj, SyncActionName.upload)
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[upload_action]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=[upload_action]),
+        ):
             _run_preview(mock_logger)
 
             # Should log upload action
@@ -415,11 +435,13 @@ class TestRunPreview:
         file_obj.size = 512
         delete_action = SyncAction(file_obj, SyncActionName.delete)
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[delete_action]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=[delete_action]),
+        ):
             _run_preview(mock_logger)
 
             # Should log delete action
@@ -441,11 +463,13 @@ class TestRunPreview:
         file_obj.size = 256
         synced_action = SyncAction(file_obj, SyncActionName.nothing)
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[synced_action]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=[synced_action]),
+        ):
             _run_preview(mock_logger)
 
             # Should log synced file
@@ -473,11 +497,16 @@ class TestRunPreview:
         new_file.md5sum = "abc123"
         download_action = SyncAction(new_file, SyncActionName.download)
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[delete_action, download_action]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch(
+                "hsync_client.main_logic.get_sync_actions",
+                return_value=[delete_action, download_action],
+            ),
+        ):
             _run_preview(mock_logger)
 
             # Should log rename action
@@ -499,15 +528,19 @@ class TestRunPreview:
         sentinel_file.size = 0
         sentinel_action = SyncAction(sentinel_file, SyncActionName.upload)
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=[sentinel_action]):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=[sentinel_action]),
+        ):
             _run_preview(mock_logger)
 
             # Should not log sentinel file in upload list
-            upload_calls = [str(call) for call in mock_logger.info.call_args_list if "TO_UPLOAD" in str(call)]
+            upload_calls = [
+                str(call) for call in mock_logger.info.call_args_list if "TO_UPLOAD" in str(call)
+            ]
             assert len(upload_calls) == 0
 
     def test_preview_handles_exception(self):
@@ -518,8 +551,13 @@ class TestRunPreview:
             "LAN_MODE": False,
         }
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files', side_effect=Exception("Test error")):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch(
+                "hsync_client.main_logic.ensure_hsynckeep_files",
+                side_effect=Exception("Test error"),
+            ),
+        ):
             _run_preview(mock_logger)
 
             # Should log error
@@ -546,17 +584,20 @@ class TestRunPreview:
         for action in actions:
             action.file.size = 100
 
-        with patch('hsync_client.main_logic.CONFIG', config), \
-             patch('hsync_client.main_logic.ensure_hsynckeep_files'), \
-             patch('hsync_client.main_logic.get_files_local', return_value=[]), \
-             patch('hsync_client.main_logic.get_files_remote', return_value=[]), \
-             patch('hsync_client.main_logic.get_sync_actions', return_value=actions):
+        with (
+            patch("hsync_client.main_logic.CONFIG", config),
+            patch("hsync_client.main_logic.ensure_hsynckeep_files"),
+            patch("hsync_client.main_logic.get_files_local", return_value=[]),
+            patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_sync_actions", return_value=actions),
+        ):
             _run_preview(mock_logger)
 
             # Should log summary with counts
-            summary_calls = [str(call) for call in mock_logger.info.call_args_list if "Preview:" in str(call)]
+            summary_calls = [
+                str(call) for call in mock_logger.info.call_args_list if "Preview:" in str(call)
+            ]
             assert len(summary_calls) > 0
-
 
 
 # ── Helper for run_sync tests ────────────────────────────────────────
@@ -564,18 +605,18 @@ class TestRunPreview:
 
 class _RunSyncKwargs(TypedDict, total=False):
     bucket: str
-    env_file: Optional[str]
-    server_url: Optional[str]
+    env_file: str | None
+    server_url: str | None
     verify_ssl: bool
-    ca_cert: Optional[str]
+    ca_cert: str | None
     http_timeout: int
     local_path: str
     continuous: bool
-    resync: Optional[int]
+    resync: int | None
     reconnect_delay: int
-    stability_delay: Optional[int]
+    stability_delay: int | None
     max_wait_timeout: int
-    filter_path: Optional[str]
+    filter_path: str | None
     dryrun: bool
     ignore_delete: bool
     sync_direction: str
@@ -583,20 +624,22 @@ class _RunSyncKwargs(TypedDict, total=False):
     lan_mode: bool
     lan_port: int
     discovery_timeout: int
-    lan_group: Optional[str]
+    lan_group: str | None
     lan_https: bool
     lan_persistent: bool
     force_master: bool
     debug: bool
     quiet: bool
-    logfile: Optional[str]
+    logfile: str | None
     no_color: bool
     legend: bool
-    api_key_fd: Optional[int]
-    lan_key_fd: Optional[int]
+    api_key_fd: int | None
+    lan_key_fd: int | None
 
 
-def _default_run_sync_kwargs(tmp_path: object, **overrides: Unpack[_RunSyncKwargs]) -> _RunSyncKwargs:
+def _default_run_sync_kwargs(
+    tmp_path: object, **overrides: Unpack[_RunSyncKwargs]
+) -> _RunSyncKwargs:
     """Return a dict with all required run_sync keyword arguments."""
     defaults: _RunSyncKwargs = {
         "bucket": "test-bucket",
@@ -641,7 +684,7 @@ class TestRunSync:
         bad_path = str(tmp_path / "nonexistent")
         kwargs = _default_run_sync_kwargs(tmp_path, local_path=bad_path)
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup:
+        with patch("hsync_client.main_logic.setup_logging") as mock_log_setup:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -652,8 +695,10 @@ class TestRunSync:
         """run_sync returns when no server URL and not in LAN mode."""
         kwargs = _default_run_sync_kwargs(tmp_path, server_url=None)
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup, \
-             patch('hsync_client.main_logic.get_server_url', return_value=None):
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_server_url", return_value=None),
+        ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -663,14 +708,18 @@ class TestRunSync:
     def test_lan_mode_uses_placeholder_url(self, tmp_path):
         """In LAN mode without server URL, a placeholder is used."""
         kwargs = _default_run_sync_kwargs(
-            tmp_path, server_url=None, lan_mode=True,
+            tmp_path,
+            server_url=None,
+            lan_mode=True,
         )
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup, \
-             patch('hsync_client.main_logic.get_server_url', return_value=None), \
-             patch('hsync_client.main_logic._run_lan_mode') as mock_lan, \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic.set_debug'):
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.main_logic._run_lan_mode") as mock_lan,
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+        ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -681,7 +730,7 @@ class TestRunSync:
         """run_sync returns when logfile path is invalid."""
         kwargs = _default_run_sync_kwargs(tmp_path, logfile="CON")
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup:
+        with patch("hsync_client.main_logic.setup_logging") as mock_log_setup:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -692,10 +741,12 @@ class TestRunSync:
         """run_sync returns when server connectivity check fails."""
         kwargs = _default_run_sync_kwargs(tmp_path)
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup, \
-             patch('hsync_client.main_logic._check_server_connectivity', return_value=False), \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic.set_debug'):
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=False),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+        ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -705,12 +756,14 @@ class TestRunSync:
         """run_sync runs a single sync when not continuous and not dryrun."""
         kwargs = _default_run_sync_kwargs(tmp_path, continuous=False, dryrun=False)
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup, \
-             patch('hsync_client.main_logic._check_server_connectivity', return_value=True), \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic.set_debug'), \
-             patch('hsync_client.main_logic.sync', new=MagicMock()), \
-             patch('hsync_client.main_logic.run') as mock_run:
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch("hsync_client.main_logic.run") as mock_run,
+        ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -720,12 +773,14 @@ class TestRunSync:
         """run_sync displays legend when requested."""
         kwargs = _default_run_sync_kwargs(tmp_path, legend=True)
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup, \
-             patch('hsync_client.main_logic._check_server_connectivity', return_value=True), \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic.set_debug'), \
-             patch('hsync_client.main_logic.sync', new=MagicMock()), \
-             patch('hsync_client.main_logic.run'):
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch("hsync_client.main_logic.run"),
+        ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -739,12 +794,14 @@ class TestRunSync:
 
         kwargs = _default_run_sync_kwargs(tmp_path, api_key_fd=r_fd)
 
-        with patch('hsync_client.main_logic.setup_logging') as mock_log_setup, \
-             patch('hsync_client.main_logic._check_server_connectivity', return_value=True), \
-             patch('hsync_client.main_logic.set_config') as mock_set_cfg, \
-             patch('hsync_client.main_logic.set_debug'), \
-             patch('hsync_client.main_logic.sync', new=MagicMock()), \
-             patch('hsync_client.main_logic.run'):
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch("hsync_client.main_logic.run"),
+        ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
@@ -771,7 +828,7 @@ class TestWithStdinCommands:
         async def quick_coro():
             pass
 
-        with patch('hsync_client.main_logic.StdinCommandHandler') as MockHandler:
+        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -790,7 +847,7 @@ class TestWithStdinCommands:
         async def failing_coro():
             raise RuntimeError("boom")
 
-        with patch('hsync_client.main_logic.StdinCommandHandler') as MockHandler:
+        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -806,7 +863,7 @@ class TestWithStdinCommands:
         async def noop():
             pass
 
-        with patch('hsync_client.main_logic.StdinCommandHandler') as MockHandler:
+        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -827,7 +884,7 @@ class TestRunStdinWait:
         """_run_stdin_wait registers PREVIEW and SYNC commands."""
         mock_log = MagicMock()
 
-        with patch('hsync_client.main_logic.StdinCommandHandler') as MockHandler:
+        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -843,7 +900,7 @@ class TestRunStdinWait:
         """_run_stdin_wait calls handler.run() to read stdin."""
         mock_log = MagicMock()
 
-        with patch('hsync_client.main_logic.StdinCommandHandler') as MockHandler:
+        with patch("hsync_client.main_logic.StdinCommandHandler") as MockHandler:
             handler_inst = MagicMock()
             handler_inst.run = AsyncMock()
             MockHandler.return_value = handler_inst
@@ -895,7 +952,7 @@ class TestRunLanMode:
         mock_lan_sync.start.return_value = mock_peer_mgr
         mock_lan_sync.port = 9000
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync):
+        with patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync):
             _run_lan_mode(config, mock_log)
 
         assert any("alone" in str(c) for c in mock_log.warning.call_args_list)
@@ -918,10 +975,12 @@ class TestRunLanMode:
         mock_lan_server = MagicMock()
         mock_ws_server = MagicMock()
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync), \
-             patch('hsync_client.main_logic.LANServer', return_value=mock_lan_server), \
-             patch('hsync_client.main_logic.LANWebSocketServer', return_value=mock_ws_server), \
-             patch('time.sleep', side_effect=KeyboardInterrupt):
+        with (
+            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.main_logic.LANServer", return_value=mock_lan_server),
+            patch("hsync_client.main_logic.LANWebSocketServer", return_value=mock_ws_server),
+            patch("time.sleep", side_effect=KeyboardInterrupt),
+        ):
             _run_lan_mode(config, mock_log)
 
         mock_lan_server.start.assert_called_once()
@@ -952,11 +1011,13 @@ class TestRunLanMode:
         mock_lan_sync.start.return_value = mock_peer_mgr
         mock_lan_sync.port = 9000
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync), \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic._measure_clock_offset'), \
-             patch('hsync_client.main_logic.sync', new=MagicMock()), \
-             patch('hsync_client.main_logic.run') as mock_run:
+        with (
+            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic._measure_clock_offset"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch("hsync_client.main_logic.run") as mock_run,
+        ):
             _run_lan_mode(config, mock_log)
 
         mock_run.assert_called_once()
@@ -984,10 +1045,12 @@ class TestRunLanMode:
         mock_lan_sync.start.return_value = mock_peer_mgr
         mock_lan_sync.port = 9000
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync), \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic._measure_clock_offset'), \
-             patch('hsync_client.main_logic._run_preview') as mock_preview:
+        with (
+            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic._measure_clock_offset"),
+            patch("hsync_client.main_logic._run_preview") as mock_preview,
+        ):
             _run_lan_mode(config, mock_log)
 
         mock_preview.assert_called_once_with(mock_log)
@@ -1008,7 +1071,7 @@ class TestRunLanMode:
         # Make wait_for_discovery raise to simulate Ctrl+C
         mock_lan_sync.wait_for_discovery.side_effect = KeyboardInterrupt
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync):
+        with patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync):
             _run_lan_mode(config, mock_log)
 
         mock_lan_sync.stop.assert_called_once()
@@ -1031,9 +1094,15 @@ class TestRunLanMode:
         mock_cert_info = MagicMock()
         mock_cert_info.fingerprint = "abcdef1234567890" * 4
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync), \
-             patch('hsync_client.ssl_utils.generate_self_signed_cert', return_value=mock_cert_info) as mock_gen, \
-             patch('hsync_client.ssl_utils.save_cert_to_temp_files', return_value=mock_cert_info) as mock_save:
+        with (
+            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
+            patch(
+                "hsync_client.ssl_utils.generate_self_signed_cert", return_value=mock_cert_info
+            ) as mock_gen,
+            patch(
+                "hsync_client.ssl_utils.save_cert_to_temp_files", return_value=mock_cert_info
+            ) as mock_save,
+        ):
             _run_lan_mode(config, mock_log)
 
         mock_gen.assert_called_once()
@@ -1066,11 +1135,13 @@ class TestRunLanMode:
         mock_lan_sync.start.return_value = mock_peer_mgr
         mock_lan_sync.port = 9000
 
-        with patch('hsync_client.main_logic.LANSync', return_value=mock_lan_sync), \
-             patch('hsync_client.main_logic.set_config'), \
-             patch('hsync_client.main_logic._measure_clock_offset'), \
-             patch('hsync_client.main_logic.sync', new=MagicMock()), \
-             patch('hsync_client.main_logic.run'):
+        with (
+            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic._measure_clock_offset"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch("hsync_client.main_logic.run"),
+        ):
             _run_lan_mode(config, mock_log)
 
         # wait_for_discovery should be called twice (first loop: not ready, second: ready)
@@ -1251,8 +1322,7 @@ class TestCheckDeletionRisk:
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
-        with patch("builtins.input", return_value="n"), \
-             pytest.raises(SystemExit) as exc_info:
+        with patch("builtins.input", return_value="n"), pytest.raises(SystemExit) as exc_info:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 lan_mode=True,
@@ -1270,8 +1340,7 @@ class TestCheckDeletionRisk:
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
-        with patch("builtins.input", return_value=""), \
-             pytest.raises(SystemExit) as exc_info:
+        with patch("builtins.input", return_value=""), pytest.raises(SystemExit) as exc_info:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 lan_mode=True,
@@ -1288,8 +1357,7 @@ class TestCheckDeletionRisk:
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
-        with patch("builtins.input", side_effect=EOFError), \
-             pytest.raises(SystemExit) as exc_info:
+        with patch("builtins.input", side_effect=EOFError), pytest.raises(SystemExit) as exc_info:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 lan_mode=True,
@@ -1306,8 +1374,10 @@ class TestCheckDeletionRisk:
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
-        with patch("builtins.input", side_effect=KeyboardInterrupt), \
-             pytest.raises(SystemExit) as exc_info:
+        with (
+            patch("builtins.input", side_effect=KeyboardInterrupt),
+            pytest.raises(SystemExit) as exc_info,
+        ):
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 lan_mode=True,

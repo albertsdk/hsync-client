@@ -12,9 +12,7 @@ for real-time synchronization with the server.
 """
 
 import sys
-
-from asyncio import create_task, get_running_loop, sleep, Task
-from asyncio import run_coroutine_threadsafe
+from asyncio import Task, create_task, get_running_loop, run_coroutine_threadsafe, sleep
 from copy import deepcopy
 from json import dumps, loads
 
@@ -22,21 +20,23 @@ from json import dumps, loads
 def _safe_json(obj: object) -> str:
     """Serialize object to JSON and escape braces for loguru."""
     return dumps(obj).replace("{", "{{").replace("}", "}}")
-from os import listdir, makedirs, remove, rename, rmdir, symlink as os_symlink, unlink
+
+
+from os import listdir, makedirs, remove, rename, rmdir, unlink
+from os import symlink as os_symlink
 from os.path import basename, dirname, exists, islink
 from shutil import rmtree
-from ssl import create_default_context, Purpose, CERT_NONE, CERT_REQUIRED
+from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 from time import time
-from typing import Optional
+
+from loguru import logger as log
 from watchdog.events import (
     DirCreatedEvent,
     DirDeletedEvent,
     FileSystemEventHandler,
 )
 from watchdog.observers import Observer
-from websockets import connect, ConnectionClosed
-
-from loguru import logger as log
+from websockets import ConnectionClosed, connect
 
 # Check if on_closed event is supported (Linux with inotify)
 # On macOS (FSEvents) and Windows, on_closed is not triggered
@@ -46,7 +46,7 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
 from hsync_client.config import CONFIG, HSYNC_API_KEY
-from hsync_client.constants import HSYNCKEEP_FILENAME, HSYNC_VERSION
+from hsync_client.constants import HSYNC_VERSION, HSYNCKEEP_FILENAME
 from hsync_client.event_queue import EventQueue
 from hsync_client.lan import check_version_compatibility
 from hsync_client.models.dir import Dir, is_hidden_dir
@@ -58,7 +58,7 @@ from hsync_client.transfer import download_file, upload_file
 from hsync_client.utils import ensure_str_path, is_same_paths
 
 # Global resync task reference for cancellation on reconnect
-_resync_task: Optional[Task[None]] = None
+_resync_task: Task[None] | None = None
 
 
 # =============================================================================
@@ -138,9 +138,7 @@ async def remote_events() -> None:
         # Check server version compatibility
         server_version = auth_result.get("version", "")
         if server_version:
-            is_compatible, reason = check_version_compatibility(
-                HSYNC_VERSION, server_version
-            )
+            is_compatible, reason = check_version_compatibility(HSYNC_VERSION, server_version)
             if not is_compatible:
                 log.error(
                     f"Server version {server_version} is incompatible with "
@@ -271,7 +269,7 @@ async def _process_websocket_events(websocket, bucket: str) -> None:
             _handle_symlink_event(src)
 
 
-def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
+def _handle_rename_event(src: dict | None, dst: dict | None) -> None:
     """Handle rename events for files and directories."""
     if src and "path" in src and dst:
         # Directory rename
@@ -299,14 +297,12 @@ def _handle_rename_event(src: Optional[dict], dst: Optional[dict]) -> None:
             log.info(f'[RENAME    ] "{src_file.filepath}" -> "{dst_file.filepath}"')
         else:
             # Source doesn't exist - log warning and download destination
-            log.warning(
-                f'Cannot rename: "{src_file.filepath}" -> "{dst_file.filepath}"'
-            )
+            log.warning(f'Cannot rename: "{src_file.filepath}" -> "{dst_file.filepath}"')
             log.warning(f'Not found: "{src_file.filepath}"')
             download_file(dst_file)
 
 
-def _handle_delete_event(src: Optional[dict]) -> None:
+def _handle_delete_event(src: dict | None) -> None:
     """Handle delete events for files and directories.
 
     If IGNORE_DELETE is enabled, remote deletions are ignored (backup mode).
@@ -347,7 +343,7 @@ def _handle_delete_event(src: Optional[dict]) -> None:
             log.warning(f'Not found: "{file.filepath}"')
 
 
-def _handle_symlink_event(src: Optional[dict]) -> None:
+def _handle_symlink_event(src: dict | None) -> None:
     """Handle symlink creation events."""
     if src and src.get("type") == "symlink":
         # Create symlink locally
@@ -456,7 +452,7 @@ class FileEventHandler(FileSystemEventHandler):
         loop: asyncio event loop for scheduling coroutines.
     """
 
-    def __init__(self, websocket, loop, event_queue: Optional[EventQueue] = None) -> None:
+    def __init__(self, websocket, loop, event_queue: EventQueue | None = None) -> None:
         """
         Initialize the file event handler.
 
@@ -493,14 +489,10 @@ class FileEventHandler(FileSystemEventHandler):
 
         if self.event_queue:
             # Use event queue for reliable delivery
-            run_coroutine_threadsafe(
-                self.event_queue.enqueue(message_dict), self.loop
-            )
+            run_coroutine_threadsafe(self.event_queue.enqueue(message_dict), self.loop)
         else:
             # Direct send (legacy)
-            run_coroutine_threadsafe(
-                self.websocket.send(dumps(message_dict)), self.loop
-            )
+            run_coroutine_threadsafe(self.websocket.send(dumps(message_dict)), self.loop)
 
     def on_any_event(self, event) -> None:
         """
@@ -514,7 +506,7 @@ class FileEventHandler(FileSystemEventHandler):
         """
         hidden_prefix = "dir" if event.is_directory else "file"
         src_path = ensure_str_path(event.src_path)
-        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+        dest_path = ensure_str_path(getattr(event, "dest_path", None))
         paths = {"src": src_path, "dest": dest_path}
 
         for kind, path in paths.items():
@@ -578,10 +570,7 @@ class FileEventHandler(FileSystemEventHandler):
         src_path = ensure_str_path(event.src_path)
 
         if event.is_directory:
-            if (
-                not is_hidden_dir(src_path)
-                and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path)
-            ):
+            if not is_hidden_dir(src_path) and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path):
                 # Directory modified (permissions change) - broadcast event
                 log.info(f'[MOVE      ] "{src_path}"')
                 dir = Dir.get(src_path)
@@ -611,14 +600,11 @@ class FileEventHandler(FileSystemEventHandler):
                             file = File.get(src_path)
                             if file:
                                 log.debug(
-                                    f'[MODIFIED  ] "{src_path}" '
-                                    f"(fallback for non-Linux system)"
+                                    f'[MODIFIED  ] "{src_path}" (fallback for non-Linux system)'
                                 )
                                 upload_file(file)
                     except Exception as e:
-                        log.error(
-                            f'Error handling modified event for "{src_path}": {e}'
-                        )
+                        log.error(f'Error handling modified event for "{src_path}": {e}')
 
     def on_closed(self, event) -> None:
         """
@@ -663,7 +649,7 @@ class FileEventHandler(FileSystemEventHandler):
             event: File system move event from watchdog.
         """
         src_path = ensure_str_path(event.src_path)
-        dest_path = ensure_str_path(getattr(event, 'dest_path', None))
+        dest_path = ensure_str_path(getattr(event, "dest_path", None))
 
         if dest_path:
             log.debug(f'[MOVE      ] "{src_path}" -> "{dest_path}"')
@@ -773,4 +759,3 @@ class FileEventHandler(FileSystemEventHandler):
 
         # Send event to server via WebSocket
         self._send_message(message)
-

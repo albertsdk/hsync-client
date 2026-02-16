@@ -13,12 +13,11 @@ and provides typed configuration structures for the application.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional, TypedDict, cast
+from typing import Any, TypedDict, cast
 
 from dotenv import load_dotenv
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # =============================================================================
 # Environment File Loading
@@ -74,27 +73,37 @@ class EnvSettings(BaseSettings):
     )
 
     # Server Connection
-    server: Optional[str] = Field(default=None, description="Server URL")
+    server: str | None = Field(default=None, description="Server URL")
     api_key: SecretStr = Field(default=SecretStr(""), description="API key for authentication")
 
     # Sync Settings
-    stability_delay: Optional[int] = Field(default=None, description="File stability delay in seconds")
+    stability_delay: int | None = Field(default=None, description="File stability delay in seconds")
 
     # LAN Mode Settings
-    lan_key: Optional[SecretStr] = Field(default=None, description="LAN shared secret key")
-    lan_group: Optional[str] = Field(default=None, description="LAN group name for peer filtering")
+    lan_key: SecretStr | None = Field(default=None, description="LAN shared secret key")
+    lan_group: str | None = Field(default=None, description="LAN group name for peer filtering")
     lan_https: bool = Field(default=True, description="Use HTTPS for LAN communication")
-    lan_port: Optional[int] = Field(default=None, ge=1, le=65535, description="LAN port")
+    lan_port: int | None = Field(default=None, ge=1, le=65535, description="LAN port")
 
     # LAN Discovery Settings
-    discovery_timeout: Optional[int] = Field(default=None, ge=1, description="Discovery timeout in seconds")
-    heartbeat_interval: Optional[int] = Field(default=None, ge=1, description="Heartbeat interval in seconds")
-    peer_timeout: Optional[int] = Field(default=None, ge=1, description="Peer timeout in seconds")
-    lan_persistent: bool = Field(default=True, description="Stay active indefinitely waiting for peers")
+    discovery_timeout: int | None = Field(
+        default=None, ge=1, description="Discovery timeout in seconds"
+    )
+    heartbeat_interval: int | None = Field(
+        default=None, ge=1, description="Heartbeat interval in seconds"
+    )
+    peer_timeout: int | None = Field(default=None, ge=1, description="Peer timeout in seconds")
+    lan_persistent: bool = Field(
+        default=True, description="Stay active indefinitely waiting for peers"
+    )
 
     # Sync Settings
-    ignore_delete: bool = Field(default=False, description="Ignore file deletion events (backup mode)")
-    compression_enabled: bool = Field(default=True, description="Enable zstd compression for file transfers")
+    ignore_delete: bool = Field(
+        default=False, description="Ignore file deletion events (backup mode)"
+    )
+    compression_enabled: bool = Field(
+        default=True, description="Enable zstd compression for file transfers"
+    )
 
 
 @lru_cache
@@ -108,7 +117,7 @@ def get_env_settings() -> EnvSettings:
 # =============================================================================
 
 
-def get_server_url() -> Optional[str]:
+def get_server_url() -> str | None:
     """Get server URL from environment."""
     return get_env_settings().server
 
@@ -118,19 +127,19 @@ def get_api_key() -> str:
     return get_env_settings().api_key.get_secret_value()
 
 
-def get_stability_delay() -> Optional[str]:
+def get_stability_delay() -> str | None:
     """Get stability delay from environment."""
     delay = get_env_settings().stability_delay
     return str(delay) if delay is not None else None
 
 
-def get_lan_key() -> Optional[str]:
+def get_lan_key() -> str | None:
     """Get LAN shared secret key from environment."""
     key = get_env_settings().lan_key
     return key.get_secret_value() if key is not None else None
 
 
-def get_lan_group() -> Optional[str]:
+def get_lan_group() -> str | None:
     """Get LAN group name from environment."""
     return get_env_settings().lan_group
 
@@ -140,22 +149,22 @@ def get_lan_https() -> bool:
     return get_env_settings().lan_https
 
 
-def get_lan_port() -> Optional[int]:
+def get_lan_port() -> int | None:
     """Get LAN port from environment."""
     return get_env_settings().lan_port
 
 
-def get_discovery_timeout() -> Optional[int]:
+def get_discovery_timeout() -> int | None:
     """Get discovery timeout from environment."""
     return get_env_settings().discovery_timeout
 
 
-def get_heartbeat_interval() -> Optional[int]:
+def get_heartbeat_interval() -> int | None:
     """Get heartbeat interval from environment."""
     return get_env_settings().heartbeat_interval
 
 
-def get_peer_timeout() -> Optional[int]:
+def get_peer_timeout() -> int | None:
     """Get peer timeout from environment."""
     return get_env_settings().peer_timeout
 
@@ -181,9 +190,11 @@ def _get_env() -> EnvSettings:
     return EnvSettings()
 
 
-HSYNC_SERVER_URL: Optional[str] = _get_env().server
+HSYNC_SERVER_URL: str | None = _get_env().server
 HSYNC_API_KEY: str = _get_env().api_key.get_secret_value()
-HSYNC_STABILITY_DELAY: Optional[str] = str(_get_env().stability_delay) if _get_env().stability_delay else None
+HSYNC_STABILITY_DELAY: str | None = (
+    str(_get_env().stability_delay) if _get_env().stability_delay else None
+)
 
 
 # =============================================================================
@@ -195,16 +206,19 @@ class ApiEndpoints(TypedDict):
     """API endpoint URLs."""
 
     buckets: str  # REST API base URL for bucket operations
-    events: str   # WebSocket URL for real-time events
+    events: str  # WebSocket URL for real-time events
 
 
 # RequestHeaders uses functional syntax because keys contain hyphens
-RequestHeaders = TypedDict('RequestHeaders', {
-    'accept': str,
-    'Authorization': str,
-    'X-Client-Name': str,
-    'X-Client-Version': str,
-})
+RequestHeaders = TypedDict(
+    "RequestHeaders",
+    {
+        "accept": str,
+        "Authorization": str,
+        "X-Client-Name": str,
+        "X-Client-Version": str,
+    },
+)
 
 
 class HsyncConfig(TypedDict):
@@ -224,11 +238,11 @@ class HsyncConfig(TypedDict):
     # Local directory path to sync
     LOCAL_BUCKET: str
     # Log file path (optional)
-    LOGFILE: Optional[str]
+    LOGFILE: str | None
     # Skip SSL verification flag
     NO_VERIFY_SSL: bool
     # Custom CA certificate path (optional)
-    CA_CERT: Optional[str]
+    CA_CERT: str | None
     # Quiet mode flag
     QUIET: bool
     # Remote bucket name on server
@@ -238,9 +252,9 @@ class HsyncConfig(TypedDict):
     # Reconnection delay in seconds
     RECONNECT_DELAY: int
     # Periodic resync interval in seconds (optional)
-    RESYNC: Optional[int]
+    RESYNC: int | None
     # Filter path for subdirectory sync (optional)
-    FILTER_PATH: Optional[str]
+    FILTER_PATH: str | None
     # File stability delay in seconds
     STABILITY_DELAY: int
     # HTTP request timeout in seconds
@@ -258,9 +272,9 @@ class HsyncConfig(TypedDict):
     # Peer timeout in seconds for LAN mode
     PEER_TIMEOUT: int
     # LAN shared secret key for authentication (None = no auth)
-    LAN_KEY: Optional[str]
+    LAN_KEY: str | None
     # LAN group name for peer filtering (None = no filtering)
-    LAN_GROUP: Optional[str]
+    LAN_GROUP: str | None
     # LAN HTTPS mode (self-signed certificate per session)
     LAN_HTTPS: bool
     # LAN persistent mode (stay active indefinitely waiting for peers)
@@ -268,7 +282,7 @@ class HsyncConfig(TypedDict):
     # Force this client to be master in LAN mode
     LAN_FORCE_MASTER: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
-    MASTER_CERT_FINGERPRINT: Optional[str]
+    MASTER_CERT_FINGERPRINT: str | None
     # Ignore file deletion events (backup mode)
     IGNORE_DELETE: bool
     # Enable zstd compression for file transfers
@@ -333,4 +347,3 @@ def is_debug() -> bool:
         True if debug mode is enabled.
     """
     return DEBUG
-
