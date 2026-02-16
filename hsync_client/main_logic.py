@@ -45,10 +45,13 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
 )
-from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
-from hsync_client.lan_server import LANServer
-from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
+from hsync_client.lan import CLOCK_SKEW_THRESHOLD
+from hsync_client.lan_handler import run_lan_mode
+
+# Backward compatibility alias
+_run_lan_mode = run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
+from hsync_client.models.file import clear_md5_cache
 from hsync_client.models.sync_action import SyncActionName
 from hsync_client.retry import retry_on_connection_error
 from hsync_client.stdin_commands import StdinCommandHandler
@@ -78,6 +81,9 @@ def _run_preview(log) -> None:
     """
     log.info("--- Preview (dry-run) ---")
     try:
+        # Clear MD5 cache so every file is re-hashed with fresh content
+        clear_md5_cache()
+
         # Ensure empty directories have sentinel files
         ensure_hsynckeep_files()
 
@@ -482,7 +488,7 @@ def run_sync(
 
     # LAN Mode: Peer Discovery and Master Election
     if config["LAN_MODE"]:
-        _run_lan_mode(config, log)
+        run_lan_mode(config, log)
         return
 
     # Server Connectivity Check with retry
@@ -692,205 +698,3 @@ def _measure_clock_offset(master, config: HsyncConfig, log) -> None:
         log.debug(f"Clock sync failed: {e}")
     except (ValueError, KeyError) as e:
         log.debug(f"Clock sync: invalid response: {e}")
-
-
-def _run_lan_mode(config: HsyncConfig, log) -> None:
-    """Handle LAN P2P mode synchronization."""
-    import time
-
-    log.info("LAN P2P mode enabled")
-    persistent = config.get("LAN_PERSISTENT", False)
-    if persistent:
-        log.info("Persistent mode enabled - will wait indefinitely for peers")
-
-    cert_info = None
-    if config["LAN_HTTPS"]:
-        from hsync_client.ssl_utils import generate_self_signed_cert, save_cert_to_temp_files
-
-        log.info("Generating self-signed certificate for HTTPS...")
-        cert_info = generate_self_signed_cert()
-        cert_info = save_cert_to_temp_files(cert_info)
-        log.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
-
-    lan_sync = LANSync(
-        cid=config["CID"],
-        bucket=config["REMOTE_BUCKET"],
-        port=config["LAN_PORT"],
-        group=config["LAN_GROUP"],
-        use_https=config["LAN_HTTPS"],
-        cert_fingerprint=cert_info.fingerprint if cert_info else None,
-        force_master=config["LAN_FORCE_MASTER"],
-        sync_direction=config["SYNC_DIRECTION"],
-    )
-    # Start discovery and register service for peer discovery
-    peer_manager = lan_sync.start(register_service=True)
-
-    # Track if we ever had peers (for different messages)
-    ever_had_peers = False
-    lan_server = None
-    lan_ws_server = None
-
-    try:
-        while True:
-            # Wait for peer discovery
-            lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
-
-            peers = peer_manager.get_alive_peers()
-            if peers:
-                ever_had_peers = True
-
-            if peer_manager.is_master():
-                log.info("This client is the MASTER - acting as sync coordinator")
-
-                # Start HTTP server if not already running
-                if lan_server is None:
-                    if config["LAN_HTTPS"] and cert_info:
-                        lan_server = LANServer(
-                            port=lan_sync.port,
-                            use_https=True,
-                            cert_file=cert_info.cert_file,
-                            key_file=cert_info.key_file,
-                        )
-                    else:
-                        lan_server = LANServer(port=lan_sync.port)
-                    lan_server.start()
-
-                    protocol = "HTTPS" if config["LAN_HTTPS"] else "HTTP"
-                    log.info(f"Master HTTP server on port {lan_sync.port} ({protocol})")
-
-                # Start WebSocket server if not already running
-                if lan_ws_server is None:
-                    ws_port = lan_sync.port + 1  # Use next port for WebSocket
-                    if config["LAN_HTTPS"] and cert_info:
-                        lan_ws_server = LANWebSocketServer(
-                            port=ws_port,
-                            use_https=True,
-                            cert_file=cert_info.cert_file,
-                            key_file=cert_info.key_file,
-                        )
-                    else:
-                        lan_ws_server = LANWebSocketServer(port=ws_port)
-                    lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
-                    ws_protocol = "WSS" if config["LAN_HTTPS"] else "WS"
-                    log.info(f"Master WebSocket server on port {ws_port} ({ws_protocol})")
-
-                    if config["LAN_KEY"]:
-                        log.info("Authentication enabled (HSYNC_LAN_KEY)")
-                    else:
-                        log.info("No authentication (trust LAN mode)")
-
-                    # Update mDNS service to indicate server is ready
-                    lan_sync.update_server_ready()
-
-                if persistent:
-                    log.info("Press Ctrl+C to stop...")
-                    # In persistent mode, keep running as master
-                    while True:
-                        time.sleep(1)
-                        # Check if we're still master (peers may have joined/left)
-                        if not peer_manager.is_master():
-                            log.info("No longer master, switching to client mode...")
-                            if lan_server:
-                                lan_server.stop()
-                                lan_server = None
-                            if lan_ws_server:
-                                lan_ws_server.stop()
-                                lan_ws_server = None
-                            break
-                else:
-                    # Non-persistent: just wait for Ctrl+C
-                    log.info("Press Ctrl+C to stop...")
-                    while True:
-                        time.sleep(1)
-            else:
-                master = peer_manager.get_master()
-                if master:
-                    # Wait for master to be ready (server_ready=true in mDNS)
-                    if not master.server_ready:
-                        log.info(f"Waiting for master {master.cid} to start server...")
-                        continue  # Re-enter discovery loop
-
-                    master_url = master.get_server_url()
-                    log.info(f"Connecting to master: {master.cid} at {master_url}")
-
-                    if master.use_https and master.cert_fingerprint:
-                        log.info(
-                            f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}..."
-                        )
-                        config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
-
-                    config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
-                    ws_master_url = sub(r"^http:", "ws:", master_url)
-                    if master.use_https:
-                        ws_master_url = sub(r"^http:", "wss:", master_url)
-                    config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
-
-                    if config["LAN_KEY"]:
-                        config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['LAN_KEY']}"
-
-                    # Set compression capability based on master peer
-                    config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
-
-                    set_config(config)
-
-                    # Measure clock offset vs master using round-trip HTTP
-                    _measure_clock_offset(master, config, log)
-
-                    # Check if dry-run mode is enabled
-                    if config["DRYRUN"]:
-                        # In dry-run mode, only show preview without syncing
-                        _run_preview(log)
-                        if not persistent:
-                            break
-                        # In persistent mode with dry-run, wait for SYNC/PREVIEW commands
-                        log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
-                        run(_run_stdin_wait(log))
-                    else:
-                        # Perform initial sync (master is source of truth in LAN mode)
-                        run(sync(lan_mode=True))
-
-                    if not persistent:
-                        break
-
-                    # In persistent mode, connect via WebSocket for real-time events
-                    # with a stdin command reader running alongside so the
-                    # desktop GUI can send PREVIEW (and future) commands.
-                    log.info(
-                        "Initial sync complete, connecting to WebSocket for real-time events..."
-                    )
-                    ws_port = master.port + 1  # WebSocket is on next port
-                    try:
-                        run(
-                            _with_stdin_commands(
-                                log,
-                                lan_websocket_client(
-                                    host=master.address,
-                                    port=ws_port,
-                                    use_https=master.use_https,
-                                ),
-                            )
-                        )
-                    except Exception as e:
-                        log.warning(f"WebSocket connection ended: {e}")
-                    # If WebSocket disconnects, re-enter discovery loop
-                    log.info("WebSocket disconnected, re-entering discovery loop...")
-                else:
-                    # No master and no peers
-                    if persistent:
-                        if ever_had_peers:
-                            log.info("All peers disconnected, waiting for new peers...")
-                        else:
-                            log.info("Waiting for peers to join...")
-                        # Continue the discovery loop
-                    else:
-                        log.warning("No master elected - this client is alone, nothing to sync")
-                        break
-
-    except KeyboardInterrupt:
-        log.info("Shutting down LAN mode...")
-    finally:
-        if lan_server:
-            lan_server.stop()
-        if lan_ws_server:
-            lan_ws_server.stop()
-        lan_sync.stop()

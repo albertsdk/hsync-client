@@ -20,6 +20,32 @@ from os.path import (
 from re import match
 from typing import Optional
 
+# In-memory cache for MD5 checksums to avoid redundant computation
+# during a single sync operation. Key: filepath, Value: md5sum
+_md5_cache: dict[str, str] = {}
+
+
+def clear_md5_cache() -> None:
+    """Clear the entire MD5 cache.
+
+    Should be called at the start of each sync cycle to ensure
+    fresh checksums are computed for all files.
+    """
+    _md5_cache.clear()
+
+
+def invalidate_md5_cache(file_path: str) -> None:
+    """Remove a single entry from the MD5 cache.
+
+    Should be called when a file is known to have been modified
+    (e.g. after a download, upload, or watchdog event) so that
+    the next ``File.get()`` recomputes the checksum.
+
+    Args:
+        file_path: Path of the file to invalidate.
+    """
+    _md5_cache.pop(file_path, None)
+
 
 def is_hidden_file(file_path: str) -> bool:
     """
@@ -136,25 +162,30 @@ class File:
             return int(time.timestamp())
         elif isinstance(time, str):
             return int(datetime.fromisoformat(time).timestamp())
-        elif isinstance(time, (int, float)):
+        elif isinstance(time, int | float):
             return int(datetime.fromtimestamp(time, UTC).timestamp())
         return None
 
     @staticmethod
-    def _compute_md5(filepath: str) -> str:
+    def _compute_md5(filepath: str, chunk_size: int = 8192) -> str:
         """
         Compute the MD5 checksum of a file.
 
-        Reads the entire file into memory for hashing.
+        Reads the file in chunks to avoid loading large files entirely
+        into memory.
 
         Args:
             filepath: Path to the file.
+            chunk_size: Size of chunks to read (default: 8KB).
 
         Returns:
             MD5 hash as hexadecimal string.
         """
+        hash_md5 = md5()
         with open(filepath, "rb") as f:
-            return md5(f.read()).hexdigest()
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
 
     @staticmethod
     def _get_permissions(obj_path: str) -> str:
@@ -194,7 +225,8 @@ class File:
         Get a File instance for an existing file.
 
         Reads file metadata from the filesystem including timestamps,
-        size, MD5 hash, and permissions.
+        size, MD5 hash, and permissions. Uses an in-memory cache for
+        MD5 checksums to avoid redundant computation during sync.
 
         Args:
             file_path: Path to the file.
@@ -205,12 +237,19 @@ class File:
         """
         file_path = join(buckets_dir, file_path.lstrip("/")) if buckets_dir else file_path
         if exists(file_path):
+            # Use cached MD5 if available, otherwise compute and cache it
+            if file_path in _md5_cache:
+                md5sum = _md5_cache[file_path]
+            else:
+                md5sum = cls._compute_md5(file_path)
+                _md5_cache[file_path] = md5sum
+
             return cls(
                 filepath=file_path,
                 ctime=int(getctime(file_path)),
                 mtime=int(getmtime(file_path)),
                 size=getsize(file_path),
-                md5sum=cls._compute_md5(file_path),
+                md5sum=md5sum,
                 permissions=cls._get_permissions(file_path),
             )
         else:

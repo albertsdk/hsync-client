@@ -53,7 +53,7 @@ class TestRunLanMode:
         mock_lan_sync.start.return_value = mock_peer_mgr
         mock_lan_sync.port = 9000
 
-        with patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync):
+        with patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync):
             _run_lan_mode(config, mock_log)
 
         assert any("alone" in str(c) for c in mock_log.warning.call_args_list)
@@ -77,9 +77,9 @@ class TestRunLanMode:
         mock_ws_server = MagicMock()
 
         with (
-            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
-            patch("hsync_client.main_logic.LANServer", return_value=mock_lan_server),
-            patch("hsync_client.main_logic.LANWebSocketServer", return_value=mock_ws_server),
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.LANServer", return_value=mock_lan_server),
+            patch("hsync_client.lan_handler.LANWebSocketServer", return_value=mock_ws_server),
             patch("time.sleep", side_effect=KeyboardInterrupt),
         ):
             _run_lan_mode(config, mock_log)
@@ -113,11 +113,11 @@ class TestRunLanMode:
         mock_lan_sync.port = 9000
 
         with (
-            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
-            patch("hsync_client.main_logic.set_config"),
-            patch("hsync_client.main_logic._measure_clock_offset"),
-            patch("hsync_client.main_logic.sync", new=MagicMock()),
-            patch("hsync_client.main_logic.run") as mock_run,
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run") as mock_run,
         ):
             _run_lan_mode(config, mock_log)
 
@@ -147,10 +147,10 @@ class TestRunLanMode:
         mock_lan_sync.port = 9000
 
         with (
-            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
-            patch("hsync_client.main_logic.set_config"),
-            patch("hsync_client.main_logic._measure_clock_offset"),
-            patch("hsync_client.main_logic._run_preview") as mock_preview,
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler._run_preview") as mock_preview,
         ):
             _run_lan_mode(config, mock_log)
 
@@ -172,7 +172,7 @@ class TestRunLanMode:
         # Make wait_for_discovery raise to simulate Ctrl+C
         mock_lan_sync.wait_for_discovery.side_effect = KeyboardInterrupt
 
-        with patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync):
+        with patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync):
             _run_lan_mode(config, mock_log)
 
         mock_lan_sync.stop.assert_called_once()
@@ -196,7 +196,7 @@ class TestRunLanMode:
         mock_cert_info.fingerprint = "abcdef1234567890" * 4
 
         with (
-            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch(
                 "hsync_client.ssl_utils.generate_self_signed_cert", return_value=mock_cert_info
             ) as mock_gen,
@@ -237,11 +237,11 @@ class TestRunLanMode:
         mock_lan_sync.port = 9000
 
         with (
-            patch("hsync_client.main_logic.LANSync", return_value=mock_lan_sync),
-            patch("hsync_client.main_logic.set_config"),
-            patch("hsync_client.main_logic._measure_clock_offset"),
-            patch("hsync_client.main_logic.sync", new=MagicMock()),
-            patch("hsync_client.main_logic.run"),
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._measure_clock_offset"),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("asyncio.run"),
         ):
             _run_lan_mode(config, mock_log)
 

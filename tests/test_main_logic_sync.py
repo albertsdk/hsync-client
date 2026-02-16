@@ -451,14 +451,14 @@ class TestRunSync:
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic._run_lan_mode") as mock_lan,
+            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             run_sync(**kwargs)
-            # _run_lan_mode should have been called
+            # run_lan_mode should have been called
             mock_lan.assert_called_once()
 
     def test_invalid_logfile_returns_early(self, tmp_path):

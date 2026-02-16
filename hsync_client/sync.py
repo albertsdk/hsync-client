@@ -30,7 +30,7 @@ from hsync_client.constants import (
 )
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.models.dir import Dir, is_hidden_dir
-from hsync_client.models.file import File, is_hidden_file
+from hsync_client.models.file import File, clear_md5_cache, invalidate_md5_cache, is_hidden_file
 from hsync_client.models.sync_action import SyncAction, SyncActionName
 from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import (
@@ -42,6 +42,38 @@ from hsync_client.utils import (
 # =============================================================================
 # Main Sync Function
 # =============================================================================
+
+
+def _cleanup_partial_files() -> int:
+    """
+    Clean up incomplete .part files from previous interrupted downloads.
+
+    This is called at the start of each sync to remove any leftover
+    partial files that may have been left behind by interrupted downloads.
+
+    Returns:
+        Number of partial files removed.
+    """
+    from os import walk
+
+    removed_count = 0
+    local_bucket = CONFIG["LOCAL_BUCKET"]
+
+    for root, _dirs, files in walk(local_bucket):
+        for file in files:
+            if file.endswith(".part"):
+                partial_path = join(root, file)
+                try:
+                    remove(partial_path)
+                    log.debug(f"Removed incomplete download: {partial_path}")
+                    removed_count += 1
+                except OSError as e:
+                    log.warning(f"Could not remove partial file {partial_path}: {e}")
+
+    if removed_count > 0:
+        log.info(f"Cleaned up {removed_count} incomplete download(s)")
+
+    return removed_count
 
 
 async def sync(lan_mode: bool = False) -> None:
@@ -67,6 +99,12 @@ async def sync(lan_mode: bool = False) -> None:
         return
 
     try:
+        # Clear MD5 cache so every file is re-hashed with fresh content
+        clear_md5_cache()
+
+        # Clean up any leftover partial downloads from previous sessions
+        _cleanup_partial_files()
+
         # Ensure empty directories have sentinel files
         ensure_hsynckeep_files()
 
@@ -219,6 +257,57 @@ def ensure_hsynckeep_files() -> None:
 # =============================================================================
 
 
+def _get_single_file_metadata(file_path: str) -> dict | None:
+    """
+    Get metadata for a single file (used for parallel processing).
+
+    Retries up to 3 times with exponential backoff if the file is
+    temporarily locked or inaccessible (common with files being written).
+
+    Args:
+        file_path: Full path to the file.
+
+    Returns:
+        File metadata dictionary or None if file cannot be read.
+    """
+    import time
+    from errno import EACCES, EBUSY, EIO, ENOENT
+
+    # Retry up to 3 times for transient file access errors
+    max_retries = 3
+    retry_errors = (
+        EACCES,
+        EBUSY,
+        EIO,
+        ENOENT,
+    )  # Permission denied, resource busy, I/O error, no such file
+
+    for attempt in range(max_retries):
+        try:
+            file_obj = File.get(file_path)
+            if file_obj:
+                return file_obj.to_dict()
+            # File doesn't exist (File.get returned None) - no retry needed
+            return None
+        except OSError as e:
+            if e.errno in retry_errors and attempt < max_retries - 1:
+                wait_time = 0.1 * (2**attempt)  # Exponential backoff: 0.1s, 0.2s, 0.4s
+                log.debug(
+                    f"Retry {attempt + 1}/{max_retries} for {file_path}: {e} (waiting {wait_time}s)"
+                )
+                time.sleep(wait_time)
+                continue
+            # Non-retryable error or max retries reached
+            log.warning(f"Error reading file metadata for {file_path}: {e}")
+            return None
+        except Exception as e:
+            # Unexpected error - log and return None
+            log.warning(f"Error reading file metadata for {file_path}: {e}")
+            return None
+
+    return None
+
+
 def get_files_local() -> list[dict]:
     """
     Get list of all local files with their metadata.
@@ -227,9 +316,14 @@ def get_files_local() -> list[dict]:
     files and directories. Returns file metadata sorted by mtime
     ascending (oldest first) to prioritize updating older files.
 
+    Uses parallel processing for MD5 computation to improve performance
+    on systems with multiple CPU cores.
+
     Returns:
         List of file metadata dictionaries.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     # Check if local directory exists before walking
     if not exists(CONFIG["LOCAL_BUCKET"]):
         log.warning(
@@ -237,7 +331,8 @@ def get_files_local() -> list[dict]:
         )
         return []
 
-    file_list = []
+    # First pass: collect all file paths (no MD5 computation)
+    file_paths = []
     for root, dirs, files in walk(CONFIG["LOCAL_BUCKET"]):
         # Skip hidden directories
         dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
@@ -246,10 +341,26 @@ def get_files_local() -> list[dict]:
             # Skip hidden files
             if is_hidden_file(file):
                 continue
+            file_paths.append(join(root, file))
 
-            file_obj = File.get(join(root, file))
-            if file_obj:
-                file_list.append(file_obj.to_dict())
+    # Early return if no files
+    if not file_paths:
+        return []
+
+    # Parallel MD5 computation using thread pool
+    # Use up to 4 workers to avoid overwhelming the system
+    max_workers = min(4, len(file_paths))
+    file_list = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all file metadata fetches in parallel
+        futures = {executor.submit(_get_single_file_metadata, fp): fp for fp in file_paths}
+
+        # Collect results as they complete
+        for future in futures:
+            result = future.result()
+            if result:
+                file_list.append(result)
 
     # Sort by mtime ascending (oldest first) to prioritize updating older files
     file_list.sort(key=lambda x: x.get("mtime", 0))
@@ -538,6 +649,8 @@ def update_file(data: dict) -> None:
             # Content differs - download new version
             file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
             download_file(file_data)
+            # Invalidate cached MD5 — file content has changed
+            invalidate_md5_cache(file_data.filepath)
         elif file and file.permissions != file_data.permissions:
             # Only permissions differ - update them
             if file_data.permissions:
