@@ -267,7 +267,19 @@ def _wait_for_slave_events(slave: subprocess.Popen, timeout: float = 30.0) -> bo
     any sync timeout used here. Tests that mutate the master once a slave has
     synced must wait for this marker first.
     """
-    return _wait_for_text_in_stderr(slave, "[READY]", timeout=timeout)
+    ok = _wait_for_text_in_stderr(slave, "[READY]", timeout=timeout)
+    if not ok and os.environ.get("BB_DIAG") == "1":
+        # Diagnostic only (opt-in): on timeout, surface the buffered subprocess
+        # log so LAN flakes can be triaged from the failure output — the pipe
+        # dies with the Popen in teardown and the log would otherwise be lost.
+        # The gate is NOT HSYNC_*-prefixed: the conftest scrubs every HSYNC_*
+        # variable from the pytest process before tests are collected.
+        print(
+            f"\n--- [BB_DIAG] slave pid={slave.pid} not READY "
+            f"after {timeout}s; full log follows ---\n{_stderr_text(slave)}"
+            "\n--- [BB_DIAG] end of slave log ---"
+        )
+    return ok
 
 
 def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:
