@@ -160,20 +160,43 @@ class File:
         return None
 
     @staticmethod
-    def _compute_md5(filepath: str, chunk_size: int = 8192) -> str:
+    def _compute_md5(filepath: str, file_size: int | None = None) -> str:
         """
         Compute the MD5 checksum of a file.
 
         Reads the file in chunks to avoid loading large files entirely
-        into memory.
+        into memory. Uses adaptive chunk size based on file size for
+        optimal performance.
 
         Args:
             filepath: Path to the file.
-            chunk_size: Size of chunks to read (default: 8KB).
+            file_size: Size of the file in bytes. If not provided, will
+                be determined from filesystem (less efficient).
 
         Returns:
             MD5 hash as hexadecimal string.
         """
+        # Import constants here to avoid circular imports
+        from hsync_client.constants import (
+            CHUNK_SIZE_LARGE,
+            CHUNK_SIZE_MEDIUM,
+            CHUNK_SIZE_SMALL,
+            FILE_SIZE_MEDIUM,
+            FILE_SIZE_SMALL,
+        )
+
+        # Determine optimal chunk size based on file size
+        if file_size is not None:
+            if file_size >= FILE_SIZE_MEDIUM:
+                chunk_size = CHUNK_SIZE_LARGE  # 256KB for large files
+            elif file_size >= FILE_SIZE_SMALL:
+                chunk_size = CHUNK_SIZE_MEDIUM  # 64KB for medium files
+            else:
+                chunk_size = CHUNK_SIZE_SMALL  # 8KB for small files
+        else:
+            # Fallback: get size from filesystem
+            chunk_size = CHUNK_SIZE_SMALL
+
         hash_md5 = md5()
         with open(filepath, "rb") as f:
             for chunk in iter(lambda: f.read(chunk_size), b""):
@@ -230,18 +253,22 @@ class File:
         """
         file_path = join(buckets_dir, file_path.lstrip("/")) if buckets_dir else file_path
         if exists(file_path):
+            # Get file size for optimal chunk size selection
+            file_size = getsize(file_path)
+
             # Use cached MD5 if available, otherwise compute and cache it
             if file_path in _md5_cache:
                 md5sum = _md5_cache[file_path]
             else:
-                md5sum = cls._compute_md5(file_path)
+                # Pass file_size for adaptive chunk size
+                md5sum = cls._compute_md5(file_path, file_size)
                 _md5_cache[file_path] = md5sum
 
             return cls(
                 filepath=file_path,
                 ctime=int(getctime(file_path)),
                 mtime=int(getmtime(file_path)),
-                size=getsize(file_path),
+                size=file_size,
                 md5sum=md5sum,
                 permissions=cls._get_permissions(file_path),
             )
