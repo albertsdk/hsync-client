@@ -13,7 +13,6 @@ This module contains the core synchronization logic extracted from main.py.
 
 import contextlib
 import sys
-import time
 from asyncio import run
 from os.path import basename, exists
 from re import sub
@@ -45,7 +44,6 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
 )
-from hsync_client.lan import CLOCK_SKEW_THRESHOLD
 from hsync_client.lan_handler import run_lan_mode
 
 # Backward compatibility alias
@@ -696,69 +694,3 @@ def _check_server_connectivity(
     except RequestException as e:
         logger.error(f"Cannot connect to server after retries: {server_url} ({e})")
         return False
-
-
-def _measure_clock_offset(master, config: HsyncConfig, log) -> None:
-    """
-    Measure clock offset between this client and the master using round-trip HTTP.
-
-    Uses an NTP-like round-trip measurement:
-        T1 = local time before request
-        T2 = master time (from /api/v1/time response)
-        T3 = local time after response
-        offset = T2 - (T1 + RTT/2), where RTT = T3 - T1
-
-    Updates master.clock_offset with the measured value and logs a warning
-    if the offset exceeds CLOCK_SKEW_THRESHOLD.
-
-    Args:
-        master: The master Peer object.
-        config: Current hsync configuration.
-    """
-    from requests import RequestException
-    from requests import get as http_get
-
-    from hsync_client.utils import get_ssl_verify
-
-    master_url = master.get_server_url()
-    time_url = f"{master_url}/api/v1/time"
-
-    try:
-        t1 = time.time()
-        response = http_get(
-            time_url,
-            headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
-            verify=get_ssl_verify(),
-            timeout=config.get("HTTP_TIMEOUT", 30),
-        )
-        t3 = time.time()
-
-        if response.status_code != 200:
-            log.debug(f"Clock sync: /api/v1/time returned {response.status_code}, skipping")
-            return
-
-        t2 = response.json().get("timestamp")
-        if t2 is None:
-            log.debug("Clock sync: no timestamp in response, skipping")
-            return
-
-        rtt = t3 - t1
-        offset = t2 - (t1 + rtt / 2)
-        master.clock_offset = offset
-
-        if abs(offset) > CLOCK_SKEW_THRESHOLD:
-            log.warning(
-                f"Clock skew detected with master {master.cid}: "
-                f"offset={offset:.1f}s, RTT={rtt * 1000:.1f}ms. "
-                f"File comparison will use MD5 fallback for "
-                f"mtime differences within tolerance."
-            )
-        else:
-            log.debug(
-                f"Clock sync with master {master.cid}: offset={offset:.3f}s, RTT={rtt * 1000:.1f}ms"
-            )
-
-    except RequestException as e:
-        log.debug(f"Clock sync failed: {e}")
-    except (ValueError, KeyError) as e:
-        log.debug(f"Clock sync: invalid response: {e}")

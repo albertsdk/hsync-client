@@ -1,23 +1,21 @@
 """
 Tests for hsync_client.main_logic module - Sync functionality.
 
-Contains TestGetStabilityDelayValue, TestCheckServerConnectivity, TestMeasureClockOffset, TestRunSync classes.
+Contains TestGetStabilityDelayValue, TestCheckServerConnectivity, TestRunSync classes.
 """
 
 import os
-import time
-from typing import Unpack, cast
+from typing import Unpack
 from unittest.mock import MagicMock, patch
 
 import pytest
 from typing_extensions import TypedDict
 
-from hsync_client.config import HsyncConfig, get_env_settings
+from hsync_client.config import get_env_settings
 from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.main_logic import (
     _check_server_connectivity,
     _get_stability_delay_value,
-    _measure_clock_offset,
     run_sync,
 )
 
@@ -192,147 +190,6 @@ class TestCheckServerConnectivity:
 
             # 404 is < 500, so it's considered successful
             assert result is True
-
-
-def _make_clock_config() -> HsyncConfig:
-    """Return a minimal HsyncConfig for _measure_clock_offset tests."""
-    return cast(
-        HsyncConfig,
-        {
-            "REQUEST_HEADERS": {"Authorization": "Bearer test"},
-            "HTTP_TIMEOUT": 30,
-        },
-    )
-
-
-class TestMeasureClockOffset:
-    """Tests for _measure_clock_offset function."""
-
-    def test_successful_clock_sync(self):
-        """Test successful clock offset measurement."""
-        mock_logger = MagicMock()
-        mock_master = MagicMock()
-        mock_master.get_server_url.return_value = "http://192.168.1.100:8765"
-        mock_master.cid = "master-123"
-
-        config = _make_clock_config()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"timestamp": time.time()}
-
-        with (
-            patch("requests.get", return_value=mock_response),
-            patch("hsync_client.utils.get_ssl_verify", return_value=True),
-        ):
-            _measure_clock_offset(mock_master, config, mock_logger)
-
-            # Should set clock_offset on master
-            assert hasattr(mock_master, "clock_offset")
-
-    def test_clock_skew_warning(self):
-        """Test warning when clock skew exceeds threshold."""
-        mock_logger = MagicMock()
-        mock_master = MagicMock()
-        mock_master.get_server_url.return_value = "http://192.168.1.100:8765"
-        mock_master.cid = "master-123"
-
-        config = _make_clock_config()
-
-        # Simulate large clock offset (>60 seconds)
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"timestamp": time.time() + 100}
-
-        with (
-            patch("requests.get", return_value=mock_response),
-            patch("hsync_client.utils.get_ssl_verify", return_value=True),
-        ):
-            _measure_clock_offset(mock_master, config, mock_logger)
-
-            # Should log warning
-            mock_logger.warning.assert_called()
-
-    def test_non_200_response(self):
-        """Test handling non-200 response."""
-        mock_logger = MagicMock()
-        mock_master = MagicMock()
-        mock_master.get_server_url.return_value = "http://192.168.1.100:8765"
-
-        config = _make_clock_config()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-
-        with (
-            patch("requests.get", return_value=mock_response),
-            patch("hsync_client.utils.get_ssl_verify", return_value=True),
-        ):
-            _measure_clock_offset(mock_master, config, mock_logger)
-
-            # Should log debug message and return early
-            mock_logger.debug.assert_called()
-
-    def test_missing_timestamp_in_response(self):
-        """Test handling response without timestamp."""
-        mock_logger = MagicMock()
-        mock_master = MagicMock()
-        mock_master.get_server_url.return_value = "http://192.168.1.100:8765"
-
-        config = _make_clock_config()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {}  # No timestamp
-
-        with (
-            patch("requests.get", return_value=mock_response),
-            patch("hsync_client.utils.get_ssl_verify", return_value=True),
-        ):
-            _measure_clock_offset(mock_master, config, mock_logger)
-
-            # Should log debug and return
-            mock_logger.debug.assert_called()
-
-    def test_request_exception(self):
-        """Test handling network error."""
-        from requests import RequestException
-
-        mock_logger = MagicMock()
-        mock_master = MagicMock()
-        mock_master.get_server_url.return_value = "http://192.168.1.100:8765"
-
-        config = _make_clock_config()
-
-        with (
-            patch("requests.get", side_effect=RequestException("Network error")),
-            patch("hsync_client.utils.get_ssl_verify", return_value=True),
-        ):
-            _measure_clock_offset(mock_master, config, mock_logger)
-
-            # Should log debug message
-            mock_logger.debug.assert_called()
-
-    def test_invalid_json_response(self):
-        """Test handling invalid JSON response."""
-        mock_logger = MagicMock()
-        mock_master = MagicMock()
-        mock_master.get_server_url.return_value = "http://192.168.1.100:8765"
-
-        config = _make_clock_config()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.side_effect = ValueError("Invalid JSON")
-
-        with (
-            patch("requests.get", return_value=mock_response),
-            patch("hsync_client.utils.get_ssl_verify", return_value=True),
-        ):
-            _measure_clock_offset(mock_master, config, mock_logger)
-
-            # Should log debug message
-            mock_logger.debug.assert_called()
 
 
 # ── Helper for run_sync tests ────────────────────────────────────────
