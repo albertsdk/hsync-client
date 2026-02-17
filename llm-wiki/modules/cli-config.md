@@ -25,9 +25,7 @@ desktop can gate UI (§8).
 
 `--once` is the single one-shot selector: it maps to `continuous=False`,
 which also feeds the LAN `ONE_SHOT` config key, so the semantics are uniform
-across topologies. There are no other run-mode knobs: no `--watch`, no
-`--lan-persistent`, no `HSYNC_*PERSISTENT*` environment variable — continuous
-is the default and `--once` is the only opt-out.
+across topologies. Continuous is the default and `--once` is the only run-mode knob.
 
 ## Orchestration (`main_logic.py`)
 

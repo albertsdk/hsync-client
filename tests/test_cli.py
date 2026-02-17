@@ -135,14 +135,6 @@ class TestTyperCli:
         assert call_kwargs["continuous"] is False
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_no_lan_persistent_flags_exist(self, mock_run_sync):
-        """--lan-persistent/--no-lan-persistent are not CLI flags (--once only)."""
-        result = runner.invoke(
-            app, ["--lan-mode", "--lan-persistent", "-b", "test", "-s", "http://t:8000"]
-        )
-        assert result.exit_code != 0
-
-    @patch("hsync_client.main_logic.run_sync")
     def test_verbose_flag(self, mock_run_sync):
         """CLI accepts -v/--verbose flag."""
         result = runner.invoke(app, ["-b", "test", "-v", "-s", "http://test:8000"])

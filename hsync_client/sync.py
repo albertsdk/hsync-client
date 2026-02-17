@@ -88,7 +88,7 @@ from hsync_client.utils import (
 # A threading.Event (not a Lock) because the watcher must NOT be blocked:
 # it still broadcasts events during a sync cycle. The flag only lets the
 # periodic resync skip a redundant cycle when one is already in progress.
-# See ADR 0006 / llm-wiki/decisions.md.
+
 _sync_cycle_active = threading.Event()
 
 

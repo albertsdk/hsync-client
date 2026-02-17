@@ -14,8 +14,8 @@ implements it, plus client-only operational rules.
 | [0003 tombstone-gossip](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
 | [0004 desktop-subprocess-contract](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:83`) |
 | [0005 protocol-versioning](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:291`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
-| [0006 master-authoritative-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0006-master-authoritative-conflict-model.md) | **Superseded by ADR-0022** (causal vector clocks). `_compare_files` (`sync.py:989`) now uses `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`) on `conflict_download`. Upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server). |
 | [0017 lan-slave-outbound-event-reliability](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
+| [0022 causal-vector-clock-conflict-model](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py:989`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
 | [0023 corrected-mtime-tie-break](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `lan_handler.run_lan_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `lan_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
 | [0025 sqlite-external-state-store](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + `syncstate.db`); `HSYNC_STATE_DIR` |
 
@@ -29,9 +29,8 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
   connectivity gate is non-fatal in continuous mode; `remote_connect`
   (`remote_websocket.py`) loops forever with full-jitter exponential
   backoff), and LAN discovery waits indefinitely by default
-  (`DISCOVERY_TIMEOUT_DEFAULT = 0`). There is no watch flag, no
-  `--lan-persistent` flag and no `HSYNC_LAN_PERSISTENT`/`HSYNC_PERSISTENT`
-  environment variable: continuous is the default and `--once` is the single
+  (`DISCOVERY_TIMEOUT_DEFAULT = 0`).
+  Continuous is the default and `--once` is the single
   one-shot selector in both topologies (in LAN mode it runs one slave sync
   cycle and exits; the master role stays continuous). Rationale: sync
   daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
@@ -74,8 +73,7 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
 - **Containerized mksapkg**: `mksapkg-OS5` runs inside the
   `hsync-wdos5-mksapkg` image (`packaging/wd-os5/Dockerfile.mksapkg`) via
   `_wdos5_run_mksapkg` (`compile.sh:947`), not on the host — the prebuilt tool
-  needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts. The
-  former host `openssl bf-cbc` shim was removed.
+  needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts.
 - **Host-uid container builds**: containerized build steps drop to the host
   `uid:gid` so artifacts under `build/`/`dist/` stay caller-owned — otherwise
   root-owned output breaks the `rm -rf build` cleanup of a later native build
