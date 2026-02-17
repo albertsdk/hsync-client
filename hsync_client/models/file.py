@@ -14,8 +14,8 @@ from re import match
 from typing import Optional
 
 # In-memory cache for MD5 checksums to avoid redundant computation
-# during a single sync operation. Key: filepath, Value: md5sum
-_md5_cache: dict[str, str] = {}
+# during a single sync operation. Key: filepath, Value: tuple[md5sum, mtime]
+_md5_cache: dict[str, tuple[str, int]] = {}
 
 
 def clear_md5_cache() -> None:
@@ -38,6 +38,41 @@ def invalidate_md5_cache(file_path: str) -> None:
         file_path: Path of the file to invalidate.
     """
     _md5_cache.pop(file_path, None)
+
+
+def _get_cached_md5(file_path: str, current_mtime: int) -> str | None:
+    """Get cached MD5 if file hasn't been modified.
+
+    Checks if the file path exists in the cache and if the stored
+    mtime matches the current mtime. If the file has been modified
+    (mtime changed), the cached value is invalidated.
+
+    Args:
+        file_path: Path to the file.
+        current_mtime: Current modification time of the file.
+
+    Returns:
+        Cached MD5 hash if valid, None otherwise.
+    """
+    if file_path in _md5_cache:
+        cached_md5, cached_mtime = _md5_cache[file_path]
+        # Use cached MD5 only if mtime hasn't changed
+        if cached_mtime == current_mtime:
+            return cached_md5
+        # File has been modified - invalidate cached entry
+        del _md5_cache[file_path]
+    return None
+
+
+def _set_cached_md5(file_path: str, md5sum: str, mtime: int) -> None:
+    """Store MD5 in cache with its mtime for invalidation.
+
+    Args:
+        file_path: Path to the file.
+        md5sum: Computed MD5 hash.
+        mtime: File modification time.
+    """
+    _md5_cache[file_path] = (md5sum, mtime)
 
 
 def is_hidden_file(file_path: str) -> bool:
@@ -244,6 +279,8 @@ class File:
         size, MD5 hash, and permissions. Uses an in-memory cache for
         MD5 checksums to avoid redundant computation during sync.
 
+        The cache is automatically invalidated when the file's mtime changes.
+
         Args:
             file_path: Path to the file.
             buckets_dir: Optional base directory to prepend.
@@ -253,21 +290,21 @@ class File:
         """
         file_path = join(buckets_dir, file_path.lstrip("/")) if buckets_dir else file_path
         if exists(file_path):
-            # Get file size for optimal chunk size selection
+            # Get file metadata
             file_size = getsize(file_path)
+            file_mtime = int(getmtime(file_path))
 
-            # Use cached MD5 if available, otherwise compute and cache it
-            if file_path in _md5_cache:
-                md5sum = _md5_cache[file_path]
-            else:
-                # Pass file_size for adaptive chunk size
+            # Try to get cached MD5 (with mtime validation)
+            md5sum = _get_cached_md5(file_path, file_mtime)
+            if md5sum is None:
+                # Compute and cache MD5 with mtime
                 md5sum = cls._compute_md5(file_path, file_size)
-                _md5_cache[file_path] = md5sum
+                _set_cached_md5(file_path, md5sum, file_mtime)
 
             return cls(
                 filepath=file_path,
                 ctime=int(getctime(file_path)),
-                mtime=int(getmtime(file_path)),
+                mtime=file_mtime,
                 size=file_size,
                 md5sum=md5sum,
                 permissions=cls._get_permissions(file_path),
