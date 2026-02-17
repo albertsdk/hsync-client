@@ -62,7 +62,12 @@ from hsync_client.sync import (
     get_sync_actions,
     sync,
 )
-from hsync_client.utils import bytes_to_human_readable, get_cid, is_valid_logfile
+from hsync_client.utils import (
+    bytes_to_human_readable,
+    get_cid,
+    is_valid_logfile,
+    reset_bandwidth_throttle,
+)
 from hsync_client.websocket_handler import remote_connect
 
 
@@ -273,6 +278,8 @@ def run_sync(
     ignore_delete: bool,
     sync_direction: str,
     compression_enabled: bool,
+    max_bandwidth_upload: int | None,
+    max_bandwidth_download: int | None,
     lan_mode: bool,
     lan_port: int,
     discovery_timeout: int,
@@ -438,6 +445,8 @@ def run_sync(
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
         "SYNC_DIRECTION": sync_direction,
+        "MAX_BANDWIDTH_UPLOAD": max_bandwidth_upload,
+        "MAX_BANDWIDTH_DOWNLOAD": max_bandwidth_download,
     }
 
     set_config(config)
@@ -499,6 +508,19 @@ def run_sync(
         logger=log,
     ):
         return
+
+    # Reset bandwidth throttle state for this session
+    reset_bandwidth_throttle()
+
+    # Log bandwidth limits if configured
+    if config.get("MAX_BANDWIDTH_UPLOAD"):
+        log.info(
+            f"Upload bandwidth limit: {bytes_to_human_readable(config['MAX_BANDWIDTH_UPLOAD'])}/s"
+        )
+    if config.get("MAX_BANDWIDTH_DOWNLOAD"):
+        log.info(
+            f"Download bandwidth limit: {bytes_to_human_readable(config['MAX_BANDWIDTH_DOWNLOAD'])}/s"
+        )
 
     # Execute Sync
     if config["DRYRUN"] and continuous:

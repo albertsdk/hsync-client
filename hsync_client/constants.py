@@ -75,10 +75,13 @@ MAX_WAIT_TIMEOUT_DEFAULT = 120  # 2 minutes
 # Can be overridden via HSYNC_MAX_CONCURRENT_TRANSFERS environment variable
 MAX_CONCURRENT_TRANSFERS = int(__import__("os").environ.get("HSYNC_MAX_CONCURRENT_TRANSFERS", "5"))
 
-
 # =============================================================================
 # CLI Validation Limits
 # =============================================================================
+
+# Bandwidth limits for CLI validation (bytes per second)
+BANDWIDTH_MIN = 1024  # 1 KB/s minimum
+BANDWIDTH_MAX = 100 * 1024 * 1024  # 100 MB/s maximum
 
 # Reconnection delay limits (seconds)
 RECONNECT_DELAY_MIN = 1

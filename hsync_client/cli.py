@@ -16,6 +16,8 @@ from typing import Annotated
 import typer
 
 from hsync_client.constants import (
+    BANDWIDTH_MAX,
+    BANDWIDTH_MIN,
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
@@ -229,6 +231,24 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = "bidirectional",
+    max_bandwidth_upload: Annotated[
+        str | None,
+        typer.Option(
+            "--max-bandwidth-upload",
+            help="Maximum upload bandwidth (e.g., '1MB', '500KB'). 0 = unlimited.",
+            metavar="RATE",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    max_bandwidth_download: Annotated[
+        str | None,
+        typer.Option(
+            "--max-bandwidth-download",
+            help="Maximum download bandwidth (e.g., '1MB', '500KB'). 0 = unlimited.",
+            metavar="RATE",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
     no_compression: Annotated[
         bool,
         typer.Option(
@@ -459,6 +479,36 @@ def main(
             f"The LAN master always operates in bidirectional mode."
         )
 
+    # Parse and validate bandwidth limits
+    from hsync_client.utils import parse_bandwidth
+
+    parsed_bw_upload: int | None = None
+    parsed_bw_download: int | None = None
+
+    if max_bandwidth_upload is not None:
+        try:
+            parsed_bw_upload = parse_bandwidth(max_bandwidth_upload)
+        except ValueError as e:
+            raise typer.BadParameter(f"Invalid --max-bandwidth-upload: {e}")
+        if parsed_bw_upload is not None and (
+            parsed_bw_upload < BANDWIDTH_MIN or parsed_bw_upload > BANDWIDTH_MAX
+        ):
+            raise typer.BadParameter(
+                f"Upload bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
+            )
+
+    if max_bandwidth_download is not None:
+        try:
+            parsed_bw_download = parse_bandwidth(max_bandwidth_download)
+        except ValueError as e:
+            raise typer.BadParameter(f"Invalid --max-bandwidth-download: {e}")
+        if parsed_bw_download is not None and (
+            parsed_bw_download < BANDWIDTH_MIN or parsed_bw_download > BANDWIDTH_MAX
+        ):
+            raise typer.BadParameter(
+                f"Download bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
+            )
+
     # Import and call the actual main logic
     from hsync_client.main_logic import run_sync
 
@@ -482,6 +532,8 @@ def main(
         ignore_delete=ignore_delete,
         sync_direction=sync_direction,
         compression_enabled=not no_compression,
+        max_bandwidth_upload=parsed_bw_upload,
+        max_bandwidth_download=parsed_bw_download,
         lan_mode=lan_mode,
         lan_port=lan_port,
         discovery_timeout=discovery_timeout,
