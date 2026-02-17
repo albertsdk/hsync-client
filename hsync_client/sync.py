@@ -14,7 +14,7 @@ file comparison, action determination, and sync execution.
 import asyncio
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from os import listdir, makedirs, remove, rmdir, walk
+from os import cpu_count, listdir, makedirs, remove, rmdir, walk
 from os.path import basename, dirname, exists, join
 from sys import exc_info
 from traceback import print_tb
@@ -314,15 +314,15 @@ def _get_optimal_workers(file_count: int) -> int:
     Returns:
         Optimal number of worker threads.
     """
-    import os
-
     # Get available CPU cores (default to 4 if detection fails)
     try:
-        cpu_cores = os.cpu_count() or 4
+        cpu_cores = cpu_count() or 4
     except Exception:
         cpu_cores = 4
 
     # Allow configuration via environment variable
+    import os
+
     env_max = os.environ.get("HSYNC_MAX_FILE_WORKERS")
     if env_max:
         try:
