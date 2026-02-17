@@ -213,6 +213,12 @@ async def _process_websocket_events(websocket, bucket: str) -> None:
 
         log.debug(f"Received message for CID {CONFIG['CID']}: {_safe_json(message)}")
 
+        # Handle server heartbeat ping — respond with pong to keep connection alive
+        if message.get("type") == "ping":
+            await websocket.send(dumps({"type": "pong"}))
+            log.debug("Received ping, sent pong")
+            continue
+
         # Validate event type
         if message.get("name") not in {
             EventName.added.value,
