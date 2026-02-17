@@ -9,14 +9,7 @@ import stat
 from datetime import UTC, datetime
 from hashlib import md5
 from os import stat as os_stat
-from os.path import (
-    basename,
-    exists,
-    getctime,
-    getmtime,
-    getsize,
-    join,
-)
+from os.path import basename, exists, getctime, getmtime, getsize, join
 from re import match
 from typing import Optional
 

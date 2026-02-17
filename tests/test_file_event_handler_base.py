@@ -9,10 +9,7 @@
 from asyncio import new_event_loop
 from unittest.mock import MagicMock, patch
 
-from hsync_client.websocket_handler import (
-    FileEventHandler,
-    _safe_json,
-)
+from hsync_client.websocket_handler import FileEventHandler, _safe_json
 
 
 class TestSafeJson:

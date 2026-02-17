@@ -30,11 +30,7 @@ from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 from time import time
 
 from loguru import logger as log
-from watchdog.events import (
-    DirCreatedEvent,
-    DirDeletedEvent,
-    FileSystemEventHandler,
-)
+from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 from websockets import ConnectionClosed, connect
 

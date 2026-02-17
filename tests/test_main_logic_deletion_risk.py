@@ -8,11 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hsync_client.main_logic import (
-    _check_deletion_risk,
-    _run_stdin_wait,
-    _with_stdin_commands,
-)
+from hsync_client.main_logic import _check_deletion_risk, _run_stdin_wait, _with_stdin_commands
 
 
 class TestCheckDeletionRisk:
