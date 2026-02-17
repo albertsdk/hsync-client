@@ -301,6 +301,49 @@ def _get_single_file_metadata(file_path: str) -> dict | None:
     return None
 
 
+def _get_optimal_workers(file_count: int) -> int:
+    """
+    Calculate optimal number of worker threads for parallel file processing.
+
+    Uses CPU count to determine parallelism, with a configurable maximum
+    and sensible defaults for different workload sizes.
+
+    Args:
+        file_count: Number of files to process.
+
+    Returns:
+        Optimal number of worker threads.
+    """
+    import os
+
+    # Get available CPU cores (default to 4 if detection fails)
+    try:
+        cpu_cores = os.cpu_count() or 4
+    except Exception:
+        cpu_cores = 4
+
+    # Allow configuration via environment variable
+    env_max = os.environ.get("HSYNC_MAX_FILE_WORKERS")
+    if env_max:
+        try:
+            max_allowed = int(env_max)
+            return min(max_allowed, file_count, cpu_cores)
+        except ValueError:
+            pass
+
+    # For small file counts, don't over-parallelize
+    if file_count < 10:
+        return min(2, file_count)
+
+    # For medium file counts, use moderate parallelism
+    if file_count < 100:
+        return min(4, file_count, cpu_cores)
+
+    # For large file counts, use more parallelism but cap at 8
+    # to avoid overwhelming the system with too many threads
+    return min(8, file_count, cpu_cores)
+
+
 def get_files_local() -> list[dict]:
     """
     Get list of all local files with their metadata.
@@ -310,7 +353,8 @@ def get_files_local() -> list[dict]:
     ascending (oldest first) to prioritize updating older files.
 
     Uses parallel processing for MD5 computation to improve performance
-    on systems with multiple CPU cores.
+    on systems with multiple CPU cores. The number of worker threads
+    is automatically determined based on CPU cores and file count.
 
     Returns:
         List of file metadata dictionaries.
@@ -340,9 +384,10 @@ def get_files_local() -> list[dict]:
     if not file_paths:
         return []
 
-    # Parallel MD5 computation using thread pool
-    # Use up to 4 workers to avoid overwhelming the system
-    max_workers = min(4, len(file_paths))
+    # Determine optimal number of workers based on file count and CPU cores
+    max_workers = _get_optimal_workers(len(file_paths))
+    log.debug(f"Using {max_workers} workers for {len(file_paths)} files")
+
     file_list = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -643,7 +688,8 @@ def update_file(data: dict) -> None:
             file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
             download_file(file_data)
             # Invalidate cached MD5 — file content has changed
-            invalidate_md5_cache(file_data.filepath)
+            if file_data.filepath:
+                invalidate_md5_cache(file_data.filepath)
         elif file and file.permissions != file_data.permissions:
             # Only permissions differ - update them
             if file_data.permissions:

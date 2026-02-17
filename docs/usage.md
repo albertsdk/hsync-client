@@ -50,6 +50,8 @@ mindmap
       --stability-delay
       --sync-direction
       --ignore-delete
+      --max-bandwidth-upload
+      --max-bandwidth-download
     Network
       --retry-delay
       --insecure
@@ -300,6 +302,7 @@ flowchart TD
 | `HSYNC_SERVER` | Default server URL | (use `-s`) |
 | `HSYNC_API_KEY` | API key for authentication | (required) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
+| `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
 
 ### Environment Files
@@ -357,6 +360,18 @@ hsync -s http://localhost:8765 -b shared -w --sync-direction download-only
 ```bash
 # Slave only receives files from master, never uploads local changes
 hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
+```
+
+### Bandwidth limiting
+```bash
+# Limit upload to 1 MB/s
+hsync -s http://localhost:8765 -b mybucket -w --max-bandwidth-upload 1MB
+
+# Limit download to 500 KB/s
+hsync -s http://localhost:8765 -b mybucket -w --max-bandwidth-download 500KB
+
+# Limit both directions
+hsync -s http://localhost:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
 ```
 
 ### Skip deletion risk confirmation (scripting)
