@@ -13,8 +13,8 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | `_validate_bucket` | `:97` | bucket flag validation |
 
 Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
-`--api-key-fd` / `--lan-key-fd` for a parent process. There is no `--api-key`
-or `--lan-key`. `--env-file` is the only dotenv path (`main_logic.py` →
+`--api-key-fd` / `--lan-key-fd` for a parent process.
+`--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/`--lan-mode`/`--force-master`
 stay CLI-only.

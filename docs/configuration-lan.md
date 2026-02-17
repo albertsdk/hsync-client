@@ -17,9 +17,9 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
 | `--discovery-timeout` | Seconds to wait for LAN peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
 
-There is **no** `--lan-key` flag. The shared secret is read from the
-`HSYNC_LAN_KEY` environment variable. Parent processes (desktop GUI) may
-pass it on a pipe with the hidden `--lan-key-fd` flag.
+The shared secret is read from the `HSYNC_LAN_KEY` environment variable.
+Parent processes (desktop GUI) may pass it on a pipe with the hidden
+`--lan-key-fd` flag.
 
 `--lan-mode` and `--force-master` have no environment-variable equivalents.
 
