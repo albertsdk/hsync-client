@@ -39,7 +39,7 @@ Sleep 4000ms
 Type "tmux -S /tmp/hsync-demo-tmux.sock attach -t demo" Enter
 Sleep 1500ms
 Show
-Sleep 500ms
+Sleep 2000ms
 
 # --- Device B (bottom pane): joins, discovers A via mDNS ----------------------
 # HSYNC_READY_FILE makes Device B write its PID once its initial sync completes,
