@@ -335,7 +335,7 @@ async def _refresh_network_tuning() -> None:
     """Re-measure RTT and re-derive the autotune-managed network keys.
 
     Only keys listed in ``CONFIG["AUTOTUNE_MANAGED_KEYS"]`` are rewritten, so
-    an explicit CLI/env override (``--timeout``, ``HSYNC_RECONNECT_DELAY`` …)
+    an explicit CLI/env override (``--http-timeout``, ``HSYNC_RECONNECT_DELAY`` …)
     survives the refresh — same guard as the LAN post-discovery refresh
     (``lan_handler._refresh_lan_network_tuning``). A failed/unmeasurable probe
     keeps the current values instead of resetting them to the SAFE profile.

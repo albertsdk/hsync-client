@@ -13,7 +13,7 @@
 1. Check the [FAQ](docs/faq.md) — your question may already be answered.
 2. Check the [documentation](docs/README.md) — the installation, configuration, and usage guides cover common issues.
 3. Run with verbose output (`-v`) to see detailed log messages.
-4. Verify your configuration: `HSYNC_SERVER` and `HSYNC_API_KEY` must be set (Server Mode), or `--lan-mode` with a reachable LAN peer.
+4. Verify your configuration: `HSYNC_SERVER` and `HSYNC_API_KEY` must be set (Server Mode), or `hsync lan` with a reachable LAN peer.
 
 ## 💚 Solo project
 

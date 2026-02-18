@@ -99,10 +99,10 @@ have missed (e.g. the inotify watch limit on Linux, sleep/wake cycles).
 
 ```bash
 # Continuous mode with a 5-minute resync interval
-hsync -s https://server:9753 -b mybucket -p /path/to/dir -i 300
+hsync server -s https://server:9753 -b mybucket -p /path/to/dir -i 300
 
 # Continuous mode with a longer stability delay (safe for slow storage)
-hsync -s https://server:9753 -b media -p /srv/media --stability-delay 30
+hsync server -s https://server:9753 -b media -p /srv/media --stability-delay 30
 ```
 
 For scheduled background sync (cron, systemd timer, Task Scheduler) use
@@ -127,7 +127,7 @@ automatically falls back to a full transfer on any failure.
 
 ```bash
 # Delta is enabled by default; disable it:
-hsync -s https://server:9753 -b media -p ~/Media --no-delta
+hsync server -s https://server:9753 -b media -p ~/Media --no-delta
 ```
 
 > Full conditions, configuration and the fallback model are documented in
@@ -137,16 +137,16 @@ hsync -s https://server:9753 -b media -p ~/Media --no-delta
 
 ```bash
 # Compression is enabled by default; disable it for fast local networks:
-hsync -s https://server:9753 -b media -p ~/Media --no-compression
+hsync server -s https://server:9753 -b media -p ~/Media --no-compression
 ```
 
 ### Bandwidth limiting (token bucket)
 
 ```bash
 # Cap upload to 1 MB/s
-hsync -s https://server:9753 -b mybucket --max-bandwidth-upload 1MB
+hsync server -s https://server:9753 -b mybucket --limit-upload 1MB
 # Cap download to 500 KB/s
-hsync -s https://server:9753 -b mybucket --max-bandwidth-download 500KB
+hsync server -s https://server:9753 -b mybucket --limit-download 500KB
 ```
 
 ## File Filtering & Ignore Rules
@@ -171,7 +171,7 @@ gitignore-style patterns:
 Or pass patterns directly on the command line without creating a file:
 
 ```bash
-hsync -s https://server:9753 -b mybucket --ignore-patterns ".git/,*.log,/dist/"
+hsync server -s https://server:9753 -b mybucket --ignore-pattern ".git/,*.log,/dist/"
 ```
 
 > Full syntax, examples and the complete default-pattern list are in
@@ -217,10 +217,10 @@ remote bucket is **always blocked**, regardless of thresholds.
 
 ```bash
 # Disable the guard (when confident deletions observed by the server are safe)
-hsync -s https://server:9753 -b mybucket --no-mass-delete-guard
+hsync server -s https://server:9753 -b mybucket --no-mass-delete-guard
 
 # Tighter guard: pause deletions at 10 files or 10% of the tree
-hsync -s https://server:9753 -b mybucket --mass-delete-threshold 10 --mass-delete-percent 10
+hsync server -s https://server:9753 -b mybucket --mass-delete-threshold 10 --mass-delete-percent 10
 ```
 
 > Full decision flowchart and the relationship with `--ignore-delete` and
@@ -240,7 +240,7 @@ Key server-mode specific options:
 | `-s, --server` | `HSYNC_SERVER` | Server URL | (required) |
 | `--ca-cert` | — | Path to CA certificate (self-signed servers) | — |
 | `--insecure` | — | Skip SSL certificate verification | `false` |
-| `--timeout` | `HSYNC_HTTP_TIMEOUT` | HTTP request timeout (seconds) | `30` |
+| `--http-timeout` | `HSYNC_HTTP_TIMEOUT` | HTTP request timeout (seconds) | `30` |
 
 > **Tip**: use a `.env` file to avoid typing credentials on every command.
 > See [Environment Files](configuration.md#environment-files).
@@ -274,7 +274,7 @@ See [Sync Modes](sync-modes.md) for the full comparison table.
 - **Check connectivity**: verify you can reach the server's port from the
   client machine (e.g. `curl -k https://server:9753/health`).
 - **Firewall**: ensure the server port (default 9753) is open.
-- **Increase timeout**: use `--timeout 60` for high-latency connections.
+- **Increase timeout**: use `--http-timeout 60` for high-latency connections.
 
 ### Files Not Syncing
 
@@ -282,7 +282,7 @@ See [Sync Modes](sync-modes.md) for the full comparison table.
   directory, not in a subdirectory. See
   [Ignore Files](configuration.md#ignore-files--patterns).
 - **Dotfiles**: they sync by default. If they aren't appearing, check that
-  `.hsyncignore` or `--ignore-patterns` is not excluding them. If they
+  `.hsyncignore` or `--ignore-pattern` is not excluding them. If they
   shouldn't sync, add `.git/` or `.env` to `.hsyncignore`.
 - **Dry run first**: use `-n` to preview what would happen without making
   changes.

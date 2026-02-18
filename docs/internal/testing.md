@@ -372,7 +372,7 @@ combine the two in the same `pytest` invocation with `-x`, or a single LAN
 timeout will abort the stable remote suite. `--maxfail` keeps one flaky LAN
 file from masking the others.
 
-The LAN tests start two subprocesses with `--lan-mode` (and
+The LAN tests start two subprocesses with the `lan` subcommand (and
 `--force-master` / `--never-master`) via the `_lan_start` helper in
 `tests/lan_helpers.py`. They use the `_HSYNC_COMMON_DIR`
 constant to inject the `hsync-common` source directory into

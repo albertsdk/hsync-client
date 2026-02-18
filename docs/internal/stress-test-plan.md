@@ -410,7 +410,7 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
 | --- | --- |
 | BB server fixtures | `hsync-client/tests/conftest.py:462` (`live_server`), `:733` (`bb_bucket`), `:760` (`bb_server_upload`), `:788` (`bb_server_files`), `:808` (`bb_server_download`), `:829` (`local_dir`), `:1007` (`run_sync_once`) |
 | BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:96`, `_lan_start:131`, `_terminate:187`, `_wait_for_file:229`, `_wait_for_text_in_stderr:239`, `_wait_for_slave_events:258` (`[READY]` marker), `_wait_for_master:358`; fixtures `lan_master_dir:392`, `lan_slave_dir:400`, `lan_bucket:408` |
-| CLI flags | `hsync-client/hsync_client/cli.py` — `--once:210`, `--insecure:139`, `--no-autotune:354`, `--max-concurrent-transfers:345`, `--min-free-disk-space:362`, `--lan-mode:422`, `--force-master:473`, `--never-master:481`, `--sync-direction:285` |
+| CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `lan`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
 | Permissions apply (client) | `hsync-client/hsync_client/utils.py:616` (`set_permissions`), `:635` (`set_permissions_on_dir`); download `transfer.py:452,678`; dir converge `sync.py:1213-1282` |

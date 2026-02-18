@@ -11,7 +11,7 @@ Connect your HSYNC client to a central HSYNC server.
 hsync --once -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 
 # Continuous sync (the default: keeps retrying if the server is unreachable)
-hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
+hsync server -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 ```
 
 > For local development with a self-signed certificate, add `--insecure` and

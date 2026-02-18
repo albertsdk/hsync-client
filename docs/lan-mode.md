@@ -108,7 +108,7 @@ Pass `--once` to disable this behavior and exit after a single sync attempt.
 ### Example Flow
 
 ```
-$ hsync -b photos -p ~/Pictures --lan-mode
+$ hsync lan -b photos -p ~/Pictures
 
 [INFO] LAN P2P mode enabled
 [INFO] Continuous mode enabled - will wait indefinitely for peers
@@ -153,7 +153,7 @@ connection that carries the data.
   ```bash
   # All peers must use the same key
   export HSYNC_LAN_KEY="mySecretKey123"
-  hsync -b photos -p ~/Pictures --lan-mode
+  hsync lan -b photos -p ~/Pictures
   ```
 
 - **Trusted home networks** — on a network you control you can run without a key;
@@ -197,7 +197,7 @@ Consequences:
   identity:
 
   ```bash
-  HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync -b photos -p ~/Other --lan-mode
+  HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync lan -b photos -p ~/Other
   ```
 
 ### One process per directory
@@ -234,13 +234,13 @@ peer without a group matches **only** other peers that also run without a group.
 
 ```bash
 # Team A - only sees other Team A peers
-hsync -b project -p ~/Projects --lan-mode --lan-group "team-a"
+hsync lan -b project -p ~/Projects --lan-group "team-a"
 
 # Team B - only sees other Team B peers
-hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
+hsync lan -b project -p ~/Projects --lan-group "team-b"
 
 # No group - only sees other peers that also run without a group
-hsync -b project -p ~/Projects --lan-mode
+hsync lan -b project -p ~/Projects
 ```
 
 ### Use Cases
@@ -328,10 +328,10 @@ When running in LAN mode **without `--force-master`** and the shared directory i
 
 ```bash
 # The client will show a warning and ask for confirmation
-hsync -b photos -p ~/Pictures --lan-mode
+hsync lan -b photos -p ~/Pictures
 
 # Skip the interactive confirmation (e.g. in scripts or systemd services)
-hsync -b photos -p ~/Pictures --lan-mode -y
+hsync lan -b photos -p ~/Pictures -y
 ```
 
 The warning is **not shown** when:

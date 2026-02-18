@@ -54,10 +54,10 @@ manually via SSH for advanced options:
 hsync --once -s https://server:9753 -b mybucket -p /path/to/dir
 
 # Continuous mode (the default)
-hsync -s https://server:9753 -b mybucket -p /path/to/dir
+hsync server -s https://server:9753 -b mybucket -p /path/to/dir
 
 # LAN mode (peer-to-peer, no server)
-hsync -b mybucket -p /path/to/dir --lan-mode
+hsync lan -b mybucket -p /path/to/dir
 ```
 
 > The API key is **required** in Server Mode. Set it via the Web UI or

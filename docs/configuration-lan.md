@@ -9,7 +9,7 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 
 | Option | Description | Default |
 |---|---|---|
-| `--lan-mode` | Enable LAN P2P mode | `false` (CLI only) |
+| `lan` subcommand | Enable LAN P2P mode (selected with `hsync lan`) | — (CLI only) |
 | `--lan-group` | LAN group name (only peers in the same group see each other) | — (all peers visible) |
 | `--lan-port` | Port when acting as LAN master; `0` = pick a free port | `0` (auto) |
 | `--force-master` | Force this device to be the master | `false` (CLI only) |
@@ -21,7 +21,7 @@ The shared secret is read from the `HSYNC_LAN_KEY` environment variable.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
 `--lan-key-fd` flag.
 
-`--lan-mode` and `--force-master` have no environment-variable equivalents.
+The `lan` subcommand and `--force-master` have no environment-variable equivalents.
 
 ## Master Election Controls
 
@@ -41,11 +41,11 @@ Parent processes (desktop GUI) may pass it on a pipe with the hidden
 
 | Option | Description | Default |
 |---|---|---|
-| `--filter-path` | Sync only files under this subdirectory | — (sync everything) |
-| `--timeout` | HTTP request timeout in seconds | auto (or `30` with `--no-autotune`) |
+| `--subdir` | Sync only files under this subdirectory | — (sync everything) |
+| `--http-timeout` | HTTP request timeout in seconds | auto (or `30` with `--no-autotune`) |
 | `--min-free-disk-space` | Minimum free disk space (MB) before syncing stops | `500` (`0` = disabled) |
 
-## Environment Variables — LAN Mode
+## Environment Variables — LAN P2P Mode
 
 | Variable | Description | Default |
 |---|---|---|
@@ -59,7 +59,7 @@ Parent processes (desktop GUI) may pass it on a pipe with the hidden
 | `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Min file size for delta transfer in LAN mode | `1048576` (1 MB) |
 
 `HSYNC_LAN_MODE` and `HSYNC_LAN_FORCE_MASTER` are **not** read. Enable LAN
-with `--lan-mode`; pin a master with `--force-master`.
+with the `lan` subcommand; pin a master with `--force-master`.
 
 ## Environment files
 
@@ -67,12 +67,12 @@ The client does **not** load `./.env` by itself. Example:
 
 ```bash
 export HSYNC_LAN_KEY="shared-secret"    # optional, recommended
-hsync --env-file ./hsync.env -b documents -p "$HOME/Documents" --lan-mode
+hsync lan --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 
 `--env-file` only applies recognised `HSYNC_*` keys (see the table above and
-[Configuration](configuration.md)). `--lan-mode`, `--force-master`, bucket,
-and path remain CLI flags.
+[Configuration](configuration.md)). The `lan` subcommand, `--force-master`,
+bucket, and path remain CLI arguments.
 
 ## See also
 

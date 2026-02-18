@@ -8,7 +8,7 @@ Sync files directly between devices on your local network — no server needed.
 
 ```bash
 # Peers discover each other via mDNS; continuous mode is implicit
-hsync -b mybucket -p /path/to/dir --lan-mode
+hsync lan -b mybucket -p /path/to/dir
 ```
 
 See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
@@ -33,12 +33,12 @@ echo "hello hsync lan" > /tmp/hsync-lan-a/hello.txt
 #    device identity: the two peers run on the same machine but must be two
 #    distinct devices, or discovery would ignore them as "self".
 HSYNC_DEVICE_DIR=/tmp/hsync-lan-a-device \
-  hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master
+  hsync lan -b demo-lan -p /tmp/hsync-lan-a --force-master
 
 # 4. Terminal 2 — start a second peer with its own device identity; it
 #    discovers the master via mDNS and downloads hello.txt
 HSYNC_DEVICE_DIR=/tmp/hsync-lan-b-device \
-  hsync -b demo-lan -p /tmp/hsync-lan-b --lan-mode
+  hsync lan -b demo-lan -p /tmp/hsync-lan-b
 
 # 5. Verify the file arrived
 cat /tmp/hsync-lan-b/hello.txt   # → hello hsync lan
@@ -66,7 +66,7 @@ both terminals to stop.
 
 ## What to expect in LAN Mode
 
-The first time you run `--lan-mode` on a non-empty directory, the client prints
+The first time you run `hsync lan` on a non-empty directory, the client prints
 a **deletion-risk warning** and asks for confirmation: files that exist only on
 this peer (and not on the elected master) are deleted during the initial sync.
 This is intentional — it lets deletions made on the master reach offline peers.
@@ -102,7 +102,7 @@ Set the shared secret in the shell (optional) and enable LAN on the CLI.
 ```bash
 export HSYNC_LAN_KEY="shared-secret"   # optional, recommended
 export HSYNC_LAN_GROUP="mygroup"       # optional, isolates peer groups
-hsync -b documents -p ~/Documents --lan-mode
+hsync lan -b documents -p ~/Documents
 ```
 
 See [Configuration — LAN P2P Mode](configuration-lan.md) for all LAN-mode options.

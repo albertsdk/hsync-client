@@ -33,31 +33,31 @@ hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents
 ## 1.1 Sync a personal folder (one-time)
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b personal -p ~/Documents
+hsync server -s "$HSYNC_SERVER" -b personal -p ~/Documents
 ```
 
 ## 1.2 Continuous workstation sync
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b work -p ~/Work
+hsync server -s "$HSYNC_SERVER" -b work -p ~/Work
 ```
 
 ## 1.3 Push-only backup to a remote server
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b backup -p ~/Backup --sync-direction upload-only
+hsync server -s "$HSYNC_SERVER" -b backup -p ~/Backup --sync-direction upload-only
 ```
 
 ## 1.4 Read-only mirror from the server
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b shared -p ~/Shared --sync-direction download-only
+hsync server -s "$HSYNC_SERVER" -b shared -p ~/Shared --sync-direction download-only
 ```
 
 ## 1.5 Periodic full re-sync alongside continuous mode
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs --interval 3600
+hsync server -s "$HSYNC_SERVER" -b docs -p ~/Docs --interval 3600
 ```
 
 ## 1.6 Multi-device sync via central server
@@ -66,10 +66,10 @@ On each device, configure the same bucket with its own local path:
 
 ```bash
 # Laptop
-hsync -s "$HSYNC_SERVER" -b team -p ~/Team
+hsync server -s "$HSYNC_SERVER" -b team -p ~/Team
 
 # Desktop
-hsync -s "$HSYNC_SERVER" -b team -p ~/Team
+hsync server -s "$HSYNC_SERVER" -b team -p ~/Team
 ```
 
 Changes made on one device propagate through the server to all others.
@@ -77,13 +77,13 @@ Changes made on one device propagate through the server to all others.
 ## 1.7 Bandwidth-limited sync over a slow connection
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs --max-bandwidth-upload 1MB
+hsync server -s "$HSYNC_SERVER" -b docs -p ~/Docs --limit-upload 1MB
 ```
 
 ## 1.8 Long-running unattended service
 
 ```bash
-hsync -s "$HSYNC_SERVER" -b docs -p ~/Docs -y
+hsync server -s "$HSYNC_SERVER" -b docs -p ~/Docs -y
 ```
 
 The `-y` flag skips confirmation prompts. Combine with a systemd service for

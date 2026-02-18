@@ -13,7 +13,7 @@ Continuous/daemon mode is the **default**; for automation pass the dedicated
 
 ```bash
 # One-shot: run one cycle and exit (required for cron/systemd timers)
-hsync -b docs -s https://server.example.com --once
+hsync server -b docs -s https://server.example.com --once
 ```
 
 Without `--once` the client keeps running and retries an unreachable server
@@ -23,7 +23,7 @@ In **LAN P2P Mode** the same `--once` flag runs one slave sync cycle and
 exits:
 
 ```bash
-hsync -b docs -p ~/Sync --lan-mode --once
+hsync lan -b docs -p ~/Sync --once
 ```
 
 > **Note:** the LAN master role is inherently continuous (it must stay
@@ -36,7 +36,7 @@ Flags that make a run non-interactive and safe for schedulers:
 | ---- | ------- |
 | `-y` / `--yes` | Accept confirmation prompts automatically (sysAdmins keep warnings on stderr). |
 | `--env-file FILE` | Load `HSYNC_*` secrets from a file instead of the crontab. |
-| `-o FILE` / `--output` | Write the log to a file (or the systemd journal when omitted). |
+| `--log-file FILE` | Write the log to a file (or the systemd journal when omitted). |
 | `-n` / `--dry-run` | Validate a new bucket before scheduling it for real. |
 
 ## Exit codes
@@ -59,14 +59,14 @@ failed transfers (`2`) > deletion guard (`3`) > conflicts (`4`).
 Check the code in a shell as usual:
 
 ```bash
-hsync -b docs -s https://server.example.com --once -y
+hsync server -b docs -s https://server.example.com --once -y
 echo $?
 ```
 
 or branch on it:
 
 ```bash
-hsync -b docs -s https://server.example.com --once -y || echo "sync failed"
+hsync server -b docs -s https://server.example.com --once -y || echo "sync failed"
 ```
 
 ## Best practices for automation
@@ -110,8 +110,8 @@ file:
 
 ```cron
 # /etc/cron.d/hsync — hourly one-shot sync
-0 * * * * hsyncuser hsync -b documents -p /data/documents \
-    --env-file /etc/hsync/hsync.env --once -y -o /var/log/hsync/documents.log
+0 * * * * hsyncuser hsync server -b documents -p /data/documents \
+    --env-file /etc/hsync/hsync.env --once -y --log-file /var/log/hsync/documents.log
 ```
 
 Notes:
@@ -127,7 +127,7 @@ Notes:
 * To trial a new bucket before scheduling it, run a dry-run first:
 
   ```bash
-  sudo -u hsyncuser hsync -b newbucket -p /data/newbucket \
+  sudo -u hsyncuser hsync server -b newbucket -p /data/newbucket \
       --env-file /etc/hsync/hsync.env --dry-run
   ```
 
@@ -138,8 +138,8 @@ means "no peer found"). A finite `--discovery-timeout` bounds the wait for
 the first peer (the default is to wait indefinitely):
 
 ```cron
-0 2 * * * hsyncuser HSYNC_LAN_KEY="shared-secret" hsync -b shared \
-    -p /data/shared --lan-mode --once --discovery-timeout 30 -y
+0 2 * * * hsyncuser HSYNC_LAN_KEY="shared-secret" hsync lan -b shared \
+    -p /data/shared --once --discovery-timeout 30 -y
 ```
 
 ## systemd timer
@@ -161,7 +161,7 @@ Type=oneshot
 User=hsyncuser
 Group=hsyncuser
 EnvironmentFile=/etc/hsync/hsync.env
-ExecStart=/usr/local/bin/hsync -b documents -p /data/documents --once -y
+ExecStart=/usr/local/bin/hsync server -b documents -p /data/documents --once -y
 # Extra hardening (the service only touches its data directories)
 ProtectSystem=strict
 ProtectHome=read-only

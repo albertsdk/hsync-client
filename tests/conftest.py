@@ -884,6 +884,7 @@ def _start_watch_client(
         sys.executable,
         "-m",
         "hsync_client",
+        "server",
         "-b",
         bucket,
         "-s",
@@ -1026,6 +1027,7 @@ def run_sync_once(live_server):
         get_env_settings.cache_clear()
         try:
             args = [
+                "server",
                 "-b",
                 bucket,
                 "-s",
@@ -1077,7 +1079,18 @@ def run_cli(live_server):
         os.environ["HSYNC_API_KEY"] = api_key
         get_env_settings.cache_clear()
         try:
-            args = ["-b", bucket, "-s", base_url, "-p", local_path, "--once", "--insecure", *extra]
+            args = [
+                "server",
+                "-b",
+                bucket,
+                "-s",
+                base_url,
+                "-p",
+                local_path,
+                "--once",
+                "--insecure",
+                *extra,
+            ]
             with _ClientGlobalsGuard():
                 result = runner.invoke(__import__("hsync_client.cli", fromlist=["app"]).app, args)
             # CliRunner captures all client output; echo it so pytest includes

@@ -55,7 +55,7 @@ def _ready_path(local_dir: str) -> str:
 
 
 def _client_log_path(local_dir: str) -> str:
-    """The log file path the client writes via ``--output`` (loguru sink)."""
+    """The log file path the client writes via ``--log-file`` (loguru sink)."""
     return str(Path(local_dir).parent / "client_output.log")
 
 
@@ -141,7 +141,7 @@ class TestContinuousSyncServerRestart:
         # full resync every 20s)
         log_path = str(Path(local_dir).parent / "client.log")
         proc = watch_sync_restartable(
-            bb_restartable_bucket, local_dir, "--interval", "20", "--output", log_path
+            bb_restartable_bucket, local_dir, "--interval", "20", "--log-file", log_path
         )
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
@@ -188,7 +188,7 @@ class TestContinuousSyncMore:
         a modification on the server is re-downloaded."""
         # Given a watch client ready to receive events
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"
@@ -230,7 +230,7 @@ class TestContinuousSync:
     ):
         # Given a client running in continuous mode against an empty bucket
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"
@@ -348,7 +348,7 @@ class TestContinuousSync:
         """File modified locally is re-uploaded to the server."""
         # Given a watch client ready to receive events
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"
@@ -406,7 +406,7 @@ class TestContinuousSync:
     ):
         """Directory created locally appears on the server."""
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"
@@ -473,7 +473,7 @@ class TestContinuousSync:
         local file is deleted."""
         # Given a watch client with --ignore-delete, ready to receive events
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--output", log_path, "--ignore-delete")
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path, "--ignore-delete")
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"
@@ -563,7 +563,7 @@ class TestContinuousSyncHsyncignoreReload:
         created matching files, while already-synced files are preserved
         (exclude protects, it does not delete)."""
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--output", log_path)
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path)
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"

@@ -12,7 +12,7 @@ Every client connects to the server, authenticates with an API key, and
 synchronizes files through it.
 
 ```bash
-hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync server -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
 
 ### How it works
@@ -43,7 +43,7 @@ Continuous mode is the **default**. The client runs as a daemon:
   instead of exiting — matching LAN mode.
 
 ```bash
-hsync -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync server -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 ```
 
 ### Single Sync (one-shot)

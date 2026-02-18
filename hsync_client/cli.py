@@ -8,14 +8,18 @@
 Command-line interface for HSYNC Client.
 
 This module provides the Typer-based CLI for the HSYNC command-line interface.
+It exposes two mutually exclusive subcommands — ``lan`` (LAN peer-to-peer sync)
+and ``server`` (central-server sync) — under a parent callback that carries the
+global options (``--version``, ``--capabilities-json``, ``--help-symbols``).
 """
 
 import json
 import re
 from os import getcwd
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
+import typer.main
 from hsync_common.protocol.capabilities import build_capabilities
 
 from hsync_client.constants import (
@@ -56,6 +60,15 @@ app = typer.Typer(
     rich_markup_mode="rich",  # Enable rich formatting for grouped options
 )
 
+# Default local path is resolved once at import time (B008-safe singleton) so
+# every subcommand shares the same default without calling getcwd() per parse.
+_DEFAULT_LOCAL_PATH = getcwd()
+
+
+# =============================================================================
+# Eager global callbacks (parent level)
+# =============================================================================
+
 
 def version_callback(value: bool) -> None:
     """Print version and exit."""
@@ -72,32 +85,38 @@ def legend_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-def collect_cli_options(command: typer.core.TyperCommand) -> list[str]:
-    """Return the sorted long-form option flags exposed by ``command``.
+def collect_subcommand_options(typer_app: typer.Typer) -> dict[str, list[str]]:
+    """Map each registered subcommand to its supported long option flags.
 
-    Introspects the underlying click command so the advertised CLI surface can
-    never drift from the real interface: every ``--flag`` an option declares
-    (primary and secondary) is reported as a supported option.
+    Introspects the click group built from ``typer_app`` so the advertised CLI
+    surface can never drift from the real interface: every ``--flag`` an option
+    declares (primary and secondary) is reported for its own subcommand.
     """
-    flags: set[str] = set()
-    for param in command.params:
-        if param.param_type_name != "option":
-            continue
-        for opt in (*param.opts, *param.secondary_opts):
-            if opt.startswith("--"):
-                flags.add(opt)
-    return sorted(flags)
+    options: dict[str, list[str]] = {}
+    for name, command in typer.main.get_group(typer_app).commands.items():
+        flags: set[str] = set()
+        for param in command.params:
+            if param.param_type_name != "option":
+                continue
+            for opt in (*param.opts, *param.secondary_opts):
+                if opt.startswith("--"):
+                    flags.add(opt)
+        options[name] = sorted(flags)
+    return dict(sorted(options.items()))
 
 
 def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
     """Print the binary's capabilities document as JSON and exit."""
     if not value:
         return
+    # The parent context's command carries only the parent-level options: the
+    # advertised surface is the per-subcommand one, so introspect each
+    # registered subcommand's click command instead of ctx.command.params.
+    options_by_subcommand = collect_subcommand_options(app)
     doc = build_capabilities(
         app_version=HSYNC_VERSION,
-        # ctx.command is typed as click.Command in the stubs, but a Typer app
-        # always builds a TyperCommand at runtime.
-        cli_options=collect_cli_options(cast(typer.core.TyperCommand, ctx.command)),
+        subcommands=sorted(options_by_subcommand),
+        cli_options_by_subcommand=options_by_subcommand,
     )
     typer.echo(json.dumps(doc, indent=2, sort_keys=True))
     raise typer.Exit()
@@ -113,529 +132,32 @@ def _validate_bucket(value: str) -> str:
     return value
 
 
-@app.command()
-def main(
-    # -------------------------------------------------------------------------
-    # Required
-    # -------------------------------------------------------------------------
-    bucket: Annotated[
-        str,
-        typer.Option(
-            "-b",
-            "--bucket",
-            help="Remote bucket name.",
-            metavar="NAME",
-            callback=lambda v: _validate_bucket(v),
-            rich_help_panel="Required",
-        ),
-    ],
-    # -------------------------------------------------------------------------
-    # Connection
-    # -------------------------------------------------------------------------
-    server_url: Annotated[
-        str | None,
-        typer.Option(
-            "-s",
-            "--server",
-            help="Server URL (or set HSYNC_SERVER).",
-            metavar="URL",
-            rich_help_panel="Connection",
-        ),
-    ] = None,
-    insecure: Annotated[
-        bool,
-        typer.Option(
-            "--insecure",
-            help="Skip SSL certificate verification.",
-            show_default=False,
-            rich_help_panel="Connection",
-        ),
-    ] = False,
-    ca_cert: Annotated[
-        str | None,
-        typer.Option(
-            "--ca-cert",
-            help="Path to CA certificate file for self-signed server certs.",
-            metavar="FILE",
-            rich_help_panel="Connection",
-        ),
-    ] = None,
-    http_timeout: Annotated[
-        int | None,
-        typer.Option(
-            "--timeout",
-            help="HTTP request timeout in seconds (default: auto-detected).",
-            metavar="SEC",
-            rich_help_panel="Connection",
-        ),
-    ] = None,
-    api_key_fd: Annotated[
-        int | None,
-        typer.Option(
-            "--api-key-fd",
-            help="Read API key from the given file descriptor (for secure passing from a parent process).",
-            metavar="FD",
-            hidden=True,
-            rich_help_panel="Connection",
-        ),
-    ] = None,
-    lan_key_fd: Annotated[
-        int | None,
-        typer.Option(
-            "--lan-key-fd",
-            help="Read LAN key from the given file descriptor (for secure passing from a parent process).",
-            metavar="FD",
-            hidden=True,
-            rich_help_panel="Connection",
-        ),
-    ] = None,
-    events_json_fd: Annotated[
-        int | None,
-        typer.Option(
-            "--events-json-fd",
-            help="Write structured JSON-Lines status events to the given file descriptor "
-            "(for a parent GUI process).",
-            metavar="FD",
-            hidden=True,
-            rich_help_panel="Connection",
-        ),
-    ] = None,
-    # -------------------------------------------------------------------------
-    # Sync
-    # -------------------------------------------------------------------------
-    local_path: Annotated[
-        str,
-        typer.Option(
-            "-p",
-            "--path",
-            help="Local directory path.",
-            metavar="DIR",
-            rich_help_panel="Sync",
-        ),
-    ] = getcwd(),
-    once: Annotated[
-        bool,
-        typer.Option(
-            "--once",
-            help=(
-                "Run a single sync cycle and exit. Without --once, the client "
-                "keeps running and retries the connection indefinitely (the "
-                "default). In LAN mode it runs one slave sync cycle and exits."
-            ),
-            rich_help_panel="Sync",
-        ),
-    ] = False,
-    resync: Annotated[
-        int | None,
-        typer.Option(
-            "-i",
-            "--interval",
-            help="Force full sync every SEC seconds (continuous mode only).",
-            metavar="SEC",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    reconnect_delay: Annotated[
-        int | None,
-        typer.Option(
-            "--retry-delay",
-            help=(
-                "Base of the reconnect backoff in seconds (exponential with "
-                "jitter, capped at 60; default: auto-detected)."
-            ),
-            metavar="SEC",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    stability_delay: Annotated[
-        int | None,
-        typer.Option(
-            "--stability-delay",
-            help="Seconds a file must stay unchanged before upload. Already-idle files skip the wait.",
-            metavar="SEC",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    max_wait_timeout: Annotated[
-        int,
-        typer.Option(
-            "--max-wait-timeout",
-            help="Maximum time to wait for file stabilization.",
-            metavar="SEC",
-            rich_help_panel="Sync",
-        ),
-    ] = 120,
-    filter_path: Annotated[
-        str | None,
-        typer.Option(
-            "--filter-path",
-            help="Sync only files within this subdirectory path.",
-            metavar="PATH",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    dryrun: Annotated[
-        bool,
-        typer.Option(
-            "-n",
-            "--dry-run",
-            help="Show what would be done without making changes.",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
-    ignore_delete: Annotated[
-        bool,
-        typer.Option(
-            "--ignore-delete",
-            help="Do not propagate file deletions (useful for backup scenarios).",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
-    sync_direction: Annotated[
-        str,
-        typer.Option(
-            "--sync-direction",
-            help="Sync direction: bidirectional, upload-only, or download-only.",
-            rich_help_panel="Sync",
-        ),
-    ] = "bidirectional",
-    max_bandwidth_upload: Annotated[
-        str | None,
-        typer.Option(
-            "--max-bandwidth-upload",
-            help="Maximum upload bandwidth (e.g., '1MB', '500KB'). 0 = unlimited.",
-            metavar="RATE",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    max_bandwidth_download: Annotated[
-        str | None,
-        typer.Option(
-            "--max-bandwidth-download",
-            help="Maximum download bandwidth (e.g., '1MB', '500KB'). 0 = unlimited.",
-            metavar="RATE",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    no_compression: Annotated[
-        bool,
-        typer.Option(
-            "--no-compression",
-            help="Disable zstd compression for file transfers.",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
-    no_delta: Annotated[
-        bool,
-        typer.Option(
-            "--no-delta",
-            help="Disable rsync-style delta transfer (block-level sync) for large files.",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
-    delta_min_file_size: Annotated[
-        int | None,
-        typer.Option(
-            "--delta-min-file-size",
-            help="Minimum file size in bytes for delta transfer (server mode). Default: 262144 (256 KB).",
-            metavar="BYTES",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    delta_min_file_size_lan: Annotated[
-        int | None,
-        typer.Option(
-            "--delta-min-file-size-lan",
-            help="Minimum file size in bytes for delta transfer (LAN mode). Default: 1048576 (1 MB).",
-            metavar="BYTES",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    max_concurrent_transfers: Annotated[
-        int | None,
-        typer.Option(
-            "--max-concurrent-transfers",
-            help="Maximum number of concurrent file transfers (1-20).",
-            metavar="N",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    no_autotune: Annotated[
-        bool,
-        typer.Option(
-            "--no-autotune",
-            help="Disable auto-tuning of timeout, retry, and concurrency (use static defaults).",
-            rich_help_panel="Sync",
-        ),
-    ] = False,
-    min_free_disk_space: Annotated[
-        int,
-        typer.Option(
-            "--min-free-disk-space",
-            help="Minimum free disk space in MB before sync. 0 = disabled.",
-            metavar="MB",
-            rich_help_panel="Sync",
-        ),
-    ] = MIN_FREE_DISK_SPACE_MB_DEFAULT,
-    max_inbound_size: Annotated[
-        int,
-        typer.Option(
-            "--max-inbound-size",
-            help=(
-                "Maximum size in MB of a single inbound file (download or "
-                "received LAN upload), enforced as an absolute cap on top of "
-                "the peer-declared size. 0 = disabled."
-            ),
-            metavar="MB",
-            rich_help_panel="Sync",
-        ),
-    ] = MAX_INBOUND_SIZE_MB_DEFAULT,
-    ignore_patterns: Annotated[
-        str | None,
-        typer.Option(
-            "--ignore-patterns",
-            help="Comma-separated extra gitignore-style patterns (layered on .hsyncignore).",
-            metavar="PATTERNS",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    mass_delete_guard: Annotated[
-        bool,
-        typer.Option(
-            "--mass-delete-guard/--no-mass-delete-guard",
-            help="Enable/disable the mass-deletion safety guard.",
-            rich_help_panel="Sync",
-        ),
-    ] = True,
-    mass_delete_threshold: Annotated[
-        int | None,
-        typer.Option(
-            "--mass-delete-threshold",
-            help="Absolute number of deletions per cycle that trips the guard (0 = disabled).",
-            metavar="N",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    mass_delete_percent: Annotated[
-        int | None,
-        typer.Option(
-            "--mass-delete-percent",
-            help="Percentage of local files whose deletion trips the guard (0 = disabled).",
-            metavar="PCT",
-            rich_help_panel="Sync",
-        ),
-    ] = None,
-    # -------------------------------------------------------------------------
-    # LAN Mode
-    # -------------------------------------------------------------------------
-    lan_mode: Annotated[
-        bool,
-        typer.Option(
-            "--lan-mode",
-            help="Enable LAN peer-to-peer mode without central server.",
-            rich_help_panel="LAN Mode",
-        ),
-    ] = False,
-    lan_port: Annotated[
-        int,
-        typer.Option(
-            "--lan-port",
-            help="Port to use when acting as LAN master.",
-            metavar="PORT",
-            rich_help_panel="LAN Mode",
-        ),
-    ] = 0,
-    discovery_timeout: Annotated[
-        int | None,
-        typer.Option(
-            "--discovery-timeout",
-            help=(
-                "Time to wait for initial LAN peer discovery in seconds "
-                f"(default: {DISCOVERY_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
-            ),
-            metavar="SEC",
-            show_default=False,
-            rich_help_panel="LAN Mode",
-        ),
-    ] = None,
-    lan_group: Annotated[
-        str | None,
-        typer.Option(
-            "--lan-group",
-            help="Group name for LAN peer filtering.",
-            metavar="GROUP",
-            rich_help_panel="LAN Mode",
-        ),
-    ] = None,
-    force_master: Annotated[
-        bool,
-        typer.Option(
-            "--force-master",
-            help="Force this client to always be master in LAN mode.",
-            rich_help_panel="LAN Mode",
-        ),
-    ] = False,
-    never_master: Annotated[
-        bool,
-        typer.Option(
-            "--never-master",
-            help="Never become master in LAN mode (always remain a client/slave).",
-            rich_help_panel="LAN Mode",
-        ),
-    ] = False,
-    require_pairing: Annotated[
-        bool,
-        typer.Option(
-            "--require-pairing",
-            help=(
-                "Strict pairing: refuse a first-seen LAN master certificate until it is "
-                "confirmed out of band (disables Trust-On-First-Use auto-pinning)."
-            ),
-            rich_help_panel="LAN Mode",
-        ),
-    ] = False,
-    # -------------------------------------------------------------------------
-    # Output
-    # -------------------------------------------------------------------------
-    debug: Annotated[
-        bool,
-        typer.Option(
-            "-v",
-            "--verbose",
-            help="Enable verbose output.",
-            rich_help_panel="Output",
-        ),
-    ] = False,
-    quiet: Annotated[
-        bool,
-        typer.Option(
-            "-q",
-            "--quiet",
-            help="Suppress all output.",
-            rich_help_panel="Output",
-        ),
-    ] = False,
-    logfile: Annotated[
-        str | None,
-        typer.Option(
-            "-o",
-            "--output",
-            help="Write output to FILE.",
-            metavar="FILE",
-            rich_help_panel="Output",
-        ),
-    ] = None,
-    no_color: Annotated[
-        bool,
-        typer.Option(
-            "--no-color",
-            help="Disable colored output.",
-            rich_help_panel="Output",
-        ),
-    ] = False,
-    legend: Annotated[
-        bool,
-        typer.Option(
-            "--help-symbols",
-            help="Show output symbols legend.",
-            is_eager=True,
-            callback=legend_callback,
-            rich_help_panel="Output",
-        ),
-    ] = False,
-    # -------------------------------------------------------------------------
-    # General
-    # -------------------------------------------------------------------------
-    yes: Annotated[
-        bool,
-        typer.Option(
-            "-y",
-            "--yes",
-            help="Skip interactive confirmation prompts (still shows warnings).",
-        ),
-    ] = False,
-    env_file: Annotated[
-        str | None,
-        typer.Option(
-            "--env-file",
-            help="Load environment variables from file.",
-            metavar="PATH",
-        ),
-    ] = None,
-    version: Annotated[
-        bool | None,
-        typer.Option(
-            "-V",
-            "--version",
-            help="Show version and exit.",
-            is_eager=True,
-            callback=version_callback,
-        ),
-    ] = None,
-    capabilities_json: Annotated[
-        bool | None,
-        typer.Option(
-            "--capabilities-json",
-            help="Print the binary's capabilities document as JSON and exit.",
-            is_eager=True,
-            callback=capabilities_json_callback,
-        ),
-    ] = None,
-) -> None:
-    """
-    HSYNC - HTTP-based file synchronization client.
+# =============================================================================
+# Shared validation (called by both subcommands)
+# =============================================================================
 
-    Synchronize files between a local directory and a remote bucket. A bucket
-    is a shared directory hosted on a central HSYNC server or on another peer
-    in LAN Mode. In [bold]Server Mode[/bold], clients connect to a centralized server.
-    In [bold]LAN Mode[/bold] (P2P), clients discover each other via mDNS and one
-    automatically becomes the master—no central server required.
 
-    [bold]Option Groups:[/bold]
+def _validate_shared_options(
+    *,
+    http_timeout: int | None,
+    resync: int | None,
+    reconnect_delay: int | None,
+    stability_delay: int | None,
+    max_wait_timeout: int,
+    sync_direction: str,
+    min_free_disk_space: int,
+    max_inbound_size: int,
+    max_bandwidth_upload: str | None,
+    max_bandwidth_download: str | None,
+    max_concurrent_transfers: int | None,
+    mass_delete_threshold: int | None,
+    mass_delete_percent: int | None,
+    delta_min_file_size: int | None,
+    delta_min_file_size_lan: int | None,
+) -> tuple[int | None, int | None]:
+    """Validate the options shared by the ``lan`` and ``server`` subcommands.
 
-        [cyan]Required[/cyan]     Mandatory options to start synchronization
-        [cyan]Connection[/cyan]   Server URL and SSL/TLS settings
-        [cyan]Sync[/cyan]         Synchronization behavior and timing
-        [cyan]LAN Mode[/cyan]     Peer-to-peer sync without central server
-        [cyan]Output[/cyan]       Logging verbosity and output destination
-
-    [bold]Examples:[/bold]
-
-        [dim]# Basic sync with a remote server[/dim]
-        $ hsync -b photos -s https://server.example.com
-
-        [dim]# Sync a specific local directory[/dim]
-        $ hsync -b documents -s https://server.example.com -p ~/Documents
-
-        [dim]# Continuous sync (the default: keeps retrying if the
-        # server is unreachable, like LAN mode)[/dim]
-        $ hsync -b projects -s https://server.example.com
-
-        [dim]# One-shot sync (single cycle, then exit)[/dim]
-        $ hsync -b projects -s https://server.example.com --once
-
-        [dim]# Dry run to see what would be synced[/dim]
-        $ hsync -b backup -s https://server.example.com -n
-
-        [dim]# LAN mode (no central server, peer-to-peer)[/dim]
-        $ hsync -b shared --lan-mode
-
-        [dim]# LAN mode with authentication[/dim]
-        $ HSYNC_LAN_KEY=mysecret hsync -b shared --lan-mode
-
-    [bold]Environment Variables:[/bold]
-
-        HSYNC_SERVER    Server URL (alternative to -s)
-        HSYNC_API_KEY   API key for authentication
-        HSYNC_LAN_KEY   Shared secret for LAN mode authentication
-
-    [bold]Project:[/bold]
-
-        https://github.com/albertobasso/hsync-client
-
-    [bold]Authors:[/bold]
-
-        Alberto Basso
+    Returns the parsed upload/download bandwidth limits (bytes/s, or ``None``).
     """
     # Validate numeric ranges
     if http_timeout is not None and (
@@ -662,27 +184,8 @@ def main(
         raise typer.BadParameter(
             f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}."
         )
-    if discovery_timeout is not None and discovery_timeout < 0:
-        raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
     if sync_direction not in SYNC_DIRECTIONS:
         raise typer.BadParameter(f"sync-direction must be one of: {', '.join(SYNC_DIRECTIONS)}.")
-
-    # --force-master is incompatible with directional sync (upload/download-only)
-    if force_master and sync_direction != "bidirectional":
-        raise typer.BadParameter(
-            f"--force-master is incompatible with --sync-direction={sync_direction}. "
-            f"The LAN master always operates in bidirectional mode."
-        )
-
-    # --force-master and --never-master are mutually exclusive (contradictory)
-    if force_master and never_master:
-        raise typer.BadParameter(
-            "--force-master and --never-master are mutually exclusive: a client "
-            "cannot be forced to be master and forbidden from being master at once."
-        )
-
-    # --once selects a one-shot run in every topology; the default is
-    # continuous/infinite.
     if (
         min_free_disk_space < MIN_FREE_DISK_SPACE_MB_MIN
         or min_free_disk_space > MIN_FREE_DISK_SPACE_MB_MAX
@@ -707,7 +210,7 @@ def main(
         try:
             parsed_bw_upload = parse_bandwidth(max_bandwidth_upload)
         except ValueError as e:
-            raise typer.BadParameter(f"Invalid --max-bandwidth-upload: {e}")
+            raise typer.BadParameter(f"Invalid --limit-upload: {e}")
         if parsed_bw_upload is not None and (
             parsed_bw_upload < BANDWIDTH_MIN or parsed_bw_upload > BANDWIDTH_MAX
         ):
@@ -719,7 +222,7 @@ def main(
         try:
             parsed_bw_download = parse_bandwidth(max_bandwidth_download)
         except ValueError as e:
-            raise typer.BadParameter(f"Invalid --max-bandwidth-download: {e}")
+            raise typer.BadParameter(f"Invalid --limit-download: {e}")
         if parsed_bw_download is not None and (
             parsed_bw_download < BANDWIDTH_MIN or parsed_bw_download > BANDWIDTH_MAX
         ):
@@ -749,17 +252,639 @@ def main(
     if delta_min_file_size_lan is not None and delta_min_file_size_lan < 0:
         raise typer.BadParameter("--delta-min-file-size-lan must be >= 0.")
 
-    # Import and call the actual main logic
+    return parsed_bw_upload, parsed_bw_download
+
+
+# =============================================================================
+# Shared option annotations
+#
+# Declared once and reused by both subcommand signatures. Typer builds a fresh
+# click parameter for each command from the (immutable) Annotated metadata, so
+# sharing the aliases cannot cross-bind options between subcommands; the
+# per-subcommand surfaces are pinned by the black-box tests and by the
+# --capabilities-json introspection.
+# =============================================================================
+
+BucketOpt = Annotated[
+    str,
+    typer.Option(
+        "-b",
+        "--bucket",
+        help="Remote bucket name.",
+        metavar="NAME",
+        callback=lambda v: _validate_bucket(v),
+        rich_help_panel="Required",
+    ),
+]
+PathOpt = Annotated[
+    str,
+    typer.Option(
+        "-p",
+        "--path",
+        help="Local directory path.",
+        metavar="DIR",
+        rich_help_panel="Sync",
+    ),
+]
+OnceOpt = Annotated[
+    bool,
+    typer.Option(
+        "--once",
+        help=(
+            "Run a single sync cycle and exit. Without --once, the client "
+            "keeps running and retries the connection indefinitely (the "
+            "default). In LAN mode it runs one slave sync cycle and exits."
+        ),
+        rich_help_panel="Sync",
+    ),
+]
+IntervalOpt = Annotated[
+    int | None,
+    typer.Option(
+        "-i",
+        "--interval",
+        help="Force full sync every SEC seconds (continuous mode only).",
+        metavar="SEC",
+        rich_help_panel="Sync",
+    ),
+]
+RetryDelayOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--retry-delay",
+        help=(
+            "Base of the reconnect backoff in seconds (exponential with "
+            "jitter, capped at 60; default: auto-detected)."
+        ),
+        metavar="SEC",
+        rich_help_panel="Sync",
+    ),
+]
+StabilityDelayOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--stability-delay",
+        help="Seconds a file must stay unchanged before upload. Already-idle files skip the wait.",
+        metavar="SEC",
+        rich_help_panel="Sync",
+    ),
+]
+MaxWaitTimeoutOpt = Annotated[
+    int,
+    typer.Option(
+        "--max-wait-timeout",
+        help="Maximum time to wait for file stabilization.",
+        metavar="SEC",
+        rich_help_panel="Sync",
+    ),
+]
+SubdirOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--subdir",
+        help="Sync only files within this subdirectory path.",
+        metavar="PATH",
+        rich_help_panel="Sync",
+    ),
+]
+DryRunOpt = Annotated[
+    bool,
+    typer.Option(
+        "-n",
+        "--dry-run",
+        help="Show what would be done without making changes.",
+        rich_help_panel="Sync",
+    ),
+]
+IgnoreDeleteOpt = Annotated[
+    bool,
+    typer.Option(
+        "--ignore-delete",
+        help="Do not propagate file deletions (useful for backup scenarios).",
+        rich_help_panel="Sync",
+    ),
+]
+SyncDirectionOpt = Annotated[
+    str,
+    typer.Option(
+        "--sync-direction",
+        help="Sync direction: bidirectional, upload-only, or download-only.",
+        rich_help_panel="Sync",
+    ),
+]
+LimitUploadOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--limit-upload",
+        help="Maximum upload bandwidth (e.g., '1MB', '500KB'). 0 = unlimited.",
+        metavar="RATE",
+        rich_help_panel="Sync",
+    ),
+]
+LimitDownloadOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--limit-download",
+        help="Maximum download bandwidth (e.g., '1MB', '500KB'). 0 = unlimited.",
+        metavar="RATE",
+        rich_help_panel="Sync",
+    ),
+]
+NoCompressionOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-compression",
+        help="Disable zstd compression for file transfers.",
+        rich_help_panel="Sync",
+    ),
+]
+NoDeltaOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-delta",
+        help="Disable rsync-style delta transfer (block-level sync) for large files.",
+        rich_help_panel="Sync",
+    ),
+]
+DeltaMinFileSizeOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--delta-min-file-size",
+        help="Minimum file size in bytes for delta transfer (server mode). Default: 262144 (256 KB).",
+        metavar="BYTES",
+        rich_help_panel="Sync",
+    ),
+]
+DeltaMinFileSizeLanOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--delta-min-file-size-lan",
+        help="Minimum file size in bytes for delta transfer (LAN mode). Default: 1048576 (1 MB).",
+        metavar="BYTES",
+        rich_help_panel="Sync",
+    ),
+]
+MaxConcurrentTransfersOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--max-concurrent-transfers",
+        help="Maximum number of concurrent file transfers (1-20).",
+        metavar="N",
+        rich_help_panel="Sync",
+    ),
+]
+NoAutotuneOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-autotune",
+        help="Disable auto-tuning of timeout, retry, and concurrency (use static defaults).",
+        rich_help_panel="Sync",
+    ),
+]
+MinFreeDiskSpaceOpt = Annotated[
+    int,
+    typer.Option(
+        "--min-free-disk-space",
+        help="Minimum free disk space in MB before sync. 0 = disabled.",
+        metavar="MB",
+        rich_help_panel="Sync",
+    ),
+]
+MaxInboundSizeOpt = Annotated[
+    int,
+    typer.Option(
+        "--max-inbound-size",
+        help=(
+            "Maximum size in MB of a single inbound file (download or "
+            "received LAN upload), enforced as an absolute cap on top of "
+            "the peer-declared size. 0 = disabled."
+        ),
+        metavar="MB",
+        rich_help_panel="Sync",
+    ),
+]
+IgnorePatternOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--ignore-pattern",
+        help=("Extra gitignore-style pattern (layered on .hsyncignore). May be repeated."),
+        metavar="PATTERN",
+        rich_help_panel="Sync",
+    ),
+]
+MassDeleteGuardOpt = Annotated[
+    bool,
+    typer.Option(
+        "--mass-delete-guard/--no-mass-delete-guard",
+        help="Enable/disable the mass-deletion safety guard.",
+        rich_help_panel="Sync",
+    ),
+]
+MassDeleteThresholdOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--mass-delete-threshold",
+        help="Absolute number of deletions per cycle that trips the guard (0 = disabled).",
+        metavar="N",
+        rich_help_panel="Sync",
+    ),
+]
+MassDeletePercentOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--mass-delete-percent",
+        help="Percentage of local files whose deletion trips the guard (0 = disabled).",
+        metavar="PCT",
+        rich_help_panel="Sync",
+    ),
+]
+HttpTimeoutOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--http-timeout",
+        help="HTTP request timeout in seconds (default: auto-detected).",
+        metavar="SEC",
+        rich_help_panel="Connection",
+    ),
+]
+VerboseOpt = Annotated[
+    bool,
+    typer.Option(
+        "-v",
+        "--verbose",
+        help="Enable verbose output.",
+        rich_help_panel="Output",
+    ),
+]
+QuietOpt = Annotated[
+    bool,
+    typer.Option(
+        "-q",
+        "--quiet",
+        help="Suppress all output.",
+        rich_help_panel="Output",
+    ),
+]
+LogFileOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--log-file",
+        help="Write output to FILE.",
+        metavar="FILE",
+        rich_help_panel="Output",
+    ),
+]
+NoColorOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-color",
+        help="Disable colored output.",
+        rich_help_panel="Output",
+    ),
+]
+YesOpt = Annotated[
+    bool,
+    typer.Option(
+        "-y",
+        "--yes",
+        help="Skip interactive confirmation prompts (still shows warnings).",
+    ),
+]
+EnvFileOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--env-file",
+        help="Load environment variables from file.",
+        metavar="PATH",
+    ),
+]
+EventsJsonFdOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--events-json-fd",
+        help="Write structured JSON-Lines status events to the given file descriptor "
+        "(for a parent GUI process).",
+        metavar="FD",
+        hidden=True,
+        rich_help_panel="Connection",
+    ),
+]
+
+# =============================================================================
+# server-subcommand options
+# =============================================================================
+
+ServerUrlOpt = Annotated[
+    str | None,
+    typer.Option(
+        "-s",
+        "--server",
+        help="Server URL (or set HSYNC_SERVER).",
+        metavar="URL",
+        rich_help_panel="Connection",
+    ),
+]
+InsecureOpt = Annotated[
+    bool,
+    typer.Option(
+        "--insecure",
+        help="Skip SSL certificate verification.",
+        show_default=False,
+        rich_help_panel="Connection",
+    ),
+]
+CaCertOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--ca-cert",
+        help="Path to CA certificate file for self-signed server certs.",
+        metavar="FILE",
+        rich_help_panel="Connection",
+    ),
+]
+ApiKeyFdOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--api-key-fd",
+        help="Read API key from the given file descriptor (for secure passing from a parent process).",
+        metavar="FD",
+        hidden=True,
+        rich_help_panel="Connection",
+    ),
+]
+
+# =============================================================================
+# lan-subcommand options
+# =============================================================================
+
+LanPortOpt = Annotated[
+    int,
+    typer.Option(
+        "--lan-port",
+        help="Port to use when acting as LAN master.",
+        metavar="PORT",
+        rich_help_panel="LAN Mode",
+    ),
+]
+DiscoveryTimeoutOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--discovery-timeout",
+        help=(
+            "Time to wait for initial LAN peer discovery in seconds "
+            f"(default: {DISCOVERY_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
+        ),
+        metavar="SEC",
+        show_default=False,
+        rich_help_panel="LAN Mode",
+    ),
+]
+LanGroupOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--lan-group",
+        help="Group name for LAN peer filtering.",
+        metavar="GROUP",
+        rich_help_panel="LAN Mode",
+    ),
+]
+ForceMasterOpt = Annotated[
+    bool,
+    typer.Option(
+        "--force-master",
+        help="Force this client to always be master in LAN mode.",
+        rich_help_panel="LAN Mode",
+    ),
+]
+NeverMasterOpt = Annotated[
+    bool,
+    typer.Option(
+        "--never-master",
+        help="Never become master in LAN mode (always remain a client/slave).",
+        rich_help_panel="LAN Mode",
+    ),
+]
+RequirePairingOpt = Annotated[
+    bool,
+    typer.Option(
+        "--require-pairing",
+        help=(
+            "Strict pairing: refuse a first-seen LAN master certificate until it is "
+            "confirmed out of band (disables Trust-On-First-Use auto-pinning)."
+        ),
+        rich_help_panel="LAN Mode",
+    ),
+]
+LanKeyFdOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--lan-key-fd",
+        help="Read LAN key from the given file descriptor (for secure passing from a parent process).",
+        metavar="FD",
+        hidden=True,
+        rich_help_panel="LAN Mode",
+    ),
+]
+
+
+# =============================================================================
+# Parent callback (global options) + subcommands
+# =============================================================================
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "-V",
+            "--version",
+            help="Show version and exit.",
+            is_eager=True,
+            callback=version_callback,
+        ),
+    ] = None,
+    capabilities_json: Annotated[
+        bool | None,
+        typer.Option(
+            "--capabilities-json",
+            help="Print the binary's capabilities document as JSON and exit.",
+            is_eager=True,
+            callback=capabilities_json_callback,
+        ),
+    ] = None,
+    help_symbols: Annotated[
+        bool,
+        typer.Option(
+            "--help-symbols",
+            help="Show output symbols legend.",
+            is_eager=True,
+            callback=legend_callback,
+        ),
+    ] = False,
+) -> None:
+    """
+    HSYNC - HTTP-based file synchronization client.
+
+    Synchronize files between a local directory and a remote bucket. A bucket
+    is a shared directory hosted on a central HSYNC server or on another peer
+    in LAN Mode. In [bold]Server Mode[/bold], clients connect to a centralized server.
+    In [bold]LAN Mode[/bold] (P2P), clients discover each other via mDNS and one
+    automatically becomes the master—no central server required.
+
+    [bold]Subcommands:[/bold]
+
+        [cyan]server[/cyan]   Synchronize with a central HSYNC server (REST + WebSocket)
+        [cyan]lan[/cyan]      Synchronize peer-to-peer over the local network
+
+    [bold]Global Options:[/bold]
+
+        [cyan]-V, --version[/cyan]        Show version and exit
+        [cyan]--capabilities-json[/cyan] Print the binary's capabilities document and exit
+        [cyan]--help-symbols[/cyan]      Show the output-symbols legend
+
+    [bold]Examples:[/bold]
+
+        [dim]# Basic sync with a remote server[/dim]
+        $ hsync server -b photos -s https://server.example.com
+
+        [dim]# Sync a specific local directory[/dim]
+        $ hsync server -b documents -s https://server.example.com -p ~/Documents
+
+        [dim]# One-shot sync (single cycle, then exit)[/dim]
+        $ hsync server -b projects -s https://server.example.com --once
+
+        [dim]# Dry run to see what would be synced[/dim]
+        $ hsync server -b backup -s https://server.example.com -n
+
+        [dim]# LAN mode (no central server, peer-to-peer)[/dim]
+        $ hsync lan -b shared
+
+        [dim]# LAN mode with authentication[/dim]
+        $ HSYNC_LAN_KEY=mysecret hsync lan -b shared
+
+    [bold]Environment Variables:[/bold]
+
+        HSYNC_SERVER    Server URL (alternative to `hsync server -s`)
+        HSYNC_API_KEY   API key for authentication
+        HSYNC_LAN_KEY   Shared secret for LAN mode authentication
+
+    [bold]Project:[/bold]
+
+        https://github.com/albertobasso/hsync-client
+
+    [bold]Authors:[/bold]
+
+        Alberto Basso
+    """
+
+
+@app.command()
+def lan(
+    bucket: BucketOpt,
+    http_timeout: HttpTimeoutOpt = None,
+    lan_port: LanPortOpt = 0,
+    discovery_timeout: DiscoveryTimeoutOpt = None,
+    lan_group: LanGroupOpt = None,
+    force_master: ForceMasterOpt = False,
+    never_master: NeverMasterOpt = False,
+    require_pairing: RequirePairingOpt = False,
+    lan_key_fd: LanKeyFdOpt = None,
+    events_json_fd: EventsJsonFdOpt = None,
+    local_path: PathOpt = _DEFAULT_LOCAL_PATH,
+    once: OnceOpt = False,
+    resync: IntervalOpt = None,
+    reconnect_delay: RetryDelayOpt = None,
+    stability_delay: StabilityDelayOpt = None,
+    max_wait_timeout: MaxWaitTimeoutOpt = 120,
+    filter_path: SubdirOpt = None,
+    dryrun: DryRunOpt = False,
+    ignore_delete: IgnoreDeleteOpt = False,
+    sync_direction: SyncDirectionOpt = "bidirectional",
+    max_bandwidth_upload: LimitUploadOpt = None,
+    max_bandwidth_download: LimitDownloadOpt = None,
+    no_compression: NoCompressionOpt = False,
+    no_delta: NoDeltaOpt = False,
+    delta_min_file_size: DeltaMinFileSizeOpt = None,
+    delta_min_file_size_lan: DeltaMinFileSizeLanOpt = None,
+    max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
+    no_autotune: NoAutotuneOpt = False,
+    mass_delete_guard: MassDeleteGuardOpt = True,
+    mass_delete_threshold: MassDeleteThresholdOpt = None,
+    mass_delete_percent: MassDeletePercentOpt = None,
+    min_free_disk_space: MinFreeDiskSpaceOpt = MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    max_inbound_size: MaxInboundSizeOpt = MAX_INBOUND_SIZE_MB_DEFAULT,
+    ignore_patterns: IgnorePatternOpt = None,
+    verbose: VerboseOpt = False,
+    quiet: QuietOpt = False,
+    logfile: LogFileOpt = None,
+    no_color: NoColorOpt = False,
+    yes: YesOpt = False,
+    env_file: EnvFileOpt = None,
+) -> None:
+    """
+    Synchronize a bucket over LAN peer-to-peer (P2P).
+
+    Peers on the same local network discover each other via mDNS and one is
+    elected master (an HTTPS/WSS transport hub). No central server is required.
+
+    [bold]Examples:[/bold]
+
+        [dim]# Basic LAN sync[/dim]
+        $ hsync lan -b shared
+
+        [dim]# Force this peer to be the master[/dim]
+        $ hsync lan -b shared --force-master
+
+        [dim]# Isolate a sync group and authenticate it[/dim]
+        $ HSYNC_LAN_KEY=mysecret hsync lan -b shared --lan-group home
+    """
+    parsed_bw_upload, parsed_bw_download = _validate_shared_options(
+        http_timeout=http_timeout,
+        resync=resync,
+        reconnect_delay=reconnect_delay,
+        stability_delay=stability_delay,
+        max_wait_timeout=max_wait_timeout,
+        sync_direction=sync_direction,
+        min_free_disk_space=min_free_disk_space,
+        max_inbound_size=max_inbound_size,
+        max_bandwidth_upload=max_bandwidth_upload,
+        max_bandwidth_download=max_bandwidth_download,
+        max_concurrent_transfers=max_concurrent_transfers,
+        mass_delete_threshold=mass_delete_threshold,
+        mass_delete_percent=mass_delete_percent,
+        delta_min_file_size=delta_min_file_size,
+        delta_min_file_size_lan=delta_min_file_size_lan,
+    )
+
+    # LAN-only validation
+    if discovery_timeout is not None and discovery_timeout < 0:
+        raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
+
+    # --force-master is incompatible with directional sync (upload/download-only)
+    if force_master and sync_direction != "bidirectional":
+        raise typer.BadParameter(
+            f"--force-master is incompatible with --sync-direction={sync_direction}. "
+            f"The LAN master always operates in bidirectional mode."
+        )
+
+    # --force-master and --never-master are mutually exclusive (contradictory)
+    if force_master and never_master:
+        raise typer.BadParameter(
+            "--force-master and --never-master are mutually exclusive: a client "
+            "cannot be forced to be master and forbidden from being master at once."
+        )
+
     from hsync_client.main_logic import run_sync
 
     run_sync(
         bucket=bucket,
         env_file=env_file,
-        server_url=server_url,
-        verify_ssl=not insecure,
-        ca_cert=ca_cert,
+        server_url=None,
+        verify_ssl=True,
+        ca_cert=None,
         http_timeout=http_timeout,
-        api_key_fd=api_key_fd,
+        api_key_fd=None,
         lan_key_fd=lan_key_fd,
         events_json_fd=events_json_fd,
         local_path=local_path,
@@ -778,22 +903,149 @@ def main(
         delta_min_file_size_lan=delta_min_file_size_lan,
         max_bandwidth_upload=parsed_bw_upload,
         max_bandwidth_download=parsed_bw_download,
-        lan_mode=lan_mode,
+        lan_mode=True,
         lan_port=lan_port,
         discovery_timeout=discovery_timeout,
         lan_group=lan_group,
         force_master=force_master,
         never_master=never_master,
         lan_require_pairing=require_pairing,
-        debug=debug,
+        debug=verbose,
         quiet=quiet,
         logfile=logfile,
         no_color=no_color,
-        legend=legend,
+        legend=False,
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,
-        ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
+        ignore_patterns=[p.strip() for p in (ignore_patterns or []) if p.strip()],
+        max_concurrent_transfers=max_concurrent_transfers,
+        no_autotune=no_autotune,
+        mass_delete_guard=mass_delete_guard,
+        mass_delete_threshold=mass_delete_threshold,
+        mass_delete_percent=mass_delete_percent,
+    )
+
+
+@app.command()
+def server(
+    bucket: BucketOpt,
+    server_url: ServerUrlOpt = None,
+    insecure: InsecureOpt = False,
+    ca_cert: CaCertOpt = None,
+    http_timeout: HttpTimeoutOpt = None,
+    api_key_fd: ApiKeyFdOpt = None,
+    events_json_fd: EventsJsonFdOpt = None,
+    local_path: PathOpt = _DEFAULT_LOCAL_PATH,
+    once: OnceOpt = False,
+    resync: IntervalOpt = None,
+    reconnect_delay: RetryDelayOpt = None,
+    stability_delay: StabilityDelayOpt = None,
+    max_wait_timeout: MaxWaitTimeoutOpt = 120,
+    filter_path: SubdirOpt = None,
+    dryrun: DryRunOpt = False,
+    ignore_delete: IgnoreDeleteOpt = False,
+    sync_direction: SyncDirectionOpt = "bidirectional",
+    max_bandwidth_upload: LimitUploadOpt = None,
+    max_bandwidth_download: LimitDownloadOpt = None,
+    no_compression: NoCompressionOpt = False,
+    no_delta: NoDeltaOpt = False,
+    delta_min_file_size: DeltaMinFileSizeOpt = None,
+    delta_min_file_size_lan: DeltaMinFileSizeLanOpt = None,
+    max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
+    no_autotune: NoAutotuneOpt = False,
+    mass_delete_guard: MassDeleteGuardOpt = True,
+    mass_delete_threshold: MassDeleteThresholdOpt = None,
+    mass_delete_percent: MassDeletePercentOpt = None,
+    min_free_disk_space: MinFreeDiskSpaceOpt = MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    max_inbound_size: MaxInboundSizeOpt = MAX_INBOUND_SIZE_MB_DEFAULT,
+    ignore_patterns: IgnorePatternOpt = None,
+    verbose: VerboseOpt = False,
+    quiet: QuietOpt = False,
+    logfile: LogFileOpt = None,
+    no_color: NoColorOpt = False,
+    yes: YesOpt = False,
+    env_file: EnvFileOpt = None,
+) -> None:
+    """
+    Synchronize a bucket with a central HSYNC server (REST + WebSocket).
+
+    The server hosts the shared bucket and coordinates synchronization between
+    all connected clients.
+
+    [bold]Examples:[/bold]
+
+        [dim]# Basic sync[/dim]
+        $ hsync server -b photos -s https://server.example.com
+
+        [dim]# Continuous sync (the default: keeps retrying if the server is unreachable)[/dim]
+        $ hsync server -b projects -s https://server.example.com
+
+        [dim]# One-shot sync[/dim]
+        $ hsync server -b projects -s https://server.example.com --once
+    """
+    parsed_bw_upload, parsed_bw_download = _validate_shared_options(
+        http_timeout=http_timeout,
+        resync=resync,
+        reconnect_delay=reconnect_delay,
+        stability_delay=stability_delay,
+        max_wait_timeout=max_wait_timeout,
+        sync_direction=sync_direction,
+        min_free_disk_space=min_free_disk_space,
+        max_inbound_size=max_inbound_size,
+        max_bandwidth_upload=max_bandwidth_upload,
+        max_bandwidth_download=max_bandwidth_download,
+        max_concurrent_transfers=max_concurrent_transfers,
+        mass_delete_threshold=mass_delete_threshold,
+        mass_delete_percent=mass_delete_percent,
+        delta_min_file_size=delta_min_file_size,
+        delta_min_file_size_lan=delta_min_file_size_lan,
+    )
+
+    from hsync_client.main_logic import run_sync
+
+    run_sync(
+        bucket=bucket,
+        env_file=env_file,
+        server_url=server_url,
+        verify_ssl=not insecure,
+        ca_cert=ca_cert,
+        http_timeout=http_timeout,
+        api_key_fd=api_key_fd,
+        lan_key_fd=None,
+        events_json_fd=events_json_fd,
+        local_path=local_path,
+        continuous=not once,
+        resync=resync,
+        reconnect_delay=reconnect_delay,
+        stability_delay=stability_delay,
+        max_wait_timeout=max_wait_timeout,
+        filter_path=filter_path,
+        dryrun=dryrun,
+        ignore_delete=ignore_delete,
+        sync_direction=sync_direction,
+        compression_enabled=not no_compression,
+        delta_enabled=not no_delta,
+        delta_min_file_size=delta_min_file_size,
+        delta_min_file_size_lan=delta_min_file_size_lan,
+        max_bandwidth_upload=parsed_bw_upload,
+        max_bandwidth_download=parsed_bw_download,
+        lan_mode=False,
+        lan_port=0,
+        discovery_timeout=None,
+        lan_group=None,
+        force_master=False,
+        never_master=False,
+        lan_require_pairing=False,
+        debug=verbose,
+        quiet=quiet,
+        logfile=logfile,
+        no_color=no_color,
+        legend=False,
+        auto_confirm=yes,
+        min_free_disk_space=min_free_disk_space,
+        max_inbound_size=max_inbound_size,
+        ignore_patterns=[p.strip() for p in (ignore_patterns or []) if p.strip()],
         max_concurrent_transfers=max_concurrent_transfers,
         no_autotune=no_autotune,
         mass_delete_guard=mass_delete_guard,

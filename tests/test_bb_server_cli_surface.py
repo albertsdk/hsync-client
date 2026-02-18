@@ -49,7 +49,7 @@ class TestCliSurface:
     def test_missing_bucket_argument_errors(self):
         # Given no bucket argument
         # When invoking with no args
-        result = runner.invoke(app, [])
+        result = runner.invoke(app, ["server"])
 
         # Then the CLI errors
         assert result.exit_code != 0
@@ -58,7 +58,7 @@ class TestCliSurface:
     def test_invalid_bucket_name_rejected(self):
         # Given a bucket name with forbidden characters
         # When invoking
-        result = runner.invoke(app, ["-b", "bucket.name", "-s", "http://test:8000"])
+        result = runner.invoke(app, ["server", "-b", "bucket.name", "-s", "http://test:8000"])
 
         # Then the CLI rejects it
         assert result.exit_code != 0
@@ -85,9 +85,12 @@ class TestCliSurface:
         assert "app_version" in data
         assert "cli_options" in data
 
-    def test_quiet_with_version_shows_version(self):
-        """--quiet does not interfere with --version (eager callback)."""
-        result = runner.invoke(app, ["--quiet", "--version"])
+    def test_version_is_eager_global_option(self):
+        """--version is a global parent option: it exits 0 before the subcommand
+        (and its required options) is parsed."""
+        result = runner.invoke(app, ["--version", "server"])
         assert result.exit_code == 0
-        # --version is eager and always prints; --quiet affects sync logs only
+        # The eager parent callback prints and exits before subcommand dispatch,
+        # so the required -b/--bucket of ``server`` is never demanded.
         assert "hsync" in result.output
+        assert "Missing option" not in result.output

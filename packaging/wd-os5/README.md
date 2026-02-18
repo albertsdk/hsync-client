@@ -135,7 +135,7 @@ option to configure.
 | UI field            | CLI flag                                       | Default                          |
 | ------------------- | ---------------------------------------------- | -------------------------------- |
 | Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
-| Mode                | `--lan-mode` vs `-s / --server`                | LAN                              |
+| Mode                | `hsync lan` vs `hsync server -s URL`          | LAN                              |
 | Role                | `--force-master` + `--sync-direction`          | Master (NAS coordinates the group) |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
@@ -146,7 +146,7 @@ option to configure.
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
 | Resync interval     | `-i / --interval`                              | `0` (off)                        |
 | Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |
-| Bandwidth limits    | `--max-bandwidth-upload/--download`            | unlimited                        |
+| Bandwidth limits    | `--limit-upload` / `--limit-download`         | unlimited                        |
 | Compression         | `--no-compression`                             | enabled                          |
 | Delta transfer      | `HSYNC_DELTA_ENABLED`                          | enabled                          |
 | Delta min size      | `HSYNC_DELTA_MIN_FILE_SIZE`                    | `262144` (256 KB)                |
@@ -160,7 +160,7 @@ option to configure.
 | Mass-delete percent | _(not in WD UI; binary default)_               | `50`                             |
 | Verbose log         | `-v / --verbose`                               | off                              |
 | Auto-tune           | `--no-autotune` when unchecked                 | on                               |
-| HTTP timeout        | `--timeout`                                    | auto (empty = autotune/default)  |
+| HTTP timeout        | `--http-timeout`                                    | auto (empty = autotune/default)  |
 | Reconnect delay     | `--retry-delay`                                | auto (empty = autotune/default)  |
 | Transfer retry min  | `HSYNC_TRANSFER_RETRY_MIN_WAIT` env            | auto (empty = autotune/default)  |
 | Transfer retry max  | `HSYNC_TRANSFER_RETRY_MAX_WAIT` env            | auto (empty = autotune/default)  |
@@ -189,7 +189,7 @@ such as an invalid bucket or boolean fields), so the command always matches
 what the NAS runs with:
 
 ```
-HSYNC_LAN_KEY='<masked>' hsync -b '<bucket>' -p '<local-folder>' --lan-mode [--lan-group '<group>']
+HSYNC_LAN_KEY='<masked>' hsync lan -b '<bucket>' -p '<local-folder>' [--lan-group '<group>']
 ```
 
 - `<bucket>` and `--lan-group` mirror the NAS settings so the peer can find the

@@ -36,7 +36,7 @@ Environment equivalents: `HSYNC_MASS_DELETE_GUARD`,
 
 | Option | Description | Default |
 |---|---|---|
-| `-o, --output` | Log file path (enables file logging) | — (stdout only) |
+| `-o, --log-file` | Log file path (enables file logging) | — (stdout only) |
 | `-q, --quiet` | Suppress non-error output | `false` |
 | `-v, --verbose` | Verbose output | `false` |
 | `--no-color` | Disable colored output | `false` |
@@ -87,8 +87,8 @@ Bandwidth is set on the CLI only (no `HSYNC_UPLOAD_LIMIT` /
 
 | Option | Description | Default |
 |---|---|---|
-| `--max-bandwidth-upload` | Upload cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
-| `--max-bandwidth-download` | Download cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
+| `--limit-upload` | Upload cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
+| `--limit-download` | Download cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
 
 ## Ignore Files & Patterns
 
@@ -112,7 +112,7 @@ syncing the file again.
 
 ## Log Rotation
 
-When file logging is enabled with `-o/--output`:
+When file logging is enabled with `-o/--log-file`:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -125,7 +125,7 @@ When file logging is enabled with `-o/--output`:
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_AUTOTUNE` | Enable auto-tuning of timeout, retry, and concurrency | `true` |
-| `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300); CLI `--timeout` | auto |
+| `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300); CLI `--http-timeout` | auto |
 | `HSYNC_RECONNECT_DELAY` | Base of the full-jitter exponential reconnect backoff in seconds (1-60); CLI `--retry-delay` | auto (`5`) |
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | auto (`5`-`20`) |
 | `HSYNC_TRANSFER_RETRY_MIN_WAIT` | Per-file retry min wait in seconds | auto |
@@ -169,7 +169,7 @@ a small `.hsyncfolder` identity marker.
 Storage and network class are **probed at runtime**. There are no
 `HSYNC_AUTOTUNE_STORAGE_TYPE` or `HSYNC_AUTOTUNE_NETWORK_TYPE` overrides.
 Disable autotune with `--no-autotune` / `HSYNC_AUTOTUNE=false` and set
-`--timeout`, `--retry-delay`, and `--max-concurrent-transfers` yourself.
+`--http-timeout`, `--retry-delay`, and `--max-concurrent-transfers` yourself.
 
 ## Environment files
 
@@ -179,7 +179,7 @@ or `export` / `source` variables in the shell before launching `hsync`.
 `--env-file` only applies keys recognised by the settings model (the
 `HSYNC_*` variables listed in this page and the server/LAN guides). It does
 **not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `--once`,
-`--sync-direction`, `--lan-mode`, or `--force-master`.
+`--sync-direction`, or `--force-master`.
 
 Repo templates `dev.env` / `prod.env` are meant to be sourced or passed to
 `--env-file`; they are not read on their own.

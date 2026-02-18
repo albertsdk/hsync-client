@@ -94,9 +94,19 @@ fi
 mkdir -p "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}" "${HSYNC_PATH}"
 
 # ---------------------------------------------------------------------------
-# Build the argument vector.
+# Build the argument vector. The subcommand is always the first token: ``lan``
+# for peer-to-peer and ``server`` for the central server.
 # ---------------------------------------------------------------------------
-set -- \
+case "${HSYNC_MODE}" in
+    lan)    SUBCOMMAND="lan" ;;
+    server) SUBCOMMAND="server" ;;
+    *)
+        echo "Unknown HSYNC_MODE=${HSYNC_MODE}" >> "$LOG"
+        exit 1
+        ;;
+esac
+
+set -- "${SUBCOMMAND}" \
     --bucket "${HSYNC_BUCKET}" \
     --path "${HSYNC_PATH}" \
     --yes
@@ -107,7 +117,6 @@ case "${HSYNC_MODE}" in
         # serves over TLS with a persistent self-signed identity and advertises
         # its certificate fingerprint, which slaves pin (TOFU). There is no
         # plain-HTTP option.
-        set -- "$@" --lan-mode
         [ "${HSYNC_LAN_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
         [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --lan-group "${HSYNC_LAN_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
@@ -125,10 +134,6 @@ case "${HSYNC_MODE}" in
         fi
         set -- "$@" --server "${HSYNC_SERVER}"
         ;;
-    *)
-        echo "Unknown HSYNC_MODE=${HSYNC_MODE}" >> "$LOG"
-        exit 1
-        ;;
 esac
 
 [ "${HSYNC_INTERVAL}" -gt 0 ] 2>/dev/null && set -- "$@" --interval "${HSYNC_INTERVAL}"
@@ -137,13 +142,13 @@ esac
 [ "${HSYNC_DELTA_ENABLED}" = "false" ] && set -- "$@" --no-delta
 [ -n "${HSYNC_DELTA_MIN_FILE_SIZE}" ]     && set -- "$@" --delta-min-file-size "${HSYNC_DELTA_MIN_FILE_SIZE}"
 [ -n "${HSYNC_DELTA_MIN_FILE_SIZE_LAN}" ] && set -- "$@" --delta-min-file-size-lan "${HSYNC_DELTA_MIN_FILE_SIZE_LAN}"
-[ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --max-bandwidth-upload "${HSYNC_MAX_BW_UPLOAD}"
-[ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --max-bandwidth-download "${HSYNC_MAX_BW_DOWNLOAD}"
+[ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --limit-upload "${HSYNC_MAX_BW_UPLOAD}"
+[ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --limit-download "${HSYNC_MAX_BW_DOWNLOAD}"
 [ -n "${HSYNC_MIN_FREE_DISK_MB}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK_MB}"
 [ -n "${HSYNC_MAX_INBOUND_SIZE_MB}" ] && set -- "$@" --max-inbound-size "${HSYNC_MAX_INBOUND_SIZE_MB}"
 [ "${HSYNC_VERBOSE}" = "true" ]        && set -- "$@" --verbose
 [ "${HSYNC_AUTOTUNE}" = "false" ]      && set -- "$@" --no-autotune
-[ -n "${HSYNC_HTTP_TIMEOUT}" ]         && set -- "$@" --timeout "${HSYNC_HTTP_TIMEOUT}"
+[ -n "${HSYNC_HTTP_TIMEOUT}" ]         && set -- "$@" --http-timeout "${HSYNC_HTTP_TIMEOUT}"
 [ -n "${HSYNC_RECONNECT_DELAY}" ]      && set -- "$@" --retry-delay "${HSYNC_RECONNECT_DELAY}"
 
 # ---------------------------------------------------------------------------

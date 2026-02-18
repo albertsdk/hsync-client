@@ -5,18 +5,19 @@ framework; asyncio event loop + watchdog observer + a thread pool for transfers.
 
 ## Entry & orchestration
 
-`main.main` (`main.py:25`) invokes the Typer app `cli.main` (`cli.py:108`), which
-parses flags, sets up logging, builds `CONFIG`, and calls `run_sync`
-(`main_logic.py:539`). `run_sync` validates inputs, runs pre-sync safety checks,
-then branches by mode and starts the watcher loop. Console script: `cli.run`
-(`cli.py:809`).
+`main.main` (`main.py:25`) invokes the Typer app (`cli.py`): a parent callback
+`cli.main` (`cli.py:696`) carrying the global options, plus two mutually
+exclusive subcommands `cli.lan` (`cli.py:783`) and `cli.server` (`cli.py:931`).
+Each subcommand validates its options and calls `run_sync` (`main_logic.py:539`),
+which validates inputs, runs pre-sync safety checks, then branches by mode and
+starts the watcher loop. Console script: `cli.run` (`cli.py:1057`).
 
 ## The two run modes
 
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
-| **Remote (server)** | default; `--server-url` set; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:97`) |
-| **LAN (P2P)** | `--lan-mode` | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `lan_handler.run_lan_mode` (`lan_handler.py:109`) |
+| **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:97`) |
+| **LAN (P2P)** | `hsync lan` subcommand | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `lan_handler.run_lan_mode` (`lan_handler.py:109`) |
 
 LAN sub-roles: `_run_as_master` (`lan_handler.py:273`) starts `LANServer`
 (`lan_server.py:1626`) + `LANWebSocketServer` (`lan_websocket.py:185`); `_run_as_slave`

@@ -15,39 +15,39 @@ These patterns apply to **both** Server Mode and LAN P2P Mode.
 ### 3.1 Dry run (preview changes)
 
 ```bash
-hsync --dry-run -b mybucket -p ~/Sync
+hsync server --dry-run -b mybucket -p ~/Sync
 ```
 
-Shows what would change without modifying any files. Add `-s` for server mode.
+Shows what would change without modifying any files.
 
 ### 3.2 Verbose output
 
 ```bash
-hsync -v -b mybucket -p ~/Sync
+hsync server -v -b mybucket -p ~/Sync
 ```
 
 ### 3.3 Log to file
 
 ```bash
-hsync -o /var/log/hsync.log -b mybucket -p ~/Sync
+hsync server --log-file /var/log/hsync.log -b mybucket -p ~/Sync
 ```
 
 ### 3.4 File stability tuning
 
 ```bash
-HSYNC_STABILITY_DELAY=2 HSYNC_MAX_WAIT_TIMEOUT=60 hsync -b mybucket -p ~/Sync
+HSYNC_STABILITY_DELAY=2 HSYNC_MAX_WAIT_TIMEOUT=60 hsync server -b mybucket -p ~/Sync
 ```
 
 ### 3.5 CI/CD non-interactive sync
 
 ```bash
-hsync -y -b artifacts -p ./build
+hsync server -y -b artifacts -p ./build
 ```
 
 ### 3.6 Ignore patterns
 
 ```bash
-HSYNC_IGNORE_PATTERNS="*.tmp,*.log,/build/" hsync -b mybucket -p ~/Sync
+HSYNC_IGNORE_PATTERNS="*.tmp,*.log,/build/" hsync server -b mybucket -p ~/Sync
 ```
 
 Or create a `.hsyncignore` file in the bucket root.
@@ -55,19 +55,19 @@ Or create a `.hsyncignore` file in the bucket root.
 ### 3.7 Delta transfer for large files
 
 ```bash
-HSYNC_DELTA_ENABLED=true HSYNC_DELTA_MIN_FILE_SIZE=262144 hsync -b large -p ~/Large
+HSYNC_DELTA_ENABLED=true HSYNC_DELTA_MIN_FILE_SIZE=262144 hsync server -b large -p ~/Large
 ```
 
 ### 3.8 Backup mode (never delete)
 
 ```bash
-hsync --ignore-delete -b backup -p ~/Backup
+hsync server --ignore-delete -b backup -p ~/Backup
 ```
 
 ### 3.9 Resync interval
 
 ```bash
-HSYNC_RESYNC=600 hsync -b mybucket -p ~/Sync
+HSYNC_RESYNC=600 hsync server -b mybucket -p ~/Sync
 ```
 
 Full resync every 10 minutes as a safety net for missed events.

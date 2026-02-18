@@ -128,7 +128,7 @@ device directory:
 
 ```bash
 HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
-  hsync -b photos -p ~/Other --lan-mode
+  hsync lan -b photos -p ~/Other
 ```
 
 Different buckets need no change — they share the identity but never clash.
@@ -185,7 +185,7 @@ They are harmless: zero bytes, hidden, and excluded from both sync and Git.
 ## Debian Package
 
 **Q: How do I configure the systemd service for LAN mode?**
-The packaged unit runs `--lan-mode` on `ExecStart` in continuous mode (the
+The packaged unit runs `hsync lan` on `ExecStart` in continuous mode (the
 client default). Edit
 `/etc/hsync/hsync.conf` (not `hsync.env`):
 ```

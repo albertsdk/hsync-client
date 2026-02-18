@@ -161,11 +161,11 @@ class TestOfflineChangesServerDisconnect:
         # ``get_files_remote`` retries bridge the server restart), so a created
         # file may only be uploaded by the next periodic cycle. The
         # offline-deletion minting is race-free (it checks the live
-        # ``existing_keys`` snapshot, not the stale listing). ``--output``
+        # ``existing_keys`` snapshot, not the stale listing). ``--log-file``
         # redirects loguru to a file for failure reports.
         log_path = _client_log_path(local_dir)
         proc = watch_sync_restartable(
-            bb_restartable_bucket, local_dir, "--interval", "20", "--output", log_path
+            bb_restartable_bucket, local_dir, "--interval", "20", "--log-file", log_path
         )
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
@@ -257,7 +257,7 @@ class TestOfflineChangesClientKill:
         # interval=3600 disables the periodic resync during the test so the
         # only reconcile is the initial full sync on restart (deterministic).
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--interval", "3600", "--output", log_path)
+        proc = watch_sync(bb_bucket, local_dir, "--interval", "3600", "--log-file", log_path)
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
                 f"watch mode did not become ready\n--- client log tail ---\n{_full_log(local_dir)}"
@@ -336,7 +336,7 @@ class TestOfflineChangesClientKill:
         log_path = _client_log_path(local_dir)
         kill_me_path = str(Path(local_dir) / "kill_me.txt")
         proc = watch_sync(
-            bb_bucket, local_dir, "--interval", "3600", "--output", log_path, "--verbose"
+            bb_bucket, local_dir, "--interval", "3600", "--log-file", log_path, "--verbose"
         )
         try:
             assert _wait_for_client_ready(proc, _ready_path(local_dir)), (

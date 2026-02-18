@@ -254,7 +254,7 @@ class TestLanIgnorePatterns:
                 lan_slave_dir,
                 lan_bucket,
                 never_master=True,
-                extra_args=("--ignore-patterns", "*.tmp"),
+                extra_args=("--ignore-pattern", "*.tmp"),
             )
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "keep.me"), timeout=30), (
@@ -277,7 +277,7 @@ class TestLanIgnorePatterns:
 
 class TestLanLogfile:
     def test_logfile_writes_output(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--output writes the session log to a file.
+        """--log-file writes the session log to a file.
 
         With an output file the log sink moves off stdout, so readiness cannot
         be parsed from the process output: wait on the master's ready file
@@ -289,7 +289,7 @@ class TestLanLogfile:
             lan_master_dir,
             lan_bucket,
             force_master=True,
-            extra_args=("--output", str(logfile)),
+            extra_args=("--log-file", str(logfile)),
         )
         try:
             temp_slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
@@ -315,7 +315,7 @@ class TestLanLogfile:
 
 
 def _invoke_lan_cli(monkeypatch, bucket: str, local: str, *extra: str, lan_key: str | None = None):
-    """Run the public CLI in-process with --lan-mode and return the result.
+    """Run the public CLI in-process with the lan subcommand and return the result.
 
     A *lan_key* is set only when the target guard runs after the LAN-key write
     policy (e.g. the disk-space guard); the deletion-risk guard fires first and
@@ -342,7 +342,7 @@ def _invoke_lan_cli(monkeypatch, bucket: str, local: str, *extra: str, lan_key: 
     get_env_settings.cache_clear()
     runner = CliRunner()
     with _ClientGlobalsGuard():
-        result = runner.invoke(app, ["--lan-mode", "-b", bucket, "-p", local, *extra])
+        result = runner.invoke(app, ["lan", "-b", bucket, "-p", local, *extra])
     get_env_settings.cache_clear()
     if result.output:
         print(f"--- hsync-client (lan) output ---\n{result.output}")
@@ -354,7 +354,7 @@ class TestLanDiskSpaceGuard:
         # Given a local dir with content and an impossibly high free-space requirement
         (Path(local_dir) / "a.txt").write_bytes(b"a")
 
-        # When running --lan-mode with --min-free-disk-space far above what is available
+        # When running lan with --min-free-disk-space far above what is available
         result = _invoke_lan_cli(
             monkeypatch,
             lan_bucket,
@@ -381,7 +381,7 @@ class TestLanDeletionRiskGuard:
         # delete local files, with no --yes confirmation
         (Path(local_dir) / "keep.txt").write_bytes(b"keep")
 
-        # When running --lan-mode download-only without --yes
+        # When running lan download-only without --yes
         result = _invoke_lan_cli(
             monkeypatch, lan_bucket, local_dir, "--sync-direction", "download-only"
         )

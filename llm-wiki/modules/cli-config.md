@@ -6,22 +6,25 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `main` | `cli.py:108` | the Typer command: all flags, then calls `run_sync` |
-| `run` | `:809` | console-script entry |
-| `version_callback` | `:59` | `--version` |
-| `capabilities_json_callback` | `:83` | `--capabilities-json` (introspects options via `collect_cli_options:66`) |
-| `_validate_bucket` | `:97` | bucket flag validation |
+| `main` (parent callback) | `cli.py:696` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
+| `lan` | `:783` | LAN P2P subcommand: shared + LAN-only flags, LAN-only validation, calls `run_sync` |
+| `server` | `:931` | central-server subcommand: shared + server-only flags, calls `run_sync` |
+| `run` | `:1057` | console-script entry |
+| `collect_subcommand_options` | `:88` | introspects each subcommand's long flags for the capabilities document |
+| `capabilities_json_callback` | `:108` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
+| `_validate_bucket` | `:125` | bucket flag validation |
+| `_validate_shared_options` | `:140` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
 
 Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
-`--api-key-fd` / `--lan-key-fd` for a parent process.
-`--env-file` is the only dotenv path (`main_logic.py` →
+`--api-key-fd` (server subcommand) / `--lan-key-fd` (lan subcommand) for a
+parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
-`EnvSettings` fields; bucket/path/direction/`--lan-mode`/`--force-master`
-stay CLI-only.
+`EnvSettings` fields; bucket/path/direction/the `lan`/`server` subcommand
+selection/`--force-master` stay CLI-only.
 
 Flags map to env keys where `EnvSettings` has a field; capabilities JSON is
-built from `hsync_common.protocol.capabilities.build_capabilities` so the
-desktop can gate UI (§8).
+built from `hsync_common.protocol.capabilities.build_capabilities` (schema v2:
+`subcommands` + per-subcommand `cli_options`) so the desktop can gate UI (§8).
 
 `--once` is the single one-shot selector: it maps to `continuous=False`,
 which also feeds the LAN `ONE_SHOT` config key, so the semantics are uniform
@@ -76,8 +79,11 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
    cgroup memory limit to cap parallelism inside containers (no effect on bare
    metal, where the memory probe returns `None`).
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
-  `resync`/`reconnect_delay` bounds raise `typer.BadParameter`; bucket naming
-  via `_validate_bucket` (`cli.py:97`). There is no separate validators module.
+  `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
+  `_validate_shared_options` (`cli.py:140`); bucket naming
+  via `_validate_bucket` (`cli.py:125`); LAN-only checks (discovery timeout,
+  `--force-master` exclusivity) live in the `lan` subcommand. There is no
+  separate validators module.
 
 ## UI events (`events.py`)
 
@@ -88,7 +94,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 > **Domain-critical**: any change to `HSYNC_*` flags / defaults requires the
 > synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
 > WD `packaging/wd-os5/Apkg/start.sh` maps the web UI autotune fields to the
-> binary: `--no-autotune` / `--timeout` / `--retry-delay`, and exports
+> binary: `--no-autotune` / `--http-timeout` / `--retry-delay`, and exports
 > `HSYNC_TRANSFER_RETRY_MIN_WAIT` / `HSYNC_TRANSFER_RETRY_MAX_WAIT` (no CLI).
 > Empty UI values are omitted so autotune/defaults apply. Secrets stay env-only.
 > Human guides: `../../docs/configuration.md`, `../../docs/configuration-server.md`, `../../docs/configuration-lan.md`, `../../docs/usage.md`.

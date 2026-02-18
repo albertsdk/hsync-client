@@ -17,10 +17,10 @@ HSYNC runs in one of two mutually exclusive operating modes:
 
 ```bash
 # Server Mode — connect to a central HSYNC server
-hsync -s <server_url> -b <bucket_name> [options]
+hsync server -s <server_url> -b <bucket_name> [options]
 
 # LAN Mode — peer-to-peer, no server (mDNS discovery, implicit continuous mode)
-hsync --lan-mode -b <bucket_name> [options]
+hsync lan -b <bucket_name> [options]
 ```
 
 See [Sync Modes](sync-modes.md) for when to use each.
@@ -77,7 +77,7 @@ documented in the single configuration reference:
 
 - [Configuration](configuration.md) — shared options and `HSYNC_*` variables
 - [Configuration → Environment files](configuration.md#environment-files)
-- [Configuration — Server Mode](configuration-server.md#environment-variables--server-mode) / [Configuration — LAN P2P Mode](configuration-lan.md#environment-variables--lan-mode) — per-mode variables
+- [Configuration — Server Mode](configuration-server.md#environment-variables--server-mode) / [Configuration — LAN P2P Mode](configuration-lan.md#environment-variables--lan-p2p-mode) — per-mode variables
 
 ## Symlinks
 

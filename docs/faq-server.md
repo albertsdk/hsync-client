@@ -122,7 +122,7 @@ They are harmless: zero bytes, hidden, and excluded from both sync and Git.
 ## Debian Package
 
 **Q: How do I configure the systemd service for server mode?**
-The packaged unit starts **LAN** mode (`--lan-mode`, continuous by default)
+The packaged unit starts **LAN** mode (`hsync lan`, continuous by default)
 and reads `/etc/hsync/hsync.conf`. `HSYNC_BUCKET` / `HSYNC_PATH` in that file
 are expanded by systemd into `--bucket` / `--path`; they are not client
 settings keys.

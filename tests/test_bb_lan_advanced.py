@@ -275,7 +275,7 @@ class TestLanPortOverride:
 
 class TestLanFilterPath:
     def test_filter_path_restricts_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--filter-path subdir/ restricts sync to that subdirectory only."""
+        """--subdir subdir/ restricts sync to that subdirectory only."""
         # Pre-create two subdirectories on master
         sub_a = Path(lan_master_dir) / "sub_a"
         sub_a.mkdir()
@@ -290,12 +290,12 @@ class TestLanFilterPath:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Start slave with --filter-path sub_a
+            # Start slave with --subdir sub_a
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
                 never_master=True,
-                extra_args=("--filter-path", "sub_a"),
+                extra_args=("--subdir", "sub_a"),
             )
             try:
                 # File in sub_a should appear on slave
@@ -320,7 +320,7 @@ class TestLanFilterPath:
 
 class TestLanBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--max-bandwidth-download with a generous limit still allows sync."""
+        """--limit-download with a generous limit still allows sync."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
@@ -332,9 +332,9 @@ class TestLanBandwidthThrottle:
                 lan_bucket,
                 never_master=True,
                 extra_args=(
-                    "--max-bandwidth-download",
+                    "--limit-download",
                     "10MB",
-                    "--max-bandwidth-upload",
+                    "--limit-upload",
                     "10MB",
                 ),
             )

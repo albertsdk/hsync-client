@@ -414,7 +414,7 @@ class TestRemoteEdgeCases:
     ):
         (Path(local_dir) / "keep.txt").write_bytes(b"keep\n")
         (Path(local_dir) / "skip.tmp").write_bytes(b"tmp\n")
-        result = run_sync_once(bb_bucket, local_dir, "--ignore-patterns", "*.tmp")
+        result = run_sync_once(bb_bucket, local_dir, "--ignore-pattern", "*.tmp")
         assert result.exit_code == 0
         assert "keep.txt" in bb_server_files(bb_bucket)
         assert "skip.tmp" not in bb_server_files(bb_bucket)
@@ -849,10 +849,10 @@ class TestRemoteMoreFlags:
     def test_logfile_writes_output(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload, tmp_path
     ):
-        """--output writes log to the specified file."""
+        """--log-file writes log to the specified file."""
         log_path = tmp_path / "remote_test.log"
         bb_server_upload(bb_bucket, "logged.txt", b"log-test\n")
-        result = run_sync_once(bb_bucket, local_dir, "--output", str(log_path))
+        result = run_sync_once(bb_bucket, local_dir, "--log-file", str(log_path))
         assert result.exit_code == 0
         assert log_path.exists(), "Log file was not created"
         assert len(log_path.read_text()) > 0, "Log file is empty"
@@ -990,7 +990,7 @@ class TestRemoteSyncNegative:
 
 # =============================================================================
 # Parity with the LAN black-box suite: file-size boundaries, symlink delete,
-# bandwidth throttle, filter-path, concurrent writers, tombstone catch-up.
+# bandwidth throttle, subdir, concurrent writers, tombstone catch-up.
 # Each mirrors a test_bb_lan_* scenario so the same replication behaviour is
 # verified in client-server mode.
 # =============================================================================
@@ -1081,9 +1081,9 @@ class TestRemoteBandwidthThrottle:
         result = run_sync_once(
             bb_bucket,
             local_dir,
-            "--max-bandwidth-upload",
+            "--limit-upload",
             "10MB",
-            "--max-bandwidth-download",
+            "--limit-download",
             "10MB",
         )
 
@@ -1106,10 +1106,10 @@ class TestRemoteFilterPath:
         (Path(local_dir) / "excluded" / "b.txt").write_bytes(b"in-excluded\n")
         assert run_sync_once(bb_bucket, local_dir).exit_code == 0
 
-        # When a fresh empty directory syncs with --filter-path restricting to "kept"
+        # When a fresh empty directory syncs with --subdir restricting to "kept"
         fresh = tmp_path / "fresh"
         fresh.mkdir()
-        result = run_sync_once(bb_bucket, str(fresh), "--filter-path", "kept")
+        result = run_sync_once(bb_bucket, str(fresh), "--subdir", "kept")
 
         # Then only the filtered subtree is downloaded; the other stays absent locally
         assert result.exit_code == 0

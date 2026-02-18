@@ -101,7 +101,7 @@ Override with `HSYNC_MAX_FILE_WORKERS` environment variable.
 
 ### Bandwidth Limiting
 
-Upload and download bandwidth can be limited via `--max-bandwidth-upload` and `--max-bandwidth-download` CLI options. The implementation uses a **token bucket** algorithm for smooth rate control:
+Upload and download bandwidth can be limited via `--limit-upload` and `--limit-download` CLI options. The implementation uses a **token bucket** algorithm for smooth rate control:
 
 - **Uploads**: `_ThrottledFileReader` wraps file handles and injects delays after each `read()` call
 - **Downloads**: Throttle delay is applied after each downloaded chunk in the streaming loop

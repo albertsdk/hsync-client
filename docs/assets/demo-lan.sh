@@ -40,7 +40,7 @@ ln -sf "$REPO_ROOT/.venv/bin/hsync" /tmp/demo-bin/hsync
 # HSYNC_READY_FILE makes the master write its PID to $READY_A once its HTTP+WSS
 # servers and filesystem watcher are up (see hsync_client/lan_handler.py).
 tmux -S "$SOCKET" new-session -d -s "$SESSION" -x 200 -y 50 \
-  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; HSYNC_DEVICE_DIR=/tmp/hsync-a-device hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master"
+  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; HSYNC_DEVICE_DIR=/tmp/hsync-a-device hsync lan -b mybucket -p /tmp/hsync-a --force-master"
 
 # Bottom pane: Device B (client) - shows clean prompt, hsync started manually later.
 # HSYNC_READY_FILE=$READY_B is exported by the tape when Device B is launched.

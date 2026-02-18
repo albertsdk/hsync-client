@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-08-30" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-03" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -10,8 +10,16 @@ hsync \- file synchronization client (Server and LAN P2P modes)
 .\" ---------------------------------------------------------------------
 .SH SYNOPSIS
 .SY hsync
+.B server
 .OP \-b NAME
 .OP \-s URL
+.OP \-p DIR
+.RI [ OPTIONS ]
+.YS
+.
+.SY hsync
+.B lan
+.OP \-b NAME
 .OP \-p DIR
 .RI [ OPTIONS ]
 .YS
@@ -28,18 +36,18 @@ hsync \- file synchronization client (Server and LAN P2P modes)
 .SH DESCRIPTION
 .B hsync
 keeps directories in sync across machines and NAS devices.
-It supports two operating modes:
+It supports two operating modes, selected by the subcommand:
 .
 .TP 4
 \(bu
-.B Server Mode:
+.BR "Server Mode" " (" hsync " " server ):
 Clients connect to a central HSYNC server.
 The server hosts shared directories ("buckets") and coordinates
 synchronization between all connected clients.
 .
 .TP 4
 \(bu
-.B LAN Mode (P2P):
+.BR "LAN Mode (P2P)" " (" hsync " " lan ):
 Clients discover each other automatically via mDNS on the local network.
 One peer is elected
 .B master
@@ -68,25 +76,30 @@ secret
 .\" ---------------------------------------------------------------------
 .SH OPTIONS
 .B hsync
-options are organised in logical groups.
+options are organised by subcommand: options shared by both subcommands,
+subcommand-specific options, and global options typed before the subcommand.
 .
 .\" --- Required ---
-.SS Required
+.SS Required (both subcommands)
 .TP
 .BR \-b ", " \-\-bucket =\fINAME\fP
 Remote bucket name. Alphanumeric characters, hyphens, and underscores
 are allowed (not at the beginning or end).
 This option is mandatory.
 .
-.\" --- Connection ---
-.SS Connection
+.\" --- Server subcommand ---
+.SS Server subcommand
 .TP
 .BR \-s ", " \-\-server =\fIURL\fP
 Server URL
 .RI ( https://server.example.com ).
 Can also be set via the
 .B HSYNC_SERVER
-environment variable. Required for Server Mode.
+environment variable. Required for
+.B hsync server
+unless
+.B HSYNC_SERVER
+is set.
 .TP
 .B \-\-insecure
 Skip SSL/TLS certificate verification (not recommended).
@@ -94,24 +107,12 @@ Skip SSL/TLS certificate verification (not recommended).
 .BR \-\-ca\-cert =\fIFILE\fP
 Path to a custom CA certificate file for self-signed server certificates.
 .TP
-.BR \-\-timeout =\fISEC\fP
-HTTP request timeout in seconds. When auto-tuning is enabled (default), the
-timeout is derived from measured network latency if not set explicitly.
-Range: 1\(en300.
-.TP
 .BR \-\-api\-key\-fd =\fIFD\fP
 Read the API key from the given file descriptor. This is a hidden option
 intended for secure passing of secrets from a parent process.
-.TP
-.BR \-\-lan\-key\-fd =\fIFD\fP
-Read the LAN shared secret from the given file descriptor. Hidden option.
-.TP
-.BR \-\-events\-json\-fd =\fIFD\fP
-Write structured JSON-Lines status events to the given file descriptor.
-Hidden option intended for GUI integration.
 .
 .\" --- Sync ---
-.SS Sync
+.SS Sync (both subcommands)
 .TP
 .BR \-p ", " \-\-path =\fIDIR\fP
 Local directory to synchronize (default: current directory).
@@ -148,7 +149,7 @@ Maximum time to wait for a file to stabilize (default:
 .BR 120 ;
 range: 10\(en3600).
 .TP
-.BR \-\-filter\-path =\fIPATH\fP
+.BR \-\-subdir =\fIPATH\fP
 Sync only files within this subdirectory path.
 .TP
 .BR \-n ", " \-\-dry\-run
@@ -164,12 +165,12 @@ Sync direction. One of:
 .BR upload\-only ", or"
 .BR download\-only .
 .TP
-.BR \-\-max\-bandwidth\-upload =\fIRATE\fP
+.BR \-\-limit\-upload =\fIRATE\fP
 Maximum upload bandwidth
 .RI ( e.g. " 1MB ", " 500KB ").
 0 = unlimited.
 .TP
-.BR \-\-max\-bandwidth\-download =\fIRATE\fP
+.BR \-\-limit\-download =\fIRATE\fP
 Maximum download bandwidth (same format as above).
 .TP
 .B \-\-no\-compression
@@ -198,8 +199,8 @@ Minimum free disk space in MB before sync is paused
 .BR 500 ;
 range: 0\(en100000, 0 = disabled).
 .TP
-.BR \-\-ignore\-patterns =\fIPATTERNS\fP
-Comma-separated extra gitignore-style patterns.
+.BR \-\-ignore\-pattern =\fIPATTERN\fP
+Extra gitignore-style pattern. May be repeated for multiple patterns.
 Layered on
 .B .hsyncignore
 (if present in the synced directory).
@@ -238,12 +239,19 @@ Disable auto-tuning of timeout, retry, and concurrency. When set, the
 client uses static defaults for all auto-tunable parameters instead of
 deriving them from the runtime environment. Equivalent to setting
 .BR HSYNC_AUTOTUNE=false .
-.
-.\" --- LAN Mode ---
-.SS LAN Mode
 .TP
-.B \-\-lan\-mode
-Enable LAN peer-to-peer mode without a central server.
+.BR \-\-http\-timeout =\fISEC\fP
+HTTP request timeout in seconds. When auto-tuning is enabled (default), the
+timeout is derived from measured network latency if not set explicitly.
+Applies to server REST requests and, in LAN mode, to the master's HTTPS
+transport. Range: 1\(en300.
+.TP
+.BR \-\-events\-json\-fd =\fIFD\fP
+Write structured JSON-Lines status events to the given file descriptor.
+Hidden option intended for GUI integration.
+.
+.\" --- LAN subcommand ---
+.SS LAN subcommand
 .TP
 .BR \-\-lan\-port =\fIPORT\fP
 Port to use when acting as LAN master (default: 0 = auto).
@@ -268,9 +276,12 @@ Never become master in LAN mode (always remain a slave).
 .B \-\-require\-pairing
 Strict pairing: refuse a first-seen LAN master certificate until it is
 confirmed out of band (disables Trust-On-First-Use auto-pinning).
+.TP
+.BR \-\-lan\-key\-fd =\fIFD\fP
+Read the LAN shared secret from the given file descriptor. Hidden option.
 .
 .\" --- Output ---
-.SS Output
+.SS Output (both subcommands)
 .TP
 .BR \-v ", " \-\-verbose
 Enable verbose (debug) output.
@@ -278,31 +289,35 @@ Enable verbose (debug) output.
 .BR \-q ", " \-\-quiet
 Suppress all output.
 .TP
-.BR \-o ", " \-\-output =\fIFILE\fP
+.BR \-\-log\-file =\fIFILE\fP
 Write output to
 .I FILE
 instead of the terminal.
 .TP
 .B \-\-no\-color
 Disable colored output.
-.TP
-.B \-\-help\-symbols
-Show a legend of the output symbols.
 .
 .\" --- General ---
-.SS General
+.SS General (both subcommands)
 .TP
 .BR \-y ", " \-\-yes
 Skip interactive confirmation prompts (warnings are still shown).
 .TP
 .BR \-\-env\-file =\fIPATH\fP
 Load environment variables from a file (KEY=VALUE, one per line).
-.TP
-.BR \-\-capabilities\-json
-Print the binary's capabilities document as JSON and exit.
+.
+.\" --- Global options ---
+.SS Global options
+The following are parent options, typed before the subcommand:
 .TP
 .BR \-V ", " \-\-version
 Show version and exit.
+.TP
+.B \-\-capabilities\-json
+Print the binary's capabilities document as JSON and exit.
+.TP
+.B \-\-help\-symbols
+Show a legend of the output symbols.
 .
 .\" ---------------------------------------------------------------------
 .SH SYNCHRONISATION DIRECTIONS
@@ -325,7 +340,7 @@ Local changes are ignored.
 .SH LAN MODE DETAILS
 In
 .B LAN Mode
-.RB ( \-\-lan\-mode ),
+.RB ( hsync " " lan ),
 clients on the same local network discover each other automatically
 using
 .B mDNS
@@ -354,8 +369,10 @@ to isolate multiple independent sync groups on the same network.
 .SH ENVIRONMENT
 .TP
 .B HSYNC_SERVER
-Server URL (alternative to
-.BR \-s ).
+Server URL (alternative to the
+.B \-s
+option of
+.BR "hsync server" ).
 .TP
 .B HSYNC_API_KEY
 API key for authenticating with the server.
@@ -541,63 +558,63 @@ in
 Basic sync with a remote server:
 .RS
 .EX
-hsync \-b photos \-s https://server.example.com
+hsync server \-b photos \-s https://server.example.com
 .EE
 .RE
 .TP
 Sync a specific local directory:
 .RS
 .EX
-hsync \-b documents \-s https://server.example.com \-p ~/Documents
+hsync server \-b documents \-s https://server.example.com \-p ~/Documents
 .EE
 .RE
 .TP
 Continuous (default) mode:
 .RS
 .EX
-hsync \-b projects \-s https://server.example.com
+hsync server \-b projects \-s https://server.example.com
 .EE
 .RE
 .TP
 One-shot sync:
 .RS
 .EX
-hsync \-b projects \-s https://server.example.com \-\-once
+hsync server \-b projects \-s https://server.example.com \-\-once
 .EE
 .RE
 .TP
 Dry-run preview (no changes made):
 .RS
 .EX
-hsync \-b backup \-s https://server.example.com \-n
+hsync server \-b backup \-s https://server.example.com \-n
 .EE
 .RE
 .TP
 LAN peer-to-peer mode:
 .RS
 .EX
-hsync \-b shared \-\-lan\-mode
+hsync lan \-b shared
 .EE
 .RE
 .TP
 LAN mode with authentication and a specific group:
 .RS
 .EX
-HSYNC_LAN_KEY=mysecret hsync \-b shared \-\-lan\-mode \-\-lan\-group home
+HSYNC_LAN_KEY=mysecret hsync lan \-b shared \-\-lan\-group home
 .EE
 .RE
 .TP
 Backup mode (upload only, never delete remote files):
 .RS
 .EX
-hsync \-b backup \-s https://server.example.com \-\-sync\-direction upload\-only \-\-ignore\-delete
+hsync server \-b backup \-s https://server.example.com \-\-sync\-direction upload\-only \-\-ignore\-delete
 .EE
 .RE
 .TP
 Bandwidth-limited sync:
 .RS
 .EX
-hsync \-b media \-s https://server.example.com \-\-max\-bandwidth\-upload 2MB
+hsync server \-b media \-s https://server.example.com \-\-limit\-upload 2MB
 .EE
 .RE
 .

@@ -46,7 +46,12 @@ Sleep 2000ms
 # which is what the watcher in demo-lan.sh waits for before creating hello.txt.
 # Once BOTH are READY the watcher drops hello.txt into Device A's dir and the
 # master pushes it to Device B live (visible in the logs within a few seconds).
-Type "HSYNC_DEVICE_DIR=/tmp/hsync-b-device HSYNC_READY_FILE=/tmp/hsync-b.ready hsync -b mybucket -p /tmp/hsync-b --lan-mode" Enter
+Hide
+Type "export HSYNC_DEVICE_DIR=/tmp/hsync-b-device HSYNC_READY_FILE=/tmp/hsync-b.ready" Enter
+Ctrl+L
+Sleep 300ms
+Show
+Type "hsync lan -b mybucket -p /tmp/hsync-b" Enter
 Sleep 12000ms
 
 # --- proof on Device B: stop the agent, show the received file ---------------

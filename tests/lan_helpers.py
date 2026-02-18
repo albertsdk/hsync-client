@@ -151,7 +151,7 @@ def _lan_start(
         sys.executable,
         "-m",
         "hsync_client",
-        "--lan-mode",
+        "lan",
         "-b",
         bucket,
         "-p",
@@ -166,7 +166,7 @@ def _lan_start(
         "1",
         "--stability-delay",
         "1",
-        "--timeout",
+        "--http-timeout",
         "10",
     ]
     if force_master:

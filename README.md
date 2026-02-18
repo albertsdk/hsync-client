@@ -90,7 +90,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 
 ## Quick Start
 
-**LAN/P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--lan-mode-no-server-needed) steps for details.
+**LAN/P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--lan-p2p-mode-no-server-needed) steps for details.
 ![LAN/P2P Mode live demo: Device B discovers Device A via mDNS and receives `hello.txt` in real time — no server needed](docs/assets/demo-lan.gif)
 
 ### Step 1 — Agent Installation
@@ -116,7 +116,7 @@ Both options produce the same result: bidirectional file sync in real time. Choo
 
 If you prefer the centralized approach, jump to [Option B](#option-b--server-mode-centralized).
 
-#### Option A — LAN Mode (no server needed)
+#### Option A — LAN P2P Mode (no server needed)
 
 Initialize direct peer-to-peer synchronization without central infrastructure or pre-shared keys. Peers discover each other via mDNS. You can
 test it locally with two terminals on the same machine:
@@ -160,12 +160,12 @@ echo "hello hsync" > /tmp/hsync-a/hello.txt
 # 2. Terminal 1 — Initialize Node A (Authoritative Data Source)
 #    Utilizing --force-master prevents initial data reconciliation conflicts
 HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
-  hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master
+  hsync lan -b mybucket -p /tmp/hsync-a --force-master
 
 # 3. Terminal 2 — Initialize Node B (Receiver)
 # Automatically discovers Node A via mDNS and downloads hello.txt automatically
 HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
-  hsync -b mybucket -p /tmp/hsync-b --lan-mode
+  hsync lan -b mybucket -p /tmp/hsync-b
 
 # 4. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
@@ -249,13 +249,13 @@ echo "hello hsync" > /tmp/hsync-a/hello.txt
 #    The bootstrap admin token provides full access for this demo
 HSYNC_API_KEY="hs_HsyncAdminBootstrap01_0000000000000000000000000000000000000000000000000000000000000001" \
   HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
-  hsync -s https://localhost:9753 --insecure -b mybucket -p /tmp/hsync-a
+  hsync server -s https://localhost:9753 --insecure -b mybucket -p /tmp/hsync-a
 
 # 4. Terminal 2 — Initialize Client B
 #    Receives events via WebSocket and downloads hello.txt automatically
 HSYNC_API_KEY="hs_HsyncAdminBootstrap01_0000000000000000000000000000000000000000000000000000000000000001" \
   HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
-  hsync -s https://localhost:9753 --insecure -b mybucket -p /tmp/hsync-b
+  hsync server -s https://localhost:9753 --insecure -b mybucket -p /tmp/hsync-b
 
 # 5. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
@@ -269,7 +269,7 @@ cat /tmp/hsync-b/hello.txt   # → hello hsync
 
 > **Note:** For the full Server Mode walkthrough (dedicated accounts, bucket setup, production deployment), see [Server Mode](docs/server-mode.md) and the [Server Getting Started guide](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started.md).
 
-If you prefer to go serverless, use [Option A](#option-a--lan-mode-no-server-needed) instead.
+If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server-needed) instead.
 
 ## Documentation
 

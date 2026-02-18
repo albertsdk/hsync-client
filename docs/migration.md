@@ -35,19 +35,19 @@ and caveats to watch for.
 
 3. **Create a bucket and upload from the source device**:
    ```bash
-   hsync -s https://server.example.com:9753 -b mybucket -p /path/to/files
+   hsync server -s https://server.example.com:9753 -b mybucket -p /path/to/files
    ```
 
 4. **Connect remaining devices**. On each additional device, point HSYNC to an
    **empty directory** and let it download everything:
    ```bash
-   hsync -s https://server.example.com:9753 -b mybucket -p /path/to/empty/dir
+   hsync server -s https://server.example.com:9753 -b mybucket -p /path/to/empty/dir
    ```
    Using an empty directory on new peers prevents accidental overwrites.
 
 5. **Replace your rsync cron job or script** with HSYNC in continuous mode:
    ```bash
-   hsync -s https://server.example.com:9753 -b mybucket -p /path/to/files
+   hsync server -s https://server.example.com:9753 -b mybucket -p /path/to/files
    ```
 
 ### Caveats
@@ -57,7 +57,7 @@ and caveats to watch for.
   correctly for offline peers.
 - rsync's `--exclude` patterns translate to `.hsyncignore` rules
   (gitignore syntax).
-- Bandwidth limits: use `--max-bandwidth-upload` and `--max-bandwidth-download`
+- Bandwidth limits: use `--limit-upload` and `--limit-download`
   instead of rsync's `--bwlimit`.
 
 ---
@@ -79,7 +79,7 @@ and caveats to watch for.
 1. **Decide on topology**:
    - **Server Mode** (recommended for internet sync): set up an HSYNC Server
      and connect all devices to it.
-   - **LAN Mode** (equivalent to Syncthing's P2P): run `hsync --lan-mode` on
+   - **LAN Mode** (equivalent to Syncthing's P2P): run `hsync lan` on
      each device on the same network.
 
 2. **Export your Syncthing ignore patterns**. Syncthing's `.stignore` uses a
@@ -154,9 +154,9 @@ and caveats to watch for.
   does not. If you need these features, consider running a separate file
   browser (e.g., FileBrowser, Nextcloud) alongside HSYNC.
 - Cloud storage's "selective sync" (sync only some folders) maps to HSYNC's
-  `--filter-path` option:
+  `--subdir` option:
   ```bash
-  hsync -s https://server:9753 -b mybucket -p /path --filter-path Documents/
+  hsync server -s https://server:9753 -b mybucket -p /path --subdir Documents/
   ```
 
 ---
@@ -175,7 +175,7 @@ drives), HSYNC automates the entire process:
 3. **Run in continuous mode** (the default) on each device. HSYNC will detect changes in
    real time and propagate them automatically.
 
-4. **For LAN-only sync**, use `--lan-mode` without a server — devices
+4. **For LAN-only sync**, use the `lan` subcommand without a server — devices
    discover each other via mDNS and sync directly.
 
 ---

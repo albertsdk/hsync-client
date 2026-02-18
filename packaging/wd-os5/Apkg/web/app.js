@@ -184,9 +184,8 @@
         // POSIX single-quote every interpolated value so the generated command
         // is safe to paste into a shell regardless of its contents (no $ /
         // backtick / " expansion, no < > redirection from the placeholder).
-        let cmd = 'hsync -b ' + shellQuote(bucket)
-            + ' -p ' + shellQuote(PATH_PLACEHOLDER)
-            + ' --lan-mode';
+        let cmd = 'hsync lan -b ' + shellQuote(bucket)
+            + ' -p ' + shellQuote(PATH_PLACEHOLDER);
         if (group) cmd += ' --lan-group ' + shellQuote(group);
 
         const showKey = key.length > 0;

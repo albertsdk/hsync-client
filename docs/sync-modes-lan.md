@@ -11,7 +11,7 @@ a central server. One device is elected **master** and serves files to all
 other devices (**slaves**).
 
 ```bash
-hsync -b mybucket -p ~/Sync --lan-mode
+hsync lan -b mybucket -p ~/Sync
 ```
 
 ### How it works
@@ -55,7 +55,7 @@ and reacts to changes (continuous mode is implicit). To run a **single
 sync cycle and exit**, pass `--once` (the universal one-shot selector):
 
 ```bash
-hsync -b mybucket -p ~/Sync --lan-mode --once
+hsync lan -b mybucket -p ~/Sync --once
 ```
 
 This compares local and remote files, syncs changes, and shuts down — useful
@@ -66,7 +66,7 @@ for cron jobs or manual "sync now" operations on a LAN.
 Preview what would change without modifying files:
 
 ```bash
-hsync --dry-run -b mybucket -p ~/Sync --lan-mode
+hsync --dry-run -b mybucket -p ~/Sync
 ```
 
 ### Conflict Handling
