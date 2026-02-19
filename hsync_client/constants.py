@@ -97,6 +97,11 @@ HTTP_TIMEOUT_MIN = 1
 HTTP_TIMEOUT_MAX = 300
 HTTP_TIMEOUT_DEFAULT = 30
 
+# Minimum free disk space limits (MB)
+MIN_FREE_DISK_SPACE_MB_MIN = 0  # 0 = disabled
+MIN_FREE_DISK_SPACE_MB_MAX = 100_000  # 100 GB
+MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
+
 
 # =============================================================================
 # Sentinel File for Empty Directories

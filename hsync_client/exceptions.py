@@ -183,6 +183,13 @@ class PermissionError(FileOperationError):
     default_message = "Permission denied"
 
 
+class InsufficientDiskSpaceError(FileOperationError):
+    """Insufficient disk space for sync operation."""
+
+    error_code = "HSYNC-C4004"
+    default_message = "Insufficient disk space"
+
+
 # =============================================================================
 # Utility Functions
 # =============================================================================

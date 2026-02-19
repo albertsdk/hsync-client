@@ -295,6 +295,8 @@ class HsyncConfig(TypedDict):
     MAX_BANDWIDTH_UPLOAD: int | None
     # Maximum download bandwidth in bytes per second (None = unlimited)
     MAX_BANDWIDTH_DOWNLOAD: int | None
+    # Minimum free disk space in MB before sync (0 = disabled)
+    MIN_FREE_DISK_SPACE: int
 
 
 # =============================================================================
