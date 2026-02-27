@@ -63,6 +63,10 @@ In plain terms, LAN mode works in three steps:
    concurrent edits are resolved causally (see
    [Conflict Resolution](conflict-resolution.md)).
 
+<p align="center">
+  <img src="assets/p2p-master-election.gif" alt="P2P master election and relay — A is elected master and relays traffic between B and C; when A goes offline, B takes over as master; when A returns it rejoins as a subordinate syncing through B, so every change reaches all peers">
+</p>
+
 > **Important — local-only files.** In the default **bidirectional** direction,
 > files that exist only on this peer are **uploaded** to the master, not
 > deleted. A local-only file is removed only when:
