@@ -17,13 +17,6 @@ to "watching"):
 instance limit reached (fs.inotify.max_user_instances): ...
 ```
 
-On older client versions the same condition surfaced as a raw kernel error
-inside a generic disconnect line:
-
-```
-WebSocket connection ended: OSError: [Errno 24] inotify instance limit reached
-```
-
 **Cause.** On Linux the file watcher is built on the kernel's inotify API,
 which has two per-user limits:
 
