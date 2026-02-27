@@ -238,10 +238,10 @@ peer without a group matches **only** other peers that also run without a group.
 
 ```bash
 # Team A - only sees other Team A peers
-hsync lan -b project -p ~/Projects --lan-group "team-a"
+hsync lan -b project -p ~/Projects --group "team-a"
 
 # Team B - only sees other Team B peers
-hsync lan -b project -p ~/Projects --lan-group "team-b"
+hsync lan -b project -p ~/Projects --group "team-b"
 
 # No group - only sees other peers that also run without a group
 hsync lan -b project -p ~/Projects
@@ -365,8 +365,8 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 
 ### Port Conflicts
 
-1. **Use random port**: Default `--lan-port 0` avoids conflicts
-2. **Specify port**: Use `--lan-port 9000` if you need a fixed port
+1. **Use random port**: Default `--listen-port 0` avoids conflicts
+2. **Specify port**: Use `--listen-port 9000` if you need a fixed port
 
 ## Comparison: Server Mode vs LAN Mode
 

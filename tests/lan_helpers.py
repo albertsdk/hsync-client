@@ -174,7 +174,7 @@ def _lan_start(
     if never_master:
         args.append("--never-master")
     if lan_port:
-        args += ["--lan-port", str(lan_port)]
+        args += ["--listen-port", str(lan_port)]
     args += list(extra_args)
     return subprocess.Popen(
         args,
@@ -379,7 +379,7 @@ def _wait_for_master(
     The master only emits ``"MASTER"`` after ``add_peer`` triggers
     ``_elect_master``, so we must have at least one slave running before
     waiting for the log line. ``slave_extra_args`` must mirror any discovery
-    partition flags the master was started with (e.g. ``--lan-group``) or the
+    partition flags the master was started with (e.g. ``--group``) or the
     two would never discover each other.
 
     The temporary slave runs on *slave_dir* and must be gone (terminated)

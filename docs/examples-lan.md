@@ -87,12 +87,12 @@ This peer receives changes but never uploads. Useful for read-only mirrors.
 
 Group A:
 ```bash
-hsync lan -b shared -p ~/Shared --lan-group team-a
+hsync lan -b shared -p ~/Shared --group team-a
 ```
 
 Group B:
 ```bash
-hsync lan -b shared -p ~/Shared --lan-group team-b
+hsync lan -b shared -p ~/Shared --group team-b
 ```
 
 Devices in different groups are invisible to each other, even on the same Wi-Fi.
@@ -100,7 +100,7 @@ Devices in different groups are invisible to each other, even on the same Wi-Fi.
 ## 2.8 LAN with a fixed port (firewalled environments)
 
 ```bash
-hsync lan -b shared -p ~/Shared --lan-port 8080
+hsync lan -b shared -p ~/Shared --listen-port 8080
 ```
 
 The client uses port 8080 for HTTPS and 8081 for WSS. Set firewall rules

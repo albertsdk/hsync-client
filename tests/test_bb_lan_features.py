@@ -47,12 +47,12 @@ class TestLanGroupFiltering:
             lan_master_dir,
             lan_bucket,
             force_master=True,
-            extra_args=("--lan-group", "group-alpha"),
+            extra_args=("--group", "group-alpha"),
         )
         try:
             # The temp slave must join the master's group or it is invisible.
             _wait_for_master(
-                master, lan_slave_dir, lan_bucket, slave_extra_args=("--lan-group", "group-alpha")
+                master, lan_slave_dir, lan_bucket, slave_extra_args=("--group", "group-alpha")
             )
 
             # Slave in different group — it won't connect, so file won't sync
@@ -60,7 +60,7 @@ class TestLanGroupFiltering:
                 lan_slave_dir,
                 lan_bucket,
                 never_master=True,
-                extra_args=("--lan-group", "group-beta"),
+                extra_args=("--group", "group-beta"),
             )
             try:
                 (Path(lan_master_dir) / "group_test.txt").write_bytes(b"group\n")
@@ -83,18 +83,18 @@ class TestLanGroupFiltering:
             lan_master_dir,
             lan_bucket,
             force_master=True,
-            extra_args=("--lan-group", "group-alpha"),
+            extra_args=("--group", "group-alpha"),
         )
         try:
             _wait_for_master(
-                master, lan_slave_dir, lan_bucket, slave_extra_args=("--lan-group", "group-alpha")
+                master, lan_slave_dir, lan_bucket, slave_extra_args=("--group", "group-alpha")
             )
 
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
                 never_master=True,
-                extra_args=("--lan-group", "group-alpha"),
+                extra_args=("--group", "group-alpha"),
             )
             try:
                 # Wait for the slave's watcher to be live before creating files

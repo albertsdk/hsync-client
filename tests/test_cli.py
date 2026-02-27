@@ -550,7 +550,7 @@ class TestCapabilitiesJson:
             assert flag in doc["cli_options"]["lan"]
         for flag in ("--server", "--insecure", "--ca-cert"):
             assert flag in doc["cli_options"]["server"]
-        assert "--lan-port" not in doc["cli_options"]["server"]
+        assert "--listen-port" not in doc["cli_options"]["server"]
         assert "--server" not in doc["cli_options"]["lan"]
 
     def test_does_not_require_bucket(self):
@@ -571,5 +571,5 @@ class TestCapabilitiesJson:
             assert all(f.startswith("--") for f in flags)
         assert "--limit-upload" in options["lan"]
         assert "--server" in options["server"]
-        assert "--lan-port" not in options["server"]
+        assert "--listen-port" not in options["server"]
         assert "--server" not in options["lan"]

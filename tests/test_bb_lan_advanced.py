@@ -244,7 +244,7 @@ class TestOneShot:
 
 class TestLanPortOverride:
     def test_lan_port_override(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--lan-port on master: slave connects on the specified port."""
+        """--listen-port on master: slave connects on the specified port."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True, lan_port=12345)
         try:
             # Start a slave so the master discovers it and runs the election

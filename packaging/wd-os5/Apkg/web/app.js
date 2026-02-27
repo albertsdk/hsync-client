@@ -186,7 +186,7 @@
         // backtick / " expansion, no < > redirection from the placeholder).
         let cmd = 'hsync lan -b ' + shellQuote(bucket)
             + ' -p ' + shellQuote(PATH_PLACEHOLDER);
-        if (group) cmd += ' --lan-group ' + shellQuote(group);
+        if (group) cmd += ' --group ' + shellQuote(group);
 
         const showKey = key.length > 0;
         const masked = showKey ? ('HSYNC_LAN_KEY=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;

@@ -61,7 +61,7 @@ non-force-master peers.
 Yes. Set `--never-master`. That device always stays a slave.
 
 **Q: How do I keep multiple sets of devices separate on the same LAN?**
-Use the `--lan-group` flag. Only devices with the same group name will see
+Use the `--group` flag. Only devices with the same group name will see
 each other. Devices with different groups (or no group) are isolated.
 
 **Q: Do I need to set up port forwarding on my router?**
@@ -77,7 +77,7 @@ No. mDNS discovery is subnet-local. Use Server Mode to sync across different
 networks.
 
 **Q: What ports does LAN mode use?**
-Two consecutive ports, starting from `--lan-port` (default 9753):
+Two consecutive ports, starting from `--listen-port` (default 9753):
 - HTTP port: serves the REST API for file uploads/downloads
 - WebSocket port (HTTP port + 1): real-time event stream
 

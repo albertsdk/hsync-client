@@ -86,7 +86,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Zero-Config Discovery:** Utilizes mDNS (Bonjour/Avahi) for automatic peer detection within broadcast domains.
 * **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
-* **Network Isolation:** Supports `HSYNC_LAN_KEY` authentication and `--lan-group` partitioning to isolate distinct sync clusters on the same physical network.
+* **Network Isolation:** Supports `HSYNC_LAN_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
 
 ## Quick Start
 
@@ -179,7 +179,7 @@ Watch above animation to see what happens.
 
 **Architectural Note (Conflict Resolution):** The `--force-master` flag establishes the initial file ledger. The master acts merely as a transport relay; logical conflicts are resolved deterministically across all nodes using vector clocks. Always assign the initial master role to the endpoint housing the authoritative data.
 
-> **Note:** For the full P2P setup (master election, pairing, pre-shared secret key `HSYNC_LAN_KEY`, group filtering with `--lan-group`), see [LAN Mode](docs/lan-mode.md).
+> **Note:** For the full P2P setup (master election, pairing, pre-shared secret key `HSYNC_LAN_KEY`, group filtering with `--group`), see [LAN Mode](docs/lan-mode.md).
 
 #### Option B — Server Mode (centralized)
 

@@ -118,7 +118,7 @@ case "${HSYNC_MODE}" in
         # its certificate fingerprint, which slaves pin (TOFU). There is no
         # plain-HTTP option.
         [ "${HSYNC_LAN_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
-        [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --lan-group "${HSYNC_LAN_GROUP}"
+        [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --group "${HSYNC_LAN_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in
             master)       set -- "$@" --force-master ;;

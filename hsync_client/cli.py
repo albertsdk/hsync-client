@@ -617,11 +617,11 @@ ApiKeyFdOpt = Annotated[
 # lan-subcommand options
 # =============================================================================
 
-LanPortOpt = Annotated[
+ListenPortOpt = Annotated[
     int,
     typer.Option(
-        "--lan-port",
-        help="Port to use when acting as LAN master.",
+        "--listen-port",
+        help="Port to listen on when acting as LAN master (0 = auto).",
         metavar="PORT",
         rich_help_panel="LAN Mode",
     ),
@@ -639,10 +639,10 @@ DiscoveryTimeoutOpt = Annotated[
         rich_help_panel="LAN Mode",
     ),
 ]
-LanGroupOpt = Annotated[
+GroupOpt = Annotated[
     str | None,
     typer.Option(
-        "--lan-group",
+        "--group",
         help="Group name for LAN peer filtering.",
         metavar="GROUP",
         rich_help_panel="LAN Mode",
@@ -783,9 +783,9 @@ def main(
 def lan(
     bucket: BucketOpt,
     http_timeout: HttpTimeoutOpt = None,
-    lan_port: LanPortOpt = 0,
+    lan_port: ListenPortOpt = 0,
     discovery_timeout: DiscoveryTimeoutOpt = None,
-    lan_group: LanGroupOpt = None,
+    lan_group: GroupOpt = None,
     force_master: ForceMasterOpt = False,
     never_master: NeverMasterOpt = False,
     require_pairing: RequirePairingOpt = False,
@@ -837,7 +837,7 @@ def lan(
         $ hsync lan -b shared --force-master
 
         [dim]# Isolate a sync group and authenticate it[/dim]
-        $ HSYNC_LAN_KEY=mysecret hsync lan -b shared --lan-group home
+        $ HSYNC_LAN_KEY=mysecret hsync lan -b shared --group home
     """
     parsed_bw_upload, parsed_bw_download = _validate_shared_options(
         http_timeout=http_timeout,

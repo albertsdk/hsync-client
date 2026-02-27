@@ -10,8 +10,8 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | Option | Description | Default |
 |---|---|---|
 | `lan` subcommand | Enable LAN P2P mode (selected with `hsync lan`) | — (CLI only) |
-| `--lan-group` | LAN group name (only peers in the same group see each other) | — (all peers visible) |
-| `--lan-port` | Port when acting as LAN master; `0` = pick a free port | `0` (auto) |
+| `--group` | LAN group name (only peers in the same group see each other) | — (all peers visible) |
+| `--listen-port` | Port when acting as LAN master; `0` = pick a free port | `0` (auto) |
 | `--force-master` | Force this device to be the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
@@ -49,7 +49,7 @@ The `lan` subcommand and `--force-master` have no environment-variable equivalen
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_LAN_GROUP` | LAN group name (alternative to `--lan-group`) | — |
+| `HSYNC_LAN_GROUP` | LAN group name (alternative to `--group`) | — |
 | `HSYNC_LAN_KEY` | Shared secret for peer authentication | — (hello handshake, unauthenticated) |
 | `HSYNC_LAN_PORT` | LAN master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |

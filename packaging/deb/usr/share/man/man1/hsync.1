@@ -253,8 +253,8 @@ Hidden option intended for GUI integration.
 .\" --- LAN subcommand ---
 .SS LAN subcommand
 .TP
-.BR \-\-lan\-port =\fIPORT\fP
-Port to use when acting as LAN master (default: 0 = auto).
+.BR \-\-listen\-port =\fIPORT\fP
+Port to listen on when acting as LAN master (default: 0 = auto).
 .TP
 .BR \-\-discovery\-timeout =\fISEC\fP
 Time to wait for initial LAN peer discovery
@@ -263,7 +263,7 @@ Time to wait for initial LAN peer discovery
 wait indefinitely, matching the server-mode default of retrying an
 unreachable server forever).
 .TP
-.BR \-\-lan\-group =\fIGROUP\fP
+.BR \-\-group =\fIGROUP\fP
 Group name for LAN peer filtering. Only peers with the same group
 will discover each other.
 .TP
@@ -362,7 +362,7 @@ key can join the session.
 .
 .P
 Use
-.B \-\-lan\-group
+.B \-\-group
 to isolate multiple independent sync groups on the same network.
 .
 .\" ---------------------------------------------------------------------
@@ -600,7 +600,7 @@ hsync lan \-b shared
 LAN mode with authentication and a specific group:
 .RS
 .EX
-HSYNC_LAN_KEY=mysecret hsync lan \-b shared \-\-lan\-group home
+HSYNC_LAN_KEY=mysecret hsync lan \-b shared \-\-group home
 .EE
 .RE
 .TP

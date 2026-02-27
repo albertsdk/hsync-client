@@ -140,7 +140,7 @@ option to configure.
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
 | Strict pairing      | `--require-pairing`                            | off                              |
-| Group               | `--lan-group`                                  | _empty_                          |
+| Group               | `--group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
 | Server URL          | `-s / --server`                                | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
@@ -189,10 +189,10 @@ such as an invalid bucket or boolean fields), so the command always matches
 what the NAS runs with:
 
 ```
-HSYNC_LAN_KEY='<masked>' hsync lan -b '<bucket>' -p '<local-folder>' [--lan-group '<group>']
+HSYNC_LAN_KEY='<masked>' hsync lan -b '<bucket>' -p '<local-folder>' [--group '<group>']
 ```
 
-- `<bucket>` and `--lan-group` mirror the NAS settings so the peer can find the
+- `<bucket>` and `--group` mirror the NAS settings so the peer can find the
   group; `<local-folder>` is a placeholder for the folder to sync on the other
   device. Every interpolated value is POSIX single-quoted, so the command is
   safe to paste even if a value contains `$`, `"`, backticks, or spaces.
