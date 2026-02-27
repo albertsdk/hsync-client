@@ -91,7 +91,9 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 ## Quick Start
 
 **LAN/P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--lan-p2p-mode-no-server-needed) steps for details.
-![LAN/P2P Mode live demo: Device B discovers Device A via mDNS and receives `hello.txt` in real time — no server needed](docs/assets/demo-lan.gif)
+<p align="center">
+  <img src="docs/assets/demo-lan.gif" alt="LAN/P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
+</p>
 
 ### Step 1 — Agent Installation
 
