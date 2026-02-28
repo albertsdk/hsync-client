@@ -16,21 +16,16 @@ same local network, without requiring a centralized HSYNC server.
 
 ```mermaid
 flowchart TB
-    subgraph "① Client-Server Mode"
-        C1A[Client A] -->|"sync"| S[Server]
-        C1B[Client B] -->|"sync"| S
-        C1C[Client C] -->|"sync"| S
-    end
-
     subgraph "② LAN Mode (P2P)"
         C2A[Client A<br/>Master] <-->|"sync"| C2B[Client B]
         C2A <-->|"sync"| C2C[Client C]
     end
 
-    style S fill:#fff3e0,stroke:#e65100
-    style C2A fill:#e8f5e9,stroke:#2e7d32
-    style C2B fill:#e3f2fd,stroke:#1565c0
-    style C2C fill:#f3e5f5,stroke:#7b1fa2
+    subgraph "① Client-Server Mode"
+        C1A[Client A] -->|"sync"| S[Server]
+        C1B[Client B] -->|"sync"| S
+        C1C[Client C] -->|"sync"| S
+    end
 ```
 
 ## Key Features
