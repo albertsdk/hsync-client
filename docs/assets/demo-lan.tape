@@ -27,7 +27,7 @@ Set Height 760
 Set Margin 12
 Set Padding 20
 Set Framerate 15
-Set TypingSpeed 5ms
+Set TypingSpeed 150ms
 
 # --- hidden setup: clean start, no leftovers, neutral demo environment ------
 # demo-lan.sh returns immediately after creating the tmux session and spawning
