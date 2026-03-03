@@ -64,7 +64,7 @@ threshold, so `[READY]` always means "reacting to events now".
 ## Watcher + transfer core (shared by both modes)
 
 ```
-watchdog Observer ──> BaseFileEventHandler (file_event_handler.py:49)
+WatcherManager (watcher.py:105) ──> BaseFileEventHandler (file_event_handler.py:79)
         │ on_created/on_closed/on_modified/on_deleted/on_moved
         ▼
  stability check (transfer._wait_for_stable_file) ──> upload_file (transfer.py)

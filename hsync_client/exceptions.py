@@ -131,11 +131,11 @@ class InsufficientDiskSpaceError(FileOperationError):
 class WatcherStartError(FileOperationError):
     """The local file watcher (watchdog) could not start.
 
-    Raised by :func:`hsync_client.utils.start_observer_guarded` when the
-    kernel refuses the watcher because an inotify limit is exhausted
-    (``Errno 24`` instance limit / ``Errno 28`` watch limit). The message is
-    the human-readable remediation hint and ``original`` keeps the raw
-    :class:`OSError` raised by watchdog, so callers can special-case the
+    Raised by :class:`hsync_client.watcher.WatcherManager` when both the inotify
+    backend AND the :class:`PollingObserver` fallback failed (an inotify limit —
+    ``Errno 24`` instance / ``Errno 28`` watch — or descriptor exhaustion). The
+    message is the human-readable remediation hint and ``original`` keeps the
+    raw :class:`OSError` raised by watchdog, so callers can special-case the
     retry policy (a kernel limit cannot clear by retrying fast) without
     re-parsing the kernel error string.
     """

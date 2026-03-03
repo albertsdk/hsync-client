@@ -90,12 +90,15 @@ Yes, but initial sync of thousands of small files may take time due to
 per-file overhead. The event-driven architecture handles ongoing changes to
 many small files efficiently.
 
-**Q: Why does the log say the file watcher cannot start (`[WATCHER ERROR]`, inotify limits)?**
+**Q: Why does the log say the file watcher degraded to polling (`[WATCHER FALLBACK]`, inotify limits)?**
 The machine's per-user kernel inotify limits are exhausted — a condition of
 the host, not of HSYNC (editors, browsers and desktop services each hold
-watcher instances). See
-[The file watcher cannot start (inotify limits)](troubleshooting.md) for the
-diagnosis commands and the two remedies (raise the limits or free some up).
+watcher instances). Real-time sync continues on the polling fallback (higher
+CPU, ~1 s event latency) and inotify is restored automatically once the
+limits free up (`[WATCHER RESTORE]`). A `[WATCHER ERROR]` line instead means
+even the polling fallback could not start. See
+[The file watcher degrades to polling (inotify limits)](troubleshooting.md) for the
+diagnosis commands and the remedies (raise the limits or free some up).
 
 **Q: What are the `.hsynckeep` files that keep appearing in my synced folder?**
 HSYNC creates a small, empty (0-byte) file named `.hsynckeep` in every folder

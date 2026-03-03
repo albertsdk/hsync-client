@@ -143,12 +143,16 @@ local network. Bandwidth limiting is available.
 Only changed files are transferred. The event-driven architecture avoids
 polling. Compression and delta transfer reduce bandwidth further.
 
-**Q: Why does the log say the file watcher cannot start (`[WATCHER ERROR]`, inotify limits)?**
+**Q: Why does the log say the file watcher degraded to polling (`[WATCHER FALLBACK]`, inotify limits)?**
 The machine's per-user kernel inotify limits are exhausted — a condition of
 the host, not of HSYNC (editors, browsers and desktop services each hold
-watcher instances). It can hit whichever device starts its watcher last. See
-[The file watcher cannot start (inotify limits)](troubleshooting.md) for the
-diagnosis commands and the two remedies (raise the limits or free some up).
+watcher instances). It can hit whichever device starts its watcher last.
+Real-time sync continues on the polling fallback (higher CPU, ~1 s event
+latency) and inotify is restored automatically once the limits free up
+(`[WATCHER RESTORE]`). A `[WATCHER ERROR]` line instead means even the
+polling fallback could not start. See
+[The file watcher degrades to polling (inotify limits)](troubleshooting.md) for the
+diagnosis commands and the remedies (raise the limits or free some up).
 
 **Q: Why are very large files transferred uncompressed over the LAN?**
 Compressible files below 256 MB are transferred with zstd compression, but

@@ -425,10 +425,11 @@ def _check_disk_space(local_path: str, min_free_mb: int, logger: Any) -> None:
 
 
 def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "Any":
-    """Start a watchdog observer that reloads *matcher* when ``.hsyncignore`` changes.
+    """Start a watcher that reloads *matcher* when ``.hsyncignore`` changes.
 
-    Returns the running observer (so the caller can stop it on shutdown), or
-    ``None`` if watchdog is unavailable or the directory does not exist.
+    Returns the running :class:`~hsync_client.watcher.WatcherManager` (so the
+    caller can stop it on shutdown), or ``None`` if watchdog is unavailable or
+    the directory does not exist.
     """
     import logging as _logging
 
@@ -437,7 +438,6 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
     try:
         from hsync_common.constants import HSYNCIGNORE_FILENAME
         from watchdog.events import FileSystemEventHandler
-        from watchdog.observers import Observer
 
         class _HsyncignoreHandler(FileSystemEventHandler):
             def on_modified(self, event) -> None:  # type: ignore[override]
@@ -451,17 +451,14 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
         if not Path(bucket_root).exists():
             return None
 
-        observer = Observer()
-        observer.daemon = True
-        from hsync_client.utils import start_observer_guarded
+        from hsync_client.watcher import WatcherManager
 
-        # Optional helper: on an inotify-limit failure the parsable
-        # [WATCHER ERROR] remediation is logged by the guarded helper and the
-        # .hsyncignore hot-reload simply stays off (matcher rules continue to
-        # apply; editing .hsyncignore then requires a client restart).
-        start_observer_guarded(observer, _HsyncignoreHandler(), bucket_root, recursive=False)
+        # On an inotify-limit failure the watcher degrades to polling (logged
+        # with [WATCHER FALLBACK]) instead of leaving the hot-reload off.
+        watcher = WatcherManager(bucket_root, recursive=False)
+        watcher.start(_HsyncignoreHandler())
         _log.debug(f"Hot-reload watcher started for {HSYNCIGNORE_FILENAME} in {bucket_root}")
-        return observer
+        return watcher
     except Exception as exc:  # pragma: no cover
         _log.warning(f"Could not start .hsyncignore hot-reload watcher: {exc}")
         return None

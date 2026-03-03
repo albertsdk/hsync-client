@@ -75,9 +75,8 @@ class TestLanWebsocketClientReadiness:
                 },
                 clear=False,
             ),
-            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "WatcherManager", MagicMock()),
             patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
-            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
             patch.object(ws, "log", mock_log),
             patch("websockets.connect", return_value=socket),
         ):

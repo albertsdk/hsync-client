@@ -14,7 +14,7 @@ SSOT in `hsync-common`.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `run_lan_mode` | `lan_handler.py:109` | start discovery, elect, branch to role; kicks off the background SNTP clock-offset probe (`timesync.start_ntp_clock_offset_probe`) so discovery never waits on an external time source |
-| `_run_as_master` | `:273` | start `LANServer` + `LANWebSocketServer` + watcher; **readiness threshold**: after both servers are up and `update_server_ready()` ran, it logs `[READY] Master ready — serving …` (`:346`). On `WatcherStartError` (inotify kernel limits, see [modules/sync-core.md](sync-core.md) "Watcher start") it tears the half-started WSS server down, does NOT advertise `server_ready`, and backs off `WATCHER_START_RETRY_DELAY_S` before the discovery loop retries |
+| `_run_as_master` | `:273` | start `LANServer` + `LANWebSocketServer` + watcher; **readiness threshold**: after both servers are up and `update_server_ready()` ran, it logs `[READY] Master ready — serving …` (`:346`). On `WatcherStartError` (the watcher could not start even on the polling fallback, see [modules/sync-core.md](sync-core.md) "Watcher lifecycle") it tears the half-started WSS server down, does NOT advertise `server_ready`, and backs off `WATCHER_START_RETRY_DELAY_S` before the discovery loop retries |
 | `_run_as_slave` | `:418` | TOFU-pin master, refresh tuning, then connect + sync; on `WatcherStartError` it backs off `WATCHER_START_RETRY_DELAY_S` before re-entering the discovery loop (a kernel limit never clears at the normal cadence) |
 | `_evaluate_master_pin` | `:377` | apply pin decision before slave connect |
 | `_refresh_lan_network_tuning` | `:107` | re-derive autotune-managed keys from real master RTT (slave, post-discovery) |

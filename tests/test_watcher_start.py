@@ -4,22 +4,24 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Regression tests for the watcher-start hardening (inotify limits).
+"""Regression tests for the file-watcher degradation (watchdog limits).
 
-On a machine whose kernel inotify limits are exhausted (e.g. Errno 24 when
-``fs.inotify.max_user_instances`` is full), watchdog raises a bare ``OSError``
-that previously surfaced as an opaque transport failure: the LAN slave logged
-a generic ``WebSocket connection ended: OSError: [Errno 24] inotify instance
-limit reached`` and looped at the discovery cadence (~10 s) without any
-remediation hint. The hardening under test:
+On a machine whose kernel inotify limits are exhausted (Errno 24 when
+``fs.inotify.max_user_instances`` is full, Errno 28 when
+``fs.inotify.max_user_watches`` is full), watchdog raises a bare ``OSError``
+that previously surfaced as an opaque transport failure and blocked realtime
+sync. The hardening under test:
 
-1. ``utils.inotify_exhaustion_hint`` classifies the two inotify failures;
-2. ``utils.start_observer_guarded`` logs a parsable ``[WATCHER ERROR]`` line
-   with the remediation hint and raises ``WatcherStartError``;
+1. ``watcher.watcher_oserror_class`` classifies the two inotify failures and the
+   generic file-descriptor exhaustion;
+2. ``watcher.WatcherManager`` downgrades to a ``PollingObserver`` on a limit (at
+   startup and, deferred, at runtime), logs a parsable ``[WATCHER FALLBACK]`` /
+   ``[FD EXHAUSTED]`` line, and restores inotify (``[WATCHER RESTORE]``) once
+   the limits free up;
 3. every retry loop (LAN master, LAN slave, remote continuous) applies the
-   dedicated slow backoff instead of the normal cadence.
-
-The pre-fix behavior fails assertions 2 and 3 (no parsable line, no backoff).
+   dedicated slow backoff instead of the normal cadence when both backends fail;
+4. a backend swap racing ``stop()`` never adopts the freshly built observer:
+   it is torn down instead, so no live watcher can outlive ``stop()``.
 """
 
 import errno
@@ -29,87 +31,322 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hsync_client.config import HsyncConfig
-from hsync_client.constants import WATCHER_START_RETRY_DELAY_S
+from hsync_client.constants import (
+    WATCHER_START_RETRY_DELAY_S,
+    WATCHER_UPGRADE_BACKOFF_FACTOR,
+    WATCHER_UPGRADE_PROBE_INITIAL_S,
+)
 from hsync_client.exceptions import WatcherStartError
-from hsync_client.utils import inotify_exhaustion_hint, start_observer_guarded
+from hsync_client.watcher import WatcherLimit, WatcherManager, watcher_oserror_class
 
-# The kernel strings watchdog surfaces on Linux (inotify_init / inotify_add_watch).
+# The kernel strings watchdog surfaces on Linux (inotify_init / inotify_add_watch)
+# plus the generic descriptor-exhaustion failures.
 _INSTANCE_ERRNO = OSError(errno.EMFILE, "inotify instance limit reached")
 _WATCH_ERRNO = OSError(errno.ENOSPC, "inotify watch limit reached")
+_FD_ERRNO = OSError(errno.EMFILE, "Too many open files")
 
 
-class TestInotifyExhaustionHint:
-    """Classifier: only the two inotify-limit errors produce a hint."""
+class TestWatcherOserrorClass:
+    """Classifier: inotify limits, FD exhaustion, and pass-through."""
 
-    def test_instance_limit_hint(self):
-        hint = inotify_exhaustion_hint(_INSTANCE_ERRNO)
-        assert hint is not None
-        assert "max_user_instances" in hint
+    def test_instance_limit(self):
+        assert watcher_oserror_class(_INSTANCE_ERRNO) is WatcherLimit.INOTIFY_INSTANCES
 
-    def test_watch_limit_hint(self):
-        hint = inotify_exhaustion_hint(_WATCH_ERRNO)
-        assert hint is not None
-        assert "max_user_watches" in hint
+    def test_watch_limit(self):
+        assert watcher_oserror_class(_WATCH_ERRNO) is WatcherLimit.INOTIFY_WATCHES
+
+    def test_emfile_fd_exhaustion(self):
+        assert watcher_oserror_class(_FD_ERRNO) is WatcherLimit.FD_EXHAUSTION
+
+    def test_enfile_fd_exhaustion(self):
+        err = OSError(errno.ENFILE, "Too many open files in system")
+        assert watcher_oserror_class(err) is WatcherLimit.FD_EXHAUSTION
 
     def test_other_oserror_returns_none(self):
-        assert inotify_exhaustion_hint(OSError(errno.EACCES, "Permission denied")) is None
-
-    def test_emfile_without_inotify_returns_none(self):
-        # A plain too-many-open-files is not necessarily inotify: the caller
-        # keeps its generic handling.
-        assert inotify_exhaustion_hint(OSError(errno.EMFILE, "Too many open files")) is None
+        assert watcher_oserror_class(OSError(errno.EACCES, "Permission denied")) is None
 
     def test_non_oserror_returns_none(self):
-        assert inotify_exhaustion_hint(ValueError("inotify instance limit reached")) is None
+        assert watcher_oserror_class(ValueError("inotify instance limit reached")) is None
 
 
-class TestStartObserverGuarded:
-    """The guarded start: classify, log parsably, raise typed."""
+def _build_raising(exc: BaseException):
+    def _build(backend: str) -> None:
+        raise exc
 
-    def _observer_raising(self, exc: BaseException) -> MagicMock:
+    return _build
+
+
+def _manager_with_build(tmp_path, inotify_exc=None, poll_exc=None) -> WatcherManager:
+    manager = WatcherManager(str(tmp_path))
+
+    def _build(backend: str) -> MagicMock:
+        exc = inotify_exc if backend == "inotify" else poll_exc
         observer = MagicMock()
-        observer.start.side_effect = exc
+        if exc is not None:
+            # Stand-in for the real _build_and_start failing part-way: the
+            # raised OSError must escape the build itself so WatcherManager
+            # applies its in-flight failure handling.
+            observer.start.side_effect = exc
+            observer.start()  # raise now: the mock build fails in-flight
         return observer
 
-    def test_inotify_instance_failure_raises_watcher_start_error(self, tmp_path):
-        observer = self._observer_raising(_INSTANCE_ERRNO)
-        with patch("hsync_client.utils.log.error") as mock_error:
-            with pytest.raises(WatcherStartError) as excinfo:
-                start_observer_guarded(observer, MagicMock(), str(tmp_path))
-        # Parsable label + path + hint in one log line.
-        logged = mock_error.call_args[0][0]
-        assert "[WATCHER ERROR]" in logged
-        assert str(tmp_path) in logged
-        assert "max_user_instances" in logged
-        # The raw kernel error rides along for callers that need it.
-        assert excinfo.value.original is _INSTANCE_ERRNO
-        observer.schedule.assert_called_once()
+    manager._build_and_start = _build  # type: ignore[method-assign]
+    return manager
 
-    def test_inotify_watch_failure_raises_watcher_start_error(self, tmp_path):
-        observer = self._observer_raising(_WATCH_ERRNO)
-        with patch("hsync_client.utils.log.error"):
+
+class TestWatcherManagerStart:
+    """Startup: inotify success, downgrade to polling, and the typed failure."""
+
+    def test_inotify_success(self, tmp_path):
+        manager = _manager_with_build(tmp_path)
+        handler = MagicMock()
+        with (
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+            patch.object(WatcherManager, "_schedule_supervisor") as schedule,
+        ):
+            manager.start(handler)
+        assert manager._backend == "inotify"
+        assert manager._observer is not None
+        assert (handler, str(tmp_path), True) in manager._registrations
+        schedule.assert_not_called()
+
+    def test_inotify_watch_limit_downgrades_to_polling(self, tmp_path):
+        manager = _manager_with_build(tmp_path, inotify_exc=_WATCH_ERRNO)
+        with (
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+            patch.object(WatcherManager, "_schedule_supervisor") as schedule,
+            patch("hsync_client.watcher.log.warning") as warn,
+        ):
+            manager.start(MagicMock())
+        assert manager._backend == "polling"
+        schedule.assert_called_once()
+        assert any("[WATCHER FALLBACK]" in str(c.args[0]) for c in warn.call_args_list if c.args)
+
+    def test_fd_exhaustion_downgrades_to_polling(self, tmp_path):
+        manager = _manager_with_build(tmp_path, inotify_exc=_FD_ERRNO)
+        with (
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+            patch.object(WatcherManager, "_schedule_supervisor"),
+            patch("hsync_client.watcher.log.warning") as warn,
+        ):
+            manager.start(MagicMock())
+        assert manager._backend == "polling"
+        assert any("[FD EXHAUSTED]" in str(c.args[0]) for c in warn.call_args_list if c.args)
+
+    def test_polling_also_fails_raises_watcher_start_error(self, tmp_path):
+        manager = _manager_with_build(tmp_path, inotify_exc=_WATCH_ERRNO, poll_exc=_FD_ERRNO)
+        with (
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+            patch("hsync_client.watcher.log.error") as err,
+        ):
             with pytest.raises(WatcherStartError) as excinfo:
-                start_observer_guarded(observer, MagicMock(), str(tmp_path))
+                manager.start(MagicMock())
         assert "max_user_watches" in str(excinfo.value)
+        assert excinfo.value.original is _WATCH_ERRNO
+        err.assert_called_once()
 
-    def test_other_oserror_propagates_unchanged(self, tmp_path):
-        observer = self._observer_raising(OSError(errno.EACCES, "Permission denied"))
-        with patch("hsync_client.utils.log.error") as mock_error:
+    def test_other_oserror_propagates(self, tmp_path):
+        manager = _manager_with_build(
+            tmp_path, inotify_exc=OSError(errno.EACCES, "Permission denied")
+        )
+        with (
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+        ):
             with pytest.raises(OSError) as excinfo:
-                start_observer_guarded(observer, MagicMock(), str(tmp_path))
+                manager.start(MagicMock())
         assert excinfo.value.errno == errno.EACCES
-        mock_error.assert_not_called()
 
-    def test_success_calls_schedule_and_start(self, tmp_path):
-        observer = MagicMock()
-        start_observer_guarded(observer, MagicMock(), str(tmp_path))
-        observer.schedule.assert_called_once()
-        observer.start.assert_called_once()
 
-    def test_recursive_flag_forwarded(self, tmp_path):
+class TestWatcherManagerScheduleDirectory:
+    """Runtime dynamic watch: schedule, skip on a limit, re-raise otherwise."""
+
+    def test_success_schedules_on_observer(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
         observer = MagicMock()
-        start_observer_guarded(observer, MagicMock(), str(tmp_path), recursive=False)
-        assert observer.schedule.call_args.kwargs["recursive"] is False
+        manager._observer = observer
+        handler = MagicMock()
+        manager.schedule_directory(handler, "/new/dir")
+        observer.schedule.assert_called_once_with(handler, "/new/dir", recursive=True)
+        assert (handler, "/new/dir", True) in manager._registrations
+
+    def test_inotify_limit_skips_and_requests_downgrade(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        observer = MagicMock()
+        observer.schedule.side_effect = _WATCH_ERRNO
+        manager._observer = observer
+        with (
+            patch.object(WatcherManager, "_request_downgrade") as request,
+            patch("hsync_client.watcher.log.warning") as warn,
+        ):
+            manager.schedule_directory(MagicMock(), "/new/dir")
+        request.assert_called_once()
+        assert any("[WATCHER FALLBACK]" in str(c.args[0]) for c in warn.call_args_list if c.args)
+
+    def test_other_oserror_raises(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        observer = MagicMock()
+        observer.schedule.side_effect = OSError(errno.EACCES, "Permission denied")
+        manager._observer = observer
+        with pytest.raises(OSError) as excinfo:
+            manager.schedule_directory(MagicMock(), "/new/dir")
+        assert excinfo.value.errno == errno.EACCES
+
+
+class TestWatcherManagerDowngrade:
+    """Deferred downgrade: swap to polling at the safe point."""
+
+    def test_swaps_to_polling_and_stops_old(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        old = MagicMock()
+        polling = MagicMock()
+        manager._observer = old
+        manager._backend = "inotify"
+        manager._pending_downgrade = True
+        manager._build_and_start = lambda backend: polling  # type: ignore[method-assign]
+        with patch("hsync_client.watcher.log.warning") as warn:
+            manager._downgrade()
+        assert manager._observer is polling
+        assert manager._backend == "polling"
+        assert manager._pending_downgrade is False
+        old.stop.assert_called_once()
+        assert any("[WATCHER FALLBACK]" in str(c.args[0]) for c in warn.call_args_list if c.args)
+
+    def test_failure_keeps_inotify(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        old = MagicMock()
+        manager._observer = old
+        manager._backend = "inotify"
+        manager._pending_downgrade = True
+        manager._build_and_start = _build_raising(OSError(errno.ENFILE, "nope"))  # type: ignore[method-assign]
+        with patch("hsync_client.watcher.log.error") as err:
+            manager._downgrade()
+        assert manager._observer is old
+        assert manager._backend == "inotify"
+        err.assert_called_once()
+
+
+class TestWatcherManagerUpgrade:
+    """Recovery: restore inotify once the limits free up."""
+
+    def test_restores_inotify(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        old = MagicMock()
+        inotify = MagicMock()
+        manager._observer = old
+        manager._backend = "polling"
+        manager._probe_interval = 60.0
+        manager._build_and_start = lambda backend: inotify  # type: ignore[method-assign]
+        with patch("hsync_client.watcher.log.warning") as warn:
+            manager._try_upgrade()
+        assert manager._observer is inotify
+        assert manager._backend == "inotify"
+        assert manager._probe_interval == WATCHER_UPGRADE_PROBE_INITIAL_S
+        old.stop.assert_called_once()
+        assert any("[WATCHER RESTORE]" in str(c.args[0]) for c in warn.call_args_list if c.args)
+
+    def test_failure_grows_backoff(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        manager._observer = MagicMock()
+        manager._backend = "polling"
+        manager._probe_interval = WATCHER_UPGRADE_PROBE_INITIAL_S
+        manager._build_and_start = _build_raising(_WATCH_ERRNO)  # type: ignore[method-assign]
+        manager._try_upgrade()
+        assert manager._backend == "polling"
+        assert (
+            manager._probe_interval
+            == WATCHER_UPGRADE_PROBE_INITIAL_S * WATCHER_UPGRADE_BACKOFF_FACTOR
+        )
+
+    def test_success_clears_pending_downgrade(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        manager._observer = MagicMock()
+        manager._backend = "polling"
+        manager._pending_downgrade = True
+        inotify = MagicMock()
+        manager._build_and_start = lambda backend: inotify  # type: ignore[method-assign]
+        with patch("hsync_client.watcher.log.warning"):
+            manager._try_upgrade()
+        assert manager._backend == "inotify"
+        # A downgrade request that landed while polling is stale once the
+        # fresh inotify build succeeded: keeping it would flip the watcher
+        # straight back to polling on the next supervisor tick.
+        assert manager._pending_downgrade is False
+
+
+class TestWatcherManagerStopRace:
+    """A stop() landing while a backend build is in flight must not adopt the
+    fresh observer: it is torn down instead, so no live watcher (and no
+    duplicate event delivery) can outlive stop()."""
+
+    def test_stop_during_downgrade_discards_candidate(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        old = MagicMock()
+        candidate = MagicMock()
+        manager._observer = old
+        manager._backend = "inotify"
+        manager._pending_downgrade = True
+
+        def _build(backend: str) -> MagicMock:
+            manager.stop()  # stop() lands mid-build (real builds walk the tree)
+            return candidate
+
+        manager._build_and_start = _build  # type: ignore[method-assign]
+        with patch("hsync_client.watcher.log.warning") as warn:
+            manager._downgrade()
+        assert manager._observer is None, "stop() must not be overridden by the swap"
+        candidate.stop.assert_called_once()
+        logged = [str(c.args[0]) for c in warn.call_args_list if c.args]
+        assert not any("[WATCHER FALLBACK]" in w for w in logged)
+
+    def test_stop_during_upgrade_discards_candidate(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        old = MagicMock()
+        candidate = MagicMock()
+        manager._observer = old
+        manager._backend = "polling"
+        manager._probe_interval = 60.0
+
+        def _build(backend: str) -> MagicMock:
+            manager.stop()  # stop() lands mid-build (real builds walk the tree)
+            return candidate
+
+        manager._build_and_start = _build  # type: ignore[method-assign]
+        with patch("hsync_client.watcher.log.warning") as warn:
+            manager._try_upgrade()
+        assert manager._observer is None, "stop() must not be overridden by the swap"
+        candidate.stop.assert_called_once()
+        logged = [str(c.args[0]) for c in warn.call_args_list if c.args]
+        assert not any("[WATCHER RESTORE]" in w for w in logged)
+
+
+class TestWatcherManagerDowngradeBackoff:
+    """Downgrade retries grow at the same capped cadence as upgrade probes."""
+
+    def test_downgrade_failure_keeps_backend_and_grows_backoff(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        old = MagicMock()
+        manager._observer = old
+        manager._backend = "inotify"
+        manager._pending_downgrade = True
+        manager._probe_interval = WATCHER_UPGRADE_PROBE_INITIAL_S
+        manager._build_and_start = _build_raising(OSError(errno.ENFILE, "nope"))  # type: ignore[method-assign]
+        with (
+            patch("hsync_client.watcher.log.error") as err,
+            patch.object(WatcherManager, "_schedule_supervisor"),
+        ):
+            manager._downgrade()
+        err.assert_called_once()
+        assert manager._backend == "inotify"
+        assert manager._observer is old
+        assert (
+            manager._probe_interval
+            == WATCHER_UPGRADE_PROBE_INITIAL_S * WATCHER_UPGRADE_BACKOFF_FACTOR
+        )
 
 
 def _lan_config(tmp_path, **overrides: Any) -> HsyncConfig:

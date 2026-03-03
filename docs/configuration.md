@@ -196,9 +196,10 @@ In continuous mode (the default) the client runs a periodic full sync every
 net: it recovers any file-system events the watcher may have missed.
 
 On Linux the recursive watcher uses one inotify watch per sub-directory. Large
-trees can exceed `fs.inotify.max_user_watches`, after which the kernel drops
-events silently. The client warns at startup when the watched tree approaches
-this limit; raise it with:
+trees can exceed `fs.inotify.max_user_watches`: the watcher then degrades to
+polling (logged as `[WATCHER FALLBACK]`) and is restored to inotify
+automatically once the limit frees up. The client warns at startup when the
+watched tree approaches this limit; raise it with:
 
 ```bash
 sudo sysctl fs.inotify.max_user_watches=$(( $(cat /proc/sys/fs/inotify/max_user_watches) * 4 ))

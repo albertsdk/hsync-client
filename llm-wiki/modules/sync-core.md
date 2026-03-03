@@ -248,22 +248,38 @@ same value).
 
 ## file_event_handler.py — watchdog adapter
 
-**Watcher start (inotify limits, Linux)** — every observer in the client (LAN
-master `lan_websocket.py:516`, LAN slave `:836`, remote continuous
-`remote_websocket.py:203`, `.hsyncignore` hot-reload `main_logic.py`) is
-started through `utils.start_observer_guarded`: it schedules + starts and, on
-an inotify-limit `OSError` (`EMFILE` instances / `ENOSPC` watches, detected by
-`utils.inotify_exhaustion_hint`), logs the parsable `[WATCHER ERROR]` line with
-the remediation hint and raises `exceptions.WatcherStartError` (carrying the
-raw kernel error in `.original`). The retry policies treat it specially
+**Watcher lifecycle (limits, Linux)** — every watcher in the client (LAN master
+`lan_websocket.py:514`, LAN slave `:839`, remote continuous
+`remote_websocket.py:203`, `.hsyncignore` hot-reload `main_logic.py:458`) is
+owned by a `WatcherManager` (`watcher.py:105`), which records every `(handler,
+path, recursive)` registration so a backend swap can replay the full watch set
+onto a fresh observer. On an inotify-limit `OSError` (`EMFILE` instances /
+`ENOSPC` watches) or a descriptor-exhaustion `EMFILE`/`ENFILE`
+(`watcher.watcher_oserror_class`, `watcher.py:82`), the manager logs the
+parsable `[WATCHER FALLBACK]` / `[FD EXHAUSTED]` line and **downgrades to a
+`PollingObserver`** (no inotify resources, higher CPU, ~1 s event latency)
+instead of blocking realtime sync. A limit hit at runtime (adding a watch for a
+new directory, `WatcherManager.schedule_directory` `:166`) is detected inline,
+the single watch is skipped (RESYNC reconciles it) and the downgrade is
+performed at a safe point by a supervisor thread. Swaps are adopted only while
+the manager is not `stop()`ed: an observer whose build raced a `stop()` is torn
+down instead, so no live watcher can outlive `stop()` (and a swap failure —
+e.g. polling defeated by true descriptor exhaustion — keeps the current backend
+and retries at the grown cadence). While degraded, the supervisor periodically
+probes inotify and restores it (`[WATCHER RESTORE]`) once the limits free up;
+failed probes and downgrade retries grow the same exponential backoff
+(`WATCHER_UPGRADE_PROBE_*`, `constants.py`), and a successful upgrade drops a
+stale downgrade request. Only if the polling fallback also fails does the manager
+log `[WATCHER ERROR]` and raise `exceptions.WatcherStartError` (carrying the
+raw kernel error in `.original`), which the retry policies treat specially
 because a kernel limit never clears at the normal cadence: the LAN slave
-(`lan_handler._run_as_slave`) and the LAN master (tearing down the
-half-started WSS server, `lan_handler._run_as_master`) sleep
-`WATCHER_START_RETRY_DELAY_S` (60 s, `constants.py`) before re-entering their
-loops; remote mode reuses its exponential backoff with a dedicated log line;
-the `.hsyncignore` hot-reload simply stays off (a restart re-reads the file).
-User-facing diagnosis/remedies: `docs/troubleshooting.md`; parsable log row in
-`hsync-common/docs/log-labels.md` (`[WATCHER ERROR]`, client-only).
+(`lan_handler._run_as_slave`)
+and the LAN master (tearing down the half-started WSS server,
+`lan_handler._run_as_master`) sleep `WATCHER_START_RETRY_DELAY_S` (60 s,
+`constants.py`) before re-entering their loops; remote mode reuses its
+exponential backoff with a dedicated log line. User-facing diagnosis/remedies:
+`docs/troubleshooting.md`; parsable log rows in `hsync-common/docs/log-labels.md`
+(`[WATCHER FALLBACK]`, `[WATCHER RESTORE]`, `[FD EXHAUSTED]`, client-only).
 
 `BaseFileEventHandler` (`file_event_handler.py:54`) maps watchdog callbacks to the
 transfer pipeline. Linux uses `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other

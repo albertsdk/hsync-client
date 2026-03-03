@@ -59,8 +59,6 @@ from hsync_common.protocol.handshake import (
 from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
-from watchdog.observers.api import BaseObserver
 
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG
@@ -81,9 +79,8 @@ from hsync_client.utils import (
     cid_suffix,
     ensure_str_path,
     request_headers,
-    start_observer_guarded,
-    warn_if_inotify_watch_limit_low,
 )
+from hsync_client.watcher import WatcherManager
 
 # Conservative minimum effective LAN bandwidth used to derive the dynamic
 # ``wait_pending`` timeout from the total bytes still in flight (10 MB/s).
@@ -258,7 +255,7 @@ class LANWebSocketServer:
         self._thread: threading.Thread | None = None
         self._server: Any | None = None
         self._running = False
-        self._observer: BaseObserver | None = None
+        self._watcher: WatcherManager | None = None
         self._event_handler: LANMasterFileEventHandler | None = None
         self._clients_lock = threading.Lock()
         self._on_clients_changed: Callable[[int], None] | None = None
@@ -514,11 +511,10 @@ class LANWebSocketServer:
             log.warning(f"Watch path '{watch_path}' does not exist, creating it")
             Path(watch_path).mkdir(parents=True, exist_ok=True)
 
-        observer = Observer()
-        self._event_handler = LANMasterFileEventHandler(self, observer)
-        warn_if_inotify_watch_limit_low(watch_path)
-        start_observer_guarded(observer, self._event_handler, watch_path)
-        self._observer = observer
+        watcher = WatcherManager(watch_path)
+        self._event_handler = LANMasterFileEventHandler(self, watcher)
+        watcher.start(self._event_handler)
+        self._watcher = watcher
         log.info(f"File watcher started for: {watch_path}")
 
     def stop(self) -> None:
@@ -529,10 +525,9 @@ class LANWebSocketServer:
         self._running = False
 
         # Stop file watcher
-        if self._observer:
-            self._observer.stop()
-            self._observer.join(timeout=2.0)
-            self._observer = None
+        if self._watcher:
+            self._watcher.stop()
+            self._watcher = None
 
         # Close all client connections
         if self._loop and self._clients:
@@ -622,13 +617,13 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
     ``_on_file_ready`` emits a ``modified`` event instead of uploading bytes.
     """
 
-    def __init__(self, ws_server: LANWebSocketServer, observer=None) -> None:
+    def __init__(self, ws_server: LANWebSocketServer, watcher=None) -> None:
         """
         Args:
             ws_server: WebSocket server for broadcasting events.
-            observer: Optional watchdog Observer for dynamic subdirectory watching.
+            watcher: Optional WatcherManager for dynamic subdirectory watching.
         """
-        super().__init__(observer=observer)
+        super().__init__(watcher=watcher)
         self._ws_server = ws_server
 
     def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
@@ -833,7 +828,6 @@ async def lan_websocket_client(
     # HTTP port is WebSocket port - 1
     http_port = port - 1
     _slave_event_handler = LANSlaveFileEventHandler(host, http_port, use_https)
-    observer = Observer()
     watch_path = CONFIG["LOCAL_BUCKET"]
 
     # Ensure watch_path exists: watchdog raises FileNotFoundError otherwise.
@@ -842,8 +836,8 @@ async def lan_websocket_client(
         log.warning(f"Watch path '{watch_path}' does not exist, creating it")
         Path(watch_path).mkdir(parents=True, exist_ok=True)
 
-    warn_if_inotify_watch_limit_low(watch_path)
-    start_observer_guarded(observer, _slave_event_handler, watch_path)
+    watcher = WatcherManager(watch_path)
+    watcher.start(_slave_event_handler)
 
     # Periodic full resync as a safety net against silently missed
     # file-system events (e.g. inotify queue overflow). The master is the
@@ -994,8 +988,7 @@ async def lan_websocket_client(
             _slave_event_handler.cancel_all_create_timers()
             _slave_event_handler.wait_pending(timeout=30.0)
         # Stop the file watcher
-        observer.stop()
-        observer.join(timeout=2.0)
+        watcher.stop()
         _slave_event_handler = None
         log.info("Client file watcher stopped")
 

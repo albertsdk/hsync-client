@@ -12,7 +12,6 @@ file operations, and data formatting.
 """
 
 import atexit
-import errno
 import os
 import secrets
 import threading
@@ -22,7 +21,7 @@ from contextlib import contextmanager
 from os import chmod, walk
 from os.path import abspath, normpath
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, cast
+from typing import IO, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from requests import Response, Session
@@ -46,10 +45,10 @@ from hsync_client.constants import (
     HTTP_TIMEOUT_DEFAULT,
     INOTIFY_MAX_USER_WATCHES_PATH,
     INOTIFY_WATCH_WARN_RATIO,
+    OPEN_FDS_WARN_RATIO,
     OWNER_DIRECTORY_ACCESS,
     ActionLabel,
 )
-from hsync_client.exceptions import WatcherStartError
 
 # =============================================================================
 # SSL Utilities
@@ -379,88 +378,6 @@ def cid_suffix(cid: object) -> str:
 # =============================================================================
 
 
-def inotify_exhaustion_hint(exc: BaseException) -> str | None:
-    """Classify an inotify-limit ``OSError`` from watchdog into a remediation hint.
-
-    The recursive watcher touches two kernel limits: creating the inotify
-    instance (``fs.inotify.max_user_instances``, linux ``EMFILE`` Errno 24) and
-    scheduling one watch per sub-directory (``fs.inotify.max_user_watches``,
-    ``ENOSPC`` Errno 28). When either is exhausted, watchdog raises a bare
-    ``OSError`` whose text (e.g. ``inotify instance limit reached``) would
-    otherwise surface as an opaque transport failure.
-
-    Returns the human-readable remediation hint, or ``None`` when *exc* is not
-    an inotify-limit error (other OSErrors keep their original handling).
-
-    Args:
-        exc: The exception raised while scheduling/starting the observer.
-
-    Returns:
-        The remediation hint, or None when the error is not an inotify limit.
-    """
-    if not isinstance(exc, OSError):
-        return None
-    detail = str(exc).lower()
-    if exc.errno == errno.EMFILE and "inotify" in detail:
-        return (
-            "inotify instance limit reached (fs.inotify.max_user_instances): too many "
-            "watchers are running on this machine — each hsync instance, and every "
-            "other watcher-based application, holds one instance. Raise the limit "
-            "(e.g. `sudo sysctl fs.inotify.max_user_instances=512`) or stop other "
-            "watcher-heavy applications. See the Troubleshooting guide in the docs."
-        )
-    if exc.errno == errno.ENOSPC and "inotify" in detail:
-        return (
-            "inotify watch limit reached (fs.inotify.max_user_watches): the watched "
-            "tree needs one inotify watch per sub-directory and the per-user limit "
-            "is exhausted. Raise the limit (e.g. "
-            "`sudo sysctl fs.inotify.max_user_watches=1048576`). See the "
-            "Troubleshooting guide in the docs."
-        )
-    return None
-
-
-def start_observer_guarded(
-    observer: Any,
-    handler: Any,
-    watch_path: str,
-    *,
-    recursive: bool = True,
-) -> None:
-    """Schedule and start a watchdog observer, translating inotify-limit errors.
-
-    The single start point for every observer in the client (LAN master, LAN
-    slave, remote continuous, ``.hsyncignore`` hot-reload). When the kernel
-    refuses the watcher because an inotify limit is exhausted, the raw
-    ``OSError`` is otherwise surfaced by the transport layers as a generic
-    "connection ended" failure: here the error is diagnosed once, logged with
-    the parsable ``[WATCHER ERROR]`` label plus the remediation hint, and
-    re-raised as :class:`~hsync_client.exceptions.WatcherStartError` so each
-    caller can apply its dedicated (slow) retry policy — a kernel limit never
-    clears by retrying at the normal cadence.
-
-    Any other ``OSError`` propagates unchanged.
-
-    Args:
-        observer: The watchdog ``Observer`` instance (caller-owned; on failure
-            the caller decides whether to keep or discard it).
-        handler: The event handler passed to ``observer.schedule``.
-        watch_path: Directory tree to watch.
-        recursive: Whether to watch the tree recursively.
-    """
-    try:
-        observer.schedule(handler, watch_path, recursive=recursive)
-        observer.start()
-    except OSError as exc:
-        hint = inotify_exhaustion_hint(exc)
-        if hint is None:
-            raise
-        log.error(
-            f"{ActionLabel.WATCHER_ERROR} cannot start the file watcher for '{watch_path}': {hint}"
-        )
-        raise WatcherStartError(hint, original=exc) from exc
-
-
 def warn_if_inotify_watch_limit_low(watch_path: str) -> None:
     """
     Warn when *watch_path* may exceed the inotify watch limit (Linux only).
@@ -508,6 +425,33 @@ def warn_if_inotify_watch_limit_low(watch_path: str) -> None:
             )
     except Exception as exc:  # pragma: no cover - diagnostics must never break startup
         log.debug(f"inotify watch-limit check skipped: {exc}")
+
+
+def warn_if_open_fds_high() -> None:
+    """Warn when the process is close to its open-file-descriptor limit.
+
+    Best-effort diagnostics (Linux): compares the number of currently open file
+    descriptors (``/proc/self/fd``) against the soft ``RLIMIT_NOFILE`` and warns
+    when the process is within a fraction of it, so an impending "Too many open
+    files" failure is visible before it happens. Any failure is swallowed so it
+    can never block the watcher from starting.
+    """
+    try:
+        import resource
+
+        soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft in (resource.RLIM_INFINITY, -1):
+            return
+        fd_count = len(os.listdir("/proc/self/fd"))
+        if fd_count >= int(soft * OPEN_FDS_WARN_RATIO):
+            log.warning(
+                f"Process has {fd_count} open file descriptors, close to the soft "
+                f"limit ({soft}). Raise it (e.g. `ulimit -n {soft * 4}`) or reduce "
+                f"concurrent connections/transfers to avoid 'Too many open files' "
+                f"errors."
+            )
+    except Exception as exc:  # pragma: no cover - diagnostics must never break startup
+        log.debug(f"open-file-descriptor check skipped: {exc}")
 
 
 # =============================================================================

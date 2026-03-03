@@ -55,6 +55,9 @@ _LABEL_DESCRIPTIONS: dict[ActionLabel, str] = {
     ActionLabel.REMOTE_ECHO: "Peer event echo suppressed (debug)",
     ActionLabel.REMOTE_DOWNLOAD: "Master serving file bytes to a peer",
     ActionLabel.INITIAL_SYNC: "Initial synchronization started (first full reconcile of a run)",
+    ActionLabel.WATCHER_FALLBACK: "File watcher degraded to polling (inotify/descriptor limit)",
+    ActionLabel.WATCHER_RESTORE: "File watcher restored to inotify (limits freed)",
+    ActionLabel.FD_EXHAUSTED: "File-descriptor limit reached (RLIMIT_NOFILE / fs.file-max)",
 }
 
 

@@ -794,7 +794,7 @@ class TestRemoteEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
         ):
             MockEventQueue.return_value = MagicMock()
@@ -857,7 +857,7 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.log") as mock_log,
             patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
         ):
             MockEventQueue.return_value = MagicMock()
@@ -1024,7 +1024,7 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
         ):
             MockEventQueue.return_value = MagicMock()
@@ -1087,7 +1087,7 @@ class TestRemoteEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch(
                 "hsync_client.remote_websocket.create_task", side_effect=_close_coro_and_return_task
             ),
@@ -1152,7 +1152,7 @@ class TestRemoteEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch(
                 "hsync_client.remote_websocket._process_remote_events",
                 side_effect=_StopLoop("Stop"),
@@ -1216,7 +1216,7 @@ class TestRemoteEventsAuthToken:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch("hsync_client.remote_websocket.get_api_key", return_value="env-fallback"),
         ):
@@ -1275,7 +1275,7 @@ class TestRemoteEventsAuthToken:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
             patch(
                 "hsync_client.remote_websocket.get_api_key",

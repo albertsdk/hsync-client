@@ -46,7 +46,7 @@ from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.utils import cid_suffix, ensure_str_path, is_same_paths
 
 if TYPE_CHECKING:
-    from watchdog.observers.api import BaseObserver as Observer
+    from hsync_client.watcher import WatcherManager
 
 # on_closed is delivered by watchdog only on Linux (inotify).
 SUPPORTS_ON_CLOSED = sys.platform == "linux"
@@ -142,7 +142,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         self._last_broadcast_ts.pop(path, None)
         self._last_mode.pop(path, None)
 
-    def __init__(self, observer: Observer | None = None) -> None:
+    def __init__(self, watcher: WatcherManager | None = None) -> None:
         # Delete coalescing: buffered (path, is_directory) pairs pending a flush.
         # Guarded by _delete_lock; _delete_timer is the pending threading.Timer.
         self._pending_deletes: list[tuple[str, bool]] = []
@@ -179,10 +179,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # poisoned entry made on_closed skip the file as "unchanged" and the
         # upload was silently lost.
         self._last_mode: dict[str, int] = {}
-        # Optional observer reference: when set, newly created directories are
-        # watched recursively so files inside them are picked up immediately
-        # instead of waiting for the next full sync cycle.
-        self._observer: Observer | None = observer
+        # Optional watcher manager reference: when set, newly created directories
+        # are watched recursively through it (with graceful degradation on a
+        # kernel limit) instead of waiting for the next full sync cycle.
+        self._watcher: WatcherManager | None = watcher
 
     # ----- subclass hooks -----
 
@@ -446,13 +446,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 )
             # Start watching the new directory recursively so files created
             # inside it are picked up immediately rather than waiting for the
-            # next periodic resync to discover them.
-            if self._observer is not None:
-                self._observer.schedule(self, src_path, recursive=True)
+            # next periodic resync to discover them. The watcher manager skips
+            # the watch and degrades gracefully if a kernel limit is reached.
+            if self._watcher is not None:
+                self._watcher.schedule_directory(self, src_path)
                 # Scan for files already present inside the directory.  The
-                # inotify watch registered above only captures events that
-                # happen *after* the watch is active; files created between
-                # mkdir() and schedule() are invisible to inotify.  Iterating
+                # watch registered above only captures events that happen
+                # *after* the watch is active; files created between
+                # mkdir() and schedule() are invisible.  Iterating
                 # the directory contents once guarantees they are picked up.
                 self._scan_existing_files(src_path)
 

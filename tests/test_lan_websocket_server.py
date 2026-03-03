@@ -47,7 +47,7 @@ class TestLANWebSocketServer:
         assert server._thread is None
         assert server._server is None
         assert server._running is False
-        assert server._observer is None
+        assert server._watcher is None
         assert server._event_handler is None
 
     @pytest.mark.asyncio
@@ -422,15 +422,14 @@ class TestLANWebSocketServer:
 
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.lan_websocket.Observer") as MockObserver,
+            patch("hsync_client.lan_websocket.WatcherManager") as MockWatcher,
         ):
-            MockObserver.return_value = mock_obs
+            MockWatcher.return_value = mock_obs
             server.start(watch_path=str(tmp_path))
 
         assert server._running is True
         assert server._thread is not None
-        assert server._observer is mock_obs
-        mock_obs.schedule.assert_called_once()
+        assert server._watcher is mock_obs
         mock_obs.start.assert_called_once()
 
         # Cleanup
@@ -443,7 +442,7 @@ class TestLANWebSocketServer:
         server._running = True
         server._loop = MagicMock()
         mock_observer = MagicMock()
-        server._observer = mock_observer
+        server._watcher = mock_observer
         mock_thread = MagicMock()
         server._thread = mock_thread
         server._clients = set()  # no clients to close
@@ -452,8 +451,7 @@ class TestLANWebSocketServer:
 
         assert server._running is False
         mock_observer.stop.assert_called_once()
-        mock_observer.join.assert_called_once()
-        assert server._observer is None
+        assert server._watcher is None
         mock_thread.join.assert_called_once()
         assert server._thread is None
 
@@ -480,14 +478,13 @@ class TestLANWebSocketServer:
 
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.lan_websocket.Observer") as MockObserver,
+            patch("hsync_client.lan_websocket.WatcherManager") as MockWatcher,
         ):
-            MockObserver.return_value = mock_obs
+            MockWatcher.return_value = mock_obs
             server.start(watch_path=str(missing))
 
         # The directory must have been created on the fly
         assert missing.exists() and missing.is_dir()
-        mock_obs.schedule.assert_called_once()
         mock_obs.start.assert_called_once()
 
         # Cleanup
@@ -567,9 +564,8 @@ class TestLanWebsocketClientResyncWiring:
 
         with (
             patch.dict(ws.CONFIG, {"LOCAL_BUCKET": str(tmp_path), "RESYNC": 60}, clear=False),
-            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "WatcherManager", MagicMock()),
             patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
-            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
             patch.object(ws, "_lan_periodic_resync", mock_resync),
             patch("websockets.connect", side_effect=boom),
         ):
@@ -589,9 +585,8 @@ class TestLanWebsocketClientResyncWiring:
 
         with (
             patch.dict(ws.CONFIG, {"LOCAL_BUCKET": str(tmp_path), "RESYNC": 0}, clear=False),
-            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "WatcherManager", MagicMock()),
             patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
-            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
             patch.object(ws, "_lan_periodic_resync", mock_resync),
             patch("websockets.connect", side_effect=boom),
         ):
@@ -638,9 +633,8 @@ class TestLanWebsocketClientGreetingValidation:
                 },
                 clear=False,
             ),
-            patch.object(ws, "Observer", MagicMock()),
+            patch.object(ws, "WatcherManager", MagicMock()),
             patch.object(ws, "LANSlaveFileEventHandler", MagicMock()),
-            patch.object(ws, "warn_if_inotify_watch_limit_low", MagicMock()),
             patch("websockets.connect", return_value=_UnexpectedGreetingSocket()),
         ):
             await ws.lan_websocket_client("master.local", 9000)

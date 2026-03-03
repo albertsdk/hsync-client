@@ -19,7 +19,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | Doc | Scope |
 | --- | ----- |
 | [architecture.md](architecture.md) | Entry points, the two run modes, config flow, layering, watcher/transfer core |
-| [modules/sync-core.md](modules/sync-core.md) | `sync.py`, `transfer.py`, `event_dispatch.py`, `file_event_handler.py`, `event_queue.py` |
+| [modules/sync-core.md](modules/sync-core.md) | `watcher.py`, `sync.py`, `transfer.py`, `event_dispatch.py`, `file_event_handler.py`, `event_queue.py` |
 | [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, reconnect |
 | [modules/lan-mode.md](modules/lan-mode.md) | `lan.py` discovery/election, `lan_server.py`, `lan_websocket.py`, `lan_handler.py`, `pinning.py`, `ssl_utils.py`, `identity.py` (device identity + instance lock) |
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |

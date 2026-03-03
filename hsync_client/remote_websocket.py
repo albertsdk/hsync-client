@@ -38,7 +38,6 @@ from hsync_common.protocol.handshake import (
 )
 from hsync_common.text import safe_json_for_log
 from loguru import logger as log
-from watchdog.observers import Observer
 from websockets import ConnectionClosed, connect
 
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
@@ -58,7 +57,7 @@ from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
 from hsync_client.sync import log_initial_sync_start, periodic_resync, sync
 from hsync_client.transfer import upload_file
-from hsync_client.utils import start_observer_guarded, warn_if_inotify_watch_limit_low
+from hsync_client.watcher import WatcherManager
 
 # Global resync task reference for cancellation on reconnect
 _resync_task: Task[None] | None = None
@@ -201,10 +200,9 @@ async def remote_events() -> None:
         queue_task = create_task(event_queue.process())
 
         # Set up local file system watcher with event queue
-        observer = Observer()
-        event_handler = RemoteFileEventHandler(websocket, loop, event_queue, observer)
-        warn_if_inotify_watch_limit_low(CONFIG["LOCAL_BUCKET"])
-        start_observer_guarded(observer, event_handler, CONFIG["LOCAL_BUCKET"])
+        watcher = WatcherManager(CONFIG["LOCAL_BUCKET"])
+        event_handler = RemoteFileEventHandler(websocket, loop, event_queue, watcher)
+        watcher.start(event_handler)
 
         # Readiness threshold: the filesystem watcher is live and the
         # WebSocket is authenticated — the node now reacts to events.
@@ -237,9 +235,8 @@ async def remote_events() -> None:
                 pass  # Expected after cancellation
             except Exception:
                 pass  # Task was cancelled
-            # Clean up file system observer
-            observer.stop()
-            observer.join()
+            # Clean up file system watcher
+            watcher.stop()
 
 
 # Inbound dispatch context for Remote sync: no slave-handler echo
@@ -491,16 +488,16 @@ class RemoteFileEventHandler(BaseFileEventHandler):
     """
 
     def __init__(
-        self, websocket, loop, event_queue: EventQueue | None = None, observer=None
+        self, websocket, loop, event_queue: EventQueue | None = None, watcher=None
     ) -> None:
         """
         Args:
             websocket: Active WebSocket connection to the server.
             loop: Running asyncio event loop for thread-safe operations.
             event_queue: Optional event queue for reliable message delivery.
-            observer: Optional watchdog Observer for dynamic subdirectory watching.
+            watcher: Optional WatcherManager for dynamic subdirectory watching.
         """
-        super().__init__(observer=observer)
+        super().__init__(watcher=watcher)
         self.websocket = websocket
         self.loop = loop
         self.event_queue = event_queue

@@ -246,8 +246,30 @@ INOTIFY_WATCH_WARN_RATIO = 0.9
 
 # Seconds to back off before attempting to start the file watcher again after a
 # WatcherStartError (kernel inotify limits exhausted — Errno 24 instances /
-# Errno 28 watches). Retrying at the normal discovery cadence cannot clear a
-# per-user kernel limit, and each attempt re-runs an initial sync against the
+# Errno 28 watches — or descriptor exhaustion that also defeated the polling
+# fallback). Retrying at the normal discovery cadence cannot clear a per-user
+# kernel limit, and each attempt re-runs an initial sync against the
 # master/server, so a long bounded wait keeps the log readable and avoids
-# hammering the peer while another process frees inotify resources.
+# hammering the peer while another process frees resources.
 WATCHER_START_RETRY_DELAY_S = 60.0
+
+# =============================================================================
+# File-watcher degradation (PollingObserver fallback & inotify recovery)
+# =============================================================================
+# When an inotify limit is exhausted the watcher downgrades to a PollingObserver
+# (higher CPU, ~1 s event latency) instead of blocking realtime sync. While
+# degraded, a supervisor periodically probes whether inotify is available again
+# and restores it. The first probe fires after this many seconds, then backs off
+# exponentially up to the cap, to avoid thrashing while the kernel limit is
+# still saturated.
+WATCHER_UPGRADE_PROBE_INITIAL_S = 30.0
+WATCHER_UPGRADE_PROBE_MAX_S = 300.0
+WATCHER_UPGRADE_BACKOFF_FACTOR = 2.0
+
+# Seconds the supervisor waits after a runtime limit is hit before performing the
+# deferred downgrade. The delay lets the watchdog dispatch thread finish the
+# current event before the observer is swapped from a separate thread.
+WATCHER_DOWNGRADE_DELAY_S = 1.0
+
+# Fraction of the soft RLIMIT_NOFILE at which warn_if_open_fds_high warns.
+OPEN_FDS_WARN_RATIO = 0.9
