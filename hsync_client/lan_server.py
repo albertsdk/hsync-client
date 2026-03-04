@@ -32,7 +32,7 @@ from os import walk
 from pathlib import Path
 from shutil import disk_usage
 from sys import exc_info
-from typing import IO
+from typing import IO, TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 from hsync_common.clock import clamp_incoming_corrected_mtime
@@ -63,6 +63,9 @@ from hsync_client.multipart import (
     _StreamingMultipartParser,
 )
 from hsync_client.utils import cid_suffix, inbound_size_cap, open_partial_no_follow
+
+if TYPE_CHECKING:
+    from hsync_client.lan_websocket import SlaveCidRegistry
 
 # =============================================================================
 # Constants
@@ -128,6 +131,10 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     ``max_threads`` requests are served concurrently; excess connections wait
     in the (bounded) socket backlog and are picked up as slots free up.
     """
+
+    # Shared duplicate-identity guard (SlaveCidRegistry), attached by
+    # LANServer.start() and read by LANRequestHandler._reject_duplicate_cid.
+    cid_guard: SlaveCidRegistry | None = None
 
     def __init__(self, *args, max_threads: int = LAN_SERVER_MAX_THREADS, **kwargs):
         self._thread_semaphore = threading.BoundedSemaphore(max_threads)
@@ -439,6 +446,37 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
 
+    def _reject_duplicate_cid(self, origin_cid) -> bool:
+        """Refuse a write claiming a duplicated device identity (409).
+
+        A request whose ``cid`` is this master's own, or is bound to a
+        *different* source address in the shared slave-CID registry, comes from
+        a cloned ``HSYNC_DEVICE_DIR``: two live peers sharing a CID would
+        corrupt the causal vector-clock and tombstone authorship. The check
+        runs after ``_check_auth``, so unauthenticated callers cannot probe
+        which CIDs are in use.
+
+        Returns True (and sends the 409 response) on conflict.
+        """
+        guard = getattr(self.server, "cid_guard", None)
+        if guard is None or not origin_cid or not is_valid_cid(origin_cid):
+            return False
+        client_ip = (
+            self.client_address[0]
+            if isinstance(self.client_address, tuple)
+            else str(self.client_address)
+        )
+        if not guard.request_conflict(origin_cid, client_ip):
+            return False
+        if guard.should_report(origin_cid, client_ip):
+            log.error(
+                f"{ActionLabel.SECURITY} Duplicate device identity: write from "
+                f"{self.address_string()} claims CID {origin_cid} which is already in use "
+                f"(this master or another host). Refusing the request."
+            )
+        self._send_error_response(HTTP_CONFLICT, "Duplicate device identity")
+        return True
+
     def _handle_patch_permissions(self, query: dict) -> None:
         """Apply a permission-only change (chmod) from a slave peer.
 
@@ -452,6 +490,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         IN_ATTRIB change and broadcasts the ``modified`` event to the other
         slaves, exactly like the central server's same-SHA branch.
         """
+        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+            return
+
         rel_path = query.get("filename", [None])[0]
         permissions = query.get("permissions", [None])[0]
 
@@ -509,6 +550,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from client."""
+        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+            return
+
         from os import rename
 
         src_rel = query.get("src", [None])[0]
@@ -571,6 +615,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_delete(self, query: dict) -> None:
         """Handle file/directory deletion from client."""
+        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+            return
+
         from shutil import rmtree
 
         rel_path = query.get("path", [None])[0]
@@ -697,6 +744,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         echo suppression, and creates a ``.hsynckeep`` sentinel if the new
         directory is empty so the sync engine preserves it.
         """
+        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+            return
+
         rel_path = query.get("path", [None])[0]
         if not rel_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
@@ -782,6 +832,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         Mirrors the central server's ``POST /symlinks`` semantics so remote
         mode and LAN mode behave identically.
         """
+        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+            return
+
         from os import symlink as os_symlink
 
         from hsync_common.path_validation import is_safe_symlink_target
@@ -1530,6 +1583,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                     return
 
             cid = form_fields.get("cid", "")
+            if self._reject_duplicate_cid(cid):
+                return
             mtime = form_fields.get("mtime", "")
             ctime = form_fields.get("ctime", "")
             permissions = form_fields.get("permissions", "664")
@@ -1796,6 +1851,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 self._send_error_response(HTTP_BAD_REQUEST, "No literal payload uploaded")
                 return
 
+            # A delta upload is a write: refuse a duplicated device identity.
+            cid = form_fields.get("cid", "")
+            if self._reject_duplicate_cid(cid):
+                return
+
             handle_delta_apply(self, form_fields, literal_path)
         except ValueError as e:
             self._discard_temp_artifact(literal_path, raw_file)
@@ -1827,6 +1887,7 @@ class LANServer:
         use_https: bool = False,
         cert_file: str | None = None,
         key_file: str | None = None,
+        cid_guard: SlaveCidRegistry | None = None,
     ) -> None:
         """
         Initialize the LAN server.
@@ -1838,11 +1899,15 @@ class LANServer:
             key_file: Path to SSL private key file (required if use_https=True).
                 The persistent master key is stored unencrypted and protected by
                 filesystem permissions (see ``load_or_create_master_cert``).
+            cid_guard: Shared :class:`SlaveCidRegistry` used to refuse writes
+                claiming a duplicated device identity. ``None`` (standalone /
+                test usage) disables the check.
         """
         self._port = port
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
+        self._cid_guard = cid_guard
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._running = False
@@ -1861,6 +1926,11 @@ class LANServer:
         """Check if HTTPS is enabled."""
         return self._use_https
 
+    @property
+    def cid_guard(self) -> SlaveCidRegistry | None:
+        """The shared duplicate-identity guard (``None`` when disabled)."""
+        return self._cid_guard
+
     def start(self) -> None:
         """Start the server in a background thread."""
         import ssl
@@ -1872,6 +1942,8 @@ class LANServer:
         self._server = BoundedThreadingHTTPServer(
             ("0.0.0.0", self._port), LANRequestHandler, max_threads=LAN_SERVER_MAX_THREADS
         )
+        # Expose the shared duplicate-identity guard to the request handlers.
+        self._server.cid_guard = self._cid_guard
         # Daemonize per-request threads so they don't block process shutdown
         self._server.daemon_threads = True
         # Cap the socket backlog so excess connections queue (bounded) instead

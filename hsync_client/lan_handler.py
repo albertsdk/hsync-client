@@ -39,7 +39,7 @@ from hsync_client.exceptions import (
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
-from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
+from hsync_client.lan_websocket import LANWebSocketServer, SlaveCidRegistry, lan_websocket_client
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
@@ -157,6 +157,12 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     lan_server = None
     lan_ws_server = None
 
+    # One shared duplicate-identity registry for both serving channels (HTTP
+    # write endpoints and WSS admissions): a clone refused on one is refused on
+    # the other too. It persists across discovery-loop iterations and across
+    # mastership changes (the WSS stop clears the bindings).
+    cid_registry = SlaveCidRegistry(master_cid=config["CID"])
+
     last_exit = int(ExitCode.OK)
 
     # Track how long the group has been without an elected master so we can warn
@@ -179,6 +185,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     cert_info=cert_info,
                     lan_server=lan_server,
                     lan_ws_server=lan_ws_server,
+                    cid_registry=cid_registry,
                 )
                 # Wire the master's live WebSocket client count into discovery
                 # presence: the provider feeds wait_for_discovery (the single
@@ -265,6 +272,7 @@ def _run_as_master(
     cert_info,
     lan_server,
     lan_ws_server,
+    cid_registry: SlaveCidRegistry | None = None,
 ) -> tuple[LANServer | None, LANWebSocketServer | None]:
     """Run as master (sync coordinator).
 
@@ -290,11 +298,16 @@ def _run_as_master(
 
     # Start HTTPS server if not already running (LAN transport is HTTPS-only)
     if lan_server is None:
+        if cid_registry is None:
+            # Direct/test callers that don't share a registry get a fresh one;
+            # the WSS server below reuses it so both channels stay in sync.
+            cid_registry = SlaveCidRegistry(master_cid=config["CID"])
         lan_server = LANServer(
             port=lan_sync.port,
             use_https=True,
             cert_file=cert_info.cert_file,
             key_file=cert_info.key_file,
+            cid_guard=cid_registry,
         )
         lan_server.start()
         log.info(f"Master HTTP server on port {lan_sync.port} (HTTPS)")
@@ -307,6 +320,10 @@ def _run_as_master(
             use_https=True,
             cert_file=cert_info.cert_file,
             key_file=cert_info.key_file,
+            master_cid=config["CID"],
+            # Reuse the registry the HTTP server holds (shared channel guard),
+            # also when this is a later iteration that only restarts the WSS.
+            cid_registry=cid_registry if cid_registry is not None else lan_server.cid_guard,
         )
         try:
             lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])

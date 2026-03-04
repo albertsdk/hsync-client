@@ -216,6 +216,105 @@ def peek_inbound_origin(filepath: str) -> str | None:
 
 
 # =============================================================================
+# Slave CID Registry (shared duplicate-identity guard: WSS + HTTP)
+# =============================================================================
+
+
+class SlaveCidRegistry:
+    """Thread-safe registry of the slave CIDs currently admitted by this master.
+
+    Shared by the WSS realtime channel and the HTTP transfer endpoints: the
+    WSS server reserves/releases ``(cid, source IP)`` bindings as slaves
+    connect and disconnect, while the HTTP write endpoints refuse requests
+    whose ``cid`` equals the master's own or is bound to a *different* source
+    address. A duplicated device identity — two live hosts presenting the same
+    CID — would corrupt the causal vector-clock and tombstone authorship, so
+    every admission and write point consults this registry.
+
+    Same-address reconnects are admitted with **replacement** semantics (the
+    superseded connection is evicted, mirroring the central server's
+    ``_register_client`` behaviour): a slave that reconnects after a network
+    blip must not be locked out while its old half-open socket lingers.
+    """
+
+    def __init__(self, master_cid: str | None = None) -> None:
+        self._master_cid = master_cid
+        # cid -> (normalized source IP, websocket that reserved it)
+        self._entries: dict[str, tuple[str, Any]] = {}
+        self._lock = threading.Lock()
+        # Dedup'd (cid, source IP) rejection signatures: mDNS heartbeats and
+        # slave retries re-deliver the same conflict, the error is logged once.
+        self._reported: set[str] = set()
+
+    @staticmethod
+    def normalize_ip(ip: str | None) -> str:
+        """Normalize an address for comparison (IPv4-mapped IPv6 → dotted quad)."""
+        if not ip:
+            return ""
+        if ip.startswith("::ffff:") and "." in ip:
+            return ip[len("::ffff:") :]
+        return ip
+
+    def try_reserve(self, cid: str, peer_ip: str | None, websocket: Any) -> tuple[bool, Any | None]:
+        """Atomically reserve *cid* for *websocket* arriving from *peer_ip*.
+
+        Returns ``(allowed, stale_websocket)``. On success *stale_websocket* is
+        the superseded connection of a same-address reconnect (the caller must
+        close it) or ``None``. A claim from a different address for an
+        already-bound CID is a duplicated device identity and is refused.
+        """
+        if self._master_cid and cid == self._master_cid:
+            return False, None
+        normalized = self.normalize_ip(peer_ip)
+        with self._lock:
+            bound = self._entries.get(cid)
+            if bound is not None and bound[0] != normalized:
+                return False, None
+            stale = bound[1] if bound is not None else None
+            self._entries[cid] = (normalized, websocket)
+            return True, stale
+
+    def release(self, cid: str, websocket: Any) -> None:
+        """Drop the *cid* binding, but only if it still belongs to *websocket*.
+
+        Idempotent and safe to call from any teardown path: after a
+        same-address replacement the superseded connection's release is a
+        no-op, so it can never evict the newer binding.
+        """
+        with self._lock:
+            bound = self._entries.get(cid)
+            if bound is not None and bound[1] is websocket:
+                del self._entries[cid]
+
+    def request_conflict(self, cid: str, client_ip: str | None) -> bool:
+        """Return True when an HTTP write from *client_ip* claiming *cid* is a
+        duplicated device identity (the master's own CID, or a CID bound to a
+        different source address)."""
+        if not cid:
+            return False
+        if self._master_cid and cid == self._master_cid:
+            return True
+        normalized = self.normalize_ip(client_ip)
+        with self._lock:
+            bound = self._entries.get(cid)
+            return bound is not None and bound[0] != normalized
+
+    def should_report(self, cid: str, peer_ip: str | None) -> bool:
+        """Return True once per ``(cid, source IP)`` duplicate-identity report."""
+        signature = f"{cid}@{self.normalize_ip(peer_ip)}"
+        with self._lock:
+            if signature in self._reported:
+                return False
+            self._reported.add(signature)
+            return True
+
+    def clear(self) -> None:
+        """Drop every binding (called when the WSS server stops)."""
+        with self._lock:
+            self._entries.clear()
+
+
+# =============================================================================
 # WebSocket Server
 # =============================================================================
 
@@ -234,6 +333,8 @@ class LANWebSocketServer:
         use_https: bool = False,
         cert_file: str | None = None,
         key_file: str | None = None,
+        master_cid: str | None = None,
+        cid_registry: SlaveCidRegistry | None = None,
     ) -> None:
         """
         Initialize the WebSocket server.
@@ -245,11 +346,20 @@ class LANWebSocketServer:
             key_file: Path to SSL private key file. The persistent master key is
                 stored unencrypted and protected by filesystem permissions (see
                 ``load_or_create_master_cert``).
+            master_cid: This master's own CID. When set, a slave that declares
+                this CID (a duplicated device identity) is refused instead of
+                being admitted as a peer.
+            cid_registry: Shared :class:`SlaveCidRegistry` (also consulted by
+                the HTTP write endpoints). A private one is created when
+                omitted, so standalone/test usage keeps working.
         """
         self._port = port
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
+        self._cid_registry = (
+            cid_registry if cid_registry is not None else SlaveCidRegistry(master_cid)
+        )
         self._clients: set[Any] = set()  # WebSocket connections
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -292,6 +402,53 @@ class LANWebSocketServer:
             callback(self.connected_clients)
         except Exception:
             log.exception("Connected-clients callback failed")
+
+    @staticmethod
+    def _peer_ip(client_addr) -> str:
+        """Extract the peer IP from a websocket remote address."""
+        return client_addr[0] if isinstance(client_addr, tuple) else str(client_addr)
+
+    async def _admit_slave(
+        self, client_cid: str, client_addr, websocket, *, authenticated: bool
+    ) -> bool:
+        """Reserve the slave's CID and admit the connection, or reject it.
+
+        A duplicated device identity — the master's own CID, or a CID already
+        bound to a *different* source address — is refused (with an
+        ``auth_failed`` frame on the authenticated path) and the connection is
+        closed. A same-address reconnect replaces the superseded binding and
+        the stale connection is closed, mirroring the central server's
+        ``_register_client`` eviction.
+
+        Returns True when the connection may proceed. On success the CID is
+        already reserved: the caller must release it on teardown paths that do
+        not reach the message loop's ``finally``.
+        """
+        peer_ip = self._peer_ip(client_addr)
+        allowed, stale_ws = self._cid_registry.try_reserve(client_cid, peer_ip, websocket)
+        if not allowed:
+            if self._cid_registry.should_report(client_cid, peer_ip):
+                self._log_duplicate_identity(client_addr, client_cid)
+            if authenticated:
+                with contextlib.suppress(Exception):
+                    await websocket.send(json.dumps(build_lan_auth_failed(reason="cid_conflict")))
+            await websocket.close()
+            return False
+        if stale_ws is not None and stale_ws is not websocket:
+            log.info(
+                f"Slave {client_cid} reconnected from {peer_ip}: closing superseded connection"
+            )
+            with contextlib.suppress(Exception):
+                await stale_ws.close(code=4000, reason="Replaced by a newer connection")
+        return True
+
+    def _log_duplicate_identity(self, client_addr, client_cid: str) -> None:
+        """Log a duplicated-device-identity rejection (shared by both paths)."""
+        log.error(
+            f"{ActionLabel.SECURITY} Duplicate device identity: slave at "
+            f"{client_addr} presents CID {client_cid} which is already in use "
+            f"(this master or another connected slave). Refusing the connection."
+        )
 
     async def _handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection."""
@@ -342,6 +499,13 @@ class LANWebSocketServer:
                     await websocket.send(json.dumps(build_lan_auth_failed(reason="invalid_token")))
                     await websocket.close()
                     return
+                # Reserve the slave's CID before admitting the connection: a
+                # duplicated device identity (the master's own CID, or a CID
+                # bound to a different host) must never reach the causal model.
+                if not await self._admit_slave(
+                    client_cid, client_addr, websocket, authenticated=True
+                ):
+                    return
                 slave_caps = decode_capabilities(auth_data.get("capabilities"))
                 log.debug(
                     f"WebSocket slave {client_cid} capabilities: "
@@ -355,6 +519,10 @@ class LANWebSocketServer:
                 await websocket.close()
                 return
             except Exception as e:
+                # The CID may already be reserved at this point (a failure after
+                # a successful admission, e.g. the auth-ok send): release it so
+                # a retrying same-address slave is not locked out. Idempotent.
+                self._cid_registry.release(client_cid, websocket)
                 log.warning(f"WebSocket auth error from {client_addr} (CID: {client_cid}): {e}")
                 await websocket.close()
                 return
@@ -375,6 +543,13 @@ class LANWebSocketServer:
                     and is_valid_cid(declared_cid)
                 ):
                     client_cid = declared_cid
+                    # Reserve the slave's CID before admitting the connection
+                    # (no failed frame exists on the unauthenticated hello
+                    # path; the slave observes the close).
+                    if not await self._admit_slave(
+                        client_cid, client_addr, websocket, authenticated=False
+                    ):
+                        return
                     slave_caps = decode_capabilities(hello_data.get("capabilities"))
                     log.info(
                         f"WebSocket client connected (no auth): {client_addr} "
@@ -392,7 +567,7 @@ class LANWebSocketServer:
             except Exception as e:
                 log.warning(f"WebSocket hello error from {client_addr}: {e}")
 
-        # Add client to set
+        # Add client to set (its CID is already reserved by _admit_slave)
         self._clients.add(websocket)
         self._notify_clients_changed()
 
@@ -408,6 +583,8 @@ class LANWebSocketServer:
             log.debug(f"WebSocket client {client_addr} (CID: {client_cid}) disconnected: {e}")
         finally:
             self._clients.discard(websocket)
+            if client_cid != "unknown":
+                self._cid_registry.release(client_cid, websocket)
             self._notify_clients_changed()
             log.info(f"WebSocket client disconnected: {client_addr} (CID: {client_cid})")
 
@@ -538,6 +715,10 @@ class LANWebSocketServer:
                         await client.close()
 
             asyncio.run_coroutine_threadsafe(close_all(), self._loop)
+
+        # Every admitted slave is gone: drop the duplicate-identity bindings so
+        # a later re-admission (role regained) starts from a clean registry.
+        self._cid_registry.clear()
 
         # Wait for thread to finish
         if self._thread:
@@ -915,7 +1096,16 @@ async def lan_websocket_client(
                 auth_result = json.loads(response)
                 if auth_result.get("status") != "ok":
                     reason = auth_result.get("reason") or "unknown"
-                    log.error(f"WebSocket authentication failed ({reason})")
+                    if reason == "cid_conflict":
+                        log.error(
+                            f"{ActionLabel.SECURITY} Master refused this client: its device "
+                            f"identity (CID {CONFIG['CID']}) is already in use by the master "
+                            f"or another connected peer. This machine's device directory "
+                            f"was likely copied from another machine; give each instance "
+                            f"its own HSYNC_DEVICE_DIR."
+                        )
+                    else:
+                        log.error(f"WebSocket authentication failed ({reason})")
                     return
                 adopt_remote_capabilities(decode_capabilities(auth_result.get("capabilities")))
                 log.info("WebSocket authenticated with master")

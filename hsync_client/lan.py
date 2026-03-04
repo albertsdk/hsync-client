@@ -165,6 +165,8 @@ class PeerManager:
         never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
+        local_cert_fingerprint: str | None = None,
+        local_address: str | None = None,
     ) -> None:
         """
         Initialize the peer manager.
@@ -179,6 +181,12 @@ class PeerManager:
             startup_time: Unix timestamp when this client started.
             sync_direction: This client's sync direction
                 ("bidirectional", "upload-only", "download-only").
+            local_cert_fingerprint: This node's own certificate fingerprint
+                (SHA-256), used to tell a duplicated device identity (same CID,
+                different cert) apart from a legitimate self-discovery.
+            local_address: The IP address this node advertises over mDNS. A
+                peer that presents our own CID from a different address is a
+                different host cloning our device identity.
         """
         self._local_cid = local_cid
         self._bucket = bucket
@@ -187,8 +195,14 @@ class PeerManager:
         self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
+        self._local_cert_fingerprint = local_cert_fingerprint
+        self._local_address = local_address
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
+        # Dedup guard for the duplicate-identity warning: mDNS heartbeats
+        # re-deliver the same foreign record every few seconds, so the error is
+        # reported once per distinct (address, fingerprint) signature.
+        self._duplicate_identity_seen: set[str] = set()
         self._master_cid: str | None = None
         self._local_server_ready = False
         self._on_master_change: Callable[[Peer | None], None] | None = None
@@ -274,7 +288,15 @@ class PeerManager:
             return
 
         if peer.cid == self._local_cid:
-            log.debug("Ignoring self from peer discovery")
+            # A peer presenting our own CID is either our own mDNS record
+            # looped back (legitimate self-discovery) or a different host that
+            # cloned this installation's device identity. Distinguish the two
+            # and fail loudly on the latter: two live nodes sharing a CID would
+            # corrupt the causal vector clocks and tombstone attribution.
+            if self._is_foreign_duplicate(peer):
+                self._report_duplicate_identity(peer)
+            else:
+                log.debug("Ignoring self from peer discovery")
             return
 
         with self._lock:
@@ -336,6 +358,43 @@ class PeerManager:
                 self._elect_master()
             if discovery_changed or stale_peer:
                 self._signal_change()
+
+    def _is_foreign_duplicate(self, peer: Peer) -> bool:
+        """Return True when *peer* presents our CID but is a different host.
+
+        A peer advertising our own CID is only "self" when it comes from the
+        address this node itself announces (our own mDNS record looped back).
+        Any other address is a different host running with a cloned device
+        identity (a copied ``HSYNC_DEVICE_DIR``). When no address hint is
+        available, a differing certificate fingerprint for the same CID is
+        still conclusive: our own record always carries our own fingerprint.
+        """
+        different_address = (
+            self._local_address is not None
+            and bool(peer.address)
+            and peer.address != self._local_address
+        )
+        different_fingerprint = (
+            self._local_cert_fingerprint is not None
+            and peer.cert_fingerprint is not None
+            and peer.cert_fingerprint != self._local_cert_fingerprint
+        )
+        return different_address or different_fingerprint
+
+    def _report_duplicate_identity(self, peer: Peer) -> None:
+        """Log (once per signature) a duplicated device identity and ignore it."""
+        signature = f"{peer.address or '?'}:{peer.cert_fingerprint or '?'}"
+        with self._lock:
+            if signature in self._duplicate_identity_seen:
+                return
+            self._duplicate_identity_seen.add(signature)
+        log.error(
+            f"{ActionLabel.SECURITY} Duplicate device identity detected: a peer at "
+            f"{peer.address}:{peer.port} presents this client's CID "
+            f"({self._local_cid}). Refusing to sync with it. Each machine must "
+            f"run with its own device identity: do not copy HSYNC_DEVICE_DIR "
+            f"between hosts, and give each instance a separate HSYNC_DEVICE_DIR."
+        )
 
     def remove_peer(self, cid: str) -> None:
         """Remove a peer by CID."""
@@ -757,6 +816,9 @@ class LANSync:
         self._sync_direction = sync_direction
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
+        # The IP this node advertises over mDNS, computed once so the advertised
+        # address and the discovery self-check compare against the same value.
+        self._local_ip = self._get_local_ip()
 
         self._zeroconf: Zeroconf | None = None
         self._browser: ServiceBrowser | None = None
@@ -835,6 +897,8 @@ class LANSync:
             never_master=self._never_master,
             startup_time=self._startup_time,
             sync_direction=self._sync_direction,
+            local_cert_fingerprint=self._cert_fingerprint,
+            local_address=self._local_ip,
         )
 
         # Register our service (can be deferred if register_service=False)
@@ -977,8 +1041,9 @@ class LANSync:
         if not self._zeroconf:
             return
 
-        # Get local IP address
-        local_ip = self._get_local_ip()
+        # Get local IP address (computed once in __init__ so discovery's
+        # self-check compares against the exact address this record advertises)
+        local_ip = self._local_ip
 
         # Create service name: bucket-cid
         service_name = f"{self._bucket}-{self._cid}.{HSYNC_SERVICE_TYPE}"

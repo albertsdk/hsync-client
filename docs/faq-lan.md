@@ -133,6 +133,19 @@ HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
 
 Different buckets need no change — they share the identity but never clash.
 
+**Q: What happens if I copy the device directory to another machine?**
+That **clones the device identity**: two machines would present the same device
+ID. hsync detects this at runtime and refuses to sync with the clone — the
+other peer logs `[SECURITY] Duplicate device identity detected`, and a slave
+whose device ID is already in use is refused at the master. Give each machine
+its own identity: delete the copied device directory (hsync regenerates it on
+the next run) or point the machine at a fresh location:
+
+```bash
+HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-machine \
+  hsync lan -b photos -p ~/Photos
+```
+
 ## Files & Performance
 
 **Q: Is there a file size limit in LAN mode?**

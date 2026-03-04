@@ -13,6 +13,7 @@ import pytest
 
 from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
+from hsync_client.lan_websocket import SlaveCidRegistry
 
 
 class TestLANRequestHandler:
@@ -183,7 +184,7 @@ class TestLANRequestHandler:
             },
         ):
             # Simulate upload like transfer.py does
-            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "test-client-id",
                 "path": "subdir",
@@ -218,7 +219,7 @@ class TestLANRequestHandler:
                 "LAN_KEY": "secret123",
             },
         ):
-            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "test",
                 "path": "",
@@ -281,7 +282,7 @@ class TestLANSyncIntegration:
             },
         ):
             # Simulate what sync.get_files_remote() does
-            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             response = requests.get(url, timeout=5)
             assert response.status_code == 200
             files = response.json()
@@ -290,7 +291,7 @@ class TestLANSyncIntegration:
             # Simulate download for each file
             for file_info in files:
                 filepath = file_info["filepath"]
-                download_url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
+                download_url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files/download"
                 response = requests.get(download_url, params={"filename": filepath}, timeout=5)
                 assert response.status_code == 200
 
@@ -308,7 +309,7 @@ class TestLANSyncIntegration:
             },
         ):
             # Simulate upload like transfer.py does
-            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "test-client",
                 "path": "",
@@ -353,7 +354,7 @@ class TestLANSyncIntegration:
             "hsync_client.lan_server.CONFIG",
             {"LOCAL_BUCKET": str(master_bucket), "LAN_KEY": None},
         ):
-            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             fields = {
                 "cid": "test-client",
                 "path": "",
@@ -381,3 +382,67 @@ class TestLANSyncIntegration:
             uploaded = master_bucket / "binary.mp3"
             assert uploaded.exists()
             assert uploaded.read_bytes() == file_data
+
+
+class TestLANDuplicateCidGuard:
+    """The HTTP write endpoints refuse duplicated device identities (409)."""
+
+    @pytest.fixture
+    def guarded_server(self):
+        """A LAN server wired to a shared duplicate-identity registry."""
+        registry = SlaveCidRegistry(master_cid="m" * 21)
+        port = get_free_port()
+        server = LANServer(port=port, cid_guard=registry)
+        server.start()
+        time.sleep(0.1)
+        yield server, port, registry
+        server.stop()
+
+    def _upload(self, port: int, tmp_path, cid: str) -> int:
+        """POST a file to the master with the given cid; return the status."""
+        import requests
+
+        url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
+        data = {
+            "cid": cid,
+            "path": "subdir",
+            "size": "12",
+            "sha256sum": _sha256(b"test content").hexdigest(),
+            "permissions": "644",
+        }
+        files = {"file": ("uploaded.txt", b"test content")}
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+        ):
+            return requests.post(url, data=data, files=files, timeout=5).status_code
+
+    def test_upload_with_master_cid_is_refused(self, guarded_server, tmp_path):
+        """Writing with the master's own CID is a duplicate identity (409)."""
+        srv, port, registry = guarded_server
+        assert self._upload(port, tmp_path, "m" * 21) == 409
+        assert (tmp_path / "subdir" / "uploaded.txt").exists() is False
+
+    def test_upload_with_cid_bound_to_other_host_is_refused(self, guarded_server, tmp_path):
+        """A CID bound to a different source address is refused (409)."""
+        srv, port, registry = guarded_server
+        registry.try_reserve("a" * 21, "192.168.1.50", object())
+        # The upload comes from localhost, not from the registered address:
+        # a cloned device presenting the same CID is refused (409).
+        assert self._upload(port, tmp_path, "a" * 21) == 409
+        assert (tmp_path / "subdir" / "uploaded.txt").exists() is False
+
+    def test_upload_with_unregistered_cid_still_works(self, guarded_server, tmp_path):
+        """An unregistered CID (one-shot slave) is not blocked."""
+        srv, port, registry = guarded_server
+        # A legitimate (one-shot, never-WSS) slave with an unregistered CID is
+        # not blocked: the guard only refuses in-use CIDs from other hosts.
+        assert self._upload(port, tmp_path, "u" * 21) == 201
+        assert (tmp_path / "subdir" / "uploaded.txt").read_text() == "test content"
+
+    def test_upload_same_host_registered_cid_allowed(self, guarded_server, tmp_path):
+        """A CID bound to this host's address passes the guard."""
+        srv, port, registry = guarded_server
+        # Reserve the CID for this host's loopback address: its writes pass.
+        registry.try_reserve("a" * 21, "127.0.0.1", object())
+        assert self._upload(port, tmp_path, "a" * 21) == 201

@@ -217,6 +217,124 @@ class TestLANWebSocketServer:
         ws.close.assert_called_once()
         assert ws not in server._clients
 
+    def test_registry_rejects_master_cid(self):
+        """The registry refuses to admit the master's own CID."""
+        server = LANWebSocketServer(port=9999, master_cid="m" * 21)
+        allowed, stale = server._cid_registry.try_reserve("m" * 21, "192.168.1.2", object())
+        assert allowed is False
+        assert stale is None
+
+    @pytest.mark.asyncio
+    async def test_handle_client_rejects_slave_with_master_cid(self):
+        """A slave presenting the master's own CID is refused with cid_conflict."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
+        server = LANWebSocketServer(port=9999, master_cid="m" * 21)
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.2", 5555)
+        ws.recv.return_value = json.dumps(
+            {
+                "type": "auth",
+                "token": "secret",
+                "cid": "m" * 21,
+                "protocol_version": PROTOCOL_VERSION_LAN,
+                "capabilities": [],
+            }
+        )
+
+        config = {"LAN_KEY": "secret"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[1]) == {
+            "type": "auth",
+            "status": "failed",
+            "protocol_version": PROTOCOL_VERSION_LAN,
+            "reason": "cid_conflict",
+        }
+        ws.close.assert_called_once()
+        assert ws not in server._clients
+        # The master CID is never bound (always a conflict), so the registry
+        # holds no entry for it after the refused attempt.
+        assert server._cid_registry.request_conflict("m" * 21, "192.168.1.2") is True
+        assert "m" * 21 not in server._cid_registry._entries
+
+    @pytest.mark.asyncio
+    async def test_handle_client_rejects_duplicate_slave_cid_from_other_host(self):
+        """A second slave presenting a CID bound to a different host is refused."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
+        server = LANWebSocketServer(port=9999, master_cid="m" * 21)
+        # CID already bound to a *different* source address (a cloned device).
+        server._cid_registry.try_reserve("b" * 21, "192.168.1.9", object())
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.3", 5555)
+        ws.recv.return_value = json.dumps(
+            {
+                "type": "auth",
+                "token": "secret",
+                "cid": "b" * 21,
+                "protocol_version": PROTOCOL_VERSION_LAN,
+                "capabilities": [],
+            }
+        )
+
+        config = {"LAN_KEY": "secret"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[1]) == {
+            "type": "auth",
+            "status": "failed",
+            "protocol_version": PROTOCOL_VERSION_LAN,
+            "reason": "cid_conflict",
+        }
+        ws.close.assert_called_once()
+        assert ws not in server._clients
+        # The original binding must be untouched.
+        assert server._cid_registry.request_conflict("b" * 21, "192.168.1.3") is True
+
+    @pytest.mark.asyncio
+    async def test_handle_client_same_host_reconnect_replaces_binding(self):
+        """A slave reconnecting from the same address replaces its own binding."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+
+        server = LANWebSocketServer(port=9999, master_cid="m" * 21)
+        stale_ws = AsyncMock()
+        server._cid_registry.try_reserve("b" * 21, "192.168.1.7", stale_ws)
+
+        ws = AsyncMock()
+        ws.remote_address = ("192.168.1.7", 4444)
+        ws.recv.return_value = json.dumps(
+            {
+                "type": "auth",
+                "token": "secret",
+                "cid": "b" * 21,
+                "protocol_version": PROTOCOL_VERSION_LAN,
+                "capabilities": [],
+            }
+        )
+
+        async def _empty_aiter(self_ws):
+            return
+            yield  # noqa – makes this an async generator
+
+        ws.__aiter__ = _empty_aiter
+
+        config = {"LAN_KEY": "secret"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            await server._handle_client(ws)
+
+        # Authenticated (no cid_conflict failure) — status is "ok".
+        calls = [c.args[0] for c in ws.send.call_args_list]
+        assert json.loads(calls[1])["status"] == "ok"
+        # The superseded connection was closed and the binding now points at ws.
+        stale_ws.close.assert_awaited()
+        assert server._cid_registry.request_conflict("b" * 21, "192.168.1.7") is False
+        assert ws not in server._clients  # removed in finally after empty loop
+
     @pytest.mark.asyncio
     async def test_handle_client_auth_protocol_mismatch(self):
         """A slave speaking a different LAN protocol is refused (hard fail)."""
@@ -642,3 +760,83 @@ class TestLanWebsocketClientGreetingValidation:
         # No frame is sent back: the connection is refused outright instead of
         # falling through to an unauthenticated session.
         assert sent == []
+
+
+class TestSlaveCidRegistry:
+    """Unit tests for the shared duplicate-identity registry."""
+
+    def test_reserve_and_release(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry(master_cid="m" * 21)
+        ws = object()
+        allowed, stale = reg.try_reserve("a" * 21, "192.168.1.5", ws)
+        assert allowed is True
+        assert stale is None
+        assert reg.request_conflict("a" * 21, "192.168.1.5") is False
+        assert reg.request_conflict("a" * 21, "192.168.1.6") is True
+        reg.release("a" * 21, ws)
+        assert reg.request_conflict("a" * 21, "192.168.1.6") is False
+
+    def test_different_ip_conflict(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        reg.try_reserve("a" * 21, "192.168.1.5", object())
+        allowed, stale = reg.try_reserve("a" * 21, "192.168.1.9", object())
+        assert allowed is False
+        assert stale is None
+
+    def test_same_ip_replaces_binding(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        old_ws = object()
+        new_ws = object()
+        allowed, stale = reg.try_reserve("a" * 21, "192.168.1.5", old_ws)
+        assert (allowed, stale) == (True, None)
+        allowed2, stale2 = reg.try_reserve("a" * 21, "192.168.1.5", new_ws)
+        assert allowed2 is True
+        assert stale2 is old_ws
+        # The old binding's release must not evict the new one.
+        reg.release("a" * 21, old_ws)
+        assert reg.request_conflict("a" * 21, "192.168.1.6") is True
+        reg.release("a" * 21, new_ws)
+        assert reg.request_conflict("a" * 21, "192.168.1.6") is False
+
+    def test_master_cid_never_reserved(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry(master_cid="m" * 21)
+        allowed, stale = reg.try_reserve("m" * 21, "192.168.1.5", object())
+        assert allowed is False
+        assert stale is None
+        assert reg.request_conflict("m" * 21, "192.168.1.5") is True
+
+    def test_ipv4_mapped_normalization(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        assert reg.normalize_ip("::ffff:192.168.1.5") == "192.168.1.5"
+        assert reg.normalize_ip("192.168.1.5") == "192.168.1.5"
+        assert reg.normalize_ip(None) == ""
+        # Same logical host via the two encodings is not a conflict.
+        reg.try_reserve("a" * 21, "::ffff:192.168.1.5", object())
+        allowed, _ = reg.try_reserve("a" * 21, "192.168.1.5", object())
+        assert allowed is True
+
+    def test_should_report_once_per_signature(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        assert reg.should_report("a" * 21, "192.168.1.5") is True
+        assert reg.should_report("a" * 21, "192.168.1.5") is False
+        assert reg.should_report("a" * 21, "192.168.1.6") is True
+
+    def test_clear_drops_bindings(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        reg.try_reserve("a" * 21, "192.168.1.5", object())
+        reg.clear()
+        assert reg.request_conflict("a" * 21, "192.168.1.9") is False

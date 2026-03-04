@@ -908,3 +908,102 @@ class TestGetMasterEdgeCases:
         )
         assert pm.get_master_cid() is None
         assert pm.get_master() is None
+
+
+class TestDuplicateIdentityDetection:
+    """A peer presenting our own CID must be told apart from a self-discovery."""
+
+    def test_self_discovery_ignored_when_same_address_and_fingerprint(self):
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_address="192.168.1.1",
+            local_cert_fingerprint="fp-local",
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(
+                Peer(
+                    cid="local123",
+                    bucket="photos",
+                    address="192.168.1.1",
+                    port=9753,
+                    cert_fingerprint="fp-local",
+                )
+            )
+        assert pm._peers == {}
+        error_calls = [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)]
+        assert error_calls == []
+
+    def test_foreign_duplicate_detected_by_different_address(self):
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_address="192.168.1.1",
+            local_cert_fingerprint="fp-local",
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(
+                Peer(
+                    cid="local123",
+                    bucket="photos",
+                    address="192.168.1.50",
+                    port=9753,
+                    cert_fingerprint="fp-local",
+                )
+            )
+        # Not admitted (never sync with a clone) and reported loudly.
+        assert pm._peers == {}
+        error_calls = [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)]
+        assert len(error_calls) == 1
+
+    def test_foreign_duplicate_detected_by_different_fingerprint(self):
+        # No address hint: a differing fingerprint for the same CID is still
+        # conclusive evidence of a partial clone (device_id copied, keypair
+        # regenerated).
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_cert_fingerprint="fp-local",
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(
+                Peer(
+                    cid="local123",
+                    bucket="photos",
+                    address="192.168.1.50",
+                    port=9753,
+                    cert_fingerprint="fp-other",
+                )
+            )
+        assert pm._peers == {}
+        error_calls = [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)]
+        assert len(error_calls) == 1
+
+    def test_duplicate_identity_warning_reported_once(self):
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_address="192.168.1.1",
+        )
+        with patch("hsync_client.lan.log") as mock_log:
+            for _ in range(3):
+                pm.add_peer(
+                    Peer(
+                        cid="local123",
+                        bucket="photos",
+                        address="192.168.1.50",
+                        port=9753,
+                    )
+                )
+        error_calls = [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)]
+        assert len(error_calls) == 1
+
+    def test_no_address_no_fingerprint_treated_as_self(self):
+        # Backward-compatible fallback: without an address/fingerprint hint we
+        # cannot distinguish self from a clone, so the historical silent-ignore
+        # behaviour is preserved (no false-positive error).
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        with patch("hsync_client.lan.log") as mock_log:
+            pm.add_peer(Peer(cid="local123", bucket="photos", address="192.168.1.50", port=9753))
+        assert pm._peers == {}
+        assert mock_log.error.call_count == 0
