@@ -395,6 +395,15 @@ class PeerManager:
             f"run with its own device identity: do not copy HSYNC_DEVICE_DIR "
             f"between hosts, and give each instance a separate HSYNC_DEVICE_DIR."
         )
+        emit_event(
+            UiEventName.duplicate_identity,
+            peer_cid=self._local_cid,
+            peer_address=peer.address or "",
+            message=(
+                "Duplicate device identity detected: a peer presents this client's "
+                "CID. Each machine must use its own HSYNC_DEVICE_DIR."
+            ),
+        )
 
     def remove_peer(self, cid: str) -> None:
         """Remove a peer by CID."""

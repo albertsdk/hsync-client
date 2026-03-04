@@ -186,7 +186,8 @@ Consequences:
   for a known device and refuse the connection (`[FINGERPRINT CHANGED]`).
 - **Copying the device directory clones the device** — keep it private. If a
   clone appears on the network, hsync detects the duplicated identity at
-  runtime and refuses to sync with it (`[SECURITY] Duplicate device identity`),
+  runtime, refuses to sync with it (`[SECURITY] Duplicate device identity`)
+  and raises a **Duplicate Device Identity** notification in the desktop app,
   instead of silently ignoring it.
 
 ### Multiple instances on one host

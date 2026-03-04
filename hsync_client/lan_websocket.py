@@ -69,6 +69,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
     SUPPORTS_ON_CLOSED,
@@ -107,6 +108,11 @@ CREATE_UPLOAD_DEFER_S = STABILITY_DELAY_ON_CLOSED
 REALTIME_MAX_WORKERS = 8
 
 _realtime_executor: ThreadPoolExecutor | None = None
+
+# One-shot guard for the slave-side ``cid_conflict`` UI event: the slave keeps
+# retrying the rejected connection, but the operator must see a single
+# notification rather than one per reconnect attempt.
+_duplicate_identity_event_sent = False
 
 
 def _get_realtime_executor() -> ThreadPoolExecutor:
@@ -448,6 +454,15 @@ class LANWebSocketServer:
             f"{ActionLabel.SECURITY} Duplicate device identity: slave at "
             f"{client_addr} presents CID {client_cid} which is already in use "
             f"(this master or another connected slave). Refusing the connection."
+        )
+        emit_event(
+            UiEventName.duplicate_identity,
+            peer_cid=client_cid,
+            peer_address=self._peer_ip(client_addr),
+            message=(
+                "Duplicate device identity: a peer presents a CID already in use. "
+                "Each machine must use its own HSYNC_DEVICE_DIR."
+            ),
         )
 
     async def _handle_client(self, websocket) -> None:
@@ -1104,6 +1119,19 @@ async def lan_websocket_client(
                             f"was likely copied from another machine; give each instance "
                             f"its own HSYNC_DEVICE_DIR."
                         )
+                        global _duplicate_identity_event_sent
+                        if not _duplicate_identity_event_sent:
+                            _duplicate_identity_event_sent = True
+                            emit_event(
+                                UiEventName.duplicate_identity,
+                                peer_cid=CONFIG["CID"],
+                                peer_address=host,
+                                message=(
+                                    "This machine's device identity is already in use by the "
+                                    "master or another peer. Give each machine its own "
+                                    "HSYNC_DEVICE_DIR."
+                                ),
+                            )
                     else:
                         log.error(f"WebSocket authentication failed ({reason})")
                     return

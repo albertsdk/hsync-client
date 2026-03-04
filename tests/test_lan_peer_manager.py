@@ -998,6 +998,22 @@ class TestDuplicateIdentityDetection:
         error_calls = [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)]
         assert len(error_calls) == 1
 
+    def test_duplicate_identity_emits_ui_event(self):
+        """Discovery detection emits the duplicate_identity UI event once."""
+        from hsync_client.events import UiEventName
+
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_address="192.168.1.1",
+        )
+        with patch("hsync_client.lan.emit_event") as mock_emit:
+            pm.add_peer(Peer(cid="local123", bucket="photos", address="192.168.1.50", port=9753))
+        assert mock_emit.call_count == 1
+        assert mock_emit.call_args.kwargs["peer_cid"] == "local123"
+        assert mock_emit.call_args.kwargs["peer_address"] == "192.168.1.50"
+        assert mock_emit.call_args.args[0] is UiEventName.duplicate_identity
+
     def test_no_address_no_fingerprint_treated_as_self(self):
         # Backward-compatible fallback: without an address/fingerprint hint we
         # cannot distinguish self from a clone, so the historical silent-ignore

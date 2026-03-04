@@ -136,15 +136,24 @@ Different buckets need no change — they share the identity but never clash.
 **Q: What happens if I copy the device directory to another machine?**
 That **clones the device identity**: two machines would present the same device
 ID. hsync detects this at runtime and refuses to sync with the clone — the
-other peer logs `[SECURITY] Duplicate device identity detected`, and a slave
-whose device ID is already in use is refused at the master. Give each machine
-its own identity: delete the copied device directory (hsync regenerates it on
-the next run) or point the machine at a fresh location:
+other peer logs `[SECURITY] Duplicate device identity detected`, a slave whose
+device ID is already in use is refused at the master (with a `[SECURITY]` error
+of its own), and every detection point raises a **Duplicate Device Identity**
+notification in the desktop app. Give each machine its own identity: delete the
+copied device directory (hsync regenerates it on the next run) or point the
+machine at a fresh location:
 
 ```bash
 HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-machine \
   hsync lan -b photos -p ~/Photos
 ```
+
+> **Trust-LAN note (no `HSYNC_LAN_KEY`):** on an unauthenticated LAN the device
+> ID a peer declares is not verified, so a malicious peer could squat another
+> peer's ID and get it refused while it holds the connection. This is a marginal
+> availability risk in a mode where any peer can already read and write the
+> share; the far more common case the check protects against is the *accidental*
+> clone (a copied configuration on a home LAN).
 
 ## Files & Performance
 
