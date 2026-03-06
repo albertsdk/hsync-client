@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-03" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-04" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -12,7 +12,8 @@ hsync \- file synchronization client (Server and LAN P2P modes)
 .SY hsync
 .B server
 .OP \-b NAME
-.OP \-s URL
+.RB [ hostname ]
+.OP \-\-port PORT
 .OP \-p DIR
 .RI [ OPTIONS ]
 .YS
@@ -90,16 +91,23 @@ This option is mandatory.
 .\" --- Server subcommand ---
 .SS Server subcommand
 .TP
-.BR \-s ", " \-\-server =\fIURL\fP
-Server URL
-.RI ( https://server.example.com ).
-Can also be set via the
+.B hostname
+Remote server hostname or IP
+.RI ( server\.example\.com ).
+HTTPS is always used; the port defaults to 9753 (the hsync\-server
+default) and a reverse proxy on 443 is selected with
+.BR \-\-port .
+Can also be configured as a full URL via the
 .B HSYNC_SERVER
 environment variable. Required for
 .B hsync server
 unless
 .B HSYNC_SERVER
 is set.
+.TP
+.BR \-\-port =\fIPORT\fP
+Remote server port (default: 9753). Requires
+.BR hostname .
 .TP
 .B \-\-insecure
 Skip SSL/TLS certificate verification (not recommended).
@@ -369,10 +377,12 @@ to isolate multiple independent sync groups on the same network.
 .SH ENVIRONMENT
 .TP
 .B HSYNC_SERVER
-Server URL (alternative to the
-.B \-s
-option of
-.BR "hsync server" ).
+Full server URL
+.RI ( https://host:port )
+— alternative to the
+.B hostname
+argument of
+.BR "hsync server" .
 .TP
 .B HSYNC_API_KEY
 API key for authenticating with the server.
@@ -558,35 +568,35 @@ in
 Basic sync with a remote server:
 .RS
 .EX
-hsync server \-b photos \-s https://server.example.com
+hsync server server.example.com \-b photos
 .EE
 .RE
 .TP
 Sync a specific local directory:
 .RS
 .EX
-hsync server \-b documents \-s https://server.example.com \-p ~/Documents
+hsync server server.example.com \-b documents \-p ~/Documents
 .EE
 .RE
 .TP
 Continuous (default) mode:
 .RS
 .EX
-hsync server \-b projects \-s https://server.example.com
+hsync server server.example.com \-b projects
 .EE
 .RE
 .TP
 One-shot sync:
 .RS
 .EX
-hsync server \-b projects \-s https://server.example.com \-\-once
+hsync server server.example.com \-b projects \-\-once
 .EE
 .RE
 .TP
 Dry-run preview (no changes made):
 .RS
 .EX
-hsync server \-b backup \-s https://server.example.com \-n
+hsync server server.example.com \-b backup \-n
 .EE
 .RE
 .TP
@@ -607,14 +617,21 @@ HSYNC_LAN_KEY=mysecret hsync lan \-b shared \-\-group home
 Backup mode (upload only, never delete remote files):
 .RS
 .EX
-hsync server \-b backup \-s https://server.example.com \-\-sync\-direction upload\-only \-\-ignore\-delete
+hsync server server.example.com \-b backup \-\-sync\-direction upload\-only \-\-ignore\-delete
 .EE
 .RE
 .TP
 Bandwidth-limited sync:
 .RS
 .EX
-hsync server \-b media \-s https://server.example.com \-\-limit\-upload 2MB
+hsync server server.example.com \-b media \-\-limit\-upload 2MB
+.EE
+.RE
+.TP
+Reverse proxy on the standard HTTPS port (the default port is 9753):
+.RS
+.EX
+hsync server server.example.com \-\-port 443 \-b photos
 .EE
 .RE
 .

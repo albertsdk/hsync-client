@@ -32,7 +32,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
 - Package root: `hsync_client/` (`hsync_client/__init__.py:1`).
 - Entry points: `main.main` (`main.py:25`) → Typer command `cli.main`
-  (`cli.py:108`); console script `cli.run` (`cli.py:809`).
+  (`cli.py:750`); console script `cli.run` (`cli.py:1121`).
 - Orchestrator: `run_sync` (`main_logic.py:539`) — validates, branches to remote or
   LAN, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.

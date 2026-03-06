@@ -17,7 +17,7 @@ HSYNC runs in two mutually exclusive modes, selected per invocation:
 | Mode | Topology | How to enable | Best for | Walkthrough |
 |------|----------|---------------|----------|-------------|
 | **LAN Mode** | Peer-to-peer (no server) | `hsync lan` | Devices on the same network, no server | [Getting Started — LAN P2P Mode](getting-started-lan.md) |
-| **Server Mode** | Client ↔ central server | `hsync server -s URL` (+ `HSYNC_API_KEY`) | Remote / internet sync, multiple sites | [Getting Started — Server Mode](getting-started-server.md) |
+| **Server Mode** | Client ↔ central server | `hsync server <hostname>` (+ `HSYNC_API_KEY`) | Remote / internet sync, multiple sites | [Getting Started — Server Mode](getting-started-server.md) |
 
 See [Sync Modes](sync-modes.md) for a full comparison of the two topologies.
 

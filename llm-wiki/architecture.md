@@ -6,11 +6,11 @@ framework; asyncio event loop + watchdog observer + a thread pool for transfers.
 ## Entry & orchestration
 
 `main.main` (`main.py:25`) invokes the Typer app (`cli.py`): a parent callback
-`cli.main` (`cli.py:696`) carrying the global options, plus two mutually
-exclusive subcommands `cli.lan` (`cli.py:783`) and `cli.server` (`cli.py:931`).
+`cli.main` (`cli.py:750`) carrying the global options, plus two mutually
+exclusive subcommands `cli.lan` (`cli.py:837`) and `cli.server` (`cli.py:985`).
 Each subcommand validates its options and calls `run_sync` (`main_logic.py:539`),
 which validates inputs, runs pre-sync safety checks, then branches by mode and
-starts the watcher loop. Console script: `cli.run` (`cli.py:1057`).
+starts the watcher loop. Console script: `cli.run` (`cli.py:1121`).
 
 ## The two run modes
 

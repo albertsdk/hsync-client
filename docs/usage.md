@@ -17,7 +17,7 @@ HSYNC runs in one of two mutually exclusive operating modes:
 
 ```bash
 # Server Mode — connect to a central HSYNC server
-hsync server -s <server_url> -b <bucket_name> [options]
+hsync server <hostname> [--port <port>] -b <bucket_name> [options]
 
 # LAN Mode — peer-to-peer, no server (mDNS discovery, implicit continuous mode)
 hsync lan -b <bucket_name> [options]

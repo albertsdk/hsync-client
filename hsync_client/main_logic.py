@@ -621,7 +621,7 @@ def run_sync(
 
     # Validate server URL is provided (not required in LAN mode)
     if not effective_server_url and not lan_mode:
-        log.error("Server URL is required (use 'hsync server -s URL' or set HSYNC_SERVER)")
+        log.error("Server URL is required (use 'hsync server <hostname>' or set HSYNC_SERVER)")
         sys.exit(1)
 
     # In LAN mode without server URL, use placeholder

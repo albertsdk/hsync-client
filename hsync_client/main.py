@@ -12,7 +12,7 @@ This module is the main entry point for the HSYNC client application.
 It uses Typer for CLI parsing and delegates to main_logic for execution.
 
 Usage:
-    hsync server -b <bucket> -s <server_url> [options]
+    hsync server <hostname> -b <bucket> [options]   (https:// and port 9753 implied)
     hsync lan -b <bucket> [options]
 
 Environment Variables:

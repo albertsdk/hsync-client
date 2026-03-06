@@ -12,7 +12,7 @@ Every client connects to the server, authenticates with an API key, and
 synchronizes files through it.
 
 ```bash
-hsync server -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync server server.example.com -b mybucket -p ~/Sync
 ```
 
 ### How it works
@@ -43,7 +43,7 @@ Continuous mode is the **default**. The client runs as a daemon:
   instead of exiting — matching LAN mode.
 
 ```bash
-hsync server -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync server server.example.com -b mybucket -p ~/Sync
 ```
 
 ### Single Sync (one-shot)
@@ -59,7 +59,7 @@ This is ideal for:
 - **Manual "sync now"** — run on demand without a persistent process
 
 ```bash
-hsync --once -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync server server.example.com --once -b mybucket -p ~/Sync
 ```
 
 ### Dry Run
@@ -67,7 +67,7 @@ hsync --once -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
 Preview what would change without modifying files:
 
 ```bash
-hsync --dry-run -s https://hsync.example.com:9753 -b mybucket -p ~/Sync
+hsync server server.example.com --dry-run -b mybucket -p ~/Sync
 ```
 
 ### Conflict Handling

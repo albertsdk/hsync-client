@@ -889,7 +889,7 @@ class TestRemoteSyncNegative:
 
         from hsync_client.cli import app
 
-        from .conftest import _ClientGlobalsGuard
+        from .conftest import _ClientGlobalsGuard, bb_server_cli_args
 
         base_url, _ = live_server
         # In-process CLI runs must stay inside the globals guard: run_sync
@@ -899,10 +899,10 @@ class TestRemoteSyncNegative:
             result = CliRunner().invoke(
                 app,
                 [
+                    "server",
                     "-b",
                     bb_bucket,
-                    "-s",
-                    base_url,
+                    *bb_server_cli_args(base_url),
                     "-p",
                     local_dir,
                     "--once",
@@ -934,10 +934,12 @@ class TestRemoteSyncNegative:
             result = CliRunner().invoke(
                 app,
                 [
+                    "server",
                     "-b",
                     "anybucket",
-                    "-s",
-                    "http://127.0.0.1:1",
+                    "127.0.0.1",
+                    "--port",
+                    "1",
                     "-p",
                     str(local),
                     "--once",
@@ -958,7 +960,7 @@ class TestRemoteSyncNegative:
 
         from hsync_client.cli import app
 
-        from .conftest import _ClientGlobalsGuard
+        from .conftest import _ClientGlobalsGuard, bb_server_cli_args
 
         base_url, api_key = live_server
 
@@ -968,10 +970,10 @@ class TestRemoteSyncNegative:
             result = CliRunner().invoke(
                 app,
                 [
+                    "server",
                     "-b",
                     bb_bucket,
-                    "-s",
-                    base_url,
+                    *bb_server_cli_args(base_url),
                     "-p",
                     local_dir,
                     "--once",

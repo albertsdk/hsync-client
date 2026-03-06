@@ -274,6 +274,21 @@ BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
 BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
 
 
+def bb_server_cli_args(base_url: str) -> list[str]:
+    """Split the live-server URL into the bare-hostname form of the public CLI.
+
+    The ``server`` subcommand takes the bare hostname (``https://`` is
+    implied) plus ``--port``; the URL stays the single source of truth in
+    the ``live_server`` fixture so no host/port is hardcoded here.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(base_url)
+    if parsed.hostname is None or parsed.port is None:
+        raise ValueError(f"live_server URL must carry host and port: {base_url!r}")
+    return [parsed.hostname, "--port", str(parsed.port)]
+
+
 # ---------------------------------------------------------------------------
 # Black-box test-data helpers
 #
@@ -887,8 +902,7 @@ def _start_watch_client(
         "server",
         "-b",
         bucket,
-        "-s",
-        base_url,
+        *bb_server_cli_args(base_url),
         "-p",
         local_path,
         "--yes",
@@ -1030,8 +1044,7 @@ def run_sync_once(live_server):
                 "server",
                 "-b",
                 bucket,
-                "-s",
-                base_url,
+                *bb_server_cli_args(base_url),
                 "-p",
                 local_path,
                 "--once",
@@ -1083,8 +1096,7 @@ def run_cli(live_server):
                 "server",
                 "-b",
                 bucket,
-                "-s",
-                base_url,
+                *bb_server_cli_args(base_url),
                 "-p",
                 local_path,
                 "--once",

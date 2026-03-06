@@ -66,7 +66,7 @@ for cron jobs or manual "sync now" operations on a LAN.
 Preview what would change without modifying files:
 
 ```bash
-hsync --dry-run -b mybucket -p ~/Sync
+hsync lan --dry-run -b mybucket -p ~/Sync
 ```
 
 ### Conflict Handling

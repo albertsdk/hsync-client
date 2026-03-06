@@ -43,6 +43,7 @@ from hsync_client.constants import (
     RECONNECT_DELAY_MIN,
     RESYNC_MAX,
     RESYNC_MIN,
+    SERVER_DEFAULT_PORT,
     STABILITY_DELAY_MAX,
     STABILITY_DELAY_MIN,
     SYNC_DIRECTIONS,
@@ -130,6 +131,50 @@ def _validate_bucket(value: str) -> str:
             "but not at the beginning or end)."
         )
     return value
+
+
+# Bare hostname / IPv4 charset (mirrors the host part of the HSYNC_SERVER
+# validator in config.py). IPv6 literals are bracketed instead.
+_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$")
+_IPV6_BRACKETED_PATTERN = re.compile(r"^\[[0-9A-Fa-f:.]+\]$")
+
+
+def _build_server_url(hostname: str | None, port: int | None) -> str | None:
+    """Assemble the ``https://`` server URL from the bare host form.
+
+    Server mode always uses HTTPS (the client refuses to send the API key over
+    an unencrypted channel), so the scheme is implied; the port defaults to
+    ``SERVER_DEFAULT_PORT``, the hsync-server default. A ``None`` hostname
+    (env-only usage, ``HSYNC_SERVER``) returns ``None`` so ``run_sync`` keeps
+    its documented env fallback. IPv6 literals are bracketed automatically — a
+    bare hostname never contains ``:``.
+
+    Raises:
+        typer.BadParameter: on URL-like input, an unparseable host, a port
+            outside 1-65535, or ``--port`` without a hostname.
+    """
+    if port is not None and not 1 <= port <= 65535:
+        raise typer.BadParameter("--port must be between 1 and 65535.")
+    if hostname is None:
+        if port is not None:
+            raise typer.BadParameter(
+                "--port requires a hostname (or set the full URL via HSYNC_SERVER)."
+            )
+        return None
+    host = hostname.strip()
+    if "://" in host or "/" in host:
+        raise typer.BadParameter(
+            f"pass the bare hostname, not a URL ('{hostname}'): the https:// "
+            "scheme is implied, e.g. 'hsync server server.example.com'."
+        )
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        host = f"[{host}]"  # bare IPv6 literal
+    if not (_HOSTNAME_PATTERN.match(host) or _IPV6_BRACKETED_PATTERN.match(host)):
+        raise typer.BadParameter(
+            f"invalid hostname: {hostname!r} (a hostname, IPv4 or IPv6 literal "
+            "is expected; use --port for the port, not host:port)."
+        )
+    return f"https://{host}:{SERVER_DEFAULT_PORT if port is None else port}"
 
 
 # =============================================================================
@@ -574,13 +619,22 @@ EventsJsonFdOpt = Annotated[
 # server-subcommand options
 # =============================================================================
 
-ServerUrlOpt = Annotated[
+HostArg = Annotated[
     str | None,
+    typer.Argument(
+        help=(
+            "Remote server hostname or IP (https:// is always used; omit to "
+            "read the full URL from HSYNC_SERVER)."
+        ),
+        metavar="HOSTNAME",
+    ),
+]
+ServerPortOpt = Annotated[
+    int | None,
     typer.Option(
-        "-s",
-        "--server",
-        help="Server URL (or set HSYNC_SERVER).",
-        metavar="URL",
+        "--port",
+        help=f"Remote server port (default: {SERVER_DEFAULT_PORT}).",
+        metavar="PORT",
         rich_help_panel="Connection",
     ),
 ]
@@ -745,17 +799,17 @@ def main(
 
     [bold]Examples:[/bold]
 
-        [dim]# Basic sync with a remote server[/dim]
-        $ hsync server -b photos -s https://server.example.com
+        [dim]# Basic sync with a remote server (https:// and port 9753 are implied)[/dim]
+        $ hsync server server.example.com -b photos
 
         [dim]# Sync a specific local directory[/dim]
-        $ hsync server -b documents -s https://server.example.com -p ~/Documents
+        $ hsync server server.example.com -b documents -p ~/Documents
 
         [dim]# One-shot sync (single cycle, then exit)[/dim]
-        $ hsync server -b projects -s https://server.example.com --once
+        $ hsync server server.example.com -b projects --once
 
         [dim]# Dry run to see what would be synced[/dim]
-        $ hsync server -b backup -s https://server.example.com -n
+        $ hsync server server.example.com -b backup -n
 
         [dim]# LAN mode (no central server, peer-to-peer)[/dim]
         $ hsync lan -b shared
@@ -765,7 +819,7 @@ def main(
 
     [bold]Environment Variables:[/bold]
 
-        HSYNC_SERVER    Server URL (alternative to `hsync server -s`)
+        HSYNC_SERVER    Full server URL (alternative to the HOSTNAME argument)
         HSYNC_API_KEY   API key for authentication
         HSYNC_LAN_KEY   Shared secret for LAN mode authentication
 
@@ -930,7 +984,8 @@ def lan(
 @app.command()
 def server(
     bucket: BucketOpt,
-    server_url: ServerUrlOpt = None,
+    hostname: HostArg = None,
+    port: ServerPortOpt = None,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
     http_timeout: HttpTimeoutOpt = None,
@@ -971,19 +1026,28 @@ def server(
     Synchronize a bucket with a central HSYNC server (REST + WebSocket).
 
     The server hosts the shared bucket and coordinates synchronization between
-    all connected clients.
+    all connected clients. The bare hostname form implies ``https://`` and the
+    default port (9753, the hsync-server default): a reverse proxy on 443 is
+    supported with ``--port 443``.
 
     [bold]Examples:[/bold]
 
         [dim]# Basic sync[/dim]
-        $ hsync server -b photos -s https://server.example.com
+        $ hsync server server.example.com -b photos
 
         [dim]# Continuous sync (the default: keeps retrying if the server is unreachable)[/dim]
-        $ hsync server -b projects -s https://server.example.com
+        $ hsync server server.example.com -b projects
 
         [dim]# One-shot sync[/dim]
-        $ hsync server -b projects -s https://server.example.com --once
+        $ hsync server server.example.com -b projects --once
+
+        [dim]# Reverse proxy on the standard HTTPS port[/dim]
+        $ hsync server server.example.com --port 443 -b photos
     """
+    # Bare-hostname form: assemble the https:// URL (port falls back to the
+    # hsync-server default). None → the documented HSYNC_SERVER env fallback.
+    server_url = _build_server_url(hostname, port)
+
     parsed_bw_upload, parsed_bw_download = _validate_shared_options(
         http_timeout=http_timeout,
         resync=resync,

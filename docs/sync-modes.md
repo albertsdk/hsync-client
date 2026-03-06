@@ -26,7 +26,7 @@ HSYNC has two orthogonal axes of operation: **topology** (where files live) and
 
 | Topology | One-shot example | Continuous example |
 |----------|-----------------|---------------|
-| Server Mode | `hsync server -s https://server:9753 -b mybucket -p ~/Sync --once` | `hsync server -s https://server:9753 -b mybucket -p ~/Sync` |
+| Server Mode | `hsync server server.example.com -b mybucket -p ~/Sync --once` | `hsync server server.example.com -b mybucket -p ~/Sync` |
 | LAN P2P Mode | `hsync lan -b mybucket -p ~/Sync --once` | `hsync lan -b mybucket -p ~/Sync` |
 
 For LAN P2P Mode, the client runs continuously by default. Use `--once` to

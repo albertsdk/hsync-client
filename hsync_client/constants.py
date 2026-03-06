@@ -165,6 +165,14 @@ MASS_DELETE_THRESHOLD_DEFAULT = 50  # absolute deletions per cycle (0 = disabled
 MASS_DELETE_PERCENT_DEFAULT = 50  # percentage of total local files (0 = disabled)
 
 # =============================================================================
+# Server Connection
+# =============================================================================
+
+# Default HTTPS port of the remote hsync server when `hsync server HOSTNAME`
+# runs without `--port`. Matches the hsync-server default (HSYNC_PORT).
+SERVER_DEFAULT_PORT = 9753
+
+# =============================================================================
 # CLI Validation Limits
 # =============================================================================
 

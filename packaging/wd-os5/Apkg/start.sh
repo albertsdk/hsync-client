@@ -132,7 +132,9 @@ case "${HSYNC_MODE}" in
             echo "HSYNC_MODE=server requires HSYNC_SERVER" >> "$LOG"
             exit 1
         fi
-        set -- "$@" --server "${HSYNC_SERVER}"
+        # The full server URL is exported below: the bare-hostname form is
+        # only for interactive command lines, the NAS wrapper uses the env
+        # fallback.
         ;;
 esac
 
@@ -165,6 +167,9 @@ esac
 export HSYNC_API_KEY
 export HSYNC_LAN_KEY
 export HSYNC_NTP_HOSTS
+# Server-mode endpoint: exported like the keys above — the client reads it
+# from the environment (no CLI flag carries the URL anymore).
+export HSYNC_SERVER
 # Per-file retry waits have no CLI flags; EnvSettings reads them from the
 # process environment. Empty values stay unset so autotune/defaults apply.
 [ -n "${HSYNC_TRANSFER_RETRY_MIN_WAIT}" ] && export HSYNC_TRANSFER_RETRY_MIN_WAIT

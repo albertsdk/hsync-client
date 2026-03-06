@@ -13,7 +13,7 @@ Continuous/daemon mode is the **default**; for automation pass the dedicated
 
 ```bash
 # One-shot: run one cycle and exit (required for cron/systemd timers)
-hsync server -b docs -s https://server.example.com --once
+hsync server server.example.com -b docs --once
 ```
 
 Without `--once` the client keeps running and retries an unreachable server
@@ -59,14 +59,14 @@ failed transfers (`2`) > deletion guard (`3`) > conflicts (`4`).
 Check the code in a shell as usual:
 
 ```bash
-hsync server -b docs -s https://server.example.com --once -y
+hsync server server.example.com -b docs --once -y
 echo $?
 ```
 
 or branch on it:
 
 ```bash
-hsync server -b docs -s https://server.example.com --once -y || echo "sync failed"
+hsync server server.example.com -b docs --once -y || echo "sync failed"
 ```
 
 ## Best practices for automation
@@ -78,7 +78,7 @@ hsync server -b docs -s https://server.example.com --once -y || echo "sync faile
    ```bash
    install -m 600 /dev/null /etc/hsync/hsync.env
    cat > /etc/hsync/hsync.env <<'EOF'
-   HSYNC_SERVER="https://hsync.example.com:9753"
+   HSYNC_SERVER="https://server.example.com:9753"
    HSYNC_API_KEY="change-me"
    EOF
    ```

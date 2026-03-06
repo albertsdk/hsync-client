@@ -251,13 +251,13 @@ echo "hello hsync" > /tmp/hsync-a/hello.txt
 #    The bootstrap admin token provides full access for this demo
 HSYNC_API_KEY="hs_HsyncAdminBootstrap01_0000000000000000000000000000000000000000000000000000000000000001" \
   HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
-  hsync server -s https://localhost:9753 --insecure -b mybucket -p /tmp/hsync-a
+  hsync server localhost --insecure -b mybucket -p /tmp/hsync-a
 
 # 4. Terminal 2 — Initialize Client B
 #    Receives events via WebSocket and downloads hello.txt automatically
 HSYNC_API_KEY="hs_HsyncAdminBootstrap01_0000000000000000000000000000000000000000000000000000000000000001" \
   HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
-  hsync server -s https://localhost:9753 --insecure -b mybucket -p /tmp/hsync-b
+  hsync server localhost --insecure -b mybucket -p /tmp/hsync-b
 
 # 5. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync

@@ -9,7 +9,7 @@ Server-mode configuration for connecting to a central HSYNC Server.
 
 | Option | Description | Default |
 |---|---|---|
-| `-s, --server` | Server URL (`https://…`; required in server mode) | `HSYNC_SERVER` |
+| `HOSTNAME` (+ `--port`) | Server host (`https://` implied; `--port` default `9753`; required in server mode unless `HSYNC_SERVER` is set) | `HSYNC_SERVER` |
 | `-b, --bucket` | Bucket name | (required; CLI only) |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
 | `--insecure` | Skip SSL certificate verification | `false` |
@@ -23,7 +23,7 @@ option is not part of the interactive CLI.
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_SERVER` | Server URL (alternative to `-s`) | (required or use `-s`) |
+| `HSYNC_SERVER` | Full server URL `https://…` (alternative to the `HOSTNAME` argument) | (required or pass `HOSTNAME`) |
 | `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
 | `HSYNC_DELTA_MIN_FILE_SIZE` | Min file size for delta transfer in server mode | `262144` (256 KB) |
 
@@ -36,8 +36,11 @@ The client does **not** load `./.env` by itself. Pass a file explicitly:
 
 ```bash
 export HSYNC_API_KEY="hs_…"
-hsync --env-file ./hsync.env -s https://hsync.example.com:9753 -b documents -p "$HOME/Documents"
+hsync server --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
+
+With no `HOSTNAME` on the command line the client reads the server URL from
+`HSYNC_SERVER` (set it in the env file, or `export` it in the shell).
 
 `--env-file` only applies `HSYNC_*` keys recognised by the client settings
 model (for server mode: `HSYNC_SERVER`, `HSYNC_API_KEY`, plus the shared

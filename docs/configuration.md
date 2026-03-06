@@ -186,7 +186,7 @@ Repo templates `dev.env` / `prod.env` are meant to be sourced or passed to
 
 ```bash
 # Load recognised HSYNC_* keys, then pass CLI-only flags
-hsync --env-file ./prod.env -s https://hsync.example.com:9753 -b documents -p ~/Documents
+hsync server --env-file ./prod.env server.example.com -b documents -p ~/Documents
 ```
 
 ## Periodic resync and the inotify watch limit (Linux)

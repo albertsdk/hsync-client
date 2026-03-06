@@ -6,21 +6,24 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `main` (parent callback) | `cli.py:696` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
-| `lan` | `:783` | LAN P2P subcommand: shared + LAN-only flags, LAN-only validation, calls `run_sync` |
-| `server` | `:931` | central-server subcommand: shared + server-only flags, calls `run_sync` |
-| `run` | `:1057` | console-script entry |
-| `collect_subcommand_options` | `:88` | introspects each subcommand's long flags for the capabilities document |
-| `capabilities_json_callback` | `:108` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
-| `_validate_bucket` | `:125` | bucket flag validation |
-| `_validate_shared_options` | `:140` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
+| `main` (parent callback) | `cli.py:750` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
+| `lan` | `:837` | LAN P2P subcommand: shared + LAN-only flags, LAN-only validation, calls `run_sync` |
+| `server` | `:985` | central-server subcommand: bare `HOSTNAME` positional + `--port` + shared flags, assembles the server URL, calls `run_sync` |
+| `run` | `:1121` | console-script entry |
+| `collect_subcommand_options` | `:89` | introspects each subcommand's long flags for the capabilities document |
+| `capabilities_json_callback` | `:109` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
+| `_validate_bucket` | `:126` | bucket flag validation |
+| `_build_server_url` | `:142` | bare-hostname form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when `--port` is omitted, IPv6 auto-bracketing; rejects URL-like and `host:port` inputs, refuses `--port` without a hostname; `None` hostname → env fallback) |
+| `_validate_shared_options` | `:185` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
 
 Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
 `--api-key-fd` (server subcommand) / `--lan-key-fd` (lan subcommand) for a
 parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `lan`/`server` subcommand
-selection/`--force-master` stay CLI-only.
+selection/`--force-master`/the server `HOSTNAME`+`--port` stay CLI-only
+(the full-URL alternative is the `HSYNC_SERVER` env var; the CLI host wins
+when both are set).
 
 Flags map to env keys where `EnvSettings` has a field; capabilities JSON is
 built from `hsync_common.protocol.capabilities.build_capabilities` (schema v2:
@@ -78,10 +81,14 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
    parallel local-file scan/hash pool (`_get_optimal_workers`), combined with the
    cgroup memory limit to cap parallelism inside containers (no effect on bare
    metal, where the memory probe returns `None`).
+- `constants.py:173` — `SERVER_DEFAULT_PORT = 9753`: the port `hsync server
+  HOSTNAME` uses when `--port` is omitted. It matches the hsync-server
+  default (`HSYNC_PORT`), so the omitted-port form targets a default server
+  install directly; reverse-proxy deployments pass `--port 443`.
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
-  `_validate_shared_options` (`cli.py:140`); bucket naming
-  via `_validate_bucket` (`cli.py:125`); LAN-only checks (discovery timeout,
+  `_validate_shared_options` (`cli.py:185`); bucket naming
+  via `_validate_bucket` (`cli.py:126`); LAN-only checks (discovery timeout,
   `--force-master` exclusivity) live in the `lan` subcommand. There is no
   separate validators module.
 

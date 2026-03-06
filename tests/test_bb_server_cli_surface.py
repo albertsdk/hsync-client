@@ -58,22 +58,51 @@ class TestCliSurface:
     def test_invalid_bucket_name_rejected(self):
         # Given a bucket name with forbidden characters
         # When invoking
-        result = runner.invoke(app, ["server", "-b", "bucket.name", "-s", "http://test:8000"])
+        result = runner.invoke(app, ["server", "-b", "bucket.name", "test.example.com"])
 
         # Then the CLI rejects it
         assert result.exit_code != 0
 
     def test_bucket_with_hyphens_and_underscores_accepted(self):
-        # Given a valid bucket name
-        # When invoking (run_sync is not actually executed: server is unreachable
-        # so the call returns early, but argument parsing must succeed)
+        # Given a valid bucket name and a URL-like hostname (a form the CLI
+        # rejects before any sync is attempted)
+        # When invoking
         result = runner.invoke(
-            app, ["-b", "valid-bucket_name", "-s", "http://127.0.0.1:1", "--yes"]
+            app, ["server", "-b", "valid-bucket_name", "https://server.example.com", "--yes"]
         )
 
-        # Then the name is accepted (parsing passes; exit 0 since the
-        # unreachable server makes run_sync return without error)
-        assert "Invalid" not in result.output
+        # Then the bucket name parses (no bucket validation error) and the
+        # CLI rejects the URL-like hostname with a usage error instead
+        assert result.exit_code != 0
+        assert "must be alphanumeric" not in result.output
+        assert "bare hostname" in result.output
+
+    def test_full_url_hostname_rejected(self):
+        # Given a full URL in the hostname slot (the https:// scheme is implied)
+        # When invoking
+        result = runner.invoke(app, ["server", "-b", "demo", "https://server.example.com"])
+
+        # Then the CLI reports a usage error and no sync starts
+        assert result.exit_code != 0
+        assert "bare hostname" in result.output
+
+    def test_port_requires_hostname(self):
+        # Given --port without a hostname
+        # When invoking
+        result = runner.invoke(app, ["server", "-b", "demo", "--port", "9753"])
+
+        # Then the CLI reports a usage error and no sync starts
+        assert result.exit_code != 0
+        assert "requires a hostname" in result.output
+
+    def test_removed_server_flag_rejected(self):
+        # Given -s/--server (removed in favour of the HOSTNAME argument)
+        # When invoking
+        result = runner.invoke(app, ["server", "-b", "demo", "-s", "https://server.example.com"])
+
+        # Then the CLI reports a plain usage error
+        assert result.exit_code != 0
+        assert "No such option" in result.output
 
     def test_capabilities_json_outputs_valid_json(self):
         """--capabilities-json produces valid JSON with expected keys."""

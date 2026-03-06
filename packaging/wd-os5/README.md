@@ -135,14 +135,14 @@ option to configure.
 | UI field            | CLI flag                                       | Default                          |
 | ------------------- | ---------------------------------------------- | -------------------------------- |
 | Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
-| Mode                | `hsync lan` vs `hsync server -s URL`          | LAN                              |
+| Mode                | `hsync lan` vs `hsync server <hostname>`      | LAN                              |
 | Role                | `--force-master` + `--sync-direction`          | Master (NAS coordinates the group) |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
 | Strict pairing      | `--require-pairing`                            | off                              |
 | Group               | `--group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
-| Server URL          | `-s / --server`                                | _empty_                          |
+| Server URL          | `HSYNC_SERVER` env var                         | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
 | Resync interval     | `-i / --interval`                              | `0` (off)                        |
 | Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |

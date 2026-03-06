@@ -13,13 +13,19 @@ server.
 
 ### Configuration via environment
 
-The client does not load `./.env` by itself. Export the token (and optional
-server URL), then pass bucket, path, and watch on the CLI:
+The client does not load `./.env` by itself. Export the token, then pass the
+server host, bucket and path on the CLI:
 
 ```bash
-export HSYNC_SERVER="https://hsync.example.com:9753"
 export HSYNC_API_KEY="hs_<id>_<secret>"
-hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents"
+hsync server server.example.com -b documents -p "$HOME/Documents"
+```
+
+The port defaults to 9753 (the hsync-server default); a reverse proxy on the
+standard HTTPS port is selected explicitly:
+
+```bash
+hsync server server.example.com --port 443 -b documents -p "$HOME/Documents"
 ```
 
 `--env-file` loads recognised `HSYNC_*` keys only (`HSYNC_SERVER`,
@@ -33,31 +39,31 @@ hsync --env-file ./hsync.env -s "$HSYNC_SERVER" -b documents -p "$HOME/Documents
 ## 1.1 Sync a personal folder (one-time)
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b personal -p ~/Documents
+hsync server server.example.com -b personal -p ~/Documents
 ```
 
 ## 1.2 Continuous workstation sync
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b work -p ~/Work
+hsync server server.example.com -b work -p ~/Work
 ```
 
 ## 1.3 Push-only backup to a remote server
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b backup -p ~/Backup --sync-direction upload-only
+hsync server server.example.com -b backup -p ~/Backup --sync-direction upload-only
 ```
 
 ## 1.4 Read-only mirror from the server
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b shared -p ~/Shared --sync-direction download-only
+hsync server server.example.com -b shared -p ~/Shared --sync-direction download-only
 ```
 
 ## 1.5 Periodic full re-sync alongside continuous mode
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b docs -p ~/Docs --interval 3600
+hsync server server.example.com -b docs -p ~/Docs --interval 3600
 ```
 
 ## 1.6 Multi-device sync via central server
@@ -66,10 +72,10 @@ On each device, configure the same bucket with its own local path:
 
 ```bash
 # Laptop
-hsync server -s "$HSYNC_SERVER" -b team -p ~/Team
+hsync server server.example.com -b team -p ~/Team
 
 # Desktop
-hsync server -s "$HSYNC_SERVER" -b team -p ~/Team
+hsync server server.example.com -b team -p ~/Team
 ```
 
 Changes made on one device propagate through the server to all others.
@@ -77,13 +83,13 @@ Changes made on one device propagate through the server to all others.
 ## 1.7 Bandwidth-limited sync over a slow connection
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b docs -p ~/Docs --limit-upload 1MB
+hsync server server.example.com -b docs -p ~/Docs --limit-upload 1MB
 ```
 
 ## 1.8 Long-running unattended service
 
 ```bash
-hsync server -s "$HSYNC_SERVER" -b docs -p ~/Docs -y
+hsync server server.example.com -b docs -p ~/Docs -y
 ```
 
 The `-y` flag skips confirmation prompts. Combine with a systemd service for

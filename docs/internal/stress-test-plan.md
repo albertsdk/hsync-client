@@ -373,7 +373,7 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
    - `run_sync_once` runs the client **in-process** (CliRunner) — engine speed,
      no process boot noise. For **wall-clock realism**, add a subprocess driver
      modeled on `lan_helpers._lan_start` but with
-     `-b <bucket> -s <base> -p <path> --yes --insecure --once
+     `<hostname> --port <port> -b <bucket> -p <path> --yes --insecure --once
      --no-autotune --min-free-disk-space 0` and `HSYNC_API_KEY` in the env.
      Default the stress suite to in-process for comparability; expose
      `HSYNC_STRESS_SUBPROCESS=1` for the wall-clock variant.
