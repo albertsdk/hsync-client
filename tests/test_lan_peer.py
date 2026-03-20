@@ -73,6 +73,19 @@ class TestPeer:
         peer.update_last_seen()
         assert peer.is_alive() is True
 
+    def test_peer_is_alive_custom_timeout(self):
+        """Test is_alive honours an explicit staleness threshold."""
+        peer = Peer(
+            cid="abc123",
+            bucket="photos",
+            address="192.168.1.100",
+            port=9753,
+            last_seen=time.time() - 10,
+        )
+        # Within the default 15s window, but stale under a custom 5s threshold.
+        assert peer.is_alive() is True
+        assert peer.is_alive(timeout=5) is False
+
     def test_peer_get_server_url(self):
         """Test getting the server URL for a peer."""
         peer = Peer(

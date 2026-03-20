@@ -784,6 +784,33 @@ class TestRunAsSlave:
         assert result[0] is True
         assert any("WebSocket connection ended" in str(c) for c in mock_log.warning.call_args_list)
 
+    def test_continuous_websocket_drop_reconciles_stale_peers(self, tmp_path):
+        """A WebSocket drop triggers a stale-peer reconcile before re-entering.
+
+        When the connection to the master ends, the slave must immediately
+        expire a master whose heartbeat already stopped so the surviving peers
+        elect the successor instead of waiting for the next discovery wake. A
+        master whose record is still fresh is left untouched (no split-brain).
+        """
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
+            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
+            patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
+        ):
+            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+
+        assert result[0] is True
+        peer_mgr.reconcile_stale_peers.assert_called_once()
+
     def test_continuous_sync_exception_reenters_loop(self, tmp_path):
         """A transport failure in continuous mode must not terminate the run.
 

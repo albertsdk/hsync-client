@@ -124,9 +124,15 @@ class Peer:
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
 
-    def is_alive(self) -> bool:
-        """Check if peer is still considered alive based on last_seen time."""
-        return (time.time() - self.last_seen) < PEER_TIMEOUT
+    def is_alive(self, timeout: float = PEER_TIMEOUT) -> bool:
+        """Check if peer is still considered alive based on last_seen time.
+
+        Args:
+            timeout: Staleness threshold in seconds. Defaults to the module
+                ``PEER_TIMEOUT``; ``PeerManager`` passes its configured
+                ``peer_timeout`` (which honours ``HSYNC_PEER_TIMEOUT``).
+        """
+        return (time.time() - self.last_seen) < timeout
 
     def update_last_seen(self) -> None:
         """Update the last seen timestamp."""
@@ -167,6 +173,7 @@ class PeerManager:
         sync_direction: str = "bidirectional",
         local_cert_fingerprint: str | None = None,
         local_address: str | None = None,
+        peer_timeout: float = PEER_TIMEOUT,
     ) -> None:
         """
         Initialize the peer manager.
@@ -187,6 +194,10 @@ class PeerManager:
             local_address: The IP address this node advertises over mDNS. A
                 peer that presents our own CID from a different address is a
                 different host cloning our device identity.
+            peer_timeout: Staleness threshold (seconds) for peer liveness.
+                A peer whose heartbeat has not been seen within this window
+                is considered dead and excluded from election. Defaults to
+                ``PEER_TIMEOUT`` (honours ``HSYNC_PEER_TIMEOUT``).
         """
         self._local_cid = local_cid
         self._bucket = bucket
@@ -197,6 +208,7 @@ class PeerManager:
         self._sync_direction = sync_direction
         self._local_cert_fingerprint = local_cert_fingerprint
         self._local_address = local_address
+        self._peer_timeout = peer_timeout
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
         # Dedup guard for the duplicate-identity warning: mDNS heartbeats
@@ -204,6 +216,7 @@ class PeerManager:
         # reported once per distinct (address, fingerprint) signature.
         self._duplicate_identity_seen: set[str] = set()
         self._master_cid: str | None = None
+        self._successor_cid: str | None = None
         self._local_server_ready = False
         self._on_master_change: Callable[[Peer | None], None] | None = None
         # Generation + Condition: waiters observe a monotonic counter so a
@@ -353,7 +366,7 @@ class PeerManager:
             # change. The expired-peer check also covers the original
             # behaviour where a stale peer (whose heartbeat stop arriving)
             # was excluded from the candidate list at the next update.
-            stale_peer = any(not p.is_alive() for p in self._peers.values())
+            stale_peer = any(not p.is_alive(self._peer_timeout) for p in self._peers.values())
             if election_changed or stale_peer:
                 self._elect_master()
             if discovery_changed or stale_peer:
@@ -414,10 +427,38 @@ class PeerManager:
                 self._elect_master()
                 self._signal_change()
 
+    def reconcile_stale_peers(self) -> bool:
+        """Expire peers whose heartbeats stopped and re-elect if needed.
+
+        Discovery normally re-elects on peer events (``add_peer`` /
+        ``remove_peer`` / ``set_local_server_ready``). Those events are driven
+        by mDNS announcements, so a peer that crashes *hard* (no goodbye packet,
+        no further announces) produces no event on its own — with only two
+        peers, the survivor would otherwise wait forever for a master whose
+        record is still present but stale. The discovery loop calls this on
+        every wake (and the slave path calls it on WebSocket loss) so that a
+        master whose heartbeat stopped is demoted within ``peer_timeout`` and
+        the deterministic election promotes the agreed successor.
+
+        Returns:
+            ``True`` when at least one peer was expired (and the election was
+            re-run), ``False`` otherwise.
+        """
+        with self._lock:
+            stale = [cid for cid, p in self._peers.items() if not p.is_alive(self._peer_timeout)]
+            if not stale:
+                return False
+            for cid in stale:
+                del self._peers[cid]
+                log.info(f"Peer timed out: {cid}")
+            self._elect_master()
+            self._signal_change()
+            return True
+
     def get_alive_peers(self) -> list[Peer]:
         """Get all peers that are still alive."""
         with self._lock:
-            return [p for p in self._peers.values() if p.is_alive()]
+            return [p for p in self._peers.values() if p.is_alive(self._peer_timeout)]
 
     def _signal_change(self) -> None:
         """Bump the discovery generation and wake waiters. Caller holds ``_lock``."""
@@ -475,7 +516,7 @@ class PeerManager:
             )
         ]
         for peer in self._peers.values():
-            if peer.is_alive():
+            if peer.is_alive(self._peer_timeout):
                 candidates.append(
                     ElectionCandidate(
                         cid=peer.cid,
@@ -489,6 +530,11 @@ class PeerManager:
 
         eligible = sorted((c for c in candidates if not c.never_master), key=election_sort_key)
         new_master_cid = eligible[0].cid if eligible else None
+        # Pre-computed successor: the next-ranked eligible candidate. Purely
+        # observational (logged for operators / asserted in tests) — the
+        # deterministic election already guarantees every peer converges on the
+        # same successor when the current master disappears.
+        self._successor_cid = eligible[1].cid if len(eligible) >= 2 else None
 
         # Detect force_master conflicts
         force_master_candidates = [c for c in eligible if c.force_master]
@@ -625,6 +671,16 @@ class PeerManager:
         """Get the current master's CID."""
         with self._lock:
             return self._master_cid
+
+    def get_successor_cid(self) -> str | None:
+        """Get the pre-computed successor (next-ranked eligible candidate).
+
+        Observational only: the deterministic election guarantees every peer
+        converges on the same successor when the current master disappears,
+        so this is exposed for operator logging and tests, never for gating.
+        """
+        with self._lock:
+            return self._successor_cid
 
 
 # =============================================================================
@@ -798,6 +854,7 @@ class LANSync:
         never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
+        peer_timeout: float = PEER_TIMEOUT,
     ) -> None:
         """
         Initialize LAN sync coordinator.
@@ -813,6 +870,9 @@ class LANSync:
             startup_time: Unix timestamp when this client started.
             sync_direction: This client's sync direction
                 ("bidirectional", "upload-only", "download-only").
+            peer_timeout: Staleness threshold (seconds) for peer liveness,
+                threaded through to :class:`PeerManager` (honours
+                ``HSYNC_PEER_TIMEOUT``).
         """
         self._cid = cid
         self._bucket = bucket
@@ -823,6 +883,7 @@ class LANSync:
         self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
+        self._peer_timeout = peer_timeout
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
         # The IP this node advertises over mDNS, computed once so the advertised
@@ -908,6 +969,7 @@ class LANSync:
             sync_direction=self._sync_direction,
             local_cert_fingerprint=self._cert_fingerprint,
             local_address=self._local_ip,
+            peer_timeout=self._peer_timeout,
         )
 
         # Register our service (can be deferred if register_service=False)

@@ -68,6 +68,16 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
   (`_mass_deletion_blocked`, `sync.py:94`) unless explicitly allowed.
 - **Per-path serialization (§14)**: all transfers take `utils.path_lock`
   (`utils.py:411`) to avoid concurrent writes to the same file.
+- **Failover via periodic staleness sweep**: a hard-crashed master sends no
+  mDNS goodbye and no further announce, so election is also re-run on every
+  discovery wake and on a slave WebSocket drop
+  (`PeerManager.reconcile_stale_peers`, `lan.py:430`), which demotes any peer
+  whose heartbeat is older than `HSYNC_PEER_TIMEOUT`. The peer timeout must be
+  ≥ 2× `HSYNC_HEARTBEAT_INTERVAL` (enforced in `config.EnvSettings`) so a
+  single missed announce never flaps a live peer; the survivor only demotes a
+  master whose record is already stale, so a local-link blip never splits the
+  group. The successor is pre-computed (`get_successor_cid`) but the
+  deterministic election alone decides the role.
 - **Packaging lock-step**: any `HSYNC_*` flag/default change requires the
   synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
 - **Containerized mksapkg**: `mksapkg-OS5` runs inside the

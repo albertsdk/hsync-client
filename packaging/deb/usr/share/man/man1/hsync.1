@@ -491,11 +491,18 @@ significant on fast local networks.
 .TP
 .B HSYNC_HEARTBEAT_INTERVAL
 Heartbeat interval in seconds for LAN mode (default:
-.BR 5 ).
+.BR 5 ;
+range: 1\(en60). Governs how often a peer's mDNS presence is re-announced and how
+often the discovery loop re-evaluates peer liveness.
 .TP
 .B HSYNC_PEER_TIMEOUT
 Peer timeout in seconds for LAN mode (default:
-.BR 15 ).
+.BR 15 ;
+range: 3\(en600). A peer whose heartbeat has not been seen within this window is
+considered dead and excluded from master election; the surviving peers then
+elect a successor. Must be at least twice
+.B HSYNC_HEARTBEAT_INTERVAL
+so a single missed announce never triggers a needless re-election.
 .TP
 .B HSYNC_IGNORE_PATTERNS
 Comma-separated extra gitignore-style patterns (layered on

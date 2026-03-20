@@ -269,6 +269,67 @@ class TestLanPortOverride:
 
 
 # =============================================================================
+# Master failover (hard crash → deterministic re-election)
+# =============================================================================
+
+
+class TestMasterFailover:
+    def test_master_death_reelects_successor(self, lan_master_dir, tmp_path, lan_bucket):
+        """A hard-crashed master is replaced by the surviving peers, unassisted.
+
+        Regression: with only two nodes the dead master's mDNS record was never
+        re-evaluated (a hard-crashed peer stops announcing and sends no goodbye),
+        so the survivor could wait indefinitely for a master that would never
+        answer. The periodic staleness sweep must demote the dead master within
+        ``HSYNC_PEER_TIMEOUT`` and the deterministic election must promote the
+        earliest-started survivor, which then resumes serving.
+        """
+        peer_a = str(tmp_path / "peer_a")
+        peer_b = str(tmp_path / "peer_b")
+        Path(peer_a).mkdir()
+        Path(peer_b).mkdir()
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            a = _lan_start(peer_a, lan_bucket)
+            try:
+                b = _lan_start(peer_b, lan_bucket)
+                try:
+                    # Master is serving and both survivors sync from it.
+                    assert _wait_for_text_in_stderr(master, "[READY]", timeout=30), (
+                        "Master did not reach [READY]"
+                    )
+                    (Path(lan_master_dir) / "before.txt").write_bytes(b"before\n")
+                    assert _wait_for_file(str(Path(peer_a) / "before.txt"), timeout=30), (
+                        "peer_a did not sync from the master"
+                    )
+                    assert _wait_for_file(str(Path(peer_b) / "before.txt"), timeout=30), (
+                        "peer_b did not sync from the master"
+                    )
+
+                    # Hard crash: SIGKILL so there is no mDNS goodbye and no
+                    # clean WSS close — only the staleness sweep can detect it.
+                    master.kill()
+                    master.wait()
+
+                    # peer_a started first → deterministic successor.
+                    assert _wait_for_text_in_stderr(a, "MASTER", timeout=45), (
+                        "peer_a was not elected master after the crash"
+                    )
+
+                    (Path(peer_a) / "after.txt").write_bytes(b"after\n")
+                    assert _wait_for_file(str(Path(peer_b) / "after.txt"), timeout=45), (
+                        "Failover did not resume sync to peer_b"
+                    )
+                finally:
+                    _terminate(b)
+            finally:
+                _terminate(a)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
 # Filter path (subdirectory sync)
 # =============================================================================
 

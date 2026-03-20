@@ -202,6 +202,16 @@ HTTP_TIMEOUT_DEFAULT = 30
 HEARTBEAT_INTERVAL = 5
 PEER_TIMEOUT = 15
 
+# Bounds for the configurable HSYNC_HEARTBEAT_INTERVAL / HSYNC_PEER_TIMEOUT
+# overrides. The peer timeout must stay comfortably above the heartbeat so a
+# single missed announce (packet loss, transient congestion) never marks a live
+# peer stale and triggers a needless re-election. The effective relationship is
+# enforced as ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` in ``config.EnvSettings``.
+HEARTBEAT_INTERVAL_MIN = 1
+HEARTBEAT_INTERVAL_MAX = 60
+PEER_TIMEOUT_MIN = 3
+PEER_TIMEOUT_MAX = 600
+
 # LAN discovery timeout (seconds). Default is 0 = "wait indefinitely",
 # mirroring the client-server behaviour (the client keeps retrying the
 # connection forever by default). A finite positive value bounds how long

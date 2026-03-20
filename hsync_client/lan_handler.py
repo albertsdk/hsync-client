@@ -25,7 +25,8 @@ from hsync_common.text import safe_json_for_log
 from hsync_client.autotune import classify_network, derive_managed_rtt_updates, measure_rtt
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
-    DISCOVERY_POLL_INTERVAL,
+    HEARTBEAT_INTERVAL,
+    PEER_TIMEOUT,
     WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
 )
@@ -127,7 +128,11 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
 
     discovery_timeout = config["DISCOVERY_TIMEOUT"]
     wait_indefinitely_for_peer = discovery_timeout == 0
-    discovery_wait = DISCOVERY_POLL_INTERVAL if wait_indefinitely_for_peer else discovery_timeout
+    # The effective heartbeat (env-overridable) sets the discovery poll cadence,
+    # so staleness is re-evaluated at least once per announce cycle.
+    heartbeat = config.get("HEARTBEAT_INTERVAL") or HEARTBEAT_INTERVAL
+    peer_timeout = config.get("PEER_TIMEOUT") or PEER_TIMEOUT
+    discovery_wait = heartbeat if wait_indefinitely_for_peer else discovery_timeout
     if wait_indefinitely_for_peer and one_shot:
         log.info("Discovery timeout disabled - waiting indefinitely for the first LAN peer/master")
 
@@ -148,6 +153,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
         force_master=config["LAN_FORCE_MASTER"],
         never_master=config["LAN_NEVER_MASTER"],
         sync_direction=config["SYNC_DIRECTION"],
+        peer_timeout=peer_timeout,
     )
     if config["LAN_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")
@@ -174,6 +180,13 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
         while True:
             # Wait for peer discovery
             lan_sync.wait_for_discovery(timeout=discovery_wait)
+
+            # Expire peers whose heartbeats stopped and re-elect if the master
+            # vanished. Discovery is event-driven (mDNS announcements), which a
+            # hard-crashed peer stops sending entirely — so this periodic sweep
+            # is what bounds failover detection to ``peer_timeout`` even when no
+            # further event arrives (e.g. a two-node group whose master died).
+            peer_manager.reconcile_stale_peers()
 
             if peer_manager.is_master():
                 no_master_since = None
@@ -568,7 +581,13 @@ def _run_as_slave(
             return True, int(ExitCode.OK)
         except Exception as e:
             log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
-        # If WebSocket disconnects, re-enter discovery loop
+        # If WebSocket disconnects, re-enter discovery loop. Expire any peer
+        # whose heartbeat already stopped so a master that died mid-session is
+        # demoted immediately instead of waiting for the next discovery wake:
+        # the surviving peers then elect the pre-agreed successor. A master
+        # whose record is still fresh (a local link blip) is left untouched,
+        # so a transient drop never triggers a needless takeover/split-brain.
+        peer_manager.reconcile_stale_peers()
         log.info("WebSocket disconnected, re-entering discovery loop...")
         return True, int(ExitCode.OK)
     else:

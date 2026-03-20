@@ -62,6 +62,24 @@ server-mode default of retrying an unreachable server forever). With no
 change the wait still blocks for the full window, so the polling cadence is
 unchanged in steady state.
 
+### Failover & staleness sweep
+
+Election is also re-run by a **periodic staleness sweep**, so a hard-crashed
+master (no mDNS goodbye, no further announce) is replaced even in a two-node
+group where no further peer event would otherwise arrive:
+
+| Symbol | Line | Role |
+| ------ | ---- | ---- |
+| `Peer.is_alive(timeout)` | `lan.py:127` | liveness check against a configurable staleness threshold |
+| `PeerManager.reconcile_stale_peers` | `lan.py:430` | expire peers whose heartbeat stopped and re-elect; invoked every discovery wake (`lan_handler.run_lan_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
+| `PeerManager.get_successor_cid` | `lan.py:675` | pre-computed next-ranked eligible candidate (observational only; never gates) |
+| `_validate_peer_timeout_relationship` | `config.py:224` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` |
+| timeout wiring | `lan_handler.py:133` → `LANSync` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` now actually reach `is_alive`/the discovery cadence (previously declared but unused) |
+
+A slave whose WebSocket drops re-runs the sweep immediately but only demotes a
+master whose record is already stale: a transient local-link blip leaves the
+incumbent in place, so the surviving peers do not split-brain.
+
 ## Master server (`lan_server.py`, `lan_websocket.py`)
 
 The LAN master mirrors the central server's causal upload arbitration via

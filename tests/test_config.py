@@ -133,6 +133,33 @@ class TestEnvSettings:
             del os.environ["HSYNC_LAN_KEY"]
             get_env_settings.cache_clear()
 
+    def test_peer_timeout_below_twice_heartbeat_is_rejected(self):
+        """HSYNC_PEER_TIMEOUT below 2x the heartbeat would flap live peers."""
+        from pydantic import ValidationError
+
+        os.environ["HSYNC_HEARTBEAT_INTERVAL"] = "5"
+        os.environ["HSYNC_PEER_TIMEOUT"] = "9"
+        try:
+            with pytest.raises(ValidationError):
+                EnvSettings()
+        finally:
+            os.environ.pop("HSYNC_HEARTBEAT_INTERVAL", None)
+            os.environ.pop("HSYNC_PEER_TIMEOUT", None)
+            get_env_settings.cache_clear()
+
+    def test_peer_timeout_relationship_accepts_valid_values(self):
+        """A peer timeout >= 2x the heartbeat is accepted."""
+        os.environ["HSYNC_HEARTBEAT_INTERVAL"] = "5"
+        os.environ["HSYNC_PEER_TIMEOUT"] = "10"
+        try:
+            settings = EnvSettings()
+            assert settings.heartbeat_interval == 5
+            assert settings.peer_timeout == 10
+        finally:
+            os.environ.pop("HSYNC_HEARTBEAT_INTERVAL", None)
+            os.environ.pop("HSYNC_PEER_TIMEOUT", None)
+            get_env_settings.cache_clear()
+
 
 class TestEnvGetters:
     """Tests for individual env getter functions."""

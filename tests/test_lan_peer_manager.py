@@ -1023,3 +1023,104 @@ class TestDuplicateIdentityDetection:
             pm.add_peer(Peer(cid="local123", bucket="photos", address="192.168.1.50", port=9753))
         assert pm._peers == {}
         assert mock_log.error.call_count == 0
+
+
+class TestReconcileStalePeers:
+    """Tests for the periodic staleness sweep (fast master failover)."""
+
+    def test_no_op_when_all_peers_alive(self):
+        """Nothing is expired and the master is unchanged when no peer is stale."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        before = pm.get_master_cid()
+        assert pm.reconcile_stale_peers() is False
+        assert pm.get_master_cid() == before
+        assert "peer1" in pm._peers
+
+    def test_expires_stale_master_and_reelects(self):
+        """A master whose heartbeat stopped is demoted and a successor elected."""
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=100.0,
+            )
+        )
+        assert pm.get_master_cid() == "aaa111"
+        # Age the master past the timeout without going through add_peer (a
+        # hard-crashed peer sends no further announce, so only the periodic
+        # sweep can observe the expiry).
+        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        assert pm.reconcile_stale_peers() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_leaves_fresh_peer_untouched(self):
+        """A peer still within the (custom) timeout is not expired."""
+        pm = PeerManager(local_cid="local123", bucket="photos", peer_timeout=10.0)
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        pm._peers["peer1"].last_seen = time.time() - 5.0  # under the 10s threshold
+        assert pm.reconcile_stale_peers() is False
+        assert "peer1" in pm._peers
+
+
+class TestPeerTimeoutOverride:
+    """The configured peer timeout (HSYNC_PEER_TIMEOUT) governs liveness."""
+
+    def test_custom_peer_timeout_is_applied(self):
+        pm = PeerManager(
+            local_cid="zzz999",
+            bucket="photos",
+            startup_time=200.0,
+            peer_timeout=5.0,
+        )
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=100.0,
+            )
+        )
+        assert pm.get_master_cid() == "aaa111"
+        # 10s old is within the default 15s window but past the custom 5s one:
+        # the override must take effect and demote the stale master.
+        pm._peers["aaa111"].last_seen = time.time() - 10.0
+        assert pm.reconcile_stale_peers() is True
+        assert pm.get_master_cid() == "zzz999"
+
+
+class TestSuccessor:
+    """The pre-computed successor (next-ranked eligible candidate)."""
+
+    def test_successor_precomputed(self):
+        pm = PeerManager(local_cid="ccc333", bucket="photos", startup_time=300.0)
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=100.0,
+            )
+        )
+        pm.add_peer(
+            Peer(
+                cid="bbb222",
+                bucket="photos",
+                address="192.168.1.101",
+                port=9753,
+                startup_time=200.0,
+            )
+        )
+        assert pm.get_master_cid() == "aaa111"
+        assert pm.get_successor_cid() == "bbb222"
+
+    def test_successor_none_when_alone(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=9753))
+        pm.remove_peer("temp")
+        assert pm.get_successor_cid() is None

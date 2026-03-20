@@ -18,13 +18,19 @@ from typing import Any, TypedDict, cast
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_LAN
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hsync_client.constants import (
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_INTERVAL_MAX,
+    HEARTBEAT_INTERVAL_MIN,
     MASS_DELETE_GUARD_DEFAULT,
     MASS_DELETE_PERCENT_DEFAULT,
     MASS_DELETE_THRESHOLD_DEFAULT,
+    PEER_TIMEOUT,
+    PEER_TIMEOUT_MAX,
+    PEER_TIMEOUT_MIN,
 )
 
 # =============================================================================
@@ -98,9 +104,17 @@ class EnvSettings(BaseSettings):
         description="Discovery timeout in seconds (0 = wait indefinitely)",
     )
     heartbeat_interval: int | None = Field(
-        default=None, ge=1, description="Heartbeat interval in seconds"
+        default=None,
+        ge=HEARTBEAT_INTERVAL_MIN,
+        le=HEARTBEAT_INTERVAL_MAX,
+        description="Heartbeat interval in seconds",
     )
-    peer_timeout: int | None = Field(default=None, ge=1, description="Peer timeout in seconds")
+    peer_timeout: int | None = Field(
+        default=None,
+        ge=PEER_TIMEOUT_MIN,
+        le=PEER_TIMEOUT_MAX,
+        description="Peer timeout in seconds",
+    )
     never_master: bool = Field(
         default=False,
         description="Never become master in LAN mode (always remain a client/slave)",
@@ -205,6 +219,26 @@ class EnvSettings(BaseSettings):
         ge=0.1,
         description="Maximum connectivity retry wait in seconds",
     )
+
+    @model_validator(mode="after")
+    def _validate_peer_timeout_relationship(self) -> "EnvSettings":
+        """Enforce the anti-false-positive relationship between the two knobs.
+
+        A peer is marked stale only after ``peer_timeout`` seconds without a
+        heartbeat, so the timeout must stay at least twice the heartbeat
+        cadence: a single missed announce (packet loss, transient congestion)
+        must never demote a live peer and trigger a needless re-election.
+        """
+        heartbeat = (
+            self.heartbeat_interval if self.heartbeat_interval is not None else HEARTBEAT_INTERVAL
+        )
+        peer_timeout = self.peer_timeout if self.peer_timeout is not None else PEER_TIMEOUT
+        if peer_timeout < 2 * heartbeat:
+            raise ValueError(
+                f"HSYNC_PEER_TIMEOUT ({peer_timeout}s) must be at least 2x "
+                f"HSYNC_HEARTBEAT_INTERVAL ({heartbeat}s)"
+            )
+        return self
 
 
 @lru_cache

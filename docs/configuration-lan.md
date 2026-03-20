@@ -55,6 +55,8 @@ The `lan` subcommand and `--force-master` have no environment-variable equivalen
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
 | `HSYNC_DISCOVERY_TIMEOUT` | LAN peer discovery timeout in seconds (`0` = indefinitely) | `0` |
+| `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |
+| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat | `15` |
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Min file size for delta transfer in LAN mode | `1048576` (1 MB) |
 
