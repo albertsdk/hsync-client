@@ -1028,8 +1028,9 @@ class LANSync:
         Shared by :meth:`update_server_ready` (server just started),
         :meth:`update_server_not_ready` (mastership yielded) and
         :meth:`set_connected_clients` (presence count changed). Re-registration
-        also marks this node as the incumbent master so the election never
-        hands the role to a newcomer (prevents takeover/split-brain).
+        sets the local incumbent flag to ``server_ready``: a serving incumbent
+        wins the election over newcomers (prevents takeover/split-brain), and a
+        yielded node clears it so it is no longer ranked as an incumbent.
         """
         if not self._zeroconf or not self._service_info:
             log.warning("Cannot update service: not registered")
