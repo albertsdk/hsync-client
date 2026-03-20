@@ -75,10 +75,14 @@ group where no further peer event would otherwise arrive:
 | `PeerManager.get_successor_cid` | `lan.py:675` | pre-computed next-ranked eligible candidate (observational only; never gates) |
 | `_validate_peer_timeout_relationship` | `config.py:224` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` |
 | timeout wiring | `lan_handler.py:133` → `LANSync` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` now actually reach `is_alive`/the discovery cadence (previously declared but unused) |
+| `LANSync.update_server_not_ready` | `lan.py:1012` | leadership lease (ADR-0027): on yield, clear the local `server_ready` flag and re-register mDNS without `server_ready`/`connected` |
+| yield path | `lan_handler.py:217` | when `is_master()` flips false after serving, stop servers **and** revoke incumbency + log `[MASTER YIELD]` (mirrored in Android `LogAction.MASTER_YIELD`) |
 
 A slave whose WebSocket drops re-runs the sweep immediately but only demotes a
 master whose record is already stale: a transient local-link blip leaves the
-incumbent in place, so the surviving peers do not split-brain.
+incumbent in place, so the surviving peers do not split-brain. A master that
+*loses* the election yields immediately and revokes its incumbency so it is not
+kept as a "zombie incumbent" (`server_ready=true` while no longer serving).
 
 ## Master server (`lan_server.py`, `lan_websocket.py`)
 

@@ -437,6 +437,33 @@ class TestUpdateServerReady:
             finally:
                 lan.stop()
 
+    def test_update_server_not_ready_clears_incumbency(self):
+        """Yielding re-registers without server_ready and clears the local flag.
+
+        Regression (ADR-0027): a yielded master that left ``server_ready=true``
+        would remain a "zombie incumbent" — ranked top of the election while no
+        longer serving — prolonging a split-brain.
+        """
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        with (
+            patch("hsync_client.lan.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.lan.ServiceBrowser"),
+        ):
+            lan.start(register_service=True)
+            zc = mock_zc_cls.return_value
+            lan.update_server_ready()  # become incumbent first
+            lan.update_server_not_ready()  # then yield
+            try:
+                new_info = zc.register_service.call_args.args[0]
+                props = dict(new_info.properties)
+                assert b"server_ready" not in props
+                assert b"connected" not in props
+                assert lan.peer_manager._local_server_ready is False
+            finally:
+                lan.stop()
+
 
 class TestGetLocalIp:
     """Tests for the _get_local_ip fallbacks."""

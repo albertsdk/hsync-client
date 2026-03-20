@@ -1009,10 +1009,24 @@ class LANSync:
         self._refresh_service(server_ready=True)
         log.info("Updated mDNS service: server_ready=true")
 
+    def update_server_not_ready(self) -> None:
+        """Revoke the serving incumbency on the wire (leadership lease, ADR-0027).
+
+        Call this when the node **yields** mastership (it stopped serving): the
+        mDNS record is re-registered without ``server_ready``/``connected`` and
+        the local ``server_ready`` flag is cleared, so neither this node nor any
+        peer treats it as an incumbent in the next election. A yielded node that
+        left ``server_ready=true`` would be a *zombie incumbent* — still ranked
+        top of the election while no longer serving — prolonging a split-brain.
+        """
+        self._refresh_service(server_ready=False)
+        log.info("Updated mDNS service: server_ready=false")
+
     def _refresh_service(self, server_ready: bool) -> None:
         """Unregister and re-register the mDNS service with fresh TXT data.
 
-        Shared by :meth:`update_server_ready` (server just started) and
+        Shared by :meth:`update_server_ready` (server just started),
+        :meth:`update_server_not_ready` (mastership yielded) and
         :meth:`set_connected_clients` (presence count changed). Re-registration
         also marks this node as the incumbent master so the election never
         hands the role to a newcomer (prevents takeover/split-brain).

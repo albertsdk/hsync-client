@@ -216,6 +216,11 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     lan_sync.set_connected_clients_provider(None)
                 # Check if we're still master after _run_as_master returns
                 if not peer_manager.is_master():
+                    # We lost mastership: stop serving, then revoke our
+                    # incumbency (local flag + mDNS server_ready) so peers no
+                    # longer rank us as an incumbent — a yielded node that left
+                    # server_ready=true would be a "zombie incumbent" and could
+                    # prolong a split-brain (ADR-0027 leadership lease).
                     if lan_server:
                         lan_server.stop()
                         lan_server = None
@@ -223,6 +228,12 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                         lan_ws_server.stop()
                         lan_ws_server = None
                     lan_sync.set_connected_clients_provider(None)
+                    lan_sync.update_server_not_ready()
+                    log.warning(
+                        f"{ActionLabel.MASTER_YIELD} this client yielded mastership; "
+                        f"the deterministic election picked "
+                        f"{peer_manager.get_master_cid() or 'no eligible peer'}."
+                    )
                 # NOTE: the master role is inherently continuous: it must
                 # stay available to serve peers regardless of the one-shot
                 # flag (which only applies to slaves). The loop only exits
