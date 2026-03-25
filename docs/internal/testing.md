@@ -67,10 +67,12 @@ tests/
 ├── test_bb_lan_auth_direction.py       # Black‑Box: LAN auth and sync direction
 ├── test_bb_lan_core.py                 # Black‑Box: LAN core sync cycle
 ├── test_bb_lan_delta.py                # Black‑Box: LAN delta transfer (REST)
+├── test_bb_lan_delta_apply.py          # Black‑Box: LAN delta‑apply upload (REST)
 ├── test_bb_lan_features.py             # Black‑Box: LAN feature flags
 ├── test_bb_lan_files.py                # Black‑Box: LAN file operations
 ├── test_bb_lan_resumable.py            # Black‑Box: LAN resumable upload (REST)
 ├── test_bb_lan_security.py             # Black‑Box: LAN security (TOFU, certs)
+├── test_bb_lan_upload_negatives.py     # Black‑Box: LAN upload rejection paths (REST)
 ├── test_bb_lan_websocket_relay.py      # Black‑Box: LAN WebSocket relay & handshake
 ├── test_bb_lan_corrected_mtime.py      # Black‑Box: ADR-0023 tie‑break (LAN mode)
 ├── test_sync_local.py                  # Local file comparison and action generation
@@ -342,7 +344,7 @@ HSYNC_BB_SERVER=1 .venv/bin/python -m pytest tests/test_bb_server_*
 
 Tests the LAN peer‑to‑peer sync use case: two real client instances that
 discover each other via mDNS/zeroconf, elect a master, and sync over
-HTTPS/WSS with TOFU certificate pinning. The suite is split across ten
+HTTPS/WSS with TOFU certificate pinning. The suite is split across twelve
 files:
 
 | File | What it covers |
@@ -351,10 +353,12 @@ files:
 | `test_bb_lan_advanced.py` | Advanced LAN scenarios (edge cases, complex file trees). |
 | `test_bb_lan_auth_direction.py` | LAN authentication and sync‑direction enforcement. |
 | `test_bb_lan_delta.py` | LAN delta transfer over the public REST surface (reconstruct, 404s). |
+| `test_bb_lan_delta_apply.py` | LAN delta‑apply (upload‑side delta) over the public REST surface (reconstruct, missing‑base 404). |
 | `test_bb_lan_features.py` | LAN feature flags (compression, delta, autotune). |
 | `test_bb_lan_files.py` | LAN file operations (create, modify, delete, rename). |
 | `test_bb_lan_resumable.py` | LAN resumable upload over the public REST surface. |
 | `test_bb_lan_security.py` | LAN security (TOFU pinning, certificate validation). |
+| `test_bb_lan_upload_negatives.py` | LAN upload rejection paths over the public REST surface (checksum, traversal, engine artifacts, compressed+offset). |
 | `test_bb_lan_websocket_relay.py` | LAN WebSocket relay, fan‑out, and handshake protocol. |
 | `test_bb_lan_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break in LAN mode: divergent edits converge on the newer corrected mtime with loser preservation; sync completes when NTP is unreachable. |
 
