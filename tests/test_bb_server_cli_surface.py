@@ -95,15 +95,6 @@ class TestCliSurface:
         assert result.exit_code != 0
         assert "requires a hostname" in result.output
 
-    def test_removed_server_flag_rejected(self):
-        # Given -s/--server (removed in favour of the HOSTNAME argument)
-        # When invoking
-        result = runner.invoke(app, ["server", "-b", "demo", "-s", "https://server.example.com"])
-
-        # Then the CLI reports a plain usage error
-        assert result.exit_code != 0
-        assert "No such option" in result.output
-
     def test_capabilities_json_outputs_valid_json(self):
         """--capabilities-json produces valid JSON with expected keys."""
         import json

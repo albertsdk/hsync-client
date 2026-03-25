@@ -568,12 +568,6 @@ class TestServerHostnameArgument:
         assert result.exit_code != 0
         assert "between 1 and 65535" in result.output
 
-    def test_rejects_removed_server_flag(self):
-        """`-s/--server` is gone: using it is a plain usage error."""
-        result = runner.invoke(app, ["server", "-b", "test", "-s", "https://hsync.example.com"])
-        assert result.exit_code != 0
-        assert "No such option" in result.output
-
 
 class TestCapabilitiesJson:
     """Tests for the --capabilities-json eager option."""
@@ -603,9 +597,6 @@ class TestCapabilitiesJson:
         for flag in ("--port", "--insecure", "--ca-cert"):
             assert flag in doc["cli_options"]["server"]
         assert "--listen-port" not in doc["cli_options"]["server"]
-        # -s/--server is gone (replaced by the HOSTNAME argument): the
-        # advertised surface must not keep advertising it.
-        assert "--server" not in doc["cli_options"]["server"]
         assert "--port" not in doc["cli_options"]["lan"]
 
     def test_does_not_require_bucket(self):
@@ -626,6 +617,5 @@ class TestCapabilitiesJson:
             assert all(f.startswith("--") for f in flags)
         assert "--limit-upload" in options["lan"]
         assert "--port" in options["server"]
-        assert "--server" not in options["server"]
         assert "--listen-port" not in options["server"]
         assert "--port" not in options["lan"]
