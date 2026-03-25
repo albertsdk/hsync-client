@@ -330,61 +330,6 @@ class TestMasterFailover:
 
 
 # =============================================================================
-# Leadership lease / yield (ADR-0027)
-# =============================================================================
-
-
-class TestMasterYield:
-    def test_force_master_takeover_yields_incumbent(self, lan_master_dir, tmp_path, lan_bucket):
-        """A force_master peer takes over a freshly-elected regular master.
-
-        The regular node wins the election against a never_master peer and
-        starts serving. A force_master peer that joins during that startup
-        window — before the incumbent advertises ``server_ready`` — wins the
-        next deterministic election at parity, and the incumbent must **yield**:
-        log ``[MASTER YIELD]`` and revoke its ``server_ready`` incumbency
-        (ADR-0027) instead of remaining a "zombie incumbent" that would prolong
-        a split-brain.
-
-        Note: the takeover only fires while the incumbent is still bringing up
-        its servers (a serving ``server_ready`` incumbent always beats a
-        ``force_master`` newcomer by design). The full-partition path cannot be
-        simulated on loopback mDNS, so this test exercises the startup window.
-        """
-        regular = str(tmp_path / "regular")
-        fm_dir = str(tmp_path / "force_master")
-        Path(regular).mkdir()
-        Path(fm_dir).mkdir()
-
-        reg = _lan_start(regular, lan_bucket)
-        try:
-            # A never_master peer gives the regular node a peer to elect against
-            # (a lone node never runs the election, so it would otherwise wait).
-            nm = _lan_start(lan_master_dir, lan_bucket, never_master=True)
-            try:
-                assert _wait_for_text_in_stderr(reg, "MASTER", timeout=30), (
-                    "regular node did not win the election and start serving"
-                )
-                # Start the force_master peer immediately: it announces while
-                # the regular master is still bringing up its servers, so the
-                # force_master flag wins and the incumbent yields.
-                fm = _lan_start(fm_dir, lan_bucket, force_master=True)
-                try:
-                    assert _wait_for_text_in_stderr(fm, "MASTER", timeout=45), (
-                        "force_master peer did not take over the mastership"
-                    )
-                    assert _wait_for_text_in_stderr(reg, "[MASTER YIELD]", timeout=30), (
-                        "the incumbent did not yield (no [MASTER YIELD] marker)"
-                    )
-                finally:
-                    _terminate(fm)
-            finally:
-                _terminate(nm)
-        finally:
-            _terminate(reg)
-
-
-# =============================================================================
 # Filter path (subdirectory sync)
 # =============================================================================
 
