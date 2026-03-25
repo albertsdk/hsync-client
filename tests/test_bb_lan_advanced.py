@@ -45,10 +45,10 @@ class TestLanTombstone:
         self, lan_master_dir, lan_slave_dir, tmp_path, lan_bucket
     ):
         """File deleted while slave is offline → tombstone cleans it up on reconnect."""
+        # Given a file on the master synced to a slave that then disconnects
         bridge_dir = str(tmp_path / "bridge")
         Path(bridge_dir).mkdir()
 
-        # Create a file on master before anyone connects
         (Path(lan_master_dir) / "pre_delete.txt").write_bytes(b"to-be-deleted\n")
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
@@ -62,9 +62,7 @@ class TestLanTombstone:
             finally:
                 _terminate(slave1)
 
-            # Phase 2: start a bridge peer so the master becomes the active
-            # master and starts its file watcher. Wait for the watcher to be
-            # running before deleting.
+            # When the file is deleted on the master (tombstone recorded)
             bridge = _lan_start(bridge_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_text_in_stderr(master, "File watcher started", timeout=30), (
@@ -84,8 +82,8 @@ class TestLanTombstone:
             finally:
                 _terminate(bridge)
 
-            # Phase 3: reconnect slave — the initial sync reconciliation
-            # serves the tombstone and deletes the stale file locally
+            # Then, on reconnect, the slave reconciles the tombstone and
+            # deletes the stale local file
             slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_file_gone(
@@ -110,6 +108,7 @@ class TestLanTombstone:
         """
         import shutil
 
+        # Given a nested file synced to the slave
         aaa = Path(lan_master_dir) / "AAA"
         aaa.mkdir(parents=True)
         (aaa / "test.txt").write_bytes(b"delete-me\n")
@@ -126,23 +125,20 @@ class TestLanTombstone:
                     "Slave did not complete the initial sync"
                 )
 
-                # Phase 2: master dies. Wait until the slave's watcher is fully
-                # stopped so the deletion below happens while the slave is
-                # offline and the watched tree is cold.
+                # When the master dies and the whole AAA tree is deleted on the
+                # (now offline) slave
                 _terminate(master)
                 assert _wait_for_text_in_stderr(slave, "Client file watcher stopped", timeout=30), (
                     "Slave watcher did not stop after the master went down"
                 )
-
-                # Phase 3: delete the whole AAA tree on the slave while offline.
                 shutil.rmtree(Path(lan_slave_dir) / "AAA")
 
-                # Phase 4: master restarts with the same identity (same device
-                # dir), so the slave's TOFU pin stays valid and it reconnects.
+                # And the master restarts with the same identity, so the slave
+                # reconnects
                 master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
                 try:
-                    # The slave records the offline deletion and the stale
-                    # remote copy is deleted instead of being downloaded back.
+                    # Then the slave mints a tombstone and deletes the stale
+                    # remote copy instead of downloading it back.
                     assert _wait_for_text_in_stderr(slave, "[TOMBSTONE]", timeout=90), (
                         "Slave did not reconcile the deletion via tombstone\n"
                         f"--- slave log tail ---\n{_stderr_text(slave)[-3000:]}"
@@ -171,6 +167,7 @@ class TestLanTombstone:
 class TestLanMultiSlave:
     def test_multiple_slaves_converge(self, lan_master_dir, lan_slave_dir, tmp_path, lan_bucket):
         """Master + 2 slaves: file from slave1 appears on slave2 via master."""
+        # Given a master and two slaves
         slave2_dir = str(tmp_path / "slave2")
         Path(slave2_dir).mkdir()
 
@@ -190,10 +187,10 @@ class TestLanMultiSlave:
                 assert _wait_for_slave_events(slave1), "Slave1 is not listening for events"
                 assert _wait_for_slave_events(slave2), "Slave2 is not listening for events"
 
-                # Slave1 creates a file
+                # When slave1 creates a file
                 (Path(lan_slave_dir) / "from_slave1.txt").write_bytes(b"via-master\n")
 
-                # It should appear on both master and slave2
+                # Then it converges on both master and slave2
                 assert _wait_for_file(str(Path(lan_master_dir) / "from_slave1.txt"), timeout=30), (
                     "Slave1 file did not reach master"
                 )
@@ -245,6 +242,7 @@ class TestOneShot:
 class TestLanPortOverride:
     def test_lan_port_override(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--listen-port on master: slave connects on the specified port."""
+        # Given a master listening on a custom port
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True, lan_port=12345)
         try:
             # Start a slave so the master discovers it and runs the election
@@ -254,10 +252,11 @@ class TestLanPortOverride:
                 assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
                     "Master did not become ready"
                 )
-                # The master log should mention port 12345
+                # Then the master uses the specified port
                 stderr = _stderr_text(master)
                 assert "12345" in stderr, "Master did not use the specified port"
 
+                # And a file still syncs over that port
                 (Path(lan_master_dir) / "port_test.txt").write_bytes(b"custom port\n")
                 assert _wait_for_file(str(Path(lan_slave_dir) / "port_test.txt"), timeout=30), (
                     "File did not sync with custom master port"
@@ -284,6 +283,7 @@ class TestMasterFailover:
         ``HSYNC_PEER_TIMEOUT`` and the deterministic election must promote the
         earliest-started survivor, which then resumes serving.
         """
+        # Given a serving master and two neutral survivors that sync from it
         peer_a = str(tmp_path / "peer_a")
         peer_b = str(tmp_path / "peer_b")
         Path(peer_a).mkdir()
@@ -295,7 +295,6 @@ class TestMasterFailover:
             try:
                 b = _lan_start(peer_b, lan_bucket)
                 try:
-                    # Master is serving and both survivors sync from it.
                     assert _wait_for_text_in_stderr(master, "[READY]", timeout=30), (
                         "Master did not reach [READY]"
                     )
@@ -307,12 +306,13 @@ class TestMasterFailover:
                         "peer_b did not sync from the master"
                     )
 
-                    # Hard crash: SIGKILL so there is no mDNS goodbye and no
-                    # clean WSS close — only the staleness sweep can detect it.
+                    # When the master is hard-killed (no mDNS goodbye, no clean
+                    # WSS close — only the staleness sweep can detect it)
                     master.kill()
                     master.wait()
 
-                    # peer_a started first → deterministic successor.
+                    # Then the earliest-started survivor is re-elected and
+                    # resumes serving.
                     assert _wait_for_text_in_stderr(a, "MASTER", timeout=45), (
                         "peer_a was not elected master after the crash"
                     )
@@ -348,29 +348,29 @@ class TestMasterYield:
         **yield** — log ``[MASTER YIELD]`` and revoke its ``server_ready``
         incumbency instead of remaining a "zombie incumbent".
         """
+        # Given a regular incumbent (with a readiness-delay seam) and a peer
+        # to elect against
         regular = str(tmp_path / "regular")
         fm_dir = str(tmp_path / "force_master")
         Path(regular).mkdir()
         Path(fm_dir).mkdir()
 
-        # The incumbent is a regular node; the readiness delay keeps it from
-        # advertising server_ready until well after the force_master peer joins
-        # (10s gives ample margin over the ~1-2s mDNS discovery latency even
-        # under CI load, so the takeover is deterministic).
         reg = _lan_start(regular, lan_bucket, extra_env={"HSYNC_BB_MASTER_READY_DELAY": "10"})
         try:
-            # A never_master peer gives the regular node a peer to elect against
-            # (a lone node never runs the election, so it would otherwise wait).
             nm = _lan_start(lan_master_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_text_in_stderr(reg, "MASTER", timeout=30), (
                     "regular node did not win the election and start serving"
                 )
+
+                # When a force_master peer joins and takes over the mastership
                 fm = _lan_start(fm_dir, lan_bucket, force_master=True)
                 try:
                     assert _wait_for_text_in_stderr(fm, "MASTER", timeout=45), (
                         "force_master peer did not take over the mastership"
                     )
+
+                    # Then the incumbent yields its mastership
                     if not _wait_for_text_in_stderr(reg, "[MASTER YIELD]", timeout=30):
                         # Diagnostic: on a flaky yield, surface the subprocess
                         # logs so the failure can be triaged (the pipes die with
@@ -395,7 +395,7 @@ class TestMasterYield:
 class TestLanFilterPath:
     def test_filter_path_restricts_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--subdir subdir/ restricts sync to that subdirectory only."""
-        # Pre-create two subdirectories on master
+        # Given two subdirectories on the master
         sub_a = Path(lan_master_dir) / "sub_a"
         sub_a.mkdir()
         (sub_a / "a.txt").write_bytes(b"in-a\n")
@@ -409,7 +409,7 @@ class TestLanFilterPath:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Start slave with --subdir sub_a
+            # When the slave starts with --subdir sub_a
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
@@ -417,11 +417,11 @@ class TestLanFilterPath:
                 extra_args=("--subdir", "sub_a"),
             )
             try:
-                # File in sub_a should appear on slave
+                # Then the file in sub_a syncs…
                 assert _wait_for_file(str(Path(lan_slave_dir) / "sub_a" / "a.txt"), timeout=30), (
                     "File in filtered subdirectory did not sync"
                 )
-                # File in sub_b should NOT appear on slave
+                # …and sub_b is never synced
                 time.sleep(5)
                 assert not (Path(lan_slave_dir) / "sub_b").exists(), (
                     "File outside filter path was synced"
@@ -440,12 +440,13 @@ class TestLanFilterPath:
 class TestLanBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--limit-download with a generous limit still allows sync."""
+        # Given a serving master
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Start slave with bandwidth limit (10 MB/s — generous enough)
+            # And a slave with a generous bandwidth limit
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
@@ -458,10 +459,11 @@ class TestLanBandwidthThrottle:
                 ),
             )
             try:
-                # Create a moderately sized file on master
+                # When a moderately sized file is created on the master
                 content = b"x" * 50000  # 50 KB
                 (Path(lan_master_dir) / "throttled.txt").write_bytes(content)
 
+                # Then it still syncs under the throttle
                 slave_file = Path(lan_slave_dir) / "throttled.txt"
                 assert _wait_for_file(str(slave_file), timeout=30), (
                     "File did not sync with bandwidth throttle"
@@ -491,7 +493,7 @@ class TestLanHsyncignore:
         engine-owned and never itself synced, so the master applies the rule
         per-node and drops matching files from its listing after the hot-reload.
         """
-        # Pre-create one visible file and one that will later be excluded.
+        # Given one visible file and one later-excluded file on the master
         (Path(lan_master_dir) / "include_me.txt").write_bytes(b"visible\n")
         (Path(lan_master_dir) / "exclude_me.log").write_bytes(b"hidden\n")
 
@@ -510,31 +512,26 @@ class TestLanHsyncignore:
             )
             _terminate(slave1)
 
-            # Add .hsyncignore on the master excluding *.log, then create fresh
-            # files: one matching the pattern, one not. The master hot-reloads
-            # the matcher and must exclude the new *.log from its listing.
+            # When .hsyncignore is added excluding *.log, then fresh matching
+            # and non-matching files are created
             (Path(lan_master_dir) / ".hsyncignore").write_text("*.log\n")
             (Path(lan_master_dir) / "new_exclude.log").write_bytes(b"nope\n")
             (Path(lan_master_dir) / "new_include.txt").write_bytes(b"yes\n")
 
-            # Slave reconnects.
+            # Then, on reconnect, the new non-matching file syncs…
             slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                # A new non-matching file syncs normally: proves the reconcile
-                # ran and sync is healthy after the .hsyncignore hot-reload.
                 assert _wait_for_file(str(Path(lan_slave_dir) / "new_include.txt"), timeout=30), (
                     "new_include.txt did not sync after .hsyncignore reload"
                 )
 
-                # The newly excluded file is NOT propagated: the master drops it
-                # from its listing after the hot-reload (reload respected).
+                # …the newly excluded file is NOT propagated…
                 assert not _wait_for_file(
                     str(Path(lan_slave_dir) / "new_exclude.log"), timeout=5
                 ), "new_exclude.log was synced despite the .hsyncignore *.log rule"
 
-                # Existing copies are preserved, never retroactively deleted:
-                # adding an ignore pattern protects matching files, it does not
-                # remove copies already present on the peer.
+                # …and existing copies are preserved, never retroactively
+                # deleted (exclude protects, it does not delete).
                 assert (Path(lan_slave_dir) / "exclude_me.log").exists(), (
                     "exclude_me.log was deleted; an ignore rule must not remove "
                     "already-synced copies on a peer"
@@ -558,23 +555,24 @@ class TestLanPermissions:
         """File with 600 perms on master → slave receives 600."""
         import stat
 
+        # Given a serving master
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Create file with specific permissions on master
+            # When a 600-permission file is created on the master
             f = Path(lan_master_dir) / "perms.txt"
             f.write_bytes(b"permissions-test\n")
             f.chmod(0o600)
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # Then it syncs and its permissions are preserved (not world-readable)
                 slave_f = Path(lan_slave_dir) / "perms.txt"
                 assert _wait_for_file(str(slave_f), timeout=30), (
                     "File with custom permissions did not sync"
                 )
-                # Check that permissions were preserved (at least not world-readable)
                 mode = slave_f.stat().st_mode
                 assert not (mode & stat.S_IROTH), "File should not be world-readable"
             finally:

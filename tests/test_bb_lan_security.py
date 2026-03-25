@@ -42,6 +42,7 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 class TestLanDryRun:
     def test_dry_run_no_files_transferred(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--dry-run prevents any file transfer."""
+        # Given a master with a file and a dry-run slave
         (Path(lan_master_dir) / "dry_test.txt").write_bytes(b"dry\n")
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
@@ -55,7 +56,10 @@ class TestLanDryRun:
                 extra_args=("--dry-run",),
             )
             try:
+                # When the slave runs a dry-run sync
                 time.sleep(5)
+
+                # Then no file is transferred
                 assert not (Path(lan_slave_dir) / "dry_test.txt").exists(), (
                     "File was transferred despite --dry-run"
                 )
@@ -73,6 +77,7 @@ class TestLanDryRun:
 class TestLanPreExistingData:
     def test_pre_existing_data_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Files already present on master before slave starts are synced."""
+        # Given a master with pre-existing data
         (Path(lan_master_dir) / "pre_existing.txt").write_bytes(b"pre-existing\n")
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
@@ -81,6 +86,8 @@ class TestLanPreExistingData:
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # When the slave starts
+                # Then the pre-existing file is synced
                 assert _wait_for_file(str(Path(lan_slave_dir) / "pre_existing.txt"), timeout=30), (
                     "Pre-existing file did not sync"
                 )
@@ -98,6 +105,7 @@ class TestLanPreExistingData:
 class TestLanUnicodePath:
     def test_unicode_filename_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Unicode filename syncs correctly."""
+        # Given a master with a Unicode-named file
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -105,6 +113,8 @@ class TestLanUnicodePath:
             (Path(lan_master_dir) / "δοκιμή.txt").write_bytes(b"unicode\n")
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # When the slave starts
+                # Then the Unicode-named file is synced
                 assert _wait_for_file(str(Path(lan_slave_dir) / "δοκιμή.txt"), timeout=30), (
                     "Unicode filename did not sync"
                 )
@@ -117,6 +127,7 @@ class TestLanUnicodePath:
 class TestLanDeepPath:
     def test_nested_deep_directory_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Deeply nested directory syncs correctly."""
+        # Given a master with a deeply nested directory
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -126,6 +137,8 @@ class TestLanDeepPath:
             (deep / "deep_file.txt").write_bytes(b"deep\n")
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # When the slave starts
+                # Then the deeply nested file is synced
                 target = (
                     Path(lan_slave_dir)
                     / "level1"
@@ -161,6 +174,7 @@ class TestLanMassDelete:
         master: a bidirectional slave would instead re-upload local-only files
         to an emptied master and no deletion would ever be computed.
         """
+        # Given a master with 20 files and a download-only slave (threshold 2)
         for i in range(20):
             (Path(lan_master_dir) / f"md{i:02d}.txt").write_bytes(b"mass-delete\n")
 
@@ -179,16 +193,16 @@ class TestLanMassDelete:
                     "Slave did not complete the initial sync"
                 )
 
-                # Slave goes "offline": master stops; the deletions become
-                # visible only at the next full reconciliation.
+                # When the master stops and the files are deleted locally
                 _terminate(master)
                 for i in range(20):
                     (Path(lan_master_dir) / f"md{i:02d}.txt").unlink()
 
-                # Master restarts with the same identity (same device dir), so
-                # the slave's TOFU pin stays valid and it reconnects.
+                # And the master restarts with the same identity, so the slave
+                # reconnects and reconciles the 20 deletions
                 master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
                 try:
+                    # Then the mass-deletion guard trips
                     assert _wait_for_text_in_stderr(
                         slave, "Mass-deletion guard tripped", timeout=90
                     ), (
@@ -211,6 +225,7 @@ class TestLanMassDelete:
 class TestLanSymlinkEscape:
     def test_escaping_symlink_not_synced(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Symlink pointing outside the sync dir is not followed."""
+        # Given a symlink on the master pointing outside the sync dir
         outside = Path("/tmp") / f"hsync-esc-{lan_bucket}"
         outside.write_bytes(b"outside\n")
 
@@ -224,7 +239,7 @@ class TestLanSymlinkEscape:
             try:
                 _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
                 time.sleep(3)
-                # The escaping symlink should NOT result in a regular file on slave
+                # Then the escaping symlink is not followed into a regular file
                 if (Path(lan_slave_dir) / "escape.txt").exists():
                     content = (Path(lan_slave_dir) / "escape.txt").read_bytes()
                     assert content != b"outside\n", "Escaping symlink content was followed"
@@ -243,6 +258,7 @@ class TestLanSymlinkEscape:
 class TestLanIgnorePatterns:
     def test_ignore_patterns_flag_respected(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--ignore '*.tmp' prevents .tmp files from syncing."""
+        # Given a master with one kept and one ignored file
         (Path(lan_master_dir) / "keep.me").write_bytes(b"keep\n")
         (Path(lan_master_dir) / "drop.tmp").write_bytes(b"drop\n")
 
@@ -257,10 +273,12 @@ class TestLanIgnorePatterns:
                 extra_args=("--ignore-pattern", "*.tmp"),
             )
             try:
+                # Then the kept file syncs…
                 assert _wait_for_file(str(Path(lan_slave_dir) / "keep.me"), timeout=30), (
                     "keep.me should have synced"
                 )
                 time.sleep(5)
+                # …and the ignored file does not
                 assert not (Path(lan_slave_dir) / "drop.tmp").exists(), (
                     "drop.tmp was synced despite --ignore *.tmp"
                 )
@@ -283,6 +301,7 @@ class TestLanLogfile:
         be parsed from the process output: wait on the master's ready file
         instead (a temporary slave still triggers the election).
         """
+        # Given a master started with --log-file
         logfile = Path(lan_master_dir) / "session.log"
 
         master = _lan_start(
@@ -300,6 +319,7 @@ class TestLanLogfile:
             finally:
                 _terminate(temp_slave)
 
+            # Then the log file exists and contains the session output
             assert logfile.exists(), "Logfile was not created"
             log_content = logfile.read_text()
             assert "HSYNC Client" in log_content

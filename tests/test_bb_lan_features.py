@@ -43,6 +43,7 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 class TestLanGroupFiltering:
     def test_different_lan_groups_dont_discover(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Peers in different LAN groups should not discover each other."""
+        # Given a master in group-alpha
         master = _lan_start(
             lan_master_dir,
             lan_bucket,
@@ -55,7 +56,7 @@ class TestLanGroupFiltering:
                 master, lan_slave_dir, lan_bucket, slave_extra_args=("--group", "group-alpha")
             )
 
-            # Slave in different group — it won't connect, so file won't sync
+            # When a slave starts in a different group
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
@@ -63,6 +64,7 @@ class TestLanGroupFiltering:
                 extra_args=("--group", "group-beta"),
             )
             try:
+                # Then it never discovers the master (file never syncs)
                 (Path(lan_master_dir) / "group_test.txt").write_bytes(b"group\n")
                 time.sleep(5)
                 assert _wait_for_text_in_stderr(
@@ -124,6 +126,7 @@ class TestLanGroupFiltering:
 class TestLanCompression:
     def test_compression_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-compression master: sync still works, compression just disabled."""
+        # Given a master running with --no-compression
         master = _lan_start(
             lan_master_dir,
             lan_bucket,
@@ -135,8 +138,11 @@ class TestLanCompression:
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # When a file is created on the master
                 content = b"no-compression\n"
                 (Path(lan_master_dir) / "nocmp.txt").write_bytes(content)
+
+                # Then it syncs despite compression being disabled
                 assert _wait_for_file(str(Path(lan_slave_dir) / "nocmp.txt"), timeout=30), (
                     "File did not sync with compression disabled"
                 )
@@ -150,6 +156,7 @@ class TestLanCompression:
 class TestLanDelta:
     def test_delta_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-delta master: sync still works, delta just disabled."""
+        # Given a master running with --no-delta
         master = _lan_start(
             lan_master_dir,
             lan_bucket,
@@ -161,8 +168,11 @@ class TestLanDelta:
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # When a file is created on the master
                 content = b"no-delta\n"
                 (Path(lan_master_dir) / "nodlt.txt").write_bytes(content)
+
+                # Then it syncs despite delta being disabled
                 assert _wait_for_file(str(Path(lan_slave_dir) / "nodlt.txt"), timeout=30), (
                     "File did not sync with delta disabled"
                 )
@@ -230,11 +240,11 @@ class TestLanHiddenFiles:
         (OS caches, editor/office temp files, ``*.tmp`` …) are filtered. See
         ``hsync_common.constants.DEFAULT_IGNORE_PATTERNS``.
         """
+        # Given a master with one file per default-ignored family
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # One file per default-ignored family: OS cache, editor temp.
             (Path(lan_master_dir) / ".DS_Store").write_bytes(b"macos\n")
             (Path(lan_master_dir) / "Thumbs.db").write_bytes(b"windows\n")
             (Path(lan_master_dir) / "notes.tmp").write_bytes(b"temp\n")
@@ -243,6 +253,8 @@ class TestLanHiddenFiles:
             try:
                 _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
                 time.sleep(5)
+
+                # Then none of the default-ignored files reach the slave
                 for name in (".DS_Store", "Thumbs.db", "notes.tmp"):
                     assert not (Path(lan_slave_dir) / name).exists(), (
                         f"Default-ignored file {name} was synced (should be ignored)"
@@ -264,6 +276,7 @@ class TestLanKeyless:
         trust-LAN keyless mode remains available to *interactive* operators
         only (unit-tested in hsync_common.protocol.pairing).
         """
+        # Given a write-capable keyless master in unattended (--yes) mode
         master = _lan_start(
             lan_master_dir,
             lan_bucket,
@@ -271,6 +284,7 @@ class TestLanKeyless:
             extra_env={"HSYNC_LAN_KEY": None},
         )
         try:
+            # Then it is refused at startup with the write-policy error
             refused = _wait_for_text_in_stderr(master, "requires authentication", timeout=15)
             assert refused, "Keyless unattended write-capable run should hit the write policy"
             # The error line can be drained before the process finishes exiting.
@@ -286,6 +300,7 @@ class TestLanKeyless:
         point is that the run is *allowed* without HSYNC_LAN_KEY (no
         write-policy error) and stays alive instead of being refused.
         """
+        # Given a keyless download-only node
         node = _lan_start(
             lan_slave_dir,
             lan_bucket,
@@ -294,6 +309,7 @@ class TestLanKeyless:
             extra_env={"HSYNC_LAN_KEY": None},
         )
         try:
+            # Then it completes discovery (no write-policy error) and stays alive
             alone = _wait_for_text_in_stderr(node, "No other peers discovered", timeout=30)
             assert alone, "Download-only keyless node should complete a discovery round"
             assert "requires authentication" not in _stderr_text(node), (

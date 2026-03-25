@@ -39,7 +39,7 @@ class TestLanElection:
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_force_master_wins_and_slave_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """A force-master client becomes master; a never-master slave syncs to it."""
-        # Start both peers — election needs at least two participants
+        # Given a force-master peer (election needs at least two participants)
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             # Wait for the master to register its mDNS service before
@@ -56,23 +56,22 @@ class TestLanElection:
                 ) or _wait_for_text_in_stderr(slave, "MASTER", timeout=10)
                 assert became_master, "Neither peer became master"
 
-                # Create a file on the master side
+                # When a file is written on the master side
                 content = b"master-origin\n"
                 (Path(lan_master_dir) / "shared.txt").write_bytes(content)
 
-                # Wait for it to appear on the slave
+                # Then it appears on the slave with the same content
                 assert _wait_for_file(str(Path(lan_slave_dir) / "shared.txt"), timeout=30), (
                     "File did not sync from master to slave"
                 )
 
-                # Verify content
                 assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == content
 
-                # Create a file on the slave side
+                # When a file is written on the slave side
                 slave_content = b"slave-origin\n"
                 (Path(lan_slave_dir) / "from_slave.txt").write_bytes(slave_content)
 
-                # Wait for it to appear on the master
+                # Then it appears on the master with the same content
                 assert _wait_for_file(str(Path(lan_master_dir) / "from_slave.txt"), timeout=30), (
                     "File did not sync from slave to master"
                 )
@@ -87,6 +86,7 @@ class TestLanElection:
 class TestLanTofuPinning:
     def test_first_sight_trusts_and_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """On first sight the slave TOFU-pins the master cert and syncs."""
+        # Given a serving master
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -106,7 +106,7 @@ class TestLanTofuPinning:
                     "Slave did not connect to the master event channel"
                 )
 
-                # File sync as smoke test
+                # Then the slave TOFU-pins the master and syncs a new file
                 content = b"tofu-test\n"
                 (Path(lan_master_dir) / "tofu.txt").write_bytes(content)
                 assert _wait_for_file(str(Path(lan_slave_dir) / "tofu.txt"), timeout=30), (
@@ -126,6 +126,7 @@ class TestLanTofuPinning:
         TOFU pin — survives. The slave must detect the fingerprint change and
         refuse the connection.
         """
+        # Given a master whose certificate the slave has TOFU-pinned
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -137,8 +138,7 @@ class TestLanTofuPinning:
             )
             _terminate(slave1)
 
-            # Stop the master and rotate ONLY its keypair: the device ID (and
-            # therefore the slave's pin) survives, the fingerprint changes.
+            # When the master's keypair is rotated (device ID preserved)
             _terminate(master)
             device_dir = Path(_lan_device_dir(lan_master_dir))
             for pem in device_dir.glob("*.pem"):
@@ -148,7 +148,7 @@ class TestLanTofuPinning:
             try:
                 _wait_for_master(master2, lan_slave_dir, lan_bucket)
 
-                # Second slave: must refuse the changed fingerprint
+                # Then a new slave refuses the changed fingerprint
                 slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
                 try:
                     refused = _wait_for_text_in_stderr(slave2, "FINGERPRINT CHANGED", timeout=30)
@@ -170,7 +170,7 @@ class TestLanTofuPinning:
 class TestLanAutomaticElection:
     def test_automatic_election_and_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Two neutral peers: one becomes master, the other slave, sync works."""
-        # Start both simultaneously — election happens via mDNS
+        # Given two neutral peers started simultaneously (election via mDNS)
         peer1 = _lan_start(lan_master_dir, lan_bucket)
         peer2 = _lan_start(lan_slave_dir, lan_bucket)
         try:
@@ -180,9 +180,11 @@ class TestLanAutomaticElection:
             ) or _wait_for_text_in_stderr(peer2, "MASTER", timeout=5)
             assert master_ready, "Neither peer became master"
 
-            # File written on the first peer should appear on the second
+            # When a file is written on the first peer
             content = b"auto-election\n"
             (Path(lan_master_dir) / "auto.txt").write_bytes(content)
+
+            # Then it appears on the second peer
             assert _wait_for_file(str(Path(lan_slave_dir) / "auto.txt"), timeout=30), (
                 "File did not sync after automatic election"
             )
@@ -194,20 +196,21 @@ class TestLanAutomaticElection:
 class TestLanResilience:
     def test_slave_reconnects_after_disconnect(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Slave reconnects and catches up after being restarted."""
+        # Given a serving master
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # First slave session
+            # And a slave that has completed its initial sync, then stopped
             slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
             _terminate(slave1)
 
-            # Master creates a new file while slave is gone
+            # When a new file is created on the master while the slave is gone
             content = b"catch-up\n"
             (Path(lan_master_dir) / "catch_up.txt").write_bytes(content)
 
-            # Restart slave
+            # Then the restarted slave catches up on reconnection
             slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "catch_up.txt"), timeout=30), (
@@ -271,10 +274,11 @@ class TestLanResilience:
 class TestLanNeverMaster:
     def test_never_master_peers_no_election(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Two never-master peers: no election, [NO MASTER] warning appears."""
+        # Given two never-master peers
         p1 = _lan_start(lan_master_dir, lan_bucket, never_master=True)
         p2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
         try:
-            # Neither should become master; after ~60s the [NO MASTER] warning fires
+            # Then neither becomes master and the [NO MASTER] warning fires
             no_master = _wait_for_text_in_stderr(
                 p1, "NO MASTER", timeout=90
             ) or _wait_for_text_in_stderr(p2, "NO MASTER", timeout=5)
@@ -295,11 +299,12 @@ class TestLanStrictPairing:
         self, lan_master_dir, lan_slave_dir, lan_bucket
     ):
         """--require-pairing without a pre-existing pin rejects the master."""
+        # Given a serving master the slave has not yet pinned
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Start slave with --require-pairing (no prior pin exists)
+            # When the slave starts with --require-pairing (no prior pin exists)
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
@@ -307,7 +312,7 @@ class TestLanStrictPairing:
                 extra_args=("--require-pairing",),
             )
             try:
-                # Should see pairing_needed / unpinned certificate rejection
+                # Then it refuses the unpinned master with a pairing rejection
                 refused = _wait_for_text_in_stderr(slave, "pairing", timeout=30)
                 assert refused, (
                     "Slave should have refused the unpinned master with --require-pairing"

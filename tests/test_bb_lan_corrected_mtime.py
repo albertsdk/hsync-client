@@ -56,6 +56,7 @@ class TestBlackBoxCorrectedMtimeLan:
     ):
         """Concurrent divergence on both peers: the more recent mtime keeps the
         canonical name and the losing content survives as a conflict copy."""
+        # Given a synced base file with a fixed mtime
         name = "shared.txt"
         stem = name.split(".")[0]
         base = b"base\n"
@@ -72,6 +73,7 @@ class TestBlackBoxCorrectedMtimeLan:
                     "slave never finished its initial sync"
                 )
 
+                # When both peers edit the file with different corrected mtimes
                 newer = b"newer edit (slave side)\n"
                 older = b"older edit (master side)\n"
                 (Path(lan_slave_dir) / name).write_bytes(newer)
@@ -79,7 +81,7 @@ class TestBlackBoxCorrectedMtimeLan:
                 (Path(lan_master_dir) / name).write_bytes(older)
                 os.utime(Path(lan_master_dir) / name, (base_time + 5, base_time + 5))
 
-                # Convergence: the newer edit wins on every peer.
+                # Then the newer edit converges on every peer…
                 slave_path = Path(lan_slave_dir) / name
                 master_path = Path(lan_master_dir) / name
                 deadline = time.time() + 45
@@ -95,7 +97,7 @@ class TestBlackBoxCorrectedMtimeLan:
                 assert slave_path.read_bytes() == newer, "slave did not converge to the winner"
                 assert master_path.read_bytes() == newer, "master did not converge to the winner"
 
-                # The losing content survives somewhere as a conflicted copy.
+                # …and the losing content survives as a conflicted copy.
                 loser_kept = False
                 for p in _conflict_copies(lan_master_dir, stem) + _conflict_copies(
                     lan_slave_dir, stem
@@ -112,6 +114,7 @@ class TestBlackBoxCorrectedMtimeLan:
     def test_unreachable_ntp_does_not_block_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """With an unreachable NTP host the LAN sync still completes (offset 0,
         degraded temporal mode) and files propagate normally."""
+        # Given a serving master and a slave pointed at an unreachable NTP host
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -125,8 +128,12 @@ class TestBlackBoxCorrectedMtimeLan:
                 assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30), (
                     "slave never finished its initial sync"
                 )
+
+                # When a file is written on the master
                 content = b"still synchronises without NTP\n"
                 (Path(lan_master_dir) / "offline.txt").write_bytes(content)
+
+                # Then it propagates to the slave despite the unreachable NTP
                 assert _wait_for_file(str(Path(lan_slave_dir) / "offline.txt"), timeout=30), (
                     "file never propagated to slave while NTP was unreachable"
                 )

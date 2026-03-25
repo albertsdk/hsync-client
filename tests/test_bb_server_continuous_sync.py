@@ -21,37 +21,19 @@ from pathlib import Path
 import pytest
 import requests
 
-from tests.conftest import BB_CLIENT_CID, _watch_client_log_tail
-from tests.lan_helpers import _wait_for_client_ready
+from tests.conftest import (
+    BB_CLIENT_CID,
+    _ready_path,
+    _wait_for,
+    _wait_for_watcher_pipeline,
+    _watch_client_log_tail,
+)
+from tests.lan_helpers import _terminate, _wait_for_client_ready
 
 _BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
 _BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
 
 pytestmark = pytest.mark.skipif(not _BB_SERVER_ENABLED, reason=_BB_SERVER_REASON)
-
-
-def _wait_for(predicate, timeout=20.0, interval=0.3):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return True
-        time.sleep(interval)
-    return False
-
-
-def _terminate(proc: subprocess.Popen) -> None:
-    """Terminate and reap a watch subprocess, killing if needed."""
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
-
-
-def _ready_path(local_dir: str) -> str:
-    """Compute the ready-file path from the local dir (same tmp_path root)."""
-    return str(Path(local_dir).parent / "client.ready")
 
 
 def _client_log_path(local_dir: str) -> str:
@@ -80,43 +62,6 @@ def _wait_for_ready(local_dir: str, proc: subprocess.Popen, log_path: str | None
         return _wait_for_log_text(log_path, "[READY]", timeout=30)
     time.sleep(2.0)  # settle window for the watcher to observe
     return True
-
-
-def _wait_for_watcher_pipeline(bucket: str, local_dir: str, server_files) -> None:
-    """Prove the local→server watcher pipeline before the real writes.
-
-    The inotify watch registration is asynchronous relative to
-    ``observer.start()``: a file written right after the ``[READY]`` log
-    line can race the kernel watch and be silently lost (no event, no
-    upload). This barrier repeatedly writes a *distinct* probe file and
-    waits for it to appear in the server listing; a lost event simply means
-    the next probe is tried. When a probe arrives, the pipeline is warm and
-    the subsequent real writes are delivered. The probes are removed once
-    the barrier is crossed.
-    """
-    probes: list[Path] = []
-    for attempt in range(1, 11):
-        name = f"watcher-probe-{attempt}.txt"
-        probe = Path(local_dir) / name
-        probe.write_bytes(f"probe-{attempt}\n".encode())
-        probes.append(probe)
-        if _wait_for(lambda name=name: name in server_files(bucket), timeout=15):
-            for p in probes:
-                p.unlink()
-            return
-    last = Path(local_dir) / "watcher-probe-final.txt"
-    last.write_bytes(b"probe-final\n")
-    probes.append(last)
-    if _wait_for(lambda: "watcher-probe-final.txt" in server_files(bucket), timeout=15):
-        for p in probes:
-            p.unlink()
-        return
-    for p in probes:
-        p.unlink()
-    raise AssertionError(
-        "watcher pipeline never delivered a probe file "
-        f"(server files: {sorted(server_files(bucket))})"
-    )
 
 
 class TestContinuousSyncServerRestart:

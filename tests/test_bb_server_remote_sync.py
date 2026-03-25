@@ -16,7 +16,6 @@ Requires HSYNC_BB_SERVER=1 to run.
 import hashlib
 import json
 import os
-import random
 import uuid
 from pathlib import Path
 
@@ -86,27 +85,42 @@ class TestRemoteSyncHappy:
     def test_downloads_remote_file_into_empty_local_dir(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload
     ):
+        # Given a file already on the server
         content = b"hello from server\n"
         bb_server_upload(bb_bucket, "remote.txt", content)
+
+        # When a one-shot sync runs into an empty local dir
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the remote file is downloaded with the right content
         assert result.exit_code == 0
         assert (Path(local_dir) / "remote.txt").read_bytes() == content
 
     def test_uploads_local_file_to_empty_server_bucket(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a local file and an empty server bucket
         content = b"hello from client\n"
         (Path(local_dir) / "local.txt").write_bytes(content)
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the local file is uploaded to the server
         assert result.exit_code == 0
         assert "local.txt" in bb_server_files(bb_bucket)
 
     def test_bidirectional_converges(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload, bb_server_files
     ):
+        # Given a file on each side
         bb_server_upload(bb_bucket, "fromserver.bin", b"server")
         (Path(local_dir) / "fromclient.bin").write_bytes(b"client")
+
+        # When a one-shot bidirectional sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then both sides converge on the union of the files
         assert result.exit_code == 0
         assert (Path(local_dir) / "fromserver.bin").read_bytes() == b"server"
         assert "fromclient.bin" in bb_server_files(bb_bucket)
@@ -121,41 +135,48 @@ class TestRemoteFileOperations:
     def test_file_modification_uploaded(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_download
     ):
+        # Given a file synced at version v1
         (Path(local_dir) / "mod.txt").write_bytes(b"v1\n")
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
 
-        # Modify locally and sync again
+        # When it is modified locally and synced again
         (Path(local_dir) / "mod.txt").write_bytes(b"v2-updated\n")
         result = run_sync_once(bb_bucket, local_dir)
         assert result.exit_code == 0
 
-        # The updated content must actually be on the server
+        # Then the updated content is on the server
         assert bb_server_download(bb_bucket, "mod.txt") == b"v2-updated\n"
 
     def test_file_deletion_propagates_to_server(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a file synced to the server
         (Path(local_dir) / "todel.txt").write_bytes(b"delete me\n")
         run_sync_once(bb_bucket, local_dir)
         assert "todel.txt" in bb_server_files(bb_bucket)
 
-        # Delete locally, sync should propagate deletion
+        # When it is deleted locally and synced again
         (Path(local_dir) / "todel.txt").unlink()
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the deletion propagates to the server
         assert result.exit_code == 0
         assert "todel.txt" not in bb_server_files(bb_bucket)
 
     def test_file_rename_propagates_to_server(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a file synced under its old name
         (Path(local_dir) / "old.txt").write_bytes(b"rename me\n")
         run_sync_once(bb_bucket, local_dir)
         assert "old.txt" in bb_server_files(bb_bucket)
 
-        # Rename locally
+        # When it is renamed locally and synced again
         (Path(local_dir) / "old.txt").rename(Path(local_dir) / "new.txt")
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the rename propagates (old gone, new present)
         assert result.exit_code == 0
         assert "old.txt" not in bb_server_files(bb_bucket)
         assert "new.txt" in bb_server_files(bb_bucket)
@@ -170,16 +191,22 @@ class TestRemoteDirectorySync:
     def test_directory_creation_propagates(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a local subdirectory with a file
         sub = Path(local_dir) / "sub"
         sub.mkdir()
         (sub / "f.txt").write_bytes(b"inside\n")
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the directory and its file are on the server
         assert result.exit_code == 0
         assert "sub/f.txt" in bb_server_files(bb_bucket)
 
     def test_directory_deletion_propagates(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a synced subdirectory
         sub = Path(local_dir) / "todel"
         sub.mkdir()
         (sub / "x.txt").write_bytes(b"x\n")
@@ -188,18 +215,26 @@ class TestRemoteDirectorySync:
 
         import shutil
 
+        # When it is removed locally and synced again
         shutil.rmtree(str(sub))
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the deletion propagates to the server
         assert result.exit_code == 0
         assert "todel/x.txt" not in bb_server_files(bb_bucket)
 
     def test_nested_deep_directory_syncs(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a deeply nested local directory tree
         deep = Path(local_dir) / "a" / "b" / "c" / "d" / "e"
         deep.mkdir(parents=True)
         (deep / "deep.txt").write_bytes(b"deep\n")
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the deep path is replicated on the server
         assert result.exit_code == 0
         assert "a/b/c/d/e/deep.txt" in bb_server_files(bb_bucket)
 
@@ -219,6 +254,7 @@ class TestRemoteSymlinks:
         its ``target``), not the bytes/content of the target file — the old
         reconcile dereferenced the link and uploaded the target content as a
         regular file, making this assertion fail."""
+        # Given a target file and an in-bucket symlink
         target = Path(local_dir) / "real.txt"
         target.write_bytes(b"target\n")
         link = Path(local_dir) / "link.txt"
@@ -227,9 +263,7 @@ class TestRemoteSymlinks:
         assert result.exit_code == 0
         assert "link.txt" in bb_server_files(bb_bucket)
 
-        # Structural check: the server listing must expose the symlink entry
-        # with its target string, not a regular-file entry with dereferenced
-        # metadata/hash.
+        # Then the server lists it structurally (type + target, no content hash)
         base, api_key = live_server
         listing = requests.get(
             f"{base}/api/v1/buckets/{bb_bucket}/files",
@@ -252,12 +286,17 @@ class TestRemoteSymlinks:
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
         """Symlink pointing outside bucket must not be uploaded."""
+        # Given a symlink pointing outside the sync dir
         outside = Path(local_dir).parent / "escape_secret.txt"
         outside.write_bytes(b"secret\n")
         try:
             link = Path(local_dir) / "esc.txt"
             link.symlink_to(outside)
+
+            # When a one-shot sync runs
             result = run_sync_once(bb_bucket, local_dir)
+
+            # Then the escaping symlink is not uploaded
             assert result.exit_code == 0
             assert "esc.txt" not in bb_server_files(bb_bucket)
         finally:
@@ -272,13 +311,16 @@ class TestRemoteSymlinks:
 
 class TestRemotePermissions:
     def test_file_permissions_preserved(self, live_server, bb_bucket, local_dir, run_sync_once):
+        # Given a local file with restrictive permissions
         f = Path(local_dir) / "perms.txt"
         f.write_bytes(b"perms\n")
         f.chmod(0o600)
-        result = run_sync_once(bb_bucket, local_dir)
-        assert result.exit_code == 0
 
-        # The server must record the restrictive permissions
+        # When a one-shot sync runs
+        result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the server records the 600 permissions
+        assert result.exit_code == 0
         meta = _server_file_metadata(live_server, bb_bucket, "perms.txt")
         assert meta["permissions"] == "600"
 
@@ -292,13 +334,18 @@ class TestRemoteBulkSync:
     def test_multiple_files_sync(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given ten local files
         files = {}
         for i in range(10):
             name = f"f_{i:02d}.txt"
             content = f"file{i:02d}\n".encode()
             (Path(local_dir) / name).write_bytes(content)
             files[name] = content
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then all ten files are on the server
         assert result.exit_code == 0
         for name in files:
             assert name in bb_server_files(bb_bucket)
@@ -306,9 +353,14 @@ class TestRemoteBulkSync:
     def test_pre_existing_data_syncs(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given pre-existing local files
         (Path(local_dir) / "pre_a.txt").write_bytes(b"alpha\n")
         (Path(local_dir) / "pre_b.txt").write_bytes(b"beta\n")
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then both are uploaded
         assert result.exit_code == 0
         assert "pre_a.txt" in bb_server_files(bb_bucket)
         assert "pre_b.txt" in bb_server_files(bb_bucket)
@@ -318,10 +370,15 @@ class TestRemoteUnicode:
     def test_unicode_filename_syncs(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a Unicode-named local file
         name = "caffè_日本語.txt"
         content = "unicode 🎉\n".encode()
         (Path(local_dir) / name).write_bytes(content)
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then it is uploaded with its Unicode name intact
         assert result.exit_code == 0
         assert name in bb_server_files(bb_bucket)
 
@@ -335,10 +392,15 @@ class TestRemoteSyncDirection:
     def test_download_only_downloads_but_does_not_upload(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload, bb_server_files
     ):
+        # Given a remote file and a local-only file
         server_content = b"from server"
         bb_server_upload(bb_bucket, "downloadme.txt", server_content)
         (Path(local_dir) / "staylocal.txt").write_bytes(b"local only")
+
+        # When syncing with --sync-direction download-only
         result = run_sync_once(bb_bucket, local_dir, "--sync-direction", "download-only")
+
+        # Then the remote file is downloaded and the local file is not uploaded
         assert result.exit_code == 0
         assert (Path(local_dir) / "downloadme.txt").read_bytes() == server_content
         assert "staylocal.txt" not in bb_server_files(bb_bucket)
@@ -346,10 +408,15 @@ class TestRemoteSyncDirection:
     def test_upload_only_uploads_but_does_not_download(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload, bb_server_files
     ):
+        # Given a remote file and a local file
         bb_server_upload(bb_bucket, "stayremote.txt", b"remote only")
         local_content = b"from client"
         (Path(local_dir) / "uploadme.txt").write_bytes(local_content)
+
+        # When syncing with --sync-direction upload-only
         result = run_sync_once(bb_bucket, local_dir, "--sync-direction", "upload-only")
+
+        # Then the local file is uploaded and the remote file is not downloaded
         assert result.exit_code == 0
         assert "uploadme.txt" in bb_server_files(bb_bucket)
         assert not (Path(local_dir) / "stayremote.txt").exists()
@@ -364,18 +431,27 @@ class TestRemoteSyncDryRun:
     def test_dry_run_writes_nothing(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload
     ):
+        # Given a remote file
         bb_server_upload(bb_bucket, "preview.txt", b"should not download")
+
+        # When syncing with --dry-run
         result = run_sync_once(bb_bucket, local_dir, "--dry-run")
+
+        # Then nothing is written locally
         assert result.exit_code == 0
         assert not (Path(local_dir) / "preview.txt").exists()
 
     def test_dry_run_shows_preview(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload
     ):
+        # Given a remote file
         bb_server_upload(bb_bucket, "show_me.txt", b"content")
+
+        # When syncing with --dry-run
         result = run_sync_once(bb_bucket, local_dir, "--dry-run")
+
+        # Then the preview mentions the file in stdout
         assert result.exit_code == 0
-        # Preview should mention the file in stdout
         assert "show_me.txt" in result.output
 
 
@@ -389,9 +465,14 @@ class TestRemoteEdgeCases:
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
         """Files matching DEFAULT_IGNORE_PATTERNS (OS/editor temp files) are not synced."""
+        # Given OS/editor temp files that match the default ignore patterns
         (Path(local_dir) / ".DS_Store").write_bytes(b"macos cache\n")
         (Path(local_dir) / "draft.txt~").write_bytes(b"editor backup\n")
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then they are not uploaded
         assert result.exit_code == 0
         assert ".DS_Store" not in bb_server_files(bb_bucket)
         assert "draft.txt~" not in bb_server_files(bb_bucket)
@@ -404,17 +485,27 @@ class TestRemoteEdgeCases:
         Following Syncthing/rsync/Nextcloud, only OS cache and editor temp
         files are excluded by default; user dotfiles carry real data.
         """
+        # Given a generic dotfile
         (Path(local_dir) / ".env").write_bytes(b"SECRET=1\n")
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then it is uploaded (dotfiles are synced by design)
         assert result.exit_code == 0
         assert ".env" in bb_server_files(bb_bucket)
 
     def test_ignore_patterns_flag_respected(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given one kept and one ignored file
         (Path(local_dir) / "keep.txt").write_bytes(b"keep\n")
         (Path(local_dir) / "skip.tmp").write_bytes(b"tmp\n")
+
+        # When syncing with --ignore-pattern '*.tmp'
         result = run_sync_once(bb_bucket, local_dir, "--ignore-pattern", "*.tmp")
+
+        # Then the kept file syncs and the ignored one does not
         assert result.exit_code == 0
         assert "keep.txt" in bb_server_files(bb_bucket)
         assert "skip.tmp" not in bb_server_files(bb_bucket)
@@ -422,16 +513,26 @@ class TestRemoteEdgeCases:
     def test_compression_disabled_still_syncs(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a local file
         (Path(local_dir) / "nocomp.txt").write_bytes(b"no compression\n")
+
+        # When syncing with --no-compression
         result = run_sync_once(bb_bucket, local_dir, "--no-compression")
+
+        # Then it still syncs
         assert result.exit_code == 0
         assert "nocomp.txt" in bb_server_files(bb_bucket)
 
     def test_delta_disabled_still_syncs(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
+        # Given a local file
         (Path(local_dir) / "nodelta.txt").write_bytes(b"no delta\n")
+
+        # When syncing with --no-delta
         result = run_sync_once(bb_bucket, local_dir, "--no-delta")
+
+        # Then it still syncs
         assert result.exit_code == 0
         assert "nodelta.txt" in bb_server_files(bb_bucket)
 
@@ -445,11 +546,16 @@ class TestRemoteSyncIgnoreDelete:
     def test_ignore_delete_keeps_local_file(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload
     ):
+        # Given a synced local file that is then deleted on the server
         content = b"keep me"
         (Path(local_dir) / "keep.txt").write_bytes(content)
         run_sync_once(bb_bucket, local_dir)
         _server_delete(live_server, bb_bucket, "keep.txt")
+
+        # When syncing with --ignore-delete
         result = run_sync_once(bb_bucket, local_dir, "--ignore-delete")
+
+        # Then the local copy survives the remote deletion
         assert result.exit_code == 0
         assert (Path(local_dir) / "keep.txt").read_bytes() == content
 
@@ -850,9 +956,14 @@ class TestRemoteMoreFlags:
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload, tmp_path
     ):
         """--log-file writes log to the specified file."""
+        # Given a remote file and a target log path
         log_path = tmp_path / "remote_test.log"
         bb_server_upload(bb_bucket, "logged.txt", b"log-test\n")
+
+        # When syncing with --log-file
         result = run_sync_once(bb_bucket, local_dir, "--log-file", str(log_path))
+
+        # Then the log file is created and non-empty
         assert result.exit_code == 0
         assert log_path.exists(), "Log file was not created"
         assert len(log_path.read_text()) > 0, "Log file is empty"
@@ -861,8 +972,13 @@ class TestRemoteMoreFlags:
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
         """--no-autotune does not block sync."""
+        # Given a local file
         (Path(local_dir) / "autotune.txt").write_bytes(b"no autotune\n")
+
+        # When syncing with --no-autotune
         result = run_sync_once(bb_bucket, local_dir, "--no-autotune")
+
+        # Then it still syncs
         assert result.exit_code == 0
         assert "autotune.txt" in bb_server_files(bb_bucket)
 
@@ -870,10 +986,15 @@ class TestRemoteMoreFlags:
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files
     ):
         """.hsyncignore in local dir excludes matching files from upload."""
+        # Given a .hsyncignore rule and one matching + one non-matching file
         (Path(local_dir) / ".hsyncignore").write_text("*.log\n")
         (Path(local_dir) / "keep.txt").write_bytes(b"keep\n")
         (Path(local_dir) / "skip.log").write_bytes(b"hidden\n")
+
+        # When a one-shot sync runs
         result = run_sync_once(bb_bucket, local_dir)
+
+        # Then the matching file is excluded and the other is uploaded
         assert result.exit_code == 0
         assert "keep.txt" in bb_server_files(bb_bucket)
         assert "skip.log" not in bb_server_files(bb_bucket)
@@ -883,6 +1004,7 @@ class TestRemoteSyncNegative:
     def test_wrong_api_key_aborts(self, live_server, bb_bucket, local_dir, monkeypatch):
         from hsync_client.config import get_env_settings
 
+        # Given a wrong API key injected into the environment
         monkeypatch.setenv("HSYNC_API_KEY", "wrong-key")
         get_env_settings.cache_clear()
         from typer.testing import CliRunner
@@ -892,9 +1014,8 @@ class TestRemoteSyncNegative:
         from .conftest import _ClientGlobalsGuard, bb_server_cli_args
 
         base_url, _ = live_server
-        # In-process CLI runs must stay inside the globals guard: run_sync
-        # mutates the process-wide CONFIG in-place and an unguarded run leaks
-        # it into later tests (harness contract, see conftest).
+
+        # When a one-shot sync runs in-process with the wrong key
         with _ClientGlobalsGuard():
             result = CliRunner().invoke(
                 app,
@@ -913,8 +1034,8 @@ class TestRemoteSyncNegative:
                 ],
             )
         get_env_settings.cache_clear()
-        # A wrong API key is an authentication failure: the CLI must exit
-        # non-zero and must not touch the local directory.
+
+        # Then the CLI aborts (auth failure) and does not touch the local dir
         assert result.exit_code != 0
         local_files = list(Path(local_dir).iterdir())
         assert local_files == [] or all(p.name.startswith(".hsync") for p in local_files)
@@ -926,10 +1047,11 @@ class TestRemoteSyncNegative:
 
         from .conftest import _ClientGlobalsGuard
 
+        # Given a local dir and an unreachable server (closed port)
         local = tmp_path / "local"
         local.mkdir()
-        # Guarded like every other in-process run (see test_wrong_api_key_aborts):
-        # the CLI aborts after set_config has already mutated the global CONFIG.
+
+        # When a one-shot sync runs in-process against it
         with _ClientGlobalsGuard():
             result = CliRunner().invoke(
                 app,
@@ -949,7 +1071,8 @@ class TestRemoteSyncNegative:
                 ],
                 env={"HSYNC_API_KEY": "some-key-1234567890"},
             )
-        # An unreachable server is a sync failure: the CLI must exit non-zero.
+
+        # Then the CLI exits non-zero (sync failure)
         assert result.exit_code != 0
 
     def test_tls_without_insecure_aborts(self, live_server, bb_bucket, local_dir):
@@ -998,15 +1121,6 @@ class TestRemoteSyncNegative:
 # =============================================================================
 
 
-def _random_payload(size: int) -> tuple[bytes, int]:
-    """Return ``(payload, seed)`` for a reproducible random payload.
-
-    The seed is logged by the caller so a failure can be reproduced exactly.
-    """
-    seed = random.randrange(2**32)
-    return random.Random(seed).randbytes(size), seed
-
-
 class TestRemoteEmptyFile:
     def test_empty_file_round_trips(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
@@ -1028,22 +1142,28 @@ class TestRemoteEmptyFile:
 
 class TestRemoteLargeFile:
     def test_large_file_round_trips(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        run_sync_once,
+        bb_server_files,
+        bb_server_download,
+        bb_sample,
     ):
         # Given a 1 MiB file of random content
-        size = 1024 * 1024
-        content, seed = _random_payload(size)
-        name = f"large-{uuid.uuid4().hex[:8]}.bin"
+        s = bb_sample(suffix=".bin", prefix="large", size=1024 * 1024)
+        name = s.name
+        content = s.payload
         (Path(local_dir) / name).write_bytes(content)
-        print(f"[bb] large-file: name={name} size={size} seed={seed} bucket={bb_bucket}")
 
         # When syncing once
         result = run_sync_once(bb_bucket, local_dir)
 
         # Then the upload succeeds, the server lists it, and the download matches byte-for-byte
-        assert result.exit_code == 0
-        assert name in bb_server_files(bb_bucket)
-        assert bb_server_download(bb_bucket, name) == content
+        assert result.exit_code == 0, s.ctx
+        assert name in bb_server_files(bb_bucket), s.ctx
+        assert bb_server_download(bb_bucket, name) == content, s.ctx
 
 
 class TestRemoteSymlinkDeleteKeepsTarget:
@@ -1071,13 +1191,20 @@ class TestRemoteSymlinkDeleteKeepsTarget:
 
 class TestRemoteBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(
-        self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_files, bb_server_download
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        run_sync_once,
+        bb_server_files,
+        bb_server_download,
+        bb_sample,
     ):
         # Given a 50 KB file of random content
-        content, seed = _random_payload(50_000)
-        name = f"throttle-{uuid.uuid4().hex[:8]}.bin"
+        s = bb_sample(suffix=".bin", prefix="throttle", size=50_000)
+        name = s.name
+        content = s.payload
         (Path(local_dir) / name).write_bytes(content)
-        print(f"[bb] bandwidth: name={name} seed={seed} bucket={bb_bucket}")
 
         # When syncing with generous upload/download bandwidth limits
         result = run_sync_once(
@@ -1090,9 +1217,9 @@ class TestRemoteBandwidthThrottle:
         )
 
         # Then the upload succeeds and the content round-trips
-        assert result.exit_code == 0
-        assert name in bb_server_files(bb_bucket)
-        assert bb_server_download(bb_bucket, name) == content
+        assert result.exit_code == 0, s.ctx
+        assert name in bb_server_files(bb_bucket), s.ctx
+        assert bb_server_download(bb_bucket, name) == content, s.ctx
 
 
 class TestRemoteFilterPath:

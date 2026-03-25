@@ -48,12 +48,12 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 class TestLanKeyAuth:
     def test_lan_key_mismatch_rejected(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Master with LAN key A, slave with LAN key B → connection refused."""
-        # Start master with LAN_KEY
+        # Given a serving master
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Start slave with a DIFFERENT LAN key
+            # When the slave starts with a different LAN key
             slave = _lan_start(
                 lan_slave_dir,
                 lan_bucket,
@@ -61,11 +61,8 @@ class TestLanKeyAuth:
                 extra_env={"HSYNC_LAN_KEY": "wrong-key-xxxxxxxx"},
             )
             try:
-                # The master answers 401 (response body only, never logged);
-                # the observable rejection is on the slave: the initial sync
-                # aborts with AuthenticationError ("Sync failed: Invalid API
-                # key") and the slave exits. The helper drains final output
-                # even after process exit.
+                # Then the connection is refused (the master answers 401; the
+                # observable rejection is the slave's "Invalid API key" abort).
                 auth_failed = _wait_for_text_in_stderr(slave, "Invalid API key", timeout=20)
                 assert auth_failed, "Slave should have been rejected with wrong LAN key"
             finally:
@@ -82,6 +79,7 @@ class TestLanKeyAuth:
 class TestLanSyncDirection:
     def test_download_only_prevents_upload(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Slave with --sync-direction download-only: its files don't reach master."""
+        # Given a serving master and a download-only slave
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -93,13 +91,13 @@ class TestLanSyncDirection:
                 extra_args=("--sync-direction", "download-only"),
             )
             try:
-                # Master creates a file → appears on slave (download works)
+                # When the master creates a file, it reaches the slave (download works)
                 (Path(lan_master_dir) / "from_master.txt").write_bytes(b"master\n")
                 assert _wait_for_file(str(Path(lan_slave_dir) / "from_master.txt"), timeout=30), (
                     "Download did not work"
                 )
 
-                # Slave creates a file → must NOT appear on master (upload blocked)
+                # But when the slave creates a file, it does NOT reach the master
                 (Path(lan_slave_dir) / "slave_only.txt").write_bytes(b"slave\n")
                 time.sleep(5)  # Give time for any potential upload
                 assert not (Path(lan_master_dir) / "slave_only.txt").exists(), (
@@ -112,6 +110,7 @@ class TestLanSyncDirection:
 
     def test_upload_only_prevents_download(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Slave with --sync-direction upload-only: master files don't reach slave."""
+        # Given a serving master and an upload-only slave
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -123,14 +122,14 @@ class TestLanSyncDirection:
                 extra_args=("--sync-direction", "upload-only"),
             )
             try:
-                # Master creates a file → must NOT appear on slave (download blocked)
+                # When the master creates a file, it does NOT reach the slave
                 (Path(lan_master_dir) / "master_only.txt").write_bytes(b"master\n")
                 time.sleep(5)  # Give time for any potential download
                 assert not (Path(lan_slave_dir) / "master_only.txt").exists(), (
                     "Master file leaked to slave despite upload-only mode"
                 )
 
-                # Slave creates a file → appears on master (upload works)
+                # But when the slave creates a file, it reaches the master (upload works)
                 (Path(lan_slave_dir) / "from_slave.txt").write_bytes(b"slave\n")
                 assert _wait_for_file(str(Path(lan_master_dir) / "from_slave.txt"), timeout=30), (
                     "Upload did not work"
@@ -399,6 +398,7 @@ class TestLanConflict:
         no common ancestor and the reconciliation is a plain adoption, not a
         true three-way conflict).
         """
+        # Given a shared file synced before the slave session starts
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             (Path(lan_master_dir) / "shared.txt").write_bytes(b"base\n")
@@ -413,9 +413,8 @@ class TestLanConflict:
                 )
                 assert (Path(lan_slave_dir) / "shared.txt").read_bytes() == b"base\n"
 
-                # Both peers diverge while the slave is offline. The payloads
-                # are chosen so the *slave* wins the deterministic SHA-256
-                # tie-break (sha("slave-wins-v2") > sha("master-loses-v2")).
+                # When both peers diverge while the slave is offline (the
+                # payloads make the *slave* win the SHA-256 tie-break).
                 _terminate(slave1)
                 master_bytes = b"master-loses-v2\n"
                 slave_bytes = b"slave-wins-v2\n"
@@ -425,9 +424,9 @@ class TestLanConflict:
                 os.utime(str(Path(lan_master_dir) / "shared.txt"), (shared_ts, shared_ts))
                 os.utime(str(Path(lan_slave_dir) / "shared.txt"), (shared_ts, shared_ts))
 
-                # On reconnect, the slave reconciles its divergence: the master
-                # must adopt the slave's content at the shared path and keep
-                # its own losing version beside it as a conflicted copy.
+                # Then, on reconnect, the master adopts the slave's content at
+                # the shared path and keeps its own losing version as a
+                # conflicted copy.
                 slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
                 try:
                     assert _wait_for_text_in_stderr(slave2, "Initial sync complete", timeout=30), (
@@ -495,6 +494,7 @@ class TestLanConflict:
 class TestLanConcurrency:
     def test_concurrent_file_writes_on_both_peers(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Master and slave write different files concurrently → both converge."""
+        # Given a serving master and a slave with a live event channel
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
@@ -505,15 +505,14 @@ class TestLanConcurrency:
                 # slave-side watcher started — both directions need them).
                 assert _wait_for_slave_events(slave), "Slave is not listening for master events"
 
-                # Both peers write files at the same time
+                # When both peers write files at the same time
                 (Path(lan_master_dir) / "from_master.txt").write_bytes(b"master-data\n")
                 (Path(lan_slave_dir) / "from_slave.txt").write_bytes(b"slave-data\n")
 
-                # Master file should appear on slave
+                # Then both files converge on the other peer
                 assert _wait_for_file(str(Path(lan_slave_dir) / "from_master.txt"), timeout=30), (
                     "Master file did not reach slave"
                 )
-                # Slave file should appear on master
                 assert _wait_for_file(str(Path(lan_master_dir) / "from_slave.txt"), timeout=30), (
                     "Slave file did not reach master"
                 )
