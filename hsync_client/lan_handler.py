@@ -11,6 +11,7 @@ This module handles LAN P2P synchronization including peer discovery,
 master election, and WebSocket communication.
 """
 
+import os
 import time
 from re import sub
 from typing import TYPE_CHECKING, Any, cast
@@ -371,7 +372,17 @@ def _run_as_master(
         else:
             log.info("No authentication (trust LAN mode)")
 
-        # Update mDNS service to indicate server is ready
+        # Update mDNS service to indicate server is ready.
+        #
+        # Test seam (black-box tests only): HSYNC_BB_MASTER_READY_DELAY widens
+        # the "elected but not yet server_ready" window so a force_master peer
+        # can deterministically take over and exercise the yield path
+        # (ADR-0027). It is read directly from the environment — not via
+        # EnvSettings — so it never affects packaged deployments or the
+        # documented HSYNC_* configuration surface.
+        ready_delay = float(os.environ.get("HSYNC_BB_MASTER_READY_DELAY", "0") or "0")
+        if ready_delay > 0:
+            time.sleep(ready_delay)
         lan_sync.update_server_ready()
         from hsync_client.utils import _write_ready_file as _signal_ready
 

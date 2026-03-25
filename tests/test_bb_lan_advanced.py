@@ -330,6 +330,64 @@ class TestMasterFailover:
 
 
 # =============================================================================
+# Leadership lease / yield (ADR-0027)
+# =============================================================================
+
+
+class TestMasterYield:
+    def test_force_master_takeover_yields_incumbent(self, lan_master_dir, tmp_path, lan_bucket):
+        """A force_master peer takes over, and the incumbent yields.
+
+        The yield path (ADR-0027) fires when a live master loses the election
+        to another ``server_ready`` peer, which in a healthy LAN only happens on
+        network-partition heal — not simulatable on loopback mDNS. To exercise
+        it deterministically, the incumbent is started with
+        ``HSYNC_BB_MASTER_READY_DELAY`` (a test seam that widens the
+        "elected but not yet server_ready" window): the force_master peer wins
+        the election, becomes ``server_ready``, and the incumbent must then
+        **yield** — log ``[MASTER YIELD]`` and revoke its ``server_ready``
+        incumbency instead of remaining a "zombie incumbent".
+        """
+        regular = str(tmp_path / "regular")
+        fm_dir = str(tmp_path / "force_master")
+        Path(regular).mkdir()
+        Path(fm_dir).mkdir()
+
+        # The incumbent is a regular node; the readiness delay keeps it from
+        # advertising server_ready until well after the force_master peer joins
+        # (10s gives ample margin over the ~1-2s mDNS discovery latency even
+        # under CI load, so the takeover is deterministic).
+        reg = _lan_start(regular, lan_bucket, extra_env={"HSYNC_BB_MASTER_READY_DELAY": "10"})
+        try:
+            # A never_master peer gives the regular node a peer to elect against
+            # (a lone node never runs the election, so it would otherwise wait).
+            nm = _lan_start(lan_master_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_text_in_stderr(reg, "MASTER", timeout=30), (
+                    "regular node did not win the election and start serving"
+                )
+                fm = _lan_start(fm_dir, lan_bucket, force_master=True)
+                try:
+                    assert _wait_for_text_in_stderr(fm, "MASTER", timeout=45), (
+                        "force_master peer did not take over the mastership"
+                    )
+                    if not _wait_for_text_in_stderr(reg, "[MASTER YIELD]", timeout=30):
+                        # Diagnostic: on a flaky yield, surface the subprocess
+                        # logs so the failure can be triaged (the pipes die with
+                        # the Popen in teardown and the log would otherwise be
+                        # lost).
+                        print(f"\n--- [DIAG] incumbent log ---\n{_stderr_text(reg)}")
+                        print(f"\n--- [DIAG] force_master log ---\n{_stderr_text(fm)}")
+                        pytest.fail("the incumbent did not yield (no [MASTER YIELD] marker)")
+                finally:
+                    _terminate(fm)
+            finally:
+                _terminate(nm)
+        finally:
+            _terminate(reg)
+
+
+# =============================================================================
 # Filter path (subdirectory sync)
 # =============================================================================
 
