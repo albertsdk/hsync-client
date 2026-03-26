@@ -804,6 +804,35 @@ class TestSlaveCidRegistry:
         reg.release("a" * 21, new_ws)
         assert reg.request_conflict("a" * 21, "192.168.1.6") is False
 
+    def test_release_reports_ownership(self):
+        """release returns True only when the caller is the current owner.
+
+        Regression: a superseded connection (same-address reconnect) must not
+        clear the WebSocket liveness mark of a CID the replacement still holds.
+        """
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        old_ws = object()
+        new_ws = object()
+        reg.try_reserve("a" * 21, "192.168.1.5", old_ws)
+        # Same-address reconnect replaces the binding.
+        reg.try_reserve("a" * 21, "192.168.1.5", new_ws)
+        assert reg.release("a" * 21, old_ws) is False
+        assert reg.release("a" * 21, new_ws) is True
+        assert reg.release("a" * 21, new_ws) is False
+
+    def test_connected_cids_snapshot(self):
+        from hsync_client.lan_websocket import SlaveCidRegistry
+
+        reg = SlaveCidRegistry()
+        assert reg.connected_cids() == set()
+        reg.try_reserve("a" * 21, "192.168.1.5", object())
+        reg.try_reserve("b" * 21, "192.168.1.6", object())
+        assert reg.connected_cids() == {"a" * 21, "b" * 21}
+        reg.clear()
+        assert reg.connected_cids() == set()
+
     def test_master_cid_never_reserved(self):
         from hsync_client.lan_websocket import SlaveCidRegistry
 

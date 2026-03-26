@@ -155,6 +155,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
         never_master=config["LAN_NEVER_MASTER"],
         sync_direction=config["SYNC_DIRECTION"],
         peer_timeout=peer_timeout,
+        heartbeat_interval=heartbeat,
     )
     if config["LAN_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")
@@ -350,6 +351,19 @@ def _run_as_master(
             # also when this is a later iteration that only restarts the WSS.
             cid_registry=cid_registry if cid_registry is not None else lan_server.cid_guard,
         )
+        # Wire the WebSocket-authoritative liveness signal BEFORE the server
+        # starts accepting connections: a slave admitted before the listener
+        # is installed would emit its ``connected=True`` into the void and
+        # never enter ``_connected_cids``, leaving it falsely expirable later.
+        peer_manager = lan_sync.peer_manager
+        if peer_manager is not None:
+            lan_ws_server.set_peer_connection_callback(
+                lambda cid, connected: (
+                    peer_manager.mark_peer_connected(cid)
+                    if connected
+                    else peer_manager.mark_peer_disconnected(cid)
+                )
+            )
         try:
             lan_ws_server.start(watch_path=config["LOCAL_BUCKET"])
         except WatcherStartError:
@@ -576,6 +590,11 @@ def _run_as_slave(
         # In continuous mode, connect via WebSocket for real-time events
         log.info("Initial sync complete, connecting to WebSocket for real-time events...")
         ws_port = master.port + 1  # WebSocket is on next port
+        # The master's mDNS record may be quiescent (its TXT only changes on
+        # presence/server_ready flips), which would otherwise let this slave
+        # falsely demote it while the WebSocket link is healthy. Mark the master
+        # live via the WebSocket channel for the whole connection lifetime.
+        peer_manager.mark_peer_connected(master.cid)
         try:
             run(
                 _with_stdin_commands(
@@ -599,10 +618,14 @@ def _run_as_slave(
                 f"Watcher start failed; backing off "
                 f"{WATCHER_START_RETRY_DELAY_S:.0f}s before retrying."
             )
+            peer_manager.mark_peer_disconnected(master.cid)
             time.sleep(WATCHER_START_RETRY_DELAY_S)
             return True, int(ExitCode.OK)
         except Exception as e:
             log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
+        # The WebSocket is down: clear the liveness mark so a master that died
+        # mid-session is demoted by the sweep below, then re-enter discovery.
+        peer_manager.mark_peer_disconnected(master.cid)
         # If WebSocket disconnects, re-enter discovery loop. Expire any peer
         # whose heartbeat already stopped so a master that died mid-session is
         # demoted immediately instead of waiting for the next discovery wake:

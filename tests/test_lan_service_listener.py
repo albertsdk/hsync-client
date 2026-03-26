@@ -49,9 +49,11 @@ def _full_props(overrides: dict[bytes, bytes] | None = None) -> dict[bytes, byte
     return props
 
 
-def _listener_with_pm(**pm_kwargs) -> tuple[HsyncServiceListener, PeerManager]:
+def _listener_with_pm(
+    goodbye_grace_s: float = 0.0, **pm_kwargs
+) -> tuple[HsyncServiceListener, PeerManager]:
     pm = PeerManager(local_cid="local-cid", bucket="photos", **pm_kwargs)
-    return HsyncServiceListener(pm), pm
+    return HsyncServiceListener(pm, goodbye_grace_s=goodbye_grace_s), pm
 
 
 class TestRegisterPeerFromInfo:
@@ -191,8 +193,9 @@ class TestServiceCallbacks:
         """Errors during peer removal must be logged, not propagated."""
         from unittest.mock import patch
 
-        listener, _pm = _listener_with_pm()
+        listener, _pm = _listener_with_pm(goodbye_grace_s=0)
         listener._peer_manager = MagicMock()
+        listener._peer_manager.is_wss_connected.return_value = False
         listener._peer_manager.remove_peer.side_effect = RuntimeError("boom")
 
         with patch("hsync_client.lan.log") as mock_log:

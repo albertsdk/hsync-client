@@ -24,12 +24,12 @@ SSOT in `hsync-common`.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `LANSync` | `lan.py:654` | top-level LAN coordinator |
-| `PeerManager` | `:129` | tracks peers, runs election, heartbeats |
-| `Peer` | `:90` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
-| `HsyncServiceListener` | `:501` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value) |
-| `get_free_port` | `:68` | bind an ephemeral serving port |
-| `HSYNC_SERVICE_TYPE` | `:47` | `_hsync._tcp.local.` mDNS type |
+| `LANSync` | `lan.py:864` | top-level LAN coordinator |
+| `PeerManager` | `lan.py:152` | tracks peers, runs election, liveness |
+| `Peer` | `lan.py:106` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
+| `HsyncServiceListener` | `lan.py:721` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value) |
+| `get_free_port` | `lan.py:74` | bind an ephemeral serving port |
+| `HSYNC_SERVICE_TYPE` | `lan.py:53` | `_hsync._tcp.local.` mDNS type |
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.lan.elect_master`
@@ -70,19 +70,50 @@ group where no further peer event would otherwise arrive:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `Peer.is_alive(timeout)` | `lan.py:127` | liveness check against a configurable staleness threshold |
-| `PeerManager.reconcile_stale_peers` | `lan.py:430` | expire peers whose heartbeat stopped and re-elect; invoked every discovery wake (`lan_handler.run_lan_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
-| `PeerManager.get_successor_cid` | `lan.py:675` | pre-computed next-ranked eligible candidate (observational only; never gates) |
+| `Peer.is_alive(timeout)` | `lan.py:127` | mDNS-staleness liveness check against a configurable threshold |
+| `PeerManager._is_peer_alive` | `lan.py:490` | liveness = mDNS staleness **or** WSS-connected (`_connected_cids`) |
+| `PeerManager.mark_peer_connected` / `mark_peer_disconnected` | `lan.py:468` / `:480` | feed the WebSocket-authoritative liveness signal (set by the master's WSS admission/release and by the slave around its WSS connection) |
+| `PeerManager.is_wss_connected` | `lan.py:485` | lock-guarded query on `_connected_cids`; used by the listener's goodbye grace |
+| `HsyncServiceListener.remove_service` | `lan.py` | **goodbye grace** (`GOODBYE_GRACE_S`): delay `remove_peer` so an Android heartbeat re-register can cancel it (covers slave<->slave, not only WSS); a live WSS link is still an immediate ignore |
+| `PeerManager.reconcile_stale_peers` | `lan.py:435` | expire peers whose liveness stopped and re-elect; invoked every discovery wake (`lan_handler.run_lan_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
+| `PeerManager.get_successor_cid` | `lan.py:701` | pre-computed next-ranked eligible candidate (observational only; never gates) |
 | `_validate_peer_timeout_relationship` | `config.py:224` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` |
-| timeout wiring | `lan_handler.py:133` → `LANSync` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` now actually reach `is_alive`/the discovery cadence (previously declared but unused) |
-| `LANSync.update_server_not_ready` | `lan.py:1012` | leadership lease (ADR-0027): on yield, clear the local `server_ready` flag and re-register mDNS without `server_ready`/`connected` |
+| timeout wiring | `lan_handler.py:133` → `LANSync` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` reach `is_alive`/the discovery cadence |
+| `LANSync._record_lock` | `lan.py:995` | serializes every record publication (initial register, heartbeat re-announce, in-place refresh, teardown) across the heartbeat thread, the debounced presence timer and the main thread; `stop()` publishes `_running = False` under it so a queued refresh bails instead of racing the unregister |
+| `LANSync._refresh_service` | `lan.py:1113` | **in-place** TXT update (`zeroconf.update_service`), never unregister+register: a goodbye would make slaves see a spurious master `remove_service` |
+| `LANSync._heartbeat` / `_heartbeat_loop` | `lan.py:1187` / `:1205` | liveness heartbeat: a background thread re-announces the TXT record every `heartbeat_interval` (env `HSYNC_HEARTBEAT_INTERVAL`, wired in `lan_handler.py:158`) with an incremented opaque `heartbeat` counter |
+| `LANSync.update_server_not_ready` | `lan.py:1042` | leadership lease (ADR-0027): on yield, clear the local `server_ready` flag and update mDNS in place without `server_ready`/`connected` |
 | yield path | `lan_handler.py:217` | when `is_master()` flips false after serving, stop servers **and** revoke incumbency + log `[MASTER YIELD]` (mirrored in Android `LogAction.MASTER_YIELD`) |
 
-A slave whose WebSocket drops re-runs the sweep immediately but only demotes a
-master whose record is already stale: a transient local-link blip leaves the
-incumbent in place, so the surviving peers do not split-brain. A master that
-*loses* the election yields immediately and revokes its incumbency so it is not
-kept as a "zombie incumbent" (`server_ready=true` while no longer serving).
+**Liveness is two-layer.** The **WebSocket link is authoritative** for the
+master↔slave channels: the master marks each admitted slave CID as connected
+(`LANWebSocketServer.set_peer_connection_callback`, wired in
+`lan_handler._run_as_master` **before** the WSS server starts accepting
+connections so no admission is missed), and a slave marks the master connected
+for the whole `lan_websocket_client` lifetime (`_run_as_slave`). Disconnect
+notifications are ownership-aware: the `SlaveCidRegistry.release` return value
+gates the "disconnected" emission so a same-address reconnect never clears a
+still-live CID's mark, and `LANWebSocketServer.stop()` emits disconnects for
+every admitted CID before clearing the registry. For the **slave↔slave**
+channel (no WSS link) liveness is carried by the **heartbeat**: zeroconf only
+re-delivers a TXT record when its *value* changes, so every peer re-announces
+its record each `HEARTBEAT_INTERVAL` with an incremented opaque `heartbeat`
+counter. mDNS staleness is therefore the **fallback** that detects a hard
+crash: a dead peer stops heartbeating and goes stale within `PEER_TIMEOUT`,
+without falsely demoting an idle-but-alive peer (the split-brain regression).
+On the receiving side, `remove_service` applies the **goodbye grace**
+(`GOODBYE_GRACE_S`): Android NSD heartbeats re-announce as unregister+register,
+so every interval broadcasts a goodbye even for live slave<->slave peers.
+The removal is delayed so a following add/update can cancel it; a live WSS
+link is still ignored immediately. A true leave expires after the grace
+window (or via the staleness sweep on a hard crash).
+
+A slave whose WebSocket drops clears the mark, re-runs the sweep immediately but
+only demotes a master whose record is already stale: a transient local-link blip
+leaves the incumbent in place, so the surviving peers do not split-brain. A
+master that *loses* the election yields immediately and revokes its incumbency
+so it is not kept as a "zombie incumbent" (`server_ready=true` while no longer
+serving).
 
 ## Master server (`lan_server.py`, `lan_websocket.py`)
 
@@ -182,7 +213,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Concern | Code | Notes |
 | ------- | ---- | ----- |
-| Pin store | `pinning.py:56` (`PinStore`) | disk-backed, `0o600` (`_PIN_FILE_MODE:39`); key `_pin_key:51`; path `default_pin_store_path:42` / `PIN_FILE_ENV:35` |
+| Pin store | `pinning.py:56` (`PinStore`) | disk-backed, `0o600` (`_PIN_FILE_MODE:40`); key `_pin_key:52`; path `default_pin_store_path:43` / `PIN_FILE_ENV:36`. Writes are atomic and multi-process safe: `_save` (`pinning.py:81`) writes a **per-write unique** temp file (`tempfile.mkstemp`) then `os.replace`s it into place — a fixed `.tmp` suffix would race across the several processes that share one store (peers on a host, or several buckets) and crash the loser with `FileNotFoundError`; readers never see a torn file (last writer wins) |
 | Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed`/`pairing_needed` |
 | Device identity | `identity.py` (`load_or_create_device_identity`) | Syncthing-style: one identity per installation — stable device ID (`device_id` file, CID_PATTERN-valid) + keypair in `HSYNC_DEVICE_DIR` (`default_device_dir`); cached process-wide. The device ID **is** the LAN `cid` (resolved in `main_logic.run_sync`), so pins survive restarts and cert rotation (delete `*.pem`, keep `device_id`) is detected as `[FINGERPRINT CHANGED]`. Keypair itself: `ssl_utils.load_or_create_master_cert` (dir delegates to `identity.default_device_dir`) |
 | Instance lock | `identity.py` (`InstanceLock`) | cross-process `flock` per synced dir (key = sha256 of realpath) in `HSYNC_LOCKS_DIR` / `$XDG_RUNTIME_DIR/hsync/locks`; kernel-released on death (never stale); second process on the same dir is refused with the holder PID in the message. Acquired for the whole run in `main_logic.run_sync`; same-process re-entry is a no-op (CliRunner tests) |

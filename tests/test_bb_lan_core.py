@@ -180,6 +180,17 @@ class TestLanAutomaticElection:
             ) or _wait_for_text_in_stderr(peer2, "MASTER", timeout=5)
             assert master_ready, "Neither peer became master"
 
+            # Wait for BOTH peers to be ready (slave watcher live + handshake
+            # done) before mutating: a file written in the post-initial-sync
+            # blind spot is only recovered by the periodic resync (300s), far
+            # beyond the sync timeout below.
+            assert _wait_for_text_in_stderr(peer1, "[READY]", timeout=30), (
+                "peer1 did not reach [READY]"
+            )
+            assert _wait_for_text_in_stderr(peer2, "[READY]", timeout=30), (
+                "peer2 did not reach [READY]"
+            )
+
             # When a file is written on the first peer
             content = b"auto-election\n"
             (Path(lan_master_dir) / "auto.txt").write_bytes(content)

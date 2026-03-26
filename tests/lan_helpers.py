@@ -32,6 +32,7 @@ import contextlib
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -382,16 +383,19 @@ def _wait_for_master(
     partition flags the master was started with (e.g. ``--group``) or the
     two would never discover each other.
 
-    The temporary slave runs on *slave_dir* and must be gone (terminated)
-    before the real slave starts on the same dir: the per-directory instance
-    lock makes two live clients on one dir impossible by design. Do **not**
-    call this while a real slave is already running on *slave_dir* — wait for
-    the master's ready file (``_wait_for_client_ready``) instead.
+    The temporary slave runs on a dedicated probe directory — never on
+    *slave_dir* — so it has its own device identity and TOFU pin store. A
+    probe that shared *slave_dir*'s identity/pin store could TOFU-pin the
+    master before it is terminated (a race made more likely as ``server_ready``
+    is advertised faster), leaving the real slave with a ``matched`` pin instead
+    of a first-sight ``trusted`` one. The probe only has to trigger the
+    election; it must never leak state into the real slave's store.
 
     Returns once the master logs ``"MASTER"``, or raises ``AssertionError``.
     The temporary slave is terminated before returning.
     """
-    slave = _lan_start(slave_dir, bucket, never_master=True, extra_args=slave_extra_args)
+    probe_dir = tempfile.mkdtemp(prefix="probe-", dir=str(Path(slave_dir).parent))
+    slave = _lan_start(probe_dir, bucket, never_master=True, extra_args=slave_extra_args)
     try:
         assert _wait_for_text_in_stderr(master, "MASTER", timeout=timeout), (
             "Master did not become ready"

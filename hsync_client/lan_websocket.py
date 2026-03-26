@@ -280,17 +280,26 @@ class SlaveCidRegistry:
             self._entries[cid] = (normalized, websocket)
             return True, stale
 
-    def release(self, cid: str, websocket: Any) -> None:
+    def release(self, cid: str, websocket: Any) -> bool:
         """Drop the *cid* binding, but only if it still belongs to *websocket*.
 
         Idempotent and safe to call from any teardown path: after a
         same-address replacement the superseded connection's release is a
         no-op, so it can never evict the newer binding.
+
+        Returns:
+            ``True`` when this *websocket* was still the current owner and the
+            binding was removed, ``False`` otherwise (it was already replaced
+            by a same-address reconnect). The caller uses this to decide
+            whether to emit a liveness "disconnected" notification, so a
+            superseded connection never clears a still-live CID's mark.
         """
         with self._lock:
             bound = self._entries.get(cid)
             if bound is not None and bound[1] is websocket:
                 del self._entries[cid]
+                return True
+            return False
 
     def request_conflict(self, cid: str, client_ip: str | None) -> bool:
         """Return True when an HTTP write from *client_ip* claiming *cid* is a
@@ -318,6 +327,11 @@ class SlaveCidRegistry:
         """Drop every binding (called when the WSS server stops)."""
         with self._lock:
             self._entries.clear()
+
+    def connected_cids(self) -> set[str]:
+        """Snapshot of the currently-bound CIDs (for teardown notifications)."""
+        with self._lock:
+            return set(self._entries)
 
 
 # =============================================================================
@@ -375,6 +389,7 @@ class LANWebSocketServer:
         self._event_handler: LANMasterFileEventHandler | None = None
         self._clients_lock = threading.Lock()
         self._on_clients_changed: Callable[[int], None] | None = None
+        self._on_peer_connection: Callable[[str, bool], None] | None = None
 
         if use_https and (not cert_file or not key_file):
             raise ValueError("cert_file and key_file are required when use_https=True")
@@ -398,6 +413,25 @@ class LANWebSocketServer:
         record with the updated ``connected`` count).
         """
         self._on_clients_changed = callback
+
+    def set_peer_connection_callback(self, callback: Callable[[str, bool], None] | None) -> None:
+        """Install (or clear) the callback invoked as ``(cid, connected)``.
+
+        Fires from the asyncio loop thread on every slave connect/disconnect.
+        ``connected`` is ``True`` after a slave CID is admitted and ``False``
+        after it disconnects. The LAN handler uses it to feed the
+        :class:`~hsync_client.lan.PeerManager`'s WebSocket-authoritative
+        liveness signal, so an mDNS-quiescent but WSS-connected slave is never
+        falsely expired.
+        """
+        self._on_peer_connection = callback
+
+    def _notify_peer_connection(self, cid: str, connected: bool) -> None:
+        """Invoke the per-CID connect/disconnect callback, if installed."""
+        callback = self._on_peer_connection
+        if callback is None:
+            return
+        callback(cid, connected)
 
     def _notify_clients_changed(self) -> None:
         """Invoke the count-change callback with the current client count."""
@@ -585,6 +619,8 @@ class LANWebSocketServer:
         # Add client to set (its CID is already reserved by _admit_slave)
         self._clients.add(websocket)
         self._notify_clients_changed()
+        if client_cid != "unknown":
+            self._notify_peer_connection(client_cid, True)
 
         try:
             # Keep connection alive and handle incoming messages
@@ -599,7 +635,11 @@ class LANWebSocketServer:
         finally:
             self._clients.discard(websocket)
             if client_cid != "unknown":
-                self._cid_registry.release(client_cid, websocket)
+                # Only the current owner of the binding may clear the liveness
+                # mark: a superseded connection (same-address reconnect) must
+                # not emit "disconnected" for a CID the replacement still holds.
+                if self._cid_registry.release(client_cid, websocket):
+                    self._notify_peer_connection(client_cid, False)
             self._notify_clients_changed()
             log.info(f"WebSocket client disconnected: {client_addr} (CID: {client_cid})")
 
@@ -731,8 +771,13 @@ class LANWebSocketServer:
 
             asyncio.run_coroutine_threadsafe(close_all(), self._loop)
 
-        # Every admitted slave is gone: drop the duplicate-identity bindings so
+        # Every admitted slave is gone: emit a disconnect for each so the
+        # PeerManager clears its WebSocket liveness marks (the handlers' own
+        # ``release`` is a no-op after ``clear()`` below, so it can no longer
+        # drive the notification), then drop the duplicate-identity bindings so
         # a later re-admission (role regained) starts from a clean registry.
+        for cid in self._cid_registry.connected_cids():
+            self._notify_peer_connection(cid, False)
         self._cid_registry.clear()
 
         # Wait for thread to finish

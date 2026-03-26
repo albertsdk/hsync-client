@@ -9,7 +9,7 @@
 import time
 from unittest.mock import patch
 
-from hsync_client.lan import PEER_TIMEOUT, Peer, PeerManager
+from hsync_client.lan import PEER_TIMEOUT, HsyncServiceListener, Peer, PeerManager
 
 
 class TestPeerManager:
@@ -1066,6 +1066,69 @@ class TestReconcileStalePeers:
         assert "peer1" in pm._peers
 
 
+class TestWebSocketLiveness:
+    """A live WebSocket link overrides mDNS staleness (master<->slave liveness)."""
+
+    def test_connected_peer_is_not_expired_when_mdns_stale(self):
+        """A peer whose mDNS record is quiescent but whose WSS is up stays alive.
+
+        Regression: zeroconf only fires an update callback when a TXT record
+        *changes*, so an idle-but-healthy peer goes stale after PEER_TIMEOUT and
+        was falsely demoted, producing split-brain elections on every join.
+        """
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=100.0,
+            )
+        )
+        assert pm.get_master_cid() == "aaa111"
+        # The master's mDNS heartbeat stopped, but its WebSocket link is live.
+        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        pm.mark_peer_connected("aaa111")
+        assert pm.reconcile_stale_peers() is False
+        assert pm.get_master_cid() == "aaa111"
+        assert "aaa111" in pm._peers
+
+    def test_disconnected_peer_is_expired_once_stale(self):
+        """Clearing the WSS liveness mark restores mDNS-based staleness."""
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=100.0,
+            )
+        )
+        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        pm.mark_peer_connected("aaa111")
+        pm.mark_peer_disconnected("aaa111")
+        assert pm.reconcile_stale_peers() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_connected_peer_counts_as_alive_candidate(self):
+        """A WSS-connected peer participates in the election despite stale mDNS."""
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=100.0,
+            )
+        )
+        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        pm.mark_peer_connected("aaa111")
+        assert pm.get_alive_peers() == [pm._peers["aaa111"]]
+
+
 class TestPeerTimeoutOverride:
     """The configured peer timeout (HSYNC_PEER_TIMEOUT) governs liveness."""
 
@@ -1124,3 +1187,67 @@ class TestSuccessor:
         pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=9753))
         pm.remove_peer("temp")
         assert pm.get_successor_cid() is None
+
+
+class TestRemoveServiceGoodbyeGrace:
+    """A goodbye must not immediately drop a peer that is about to re-announce.
+
+    Android re-announces its liveness heartbeat as an unregister+register
+    cycle (no in-place TXT update in NSD), so every heartbeat broadcasts a
+    goodbye — including for slave<->slave peers with no WSS link. The
+    listener delays the removal so a following add/update can cancel it.
+    A live WSS link is still an immediate ignore.
+    """
+
+    SERVICE_NAME = "hsync-photos-peerabc.local."
+
+    @staticmethod
+    def _manager_with_peer() -> PeerManager:
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="peerabc", bucket="photos", address="192.168.1.100", port=9753))
+        return pm
+
+    def test_goodbye_for_wss_connected_peer_is_ignored(self):
+        pm = self._manager_with_peer()
+        pm.mark_peer_connected("peerabc")
+        listener = HsyncServiceListener(pm, goodbye_grace_s=0)
+
+        listener.remove_service(None, "_hsync._tcp.local.", self.SERVICE_NAME)
+
+        assert [p.cid for p in pm.get_alive_peers()] == ["peerabc"]
+
+    def test_goodbye_without_wss_link_is_not_immediate(self):
+        pm = self._manager_with_peer()
+        listener = HsyncServiceListener(pm, goodbye_grace_s=30.0)
+
+        listener.remove_service(None, "_hsync._tcp.local.", self.SERVICE_NAME)
+
+        assert [p.cid for p in pm.get_alive_peers()] == ["peerabc"]
+        listener._cancel_pending_goodbye("peerabc")
+
+    def test_goodbye_without_wss_link_removes_after_zero_grace(self):
+        pm = self._manager_with_peer()
+        listener = HsyncServiceListener(pm, goodbye_grace_s=0)
+
+        listener.remove_service(None, "_hsync._tcp.local.", self.SERVICE_NAME)
+
+        assert pm.get_alive_peers() == []
+
+    def test_fresh_announce_cancels_pending_goodbye(self):
+        pm = self._manager_with_peer()
+        listener = HsyncServiceListener(pm, goodbye_grace_s=30.0)
+        listener.remove_service(None, "_hsync._tcp.local.", self.SERVICE_NAME)
+        listener._cancel_pending_goodbye("peerabc")
+        # Simulate the re-announce that follows an Android heartbeat.
+        pm.add_peer(Peer(cid="peerabc", bucket="photos", address="192.168.1.100", port=9753))
+        assert [p.cid for p in pm.get_alive_peers()] == ["peerabc"]
+
+    def test_goodbye_after_wss_drop_removes_peer(self):
+        pm = self._manager_with_peer()
+        pm.mark_peer_connected("peerabc")
+        listener = HsyncServiceListener(pm, goodbye_grace_s=0)
+
+        pm.mark_peer_disconnected("peerabc")
+        listener.remove_service(None, "_hsync._tcp.local.", self.SERVICE_NAME)
+
+        assert pm.get_alive_peers() == []

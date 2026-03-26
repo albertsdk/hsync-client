@@ -7,6 +7,8 @@
 """Tests for LANSync class in LAN module."""
 
 import socket
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
@@ -332,6 +334,8 @@ class TestRegisterService:
             assert props[b"sync_direction"] == b"bidirectional"
             assert b"startup_time" in props
             assert b"version" in props
+            # The liveness heartbeat is always advertised (opaque counter).
+            assert props[b"heartbeat"] == b"0"
             # Conditional keys stay absent when the feature is off.
             for key in (
                 b"group",
@@ -344,6 +348,26 @@ class TestRegisterService:
                 assert key not in props
         finally:
             lan.stop()
+
+    def test_heartbeat_increments_and_reannounces(self):
+        """The liveness counter increments and re-announces via update_service."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        with (
+            patch("hsync_client.lan.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.lan.ServiceBrowser"),
+        ):
+            lan.start(register_service=True)
+            zc = mock_zc_cls.return_value
+            try:
+                props = dict(zc.register_service.call_args.args[0].properties)
+                assert props[b"heartbeat"] == b"0"
+                lan._heartbeat()
+                info = zc.update_service.call_args.args[0]
+                assert dict(info.properties)[b"heartbeat"] == b"1"
+            finally:
+                lan.stop()
 
     def test_optional_properties(self):
         lan, zc = self._started_lan(
@@ -428,9 +452,12 @@ class TestUpdateServerReady:
             zc = mock_zc_cls.return_value
             lan.update_server_ready()
             try:
-                zc.unregister_service.assert_called_once()
-                assert zc.register_service.call_count == 2
-                new_info = zc.register_service.call_args.args[0]
+                # In-place TXT update: no goodbye (unregister) must ever be sent
+                # for a server_ready flip — slaves must see a value change, not
+                # a spurious master removal.
+                zc.unregister_service.assert_not_called()
+                zc.update_service.assert_called_once()
+                new_info = zc.update_service.call_args.args[0]
                 assert dict(new_info.properties)[b"server_ready"] == b"true"
                 # The local node marked itself incumbent (anti-takeover).
                 assert lan.peer_manager._local_server_ready is True
@@ -456,7 +483,7 @@ class TestUpdateServerReady:
             lan.update_server_ready()  # become incumbent first
             lan.update_server_not_ready()  # then yield
             try:
-                new_info = zc.register_service.call_args.args[0]
+                new_info = zc.update_service.call_args.args[0]
                 props = dict(new_info.properties)
                 assert b"server_ready" not in props
                 assert b"connected" not in props
@@ -490,3 +517,72 @@ class TestGetLocalIp:
         lan = LANSync(cid="test123", bucket="photos")
         with patch("hsync_client.lan.socket.socket", side_effect=OSError("no sockets")):
             assert lan._get_local_ip() == "127.0.0.1"
+
+
+class TestRecordPublicationSerialization:
+    """The heartbeat thread, the debounced refresh timer and the main thread
+    all publish the mDNS record: their ``update_service`` calls must never
+    interleave, or the published TXT state diverges from the local state."""
+
+    def test_concurrent_heartbeat_and_refresh_are_serialized(self):
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(cid="test123", bucket="photos")
+        try:
+            with (
+                patch("hsync_client.lan.Zeroconf") as mock_zc_cls,
+                patch("hsync_client.lan.ServiceBrowser"),
+            ):
+                lan.start(register_service=True)
+                zc = mock_zc_cls.return_value
+
+                intervals: list[tuple[float, float]] = []
+                intervals_lock = threading.Lock()
+
+                def slow_update(info, *args, **kwargs):
+                    start = time.monotonic()
+                    time.sleep(0.02)
+                    with intervals_lock:
+                        intervals.append((start, time.monotonic()))
+
+                zc.update_service.side_effect = slow_update
+
+                errors: list[Exception] = []
+
+                def hammer_heartbeat():
+                    try:
+                        for _ in range(10):
+                            lan._heartbeat()
+                    except Exception as e:  # pragma: no cover - surfaced below
+                        errors.append(e)
+
+                def hammer_refresh():
+                    try:
+                        for _ in range(10):
+                            lan._refresh_service(server_ready=True)
+                    except Exception as e:  # pragma: no cover - surfaced below
+                        errors.append(e)
+
+                threads = [
+                    threading.Thread(target=hammer_heartbeat),
+                    threading.Thread(target=hammer_refresh),
+                ]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+
+                assert not errors, f"worker threads raised: {errors!r}"
+                assert len(intervals) == 20
+                intervals.sort()
+                for (_, prev_end), (start, _) in zip(intervals, intervals[1:], strict=False):
+                    assert start >= prev_end, (
+                        "update_service calls overlapped: record publication is not serialized"
+                    )
+
+                # The published record reflects a coherent final state.
+                final = dict(lan._service_info.properties)
+                assert final[b"server_ready"] == b"true"
+                assert 1 <= int(final[b"heartbeat"]) <= 10
+        finally:
+            lan.stop()

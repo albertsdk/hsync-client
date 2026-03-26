@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -79,15 +80,32 @@ class PinStore:
 
     def _save(self, data: dict[str, str]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        # Create the temp file with 0600 from the start: writing first and
-        # chmoding after would leave a window where the trusted-peer pins are
-        # readable by other local users.
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _PIN_FILE_MODE)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, indent=2, sort_keys=True))
-        os.chmod(tmp, _PIN_FILE_MODE)
-        os.replace(tmp, self._path)
+        # Unique temp name per write: several hsync processes share one pin
+        # store (peers on the same host, or several buckets via the default
+        # path), so a fixed ``.tmp`` suffix races — one writer's ``os.replace``
+        # moves the temp file away while another writer is still using it, and
+        # the loser crashes with ``FileNotFoundError``. A per-write name keeps
+        # the writers independent; ``os.replace`` stays atomic, so the last
+        # writer wins and readers never observe a torn file.
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{self._path.name}.",
+            suffix=".tmp",
+            dir=str(self._path.parent),
+        )
+        try:
+            # mkstemp already creates the file 0600; chmod is a belt-and-braces
+            # guard so the trusted-peer pins are never group/world readable.
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, indent=2, sort_keys=True))
+            os.chmod(tmp, _PIN_FILE_MODE)
+            os.replace(tmp, self._path)
+        finally:
+            # os.replace already unlinked tmp on success; drop it if we failed
+            # before reaching it.
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     def get(self, cid: str, bucket: str) -> str | None:
         """Return the pinned fingerprint for ``(cid, bucket)``, or ``None``."""

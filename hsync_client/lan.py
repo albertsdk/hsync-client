@@ -38,6 +38,7 @@ from zeroconf import NonUniqueNameException, ServiceBrowser, ServiceInfo, Servic
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     DISCOVERY_TIMEOUT_DEFAULT,
+    HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
     PEER_TIMEOUT,
     ActionLabel,
@@ -64,6 +65,12 @@ DISCOVERY_TIMEOUT = DISCOVERY_TIMEOUT_DEFAULT
 # many seconds after the last change, so peers see a converged ``connected``
 # count without mDNS churn.
 PRESENCE_REFRESH_COALESCE_S = 2.0
+
+# Android NSD cannot update TXT in place, so its heartbeat is an
+# unregister+register cycle that broadcasts a goodbye. Receivers delay
+# acting on that goodbye so a fresh announce can cancel the removal.
+# A true leave still expires after this window (or via the staleness sweep).
+GOODBYE_GRACE_S = 2.0
 
 
 # =============================================================================
@@ -210,6 +217,15 @@ class PeerManager:
         self._local_address = local_address
         self._peer_timeout = peer_timeout
         self._peers: dict[str, Peer] = {}
+        # Peers with a live WebSocket connection to (or from) this node. mDNS
+        # staleness must never demote them: the WSS channel is the authoritative
+        # liveness signal for the master<->slave links, while mDNS is discovery
+        # (and the fallback for slave<->slave failover detection).
+        self._connected_cids: set[str] = set()
+        # Dedicated lock for ``_connected_cids``: the WSS server feeds it from
+        # its asyncio loop thread, so it must never contend with ``_lock``,
+        # which other threads hold across the (heavier) election/emit work.
+        self._connected_lock = threading.Lock()
         self._lock = threading.Lock()
         # Dedup guard for the duplicate-identity warning: mDNS heartbeats
         # re-deliver the same foreign record every few seconds, so the error is
@@ -366,7 +382,7 @@ class PeerManager:
             # change. The expired-peer check also covers the original
             # behaviour where a stale peer (whose heartbeat stop arriving)
             # was excluded from the candidate list at the next update.
-            stale_peer = any(not p.is_alive(self._peer_timeout) for p in self._peers.values())
+            stale_peer = any(not self._is_peer_alive(p) for p in self._peers.values())
             if election_changed or stale_peer:
                 self._elect_master()
             if discovery_changed or stale_peer:
@@ -445,7 +461,7 @@ class PeerManager:
             re-run), ``False`` otherwise.
         """
         with self._lock:
-            stale = [cid for cid, p in self._peers.items() if not p.is_alive(self._peer_timeout)]
+            stale = [cid for cid, p in self._peers.items() if not self._is_peer_alive(p)]
             if not stale:
                 return False
             for cid in stale:
@@ -455,10 +471,39 @@ class PeerManager:
             self._signal_change()
             return True
 
+    def mark_peer_connected(self, cid: str) -> None:
+        """Mark *cid* as live via an out-of-band channel (WebSocket).
+
+        A peer with a live WebSocket connection to (or from) this node is
+        alive even while its mDNS record is quiescent: zeroconf only delivers
+        an update callback when the TXT record *changes*, so a healthy but
+        idle peer otherwise goes stale and gets falsely demoted. The WSS link
+        is the authoritative liveness signal for the master<->slave channels.
+        """
+        with self._connected_lock:
+            self._connected_cids.add(cid)
+
+    def mark_peer_disconnected(self, cid: str) -> None:
+        """Clear the out-of-band liveness mark for *cid* (WebSocket closed)."""
+        with self._connected_lock:
+            self._connected_cids.discard(cid)
+
+    def is_wss_connected(self, cid: str) -> bool:
+        """Return whether *cid* is currently live via the WebSocket channel."""
+        with self._connected_lock:
+            return cid in self._connected_cids
+
+    def _is_peer_alive(self, peer: Peer) -> bool:
+        """Return whether *peer* is alive by mDNS heartbeat or WSS liveness."""
+        if peer.is_alive(self._peer_timeout):
+            return True
+        with self._connected_lock:
+            return peer.cid in self._connected_cids
+
     def get_alive_peers(self) -> list[Peer]:
         """Get all peers that are still alive."""
         with self._lock:
-            return [p for p in self._peers.values() if p.is_alive(self._peer_timeout)]
+            return [p for p in self._peers.values() if self._is_peer_alive(p)]
 
     def _signal_change(self) -> None:
         """Bump the discovery generation and wake waiters. Caller holds ``_lock``."""
@@ -516,7 +561,7 @@ class PeerManager:
             )
         ]
         for peer in self._peers.values():
-            if peer.is_alive(self._peer_timeout):
+            if self._is_peer_alive(peer):
                 candidates.append(
                     ElectionCandidate(
                         cid=peer.cid,
@@ -603,7 +648,9 @@ class PeerManager:
             self._master_cid = new_master_cid
 
             if new_master_cid == self._local_cid:
-                if self._force_master:
+                if self._local_server_ready:
+                    reason = "server_ready"
+                elif self._force_master:
                     reason = "force_master"
                 elif self._sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
                     reason = "bidirectional preference"
@@ -622,7 +669,9 @@ class PeerManager:
             else:
                 master_peer = self._peers.get(new_master_cid) if new_master_cid else None
                 if master_peer:
-                    if master_peer.force_master:
+                    if master_peer.server_ready:
+                        reason = "server_ready"
+                    elif master_peer.force_master:
                         reason = "force_master"
                     elif master_peer.sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
                         reason = "bidirectional preference"
@@ -696,14 +745,57 @@ class HsyncServiceListener(ServiceListener):
     registers them with the PeerManager.
     """
 
-    def __init__(self, peer_manager: PeerManager) -> None:
+    def __init__(
+        self,
+        peer_manager: PeerManager,
+        goodbye_grace_s: float = GOODBYE_GRACE_S,
+    ) -> None:
         """
         Initialize the service listener.
 
         Args:
             peer_manager: PeerManager to register discovered peers.
+            goodbye_grace_s: Delay before honouring a ``remove_service`` so an
+                Android heartbeat re-register can cancel the removal. ``0``
+                removes immediately (tests).
         """
         self._peer_manager = peer_manager
+        self._goodbye_grace_s = goodbye_grace_s
+        self._pending_goodbyes: dict[str, threading.Timer] = {}
+        self._pending_lock = threading.Lock()
+
+    def _cancel_pending_goodbye(self, cid: str) -> None:
+        """Drop a delayed removal for *cid* (a fresh announce arrived)."""
+        with self._pending_lock:
+            timer = self._pending_goodbyes.pop(cid, None)
+        if timer is not None:
+            timer.cancel()
+
+    def _commit_goodbye(self, cid: str) -> None:
+        """Honour a goodbye after the grace window, unless WSS is still live."""
+        with self._pending_lock:
+            self._pending_goodbyes.pop(cid, None)
+        if self._peer_manager.is_wss_connected(cid):
+            log.debug(f"Ignoring expired goodbye for WSS-connected peer: {cid}")
+            return
+        try:
+            self._peer_manager.remove_peer(cid)
+        except Exception as e:
+            log.debug(f"Error removing peer after goodbye grace: {e}")
+
+    def _schedule_goodbye(self, cid: str) -> None:
+        """Delay *cid* removal so a heartbeat re-announce can cancel it."""
+        if self._goodbye_grace_s <= 0:
+            self._commit_goodbye(cid)
+            return
+        with self._pending_lock:
+            old = self._pending_goodbyes.pop(cid, None)
+            if old is not None:
+                old.cancel()
+            timer = threading.Timer(self._goodbye_grace_s, self._commit_goodbye, args=(cid,))
+            timer.daemon = True
+            self._pending_goodbyes[cid] = timer
+            timer.start()
 
     def _register_peer_from_info(self, info: ServiceInfo) -> None:
         """Extract peer information from ServiceInfo and register it."""
@@ -796,6 +888,7 @@ class HsyncServiceListener(ServiceListener):
                 startup_time=startup_time,
                 sync_direction=sync_direction,
             )
+            self._cancel_pending_goodbye(cid)
             self._peer_manager.add_peer(peer)
 
         except Exception as e:
@@ -821,7 +914,15 @@ class HsyncServiceListener(ServiceListener):
                 service_name = parts[0]
                 if "-" in service_name:
                     cid = service_name.rsplit("-", 1)[-1]
-                    self._peer_manager.remove_peer(cid)
+                    # Goodbye grace: Android NSD heartbeats re-announce as
+                    # unregister+register, so every interval broadcasts a
+                    # goodbye even for live slave<->slave peers (no WSS). A
+                    # live WSS link is still an immediate ignore; otherwise
+                    # delay the removal so a following add/update can cancel.
+                    if self._peer_manager.is_wss_connected(cid):
+                        log.debug(f"Ignoring goodbye for WSS-connected peer: {cid}")
+                        return
+                    self._schedule_goodbye(cid)
         except Exception as e:
             log.debug(f"Error parsing service name on removal: {e}")
 
@@ -855,6 +956,7 @@ class LANSync:
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
         peer_timeout: float = PEER_TIMEOUT,
+        heartbeat_interval: float = HEARTBEAT_INTERVAL,
     ) -> None:
         """
         Initialize LAN sync coordinator.
@@ -873,6 +975,10 @@ class LANSync:
             peer_timeout: Staleness threshold (seconds) for peer liveness,
                 threaded through to :class:`PeerManager` (honours
                 ``HSYNC_PEER_TIMEOUT``).
+            heartbeat_interval: Cadence (seconds) of the liveness heartbeat
+                re-announce (honours ``HSYNC_HEARTBEAT_INTERVAL``). Must be
+                shorter than ``peer_timeout`` so a single missed heartbeat never
+                expires a live peer.
         """
         self._cid = cid
         self._bucket = bucket
@@ -884,6 +990,7 @@ class LANSync:
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
         self._peer_timeout = peer_timeout
+        self._heartbeat_interval = heartbeat_interval
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
         # The IP this node advertises over mDNS, computed once so the advertised
@@ -914,6 +1021,25 @@ class LANSync:
         # change per coalescing window re-registers the record.
         self._refresh_lock = threading.Lock()
         self._refresh_timer: threading.Timer | None = None
+
+        # Liveness heartbeat: a monotonic counter re-announced every
+        # HEARTBEAT_INTERVAL so peers' staleness sweep sees a *changing* TXT
+        # value for otherwise-quiescent nodes (idle slaves never change their
+        # record otherwise). The counter is opaque; the value change is the
+        # signal. Tracks the serving state so the heartbeat re-announces the
+        # record exactly as it currently is.
+        self._heartbeat_counter = 0
+        self._server_ready = False
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+
+        # Serializes every mDNS record publication (initial register, heartbeat
+        # re-announce, in-place refresh, teardown) across the three threads that
+        # touch the record: the heartbeat thread, the debounced presence-refresh
+        # timer and the main thread. Without it, concurrent ``update_service``
+        # calls and ``_service_info`` assignments can interleave and leave the
+        # published record inconsistent with the local state.
+        self._record_lock = threading.Lock()
 
     @property
     def port(self) -> int:
@@ -983,6 +1109,15 @@ class LANSync:
         self._running = True
         log.info("LAN discovery started")
 
+        # Start the liveness heartbeat: peers must see a changing TXT value at
+        # least every HEARTBEAT_INTERVAL or their staleness sweep falsely
+        # expires quiescent-but-alive nodes (split-brain on failover).
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, name="hsync-lan-heartbeat", daemon=True
+        )
+        self._heartbeat_thread.start()
+
         return self._peer_manager
 
     def register_service(self, server_ready: bool = False) -> None:
@@ -1023,25 +1158,38 @@ class LANSync:
         log.info("Updated mDNS service: server_ready=false")
 
     def _refresh_service(self, server_ready: bool) -> None:
-        """Unregister and re-register the mDNS service with fresh TXT data.
+        """Update the mDNS service's TXT record in place (no goodbye).
 
         Shared by :meth:`update_server_ready` (server just started),
         :meth:`update_server_not_ready` (mastership yielded) and
-        :meth:`set_connected_clients` (presence count changed). Re-registration
+        :meth:`set_connected_clients` (presence count changed). The update
         sets the local incumbent flag to ``server_ready``: a serving incumbent
         wins the election over newcomers (prevents takeover/split-brain), and a
         yielded node clears it so it is no longer ranked as an incumbent.
+
+        The record is updated via ``zeroconf.update_service`` rather than an
+        unregister+register cycle. An unregister broadcasts a goodbye packet
+        that makes every slave observe a spurious ``remove_service`` for the
+        master (a "Peer disconnected" + re-election churn) on a value that only
+        changed for diagnostics. ``update_service`` re-announces the fresh TXT
+        record in place, so peers see a value *change* (an ``update_service``
+        callback) and never a removal.
         """
-        if not self._zeroconf or not self._service_info:
-            log.warning("Cannot update service: not registered")
-            return
+        with self._record_lock:
+            if not self._zeroconf or not self._service_info or not self._running:
+                log.warning("Cannot update service: not registered")
+                return
 
-        # Unregister old service
-        self._zeroconf.unregister_service(self._service_info)
-        self._service_info = None
-
-        # Re-register with the fresh record.
-        self._register_service(server_ready=server_ready)
+            new_info = self._build_service_info(server_ready=server_ready)
+            # ``register_service`` sets the server hostname implicitly; an in-place
+            # ``update_service`` requires it explicitly so the registry key matches.
+            new_info.set_server_if_missing()
+            self._zeroconf.update_service(new_info)
+            self._service_info = new_info
+            self._server_ready = server_ready
+        # Notify outside the record lock: the peer manager takes its own locks
+        # and no code path ever acquires them in the opposite order, but holding
+        # two locks would needlessly widen the critical section.
         if self._peer_manager:
             self._peer_manager.set_local_server_ready(server_ready)
 
@@ -1083,6 +1231,32 @@ class LANSync:
                 return
         self._refresh_service(server_ready=True)
 
+    def _heartbeat(self) -> None:
+        """Re-announce the mDNS record with an incremented liveness counter.
+
+        zeroconf only re-delivers a TXT record when its *value* changes, so a
+        periodically incrementing counter is the only way to make a quiescent
+        peer's ``last_seen`` stay fresh on every other node. Without it, idle
+        slaves (whose record never otherwise changes) go stale and are falsely
+        demoted during master failover — a split-brain.
+        """
+        with self._record_lock:
+            if not self._zeroconf or not self._service_info or not self._running:
+                return
+            self._heartbeat_counter += 1
+            new_info = self._build_service_info(server_ready=self._server_ready)
+            new_info.set_server_if_missing()
+            self._zeroconf.update_service(new_info)
+            self._service_info = new_info
+
+    def _heartbeat_loop(self) -> None:
+        """Background loop that emits the liveness heartbeat at a fixed cadence."""
+        while not self._heartbeat_stop.wait(self._heartbeat_interval):
+            try:
+                self._heartbeat()
+            except Exception:
+                log.exception("Heartbeat re-announce failed")
+
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install (or clear) the callable that returns the live connected count.
 
@@ -1100,22 +1274,34 @@ class LANSync:
 
         log.info("Stopping LAN mode")
 
+        # Stop the heartbeat loop first and wait for a possibly in-flight
+        # re-announce (bounded by the zeroconf update_service timeout) so it
+        # cannot race the unregister/close below.
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+            self._heartbeat_thread = None
+
         # Cancel any pending debounced refresh before touching Zeroconf.
         with self._refresh_lock:
             if self._refresh_timer is not None:
                 self._refresh_timer.cancel()
                 self._refresh_timer = None
 
-        # Unregister our service
-        if self._zeroconf and self._service_info:
-            self._zeroconf.unregister_service(self._service_info)
-            log.debug("Service unregistered")
+        # Unregister our service. The record lock excludes any in-flight
+        # publication (heartbeat/refresh) so the unregister never races an
+        # ``update_service``; a queued refresh that resumes afterwards sees
+        # ``_running = False`` and bails out.
+        with self._record_lock:
+            self._running = False
+            if self._zeroconf and self._service_info:
+                self._zeroconf.unregister_service(self._service_info)
+                log.debug("Service unregistered")
 
-        # Close zeroconf
-        if self._zeroconf:
-            self._zeroconf.close()
+            # Close zeroconf
+            if self._zeroconf:
+                self._zeroconf.close()
 
-        self._running = False
         log.info("LAN mode stopped")
 
     def _register_service(self, server_ready: bool = False) -> None:
@@ -1124,9 +1310,39 @@ class LANSync:
         Args:
             server_ready: If True, indicates the HTTP server is listening.
         """
-        if not self._zeroconf:
-            return
+        with self._record_lock:
+            if not self._zeroconf:
+                return
 
+            self._service_info = self._build_service_info(server_ready=server_ready)
+
+            # Register the service
+            try:
+                self._zeroconf.register_service(self._service_info)
+            except NonUniqueNameException:
+                # The service name is "{bucket}-{device_id}": a clash means another
+                # process presenting THIS device identity already announces THIS
+                # bucket on the network — almost always a second instance on this
+                # host sharing the same device directory.
+                raise RuntimeError(
+                    f"mDNS name clash: another hsync instance with the same device "
+                    f"identity already announces bucket '{self._bucket}' on this host. "
+                    "Instances syncing the same bucket on one host must run as distinct "
+                    "devices: set HSYNC_DEVICE_DIR to a separate directory for this "
+                    "instance. (Instances syncing different buckets can share one "
+                    "device identity.)"
+                ) from None
+            log.info(
+                f"Registered mDNS service: {self._service_info.name} at {self._local_ip}:{self._port}"
+            )
+
+    def _build_service_info(self, server_ready: bool = False) -> ServiceInfo:
+        """Build the :class:`ServiceInfo` for this client's current TXT state.
+
+        Shared by :meth:`_register_service` (initial announce) and
+        :meth:`_refresh_service` (in-place update), so both paths advertise the
+        exact same property set for a given ``server_ready`` value.
+        """
         # Get local IP address (computed once in __init__ so discovery's
         # self-check compares against the exact address this record advertises)
         local_ip = self._local_ip
@@ -1168,38 +1384,24 @@ class LANSync:
         properties["startup_time"] = str(self._startup_time)
         # Add sync direction for master election (bidirectional preferred)
         properties["sync_direction"] = self._sync_direction
+        # Liveness heartbeat: opaque monotonic counter, re-announced every
+        # HEARTBEAT_INTERVAL. Receivers only rely on it *changing* so a
+        # quiescent node's record is never falsely expired. Never part of the
+        # election.
+        properties["heartbeat"] = str(self._heartbeat_counter)
         # Add the connected-clients count once this node serves as master.
         # Diagnostic only: slaves mirror it for presence display, it never
         # participates in the election.
         if server_ready:
             properties["connected"] = str(self._connected_clients)
 
-        # Create service info
-        self._service_info = ServiceInfo(
+        return ServiceInfo(
             HSYNC_SERVICE_TYPE,
             service_name,
             port=self._port,
             properties=properties,
             addresses=[socket.inet_aton(local_ip)],
         )
-
-        # Register the service
-        try:
-            self._zeroconf.register_service(self._service_info)
-        except NonUniqueNameException:
-            # The service name is "{bucket}-{device_id}": a clash means another
-            # process presenting THIS device identity already announces THIS
-            # bucket on the network — almost always a second instance on this
-            # host sharing the same device directory.
-            raise RuntimeError(
-                f"mDNS name clash: another hsync instance with the same device "
-                f"identity already announces bucket '{self._bucket}' on this host. "
-                "Instances syncing the same bucket on one host must run as distinct "
-                "devices: set HSYNC_DEVICE_DIR to a separate directory for this "
-                "instance. (Instances syncing different buckets can share one "
-                "device identity.)"
-            ) from None
-        log.info(f"Registered mDNS service: {service_name} at {local_ip}:{self._port}")
 
     def _get_local_ip(self) -> str:
         """Get the local IP address for LAN communication."""

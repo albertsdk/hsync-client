@@ -242,8 +242,14 @@ class TestOneShot:
 class TestLanPortOverride:
     def test_lan_port_override(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--listen-port on master: slave connects on the specified port."""
+        from hsync_client.lan import get_free_port
+
+        # Use a free ephemeral port instead of a fixed one: a fixed port can
+        # collide with a lingering listener from a previous run (or a parallel
+        # CI job) and, unlike the LAN transport itself, has no fallback.
+        port = get_free_port()
         # Given a master listening on a custom port
-        master = _lan_start(lan_master_dir, lan_bucket, force_master=True, lan_port=12345)
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True, lan_port=port)
         try:
             # Start a slave so the master discovers it and runs the election
             # (master only emits "MASTER" after add_peer triggers _elect_master).
@@ -254,7 +260,14 @@ class TestLanPortOverride:
                 )
                 # Then the master uses the specified port
                 stderr = _stderr_text(master)
-                assert "12345" in stderr, "Master did not use the specified port"
+                assert f"Master HTTP server on port {port}" in stderr, (
+                    "Master did not use the specified port"
+                )
+
+                # Wait for the slave to be ready before mutating: a file written
+                # in the post-initial-sync blind spot is only recovered by the
+                # periodic resync (300s), far beyond the sync timeout below.
+                assert _wait_for_slave_events(slave), "slave did not reach [READY]"
 
                 # And a file still syncs over that port
                 (Path(lan_master_dir) / "port_test.txt").write_bytes(b"custom port\n")
@@ -320,6 +333,135 @@ class TestMasterFailover:
                     (Path(peer_a) / "after.txt").write_bytes(b"after\n")
                     assert _wait_for_file(str(Path(peer_b) / "after.txt"), timeout=45), (
                         "Failover did not resume sync to peer_b"
+                    )
+                finally:
+                    _terminate(b)
+            finally:
+                _terminate(a)
+        finally:
+            _terminate(master)
+
+    def test_quiescent_slaves_failover_to_one_successor(self, lan_master_dir, tmp_path, lan_bucket):
+        """The heartbeat keeps idle slaves fresh so failover elects one successor.
+
+        Regression: an idle slave's TXT record never changes, so without the
+        periodic heartbeat its ``last_seen`` goes stale; when the master then
+        dies, every surviving slave falsely expires the others and self-elects
+        (split-brain). The heartbeat must keep every peer fresh so the
+        deterministic election converges on a single successor.
+        """
+        peer_a = str(tmp_path / "peer_a")
+        peer_b = str(tmp_path / "peer_b")
+        Path(peer_a).mkdir()
+        Path(peer_b).mkdir()
+
+        # Tight liveness window (heartbeat 2s, timeout 5s is the tightest valid
+        # HSYNC_PEER_TIMEOUT >= 2 * HSYNC_HEARTBEAT_INTERVAL).
+        fast_env = {"HSYNC_HEARTBEAT_INTERVAL": "2", "HSYNC_PEER_TIMEOUT": "5"}
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True, extra_env=fast_env)
+        try:
+            a = _lan_start(peer_a, lan_bucket, extra_env=fast_env)
+            try:
+                b = _lan_start(peer_b, lan_bucket, extra_env=fast_env)
+                try:
+                    assert _wait_for_text_in_stderr(master, "[READY]", timeout=30), (
+                        "master did not reach [READY]"
+                    )
+                    assert _wait_for_text_in_stderr(a, "[READY]", timeout=30), (
+                        "peer_a did not reach [READY]"
+                    )
+                    assert _wait_for_text_in_stderr(b, "[READY]", timeout=30), (
+                        "peer_b did not reach [READY]"
+                    )
+                    # Quiesce longer than the peer timeout: without the heartbeat
+                    # both slaves' records would already be stale here, and the
+                    # failover below would split-brain.
+                    time.sleep(7)
+
+                    master.kill()
+                    master.wait()
+
+                    # Exactly one survivor must self-elect (no split-brain); the
+                    # winner is whichever peer started first, so accept either.
+                    winner = _wait_for_text_in_stderr(a, "MASTER", timeout=90) or (
+                        _wait_for_text_in_stderr(b, "MASTER", timeout=15)
+                    )
+                    assert winner, "no survivor was elected after the crash"
+                    # Let a spurious self-election + yield (split-brain) settle.
+                    time.sleep(5)
+
+                    a_count = _stderr_text(a).count("This client elected as MASTER")
+                    b_count = _stderr_text(b).count("This client elected as MASTER")
+                    assert a_count + b_count == 1, (
+                        f"split-brain: peer_a elected {a_count}x, peer_b {b_count}x\n"
+                        f"peer_a:\n{_stderr_text(a)}\npeer_b:\n{_stderr_text(b)}"
+                    )
+
+                    # The surviving pair still syncs master -> slave.
+                    src_dir, dst_dir = (peer_a, peer_b) if a_count == 1 else (peer_b, peer_a)
+                    (Path(src_dir) / "after.txt").write_bytes(b"after\n")
+                    assert _wait_for_file(str(Path(dst_dir) / "after.txt"), timeout=60), (
+                        "Failover did not resume sync"
+                    )
+                finally:
+                    _terminate(b)
+            finally:
+                _terminate(a)
+        finally:
+            _terminate(master)
+
+
+class TestNoSplitBrainOnQuiescentPeer:
+    """A WSS-connected slave is never falsely self-elected after quiescence.
+
+    Regression: a healthy but idle peer's mDNS record is not re-announced
+    (zeroconf only re-delivers a TXT record when its *value* changes), so its
+    ``last_seen`` goes stale. Before the WebSocket-authoritative liveness fix,
+    a newly joining peer triggered ``_elect_master`` on the stale slave, which
+    excluded its (still-connected) master and self-elected — a split-brain. The
+    WebSocket link must keep the master alive regardless of mDNS staleness.
+    """
+
+    def test_slave_does_not_self_elect_after_quiescence(self, lan_master_dir, tmp_path, lan_bucket):
+        peer_a = str(tmp_path / "peer_a")
+        peer_b = str(tmp_path / "peer_b")
+        Path(peer_a).mkdir()
+        Path(peer_b).mkdir()
+
+        # Shorten the liveness window so staleness manifests in seconds rather
+        # than the production 15s default (heartbeat 1s, timeout 3s is the
+        # tightest valid HSYNC_PEER_TIMEOUT >= 2 * HSYNC_HEARTBEAT_INTERVAL).
+        fast_env = {"HSYNC_HEARTBEAT_INTERVAL": "1", "HSYNC_PEER_TIMEOUT": "3"}
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True, extra_env=fast_env)
+        try:
+            a = _lan_start(peer_a, lan_bucket, extra_env=fast_env)
+            try:
+                assert _wait_for_text_in_stderr(master, "[READY]", timeout=30), (
+                    "master did not reach [READY]"
+                )
+                assert _wait_for_text_in_stderr(a, "[READY]", timeout=30), (
+                    "peer_a did not reach [READY]"
+                )
+                # Let both peers' mDNS records go stale while their WebSocket
+                # links stay up (the quiescence window that used to split-brain).
+                time.sleep(5)
+
+                b = _lan_start(peer_b, lan_bucket, extra_env=fast_env)
+                try:
+                    assert _wait_for_text_in_stderr(b, "[READY]", timeout=30), (
+                        "peer_b did not reach [READY]"
+                    )
+                    # Allow the join-triggered election to settle.
+                    time.sleep(3)
+
+                    a_log = _stderr_text(a)
+                    assert "This client elected as MASTER" not in a_log, (
+                        "peer_a self-elected after peer_b joined (split-brain):\n" + a_log
+                    )
+                    assert "Master changed" not in _stderr_text(master), (
+                        "the force_master master churned its mastership:\n" + _stderr_text(master)
                     )
                 finally:
                     _terminate(b)
