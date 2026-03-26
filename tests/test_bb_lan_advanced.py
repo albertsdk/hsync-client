@@ -305,6 +305,14 @@ class TestMasterFailover:
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             a = _lan_start(peer_a, lan_bucket)
+            # Stagger peer_b so peer_a's startup_time is unambiguously earlier.
+            # The "earliest startup wins" tiebreak samples startup_time in
+            # LANSync.__init__, well after process spawn, so two peers spawned
+            # back-to-back race on which one reports the earlier timestamp (and
+            # the CID tiebreak would then flakily elect peer_b instead of
+            # peer_a). A short gap removes the race without changing the
+            # election contract under test.
+            time.sleep(1.5)
             try:
                 b = _lan_start(peer_b, lan_bucket)
                 try:
