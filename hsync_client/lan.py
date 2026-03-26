@@ -30,7 +30,7 @@ from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
 from hsync_common.protocol.lan import (
     SYNC_DIRECTION_BIDIRECTIONAL,
     ElectionCandidate,
-    election_sort_key,
+    rank_election_candidates,
 )
 from loguru import logger as log
 from zeroconf import NonUniqueNameException, ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
@@ -547,9 +547,11 @@ class PeerManager:
         candidate list is empty and no master is elected.
         """
         # Build the candidate list (local node + every alive peer) and delegate
-        # the ordering to the shared, cross-language algorithm in hsync_common so
+        # the ranking to the shared, cross-language algorithm in hsync_common so
         # the Python client and Android never diverge. ``never_master`` nodes are
-        # carried through and filtered by the shared sort key.
+        # carried through and filtered by the shared ranking helper, which also
+        # yields the full ranked list needed for the successor and the
+        # force_master conflict report below.
         candidates: list[ElectionCandidate] = [
             ElectionCandidate(
                 cid=self._local_cid,
@@ -573,16 +575,16 @@ class PeerManager:
                     )
                 )
 
-        eligible = sorted((c for c in candidates if not c.never_master), key=election_sort_key)
-        new_master_cid = eligible[0].cid if eligible else None
+        ranked = rank_election_candidates(candidates)
+        new_master_cid = ranked[0].cid if ranked else None
         # Pre-computed successor: the next-ranked eligible candidate. Purely
         # observational (logged for operators / asserted in tests) — the
         # deterministic election already guarantees every peer converges on the
         # same successor when the current master disappears.
-        self._successor_cid = eligible[1].cid if len(eligible) >= 2 else None
+        self._successor_cid = ranked[1].cid if len(ranked) >= 2 else None
 
         # Detect force_master conflicts
-        force_master_candidates = [c for c in eligible if c.force_master]
+        force_master_candidates = [c for c in ranked if c.force_master]
         if len(force_master_candidates) > 1:
             winner_cid = force_master_candidates[0].cid
             for loser in force_master_candidates[1:]:
