@@ -34,7 +34,6 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from functools import partial
-from os import listdir
 from pathlib import Path
 from time import time
 from typing import Any
@@ -47,6 +46,7 @@ from hsync_common.models.file import (
     is_hidden_file,
     is_partial_file,
 )
+from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.protocol.handshake import (
     PROTOCOL_VERSION_LAN,
     build_lan_auth,
@@ -1650,8 +1650,18 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             log.error(f"Failed to upload to master: {e}")
 
     def _rel_in_bucket(self, abs_path: str) -> str:
-        prefix = CONFIG["LOCAL_BUCKET"].rstrip("/")
-        return abs_path.removeprefix(prefix).lstrip("/")
+        """Bucket-relative path via the component-aware SSOT helper.
+
+        Delegates to :func:`hsync_common.models.tombstone.relpath_in_bucket`
+        so a sibling-prefix directory (e.g. ``/data/bucket2`` vs
+        ``/data/bucket``) is never stripped into a bogus relative path
+        (``2/x``). A path outside the bucket raises ``ValueError``; the
+        caller's broad ``except`` logs and skips the operation.
+        """
+        rel = relpath_in_bucket(abs_path, str(CONFIG["LOCAL_BUCKET"]))
+        if rel is None:
+            raise ValueError(f"Path outside local bucket: {abs_path}")
+        return rel
 
     def _master_url(self, suffix: str) -> str:
         protocol = "https" if self._use_https else "http"
@@ -2072,21 +2082,9 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         sync engine and propagated to the master.  The watchdog will
         detect the new file and trigger an upload automatically.
         """
-        try:
-            entries = listdir(dir_path)
-        except OSError:
-            return
-        # Consider the directory empty if it has no visible (syncable) files
-        has_syncable = any(not is_hidden_file(e) for e in entries)
-        if has_syncable:
-            return
-        sentinel = str(Path(dir_path) / HSYNCKEEP_FILENAME)
-        if not Path(sentinel).exists():
-            try:
-                open(sentinel, "w").close()  # noqa: SIM115
-                log.debug(f'{ActionLabel.LOCAL_KEEP} Created sentinel "{sentinel}"')
-            except OSError as exc:
-                log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
+        from hsync_client.sync import ensure_sentinel
+
+        ensure_sentinel(dir_path, label=ActionLabel.LOCAL_KEEP)
 
     def on_deleted(self, event) -> None:
         """Handle file/directory deletion events."""

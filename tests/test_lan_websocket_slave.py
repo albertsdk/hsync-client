@@ -41,6 +41,33 @@ class TestSlaveFileEventHandler:
         assert handler._receiving_files == set()
         assert handler._pending_ops == []
 
+    def test_rel_in_bucket_inside(self, handler):
+        """A path inside the bucket is relativized component-aware."""
+        config = {"LOCAL_BUCKET": "/data/bucket"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            assert handler._rel_in_bucket("/data/bucket/x/y.txt") == "x/y.txt"
+
+    def test_rel_in_bucket_root(self, handler):
+        """The bucket root itself relativizes to the empty string."""
+        config = {"LOCAL_BUCKET": "/data/bucket"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            assert handler._rel_in_bucket("/data/bucket") == ""
+
+    def test_rel_in_bucket_sibling_prefix_not_stripped(self, handler):
+        """A sibling sharing a path prefix must not be stripped into a bogus
+        relative path (regression: removeprefix produced ``2/x``)."""
+        config = {"LOCAL_BUCKET": "/data/bucket"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            with pytest.raises(ValueError):
+                handler._rel_in_bucket("/data/bucket2/x/y.txt")
+
+    def test_rel_in_bucket_outside_raises(self, handler):
+        """A path outside the bucket raises instead of being sent verbatim."""
+        config = {"LOCAL_BUCKET": "/data/bucket"}
+        with patch("hsync_client.lan_websocket.CONFIG", config):
+            with pytest.raises(ValueError):
+                handler._rel_in_bucket("/etc/passwd")
+
     def test_mark_receiving(self, handler):
         """Test marking a file as receiving."""
         handler.mark_receiving("/path/to/file.txt")

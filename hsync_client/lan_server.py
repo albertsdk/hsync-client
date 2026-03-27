@@ -44,7 +44,7 @@ from hsync_common.constants import (
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import is_valid_cid
-from hsync_common.models.file import File, is_hidden_file
+from hsync_common.models.file import File
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
 from hsync_common.path_validation import resolve_within
 from loguru import logger as log
@@ -703,23 +703,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         After a file is deleted the parent directory may become empty.
         Placing a sentinel preserves the directory structure during sync.
         """
+        from hsync_client.sync import ensure_sentinel
+
         parent = str(Path(deleted_file).parent)
         if not parent or not Path(parent).exists() or not Path(parent).is_dir():
             return
-        try:
-            entries = os.listdir(parent)
-        except OSError:
-            return
-        has_syncable = any(not is_hidden_file(e) for e in entries)
-        if has_syncable:
-            return
-        sentinel = str(Path(parent) / HSYNCKEEP_FILENAME)
-        if not Path(sentinel).exists():
-            try:
-                open(sentinel, "w").close()  # noqa: SIM115
-                log.debug(f'Created sentinel "{sentinel}"')
-            except OSError as exc:
-                log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
+        ensure_sentinel(parent)
 
     @staticmethod
     def _cleanup_empty_dir(dir_path: str) -> None:
@@ -970,87 +959,63 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_NOT_FOUND, "Bucket not found")
             return
 
+        from hsync_client.sync import iter_bucket_entries
         from hsync_client.sync_state import flush as _flush_state
 
         file_list = []
         self_recorded = False
-        for root, dirs, files in walk(local_bucket):
-            # Skip hidden directories
-            dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
+        for file_path, link in iter_bucket_entries(local_bucket):
+            # Symlinks are emitted as structural entries (path + target),
+            # never dereferenced: File.get() (exists/stat/sha256) would
+            # follow the link and the listing would either exfiltrate an
+            # out-of-bucket target (e.g. ``secret -> /etc/passwd``) to every
+            # slave or advertise the target content instead of the link.
+            if link is not None:
+                entry = link.to_dict()
+                entry["filepath"] = str(Path(file_path).relative_to(local_bucket))
+                file_list.append(entry)
+                continue
 
-            for file in files:
-                # Skip hidden files
-                if is_hidden_file(file):
-                    continue
+            file_obj = File.get(file_path)
+            if file_obj:
+                file_dict = file_obj.to_dict()
+                # Normalize path to be relative to bucket (like server does)
+                file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
 
-                file_path = os.path.join(root, file)
-                # Symlinks are emitted as structural entries (path + target),
-                # never dereferenced: File.get() (exists/stat/sha256) would
-                # follow the link and the listing would either exfiltrate an
-                # out-of-bucket target (e.g. ``secret -> /etc/passwd``) to every
-                # slave or advertise the target content instead of the link.
-                if Path(file_path).is_symlink():
-                    from hsync_common.models.symlink import Symlink
-                    from hsync_common.path_validation import is_safe_symlink_target
+                # Attach the effective causal version so slaves can run the
+                # causal matrix on the listing (ADR-0022). The listing is the
+                # master's *publication point*: before advertising, persist
+                # the self-record for a dirty/edited file (catch-all of the
+                # anti-aliasing invariant, §3.4.7) so two distinct contents
+                # can never share the same advertised clock — a pure tick
+                # without persistence would alias {master:1} across edits,
+                # letting a slave silently dominate a genuine divergence.
+                from hsync_client.sync_state import (
+                    get_base_hash,
+                    local_version_for_compare,
+                    note_local_edit,
+                )
 
-                    try:
-                        link = Symlink.get(file_path)
-                    except OSError:
-                        link = None
-                    if link is not None and not is_safe_symlink_target(
-                        file_path, link.target, local_bucket
-                    ):
-                        log.warning(
-                            f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
-                            f'skipping: "{file_path}" -> "{link.target}"'
-                        )
+                prev_hash = get_base_hash(file_path)
+                note_local_edit(file_path, file_obj.sha256sum or "")
+                if get_base_hash(file_path) != prev_hash:
+                    self_recorded = True
+                eff = local_version_for_compare(file_path, file_obj.sha256sum)
+                if eff is not None:
+                    file_normalized["version"] = {
+                        "vclock": eff["vclock"],
+                        "version_id": eff.get("version_id", ""),
+                        "origin_cid": eff.get("origin_cid"),
+                        "ts": eff.get("ts", 0),
+                        "corrected_mtime": eff.get("corrected_mtime", 0),
+                    }
+
+                # Apply path filter if specified
+                if filter_path:
+                    rel_path = file_normalized.get("filepath", "")
+                    if not rel_path.startswith(filter_path):
                         continue
-                    if link is not None:
-                        entry = link.to_dict()
-                        entry["filepath"] = str(Path(file_path).relative_to(local_bucket))
-                        file_list.append(entry)
-                    continue
-
-                file_obj = File.get(file_path)
-                if file_obj:
-                    file_dict = file_obj.to_dict()
-                    # Normalize path to be relative to bucket (like server does)
-                    file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
-
-                    # Attach the effective causal version so slaves can run the
-                    # causal matrix on the listing (ADR-0022). The listing is the
-                    # master's *publication point*: before advertising, persist
-                    # the self-record for a dirty/edited file (catch-all of the
-                    # anti-aliasing invariant, §3.4.7) so two distinct contents
-                    # can never share the same advertised clock — a pure tick
-                    # without persistence would alias {master:1} across edits,
-                    # letting a slave silently dominate a genuine divergence.
-                    from hsync_client.sync_state import (
-                        get_base_hash,
-                        local_version_for_compare,
-                        note_local_edit,
-                    )
-
-                    prev_hash = get_base_hash(file_path)
-                    note_local_edit(file_path, file_obj.sha256sum or "")
-                    if get_base_hash(file_path) != prev_hash:
-                        self_recorded = True
-                    eff = local_version_for_compare(file_path, file_obj.sha256sum)
-                    if eff is not None:
-                        file_normalized["version"] = {
-                            "vclock": eff["vclock"],
-                            "version_id": eff.get("version_id", ""),
-                            "origin_cid": eff.get("origin_cid"),
-                            "ts": eff.get("ts", 0),
-                            "corrected_mtime": eff.get("corrected_mtime", 0),
-                        }
-
-                    # Apply path filter if specified
-                    if filter_path:
-                        rel_path = file_normalized.get("filepath", "")
-                        if not rel_path.startswith(filter_path):
-                            continue
-                    file_list.append(file_normalized)
+                file_list.append(file_normalized)
 
         # Sort by mtime ascending (oldest first) to prioritize updating older files
         file_list.sort(key=lambda x: x.get("mtime", 0))

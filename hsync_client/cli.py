@@ -26,6 +26,7 @@ from hsync_client.constants import (
     BANDWIDTH_MAX,
     BANDWIDTH_MIN,
     DISCOVERY_TIMEOUT_DEFAULT,
+    HOSTNAME_PATTERN,
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
@@ -133,9 +134,10 @@ def _validate_bucket(value: str) -> str:
     return value
 
 
-# Bare hostname / IPv4 charset (mirrors the host part of the HSYNC_SERVER
-# validator in config.py). IPv6 literals are bracketed instead.
-_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$")
+# Bare hostname / IPv4 charset (SSOT: HOSTNAME_PATTERN in hsync_client.constants,
+# shared with the HSYNC_SERVER validator in config.py). IPv6 literals are
+# bracketed instead.
+_HOSTNAME_PATTERN = re.compile(rf"^{HOSTNAME_PATTERN}$")
 _IPV6_BRACKETED_PATTERN = re.compile(r"^\[[0-9A-Fa-f:.]+\]$")
 
 
@@ -180,6 +182,27 @@ def _build_server_url(hostname: str | None, port: int | None) -> str | None:
 # =============================================================================
 # Shared validation (called by both subcommands)
 # =============================================================================
+
+
+def _parse_and_validate_bandwidth(value: str | None, flag: str, label: str) -> int | None:
+    """Parse *value* as a bandwidth rate and enforce the global bounds.
+
+    ``None`` (flag omitted) passes through as ``None`` (unlimited). A parse
+    error or an out-of-range rate raises ``typer.BadParameter``.
+    """
+    if value is None:
+        return None
+    from hsync_client.utils import parse_bandwidth
+
+    try:
+        parsed = parse_bandwidth(value)
+    except ValueError as e:
+        raise typer.BadParameter(f"Invalid {flag}: {e}")
+    if parsed is not None and (parsed < BANDWIDTH_MIN or parsed > BANDWIDTH_MAX):
+        raise typer.BadParameter(
+            f"{label} bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
+        )
+    return parsed
 
 
 def _validate_shared_options(
@@ -246,34 +269,12 @@ def _validate_shared_options(
         )
 
     # Parse and validate bandwidth limits
-    from hsync_client.utils import parse_bandwidth
-
-    parsed_bw_upload: int | None = None
-    parsed_bw_download: int | None = None
-
-    if max_bandwidth_upload is not None:
-        try:
-            parsed_bw_upload = parse_bandwidth(max_bandwidth_upload)
-        except ValueError as e:
-            raise typer.BadParameter(f"Invalid --limit-upload: {e}")
-        if parsed_bw_upload is not None and (
-            parsed_bw_upload < BANDWIDTH_MIN or parsed_bw_upload > BANDWIDTH_MAX
-        ):
-            raise typer.BadParameter(
-                f"Upload bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
-            )
-
-    if max_bandwidth_download is not None:
-        try:
-            parsed_bw_download = parse_bandwidth(max_bandwidth_download)
-        except ValueError as e:
-            raise typer.BadParameter(f"Invalid --limit-download: {e}")
-        if parsed_bw_download is not None and (
-            parsed_bw_download < BANDWIDTH_MIN or parsed_bw_download > BANDWIDTH_MAX
-        ):
-            raise typer.BadParameter(
-                f"Download bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
-            )
+    parsed_bw_upload = _parse_and_validate_bandwidth(
+        max_bandwidth_upload, "--limit-upload", "Upload"
+    )
+    parsed_bw_download = _parse_and_validate_bandwidth(
+        max_bandwidth_download, "--limit-download", "Download"
+    )
 
     # Validate max-concurrent-transfers range
     if max_concurrent_transfers is not None and (
@@ -968,7 +969,6 @@ def lan(
         quiet=quiet,
         logfile=logfile,
         no_color=no_color,
-        legend=False,
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,
@@ -1105,7 +1105,6 @@ def server(
         quiet=quiet,
         logfile=logfile,
         no_color=no_color,
-        legend=False,
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,

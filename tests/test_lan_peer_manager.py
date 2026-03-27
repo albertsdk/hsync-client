@@ -1156,10 +1156,10 @@ class TestPeerTimeoutOverride:
         assert pm.get_master_cid() == "zzz999"
 
 
-class TestSuccessor:
-    """The pre-computed successor (next-ranked eligible candidate)."""
+class TestMasterReelection:
+    """Election determinism when the current master disappears."""
 
-    def test_successor_precomputed(self):
+    def test_next_ranked_becomes_master_after_master_removed(self):
         pm = PeerManager(local_cid="ccc333", bucket="photos", startup_time=300.0)
         pm.add_peer(
             Peer(
@@ -1180,13 +1180,16 @@ class TestSuccessor:
             )
         )
         assert pm.get_master_cid() == "aaa111"
-        assert pm.get_successor_cid() == "bbb222"
+        # Removing the master re-runs the deterministic election: the
+        # next-ranked candidate takes over without a pre-computed successor.
+        pm.remove_peer("aaa111")
+        assert pm.get_master_cid() == "bbb222"
 
-    def test_successor_none_when_alone(self):
+    def test_sole_remaining_candidate_becomes_master(self):
         pm = PeerManager(local_cid="local123", bucket="photos")
         pm.add_peer(Peer(cid="temp", bucket="photos", address="192.168.1.100", port=9753))
         pm.remove_peer("temp")
-        assert pm.get_successor_cid() is None
+        assert pm.get_master_cid() == "local123"
 
 
 class TestRemoveServiceGoodbyeGrace:

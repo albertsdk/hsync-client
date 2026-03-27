@@ -76,8 +76,7 @@ in [`lan-protocol.md`](https://github.com/albertobasso/hsync-common/blob/main/do
   ≥ 2× `HSYNC_HEARTBEAT_INTERVAL` (enforced in `config.EnvSettings`) so a
   single missed announce never flaps a live peer; the survivor only demotes a
   master whose record is already stale, so a local-link blip never splits the
-  group. The successor is pre-computed (`get_successor_cid`) but the
-  deterministic election alone decides the role.
+  group. The deterministic election alone decides the role.
 - **Packaging lock-step**: any `HSYNC_*` flag/default change requires the
   synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
 - **Containerized mksapkg**: `mksapkg-OS5` runs inside the

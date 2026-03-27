@@ -47,6 +47,52 @@ def _deterministic_umask():
         os.umask(old)
 
 
+class TestEnsureSentinel:
+    """Tests for the shared ``ensure_sentinel`` / ``ensure_hsynckeep_files``."""
+
+    def test_creates_sentinel_in_empty_dir(self, tmp_path):
+        from hsync_client.sync import ensure_sentinel
+
+        d = tmp_path / "empty"
+        d.mkdir()
+        assert ensure_sentinel(str(d)) is True
+        assert (d / ".hsynckeep").exists()
+
+    def test_no_sentinel_in_dir_with_file(self, tmp_path):
+        from hsync_client.sync import ensure_sentinel
+
+        d = tmp_path / "nonempty"
+        d.mkdir()
+        (d / "f.txt").write_text("x")
+        assert ensure_sentinel(str(d)) is False
+        assert not (d / ".hsynckeep").exists()
+
+    def test_no_sentinel_in_dir_with_subdir(self, tmp_path):
+        from hsync_client.sync import ensure_sentinel
+
+        d = tmp_path / "withsub"
+        d.mkdir()
+        (d / "sub").mkdir()
+        assert ensure_sentinel(str(d)) is False
+        assert not (d / ".hsynckeep").exists()
+
+    def test_missing_dir_returns_false(self, tmp_path):
+        from hsync_client.sync import ensure_sentinel
+
+        assert ensure_sentinel(str(tmp_path / "nope")) is False
+
+    def test_walk_creates_sentinels_only_in_empty_subdirs(self, tmp_path):
+        from hsync_client.sync import ensure_hsynckeep_files
+
+        (tmp_path / "empty_sub").mkdir()
+        (tmp_path / "full_sub").mkdir()
+        (tmp_path / "full_sub" / "f.txt").write_text("x")
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ensure_hsynckeep_files()
+        assert (tmp_path / "empty_sub" / ".hsynckeep").exists()
+        assert not (tmp_path / "full_sub" / ".hsynckeep").exists()
+
+
 class TestGetFilesLocal:
     """Tests for get_files_local function."""
 

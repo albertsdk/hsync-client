@@ -14,7 +14,6 @@ This module contains the core synchronization logic extracted from main.py.
 import sys
 from asyncio import run
 from pathlib import Path
-from re import sub
 from typing import Any, Literal
 
 from hsync_common.format import format_bytes
@@ -77,7 +76,6 @@ from hsync_client.constants import (
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan_handler import run_lan_mode
-from hsync_client.log_labels import legend_lines
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.remote_websocket import remote_connect
@@ -89,6 +87,7 @@ from hsync_client.utils import (
     _suppress_insecure_warning,
     diagnose_connection_error,
     get_cid,
+    http_to_ws,
     is_valid_logfile,
     reset_bandwidth_throttle,
 )
@@ -521,7 +520,6 @@ def run_sync(
     quiet: bool,
     logfile: str | None,
     no_color: bool,
-    legend: bool,
     lan_require_pairing: bool = False,
     api_key_fd: int | None = None,
     lan_key_fd: int | None = None,
@@ -635,8 +633,7 @@ def run_sync(
         emit_event(UiEventName.server, url=effective_server_url)
 
     # Convert HTTP URL to WebSocket URL for events endpoint
-    ws_url = sub(r"^http:", "ws:", effective_server_url)
-    ws_url = sub(r"^https:", "wss:", ws_url)
+    ws_url = http_to_ws(effective_server_url)
 
     # Client identity. LAN mode presents the persistent device identity
     # (Syncthing-style: one device ID per installation, anchored in
@@ -939,11 +936,6 @@ def run_sync(
 
     # Mask sensitive values before logging (shared helper, DRY with transfer.py)
     log.debug("Local configuration:", extra={"json_data": _safe_config_for_log(config, env_file)})
-
-    # Display legend if requested (same lines as the --help-symbols output)
-    if legend:
-        for line in legend_lines():
-            log.info(line)
 
     # Cross-process instance lock: two hsync processes must never sync the
     # same local directory — they would race the same folder UUID in

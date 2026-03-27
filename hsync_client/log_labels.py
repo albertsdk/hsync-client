@@ -6,9 +6,8 @@
 
 """Client log-label legend.
 
-Single source for the ``--help-symbols`` output and the in-run legend
-printed by ``main_logic`` when ``legend=True``: both render the same
-lines produced by :func:`legend_lines`.
+Single source for the ``--help-symbols`` output: it renders the lines
+produced by :func:`legend_lines`.
 """
 
 from hsync_common.labels import ActionLabel

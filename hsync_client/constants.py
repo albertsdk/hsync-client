@@ -73,6 +73,18 @@ SYNC_DIRECTIONS: tuple[str, ...] = (
 
 
 # =============================================================================
+# Hostname Validation
+# =============================================================================
+
+# Bare-hostname charset shared by the CLI host parser (``cli.py``) and the
+# ``HSYNC_SERVER`` URL validator (``config.py``). A host is alphanumeric,
+# optionally dotted/hyphenated, but never starts or ends with ``-``/``.``.
+# Keep the anchors out so callers can embed it (bare ``^...$`` or inside the
+# full ``https://host[:port][/path]`` pattern).
+HOSTNAME_PATTERN = r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?"
+
+
+# =============================================================================
 # Client ID Generation
 # =============================================================================
 
@@ -217,11 +229,6 @@ PEER_TIMEOUT_MAX = 600
 # connection forever by default). A finite positive value bounds how long
 # the client waits for the initial peer discovery before reporting no peer.
 DISCOVERY_TIMEOUT_DEFAULT = 0
-# Polling window used when discovery waits indefinitely (timeout == 0): how often
-# the LAN loop wakes up to re-evaluate peer/master state. Matches the LAN
-# heartbeat cadence so we react within one announce cycle without busy-spinning
-# while no peer is present.
-DISCOVERY_POLL_INTERVAL = HEARTBEAT_INTERVAL
 
 # Minimum free disk space limits (MB)
 MIN_FREE_DISK_SPACE_MB_MIN = 0  # 0 = disabled

@@ -16,7 +16,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from errno import EACCES, EBUSY, EIO, ENOENT
@@ -806,6 +806,40 @@ async def _execute_parallel_transfers(
 # =============================================================================
 
 
+def ensure_sentinel(dir_path: str, *, label: str | None = None) -> bool:
+    """Create a ``.hsynckeep`` sentinel in *dir_path* if it is empty.
+
+    A directory is considered empty when it has no syncable (non-hidden)
+    entries. An already-present sentinel is never recreated (guarded by an
+    existence check). Returns True when a sentinel was created.
+
+    *label* is an optional ``ActionLabel`` prefix for the debug log line
+    (e.g. the slave watcher passes ``ActionLabel.LOCAL_KEEP``); callers that
+    create sentinels outside the watcher leave it unset.
+
+    Shared by :func:`ensure_hsynckeep_files` (walk-all at cycle start),
+    ``lan_websocket.LANSlaveFileEventHandler`` (single dir on create) and
+    ``lan_server.LANRequestHandler`` (parent-of-deleted).
+    """
+    try:
+        entries = os.listdir(dir_path)
+    except OSError:
+        return False
+    if any(not is_hidden_file(e) for e in entries):
+        return False
+    sentinel = os.path.join(dir_path, HSYNCKEEP_FILENAME)
+    if os.path.exists(sentinel):
+        return False
+    prefix = f"{label} " if label else ""
+    try:
+        open(sentinel, "w").close()  # noqa: SIM115
+        log.debug(f'{prefix}Created sentinel "{sentinel}"')
+        return True
+    except OSError as e:
+        log.warning(f'Cannot create sentinel "{sentinel}": {e}')
+        return False
+
+
 def ensure_hsynckeep_files() -> None:
     """
     Ensure every empty directory under LOCAL_BUCKET contains a sentinel
@@ -816,21 +850,10 @@ def ensure_hsynckeep_files() -> None:
     files count as syncable, so they prevent a second creation.
     """
     local_bucket = CONFIG["LOCAL_BUCKET"]
-    for root, dirs, files in walk(local_bucket):
+    for root, dirs, _files in walk(local_bucket):
         # Skip hidden directories (same filter as get_files_local)
         dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
-
-        # Check if there are any syncable (non-hidden) files
-        has_syncable = any(not is_hidden_file(f) for f in files)
-
-        if not has_syncable:
-            sentinel = os.path.join(root, HSYNCKEEP_FILENAME)
-            if not Path(sentinel).exists():
-                try:
-                    open(sentinel, "w").close()  # noqa: SIM115
-                    log.debug(f'Created sentinel "{sentinel}"')
-                except OSError as e:
-                    log.warning(f'Cannot create sentinel "{sentinel}": {e}')
+        ensure_sentinel(root)
 
 
 # =============================================================================
@@ -955,6 +978,50 @@ def _get_optimal_workers(file_count: int) -> int:
     return min(8, file_count, resource_cap)
 
 
+def iter_bucket_entries(bucket: str) -> Iterator[tuple[str, Symlink | None]]:
+    """Yield ``(abs_path, symlink_or_none)`` for every syncable bucket entry.
+
+    Walks *bucket* with ``followlinks=False`` (the default), skipping hidden
+    directories, hidden files, and unsafe file-symlinks (a link whose target
+    escapes the bucket would be dereferenced and exfiltrated). Safe symlinks
+    yield their :class:`Symlink` (never dereferenced); regular files and
+    unreadable symlinks yield ``None``.
+
+    Shared by :func:`get_files_local` and the LAN master's ``_handle_list_files``
+    so the two listing surfaces can never drift on the security filter.
+    """
+    for root, dirs, files in walk(bucket):
+        # Skip hidden directories. ``os.walk`` runs with followlinks=False (the
+        # default), so a symlinked directory *inside* the bucket pointing
+        # outside it is never descended into; only its name appears in ``dirs``
+        # and, being a directory, it is never emitted as a ``File`` entry.
+        dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
+
+        for file in files:
+            # Skip hidden files
+            if is_hidden_file(file):
+                continue
+            file_path = os.path.join(root, file)
+            # Security: a file-symlink whose target escapes the bucket must never
+            # be followed. ``os.walk`` (followlinks=False, the default) already
+            # prevents descending into symlinked *directories*, but a symlink to a
+            # file is still enumerated in ``files``. Without this guard,
+            # ``File.get`` (exists/stat/sha256) and the upload path would
+            # dereference it and exfiltrate the out-of-bucket target — e.g.
+            # ``secret -> /etc/passwd`` would leak its content to the peer.
+            if Path(file_path).is_symlink():
+                link = Symlink.get(file_path)
+                if link is not None and not is_safe_symlink_target(file_path, link.target, bucket):
+                    log.warning(
+                        f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                        f'skipping: "{file_path}" -> "{link.target}"'
+                    )
+                    continue
+                yield file_path, link
+            else:
+                yield file_path, None
+
+
 def get_files_local() -> list[dict]:
     """
     Get list of all local files with their metadata.
@@ -978,37 +1045,7 @@ def get_files_local() -> list[dict]:
         return []
 
     # First pass: collect all file paths (no checksum computation)
-    file_paths = []
-    for root, dirs, files in walk(CONFIG["LOCAL_BUCKET"]):
-        # Skip hidden directories. ``os.walk`` runs with followlinks=False (the
-        # default), so a symlinked directory *inside* the bucket pointing
-        # outside it is never descended into; only its name appears in ``dirs``
-        # and, being a directory, it is never emitted as a ``File`` entry.
-        dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
-
-        for file in files:
-            # Skip hidden files
-            if is_hidden_file(file):
-                continue
-            file_path = os.path.join(root, file)
-            # Security: a file-symlink whose target escapes the bucket must never
-            # be followed. ``os.walk`` (followlinks=False, the default) already
-            # prevents descending into symlinked *directories*, but a symlink to a
-            # file is still enumerated in ``files``. Without this guard,
-            # ``File.get`` (exists/stat/sha256) and the upload path would
-            # dereference it and exfiltrate the out-of-bucket target — e.g.
-            # ``secret -> /etc/passwd`` would leak its content to the peer.
-            if Path(file_path).is_symlink():
-                link = Symlink.get(file_path)
-                if link is not None and not is_safe_symlink_target(
-                    file_path, link.target, CONFIG["LOCAL_BUCKET"]
-                ):
-                    log.warning(
-                        f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
-                        f'skipping: "{file_path}" -> "{link.target}"'
-                    )
-                    continue
-            file_paths.append(file_path)
+    file_paths = [abs_path for abs_path, _link in iter_bucket_entries(CONFIG["LOCAL_BUCKET"])]
 
     # Early return if no files
     if not file_paths:

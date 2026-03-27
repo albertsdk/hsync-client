@@ -15,7 +15,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from hsync_client.config import HsyncConfig
-from hsync_client.constants import DISCOVERY_POLL_INTERVAL
+from hsync_client.constants import HEARTBEAT_INTERVAL
 from hsync_client.identity import DeviceIdentity
 
 
@@ -553,7 +553,7 @@ class TestRunLanModeDiscoveryTimeout:
             run_lan_mode(config, mock_log)
 
         first_call = mock_lan_sync.wait_for_discovery.call_args_list[0]
-        assert first_call.kwargs["timeout"] == DISCOVERY_POLL_INTERVAL
+        assert first_call.kwargs["timeout"] == HEARTBEAT_INTERVAL
         assert any("Discovery timeout disabled" in str(c) for c in mock_log.info.call_args_list)
 
 

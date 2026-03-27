@@ -232,7 +232,6 @@ class PeerManager:
         # reported once per distinct (address, fingerprint) signature.
         self._duplicate_identity_seen: set[str] = set()
         self._master_cid: str | None = None
-        self._successor_cid: str | None = None
         self._local_server_ready = False
         self._on_master_change: Callable[[Peer | None], None] | None = None
         # Generation + Condition: waiters observe a monotonic counter so a
@@ -550,8 +549,8 @@ class PeerManager:
         # the ranking to the shared, cross-language algorithm in hsync_common so
         # the Python client and Android never diverge. ``never_master`` nodes are
         # carried through and filtered by the shared ranking helper, which also
-        # yields the full ranked list needed for the successor and the
-        # force_master conflict report below.
+        # yields the full ranked list needed for the force_master conflict report
+        # below.
         candidates: list[ElectionCandidate] = [
             ElectionCandidate(
                 cid=self._local_cid,
@@ -577,11 +576,6 @@ class PeerManager:
 
         ranked = rank_election_candidates(candidates)
         new_master_cid = ranked[0].cid if ranked else None
-        # Pre-computed successor: the next-ranked eligible candidate. Purely
-        # observational (logged for operators / asserted in tests) — the
-        # deterministic election already guarantees every peer converges on the
-        # same successor when the current master disappears.
-        self._successor_cid = ranked[1].cid if len(ranked) >= 2 else None
 
         # Detect force_master conflicts
         force_master_candidates = [c for c in ranked if c.force_master]
@@ -722,16 +716,6 @@ class PeerManager:
         """Get the current master's CID."""
         with self._lock:
             return self._master_cid
-
-    def get_successor_cid(self) -> str | None:
-        """Get the pre-computed successor (next-ranked eligible candidate).
-
-        Observational only: the deterministic election guarantees every peer
-        converges on the same successor when the current master disappears,
-        so this is exposed for operator logging and tests, never for gating.
-        """
-        with self._lock:
-            return self._successor_cid
 
 
 # =============================================================================

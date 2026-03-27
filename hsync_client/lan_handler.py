@@ -13,7 +13,6 @@ master election, and WebSocket communication.
 
 import os
 import time
-from re import sub
 from typing import TYPE_CHECKING, Any, cast
 
 from hsync_common.protocol.pairing import (
@@ -45,6 +44,7 @@ from hsync_client.lan_websocket import LANWebSocketServer, SlaveCidRegistry, lan
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
+from hsync_client.utils import http_to_ws
 
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
@@ -528,7 +528,7 @@ def _run_as_slave(
         config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
         config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
-        ws_master_url = sub(r"^https:", "wss:", master_url)
+        ws_master_url = http_to_ws(master_url)
         config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
 
         if config["LAN_KEY"]:

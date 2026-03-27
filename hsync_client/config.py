@@ -25,6 +25,7 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     HEARTBEAT_INTERVAL_MAX,
     HEARTBEAT_INTERVAL_MIN,
+    HOSTNAME_PATTERN,
     MASS_DELETE_GUARD_DEFAULT,
     MASS_DELETE_PERCENT_DEFAULT,
     MASS_DELETE_THRESHOLD_DEFAULT,
@@ -78,7 +79,7 @@ class EnvSettings(BaseSettings):
             return None
         if not v.startswith("https://"):
             raise ValueError("Server URL must start with 'https://'")
-        if not re.match(r"^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(\:\d+)?(/.*)?$", v):
+        if not re.match(rf"^https://{HOSTNAME_PATTERN}(\:\d+)?(/.*)?$", v):
             raise ValueError(f"Invalid server URL format: {v!r}")
         return v
 

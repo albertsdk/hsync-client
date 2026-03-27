@@ -434,7 +434,6 @@ class _RunSyncKwargs(TypedDict, total=False):
     quiet: bool
     logfile: str | None
     no_color: bool
-    legend: bool
     api_key_fd: int | None
     lan_key_fd: int | None
 
@@ -473,7 +472,6 @@ def _default_run_sync_kwargs(
         "quiet": False,
         "logfile": None,
         "no_color": True,
-        "legend": False,
     }
     defaults.update(overrides)
     return defaults
@@ -693,33 +691,6 @@ class TestRunSync:
                 run_sync(**kwargs)
             assert exc_info.value.code == 0
             mock_run.assert_called_once()
-
-    def test_legend_display(self, tmp_path):
-        """run_sync displays legend when requested."""
-        kwargs = _default_run_sync_kwargs(
-            tmp_path, legend=True, server_url="https://localhost:8000"
-        )
-
-        with (
-            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
-            patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
-            patch("hsync_client.main_logic.set_config"),
-            patch("hsync_client.main_logic.set_debug"),
-            patch("hsync_client.main_logic.sync", new=MagicMock()),
-            patch(
-                "hsync_client.main_logic.run",
-                return_value=SyncCycleResult(
-                    completed=True, transfers=0, failed=0, conflicts=0, guard_tripped=False
-                ),
-            ),
-        ):
-            mock_logger = MagicMock()
-            mock_log_setup.return_value = mock_logger
-            with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
-            assert exc_info.value.code == 0
-            assert any("Log legend" in str(c) for c in mock_logger.info.call_args_list)
 
     def test_api_key_from_fd(self, tmp_path):
         """run_sync reads API key from file descriptor."""

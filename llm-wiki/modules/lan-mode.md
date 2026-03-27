@@ -76,7 +76,6 @@ group where no further peer event would otherwise arrive:
 | `PeerManager.is_wss_connected` | `lan.py:485` | lock-guarded query on `_connected_cids`; used by the listener's goodbye grace |
 | `HsyncServiceListener.remove_service` | `lan.py` | **goodbye grace** (`GOODBYE_GRACE_S`): delay `remove_peer` so an Android heartbeat re-register can cancel it (covers slave<->slave, not only WSS); a live WSS link is still an immediate ignore |
 | `PeerManager.reconcile_stale_peers` | `lan.py:435` | expire peers whose liveness stopped and re-elect; invoked every discovery wake (`lan_handler.run_lan_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
-| `PeerManager.get_successor_cid` | `lan.py:701` | pre-computed next-ranked eligible candidate (observational only; never gates) |
 | `_validate_peer_timeout_relationship` | `config.py:224` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` |
 | timeout wiring | `lan_handler.py:133` → `LANSync` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` reach `is_alive`/the discovery cadence |
 | `LANSync._record_lock` | `lan.py:995` | serializes every record publication (initial register, heartbeat re-announce, in-place refresh, teardown) across the heartbeat thread, the debounced presence timer and the main thread; `stop()` publishes `_running = False` under it so a queued refresh bails instead of racing the unregister |

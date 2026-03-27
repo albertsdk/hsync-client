@@ -79,6 +79,17 @@ def request_headers() -> dict[str, str]:
     return headers
 
 
+def http_to_ws(url: str) -> str:
+    """Return the WebSocket URL for an HTTP(S) *url*.
+
+    Replaces the ``http``/``https`` scheme with ``ws``/``wss``. Both run
+    modes use this to derive the events endpoint from the REST base URL.
+    """
+    from re import sub
+
+    return sub(r"^https:", "wss:", sub(r"^http:", "ws:", url))
+
+
 def http_connect_timeout() -> float:
     """Connect timeout honouring the configured HTTP timeout."""
     return float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
