@@ -14,9 +14,9 @@ to the master for propagation to other peers.
 
 Features:
 - WebSocket server for real-time event broadcasting (master)
-- WebSocket client for receiving events (slave)
+- WebSocket client for receiving events (client)
 - Bidirectional sync: slaves can upload changes to master
-- File system watching using watchdog (both master and slave)
+- File system watching using watchdog (both master and client)
 - Event handling for file/directory create, modify, delete, rename
 - SSL/TLS support for secure connections
 - Echo loop prevention for files received from master
@@ -70,7 +70,7 @@ class LANWebSocketServer:
     WebSocket server for LAN master mode.
 
     Runs in a background thread and broadcasts file system events
-    to all connected slave clients.
+    to all connected client clients.
     """
 
     def __init__(
@@ -292,7 +292,7 @@ class LANFileEventHandler(FileSystemEventHandler):
     File system event handler for LAN master mode.
 
     Monitors the local bucket directory for file system changes and
-    broadcasts events to all connected slave clients.
+    broadcasts events to all connected client clients.
     """
 
     def __init__(self, ws_server: LANWebSocketServer) -> None:
@@ -501,7 +501,7 @@ class LANFileEventHandler(FileSystemEventHandler):
 
 
 # =============================================================================
-# WebSocket Client for LAN Slave
+# WebSocket Client for LAN Client
 # =============================================================================
 
 
@@ -542,7 +542,7 @@ async def lan_websocket_client(
     watch_path = CONFIG["LOCAL_BUCKET"]
     observer.schedule(_slave_event_handler, watch_path, recursive=True)
     observer.start()
-    log.info(f"Slave file watcher started for bidirectional sync: {watch_path}")
+    log.info(f"Client file watcher started for bidirectional sync: {watch_path}")
 
     # Set up SSL context for WSS
     # Note: Certificate fingerprint was already verified during initial HTTP sync.
@@ -602,7 +602,7 @@ async def lan_websocket_client(
     except Exception as e:
         log.error(f"WebSocket connection error: {e}")
     finally:
-        # Wait for pending slave→master operations to complete before
+        # Wait for pending client→master operations to complete before
         # returning to the discovery loop (which triggers a full sync).
         # This prevents race conditions where a rename/upload/delete is
         # still in-flight while the full sync runs and reverts it.
@@ -612,7 +612,7 @@ async def lan_websocket_client(
         observer.stop()
         observer.join(timeout=2.0)
         _slave_event_handler = None
-        log.info("Slave file watcher stopped")
+        log.info("Client file watcher stopped")
 
 
 async def _handle_lan_event(
@@ -624,7 +624,7 @@ async def _handle_lan_event(
 
     Args:
         event_data: Event dictionary from the master.
-        slave_handler: Optional slave event handler for marking files as receiving.
+        slave_handler: Optional client event handler for marking files as receiving.
     """
     from os import listdir, makedirs, remove, rename, rmdir
     from os.path import basename, dirname, exists
@@ -770,13 +770,13 @@ async def _handle_lan_event(
 
 
 # =============================================================================
-# Slave File Event Handler (for bidirectional sync)
+# Client File Event Handler (for bidirectional sync)
 # =============================================================================
 
 
 class SlaveFileEventHandler(FileSystemEventHandler):
     """
-    File system event handler for LAN slave mode.
+    File system event handler for LAN client mode.
 
     Monitors the local bucket directory for file system changes and
     uploads changes to the master server for propagation to other slaves.
@@ -789,7 +789,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         use_https: bool = False,
     ) -> None:
         """
-        Initialize the slave file event handler.
+        Initialize the client file event handler.
 
         Args:
             master_host: Master's IP address or hostname.
@@ -850,7 +850,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         """Wait for all pending operations to complete.
 
         Called before reconnect sync to avoid race conditions between
-        pending slave→master operations and the full sync.
+        pending client→master operations and the full sync.
 
         Args:
             timeout: Maximum seconds to wait for all operations.
@@ -893,7 +893,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            log.info(f'[SLAVE UP  ] "{file_obj.filepath}"')
+            log.info(f'[CLIENT UP  ] "{file_obj.filepath}"')
             upload_file(file_obj, check_size=True)
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
@@ -921,7 +921,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            log.info(f'[SLAVE DEL ] "{filepath}"')
+            log.info(f'[CLIENT DEL ] "{filepath}"')
             response = requests.delete(
                 url,
                 params=params,
@@ -959,7 +959,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            log.info(f'[SLAVE REN ] "{src_path}" -> "{dst_path}"')
+            log.info(f'[CLIENT REN ] "{src_path}" -> "{dst_path}"')
             response = requests.patch(
                 url,
                 params=params,
@@ -990,7 +990,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             # Create a .hsynckeep sentinel so the empty directory is
             # synced to the master.  The watchdog will pick up the new
             # file and trigger an upload via on_closed / on_modified.
-            log.debug(f'[SLAVE DIR ] "{src_path}"')
+            log.debug(f'[CLIENT DIR ] "{src_path}"')
             self._ensure_sentinel(src_path)
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
@@ -1085,7 +1085,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         if not exists(sentinel):
             try:
                 open(sentinel, "w").close()  # noqa: SIM115
-                log.debug(f'[SLAVE KEEP] Created sentinel "{sentinel}"')
+                log.debug(f'[CLIENT KEEP] Created sentinel "{sentinel}"')
             except OSError as exc:
                 log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
 
@@ -1109,7 +1109,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip if in ignore-delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug("[SLAVE IGN ] Deletion ignored (ignore-delete mode)")
+            log.debug("[CLIENT IGN ] Deletion ignored (ignore-delete mode)")
             return
 
         # Notify master about deletion
@@ -1182,10 +1182,10 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         )
 
 
-# Global slave event handler for marking files as receiving
+# Global client event handler for marking files as receiving
 _slave_event_handler: SlaveFileEventHandler | None = None
 
 
 def get_slave_event_handler() -> SlaveFileEventHandler | None:
-    """Get the global slave event handler."""
+    """Get the global client event handler."""
     return _slave_event_handler

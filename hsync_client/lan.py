@@ -370,7 +370,7 @@ class PeerManager:
                         f"[MASTER_CONFLICT] force_master conflict: "
                         f"another master {winner_cid} at {winner_addr} "
                         f"has priority (started earlier). "
-                        f"This client will operate as slave."
+                        f"This client will operate as client."
                     )
                 elif winner_cid == self._local_cid:
                     # We won: a remote force_master peer lost
@@ -396,7 +396,7 @@ class PeerManager:
                     f"[MASTER_TAKEOVER] peer {new_master_cid} at "
                     f"{new_peer.address} has force_master enabled "
                     f"and is taking over as master. "
-                    f"This client will switch to slave."
+                    f"This client will switch to client."
                 )
 
         if new_master_cid != self._master_cid:

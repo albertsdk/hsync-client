@@ -89,7 +89,7 @@ class TestRunLanMode:
         mock_lan_sync.update_server_ready.assert_called_once()
 
     def test_slave_non_persistent_sync(self, tmp_path):
-        """Slave connects to master and runs sync in non-persistent mode."""
+        """Client connects to master and runs sync in non-persistent mode."""
         config = _make_lan_config(tmp_path)
         mock_log = MagicMock()
 
@@ -125,7 +125,7 @@ class TestRunLanMode:
         assert any("master" in str(c).lower() for c in mock_log.info.call_args_list)
 
     def test_slave_dryrun_shows_preview(self, tmp_path):
-        """Slave in dryrun mode shows preview and exits."""
+        """Client in dryrun mode shows preview and exits."""
         config = _make_lan_config(tmp_path, DRYRUN=True)
         mock_log = MagicMock()
 
@@ -210,7 +210,7 @@ class TestRunLanMode:
         mock_save.assert_called_once_with(mock_cert_info)
 
     def test_slave_waits_for_master_server_ready(self, tmp_path):
-        """Slave re-enters discovery loop when master not ready."""
+        """Client re-enters discovery loop when master not ready."""
         config = _make_lan_config(tmp_path)
         mock_log = MagicMock()
 

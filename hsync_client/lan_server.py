@@ -278,7 +278,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
 
     def _handle_rename(self, query: dict) -> None:
-        """Handle file/directory rename from slave."""
+        """Handle file/directory rename from client."""
         from os import makedirs, rename
         from os.path import dirname
 
@@ -321,7 +321,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if dst_parent and not exists(dst_parent):
                 makedirs(dst_parent, exist_ok=True)
 
-            log.info(f"Renaming from slave request: {src_path} -> {dst_path}")
+            log.info(f"Renaming from client request: {src_path} -> {dst_path}")
             rename(src_path, dst_path)
 
             self._send_json_response(HTTP_OK, {"info": "Renamed successfully"})
@@ -331,7 +331,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Rename error: {e}")
 
     def _handle_delete(self, query: dict) -> None:
-        """Handle file/directory deletion from slave."""
+        """Handle file/directory deletion from client."""
         from shutil import rmtree
 
         rel_path = query.get("path", [None])[0]
@@ -367,10 +367,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         try:
             if is_dir:
-                log.info(f"Deleting directory from slave request: {full_path}")
+                log.info(f"Deleting directory from client request: {full_path}")
                 rmtree(full_path, ignore_errors=False)
             else:
-                log.info(f"Deleting file from slave request: {full_path}")
+                log.info(f"Deleting file from client request: {full_path}")
                 os.remove(full_path)
                 parent = os.path.dirname(full_path)
                 if os.path.basename(full_path) == HSYNCKEEP_FILENAME:

@@ -57,14 +57,14 @@ flowchart TB
             M_FILES[(Local Files)]
         end
 
-        subgraph "Slave A"
+        subgraph "Client A"
             A_DISC[mDNS Discovery]
             A_SYNC[Sync Engine]
             A_WATCH[File Watcher]
             A_FILES[(Local Files)]
         end
 
-        subgraph "Slave B"
+        subgraph "Client B"
             B_DISC[mDNS Discovery]
             B_SYNC[Sync Engine]
             B_WATCH[File Watcher]
@@ -127,11 +127,11 @@ sequenceDiagram
 
 ### Synchronization Flow
 
-During initial sync (when a slave connects or reconnects), the **master is the source of truth**:
+During initial sync (when a client connects or reconnects), the **master is the source of truth**:
 
 ```mermaid
 sequenceDiagram
-    participant C as Client (Slave)
+    participant C as Client (Client)
     participant M as Master
 
     Note over C,M: List Remote Files
@@ -152,15 +152,15 @@ sequenceDiagram
 
 ![Sync Flow](images/lan-mode-4.png)
 
-> **Important**: In LAN mode, files that exist only on the slave (not on master) are **deleted locally** during initial sync. This ensures that if a file was deleted on the master while the slave was offline, the deletion is correctly propagated when the slave reconnects.
+> **Important**: In LAN mode, files that exist only on the client (not on master) are **deleted locally** during initial sync. This ensures that if a file was deleted on the master while the client was offline, the deletion is correctly propagated when the client reconnects.
 
 ### Reconnection Behavior
 
-When a slave reconnects after being offline:
+When a client reconnects after being offline:
 
 1. **Master state is authoritative** - The master's file list is the source of truth
-2. **Missing files are downloaded** - Files on master but not on slave are downloaded
-3. **Extra files are deleted** - Files on slave but not on master are deleted locally
+2. **Missing files are downloaded** - Files on master but not on client are downloaded
+3. **Extra files are deleted** - Files on client but not on master are deleted locally
 4. **Modified files are synced** - Files with different mtimes are synced (newer wins)
 
 This ensures consistent state across all peers, even after network interruptions.
@@ -171,9 +171,9 @@ After initial sync, all peers maintain a **WebSocket connection** to the master 
 
 ```mermaid
 sequenceDiagram
-    participant A as Slave A
+    participant A as Client A
     participant M as Master
-    participant B as Slave B
+    participant B as Client B
 
     Note over A,B: ① Master changes a file
     M->>M: File modified (watchdog)
@@ -182,14 +182,14 @@ sequenceDiagram
     A->>M: GET file (download)
     B->>M: GET file (download)
 
-    Note over A,B: ② Slave A changes a file
+    Note over A,B: ② Client A changes a file
     A->>A: File modified (watchdog)
     A->>M: POST file (upload)
     M->>M: Master sees new file
     M-->>B: WebSocket: modified event
     B->>M: GET file (download)
 
-    Note over A,B: ③ Slave B deletes a file
+    Note over A,B: ③ Client B deletes a file
     B->>B: File deleted (watchdog)
     B->>M: DELETE file
     M->>M: Master deletes file
@@ -648,13 +648,13 @@ HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
 
 ### Directional Sync in LAN Mode
 
-Use `--sync-direction` on slave nodes to control the direction of synchronization:
+Use `--sync-direction` on client nodes to control the direction of synchronization:
 
 ```bash
-# Slave that only downloads from master (read-only mirror)
+# Client that only downloads from master (read-only mirror)
 ./dist/hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
 
-# Slave that only uploads to master (push-only source)
+# Client that only uploads to master (push-only source)
 ./dist/hsync -b logs -p ~/Logs --lan-mode --sync-direction upload-only
 ```
 

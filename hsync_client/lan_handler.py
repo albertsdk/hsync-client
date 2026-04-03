@@ -263,7 +263,7 @@ def _run_as_slave(
     persistent: bool,
     peer_manager,
 ) -> bool:
-    """Run as slave (connect to master). Returns True to continue loop, False to break."""
+    """Run as client (connect to master). Returns True to continue loop, False to break."""
     from asyncio import run
 
     master = peer_manager.get_master()
