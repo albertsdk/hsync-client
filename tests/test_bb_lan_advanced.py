@@ -387,20 +387,38 @@ class TestMasterFailover:
                     # failover below would split-brain.
                     time.sleep(7)
 
+                    # Snapshot the pre-crash self-election count: a slave may
+                    # self-elect once at startup before it discovers the
+                    # force_master peer and yields to it (a transient, not a
+                    # split-brain). The "exactly one successor" assertion must
+                    # only count elections that happen after the crash.
+                    elected = "This client elected as MASTER"
+                    a_before = _stderr_text(a).count(elected)
+                    b_before = _stderr_text(b).count(elected)
+
                     master.kill()
                     master.wait()
 
-                    # Exactly one survivor must self-elect (no split-brain); the
-                    # winner is whichever peer started first, so accept either.
-                    winner = _wait_for_text_in_stderr(a, "MASTER", timeout=90) or (
-                        _wait_for_text_in_stderr(b, "MASTER", timeout=15)
+                    # Poll for the post-crash self-election (the liveness window
+                    # is HSYNC_PEER_TIMEOUT=5s plus discovery, so allow ample
+                    # time). The winner is whichever survivor self-elects.
+                    deadline = time.time() + 90
+                    while True:
+                        a_count = _stderr_text(a).count(elected) - a_before
+                        b_count = _stderr_text(b).count(elected) - b_before
+                        if a_count + b_count >= 1 or time.time() >= deadline:
+                            break
+                        time.sleep(0.5)
+                    assert a_count + b_count >= 1, (
+                        "no survivor was elected after the crash\n"
+                        f"peer_a:\n{_stderr_text(a)}\npeer_b:\n{_stderr_text(b)}"
                     )
-                    assert winner, "no survivor was elected after the crash"
-                    # Let a spurious self-election + yield (split-brain) settle.
+                    # Let a spurious self-election + yield (split-brain) settle:
+                    # a second survivor that also self-elected shows up now.
                     time.sleep(5)
 
-                    a_count = _stderr_text(a).count("This client elected as MASTER")
-                    b_count = _stderr_text(b).count("This client elected as MASTER")
+                    a_count = _stderr_text(a).count(elected) - a_before
+                    b_count = _stderr_text(b).count(elected) - b_before
                     assert a_count + b_count == 1, (
                         f"split-brain: peer_a elected {a_count}x, peer_b {b_count}x\n"
                         f"peer_a:\n{_stderr_text(a)}\npeer_b:\n{_stderr_text(b)}"
