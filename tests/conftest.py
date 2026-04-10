@@ -107,12 +107,22 @@ def _isolate_device_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Ge
     per-directory instance lock default to OS state/runtime directories;
     without isolation, in-process runs (CliRunner) would read/write the real
     ``~/.local/state/hsync`` and ``$XDG_RUNTIME_DIR/hsync``. Point both at a
-    per-test tmp dir, reset the identity cache around each test, and release
+    per-test temp dir, reset the identity cache around each test, and release
     any lock an in-process run forgot to release.
+
+    The isolation dirs live in a sibling of *tmp_path* (inside the pytest
+    basetemp, so pytest cleans them up) rather than inside *tmp_path* itself:
+    many tests use *tmp_path* as ``LOCAL_BUCKET``, and the installation
+    ``syncstate.db`` opened under ``HSYNC_STATE_DIR`` would otherwise be
+    created inside the bucket — showing up as a syncable, listed file whose
+    second-granularity mtime breaks listing-based assertions (it is created
+    lazily at the first store access, so it sorts unpredictably against the
+    bucket's own files).
     """
-    monkeypatch.setenv("HSYNC_DEVICE_DIR", str(tmp_path / "hsync_device"))
-    monkeypatch.setenv("HSYNC_LOCKS_DIR", str(tmp_path / "hsync_locks"))
-    monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "hsync_state"))
+    isolation_root = tmp_path.parent / f"{tmp_path.name}-isolation"
+    monkeypatch.setenv("HSYNC_DEVICE_DIR", str(isolation_root / "hsync_device"))
+    monkeypatch.setenv("HSYNC_LOCKS_DIR", str(isolation_root / "hsync_locks"))
+    monkeypatch.setenv("HSYNC_STATE_DIR", str(isolation_root / "hsync_state"))
     from hsync_client.identity import InstanceLock, reset_device_identity_cache
 
     reset_device_identity_cache()

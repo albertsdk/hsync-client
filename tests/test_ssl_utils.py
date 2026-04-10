@@ -28,8 +28,9 @@ def cert_dir(tmp_path, monkeypatch):
     """Point the persistent master cert dir at an isolated temp directory.
 
     The keypair lives in the device identity directory (``HSYNC_DEVICE_DIR``);
-    the conftest isolation fixture already points it at ``tmp_path /
-    "hsync_device"`` — redirect it to *tmp_path* itself for these tests.
+    the conftest isolation fixture already points it at the per-test
+    ``*-isolation/hsync_device`` sibling of *tmp_path* — redirect it to
+    *tmp_path* itself for these tests.
     """
     monkeypatch.setenv("HSYNC_DEVICE_DIR", str(tmp_path))
     return tmp_path

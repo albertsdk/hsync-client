@@ -44,7 +44,7 @@ class TestDeviceIdentity:
 
         assert is_valid_cid(identity.device_id)
         device_dir = default_device_dir()
-        assert device_dir == tmp_path / "hsync_device"
+        assert device_dir == tmp_path.parent / f"{tmp_path.name}-isolation" / "hsync_device"
 
         id_file = device_dir / "device_id"
         assert id_file.read_text().strip() == identity.device_id

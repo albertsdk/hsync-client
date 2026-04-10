@@ -16,6 +16,19 @@ from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
 
+def _bucket_entry(listing: list[dict], filepath: str) -> dict:
+    """Return the listing entry for *filepath*.
+
+    The listing is filtered explicitly instead of using ``listing[0]``: the
+    master advertises every syncable bucket file sorted by mtime, and the
+    test's bucket may legitimately carry unrelated entries (the suite's
+    isolation directories live outside ``tmp_path``, but a test-local bucket
+    is not guaranteed to hold a single file). ``next`` raises StopIteration
+    on a missing entry, failing the test loudly.
+    """
+    return next(entry for entry in listing if entry.get("filepath") == filepath)
+
+
 def _server_fixture():
     port = get_free_port()
     server = LANServer(port=port)
@@ -64,7 +77,7 @@ def test_listing_self_record_persists_and_clock_progresses(tmp_path):
         srv, port = _server_fixture()
         try:
             listing = _get_listing(port)
-            version = listing[0]["version"]
+            version = _bucket_entry(listing, "doc.txt")["version"]
             assert version["vclock"] == {_cid(): 1}, version
 
             # The self-record must be persisted: the stored base hash mirrors
@@ -77,7 +90,7 @@ def test_listing_self_record_persists_and_clock_progresses(tmp_path):
             f.write_text("v2 — different content\n")
             invalidate_sha256_cache(str(f))
             listing = _get_listing(port)
-            version = listing[0]["version"]
+            version = _bucket_entry(listing, "doc.txt")["version"]
             assert version["vclock"] == {_cid(): 2}, version
         finally:
             srv.stop()
@@ -95,8 +108,8 @@ def test_listing_idempotent_when_content_unchanged(tmp_path):
     ):
         srv, port = _server_fixture()
         try:
-            first = _get_listing(port)[0]["version"]["vclock"]
-            second = _get_listing(port)[0]["version"]["vclock"]
+            first = _bucket_entry(_get_listing(port), "doc.txt")["version"]["vclock"]
+            second = _bucket_entry(_get_listing(port), "doc.txt")["version"]["vclock"]
             assert first == second == {_cid(): 1}
         finally:
             srv.stop()
