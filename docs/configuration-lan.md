@@ -15,9 +15,13 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | `--force-master` | Force this device to be the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
+| `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
+| `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without `HSYNC_LAN_KEY` | `false` |
 | `--discovery-timeout` | Seconds to wait for LAN peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
 
-The shared secret is read from the `HSYNC_LAN_KEY` environment variable.
+The shared secret is read from the `HSYNC_LAN_KEY` environment variable. With
+no key, reads and download-only operation remain available, but write-capable
+sync is refused unless the dangerous CLI or environment opt-in is explicit.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
 `--lan-key-fd` flag.
 
@@ -29,6 +33,10 @@ The `lan` subcommand and `--force-master` have no environment-variable equivalen
 |---|---|
 | `--force-master` | This device wins elections against non-force-master peers. Multiple force-master peers are resolved by the deterministic election algorithm. |
 | `--never-master` | This device always stays a slave. If all peers are never-master, no master is elected and syncing stops. |
+
+`--require-pairing` applies to the elected master only. Peer seeders are selected
+through that master and receive their own persistent `(device ID, bucket)` TOFU
+pin before the requester opens a connection.
 
 ## File Stability & Upload
 
@@ -50,7 +58,12 @@ The `lan` subcommand and `--force-master` have no environment-variable equivalen
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_LAN_GROUP` | LAN group name (alternative to `--group`) | — |
-| `HSYNC_LAN_KEY` | Shared secret for peer authentication | — (hello handshake, unauthenticated) |
+| `HSYNC_LAN_KEY` | Shared secret for peer authentication | — (reads only unless explicitly opted into unauthenticated writes) |
+| `HSYNC_LAN_PEER_DOWNLOAD` | Ask the master for exact-hash sources and try eligible peers before master full-download fallback | `true` |
+| `HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE` | Minimum listed file size eligible for peer-assisted download (`0` permits all sizes) | `1048576` (1 MB) |
+| `HSYNC_LAN_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder | `2` |
+| `HSYNC_LAN_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |
+| `HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow LAN filesystem mutations with no shared key | `false` |
 | `HSYNC_LAN_PORT` | LAN master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
@@ -62,6 +75,11 @@ The `lan` subcommand and `--force-master` have no environment-variable equivalen
 
 `HSYNC_LAN_MODE` and `HSYNC_LAN_FORCE_MASTER` are **not** read. Enable LAN
 with the `lan` subcommand; pin a master with `--force-master`.
+
+`--no-peer-download` is a final opt-out: when present, peer downloading stays
+disabled even if `HSYNC_LAN_PEER_DOWNLOAD=true`. One-shot slaves may request
+from peers, but they never advertise or run a seeder. Continuous non-dry-run
+slaves serve only exact-hash `GET` downloads; all mutating routes are disabled.
 
 ## Environment files
 

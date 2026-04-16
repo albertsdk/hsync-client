@@ -39,6 +39,7 @@ class TestLANResumableUpload:
         return {
             "LOCAL_BUCKET": str(tmp_path),
             "LAN_KEY": None,
+            "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
         }
 
     def _upload_url(self, port: int) -> str:

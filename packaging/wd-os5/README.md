@@ -138,8 +138,13 @@ option to configure.
 | Mode                | `hsync lan` vs `hsync server <hostname>`      | LAN                              |
 | Role                | `--force-master` + `--sync-direction`          | Master (NAS coordinates the group) |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
-| LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
+| LAN shared key      | `HSYNC_LAN_KEY` env var                        | random 192-bit value generated at install |
 | Strict pairing      | `--require-pairing`                            | off                              |
+| Peer-assisted LAN downloads | `--no-peer-download` (when disabled)    | enabled                          |
+| Unauthenticated LAN writes | `--allow-unauthenticated-writes`          | disabled                         |
+| Peer minimum size   | `HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE`             | `1048576` (1 MiB)                |
+| Seeder read cap     | `HSYNC_LAN_PEER_READ_CAP`                      | `2`                              |
+| Peer attempts       | `HSYNC_LAN_PEER_SOURCES_MAX`                    | `3`                              |
 | Group               | `--group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
 | Server URL          | `HSYNC_SERVER` env var                         | _empty_                          |

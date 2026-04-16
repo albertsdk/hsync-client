@@ -38,6 +38,57 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 # =============================================================================
 
 
+class TestLanPeerDownload:
+    def test_one_shot_requester_excludes_same_address_seeder_and_falls_back(
+        self,
+        lan_master_dir,
+        lan_slave_dir,
+        lan_bucket,
+        tmp_path,
+    ):
+        """Same-address sources are excluded and one-shot falls back to the master."""
+        content = (b"peer-assisted-download\n" * 65536)[: 2 * 1024 * 1024]
+        source_path = Path(lan_master_dir) / "peer-source.bin"
+        source_path.write_bytes(content)
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+            seeder = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("-v",),
+            )
+            try:
+                seeded_path = Path(lan_slave_dir) / source_path.name
+                assert _wait_for_file(str(seeded_path), timeout=45), _stderr_text(seeder)
+                assert _wait_for_slave_events(seeder, timeout=30), _stderr_text(seeder)
+                time.sleep(2)
+
+                requester_dir = tmp_path / "requester"
+                requester_dir.mkdir()
+                requester = _lan_start(
+                    str(requester_dir),
+                    lan_bucket,
+                    never_master=True,
+                    extra_args=("--once", "-v"),
+                )
+                try:
+                    requester.wait(timeout=60)
+                    requester_output = _stderr_text(requester)
+                    assert requester.returncode == 0, requester_output
+                    assert (requester_dir / source_path.name).read_bytes() == content
+                    assert '/files/sources HTTP/1.1" 200' in requester_output
+                    assert f"filename={source_path.name}&cid=" in requester_output
+                    assert f"filename={source_path.name}&sha256=" not in _stderr_text(seeder)
+                finally:
+                    _terminate(requester)
+            finally:
+                _terminate(seeder)
+        finally:
+            _terminate(master)
+
+
 class TestLanFileDeletion:
     def test_file_deletion_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """File deleted on master → deleted on slave."""

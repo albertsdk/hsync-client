@@ -270,11 +270,9 @@ class TestLanKeyless:
         """Keyless + write-capable + non-interactive is refused at startup.
 
         The write policy (``lan_write_requires_key``) requires a shared
-        ``HSYNC_LAN_KEY`` whenever an unattended run may upload to a master
-        whose identity cannot be vouched for out of band. A ``--yes`` LAN run
-        without a key must therefore exit immediately with the policy error —
-        trust-LAN keyless mode remains available to *interactive* operators
-        only (unit-tested in hsync_common.protocol.pairing).
+        ``HSYNC_LAN_KEY`` or the explicit dangerous opt-in whenever a run may
+        upload to a master. A ``--yes`` LAN run without either must therefore
+        exit immediately with the policy error.
         """
         # Given a write-capable keyless master in unattended (--yes) mode
         master = _lan_start(

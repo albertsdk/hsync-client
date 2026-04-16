@@ -52,6 +52,7 @@ class TestLANRequestHandlerCreateDir:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
@@ -88,6 +89,7 @@ class TestLANRequestHandlerCreateDir:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
@@ -114,6 +116,7 @@ class TestLANRequestHandlerCreateDir:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
@@ -152,6 +155,7 @@ class TestLANRequestHandlerDELETE:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -176,6 +180,7 @@ class TestLANRequestHandlerDELETE:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -197,6 +202,7 @@ class TestLANRequestHandlerDELETE:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -215,6 +221,7 @@ class TestLANRequestHandlerDELETE:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -252,6 +259,7 @@ class TestLANRequestHandlerPATCH:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -279,6 +287,7 @@ class TestLANRequestHandlerPATCH:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -299,6 +308,7 @@ class TestLANRequestHandlerPATCH:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -319,6 +329,7 @@ class TestLANRequestHandlerPATCH:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -348,6 +359,7 @@ class TestLANRequestHandlerPATCH:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -398,6 +410,7 @@ class TestLANRequestHandlerSymlink:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -427,6 +440,7 @@ class TestLANRequestHandlerSymlink:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -462,6 +476,7 @@ class TestLANRequestHandlerSymlink:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/symlinks"
@@ -491,6 +506,7 @@ class TestLANRequestHandlerSymlink:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/symlinks"

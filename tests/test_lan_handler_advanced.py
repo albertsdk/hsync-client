@@ -556,6 +556,34 @@ class TestRunLanModeDiscoveryTimeout:
         assert first_call.kwargs["timeout"] == HEARTBEAT_INTERVAL
         assert any("Discovery timeout disabled" in str(c) for c in mock_log.info.call_args_list)
 
+    def test_one_shot_ignores_early_ineligible_peer_until_deadline(self, tmp_path):
+        """A seeder wakeup must not end discovery before a master appears."""
+        from hsync_client import lan_handler
+
+        config = _make_lan_config(tmp_path, DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
+        mock_log = MagicMock()
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.is_master.return_value = False
+        mock_peer_mgr.get_master_cid.return_value = None
+        mock_peer_mgr.get_master.return_value = None
+
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.start.return_value = mock_peer_mgr
+        mock_lan_sync.port = 9000
+        monotonic = iter([100.0, 100.0, 101.0, 111.0, 111.0])
+
+        with (
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch.object(lan_handler, "_run_as_slave", return_value=(False, 5)) as run_slave,
+            patch("hsync_client.lan_handler.time.monotonic", side_effect=lambda: next(monotonic)),
+            patch("hsync_client.timesync.start_ntp_clock_offset_probe", return_value=None),
+        ):
+            assert lan_handler.run_lan_mode(config, mock_log) == 5
+
+        assert mock_lan_sync.wait_for_discovery.call_count == 2
+        assert mock_lan_sync.wait_for_discovery.call_args_list[0].kwargs["timeout"] == 10
+        run_slave.assert_called_once()
+
 
 def _make_master(**overrides: Any) -> MagicMock:
     """Build a master-peer mock with the attributes _run_as_slave reads.
@@ -567,10 +595,12 @@ def _make_master(**overrides: Any) -> MagicMock:
     master.cid = "master-1"
     master.server_ready = True
     master.use_https = True
-    master.cert_fingerprint = "a" * 40
+    master.cert_fingerprint = "a" * 64
     master.port = 9000
     master.address = "192.168.1.1"
     master.compression_enabled = False
+    master.delta_enabled = False
+    master.peer_download_enabled = True
     master.get_server_url.return_value = "https://192.168.1.1:9000"
     for key, value in overrides.items():
         setattr(master, key, value)
@@ -580,6 +610,46 @@ def _make_master(**overrides: Any) -> MagicMock:
 class TestRunAsSlave:
     """Direct tests for the _run_as_slave branches not exercised elsewhere."""
 
+    def test_one_shot_uses_peer_requester_without_starting_publisher(self, tmp_path):
+        """One-shot slaves can consume peers even though they never seed."""
+        from hsync_client.lan_handler import _run_as_slave
+
+        config = _make_lan_config(tmp_path, ONE_SHOT=True, LAN_PEER_DOWNLOAD=True)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = _make_master()
+        resolver = MagicMock()
+        seen: dict[str, object] = {}
+
+        async def fake_sync(**kwargs):
+            seen.update(kwargs)
+            return None
+
+        with (
+            patch("hsync_client.lan_handler.set_config"),
+            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.lan_handler._refresh_lan_network_tuning"),
+            patch(
+                "hsync_client.lan_handler.LanSourceResolver",
+                return_value=resolver,
+            ) as resolver_cls,
+            patch("hsync_client.lan_handler.sync", new=fake_sync),
+        ):
+            result = _run_as_slave(
+                config,
+                MagicMock(),
+                MagicMock(),
+                None,
+                True,
+                peer_mgr,
+            )
+
+        assert result == (False, 0)
+        assert seen == {"lan_mode": True, "source_resolver": resolver}
+        resolver_kwargs = resolver_cls.call_args.kwargs
+        assert resolver_kwargs["enabled"] is True
+        assert resolver_kwargs["master_capable"] is True
+        assert resolver_kwargs["timeout"] == config["HTTP_TIMEOUT"]
+
     def test_https_sets_fingerprint_and_bearer(self, tmp_path, monkeypatch):
         """HTTPS master with LAN_KEY stores fingerprint and sends a Bearer token."""
         from hsync_client.lan_handler import _run_as_slave
@@ -588,7 +658,7 @@ class TestRunAsSlave:
         config = _make_lan_config(tmp_path, LAN_KEY="secret")
         master = _make_master(
             use_https=True,
-            cert_fingerprint="f" * 40,
+            cert_fingerprint="f" * 64,
             compression_enabled=True,
             get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
         )
@@ -603,7 +673,7 @@ class TestRunAsSlave:
             result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
         assert result == (False, 0)
-        assert config["MASTER_CERT_FINGERPRINT"] == "f" * 40
+        assert config["MASTER_CERT_FINGERPRINT"] == "f" * 64
         assert config["REQUEST_HEADERS"]["Authorization"] == "Bearer secret"
         assert config["SERVER_COMPRESSION_ENABLED"] is True
         assert config["API"]["events"]
@@ -618,7 +688,7 @@ class TestRunAsSlave:
         config = _make_lan_config(tmp_path, LAN_KEY="secret")
         master = _make_master(
             use_https=True,
-            cert_fingerprint="a" * 40,
+            cert_fingerprint="a" * 64,
             get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
         )
         peer_mgr = MagicMock()
@@ -631,7 +701,28 @@ class TestRunAsSlave:
         ):
             _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
 
-        assert PinStore(pin_file).get("master-1", "test-bucket") == "a" * 40
+        assert PinStore(pin_file).get("master-1", "test-bucket") == "a" * 64
+
+    def test_non_sha256_master_fingerprint_is_not_persisted(self, tmp_path, monkeypatch):
+        """Malformed discovery fingerprint material fails closed before TOFU."""
+        from hsync_client.lan_handler import _evaluate_master_pin
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(pin_file))
+        master = _make_master(cert_fingerprint="a" * 40)
+        log = MagicMock()
+
+        assert (
+            _evaluate_master_pin(
+                {"REMOTE_BUCKET": "test-bucket", "LAN_REQUIRE_PAIRING": False},  # type: ignore[arg-type]
+                master,
+                log,
+            )
+            is False
+        )
+
+        assert not pin_file.exists()
+        assert any("non-SHA-256" in str(call) for call in log.error.call_args_list)
 
     def test_changed_fingerprint_is_refused(self, tmp_path, monkeypatch):
         """A master whose cert no longer matches the pin is refused (no connect)."""
@@ -640,12 +731,12 @@ class TestRunAsSlave:
 
         pin_file = tmp_path / "pins.json"
         monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(pin_file))
-        PinStore(pin_file).set("master-1", "test-bucket", "a" * 40)
+        PinStore(pin_file).set("master-1", "test-bucket", "a" * 64)
 
         config = _make_lan_config(tmp_path, LAN_KEY="secret")
         master = _make_master(
             use_https=True,
-            cert_fingerprint="b" * 40,
+            cert_fingerprint="b" * 64,
             get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
         )
         peer_mgr = MagicMock()
@@ -676,7 +767,7 @@ class TestRunAsSlave:
         config = _make_lan_config(tmp_path, LAN_KEY="secret", LAN_REQUIRE_PAIRING=True)
         master = _make_master(
             use_https=True,
-            cert_fingerprint="a" * 40,
+            cert_fingerprint="a" * 64,
             get_server_url=MagicMock(return_value="https://192.168.1.1:9000"),
         )
         peer_mgr = MagicMock()
@@ -930,7 +1021,11 @@ class TestStdinCommands:
         from hsync_client.lan_handler import _with_stdin_commands
 
         handler, registered = self._capture_handler()
-        fake_config = {"LAN_MODE": True, "SYNC_DIRECTION": "bidirectional"}
+        fake_config = {
+            "LAN_MODE": True,
+            "LAN_KEY": "shared-key",
+            "SYNC_DIRECTION": "bidirectional",
+        }
 
         async def _coro() -> None:
             return None
@@ -986,6 +1081,174 @@ class TestStdinCommands:
         assert fake_config["DRYRUN"] is False
         mock_sync.assert_awaited_once_with(lan_mode=False)
         handler.stop.assert_called_once()
+
+    def test_runtime_direction_refuses_unauthenticated_lan_write(self):
+        """A stdin direction change cannot bypass the startup LAN-key policy."""
+        from hsync_client.lan_handler import _with_stdin_commands
+
+        handler, registered = self._capture_handler()
+        fake_config = {
+            "LAN_MODE": True,
+            "LAN_KEY": None,
+            "LAN_ALLOW_UNAUTHENTICATED_WRITES": False,
+            "SYNC_DIRECTION": "download-only",
+        }
+
+        async def _coro() -> None:
+            return None
+
+        with (
+            patch("hsync_client.preview.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.preview.CONFIG", fake_config),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview.emit_event") as mock_emit,
+        ):
+            asyncio.run(_with_stdin_commands(MagicMock(), _coro()))
+            asyncio.run(registered["SET_SYNC_DIRECTION"](direction="bidirectional"))
+
+        assert fake_config["SYNC_DIRECTION"] == "download-only"
+        mock_sync.assert_not_awaited()
+        assert any(str(call.args[0]) == "auth_required" for call in mock_emit.call_args_list)
+
+    def test_dryrun_sync_refuses_unauthenticated_lan_write(self):
+        """SYNC keeps dry-run active when the selected LAN direction would write."""
+        from hsync_client.lan_handler import _run_stdin_wait
+
+        handler, registered = self._capture_handler()
+        fake_config = {
+            "LAN_MODE": True,
+            "LAN_KEY": None,
+            "LAN_ALLOW_UNAUTHENTICATED_WRITES": False,
+            "SYNC_DIRECTION": "bidirectional",
+            "DRYRUN": True,
+        }
+        with (
+            patch("hsync_client.preview.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.preview.CONFIG", fake_config),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
+        ):
+            asyncio.run(_run_stdin_wait(MagicMock()))
+            asyncio.run(registered["SYNC"]())
+
+        assert fake_config["DRYRUN"] is True
+        mock_sync.assert_not_awaited()
+        handler.stop.assert_not_called()
+
+
+class TestSlaveSeederLifecycle:
+    """The read-only seeder is owned strictly by a continuous slave role."""
+
+    def test_continuous_slave_starts_seeder_then_publishes_seed_ready(self, tmp_path):
+        from hsync_client.lan_handler import _start_slave_seeder
+        from hsync_client.lan_server import LANServerMode
+
+        config = _make_lan_config(
+            tmp_path,
+            ONE_SHOT=False,
+            LAN_PEER_DOWNLOAD=True,
+            LAN_PEER_READ_CAP=3,
+        )
+        lan_sync = MagicMock(port=9443)
+        server = MagicMock()
+        publisher = MagicMock()
+        with (
+            patch("hsync_client.lan_handler.LANServer", return_value=server) as server_cls,
+            patch(
+                "hsync_client.lan_handler.LanInventoryPublisher",
+                return_value=publisher,
+            ) as publisher_cls,
+            patch("hsync_client.lan_handler.set_active_inventory_publisher") as set_active,
+        ):
+            result = _start_slave_seeder(config, lan_sync, _make_cert_info(), MagicMock())
+
+        assert result == (server, publisher)
+        server_cls.assert_called_once_with(
+            port=9443,
+            use_https=True,
+            cert_file="/tmp/cert.pem",
+            key_file="/tmp/key.pem",
+            mode=LANServerMode.seeder,
+            bucket="test-bucket",
+            peer_read_cap=3,
+        )
+        server.start.assert_called_once_with()
+        lan_sync.update_seed_ready.assert_called_once_with(True)
+        publisher_cls.assert_called_once_with(str(tmp_path))
+        set_active.assert_called_once_with(publisher)
+
+    def test_one_shot_and_dry_run_never_start_seeder(self, tmp_path):
+        from hsync_client.lan_handler import _start_slave_seeder
+
+        for overrides in ({"ONE_SHOT": True}, {"ONE_SHOT": False, "DRYRUN": True}):
+            config = _make_lan_config(tmp_path, **overrides)
+            with patch("hsync_client.lan_handler.LANServer") as server_cls:
+                assert _start_slave_seeder(
+                    config,
+                    MagicMock(port=9443),
+                    _make_cert_info(),
+                    MagicMock(),
+                ) == (None, None)
+            server_cls.assert_not_called()
+
+    def test_bind_failure_degrades_to_requester_only(self, tmp_path):
+        from hsync_client.lan_handler import _start_slave_seeder
+
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
+        lan_sync = MagicMock(port=9443)
+        server = MagicMock()
+        server.start.side_effect = OSError("address in use")
+        with patch("hsync_client.lan_handler.LANServer", return_value=server):
+            assert _start_slave_seeder(
+                config,
+                lan_sync,
+                _make_cert_info(),
+                MagicMock(),
+            ) == (None, None)
+
+        server.stop.assert_called_once_with()
+        lan_sync.update_seed_ready.assert_not_called()
+
+    def test_readiness_failure_stops_and_clears_seed_txt(self, tmp_path):
+        """A partial seed=true publication is explicitly withdrawn before fallback."""
+        from hsync_client.lan_handler import _start_slave_seeder
+
+        config = _make_lan_config(tmp_path, ONE_SHOT=False)
+        lan_sync = MagicMock(port=9443)
+        lan_sync.update_seed_ready.side_effect = [RuntimeError("mdns failed"), None]
+        server = MagicMock()
+        with patch("hsync_client.lan_handler.LANServer", return_value=server):
+            assert _start_slave_seeder(
+                config,
+                lan_sync,
+                _make_cert_info(),
+                MagicMock(),
+            ) == (None, None)
+
+        server.stop.assert_called_once_with()
+        assert [call.args[0] for call in lan_sync.update_seed_ready.call_args_list] == [True, False]
+
+    def test_stop_withdraws_txt_and_stops_even_if_withdraw_fails(self):
+        from hsync_client.lan_handler import _stop_slave_seeder
+
+        lan_sync = MagicMock()
+        server = MagicMock()
+        publisher = MagicMock()
+        order: list[str] = []
+        server.stop.side_effect = lambda: order.append("stop")
+
+        def fail_withdraw(_ready: bool) -> None:
+            order.append("withdraw")
+            raise RuntimeError("mdns unavailable")
+
+        lan_sync.update_seed_ready.side_effect = fail_withdraw
+
+        with patch("hsync_client.lan_handler.set_active_inventory_publisher") as set_active:
+            _stop_slave_seeder(server, lan_sync, publisher)
+
+        lan_sync.update_seed_ready.assert_called_once_with(False)
+        server.stop.assert_called_once_with()
+        set_active.assert_called_once_with(None)
+        assert order == ["stop", "withdraw"]
 
 
 class TestMasterElection:

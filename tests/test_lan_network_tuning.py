@@ -270,6 +270,7 @@ class TestRunSyncLanPlaceholder:
     """run_sync in LAN mode with the placeholder URL must defer RTT probing."""
 
     def _run_lan(self, tmp_path, **kwargs_overrides: Any):
+        kwargs_overrides.setdefault("sync_direction", "download-only")
         kwargs = _default_run_sync_kwargs(tmp_path, **kwargs_overrides)
         with (
             patch("hsync_client.main_logic.setup_logging", return_value=MagicMock()),
@@ -324,6 +325,46 @@ class TestRunSyncLanPlaceholder:
 
         config_arg = mock_lan.call_args.args[0]
         assert set(config_arg["AUTOTUNE_MANAGED_KEYS"]) == set(_ALL_TUNING_KEYS)
+
+    def test_config_carries_peer_download_environment_policy(self, tmp_path):
+        """Peer threshold, read cap, and dangerous opt-in come from HSYNC_ settings."""
+        with (
+            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.main_logic.get_lan_peer_download", return_value=True),
+            patch("hsync_client.main_logic.get_lan_peer_download_min_size", return_value=4096),
+            patch("hsync_client.main_logic.get_lan_peer_read_cap", return_value=7),
+            patch(
+                "hsync_client.main_logic.get_lan_allow_unauthenticated_writes",
+                return_value=True,
+            ),
+        ):
+            mock_lan, _, _ = self._run_lan(
+                tmp_path,
+                server_url=None,
+                lan_mode=True,
+                sync_direction="bidirectional",
+            )
+
+        config_arg = mock_lan.call_args.args[0]
+        assert config_arg["LAN_PEER_DOWNLOAD"] is True
+        assert config_arg["LAN_PEER_DOWNLOAD_MIN_SIZE"] == 4096
+        assert config_arg["LAN_PEER_READ_CAP"] == 7
+        assert config_arg["LAN_ALLOW_UNAUTHENTICATED_WRITES"] is True
+
+    def test_cli_peer_download_opt_out_wins_over_environment(self, tmp_path):
+        """--no-peer-download remains final even when the environment enables peers."""
+        with (
+            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.main_logic.get_lan_peer_download", return_value=True),
+        ):
+            mock_lan, _, _ = self._run_lan(
+                tmp_path,
+                server_url=None,
+                lan_mode=True,
+                lan_peer_download_enabled=False,
+            )
+
+        assert mock_lan.call_args.args[0]["LAN_PEER_DOWNLOAD"] is False
 
     def test_cli_override_excluded_from_managed_keys(self, tmp_path):
         """--http-timeout 30 must survive the LAN refresh: not autotune-managed."""

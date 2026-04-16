@@ -38,6 +38,8 @@ def _full_props(overrides: dict[bytes, bytes] | None = None) -> dict[bytes, byte
         b"cert_fp": b"ab" * 32,
         b"compression": b"true",
         b"delta": b"true",
+        b"peer_download": b"true",
+        b"seed": b"true",
         b"server_ready": b"true",
         b"force_master": b"true",
         b"never_master": b"false",
@@ -70,6 +72,8 @@ class TestRegisterPeerFromInfo:
         assert peer.cert_fingerprint == "ab" * 32
         assert peer.compression_enabled is True
         assert peer.delta_enabled is True
+        assert peer.peer_download_enabled is True
+        assert peer.seed_enabled is True
         assert peer.server_ready is True
         assert peer.force_master is True
         assert peer.never_master is False
@@ -92,6 +96,8 @@ class TestRegisterPeerFromInfo:
         assert peer.cert_fingerprint is None
         assert peer.compression_enabled is False
         assert peer.delta_enabled is False
+        assert peer.peer_download_enabled is False
+        assert peer.seed_enabled is False
         assert peer.server_ready is False
         assert peer.force_master is False
         assert peer.never_master is False

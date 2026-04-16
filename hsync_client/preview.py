@@ -17,10 +17,13 @@ from typing import Literal
 from hsync_common.format import format_bytes
 from hsync_common.models.file import clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
+from hsync_common.protocol.pairing import lan_write_requires_key
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, SYNC_DIRECTIONS, ActionLabel
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.lan_inventory import InventoryObserver
+from hsync_client.lan_sources import LanSourceResolver
 from hsync_client.presence import reemit_presence
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
@@ -34,6 +37,43 @@ from hsync_client.sync import (
 from hsync_client.utils import reset_bandwidth_throttle
 
 _BANDWIDTH_KEY = Literal["MAX_BANDWIDTH_UPLOAD", "MAX_BANDWIDTH_DOWNLOAD"]
+
+
+def _lan_write_allowed(direction: str, log) -> bool:
+    """Enforce the no-key write policy for runtime-triggered LAN syncs."""
+    if not CONFIG.get("LAN_MODE", False) or CONFIG.get("LAN_KEY"):
+        return True
+    if not lan_write_requires_key(
+        direction,
+        interactive=False,
+        allow_unauthenticated_writes=CONFIG.get("LAN_ALLOW_UNAUTHENTICATED_WRITES", False),
+    ):
+        return True
+    log.error(
+        f"{ActionLabel.AUTH_REQUIRED} LAN writes require authentication. "
+        "Set HSYNC_LAN_KEY, use download-only, or explicitly allow unauthenticated writes."
+    )
+    emit_event(
+        UiEventName.auth_required,
+        message="A shared LAN key or explicit unauthenticated-write opt-in is required",
+    )
+    return False
+
+
+async def _sync_with_inventory_observer(
+    lan_mode: bool,
+    inventory_observer: InventoryObserver | None,
+    source_resolver: LanSourceResolver | None = None,
+) -> None:
+    """Run one sync without changing the established no-observer call shape."""
+    if inventory_observer is None and source_resolver is None:
+        await sync(lan_mode=lan_mode)
+    else:
+        await sync(
+            lan_mode=lan_mode,
+            inventory_observer=inventory_observer,
+            source_resolver=source_resolver,
+        )
 
 
 def _apply_bandwidth(value: object, key: _BANDWIDTH_KEY, name: str, log) -> bool:
@@ -175,7 +215,12 @@ def _run_preview(log) -> None:
     emit_event(UiEventName.preview_end)
 
 
-async def _with_stdin_commands(log, coro) -> None:
+async def _with_stdin_commands(
+    log,
+    coro,
+    inventory_observer: InventoryObserver | None = None,
+    source_resolver: LanSourceResolver | None = None,
+) -> None:
     """Run *coro* with a background stdin command reader.
 
     The reader listens for JSON commands on stdin (one per line) and
@@ -192,7 +237,9 @@ async def _with_stdin_commands(log, coro) -> None:
 
     async def _handle_sync(**_kw: object) -> None:
         lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
+        if not _lan_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
+            return
+        await _sync_with_inventory_observer(lan, inventory_observer, source_resolver)
 
     handler.register("SYNC", _handle_sync)
 
@@ -205,11 +252,13 @@ async def _with_stdin_commands(log, coro) -> None:
         if direction == old:
             log.debug(f"Sync direction already set to {direction!r}, no change.")
             return
+        if not _lan_write_allowed(direction, log):
+            return
         CONFIG["SYNC_DIRECTION"] = direction
         log.info(f"Sync direction changed: {old!r} → {direction!r}")
         # Trigger an immediate resync with the new direction
         lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
+        await _sync_with_inventory_observer(lan, inventory_observer, source_resolver)
 
     handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
 
@@ -252,7 +301,11 @@ async def _with_stdin_commands(log, coro) -> None:
             await stdin_task
 
 
-async def _run_stdin_wait(log) -> None:
+async def _run_stdin_wait(
+    log,
+    inventory_observer: InventoryObserver | None = None,
+    source_resolver: LanSourceResolver | None = None,
+) -> None:
     """Block reading stdin commands until EOF or SYNC.
 
     Used in continuous dry-run mode (LAN or server) where there is no
@@ -265,9 +318,11 @@ async def _run_stdin_wait(log) -> None:
     handler.register("PEERS", lambda **_kw: reemit_presence())
 
     async def _handle_sync(**_kw: object) -> None:
+        if not _lan_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
+            return
         CONFIG["DRYRUN"] = False
         lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
+        await _sync_with_inventory_observer(lan, inventory_observer, source_resolver)
         handler.stop()
 
     handler.register("SYNC", _handle_sync)

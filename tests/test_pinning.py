@@ -3,9 +3,11 @@ Tests for hsync_client.pinning (LAN Trust-On-First-Use certificate store).
 """
 
 import json
+import multiprocessing
 import os
 import stat
 import threading
+from pathlib import Path
 
 import pytest
 from hsync_common.protocol.pairing import PinDecision
@@ -13,9 +15,20 @@ from hsync_common.protocol.pairing import PinDecision
 from hsync_client.pinning import (
     PIN_FILE_ENV,
     PinStore,
+    PinStoreError,
     default_pin_store,
     default_pin_store_path,
 )
+
+
+def _race_first_pin(path: str, fingerprint: str, start, results) -> None:
+    """Child-process target for transactional first-use pinning."""
+    start.wait()
+    try:
+        decision = PinStore(Path(path)).check_and_record("cid-race", "bucket", fingerprint)
+        results.put(decision.value)
+    except BaseException as exc:  # pragma: no cover - asserted in parent
+        results.put(f"error:{type(exc).__name__}:{exc}")
 
 
 class TestDefaultPinStorePath:
@@ -57,10 +70,13 @@ class TestPinStore:
         mode = stat.S_IMODE(os.stat(path).st_mode)
         assert mode == 0o600
 
-    def test_corrupt_file_is_treated_as_empty(self, tmp_path):
+    def test_corrupt_file_fails_closed(self, tmp_path):
         path = tmp_path / "pins.json"
         path.write_text("not json", encoding="utf-8")
-        assert PinStore(path).get("cid-1", "bucket") is None
+        with pytest.raises(PinStoreError, match="corrupt"):
+            PinStore(path).get("cid-1", "bucket")
+        with pytest.raises(PinStoreError, match="corrupt"):
+            PinStore(path).check_and_record("cid-1", "bucket", "abc123")
 
     def test_check_and_record_first_use_is_trusted_and_pins(self, tmp_path):
         path = tmp_path / "pins.json"
@@ -120,6 +136,37 @@ class TestPinStore:
         # The file survives as valid JSON (last writer wins per key).
         data = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(data, dict)
-        assert any(k.startswith("cid-") for k in data)
+        assert {k.split("|", 1)[0] for k in data} == {f"cid-{i}" for i in range(4)}
         # No temp file left behind.
         assert not list(path.parent.glob("*.tmp"))
+
+    def test_first_use_is_atomic_across_processes(self, tmp_path):
+        """Two processes racing first use cannot both establish different trust."""
+        ctx = multiprocessing.get_context("spawn")
+        path = tmp_path / "pins.json"
+        start = ctx.Barrier(2)
+        results = ctx.Queue()
+        processes = [
+            ctx.Process(target=_race_first_pin, args=(str(path), fp, start, results))
+            for fp in ("a" * 64, "b" * 64)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=15)
+            assert process.exitcode == 0
+
+        decisions = sorted(results.get(timeout=2) for _ in processes)
+        assert decisions == ["changed", "trusted"]
+        assert PinStore(path).get("cid-race", "bucket") in {"a" * 64, "b" * 64}
+
+    def test_first_use_persistence_failure_never_returns_trusted(self, tmp_path, monkeypatch):
+        """TOFU is not granted when the durable write cannot complete."""
+        store = PinStore(tmp_path / "pins.json")
+
+        def fail_save(_data):
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "_save_unlocked", fail_save)
+        with pytest.raises(PinStoreError, match="persist"):
+            store.check_and_record("cid-1", "bucket", "a" * 64)

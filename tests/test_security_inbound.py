@@ -551,7 +551,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(bucket), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(bucket),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(url, params={"filename": "../sync-evil/secret.txt"}, timeout=5)
@@ -569,7 +574,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(bucket), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(bucket),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "../sync-evil"}, timeout=5)
@@ -587,7 +597,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(bucket), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(bucket),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
@@ -624,7 +639,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -644,7 +664,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -664,7 +689,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "t", "path": "", "mtime": "", "ctime": ""}
@@ -682,7 +712,12 @@ class TestLANServerHardening:
 
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -706,7 +741,12 @@ class TestLANServerHardening:
         srv, port = server
         with (
             patch(
-                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+                },
             ),
             patch("hsync_client.lan_server.MAX_TOMBSTONE_PAYLOAD_BYTES", 1024),
             patch("hsync_client.tombstones.merge_payload", return_value=0) as mock_merge,
@@ -733,7 +773,12 @@ class TestLANServerHardening:
         srv, port = server
         future = str(time.time() + 10_000_000)
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {

@@ -39,7 +39,8 @@ flowchart TB
 | **Real-Time Sync** | WebSocket-based instant event propagation (implicit; continuous mode is the default) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
 | **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
-| **Optional Authentication** | Shared secret key for security |
+| **Peer-Assisted Downloads** | Large files can be fetched from exact-hash continuous slaves before master fallback |
+| **Optional Authentication** | Shared key authenticates all traffic; no-key operation is read-only by default |
 | **Random Port Allocation** | Avoids port conflicts |
 | **Auto-Tuning** | Environment-adaptive defaults for HTTP timeout, retry, and concurrency |
 
@@ -51,8 +52,11 @@ In plain terms, LAN mode works in three steps:
    peers find each other automatically with no IP addresses to configure.
 2. **Election** — the peers agree on a single **master** that coordinates sync.
    The choice is automatic (see [Master Election](#master-election)).
-3. **Sync** — peers connect to the master over an encrypted channel. The master
-   coordinates sync as a transport hub; afterwards every change
+3. **Sync** — peers connect to the master over an encrypted channel. For an
+   eligible full download, the master may identify continuous slaves that hold
+   the exact listed hash; the requester tries those sources before downloading
+   the full file from the master. The master remains the source of metadata,
+   delta transfer, and final fallback. Afterwards every change
    (create, modify, delete, rename) is propagated in real time, in both
    directions, over a live WebSocket connection. No peer is authoritative —
    concurrent edits are resolved causally (see
@@ -94,6 +98,23 @@ This is useful for:
 - **Intermittent connectivity**: Handle peers that connect and disconnect frequently
 
 Pass `--once` to disable this behavior and exit after a single sync attempt.
+
+### Peer-Assisted Downloads
+
+Peer assistance is enabled by default for files of at least 1 MiB. A continuous,
+non-dry-run slave publishes an inventory and exposes a read-only HTTPS seeder on
+its advertised LAN port. The master returns candidate endpoints only for the
+exact `(path, SHA-256)` from its listing. The requester verifies the final body
+against that listing hash before replacing the destination, regardless of which
+source sent the bytes.
+
+The transfer order is deterministic: master delta first when applicable, then
+ranked peer full-download candidates, then canonical master full-download. An
+interrupted exact body may resume from another source; malformed ranges, wrong
+sizes, or completed hash failures discard the partial body. One-shot slaves can
+request from peers but never seed. Use `--no-peer-download` to disable this path.
+Threshold and concurrency settings are listed in
+[Configuration — LAN P2P Mode](configuration-lan.md).
 
 ### Behavior
 
@@ -155,8 +176,15 @@ connection that carries the data.
   hsync lan -b photos -p ~/Pictures
   ```
 
-- **Trusted home networks** — on a network you control you can run without a key;
-  peers then sync without authentication.
+- **No-key mode is read-only by default** — discovery, listings, downloads,
+  exact-hash source lookup, and download delta remain available, but any
+  write-capable sync is refused and mutating HTTP endpoints return `403`.
+- **Dangerous explicit opt-in** — `--allow-unauthenticated-writes` or
+  `HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES=true` permits no-key mutations on a
+  fully trusted LAN. A TTY or `--yes` does not grant this permission.
+- **Per-source trust** — each selected seeder is pinned independently by device
+  ID and bucket before connecting. `--require-pairing` remains specific to the
+  elected master; seeder trust uses persistent TOFU.
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
 > [LAN Internals → Transport Security](internal/lan-internals.md#transport-security-internals).

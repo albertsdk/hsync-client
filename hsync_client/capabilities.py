@@ -33,6 +33,8 @@ def local_capabilities() -> set[Capability]:
     authenticated capability source (ADR-0024).
     """
     caps: set[Capability] = {Capability.vector_clocks, Capability.tombstones}
+    if CONFIG.get("LAN_PEER_DOWNLOAD", True):
+        caps.add(Capability.peer_download)
     if CONFIG.get("COMPRESSION_ENABLED", False):
         caps.add(Capability.compression)
     if CONFIG.get("DELTA_ENABLED", False):

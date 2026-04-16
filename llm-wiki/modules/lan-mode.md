@@ -34,8 +34,9 @@ SSOT in `hsync-common`.
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.lan.elect_master`
 (bidirectional peers preferred; `--force-master`/`--never-master` honored). TXT
-records advertise `protocol`, `cert_fp`, `sync_direction`; protocol-mismatched
-peers are ignored.
+records advertise `protocol`, `cert_fp`, `sync_direction`, `peer_download`, and
+`seed`. `peer_download` means the node implements the contract; `seed=true`
+means its HTTPS seeder is reachable now. Protocol-mismatched peers are ignored.
 
 `LANSync.wait_for_discovery` is the single owner of the display-ready presence
 pair (`hsync_client/presence.py`): `total = 1 + alive mDNS peers`, `connected =
@@ -129,6 +130,10 @@ matrix on the wire data.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `LANServer` | `lan_server.py:1627` | HTTPS file server (REST mirror of hsync-server) |
+| `LANServerMode` | `lan_server.py` | explicit `master` or `seeder` route surface. Seeder mode allows health/time and exact-hash `GET /files/download` only; all mutating or unrelated routes are `405` |
+| `LanInventoryStore` | `lan_inventory.py` | master-owned SQLite availability index keyed by `(bucket, normalized path, lowercase SHA-256, CID)` with per-session tokens; stale disconnect cleanup cannot delete a newer reconnect session |
+| `LanSourceService` | `lan_sources.py` | validates bounded wantlists, joins inventory holders with live/seed-ready peer snapshots, excludes requester/self, shuffles otherwise-equal candidates, and emits strict source responses |
+| `/files/sources` | `lan_server.py` | authenticated-if-key, read-only bounded POST. Wrong buckets are `404`; no-key default-deny mutation policy does not block this read operation |
 | `BoundedThreadingHTTPServer` | `:118` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap (H5, default `LAN_SERVER_MAX_THREADS=64`). With HTTP/1.1 keep-alive each **connection** — idle ones included — holds its thread+slot for its whole lifetime, so the cap is sized for the peers' connection pools, not just in-flight requests; idle connections are reaped after `LAN_HANDLER_IDLE_TIMEOUT_S` (300 s — above the worst-case inter-chunk silence of a maximally throttled 256 KiB upload at the 1 KB/s CLI floor, ~262 s, and the client HTTP timeout); `handle_error` logs routine peer connection resets/timeouts at DEBUG |
 | `LANRequestHandler` | `:215` | per-request handler; **HTTP/1.1 keep-alive** (`protocol_version`, every response framed with an exact `Content-Length` — `_send_json_response` always sets it — so connections persist and no TCP+TLS handshake is paid per request) with **TCP_NODELAY** on every connection (`disable_nagle_algorithm`: without it Nagle parks the small response body behind the peer's delayed ACK — a ~40 ms stall per response on persistent connections, benchmarked at 24 vs 5500 req/s by `scripts/benchmark_lan_transfers.py`); endpoints `API_PREFIX`; `POST /dirs` creates directories from slaves (`_handle_create_dir`); `POST /symlinks` creates links STRUCTURALLY from slaves (`_handle_symlink` — mirror of the central server; an existing file/link is replaced, the target is validated with `is_safe_symlink_target`). **Idempotent**: a link already present with the SAME target is a converged echo and returns 200 without touching the filesystem (unlink+recreate on every echo was what kept the SYMLINK/DELETE oscillation alive: each mutation emitted a `deleted`+`created` pair, the single inbound-origin mark was consumed by the first, and the second was rebroadcast with the master CID) |
 | `_handle_patch_permissions` | `lan_server.py` (PATCH route) | metadata-only chmod from a slave: `PATCH /files/permissions?filename&permissions&cid` applies the sanitized mode to an existing file (owner rwx floor via `set_permissions_on_dir` for dirs; no file bytes cross the wire), attributes the resulting IN_ATTRIB to the slave (`mark_inbound_origin`) so the master's watcher re-broadcasts the change to the other slaves. Mirrors the central server's `PATCH …/files/permissions` |
@@ -138,7 +143,7 @@ matrix on the wire data.
 | `_StreamingMultipartParser` | `multipart.py:68` | streaming upload parsing (extracted to `multipart.py`) |
 | `_handle_upload_status` | `lan_server.py:1067` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
 | `_handle_upload` (offset) | `:1153` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected |
-| compressed download cap | `LANRequestHandler._handle_download` | the compressed download branch buffers the whole file in RAM to build the zstd frame, so it is capped at `LAN_COMPRESSION_MAX_FILE_BYTES` (256 MB): larger compressible files fall back to the streaming UNCOMPRESSED path (no master RAM spike — the old bound was `MAX_INBOUND_SIZE`, 10 GB by default) and keep Range-resume, which a zstd response cannot offer |
+| safe download serving | `LANRequestHandler._handle_download` / `_serve_open_file` | opens beneath the bucket with component-by-component `O_NOFOLLOW`, hashes and streams the same descriptor, checks identity/size during transfer, emits canonical `X-Checksum-SHA256`, and treats `Content-Length` as wire bytes. Zstd is selected only after explicit negotiation and is staged in a bounded temporary file; ranges are always identity |
 | `_CappedBytesWriter` | `multipart.py:39` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:185` | WSS event hub; LAN-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); **`lan/1` capability exchange (ADR-0024)** — greeting/hello/auth frames carry `protocol_version` + `capabilities` (master advertise, slave reply); a protocol mismatch on the auth path is a hard fail (`reason: protocol_incompatible`); when no `LAN_KEY` is set, the `hello` handshake exchanges capabilities for coherence only (logged `unauthenticated`) — CID format is validated in both paths |
 | `LANMasterFileEventHandler` | `:546` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
@@ -189,6 +194,9 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `lan_websocket_client` | `lan_websocket.py:736` | connect to master WSS, verify cert fp, **`lan/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`:875`) fires only after the handshake completed — a failed auth never reaches it |
+| `LanInventoryPublisher` | `lan_inventory.py` | continuous-slave WSS publisher: immutable snapshot + bounded pending journal, chunked snapshot/delta frames, one in-flight generation, ACK timeout/retry, and resnapshot fallback on overflow/reject/reconnect |
+| slave seeder lifecycle | `lan_handler.py` | starts only for continuous non-dry-run slaves after the read-only HTTPS port binds; publishes `seed=true` only after bind; stops accepting, withdraws TXT readiness, and drops role-owned publisher/resolver state before becoming master or exiting. Bind/readiness failure degrades to requester-only |
+| `LanSourceResolver` / `LanSourceTelemetry` | `lan_sources.py` | one bounded master wantlist per initial sync and one fresh single-file lookup for realtime events; immutable candidate maps are passed explicitly. Sources are ranked by cooldown, consecutive failures, RTT, throughput, master order, CID; health has deterministic exponential cooldown and 10-minute TTL |
 | `_handle_lan_event` | `lan_websocket.py:985` | apply inbound master events locally; the `lan_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_lan_dispatch_ctx`, `lan_websocket.py:963`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |
 | `LANSlaveFileEventHandler` | `:1082` | slave-local FS changes → upload to master. Realtime operations (uploads, inbound event downloads, deletes, renames) run on a process-wide bounded pool (`_get_realtime_executor:109`, `REALTIME_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of one thread per event: long-lived workers reuse their keep-alive HTTP sessions to the master (no TCP+TLS handshake per file) and the parallelism stays predictable; `_start_operation` tracks `Future`s so `wait_pending` can still wait them out gracefully |
 | live deletion marker (slave) | `LANSlaveFileEventHandler.on_deleted` (`:1771`) / `on_moved` visible→hidden | a slave-side file deletion records a **causal tombstone locally** via the shared `_record_deletion_marker` (`lan_websocket.py:520`) before the best-effort HTTP DELETE reaches the master. Correctness never depends on the transport being up: the marker inherits the merge-base hash + clock (ticked by this peer) and drops the merge base, so the next reconciliation deletes the stale remote copy (`delete_remote`) instead of resurrecting it — the master-unreachable-deletion regression |
@@ -205,14 +213,14 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Symbol | Purpose |
 | ------ | ------- |
-| `local_capabilities` | runtime-derived capability set advertised on every handshake (always `vector_clocks` + `tombstones`; `compression`/`delta` when enabled) — shared by remote and LAN transports (ADR-0024) |
+| `local_capabilities` | runtime-derived capability set advertised on every handshake (always `vector_clocks` + `tombstones`; `compression`/`delta` when enabled; `peer_download` only when the runtime feature is enabled) — shared by remote and LAN transports |
 | `adopt_remote_capabilities` | adopts the authenticated peer's capabilities as the session transfer gates (`SERVER_COMPRESSION_ENABLED`/`SERVER_DELTA_ENABLED`) |
 
 ## Security: TOFU pinning + persistent identity
 
 | Concern | Code | Notes |
 | ------- | ---- | ----- |
-| Pin store | `pinning.py:56` (`PinStore`) | disk-backed, `0o600` (`_PIN_FILE_MODE:40`); key `_pin_key:52`; path `default_pin_store_path:43` / `PIN_FILE_ENV:36`. Writes are atomic and multi-process safe: `_save` (`pinning.py:81`) writes a **per-write unique** temp file (`tempfile.mkstemp`) then `os.replace`s it into place — a fixed `.tmp` suffix would race across the several processes that share one store (peers on a host, or several buckets) and crash the loser with `FileNotFoundError`; readers never see a torn file (last writer wins) |
+| Pin store | `pinning.py` (`PinStore`) | disk-backed `0o600` JSON keyed by `(CID, bucket)`. Every read-modify-write holds a sibling `.lock` file with POSIX `flock` or Windows `msvcrt.locking`, reloads inside the lock, writes a unique same-directory temp, fsyncs file + parent directory, and atomically replaces. Master and each selected seeder use independent persistent TOFU entries; `--require-pairing` applies to the master only |
 | Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed`/`pairing_needed` |
 | Device identity | `identity.py` (`load_or_create_device_identity`) | Syncthing-style: one identity per installation — stable device ID (`device_id` file, CID_PATTERN-valid) + keypair in `HSYNC_DEVICE_DIR` (`default_device_dir`); cached process-wide. The device ID **is** the LAN `cid` (resolved in `main_logic.run_sync`), so pins survive restarts and cert rotation (delete `*.pem`, keep `device_id`) is detected as `[FINGERPRINT CHANGED]`. Keypair itself: `ssl_utils.load_or_create_master_cert` (dir delegates to `identity.default_device_dir`) |
 | Instance lock | `identity.py` (`InstanceLock`) | cross-process `flock` per synced dir (key = sha256 of realpath) in `HSYNC_LOCKS_DIR` / `$XDG_RUNTIME_DIR/hsync/locks`; kernel-released on death (never stale); second process on the same dir is refused with the holder PID in the message. Acquired for the whole run in `main_logic.run_sync`; same-process re-entry is a no-op (CliRunner tests) |
@@ -222,13 +230,17 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 On the unauthenticated (no `LAN_KEY`) WSS `hello` path the declared CID is not
 authenticated, so a hostile peer that observes mDNS could squat another
 slave's CID and get the legit slave refused while it holds the connection.
-Accepted trade-off: in that mode any peer already has read/write access to the
-share, so the availability loss is marginal next to the protection against the
-far more common *accidental* clone (a copied config on a home LAN).
+No-key mode is read-only by default: discovery, WSS availability publication,
+list/download/source lookup, and download-delta reads remain available, while
+write-capable startup and every mutating HTTP route are denied unless the
+explicit dangerous opt-in is set. CID squatting can therefore affect
+availability/source hints but cannot authorize a filesystem mutation.
 | Connection pinning | `ssl_utils.py` | `create_fingerprint_ssl_context`, `FingerprintHTTPAdapter`, `verify_peer_cert_fingerprint` (no TOCTOU) |
 
-HTTPS/WSS is mandatory in LAN mode (no plaintext fallback). Write-capable sync in
-non-interactive mode requires a LAN key (`main_logic._check_lan_write_policy`).
+HTTPS/WSS is mandatory in LAN mode (no plaintext fallback). Write-capable no-key
+sync requires `--allow-unauthenticated-writes` or
+`HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES=true`; TTY state and `--yes` never
+authorize it (`main_logic._check_lan_write_policy`).
 
 > Human guide: `../../docs/lan-mode.md`. Election/security rationale:
 > ADRs 0001/0002 + `lan-protocol.md` (see [decisions.md](../decisions.md)).

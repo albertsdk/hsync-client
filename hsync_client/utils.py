@@ -144,7 +144,12 @@ def get_ssl_verify() -> bool | str:
     return True
 
 
-def get_http_session() -> "Session":
+_CONFIG_FINGERPRINT = object()
+
+
+def get_http_session(
+    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+) -> "Session":
     """Build a ``requests.Session`` that pins the LAN master cert when required.
 
     When ``MASTER_CERT_FINGERPRINT`` is set the session mounts a
@@ -159,7 +164,11 @@ def get_http_session() -> "Session":
     Returns:
         A configured :class:`requests.Session`.
     """
-    fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
+    fingerprint = (
+        CONFIG.get("MASTER_CERT_FINGERPRINT")
+        if cert_fingerprint is _CONFIG_FINGERPRINT
+        else cert_fingerprint
+    )
     cache_key = str(fingerprint) if fingerprint else ""
 
     # Lazy-init the per-thread session store.
@@ -190,19 +199,34 @@ def get_http_session() -> "Session":
 _http_session_cache = threading.local()
 
 
-def http_get(url: str, **kwargs) -> "Response":
+def http_get(
+    url: str,
+    *,
+    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    **kwargs,
+) -> "Response":
     """GET ``url`` through a fingerprint-pinned session (see :func:`get_http_session`)."""
-    return get_http_session().get(url, **kwargs)
+    return get_http_session(cert_fingerprint).get(url, **kwargs)
 
 
-def http_post(url: str, **kwargs) -> "Response":
+def http_post(
+    url: str,
+    *,
+    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    **kwargs,
+) -> "Response":
     """POST to ``url`` through a fingerprint-pinned session."""
-    return get_http_session().post(url, **kwargs)
+    return get_http_session(cert_fingerprint).post(url, **kwargs)
 
 
-def http_delete(url: str, **kwargs) -> "Response":
+def http_delete(
+    url: str,
+    *,
+    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    **kwargs,
+) -> "Response":
     """DELETE ``url`` through a fingerprint-pinned session."""
-    return get_http_session().delete(url, **kwargs)
+    return get_http_session(cert_fingerprint).delete(url, **kwargs)
 
 
 # OpenSSL signatures emitted when an HTTPS client speaks to a plaintext HTTP
@@ -246,9 +270,14 @@ def diagnose_connection_error(exc: BaseException, server_url: str) -> str | None
     return None
 
 
-def http_patch(url: str, **kwargs) -> "Response":
+def http_patch(
+    url: str,
+    *,
+    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    **kwargs,
+) -> "Response":
     """PATCH ``url`` through a fingerprint-pinned session."""
-    return get_http_session().patch(url, **kwargs)
+    return get_http_session(cert_fingerprint).patch(url, **kwargs)
 
 
 # =============================================================================

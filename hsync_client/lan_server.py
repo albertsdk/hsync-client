@@ -22,11 +22,18 @@ Endpoints:
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import hmac
 import json
 import os
+import stat as stat_module
+import tempfile
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
 from pathlib import Path
@@ -35,10 +42,13 @@ from sys import exc_info
 from typing import IO, TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
+import zstandard as zstd
 from hsync_common.clock import clamp_incoming_corrected_mtime
+from hsync_common.compression import COMPRESSION_LEVEL
 from hsync_common.constants import (
     CONTENT_TYPE_JSON,
     CONTENT_TYPE_OCTET_STREAM,
+    HEADER_CHECKSUM_SHA256,
     PARTIAL_DOWNLOAD_SUFFIX,
 )
 from hsync_common.hashing import compute_sha256, is_sha256_hex
@@ -46,13 +56,17 @@ from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
-from hsync_common.path_validation import resolve_within
+from hsync_common.path_validation import resolve_within, validate_remote_relpath
+from hsync_common.protocol.peer_download import (
+    LAN_SOURCES_MAX_BODY_BYTES,
+    build_lan_sources_response,
+    validate_lan_sources_request,
+)
 from loguru import logger as log
 
 from hsync_client.arbitration import conflicted_copy_name
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
-    compress_data,
     should_compress,
 )
 from hsync_client.config import CONFIG
@@ -65,6 +79,8 @@ from hsync_client.multipart import (
 from hsync_client.utils import cid_suffix, inbound_size_cap, open_partial_no_follow
 
 if TYPE_CHECKING:
+    from hsync_client.lan_inventory import LanInventoryStore
+    from hsync_client.lan_sources import LanSourceService
     from hsync_client.lan_websocket import SlaveCidRegistry
 
 # =============================================================================
@@ -97,13 +113,128 @@ LAN_HANDLER_IDLE_TIMEOUT_S = 300
 # into RAM per iteration.
 _LAN_UPLOAD_CHUNK_SIZE = 256 * 1024
 
-# Cap (bytes) on the file size the compressed download branch accepts. That
-# branch buffers the whole file in RAM to build the zstd frame, so beyond
-# this size the master serves the streaming UNCOMPRESSED path instead of
-# spiking its memory (the old fallback read up to MAX_INBOUND_SIZE — 10 GB by
-# default — into RAM). The threshold also keeps Range-resume available for
-# huge files, which a zstd response cannot offer.
+# Cap (bytes) on the file size the compressed download branch accepts. The
+# branch stages a bounded zstd frame in a temporary file before sending any
+# headers; larger files use identity streaming so resume stays available and
+# temporary-disk use remains bounded.
 LAN_COMPRESSION_MAX_FILE_BYTES = 256 * 1024 * 1024
+
+
+class LANServerMode(StrEnum):
+    """Route policy for the embedded LAN listener."""
+
+    master = "master"
+    seeder = "seeder"
+
+
+def _same_open_file(before: os.stat_result, after: os.stat_result) -> bool:
+    """Return whether an opened regular file retained identity and content metadata."""
+    return (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) == (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+
+
+@contextmanager
+def _open_regular_beneath(bucket: str, relpath: str) -> Iterator[tuple[IO[bytes], os.stat_result]]:
+    """Open one regular file beneath *bucket* without following symlink components."""
+    normalized = validate_remote_relpath(relpath)
+    if not bucket or normalized is None:
+        raise PermissionError("unsafe file path")
+    root = Path(bucket).resolve(strict=True)
+    parts = Path(normalized).parts
+    if not parts:
+        raise PermissionError("unsafe file path")
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if nofollow and directory and os.open in os.supports_dir_fd:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        dir_fd = os.open(root, flags | directory)
+        try:
+            try:
+                for component in parts[:-1]:
+                    next_fd = os.open(component, flags | directory | nofollow, dir_fd=dir_fd)
+                    os.close(dir_fd)
+                    dir_fd = next_fd
+                file_fd = os.open(parts[-1], flags | nofollow, dir_fd=dir_fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise PermissionError("symlink components are not served") from exc
+                raise
+        finally:
+            os.close(dir_fd)
+    else:  # pragma: no cover - fallback for platforms without openat/O_NOFOLLOW
+        confined = resolve_within(str(root), normalized)
+        if confined is None:
+            raise PermissionError("unsafe file path")
+        before = os.lstat(confined)
+        if stat_module.S_ISLNK(before.st_mode) or not stat_module.S_ISREG(before.st_mode):
+            raise PermissionError("not a regular file")
+        file_fd = os.open(confined, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        opened = os.fstat(file_fd)
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            os.close(file_fd)
+            raise PermissionError("file identity changed while opening")
+
+    stream = os.fdopen(file_fd, "rb")
+    try:
+        opened = os.fstat(stream.fileno())
+        if not stat_module.S_ISREG(opened.st_mode):
+            raise PermissionError("not a regular file")
+        yield stream, opened
+    finally:
+        stream.close()
+
+
+def _hash_open_file(stream: IO[bytes]) -> str:
+    """Hash an already-open descriptor and rewind it for serving."""
+    digest = hashlib.sha256()
+    while chunk := stream.read(_LAN_UPLOAD_CHUNK_SIZE):
+        digest.update(chunk)
+    stream.seek(0)
+    return digest.hexdigest()
+
+
+def _stage_compressed_body(
+    stream: IO[bytes],
+    opened_stat: os.stat_result,
+    expected_sha256: str,
+) -> IO[bytes] | None:
+    """Stream one stable open-file snapshot into a bounded temporary zstd frame."""
+    staged = tempfile.TemporaryFile(mode="w+b")
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        stream.seek(0)
+        compressor = zstd.ZstdCompressor(level=COMPRESSION_LEVEL)
+        with compressor.stream_writer(staged, closefd=False) as writer:
+            while chunk := stream.read(_LAN_UPLOAD_CHUNK_SIZE):
+                digest.update(chunk)
+                total += len(chunk)
+                writer.write(chunk)
+        if (
+            total != opened_stat.st_size
+            or not _same_open_file(opened_stat, os.fstat(stream.fileno()))
+            or not hmac.compare_digest(digest.hexdigest(), expected_sha256)
+        ):
+            staged.close()
+            return None
+        staged.flush()
+        staged.seek(0)
+        return staged
+    except Exception:
+        staged.close()
+        raise
 
 
 def _extract_multipart_boundary(content_type: str) -> bytes | None:
@@ -135,6 +266,10 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     # Shared duplicate-identity guard (SlaveCidRegistry), attached by
     # LANServer.start() and read by LANRequestHandler._reject_duplicate_cid.
     cid_guard: SlaveCidRegistry | None = None
+    source_service: LanSourceService | None = None
+    mode: LANServerMode = LANServerMode.master
+    bucket: str = ""
+    peer_read_slots: threading.BoundedSemaphore | None = None
 
     def __init__(self, *args, max_threads: int = LAN_SERVER_MAX_THREADS, **kwargs):
         self._thread_semaphore = threading.BoundedSemaphore(max_threads)
@@ -185,6 +320,7 @@ ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
 ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX = "/files/upload-status"
 ENDPOINT_FILES_PERMISSIONS_SUFFIX = "/files/permissions"
+ENDPOINT_FILES_SOURCES_SUFFIX = "/files/sources"
 ENDPOINT_DIRS_SUFFIX = "/dirs"
 ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
 ENDPOINT_SYMLINKS_SUFFIX = "/symlinks"
@@ -201,9 +337,12 @@ HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+HTTP_METHOD_NOT_ALLOWED = 405
 HTTP_CONFLICT = 409
+HTTP_CONTENT_TOO_LARGE = 413
 HTTP_RANGE_NOT_SATISFIABLE = 416
 HTTP_INTERNAL_ERROR = 500
+HTTP_SERVICE_UNAVAILABLE = 503
 HTTP_INSUFFICIENT_STORAGE = 507
 
 # Cap on tombstone-gossip POST bodies: the store itself is capped at
@@ -260,7 +399,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         HTTP/1.1 persistent connection (a body-less framing would leave the
         client unable to tell where the response ends).
         """
-        body = json.dumps(data).encode("utf-8")
+        body = json.dumps(
+            data,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", CONTENT_TYPE_JSON)
         self.send_header("Content-Length", str(len(body)))
@@ -301,8 +445,41 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if hmac.compare_digest(token, str(lan_key)):
                 return True
 
-        self._send_error_response(HTTP_UNAUTHORIZED, "Unauthorized")
+        if self.headers.get("Content-Length") or self.headers.get("Transfer-Encoding"):
+            self._reject_unread_body(HTTP_UNAUTHORIZED, "Unauthorized")
+        else:
+            self._send_error_response(HTTP_UNAUTHORIZED, "Unauthorized")
         return False
+
+    def _check_mutation_auth(self) -> bool:
+        """Authorize a mutating endpoint under the explicit LAN write policy."""
+        if CONFIG.get("LAN_KEY"):
+            return self._check_auth()
+        if CONFIG.get("LAN_ALLOW_UNAUTHENTICATED_WRITES", False):
+            return True
+        if self.headers.get("Content-Length") or self.headers.get("Transfer-Encoding"):
+            self._reject_unread_body(
+                HTTP_FORBIDDEN,
+                "Unauthenticated LAN writes are disabled",
+            )
+        else:
+            self._send_error_response(HTTP_FORBIDDEN, "Unauthenticated LAN writes are disabled")
+        return False
+
+    def _is_seeder(self) -> bool:
+        return getattr(self.server, "mode", LANServerMode.master) is LANServerMode.seeder
+
+    def _send_method_not_allowed(self) -> None:
+        # Unsupported seeder requests are never parsed or drained. Closing the
+        # connection prevents an unread mutation body becoming a second request.
+        self.close_connection = True
+        body = json.dumps({"error": "Method not allowed"}, separators=(",", ":")).encode()
+        self.send_response(HTTP_METHOD_NOT_ALLOWED)
+        self.send_header("Allow", "GET")
+        self.send_header("Content-Type", CONTENT_TYPE_JSON)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self) -> None:
         """Handle GET requests."""
@@ -311,7 +488,45 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+
+        if self._is_seeder():
+            if path == ENDPOINT_HEALTH:
+                self._handle_health()
+                return
+            if path == ENDPOINT_TIME:
+                self._handle_time()
+                return
+            download_path = (
+                f"{ENDPOINT_BUCKETS_PREFIX}/{getattr(self.server, 'bucket', '')}"
+                f"{ENDPOINT_FILES_DOWNLOAD_SUFFIX}"
+            )
+            if path != download_path:
+                self._send_method_not_allowed()
+                return
+            required = {"filename", "sha256", "cid"}
+            if set(query) != required or any(len(query[key]) != 1 for key in required):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
+                return
+            expected_sha = query["sha256"][0]
+            requester_cid = query["cid"][0]
+            if (
+                not is_sha256_hex(expected_sha)
+                or expected_sha != expected_sha.lower()
+                or not is_valid_cid(requester_cid)
+            ):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
+                return
+            slots = getattr(self.server, "peer_read_slots", None)
+            if slots is not None and not slots.acquire(blocking=False):
+                self._send_error_response(HTTP_SERVICE_UNAVAILABLE, "Seeder read cap reached")
+                return
+            try:
+                self._handle_download(query, expected_sha256=expected_sha)
+            finally:
+                if slots is not None:
+                    slots.release()
+            return
 
         # Health check
         if path == ENDPOINT_HEALTH:
@@ -368,11 +583,41 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle POST requests."""
-        if not self._check_auth():
+        if self._is_seeder():
+            self._send_method_not_allowed()
             return
-
         parsed = urlparse(self.path)
         path = parsed.path
+
+        source_service = getattr(self.server, "source_service", None)
+        if path.endswith(ENDPOINT_FILES_SOURCES_SUFFIX):
+            if source_service is None:
+                self._reject_unread_body(HTTP_NOT_FOUND, "Not found")
+                return
+            sources_path = (
+                f"{ENDPOINT_BUCKETS_PREFIX}/{source_service.bucket}{ENDPOINT_FILES_SOURCES_SUFFIX}"
+            )
+            if path != sources_path:
+                self._reject_unread_body(HTTP_NOT_FOUND, "Not found")
+                return
+            if not self._check_auth():
+                return
+            self._handle_sources(source_service)
+            return
+
+        # Producing a delta from requester signatures is read-only: it exposes
+        # no more content than GET /files/download and remains available in a
+        # no-key download-only group.
+        if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            if not self._check_auth():
+                return
+            from hsync_client.lan_delta import handle_delta_signatures_post
+
+            handle_delta_signatures_post(self)
+            return
+
+        if not self._check_mutation_auth():
+            return
 
         # Tombstone gossip (slave -> master): /api/v1/buckets/{bucket}/tombstones
         if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
@@ -382,13 +627,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # Symlink creation (slave -> master): /api/v1/buckets/{bucket}/symlinks
         if path.endswith(ENDPOINT_SYMLINKS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_symlink(parse_qs(urlparse(self.path).query))
-            return
-
-        # Delta signatures (download delta): /api/v1/buckets/{bucket}/files/delta/signatures
-        if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            from hsync_client.lan_delta import handle_delta_signatures_post
-
-            handle_delta_signatures_post(self)
             return
 
         # Delta apply (upload delta): /api/v1/buckets/{bucket}/files/delta/apply
@@ -409,9 +647,92 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
 
+    def _handle_sources(self, source_service: LanSourceService) -> None:
+        """Validate and resolve one strict peer-source batch request."""
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.split(";", 1)[0].strip().lower() != CONTENT_TYPE_JSON:
+            self._reject_unread_body(HTTP_BAD_REQUEST, "Content-Type must be application/json")
+            return
+        if self.headers.get("Transfer-Encoding"):
+            self._reject_unread_body(HTTP_BAD_REQUEST, "Chunked request bodies are unsupported")
+            return
+
+        raw_length = self.headers.get("Content-Length")
+        content_length = (
+            int(raw_length)
+            if raw_length is not None and raw_length.isascii() and raw_length.isdigit()
+            else -1
+        )
+        if content_length > LAN_SOURCES_MAX_BODY_BYTES:
+            self._reject_unread_body(HTTP_CONTENT_TOO_LARGE, "Request body too large")
+            return
+        if content_length <= 0:
+            self._reject_unread_body(HTTP_BAD_REQUEST, "Invalid Content-Length")
+            return
+
+        body = self.rfile.read(content_length)
+        if len(body) != content_length:
+            self.close_connection = True
+            self._send_error_response(HTTP_BAD_REQUEST, "Incomplete request body")
+            return
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid JSON body")
+            return
+
+        request = validate_lan_sources_request(payload)
+        if request is None:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid sources request")
+            return
+
+        requester_cid = request["cid"]
+        requester_address = (
+            self.client_address[0]
+            if isinstance(self.client_address, tuple)
+            else str(self.client_address)
+        )
+        guard = getattr(self.server, "cid_guard", None)
+        if guard is not None and guard.request_conflict(requester_cid, requester_address):
+            if guard.should_report(requester_cid, requester_address):
+                log.error(
+                    f"{ActionLabel.SECURITY} LAN sources request from "
+                    f"{requester_address} claims CID {requester_cid} owned by another host"
+                )
+            self._send_error_response(HTTP_FORBIDDEN, "Requester CID is owned by another host")
+            return
+
+        try:
+            response = source_service.resolve(
+                requester_cid=requester_cid,
+                requester_address=requester_address,
+                files=request["files"],
+            )
+        except Exception:
+            log.exception("LAN source lookup failed; returning an empty source list")
+            try:
+                response = build_lan_sources_response(
+                    files=[
+                        {"path": file["path"], "sha256": file["sha256"], "sources": []}
+                        for file in request["files"]
+                    ]
+                )
+            except ValueError:
+                self._send_error_response(HTTP_BAD_REQUEST, "Sources response would exceed limit")
+                return
+        self._send_json_response(HTTP_OK, response)
+
+    def _reject_unread_body(self, status: int, message: str) -> None:
+        """Reject a request before reading its body and disable connection reuse."""
+        self.close_connection = True
+        self._send_error_response(status, message)
+
     def do_DELETE(self) -> None:
         """Handle DELETE requests for bidirectional sync."""
-        if not self._check_auth():
+        if self._is_seeder():
+            self._send_method_not_allowed()
+            return
+        if not self._check_mutation_auth():
             return
 
         parsed = urlparse(self.path)
@@ -427,7 +748,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:
         """Handle PATCH requests for rename operations."""
-        if not self._check_auth():
+        if self._is_seeder():
+            self._send_method_not_allowed()
+            return
+        if not self._check_mutation_auth():
             return
 
         parsed = urlparse(self.path)
@@ -445,6 +769,17 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def do_PUT(self) -> None:
+        """Reject unsupported writes consistently in read-only seeder mode."""
+        if self._is_seeder():
+            self._send_method_not_allowed()
+            return
+        self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def do_HEAD(self) -> None:
+        """Reject unsupported HEAD requests with the seeder's route policy."""
+        self._send_method_not_allowed()
 
     def _reject_duplicate_cid(self, origin_cid) -> bool:
         """Refuse a write claiming a duplicated device identity (409).
@@ -1122,8 +1457,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, IndexError):
             return None
 
-    def _handle_download(self, query: dict) -> None:
-        """Handle file download endpoint with Range request support."""
+    def _handle_download(self, query: dict, expected_sha256: str | None = None) -> None:
+        """Serve one safely-opened regular file, optionally bound to an expected hash."""
         filename = query.get("filename", [None])[0]
         if not filename:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing filename parameter")
@@ -1132,145 +1467,146 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         log.info(f'{ActionLabel.REMOTE_DOWNLOAD} "{filename}"{cid_suffix(origin_cid)}')
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
-        # Peer-supplied path is untrusted: validate and confine to the bucket
-        # (rejects traversal, absolute paths and sibling-prefix confusion).
-        filepath = resolve_within(local_bucket, filename)
-        if not filepath:
+        normalized = validate_remote_relpath(filename)
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return
+        if normalized is None:
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
-        # A peer can request a hidden/ignored file by its explicit
-        # path. Reject it so the master never serves files the local
-        # user excluded from sync (e.g. via .hsyncignore or dot-files).
         from hsync_common.ignore import should_skip
 
-        if should_skip(filepath):
+        display_path = str(Path(local_bucket) / normalized)
+        if should_skip(display_path):
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
-        if not Path(filepath).exists():
-            self._send_error_response(HTTP_NOT_FOUND, "File not found")
-            return
-
-        # A symlink inside the bucket whose target escapes it must never be
-        # dereferenced: File.get() (exists/stat/sha256) and the read below
-        # would follow it and serve the out-of-bucket target (e.g.
-        # ``secret -> /etc/passwd``) to the requesting peer.
-        if Path(filepath).is_symlink():
-            from hsync_common.models.symlink import Symlink
-            from hsync_common.path_validation import is_safe_symlink_target
-
-            try:
-                link = Symlink.get(filepath)
-            except OSError:
-                link = None
-            if link is not None and not is_safe_symlink_target(filepath, link.target, local_bucket):
-                log.warning(
-                    f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
-                    f'not serving: "{filepath}" -> "{link.target}"'
-                )
-                self._send_error_response(HTTP_FORBIDDEN, "Access denied")
-                return
-
+        response_started = False
         try:
-            # Get file metadata
-            file_obj = File.get(filepath)
-            if not file_obj:
-                self._send_error_response(HTTP_NOT_FOUND, "File not found")
-                return
+            with _open_regular_beneath(local_bucket, normalized) as (stream, opened):
+                file_size = opened.st_size
+                checksum = _hash_open_file(stream)
+                if not _same_open_file(opened, os.fstat(stream.fileno())):
+                    self._send_error_response(HTTP_CONFLICT, "File changed while opening")
+                    return
+                if expected_sha256 and not hmac.compare_digest(checksum, expected_sha256.lower()):
+                    self._send_error_response(HTTP_CONFLICT, "File checksum no longer matches")
+                    return
 
-            file_size = file_obj.size or 0
+                range_header = self.headers.get("Range")
+                range_tuple = (
+                    self._parse_range_header(range_header, file_size) if range_header else None
+                )
+                if range_header and range_tuple is None:
+                    self.send_response(HTTP_RANGE_NOT_SATISFIABLE)
+                    self.send_header("Content-Range", f"*/{file_size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
 
-            # Check for Range header
-            range_header = self.headers.get("Range")
-            range_tuple = (
-                self._parse_range_header(range_header, file_size) if range_header else None
-            )
-
-            if range_header and range_tuple is None:
-                # Invalid range requested. Content-Length: 0 keeps the
-                # HTTP/1.1 connection persistent (a body-less framing would
-                # leave the client waiting for the body).
-                self.send_response(HTTP_RANGE_NOT_SATISFIABLE)
-                self.send_header("Content-Range", f"*/{file_size}")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-
-            with open(filepath, "rb") as f:
+                permissions = f"{stat_module.S_IMODE(opened.st_mode):o}"
                 if range_tuple:
-                    # Partial content — stream in chunks, never load the
-                    # whole range into RAM (master LAN RAM exhaustion).
                     start, end = range_tuple
-                    f.seek(start)
+                    stream.seek(start)
                     range_len = end - start
-
                     self.send_response(HTTP_PARTIAL_CONTENT)
                     self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
                     self.send_header("Content-Length", str(range_len))
                     self.send_header("Content-Range", f"bytes {start}-{end - 1}/{file_size}")
                     self.send_header("Accept-Ranges", "bytes")
-                    self.send_header("X-SHA256", file_obj.sha256sum or "")
-                    self.send_header("X-Permissions", file_obj.permissions or "")
+                    self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+                    self.send_header("X-Permissions", permissions)
                     self.end_headers()
+                    response_started = True
                     remaining = range_len
                     while remaining > 0:
-                        chunk = f.read(min(_LAN_UPLOAD_CHUNK_SIZE, remaining))
+                        chunk = stream.read(min(_LAN_UPLOAD_CHUNK_SIZE, remaining))
                         if not chunk:
-                            break
+                            self.close_connection = True
+                            return
+                        if not _same_open_file(opened, os.fstat(stream.fileno())):
+                            self.close_connection = True
+                            return
                         self.wfile.write(chunk)
                         remaining -= len(chunk)
-                else:
-                    # Full file — stream in chunks, never load the whole
-                    # file into RAM (master LAN RAM exhaustion).
-                    # Compression is capped at LAN_COMPRESSION_MAX_FILE_BYTES:
-                    # the zstd branch buffers the whole file in RAM to build
-                    # the frame, so larger compressible files fall back to
-                    # the streaming UNCOMPRESSED path below instead of
-                    # spiking the master's memory — and Range-resume, which
-                    # a zstd response cannot offer, stays available for them.
-                    use_compression = (
-                        CONFIG.get("COMPRESSION_ENABLED", False)
-                        and should_compress(filepath, file_size, is_lan=True)
-                        and file_size <= LAN_COMPRESSION_MAX_FILE_BYTES
-                    )
+                    return
 
-                    if use_compression:
-                        # Bounded by LAN_COMPRESSION_MAX_FILE_BYTES: the
-                        # buffered read plus the compressed copy stay within
-                        # roughly twice that threshold, whatever the peer
-                        # requests.
-                        content = f.read(file_size)
-                        compressed_content = compress_data(content)
-                        log.debug(
-                            f"Compressed download: {len(content)} -> "
-                            f"{len(compressed_content)} bytes"
+                accept_encoding = self.headers.get("Accept-Encoding", "").lower()
+                identity_only = "identity" in accept_encoding and "zstd" not in accept_encoding
+                use_compression = (
+                    CONFIG.get("COMPRESSION_ENABLED", False)
+                    and should_compress(display_path, file_size, is_lan=True)
+                    and file_size <= LAN_COMPRESSION_MAX_FILE_BYTES
+                    and not identity_only
+                    and (not self._is_seeder() or "zstd" in accept_encoding)
+                )
+                if use_compression:
+                    try:
+                        compressed_body = _stage_compressed_body(stream, opened, checksum)
+                    except (OSError, zstd.ZstdError) as exc:
+                        log.warning(
+                            f'Could not stage compressed LAN download "{display_path}": {exc}; '
+                            "serving identity encoding"
                         )
-                        self.send_response(HTTP_OK)
-                        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                        self.send_header("Content-Length", str(len(compressed_content)))
-                        self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
-                        self.send_header("X-SHA256", file_obj.sha256sum or "")
-                        self.send_header("X-Permissions", file_obj.permissions or "")
-                        self.end_headers()
-                        self.wfile.write(compressed_content)
+                        stream.seek(0)
                     else:
-                        self.send_response(HTTP_OK)
-                        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                        self.send_header("Content-Length", str(file_size))
-                        self.send_header("Accept-Ranges", "bytes")
-                        self.send_header("X-SHA256", file_obj.sha256sum or "")
-                        self.send_header("X-Permissions", file_obj.permissions or "")
-                        self.end_headers()
-                        while True:
-                            chunk = f.read(_LAN_UPLOAD_CHUNK_SIZE)
-                            if not chunk:
-                                break
-                            self.wfile.write(chunk)
+                        if compressed_body is None:
+                            self._send_error_response(HTTP_CONFLICT, "File changed while reading")
+                            return
+                        with compressed_body:
+                            compressed_size = os.fstat(compressed_body.fileno()).st_size
+                            self.send_response(HTTP_OK)
+                            self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                            self.send_header("Content-Length", str(compressed_size))
+                            self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
+                            self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+                            self.send_header("X-Permissions", permissions)
+                            self.end_headers()
+                            response_started = True
+                            remaining = compressed_size
+                            while remaining:
+                                chunk = compressed_body.read(min(_LAN_UPLOAD_CHUNK_SIZE, remaining))
+                                if not chunk:
+                                    self.close_connection = True
+                                    return
+                                self.wfile.write(chunk)
+                                remaining -= len(chunk)
+                        return
+                    if not _same_open_file(opened, os.fstat(stream.fileno())):
+                        self._send_error_response(HTTP_CONFLICT, "File changed while reading")
+                        return
 
-        except OSError as e:
-            log.error(f"Error reading file {filepath}: {e}")
-            self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
+                self.send_response(HTTP_OK)
+                self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+                self.send_header("X-Permissions", permissions)
+                self.end_headers()
+                response_started = True
+                while True:
+                    chunk = stream.read(_LAN_UPLOAD_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    if not _same_open_file(opened, os.fstat(stream.fileno())):
+                        self.close_connection = True
+                        return
+                    self.wfile.write(chunk)
+                if not _same_open_file(opened, os.fstat(stream.fileno())):
+                    self.close_connection = True
+                return
+        except FileNotFoundError:
+            self._send_error_response(HTTP_NOT_FOUND, "File not found")
+        except PermissionError as exc:
+            log.warning(f'{ActionLabel.SECURITY} Refusing file serve "{display_path}": {exc}')
+            self._send_error_response(HTTP_FORBIDDEN, "Access denied")
+        except OSError as exc:
+            log.error(f"Error reading file {display_path}: {exc}")
+            if response_started:
+                self.close_connection = True
+            else:
+                self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 
     def _handle_upload_status(self, query: dict) -> None:
         """Handle GET /api/v1/buckets/{bucket}/files/upload-status.
@@ -1853,6 +2189,11 @@ class LANServer:
         cert_file: str | None = None,
         key_file: str | None = None,
         cid_guard: SlaveCidRegistry | None = None,
+        inventory_store: LanInventoryStore | None = None,
+        source_service: LanSourceService | None = None,
+        mode: LANServerMode = LANServerMode.master,
+        bucket: str | None = None,
+        peer_read_cap: int = 2,
     ) -> None:
         """
         Initialize the LAN server.
@@ -1873,6 +2214,15 @@ class LANServer:
         self._cert_file = cert_file
         self._key_file = key_file
         self._cid_guard = cid_guard
+        self._inventory_store = inventory_store
+        self._source_service = source_service
+        if peer_read_cap < 1:
+            raise ValueError("peer_read_cap must be at least 1")
+        self._mode = mode
+        self._bucket = bucket or str(CONFIG.get("REMOTE_BUCKET", ""))
+        self._peer_read_slots = (
+            threading.BoundedSemaphore(peer_read_cap) if mode is LANServerMode.seeder else None
+        )
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._running = False
@@ -1896,6 +2246,27 @@ class LANServer:
         """The shared duplicate-identity guard (``None`` when disabled)."""
         return self._cid_guard
 
+    @property
+    def inventory_store(self) -> LanInventoryStore | None:
+        """Role-owned inventory store shared with the WSS server."""
+        return self._inventory_store
+
+    @property
+    def source_service(self) -> LanSourceService | None:
+        """Batch source resolver exposed by this master."""
+        return self._source_service
+
+    @property
+    def mode(self) -> LANServerMode:
+        return self._mode
+
+    def close_inventory(self) -> None:
+        """Close SQLite after HTTP and WSS consumers have stopped."""
+        store = self._inventory_store
+        self._inventory_store = None
+        if store is not None:
+            store.close()
+
     def start(self) -> None:
         """Start the server in a background thread."""
         import ssl
@@ -1904,36 +2275,47 @@ class LANServer:
             log.warning("LAN server already running")
             return
 
-        self._server = BoundedThreadingHTTPServer(
+        server = BoundedThreadingHTTPServer(
             ("0.0.0.0", self._port), LANRequestHandler, max_threads=LAN_SERVER_MAX_THREADS
         )
+        self._server = server
         # Expose the shared duplicate-identity guard to the request handlers.
         self._server.cid_guard = self._cid_guard
+        self._server.source_service = self._source_service
+        self._server.mode = self._mode
+        self._server.bucket = self._bucket
+        self._server.peer_read_slots = self._peer_read_slots
         # Daemonize per-request threads so they don't block process shutdown
         self._server.daemon_threads = True
         # Cap the socket backlog so excess connections queue (bounded) instead
         # of being accepted immediately and consuming a thread slot.
         self._server.request_queue_size = LAN_SERVER_MAX_THREADS
 
-        # Wrap socket with SSL if HTTPS is enabled
-        if self._use_https:
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ssl_context.load_cert_chain(
-                self._cert_file,  # type: ignore[arg-type]
-                self._key_file,  # type: ignore[arg-type]
-            )
-            self._server.socket = ssl_context.wrap_socket(
-                self._server.socket,
-                server_side=True,
-            )
-            protocol = "HTTPS"
-        else:
-            protocol = "HTTP"
+        try:
+            # Wrap socket with SSL if HTTPS is enabled
+            if self._use_https:
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ssl_context.load_cert_chain(
+                    self._cert_file,  # type: ignore[arg-type]
+                    self._key_file,  # type: ignore[arg-type]
+                )
+                self._server.socket = ssl_context.wrap_socket(
+                    self._server.socket,
+                    server_side=True,
+                )
+                protocol = "HTTPS"
+            else:
+                protocol = "HTTP"
+        except BaseException:
+            server.server_close()
+            self._server = None
+            raise
 
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
         self._running = True
-        log.info(f"LAN master server started on port {self._port} ({protocol})")
+        role = "seeder" if self._mode is LANServerMode.seeder else "master server"
+        log.info(f"LAN {role} started on port {self._port} ({protocol})")
 
     def _serve(self) -> None:
         """Server loop (runs in background thread)."""
@@ -1949,10 +2331,12 @@ class LANServer:
             self._server.shutdown()
             self._server.server_close()
 
-        # Reap any parked delta literal payloads tied to this server lifetime.
-        from hsync_client.lan_delta import reset_delta_lan_state
+        if self._mode is LANServerMode.master:
+            # Reap any parked delta literal payloads tied to the master lifetime.
+            from hsync_client.lan_delta import reset_delta_lan_state
 
-        reset_delta_lan_state()
+            reset_delta_lan_state()
 
         self._running = False
-        log.info("LAN master server stopped")
+        role = "seeder" if self._mode is LANServerMode.seeder else "master server"
+        log.info(f"LAN {role} stopped")

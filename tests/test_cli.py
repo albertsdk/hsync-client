@@ -298,6 +298,31 @@ class TestTyperCli:
         assert call_kwargs["lan_require_pairing"] is True
 
     @patch("hsync_client.main_logic.run_sync")
+    def test_peer_download_default_and_opt_out(self, mock_run_sync):
+        """Peer downloading is on by default and --no-peer-download is final."""
+        result = runner.invoke(app, ["lan", "-b", "test"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["lan_peer_download_enabled"] is True
+
+        result = runner.invoke(app, ["lan", "-b", "test", "--no-peer-download"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["lan_peer_download_enabled"] is False
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_allow_unauthenticated_writes_option(self, mock_run_sync):
+        """The dangerous no-key mutation opt-in is explicit and defaults off."""
+        result = runner.invoke(app, ["lan", "-b", "test"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["lan_allow_unauthenticated_writes"] is False
+
+        result = runner.invoke(
+            app,
+            ["lan", "-b", "test", "--allow-unauthenticated-writes"],
+        )
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["lan_allow_unauthenticated_writes"] is True
+
+    @patch("hsync_client.main_logic.run_sync")
     def test_yes_flag_long(self, mock_run_sync):
         """CLI accepts --yes flag."""
         result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "--yes"])
@@ -592,7 +617,13 @@ class TestCapabilitiesJson:
         result = runner.invoke(app, ["--capabilities-json"])
         doc = parse_capabilities(result.output)
         assert doc is not None
-        for flag in ("--never-master", "--force-master", "--require-pairing"):
+        for flag in (
+            "--never-master",
+            "--force-master",
+            "--require-pairing",
+            "--no-peer-download",
+            "--allow-unauthenticated-writes",
+        ):
             assert flag in doc["cli_options"]["lan"]
         for flag in ("--port", "--insecure", "--ca-cert"):
             assert flag in doc["cli_options"]["server"]

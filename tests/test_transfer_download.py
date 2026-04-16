@@ -17,6 +17,7 @@ from requests import RequestException
 
 from hsync_client.events import UiEventName
 from hsync_client.exceptions import PermanentDownloadError
+from hsync_client.lan_sources import LanPeerSource, PeerFailureKind
 from hsync_client.transfer import download_file
 
 
@@ -276,7 +277,7 @@ class TestDownloadFileResume:
         file = File(
             filepath="file.txt",
             sha256sum=hashlib.sha256(partial_prefix + new_chunk).hexdigest(),
-            size=1000,
+            size=len(partial_prefix + new_chunk),
             mtime=1000,
             ctime=1000,
         )
@@ -287,7 +288,14 @@ class TestDownloadFileResume:
 
         mock_response = MagicMock()
         mock_response.status_code = 206
-        mock_response.headers = {"Content-Encoding": ""}
+        mock_response.headers = {
+            "Content-Encoding": "",
+            "Content-Range": (
+                f"bytes {len(partial_prefix)}-{len(partial_prefix + new_chunk) - 1}/"
+                f"{len(partial_prefix + new_chunk)}"
+            ),
+            "Content-Length": str(len(new_chunk)),
+        }
         mock_response.iter_content = MagicMock(return_value=[new_chunk])
 
         with (
@@ -645,7 +653,8 @@ class TestDownloadSizeCap:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
         ):
-            download_file(file)
+            with pytest.raises(PermanentDownloadError):
+                download_file(file)
 
         assert not (tmp_path / "bomb.txt").exists()
         assert not (tmp_path / "bomb.txt.part").exists()
@@ -698,6 +707,369 @@ class TestDownloadSizeCap:
             download_file(file)
 
         assert (tmp_path / "ok.txt").read_bytes() == content
+
+
+class TestPeerDownloadFallback:
+    """Exact-hash peer downloads share resume state and fall back safely."""
+
+    @staticmethod
+    def _config(tmp_path):
+        return {
+            "API": {"buckets": "https://master:8443/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "REQUEST_HEADERS": {"Authorization": "Bearer lan-key"},
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": "r" * 21,
+            "HTTP_TIMEOUT": 5,
+            "COMPRESSION_ENABLED": True,
+            "MIN_FREE_DISK_SPACE": 0,
+            "MAX_INBOUND_SIZE": 0,
+            "TRANSFER_RETRY_ATTEMPTS": 1,
+        }
+
+    @staticmethod
+    def _source(cid: str, *, compression: bool = False) -> LanPeerSource:
+        return LanPeerSource(
+            cid=cid,
+            download_url="https://10.0.0.2:8443/api/v1/buckets/test/files/download",
+            cert_fingerprint="a" * 64,
+            compression=compression,
+        )
+
+    @staticmethod
+    def _response(content: bytes, digest: str, *, status: int = 200) -> MagicMock:
+        response = MagicMock()
+        response.status_code = status
+        response.headers = {
+            "Content-Length": str(len(content)),
+            "X-Checksum-SHA256": digest,
+        }
+        response.iter_content.return_value = [content]
+        return response
+
+    @staticmethod
+    def _resolver(sources: tuple[LanPeerSource, ...]) -> MagicMock:
+        resolver = MagicMock()
+        resolver.candidates_for.return_value = sources
+        resolver.authorize.return_value = True
+        resolver.request_headers.return_value = {"Accept-Encoding": "identity"}
+        return resolver
+
+    def test_peer_success_uses_explicit_pin_and_emits_source_cid(self, tmp_path):
+        """A verified peer body never contacts the master and identifies its source."""
+        import hashlib
+
+        content = b"peer payload"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="peer.txt", sha256sum=digest, size=len(content))
+        source = self._source("s" * 21)
+        resolver = self._resolver((source,))
+        response = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", return_value=response) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+            patch("hsync_client.transfer.emit_event") as mock_emit,
+            patch("hsync_client.transfer.log.info") as mock_log,
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "peer.txt").read_bytes() == content
+        assert mock_get.call_count == 1
+        request = mock_get.call_args
+        assert request.kwargs["cert_fingerprint"] == source.cert_fingerprint
+        assert request.kwargs["params"] == {
+            "filename": "peer.txt",
+            "sha256": digest,
+            "cid": "r" * 21,
+        }
+        assert any(call.kwargs.get("source_cid") == source.cid for call in mock_emit.call_args_list)
+        assert any(
+            f"source_cid={source.cid}" in str(call.args[0]) for call in mock_log.call_args_list
+        )
+        resolver.record_success.assert_called_once()
+
+    def test_delta_is_attempted_before_peer_and_master_full_fallback(self):
+        """The frozen order is master delta, ranked peer full, then master full."""
+        from hsync_client.transfer import _download_file_attempt, _PeerSourceFailure
+
+        file = File(filepath="ordered.bin", sha256sum="d" * 64, size=10)
+        source = self._source("s" * 21)
+        resolver = self._resolver((source,))
+        calls: list[tuple[bool, LanPeerSource | None, bool]] = []
+
+        def attempt(_file, _observer, **kwargs):
+            calls.append(
+                (
+                    bool(kwargs.get("delta_only")),
+                    kwargs.get("source"),
+                    bool(kwargs.get("allow_delta", True)),
+                )
+            )
+            if kwargs.get("delta_only"):
+                return False
+            if kwargs.get("source") is not None:
+                raise _PeerSourceFailure(PeerFailureKind.conflict, "stale")
+            return True
+
+        with patch("hsync_client.transfer._download_from_source_attempt", side_effect=attempt):
+            _download_file_attempt(file, source_resolver=resolver)
+
+        assert calls == [
+            (True, None, True),
+            (False, source, False),
+            (False, None, False),
+        ]
+        resolver.record_failure.assert_called_once_with(source, PeerFailureKind.conflict)
+
+    def test_peer_404_advances_to_master_without_retrying_peer(self, tmp_path):
+        """A peer-local 404 advances immediately and master fallback stays unpinned to it."""
+        import hashlib
+
+        content = b"master payload"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="fallback.txt", sha256sum=digest, size=len(content))
+        source = self._source("s" * 21)
+        resolver = self._resolver((source,))
+        peer_response = MagicMock(status_code=404, headers={})
+        master_response = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch(
+                "hsync_client.transfer.get",
+                side_effect=[peer_response, master_response],
+            ) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "fallback.txt").read_bytes() == content
+        assert mock_get.call_count == 2
+        assert "cert_fingerprint" in mock_get.call_args_list[0].kwargs
+        assert "cert_fingerprint" not in mock_get.call_args_list[1].kwargs
+        resolver.record_failure.assert_called_once_with(source, PeerFailureKind.not_found)
+
+    def test_peer_disconnect_resumes_same_partial_from_master(self, tmp_path):
+        """An interrupted exact body preserves its prefix for the next source."""
+        import hashlib
+
+        prefix = b"shared-prefix-"
+        suffix = b"master-tail"
+        content = prefix + suffix
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="resume.txt", sha256sum=digest, size=len(content))
+        source = self._source("s" * 21)
+        resolver = self._resolver((source,))
+        peer_response = self._response(content, digest)
+
+        def interrupted_chunks(*_args, **_kwargs):
+            yield prefix
+            raise RequestException("connection reset")
+
+        peer_response.iter_content.side_effect = interrupted_chunks
+        master_response = self._response(suffix, digest, status=206)
+        master_response.headers["Content-Range"] = (
+            f"bytes {len(prefix)}-{len(content) - 1}/{len(content)}"
+        )
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch(
+                "hsync_client.transfer.get",
+                side_effect=[peer_response, master_response],
+            ) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "resume.txt").read_bytes() == content
+        master_headers = mock_get.call_args_list[1].kwargs["headers"]
+        assert master_headers["Range"] == f"bytes={len(prefix)}-"
+        assert master_headers["Accept-Encoding"] == "identity"
+        resolver.record_failure.assert_called_once_with(source, PeerFailureKind.transport)
+
+    def test_bad_peer_hash_is_deleted_before_next_peer(self, tmp_path):
+        """A complete wrong body cannot become a resume prefix for another source."""
+        import hashlib
+
+        content = b"correct-data"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="hash.txt", sha256sum=digest, size=len(content))
+        first = self._source("a" * 21)
+        second = self._source("b" * 21)
+        resolver = self._resolver((first, second))
+        bad_response = self._response(b"wrong--data!", digest)
+        good_response = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch(
+                "hsync_client.transfer.get",
+                side_effect=[bad_response, good_response],
+            ) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "hash.txt").read_bytes() == content
+        assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
+        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.hash_mismatch)
+        assert resolver.record_success.call_args.args[0] == second
+
+    def test_complete_short_peer_body_is_deleted_before_next_peer(self, tmp_path):
+        """A clean short EOF is malformed, not an interrupted resumable prefix."""
+        import hashlib
+
+        content = b"complete payload"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="short.txt", sha256sum=digest, size=len(content))
+        first = self._source("a" * 21)
+        second = self._source("b" * 21)
+        resolver = self._resolver((first, second))
+        short_response = self._response(content[:5], digest)
+        good_response = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch(
+                "hsync_client.transfer.get",
+                side_effect=[short_response, good_response],
+            ) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "short.txt").read_bytes() == content
+        assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
+        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.malformed)
+
+    def test_zero_byte_listing_rejects_peer_body_before_fallback(self, tmp_path):
+        """An exact empty file cannot consume the generic inbound-size allowance."""
+        import hashlib
+
+        digest = hashlib.sha256(b"").hexdigest()
+        file = File(filepath="empty.txt", sha256sum=digest, size=0)
+        first = self._source("a" * 21)
+        second = self._source("b" * 21)
+        resolver = self._resolver((first, second))
+        oversized = self._response(b"unexpected", digest)
+        empty = self._response(b"", digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", side_effect=[oversized, empty]),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "empty.txt").read_bytes() == b""
+        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.malformed)
+
+    def test_resumed_master_hash_failure_retries_once_from_zero(self, tmp_path):
+        """A poisoned prefix is discarded before one clean canonical-master retry."""
+        import hashlib
+
+        content = b"good"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="master.txt", sha256sum=digest, size=len(content))
+        (tmp_path / "master.txt.part").write_bytes(b"x")
+        resumed = self._response(b"ood", digest, status=206)
+        resumed.headers["Content-Range"] = "bytes 1-3/4"
+        fresh = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", side_effect=[resumed, fresh]) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file)
+
+        assert (tmp_path / "master.txt").read_bytes() == content
+        assert mock_get.call_args_list[0].kwargs["headers"]["Range"] == "bytes=1-"
+        assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
+
+    def test_peer_zstd_content_length_counts_wire_bytes(self, tmp_path):
+        """Compressed Content-Length is compared with wire, not decoded, bytes."""
+        import hashlib
+
+        import zstandard as zstd
+
+        content = b"compressible" * 100
+        compressed = zstd.ZstdCompressor().compress(content)
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="compressed.txt", sha256sum=digest, size=len(content))
+        source = self._source("s" * 21, compression=True)
+        resolver = self._resolver((source,))
+        resolver.request_headers.return_value = {"Accept-Encoding": "zstd"}
+        response = MagicMock()
+        response.status_code = 200
+        response.headers = {
+            "Content-Encoding": "zstd",
+            "Content-Length": str(len(compressed)),
+            "X-Checksum-SHA256": digest,
+        }
+        response.raw = io.BytesIO(compressed)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", return_value=response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "compressed.txt").read_bytes() == content
+        assert resolver.record_success.call_args.kwargs["bytes_transferred"] == len(compressed)
+
+    def test_complete_malformed_zstd_body_is_discarded_before_fallback(self, tmp_path):
+        """A complete invalid zstd frame cannot be reused as a resume prefix."""
+        import hashlib
+
+        content = b"valid peer payload"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="malformed.txt", sha256sum=digest, size=len(content))
+        first = self._source("a" * 21, compression=True)
+        second = self._source("b" * 21)
+        resolver = self._resolver((first, second))
+        resolver.request_headers.side_effect = [
+            {"Accept-Encoding": "zstd"},
+            {"Accept-Encoding": "identity"},
+        ]
+        malformed = b"not-a-zstd-frame"
+        bad_response = MagicMock(
+            status_code=200,
+            headers={
+                "Content-Encoding": "zstd",
+                "Content-Length": str(len(malformed)),
+                "X-Checksum-SHA256": digest,
+            },
+        )
+        bad_response.raw = io.BytesIO(malformed)
+        good_response = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch(
+                "hsync_client.transfer.get",
+                side_effect=[bad_response, good_response],
+            ) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "malformed.txt").read_bytes() == content
+        assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
+        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.malformed)
 
 
 class TestDownloadPathLocking:

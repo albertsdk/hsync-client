@@ -35,8 +35,13 @@ from hsync_client.config import (
     get_heartbeat_interval,
     get_ignore_delete,
     get_ignore_patterns,
+    get_lan_allow_unauthenticated_writes,
     get_lan_group,
     get_lan_key,
+    get_lan_peer_download,
+    get_lan_peer_download_min_size,
+    get_lan_peer_read_cap,
+    get_lan_peer_sources_max,
     get_lan_port,
     get_lan_require_pairing,
     get_mass_delete_guard,
@@ -334,16 +339,15 @@ def _check_lan_write_policy(
     sync_direction: str,
     auto_confirm: bool,
     logger: Any,
+    allow_unauthenticated_writes: bool = False,
 ) -> None:
-    """Require a shared LAN key for write-capable sync in non-interactive mode.
+    """Require authorization for every write-capable LAN sync.
 
     A self-signed LAN transport hides traffic but does not prove the master's
-    identity, so an unattended client that uploads data must authenticate with
-    ``HSYNC_LAN_KEY``. The trust policy lives in
+    identity, so a client that uploads data must authenticate with
+    ``HSYNC_LAN_KEY`` unless the dangerous explicit opt-in is enabled. The policy lives in
     :func:`hsync_common.protocol.pairing.lan_write_requires_key`; here we apply
-    it. A run is unattended when ``auto_confirm`` (the ``--yes`` flag) is set or
-    when no interactive terminal is available (container, systemd, cron, pipes):
-    in both cases no operator can vouch for the peer out of band.
+    it. Interactivity is context only and never grants mutation authorization.
 
     Raises SystemExit when the policy is violated.
     """
@@ -353,7 +357,11 @@ def _check_lan_write_policy(
     from hsync_common.protocol.pairing import lan_write_requires_key
 
     interactive = not auto_confirm and is_tty_interactive()
-    if not lan_write_requires_key(sync_direction, interactive=interactive):
+    if not lan_write_requires_key(
+        sync_direction,
+        interactive=interactive,
+        allow_unauthenticated_writes=allow_unauthenticated_writes,
+    ):
         return
 
     # The shared key authenticates writes; over the HTTPS-only LAN transport a
@@ -362,13 +370,13 @@ def _check_lan_write_policy(
         return
 
     logger.error(
-        f"{ActionLabel.AUTH_REQUIRED} Non-interactive LAN write requires authentication. "
-        "Set HSYNC_LAN_KEY to upload to the master, or run interactively "
-        "(omit --yes), or use --sync-direction download-only."
+        f"{ActionLabel.AUTH_REQUIRED} LAN writes require authentication. "
+        "Set HSYNC_LAN_KEY, use --sync-direction download-only, or explicitly accept "
+        "the risk with --allow-unauthenticated-writes."
     )
     emit_event(
         UiEventName.auth_required,
-        message="A shared LAN key (HSYNC_LAN_KEY) is required for non-interactive writes",
+        message="A shared LAN key or explicit unauthenticated-write opt-in is required",
     )
     raise SystemExit(1)
 
@@ -443,6 +451,9 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
                 if Path(event.src_path).name == HSYNCIGNORE_FILENAME:
                     _log.debug(".hsyncignore changed — reloading ignore matcher")
                     matcher.reload()
+                    from hsync_client.lan_inventory import refresh_active_inventory
+
+                    refresh_active_inventory()
 
             def on_created(self, event) -> None:  # type: ignore[override]
                 self.on_modified(event)
@@ -536,6 +547,8 @@ def run_sync(
     delta_enabled: bool = True,
     delta_min_file_size: int | None = None,
     delta_min_file_size_lan: int | None = None,
+    lan_peer_download_enabled: bool = True,
+    lan_allow_unauthenticated_writes: bool = False,
 ) -> None:
     """
     Main synchronization logic.
@@ -655,6 +668,10 @@ def run_sync(
 
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
+    resolved_lan_key = lan_key_from_fd or get_lan_key()
+    allow_unauthenticated_lan_writes = (
+        lan_allow_unauthenticated_writes or get_lan_allow_unauthenticated_writes()
+    )
 
     # Fail fast on a missing API key: every authenticated server endpoint
     # requires a valid key, so an empty key can never sync. Reporting it here
@@ -808,7 +825,7 @@ def run_sync(
         "REMOTE_BUCKET": bucket,
         "REQUEST_HEADERS": {
             "accept": "application/json",
-            "Authorization": f"Bearer {resolved_api_key}",
+            "Authorization": f"Bearer {resolved_lan_key or '' if lan_mode else resolved_api_key}",
             HEADER_CLIENT_NAME: CLIENT_NAME,
             HEADER_CLIENT_VERSION: HSYNC_VERSION,
             HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION_REST,
@@ -824,7 +841,7 @@ def run_sync(
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
         "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
-        "LAN_KEY": lan_key_from_fd or get_lan_key(),
+        "LAN_KEY": resolved_lan_key,
         "LAN_GROUP": lan_group or get_lan_group(),
         # One-shot is derived solely from --once: continuous is the default
         # and no env/flag knob for "persistence" exists.
@@ -832,6 +849,11 @@ def run_sync(
         "LAN_FORCE_MASTER": force_master,
         "LAN_NEVER_MASTER": never_master or get_never_master(),
         "LAN_REQUIRE_PAIRING": lan_require_pairing or get_lan_require_pairing(),
+        "LAN_PEER_DOWNLOAD": lan_peer_download_enabled and get_lan_peer_download(),
+        "LAN_PEER_DOWNLOAD_MIN_SIZE": get_lan_peer_download_min_size(),
+        "LAN_PEER_READ_CAP": get_lan_peer_read_cap(),
+        "LAN_PEER_SOURCES_MAX": get_lan_peer_sources_max(),
+        "LAN_ALLOW_UNAUTHENTICATED_WRITES": allow_unauthenticated_lan_writes,
         "MASTER_CERT_FINGERPRINT": None,
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
@@ -920,7 +942,7 @@ def run_sync(
             logger=log,
         )
 
-    # Enforce the LAN-key policy for unattended write-capable sync.
+    # Enforce the LAN-key policy for every write-capable sync.
     if not dryrun:
         _check_lan_write_policy(
             lan_mode=config["LAN_MODE"],
@@ -928,6 +950,7 @@ def run_sync(
             sync_direction=config["SYNC_DIRECTION"],
             auto_confirm=auto_confirm,
             logger=log,
+            allow_unauthenticated_writes=config["LAN_ALLOW_UNAUTHENTICATED_WRITES"],
         )
 
     # Check disk space before syncing

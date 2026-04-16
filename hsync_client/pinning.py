@@ -25,11 +25,19 @@ import json
 import os
 import tempfile
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from hsync_common.protocol.pairing import PinDecision, evaluate_pin, normalize_fingerprint
 
-__all__ = ["PIN_FILE_ENV", "PinStore", "default_pin_store", "default_pin_store_path"]
+__all__ = [
+    "PIN_FILE_ENV",
+    "PinStore",
+    "PinStoreError",
+    "default_pin_store",
+    "default_pin_store_path",
+]
 
 # Environment override for the pin store location (used by tests and operators
 # who keep state outside the default OS location).
@@ -38,6 +46,46 @@ PIN_FILE_ENV = "HSYNC_LAN_PIN_FILE"
 # Owner-only permissions for the pin file: it records which peers this host
 # trusts and must not be world-readable/writable.
 _PIN_FILE_MODE = 0o600
+_PATH_LOCKS_GUARD = threading.Lock()
+_PATH_LOCKS: dict[str, threading.RLock] = {}
+
+
+class PinStoreError(RuntimeError):
+    """The durable TOFU store could not be read or updated safely."""
+
+
+def _thread_lock_for(path: Path) -> threading.RLock:
+    key = str(path.absolute())
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(key, threading.RLock())
+
+
+def _lock_fd(fd: int) -> None:
+    if os.name == "nt":  # pragma: no cover - exercised by Windows packaging
+        import msvcrt
+
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        os.lseek(fd, 0, os.SEEK_SET)
+        locking = vars(msvcrt)["locking"]
+        locking(fd, vars(msvcrt)["LK_LOCK"], 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _unlock_fd(fd: int) -> None:
+    if os.name == "nt":  # pragma: no cover - exercised by Windows packaging
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        locking = vars(msvcrt)["locking"]
+        locking(fd, vars(msvcrt)["LK_UNLCK"], 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def default_pin_store_path() -> Path:
@@ -57,70 +105,97 @@ def _pin_key(cid: str, bucket: str) -> str:
 class PinStore:
     """Disk-backed map of ``(cid, bucket)`` to a pinned certificate fingerprint.
 
-    Reads tolerate a missing/corrupt file (treated as empty); writes are atomic
-    and owner-only. Instances are thread-safe.
+    A missing file is an empty store. Corrupt/unreadable state fails closed;
+    writes use one cross-process locked read/modify/fsync/replace transaction.
     """
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or default_pin_store_path()
-        self._lock = threading.Lock()
+        self._lock = _thread_lock_for(self._path)
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def _load(self) -> dict[str, str]:
+    def _load_unlocked(self) -> dict[str, str]:
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw = self._path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
-        if not isinstance(data, dict):
-            return {}
-        return {str(k): str(v) for k, v in data.items()}
+        except OSError as exc:
+            raise PinStoreError(f"could not read LAN pin store: {exc}") from exc
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise PinStoreError("LAN pin store is corrupt") from exc
+        if not isinstance(data, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str) for key, value in data.items()
+        ):
+            raise PinStoreError("LAN pin store is corrupt")
+        return dict(data)
 
-    def _save(self, data: dict[str, str]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        # Unique temp name per write: several hsync processes share one pin
-        # store (peers on the same host, or several buckets via the default
-        # path), so a fixed ``.tmp`` suffix races — one writer's ``os.replace``
-        # moves the temp file away while another writer is still using it, and
-        # the loser crashes with ``FileNotFoundError``. A per-write name keeps
-        # the writers independent; ``os.replace`` stays atomic, so the last
-        # writer wins and readers never observe a torn file.
+    def _save_unlocked(self, data: dict[str, str]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd, tmp = tempfile.mkstemp(
             prefix=f".{self._path.name}.",
             suffix=".tmp",
             dir=str(self._path.parent),
         )
         try:
-            # mkstemp already creates the file 0600; chmod is a belt-and-braces
-            # guard so the trusted-peer pins are never group/world readable.
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(json.dumps(data, indent=2, sort_keys=True))
+                f.flush()
+                os.fsync(f.fileno())
             os.chmod(tmp, _PIN_FILE_MODE)
             os.replace(tmp, self._path)
+            if hasattr(os, "O_DIRECTORY"):
+                dir_fd = os.open(self._path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
         finally:
-            # os.replace already unlinked tmp on success; drop it if we failed
-            # before reaching it.
             try:
                 os.unlink(tmp)
-            except OSError:
+            except FileNotFoundError:
                 pass
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """Hold the per-path thread lock and cross-process advisory lock."""
+        with self._lock:
+            try:
+                self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                lock_path = self._path.with_name(f".{self._path.name}.lock")
+                fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, _PIN_FILE_MODE)
+                try:
+                    os.chmod(lock_path, _PIN_FILE_MODE)
+                    _lock_fd(fd)
+                    try:
+                        yield
+                    finally:
+                        _unlock_fd(fd)
+                finally:
+                    os.close(fd)
+            except PinStoreError:
+                raise
+            except OSError as exc:
+                raise PinStoreError(f"could not lock or persist LAN pin store: {exc}") from exc
 
     def get(self, cid: str, bucket: str) -> str | None:
         """Return the pinned fingerprint for ``(cid, bucket)``, or ``None``."""
-        with self._lock:
-            return self._load().get(_pin_key(cid, bucket))
+        with self._transaction():
+            return self._load_unlocked().get(_pin_key(cid, bucket))
 
     def set(self, cid: str, bucket: str, fingerprint: str) -> None:
         """Pin (or repin) ``fingerprint`` for ``(cid, bucket)``."""
         normalized = normalize_fingerprint(fingerprint)
         if normalized is None:
-            return
-        with self._lock:
-            data = self._load()
+            raise ValueError("fingerprint is mandatory for LAN HTTPS pinning")
+        with self._transaction():
+            data = self._load_unlocked()
             data[_pin_key(cid, bucket)] = normalized
-            self._save(data)
+            self._save_unlocked(data)
 
     def check_and_record(self, cid: str, bucket: str, observed_fp: str | None) -> PinDecision:
         """Classify ``observed_fp`` against the stored pin, pinning on first use.
@@ -130,15 +205,19 @@ class PinStore:
         must be present (LAN transport is HTTPS-only); a missing fingerprint is a
         contract violation and :func:`evaluate_pin` raises.
         """
-        with self._lock:
-            data = self._load()
-            stored = data.get(_pin_key(cid, bucket))
+        key = _pin_key(cid, bucket)
+        with self._transaction():
+            data = self._load_unlocked()
+            stored = data.get(key)
             decision = evaluate_pin(stored, observed_fp)
             if decision is PinDecision.trusted:
                 normalized = normalize_fingerprint(observed_fp)
-                if normalized is not None:
-                    data[_pin_key(cid, bucket)] = normalized
-                    self._save(data)
+                if normalized is None:
+                    raise ValueError("fingerprint is mandatory for LAN HTTPS pinning")
+                data[key] = normalized
+                self._save_unlocked(data)
+                if self._load_unlocked().get(key) != normalized:
+                    raise PinStoreError("LAN pin store verification failed")
             return decision
 
 

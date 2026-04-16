@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-04" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-10" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -65,6 +65,8 @@ secret
 \& (Linux)
 .br
 \(bu Compression of transferred data via zstd
+.br
+\(bu Exact-hash peer-assisted LAN downloads with automatic master fallback
 .br
 \(bu Bandwidth throttling per transfer direction
 .br
@@ -285,6 +287,14 @@ Never become master in LAN mode (always remain a slave).
 Strict pairing: refuse a first-seen LAN master certificate until it is
 confirmed out of band (disables Trust-On-First-Use auto-pinning).
 .TP
+.B \-\-no\-peer\-download
+Disable peer-assisted LAN downloads for this run. By default, large full-file
+downloads may use a verified continuous slave before falling back to the master.
+.TP
+.B \-\-allow\-unauthenticated\-writes
+Dangerous explicit opt-in: allow LAN mutations when no shared LAN key is
+configured. Without this option, no-key LAN groups are read-only.
+.TP
 .BR \-\-lan\-key\-fd =\fIFD\fP
 Read the LAN shared secret from the given file descriptor. Hidden option.
 .
@@ -462,6 +472,32 @@ Never become master in LAN mode (default:
 Strict pairing: require out-of-band confirmation for first-seen master
 certificates (default:
 .BR false ).
+.TP
+.B HSYNC_LAN_PEER_DOWNLOAD
+Enable exact-hash peer-assisted LAN full downloads (default:
+.BR true ).
+.TP
+.B HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE
+Minimum file size in bytes eligible for peer-assisted download (default:
+.BR 1048576 ,
+1 MiB; 0 permits every size).
+.TP
+.B HSYNC_LAN_PEER_READ_CAP
+Maximum concurrent peer-download response bodies served by a continuous slave
+(default:
+.BR 2 ;
+range: 1\(en32).
+.TP
+.B HSYNC_LAN_PEER_SOURCES_MAX
+Maximum unique peer devices attempted per file before the master fallback
+(default:
+.BR 3 ;
+range: 1\(en8).
+.TP
+.B HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES
+Dangerously permit LAN mutations without a shared key (default:
+.BR false ).
+Reads remain available when this setting is false.
 .TP
 .B HSYNC_IGNORE_DELETE
 Do not propagate file deletions (default:

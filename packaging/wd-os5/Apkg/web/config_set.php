@@ -42,6 +42,9 @@ parse_str($raw, $post);
 const KEYS = [
     'HSYNC_MODE', 'HSYNC_PATH', 'HSYNC_BUCKET', 'HSYNC_ROLE',
     'HSYNC_LAN_KEY', 'HSYNC_LAN_REQUIRE_PAIRING',
+    'HSYNC_LAN_PEER_DOWNLOAD', 'HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE',
+    'HSYNC_LAN_PEER_READ_CAP', 'HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES',
+    'HSYNC_LAN_PEER_SOURCES_MAX',
     'HSYNC_LAN_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
     'HSYNC_SERVER', 'HSYNC_API_KEY',
     'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_NO_COMPRESSION',
@@ -75,6 +78,9 @@ foreach (KEYS as $key) {
         case 'HSYNC_MAX_INBOUND_SIZE_MB':
         case 'HSYNC_DELTA_MIN_FILE_SIZE':
         case 'HSYNC_DELTA_MIN_FILE_SIZE_LAN':
+        case 'HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE':
+        case 'HSYNC_LAN_PEER_READ_CAP':
+        case 'HSYNC_LAN_PEER_SOURCES_MAX':
         case 'HSYNC_HTTP_TIMEOUT':
         case 'HSYNC_RECONNECT_DELAY':
             if (!preg_match('/^[0-9]*$/', $val)) $val = '';
@@ -85,6 +91,8 @@ foreach (KEYS as $key) {
             break;
         case 'HSYNC_AUTOTUNE':
         case 'HSYNC_LAN_REQUIRE_PAIRING':
+        case 'HSYNC_LAN_PEER_DOWNLOAD':
+        case 'HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES':
         case 'HSYNC_IGNORE_DELETE':
         case 'HSYNC_NO_COMPRESSION':
         case 'HSYNC_DELTA_ENABLED':

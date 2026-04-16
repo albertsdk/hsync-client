@@ -31,7 +31,7 @@ import json
 import ssl
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from functools import partial
 from pathlib import Path
@@ -49,12 +49,18 @@ from hsync_common.models.file import (
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.protocol.handshake import (
     PROTOCOL_VERSION_LAN,
+    Capability,
     build_lan_auth,
     build_lan_auth_failed,
     build_lan_auth_ok,
     build_lan_auth_required,
     build_lan_hello,
     decode_capabilities,
+)
+from hsync_common.protocol.peer_download import (
+    LAN_WIRE_INT_MAX,
+    LanInventoryAckFrame,
+    build_lan_inventory_ack,
 )
 from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
@@ -75,6 +81,14 @@ from hsync_client.file_event_handler import (
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
 )
+from hsync_client.lan_inventory import (
+    NOOP_INVENTORY_OBSERVER,
+    InventoryObserver,
+    InventorySessionLimitError,
+    LanInventoryPublisher,
+    LanInventoryStore,
+)
+from hsync_client.lan_sources import LanSourceResolver
 from hsync_client.pools import log_future_error
 from hsync_client.utils import (
     cid_suffix,
@@ -98,6 +112,21 @@ MAX_WAIT_PENDING_SECONDS = 30 * 60
 # directory) never receive ``on_closed``, so after this window the deferred
 # upload fires as a fallback via the conservative stability poll.
 CREATE_UPLOAD_DEFER_S = STABILITY_DELAY_ON_CLOSED
+
+
+def _inventory_rejection(payload: Mapping[str, object], reason: str) -> LanInventoryAckFrame:
+    """Build a safe rejection ACK when no writable inventory session exists."""
+    raw_gen = payload.get("gen")
+    raw_seq = payload.get("seq")
+    gen = raw_gen if isinstance(raw_gen, int) and not isinstance(raw_gen, bool) else 0
+    seq = raw_seq if isinstance(raw_seq, int) and not isinstance(raw_seq, bool) else 0
+    return build_lan_inventory_ack(
+        gen=max(0, min(gen, LAN_WIRE_INT_MAX)),
+        seq=max(0, min(seq, LAN_WIRE_INT_MAX)),
+        status="rejected",
+        reason=reason,
+    )
+
 
 # Maximum concurrent realtime operations (uploads to the master, inbound
 # event downloads, deletes, renames) executed on behalf of the watcher.
@@ -355,6 +384,7 @@ class LANWebSocketServer:
         key_file: str | None = None,
         master_cid: str | None = None,
         cid_registry: SlaveCidRegistry | None = None,
+        inventory_store: LanInventoryStore | None = None,
     ) -> None:
         """
         Initialize the WebSocket server.
@@ -380,6 +410,7 @@ class LANWebSocketServer:
         self._cid_registry = (
             cid_registry if cid_registry is not None else SlaveCidRegistry(master_cid)
         )
+        self._inventory_store = inventory_store
         self._clients: set[Any] = set()  # WebSocket connections
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -449,8 +480,14 @@ class LANWebSocketServer:
         return client_addr[0] if isinstance(client_addr, tuple) else str(client_addr)
 
     async def _admit_slave(
-        self, client_cid: str, client_addr, websocket, *, authenticated: bool
-    ) -> bool:
+        self,
+        client_cid: str,
+        client_addr,
+        websocket,
+        *,
+        authenticated: bool,
+        inventory_capable: bool,
+    ) -> tuple[bool, str | None, str | None]:
         """Reserve the slave's CID and admit the connection, or reject it.
 
         A duplicated device identity — the master's own CID, or a CID already
@@ -460,9 +497,9 @@ class LANWebSocketServer:
         the stale connection is closed, mirroring the central server's
         ``_register_client`` eviction.
 
-        Returns True when the connection may proceed. On success the CID is
-        already reserved: the caller must release it on teardown paths that do
-        not reach the message loop's ``finally``.
+        Returns the admission result, inventory owner token, and any reason
+        inventory publication is unavailable. On success the CID is already
+        reserved before a superseded same-address socket is closed.
         """
         peer_ip = self._peer_ip(client_addr)
         allowed, stale_ws = self._cid_registry.try_reserve(client_cid, peer_ip, websocket)
@@ -473,14 +510,32 @@ class LANWebSocketServer:
                 with contextlib.suppress(Exception):
                     await websocket.send(json.dumps(build_lan_auth_failed(reason="cid_conflict")))
             await websocket.close()
-            return False
+            return False, None, None
+
+        inventory_token: str | None = None
+        inventory_rejection: str | None = None
+        if inventory_capable and self._inventory_store is not None:
+            try:
+                # Install the replacement owner before closing a superseded
+                # same-address WSS. Its later teardown is then an old-owner no-op.
+                inventory_token = self._inventory_store.begin_session(
+                    client_cid,
+                    remote_address=peer_ip,
+                )
+            except InventorySessionLimitError:
+                inventory_rejection = "quota"
+            except Exception:
+                inventory_rejection = "storage"
+                log.exception(f"Could not start LAN inventory session for {client_cid}")
+        else:
+            inventory_rejection = "unsupported"
         if stale_ws is not None and stale_ws is not websocket:
             log.info(
                 f"Slave {client_cid} reconnected from {peer_ip}: closing superseded connection"
             )
             with contextlib.suppress(Exception):
                 await stale_ws.close(code=4000, reason="Replaced by a newer connection")
-        return True
+        return True, inventory_token, inventory_rejection
 
     def _log_duplicate_identity(self, client_addr, client_cid: str) -> None:
         """Log a duplicated-device-identity rejection (shared by both paths)."""
@@ -499,10 +554,23 @@ class LANWebSocketServer:
             ),
         )
 
+    def _release_failed_admission(
+        self, client_cid: str, websocket: object, inventory_token: str | None
+    ) -> None:
+        """Release ownership when handshake setup fails after CID reservation."""
+        if client_cid != "unknown":
+            self._cid_registry.release(client_cid, websocket)
+        if inventory_token is not None and self._inventory_store is not None:
+            with contextlib.suppress(Exception):
+                self._inventory_store.end_session(client_cid, inventory_token)
+
     async def _handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection."""
         client_addr = websocket.remote_address
         client_cid = "unknown"
+        inventory_token: str | None = None
+        inventory_rejection: str | None = "unsupported"
+        slave_caps: set[Capability] = set()
         log.info(f"WebSocket client connected (pre-auth): {client_addr}")
 
         # Send greeting: tell the client whether authentication is required.
@@ -551,11 +619,16 @@ class LANWebSocketServer:
                 # Reserve the slave's CID before admitting the connection: a
                 # duplicated device identity (the master's own CID, or a CID
                 # bound to a different host) must never reach the causal model.
-                if not await self._admit_slave(
-                    client_cid, client_addr, websocket, authenticated=True
-                ):
-                    return
                 slave_caps = decode_capabilities(auth_data.get("capabilities"))
+                admitted, inventory_token, inventory_rejection = await self._admit_slave(
+                    client_cid,
+                    client_addr,
+                    websocket,
+                    authenticated=True,
+                    inventory_capable=Capability.peer_download in slave_caps,
+                )
+                if not admitted:
+                    return
                 log.debug(
                     f"WebSocket slave {client_cid} capabilities: "
                     f"{sorted(c.value for c in slave_caps) or 'none'}"
@@ -563,6 +636,7 @@ class LANWebSocketServer:
                 await websocket.send(json.dumps(build_lan_auth_ok(capabilities=master_caps)))
                 log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
             except TimeoutError:
+                self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket auth timeout from {client_addr} (CID: {client_cid})")
                 await websocket.send(json.dumps(build_lan_auth_failed(reason="timeout")))
                 await websocket.close()
@@ -571,7 +645,7 @@ class LANWebSocketServer:
                 # The CID may already be reserved at this point (a failure after
                 # a successful admission, e.g. the auth-ok send): release it so
                 # a retrying same-address slave is not locked out. Idempotent.
-                self._cid_registry.release(client_cid, websocket)
+                self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket auth error from {client_addr} (CID: {client_cid}): {e}")
                 await websocket.close()
                 return
@@ -595,11 +669,16 @@ class LANWebSocketServer:
                     # Reserve the slave's CID before admitting the connection
                     # (no failed frame exists on the unauthenticated hello
                     # path; the slave observes the close).
-                    if not await self._admit_slave(
-                        client_cid, client_addr, websocket, authenticated=False
-                    ):
-                        return
                     slave_caps = decode_capabilities(hello_data.get("capabilities"))
+                    admitted, inventory_token, inventory_rejection = await self._admit_slave(
+                        client_cid,
+                        client_addr,
+                        websocket,
+                        authenticated=False,
+                        inventory_capable=Capability.peer_download in slave_caps,
+                    )
+                    if not admitted:
+                        return
                     log.info(
                         f"WebSocket client connected (no auth): {client_addr} "
                         f"(CID: {client_cid}, unauthenticated, capabilities: "
@@ -611,10 +690,18 @@ class LANWebSocketServer:
                         f"type={hello_data.get('type')!r} cid={declared_cid!r} "
                         f"protocol={hello_data.get('protocol_version')!r}"
                     )
+                    await websocket.close()
+                    return
             except TimeoutError:
+                self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket hello timeout from {client_addr}")
+                await websocket.close()
+                return
             except Exception as e:
+                self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket hello error from {client_addr}: {e}")
+                await websocket.close()
+                return
 
         # Add client to set (its CID is already reserved by _admit_slave)
         self._clients.add(websocket)
@@ -625,15 +712,31 @@ class LANWebSocketServer:
         try:
             # Keep connection alive and handle incoming messages
             async for message in websocket:
-                # Currently we don't expect messages from slaves
-                # but we keep the connection alive
+                try:
+                    payload = json.loads(message)
+                except json.JSONDecodeError:
+                    log.warning(f"Invalid JSON from slave {client_cid}")
+                    continue
+                if isinstance(payload, Mapping) and payload.get("type") == "inventory":
+                    if inventory_token is not None and self._inventory_store is not None:
+                        ack = self._inventory_store.apply_frame(
+                            client_cid, inventory_token, payload
+                        )
+                    else:
+                        ack = _inventory_rejection(payload, inventory_rejection or "unsupported")
+                    await websocket.send(json.dumps(ack, separators=(",", ":")))
+                    continue
                 log.debug(
-                    f"Received from {client_addr} (CID: {client_cid}): {escape_loguru_markup(message)}"
+                    f"Received from {client_addr} (CID: {client_cid}): "
+                    f"{escape_loguru_markup(message)}"
                 )
         except Exception as e:
             log.debug(f"WebSocket client {client_addr} (CID: {client_cid}) disconnected: {e}")
         finally:
             self._clients.discard(websocket)
+            if inventory_token is not None and self._inventory_store is not None:
+                with contextlib.suppress(Exception):
+                    self._inventory_store.end_session(client_cid, inventory_token)
             if client_cid != "unknown":
                 # Only the current owner of the binding may clear the liveness
                 # mark: a superseded connection (same-address reconnect) must
@@ -689,6 +792,7 @@ class LANWebSocketServer:
             ssl=ssl_context,
             ping_interval=60,
             ping_timeout=30,
+            max_size=WS_MAX_MESSAGE_BYTES,
         ) as server:
             self._server = server
             protocol = "WSS" if self._use_https else "WS"
@@ -1040,6 +1144,8 @@ async def lan_websocket_client(
     host: str,
     port: int,
     use_https: bool = False,
+    inventory_publisher: LanInventoryPublisher | None = None,
+    source_resolver: LanSourceResolver | None = None,
 ) -> None:
     """
     Connect to the LAN master's WebSocket server and handle events.
@@ -1068,7 +1174,16 @@ async def lan_websocket_client(
     # Start local file watcher for bidirectional sync
     # HTTP port is WebSocket port - 1
     http_port = port - 1
-    _slave_event_handler = LANSlaveFileEventHandler(host, http_port, use_https)
+    inventory_observer: InventoryObserver = inventory_publisher or NOOP_INVENTORY_OBSERVER
+    if inventory_publisher is None:
+        _slave_event_handler = LANSlaveFileEventHandler(host, http_port, use_https)
+    else:
+        _slave_event_handler = LANSlaveFileEventHandler(
+            host,
+            http_port,
+            use_https,
+            inventory_observer=inventory_observer,
+        )
     watch_path = CONFIG["LOCAL_BUCKET"]
 
     # Ensure watch_path exists: watchdog raises FileNotFoundError otherwise.
@@ -1085,7 +1200,9 @@ async def lan_websocket_client(
     # source of truth in LAN mode, so a full sync pulls back any drift.
     resync_task: asyncio.Task[None] | None = None
     if CONFIG.get("RESYNC"):
-        resync_task = asyncio.create_task(_lan_periodic_resync())
+        resync_task = asyncio.create_task(
+            _lan_periodic_resync(inventory_publisher, source_resolver)
+        )
 
     # Set up SSL context for WSS. The self-signed master cert is trusted by
     # pinned fingerprint (TOFU), not by chain validation, so we accept any cert
@@ -1130,6 +1247,7 @@ async def lan_websocket_client(
             # capability set as the session's capability source of truth.
             greeting = await asyncio.wait_for(websocket.recv(), timeout=10.0)
             greeting_data = json.loads(greeting)
+            master_caps = decode_capabilities(greeting_data.get("capabilities"))
 
             if greeting_data.get("type") == "auth_required":
                 # Protocol gate first: a greeting we do not speak must never
@@ -1180,7 +1298,12 @@ async def lan_websocket_client(
                     else:
                         log.error(f"WebSocket authentication failed ({reason})")
                     return
-                adopt_remote_capabilities(decode_capabilities(auth_result.get("capabilities")))
+                master_caps = decode_capabilities(auth_result.get("capabilities"))
+                adopt_remote_capabilities(master_caps)
+                if source_resolver is not None:
+                    source_resolver.set_authenticated_master_capability(
+                        Capability.peer_download in master_caps
+                    )
                 log.info("WebSocket authenticated with master")
             elif greeting_data.get("type") == "hello":
                 # Lightweight hello handshake: the master has no LAN_KEY
@@ -1200,6 +1323,13 @@ async def lan_websocket_client(
                 )
                 return
 
+            if (
+                inventory_publisher is not None
+                and Capability.peer_download in master_caps
+                and Capability.peer_download in local_capabilities()
+            ):
+                inventory_publisher.start(websocket)
+
             log.info("Listening for events from master...")
 
             # Readiness threshold: the local watcher is running and the master
@@ -1215,12 +1345,23 @@ async def lan_websocket_client(
             # would reset the cache each time and the duplicate added/
             # modified burst a single mkdir broadcast produces could
             # never be suppressed).
-            ctx = _build_lan_dispatch_ctx(_slave_event_handler)
+            ctx = _build_lan_dispatch_ctx(
+                _slave_event_handler,
+                inventory_observer,
+                source_resolver,
+            )
 
             # Process incoming events
             async for message in websocket:
                 try:
                     event_data = json.loads(message)
+                    if inventory_publisher is not None and inventory_publisher.handle_ack(
+                        event_data
+                    ):
+                        continue
+                    if not isinstance(event_data, dict):
+                        log.warning("Invalid non-object event from master")
+                        continue
                     await _handle_lan_event(event_data, _slave_event_handler, ctx)
                 except json.JSONDecodeError as e:
                     log.warning(f"Invalid JSON from master: {e}")
@@ -1240,6 +1381,8 @@ async def lan_websocket_client(
             resync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await resync_task
+        if inventory_publisher is not None:
+            await inventory_publisher.stop()
         # Wait for pending client→master operations to complete before
         # returning to the discovery loop (which triggers a full sync).
         # This prevents race conditions where a rename/upload/delete is
@@ -1256,15 +1399,24 @@ async def lan_websocket_client(
         log.info("Client file watcher stopped")
 
 
-async def _lan_periodic_resync() -> None:
+async def _lan_periodic_resync(
+    inventory_observer: InventoryObserver | None = None,
+    source_resolver: LanSourceResolver | None = None,
+) -> None:
     """Periodic full resync for the LAN slave (safety net for missed events)."""
     from hsync_client.sync import periodic_resync
 
-    await periodic_resync(lan_mode=True)
+    await periodic_resync(
+        lan_mode=True,
+        inventory_observer=inventory_observer,
+        source_resolver=source_resolver,
+    )
 
 
 def _build_lan_dispatch_ctx(
     slave_handler: LANSlaveFileEventHandler | None,
+    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
+    source_resolver: LanSourceResolver | None = None,
 ) -> EventDispatchContext:
     """Build the LAN slave's inbound event dispatch context.
 
@@ -1282,6 +1434,8 @@ def _build_lan_dispatch_ctx(
         record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
         record_inbound_delete=(slave_handler.record_inbound_delete if slave_handler else None),
         recover_on_missing_rename_src=False,
+        inventory_observer=inventory_observer,
+        source_resolver=source_resolver,
     )
 
 
@@ -1375,6 +1529,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         master_host: str,
         master_port: int,
         use_https: bool = False,
+        inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
     ) -> None:
         """
         Initialize the client file event handler.
@@ -1387,6 +1542,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._master_host = master_host
         self._master_port = master_port
         self._use_https = use_https
+        self._inventory_observer = inventory_observer
         self._last_modified: dict[str, float] = {}
         # Track the last observed permission mode per file so a pure ``chmod``
         # (IN_ATTRIB, which inotify delivers without a close) is recognised and
@@ -1645,7 +1801,15 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            upload_file(file_obj, check_size=True, from_closed=from_closed)
+            if self._inventory_observer is NOOP_INVENTORY_OBSERVER:
+                upload_file(file_obj, check_size=True, from_closed=from_closed)
+            else:
+                upload_file(
+                    file_obj,
+                    check_size=True,
+                    from_closed=from_closed,
+                    inventory_observer=self._inventory_observer,
+                )
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
 
@@ -2041,9 +2205,6 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         ``from_closed`` is forwarded to :meth:`_upload_to_master` so an
         ``on_closed`` (``IN_CLOSE_WRITE``) trigger uses the fast re-check.
         """
-        # Skip uploads in download-only mode
-        if CONFIG.get("SYNC_DIRECTION") == "download-only":
-            return
         if not Path(src_path).exists():
             return
 
@@ -2061,6 +2222,9 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         invalidate_sha256_cache(src_path)
         file_obj = File.get(src_path)
         if file_obj:
+            if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                self._inventory_observer.upsert(file_obj)
+                return
             # Bytes estimate lets ``wait_pending`` scale its timeout when
             # large files are still being uploaded at WS disconnect time.
             try:
@@ -2113,14 +2277,19 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             log.debug(f'Delete echo of inbound recursive delete skipped: "{src_path}"')
             return
 
-        # Skip in download-only mode (don't propagate local deletions)
-        if CONFIG.get("SYNC_DIRECTION") == "download-only":
-            return
-
         # Skip hidden files/dirs
         if event.is_directory and is_hidden_dir(src_path):
             return
         if not event.is_directory and is_hidden_file(src_path):
+            return
+
+        if event.is_directory:
+            self._inventory_observer.remove_prefix(src_path)
+        else:
+            self._inventory_observer.remove_file(src_path)
+
+        # Skip in download-only mode (don't propagate local deletions)
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
 
         # Skip if in ignore-delete mode
@@ -2173,10 +2342,6 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         self._last_mode.pop(dest_path, None)
         self._last_dir_mode.pop(dest_path, None)
 
-        # Skip in download-only mode (don't propagate local renames)
-        if CONFIG.get("SYNC_DIRECTION") == "download-only":
-            return
-
         # Skip temp files (.part files used during downloads)
         if self._is_temp_file(src_path) or self._is_temp_file(dest_path):
             return
@@ -2199,10 +2364,17 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         # Hidden to visible - treat as creation
         if src_hidden and not dest_hidden:
+            if event.is_directory:
+                from hsync_client.sync import get_files_local
+
+                self._inventory_observer.replace_snapshot(get_files_local())
             if not event.is_directory and Path(dest_path).exists():
                 invalidate_sha256_cache(dest_path)
                 file_obj = File.get(dest_path)
                 if file_obj:
+                    self._inventory_observer.upsert(file_obj)
+                    if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                        return
                     try:
                         size_hint = Path(dest_path).stat().st_size
                     except OSError:
@@ -2217,6 +2389,12 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         # Visible to hidden - treat as deletion
         if not src_hidden and dest_hidden:
+            if event.is_directory:
+                self._inventory_observer.remove_prefix(src_path)
+            else:
+                self._inventory_observer.remove_file(src_path)
+            if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                return
             if not CONFIG.get("IGNORE_DELETE", False):
                 # Causal tombstone (ADR-0003): a hide/move-away is a local
                 # deletion and must survive locally even when the master is
@@ -2228,6 +2406,16 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     args=(src_path, event.is_directory),
                     name=f"delete-{src_path}",
                 )
+            return
+
+        if event.is_directory:
+            self._inventory_observer.rename_prefix(src_path, dest_path)
+        else:
+            self._inventory_observer.rename_file(src_path, dest_path)
+
+        # Inventory tracks local state even when this direction does not push
+        # local renames to the master.
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
 
         # Normal rename - use PATCH endpoint, unless this rename is redundant:

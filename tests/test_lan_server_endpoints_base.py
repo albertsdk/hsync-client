@@ -39,6 +39,7 @@ class TestLANRequestHandler:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             conn = HTTPConnection("localhost", port, timeout=5)
@@ -83,6 +84,33 @@ class TestLANRequestHandler:
             assert response.status == 401
             conn.close()
 
+    def test_no_key_reads_allowed_but_mutations_default_deny(self, server, tmp_path):
+        """No-key mode is read-only unless the dangerous opt-in is explicit."""
+        _, port = server
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": False,
+            },
+        ):
+            conn = HTTPConnection("localhost", port, timeout=5)
+            conn.request("GET", "/api/v1/health")
+            response = conn.getresponse()
+            assert response.status == 200
+            response.read()
+            conn.close()
+
+            conn = HTTPConnection("localhost", port, timeout=5)
+            conn.request("POST", "/api/v1/buckets/test/dirs?path=blocked")
+            response = conn.getresponse()
+            assert response.status == 403
+            response.read()
+            conn.close()
+
+        assert not (tmp_path / "blocked").exists()
+
     def test_list_files_endpoint(self, server, tmp_path):
         """Test list files endpoint."""
         srv, port = server
@@ -98,6 +126,7 @@ class TestLANRequestHandler:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             conn = HTTPConnection("localhost", port, timeout=5)
@@ -123,6 +152,7 @@ class TestLANRequestHandler:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             conn = HTTPConnection("localhost", port, timeout=5)
@@ -143,6 +173,7 @@ class TestLANRequestHandler:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             conn = HTTPConnection("localhost", port, timeout=5)
@@ -161,6 +192,7 @@ class TestLANRequestHandler:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             conn = HTTPConnection("localhost", port, timeout=5)
@@ -181,6 +213,7 @@ class TestLANRequestHandler:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             # Simulate upload like transfer.py does
@@ -279,6 +312,7 @@ class TestLANSyncIntegration:
             {
                 "LOCAL_BUCKET": str(master_bucket),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             # Simulate what sync.get_files_remote() does
@@ -306,6 +340,7 @@ class TestLANSyncIntegration:
             {
                 "LOCAL_BUCKET": str(master_bucket),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             # Simulate upload like transfer.py does
@@ -352,7 +387,11 @@ class TestLANSyncIntegration:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(master_bucket), "LAN_KEY": None},
+            {
+                "LOCAL_BUCKET": str(master_bucket),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             fields = {
@@ -413,7 +452,11 @@ class TestLANDuplicateCidGuard:
         files = {"file": ("uploaded.txt", b"test content")}
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             return requests.post(url, data=data, files=files, timeout=5).status_code
 

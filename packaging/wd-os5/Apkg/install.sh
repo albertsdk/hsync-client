@@ -71,6 +71,11 @@ chmod 0750 "${HSYNC_CONFIG_DIR}"
 # Seed a default configuration on a fresh install. Existing user config is
 # preserved (postinst.sh restores from the preinst backup if present).
 if [ ! -f "${HSYNC_ENV_FILE}" ]; then
+    LAN_KEY=$(dd if=/dev/urandom bs=24 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    if [ "${#LAN_KEY}" -ne 48 ]; then
+        echo "cannot generate a secure LAN key" >> "$LOG"
+        exit 1
+    fi
     cat > "${HSYNC_ENV_FILE}" <<EOF
 # HSYNC configuration — edited from the web UI at http://<NAS>/${APKG_NAME}/
 # Values follow the .env convention; quoted strings are recommended.
@@ -95,11 +100,18 @@ HSYNC_ROLE="master"
 # LAN options. The LAN transport is HTTPS/WSS-only (protocol lan/1); the master
 # uses a persistent self-signed identity and slaves pin its fingerprint (TOFU).
 HSYNC_LAN_GROUP=""
-# Optional shared secret required to write to the master (recommended).
-HSYNC_LAN_KEY=""
+# Random shared secret generated at install time; required for LAN writes.
+HSYNC_LAN_KEY="${LAN_KEY}"
 # Strict pairing: refuse a first-seen master fingerprint until confirmed
 # out of band (disables Trust-On-First-Use auto-pinning).
 HSYNC_LAN_REQUIRE_PAIRING="false"
+# Peer-assisted reads are enabled by default. Writes without the LAN key remain
+# blocked unless the dangerous explicit opt-in is enabled.
+HSYNC_LAN_PEER_DOWNLOAD="true"
+HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE="1048576"
+HSYNC_LAN_PEER_READ_CAP="2"
+HSYNC_LAN_PEER_SOURCES_MAX="3"
+HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES="false"
 HSYNC_DISCOVERY_TIMEOUT="0"
 
 # Server options (used only when HSYNC_MODE=server)

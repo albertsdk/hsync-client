@@ -133,7 +133,11 @@ class TestLANRequestHandlerInboundOriginMarking:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -163,7 +167,11 @@ class TestLANRequestHandlerInboundOriginMarking:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(
@@ -188,7 +196,11 @@ class TestLANRequestHandlerInboundOriginMarking:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+            {
+                "LOCAL_BUCKET": str(tmp_path),
+                "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+            },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
@@ -232,6 +244,7 @@ class TestLANRequestHandlerRange:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
@@ -261,6 +274,7 @@ class TestLANRequestHandlerRange:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
@@ -289,6 +303,7 @@ class TestLANRequestHandlerRange:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
@@ -328,6 +343,7 @@ class TestLANRequestHandlerTime:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/time"
@@ -370,6 +386,7 @@ class TestLANRequestHandlerListFilesFilter:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -414,6 +431,7 @@ class TestLANRequestHandlerUpload:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -446,6 +464,7 @@ class TestLANRequestHandlerUpload:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -502,7 +521,12 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch(
-                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+                },
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
@@ -521,7 +545,12 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch(
-                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+                },
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
@@ -554,7 +583,12 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch(
-                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+                },
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
@@ -587,7 +621,12 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch(
-                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+                },
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
@@ -605,7 +644,12 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch(
-                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+                },
             ),
             patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):

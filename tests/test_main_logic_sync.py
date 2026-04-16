@@ -516,6 +516,7 @@ class TestRunSync:
             tmp_path,
             server_url=None,
             lan_mode=True,
+            sync_direction="download-only",
         )
 
         with (
@@ -542,6 +543,7 @@ class TestRunSync:
             server_url=None,
             lan_mode=True,
             discovery_timeout=None,
+            sync_direction="download-only",
         )
 
         with (
@@ -570,6 +572,7 @@ class TestRunSync:
                 server_url=None,
                 lan_mode=True,
                 continuous=continuous_value,
+                sync_direction="download-only",
             )
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
@@ -594,6 +597,7 @@ class TestRunSync:
             server_url=None,
             lan_mode=True,
             discovery_timeout=0,
+            sync_direction="download-only",
         )
 
         with (

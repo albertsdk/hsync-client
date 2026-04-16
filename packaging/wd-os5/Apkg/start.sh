@@ -70,6 +70,11 @@ fi
 : "${HSYNC_LAN_GROUP:=}"
 : "${HSYNC_LAN_KEY:=}"
 : "${HSYNC_LAN_REQUIRE_PAIRING:=false}"
+: "${HSYNC_LAN_PEER_DOWNLOAD:=true}"
+: "${HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE:=1048576}"
+: "${HSYNC_LAN_PEER_READ_CAP:=2}"
+: "${HSYNC_LAN_PEER_SOURCES_MAX:=3}"
+: "${HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES:=false}"
 : "${HSYNC_DISCOVERY_TIMEOUT:=0}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
@@ -118,6 +123,8 @@ case "${HSYNC_MODE}" in
         # its certificate fingerprint, which slaves pin (TOFU). There is no
         # plain-HTTP option.
         [ "${HSYNC_LAN_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
+        [ "${HSYNC_LAN_PEER_DOWNLOAD}" = "false" ]    && set -- "$@" --no-peer-download
+        [ "${HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES}" = "true" ] && set -- "$@" --allow-unauthenticated-writes
         [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --group "${HSYNC_LAN_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in
@@ -166,6 +173,11 @@ esac
 # ---------------------------------------------------------------------------
 export HSYNC_API_KEY
 export HSYNC_LAN_KEY
+export HSYNC_LAN_PEER_DOWNLOAD
+export HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE
+export HSYNC_LAN_PEER_READ_CAP
+export HSYNC_LAN_PEER_SOURCES_MAX
+export HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES
 export HSYNC_NTP_HOSTS
 # Server-mode endpoint: exported like the keys above — the client reads it
 # from the environment (no CLI flag carries the URL anymore).

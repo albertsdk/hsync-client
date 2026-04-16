@@ -48,6 +48,8 @@ from loguru import logger as log
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
+from hsync_client.lan_sources import LanSourceResolver
 from hsync_client.sync import update_dir, update_file
 from hsync_client.transfer import download_file
 from hsync_client.utils import cid_suffix, path_lock, safe_rmdir_if_empty
@@ -155,6 +157,8 @@ class EventDispatchContext:
     record_inbound_delete: Callable[[str], None] | None = None
     recover_on_missing_rename_src: bool = False
     dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
+    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER
+    source_resolver: LanSourceResolver | None = None
 
 
 #: Prefix for every inbound-dispatch label: the event is always caused by a
@@ -350,7 +354,15 @@ async def _apply_add_or_modify(
         target = _resolve_local_path(src, "filepath") if ctx.mark_receiving else None
         _mark(ctx, target) if target else None
         try:
-            await asyncio.to_thread(update_file, src)
+            if ctx.inventory_observer is NOOP_INVENTORY_OBSERVER and ctx.source_resolver is None:
+                await asyncio.to_thread(update_file, src)
+            else:
+                await asyncio.to_thread(
+                    update_file,
+                    src,
+                    inventory_observer=ctx.inventory_observer,
+                    source_resolver=ctx.source_resolver,
+                )
         finally:
             if target:
                 _unmark(ctx, target)
@@ -383,6 +395,7 @@ async def _apply_rename(
             src_local,
             dst_local,
             ctx,
+            is_directory=True,
             recover=lambda: update_dir(dst),
             origin_cid=origin_cid,
         )
@@ -394,11 +407,26 @@ async def _apply_rename(
         if src_local is None or dst_local is None:
             return
         dst_file = File.from_dict(dst, CONFIG["LOCAL_BUCKET"], False)
+        if ctx.inventory_observer is NOOP_INVENTORY_OBSERVER and ctx.source_resolver is None:
+
+            def recover() -> None:
+                download_file(dst_file)
+        else:
+
+            def recover() -> None:
+                download_file(
+                    dst_file,
+                    inventory_observer=ctx.inventory_observer,
+                    source_resolver=ctx.source_resolver,
+                    refresh_peer_sources=ctx.source_resolver is not None,
+                )
+
         await _rename_path(
             src_local,
             dst_local,
             ctx,
-            recover=lambda: download_file(dst_file),
+            is_directory=False,
+            recover=recover,
             origin_cid=origin_cid,
         )
 
@@ -414,6 +442,7 @@ async def _rename_path(
     src_path: str | None,
     dst_path: str | None,
     ctx: EventDispatchContext,
+    is_directory: bool,
     recover: Callable[[], None],
     origin_cid: object = None,
 ) -> None:
@@ -437,6 +466,10 @@ async def _rename_path(
             await asyncio.to_thread(rename, src_path, dst_path)
             if ctx.record_inbound_rename:
                 ctx.record_inbound_rename(src_path, dst_path)
+            if is_directory:
+                ctx.inventory_observer.rename_prefix(src_path, dst_path)
+            else:
+                ctx.inventory_observer.rename_file(src_path, dst_path)
         elif ctx.recover_on_missing_rename_src:
             log.warning(f'Cannot rename: "{src_path}" -> "{dst_path}"')
             log.warning(f'Not found: "{src_path}"')
@@ -490,6 +523,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 log.debug(f'{_tag("DELETE")} Already absent (benign echo): "{local}"')
         finally:
             _unmark(ctx, local)
+        ctx.inventory_observer.remove_prefix(local)
     elif "filepath" in src:
         local = _confined_local(
             src.get("filepath"), EventName.deleted.value, ctx, resolve_final=False
@@ -518,6 +552,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 log.debug(f'{_tag("DELETE")} Already absent (benign echo): "{local}"')
         finally:
             _unmark(ctx, local)
+        ctx.inventory_observer.remove_file(local)
 
 
 async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
@@ -549,6 +584,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     if Path(local).is_symlink():
         try:
             if readlink(local) == target:
+                ctx.inventory_observer.remove_file(local)
                 log.debug(f'{_tag("SYMLINK")} Already exists with same target: "{local}"')
                 return
         except OSError:
@@ -577,5 +613,6 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
         elif Path(local).is_symlink() or Path(local).exists():
             unlink(local)
         await asyncio.to_thread(os_symlink, target, local)
+        ctx.inventory_observer.remove_file(local)
     finally:
         _unmark(ctx, local)

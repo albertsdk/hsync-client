@@ -15,12 +15,15 @@ import os
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+from hsync_common.hashing import is_sha256_hex
 from hsync_common.protocol.pairing import (
     PinDecision,
     evaluate_pin,
+    normalize_fingerprint,
     requires_pairing_confirmation,
 )
 from hsync_common.text import safe_json_for_log
+from loguru import logger as module_log
 
 from hsync_client.autotune import classify_network, derive_managed_rtt_updates, measure_rtt
 from hsync_client.config import CONFIG, set_config
@@ -39,7 +42,13 @@ from hsync_client.exceptions import (
 )
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.lan import LANSync
-from hsync_client.lan_server import LANServer
+from hsync_client.lan_inventory import (
+    LanInventoryPublisher,
+    LanInventoryStore,
+    set_active_inventory_publisher,
+)
+from hsync_client.lan_server import LANServer, LANServerMode
+from hsync_client.lan_sources import LanSourceResolver, LanSourceService
 from hsync_client.lan_websocket import LANWebSocketServer, SlaveCidRegistry, lan_websocket_client
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
@@ -54,6 +63,70 @@ if TYPE_CHECKING:
 # peer in the group is configured with --never-master). Emitted as a parsable
 # ``[NO MASTER]`` warning so front-ends (desktop UI) can surface a notification.
 NO_MASTER_WARNING_TIMEOUT = 60.0
+
+
+def _start_slave_seeder(
+    config: "HsyncConfig",
+    lan_sync: LANSync,
+    cert_info,
+    log,
+) -> tuple[LANServer | None, LanInventoryPublisher | None]:
+    """Bind a read-only slave seeder, degrading cleanly on port conflicts."""
+    if (
+        config.get("ONE_SHOT", False)
+        or config.get("DRYRUN", False)
+        or not config.get("LAN_PEER_DOWNLOAD", True)
+    ):
+        return None, None
+    publisher = LanInventoryPublisher(config["LOCAL_BUCKET"])
+    server = LANServer(
+        port=lan_sync.port,
+        use_https=True,
+        cert_file=cert_info.cert_file,
+        key_file=cert_info.key_file,
+        mode=LANServerMode.seeder,
+        bucket=config["REMOTE_BUCKET"],
+        peer_read_cap=config.get("LAN_PEER_READ_CAP", 2),
+    )
+    try:
+        server.start()
+    except OSError as exc:
+        server.stop()
+        log.warning(
+            f"Peer seeder could not bind port {lan_sync.port} ({exc}); continuing as requester-only"
+        )
+        return None, None
+    try:
+        lan_sync.update_seed_ready(True)
+    except Exception as exc:
+        server.stop()
+        try:
+            lan_sync.update_seed_ready(False)
+        except Exception as cleanup_exc:
+            log.warning(f"Peer seeder readiness cleanup failed: {cleanup_exc}")
+        log.warning(f"Peer seeder readiness could not be published ({exc}); disabling seeding")
+        return None, None
+    set_active_inventory_publisher(publisher)
+    return server, publisher
+
+
+def _stop_slave_seeder(
+    server: LANServer | None,
+    lan_sync: LANSync,
+    publisher: LanInventoryPublisher | None = None,
+) -> None:
+    """Stop accepting peer reads, withdraw TXT readiness, and detach inventory."""
+    if server is not None:
+        try:
+            server.stop()
+        except Exception as exc:
+            module_log.warning(f"Could not stop peer seeder: {exc}")
+        try:
+            lan_sync.update_seed_ready(False)
+        except Exception as exc:
+            module_log.warning(f"Could not withdraw peer seeder readiness: {exc}")
+    if publisher is not None:
+        set_active_inventory_publisher(None)
 
 
 def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
@@ -164,6 +237,9 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
 
     lan_server = None
     lan_ws_server = None
+    seeder_server: LANServer | None = None
+    seeder_attempted = False
+    inventory_publisher: LanInventoryPublisher | None = None
 
     # One shared duplicate-identity registry for both serving channels (HTTP
     # write endpoints and WSS admissions): a clone refused on one is refused on
@@ -172,6 +248,11 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     cid_registry = SlaveCidRegistry(master_cid=config["CID"])
 
     last_exit = int(ExitCode.OK)
+    discovery_deadline = (
+        time.monotonic() + discovery_timeout
+        if one_shot and not wait_indefinitely_for_peer
+        else None
+    )
 
     # Track how long the group has been without an elected master so we can warn
     # once after NO_MASTER_WARNING_TIMEOUT (e.g. when every peer is never-master).
@@ -181,7 +262,13 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     try:
         while True:
             # Wait for peer discovery
-            lan_sync.wait_for_discovery(timeout=discovery_wait)
+            current_wait = float(discovery_wait)
+            if discovery_deadline is not None:
+                current_wait = min(
+                    current_wait,
+                    max(0.0, discovery_deadline - time.monotonic()),
+                )
+            lan_sync.wait_for_discovery(timeout=current_wait)
 
             # Expire peers whose heartbeats stopped and re-elect if the master
             # vanished. Discovery is event-driven (mDNS announcements), which a
@@ -190,9 +277,24 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
             # further event arrives (e.g. a two-node group whose master died).
             peer_manager.reconcile_stale_peers()
 
+            # A finite one-shot window must not end merely because an
+            # ineligible seeder wakes discovery before the serving master is
+            # announced. Keep consuming mDNS changes until a master is elected
+            # or the original deadline expires.
+            if (
+                discovery_deadline is not None
+                and peer_manager.get_master_cid() is None
+                and time.monotonic() < discovery_deadline
+            ):
+                continue
+
             if peer_manager.is_master():
                 no_master_since = None
                 no_master_warned = False
+                _stop_slave_seeder(seeder_server, lan_sync, inventory_publisher)
+                seeder_server = None
+                seeder_attempted = False
+                inventory_publisher = None
                 lan_server, lan_ws_server = _run_as_master(
                     config=config,
                     log=log,
@@ -223,12 +325,14 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     # longer rank us as an incumbent — a yielded node that left
                     # server_ready=true would be a "zombie incumbent" and could
                     # prolong a split-brain (ADR-0027 leadership lease).
-                    if lan_server:
-                        lan_server.stop()
-                        lan_server = None
                     if lan_ws_server:
                         lan_ws_server.stop()
                         lan_ws_server = None
+                    if lan_server:
+                        lan_server.stop()
+                        lan_server.close_inventory()
+                        lan_server = None
+                    inventory_publisher = None
                     lan_sync.set_connected_clients_provider(None)
                     lan_sync.update_server_not_ready()
                     log.warning(
@@ -242,6 +346,17 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                 # via KeyboardInterrupt or by losing the master role and
                 # being elected slave on a later iteration.
             else:
+                # A role transition must release the shared HTTP port before a
+                # slave can bind its read-only seeder.
+                if lan_ws_server:
+                    lan_ws_server.stop()
+                    lan_ws_server = None
+                if lan_server:
+                    lan_server.stop()
+                    lan_server.close_inventory()
+                    lan_server = None
+                    lan_sync.set_connected_clients_provider(None)
+                    lan_sync.update_server_not_ready()
                 # Warn (once) if no master has been elected for a while: this
                 # happens when every reachable peer is in never-master mode.
                 if peer_manager.get_master_cid() is None:
@@ -266,6 +381,12 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     no_master_since = None
                     no_master_warned = False
 
+                if not seeder_attempted and not one_shot:
+                    seeder_server, inventory_publisher = _start_slave_seeder(
+                        config, lan_sync, cert_info, log
+                    )
+                    seeder_attempted = True
+
                 should_continue, exit_code = _run_as_slave(
                     config=config,
                     log=log,
@@ -274,6 +395,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     one_shot=one_shot,
                     peer_manager=peer_manager,
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
+                    inventory_publisher=inventory_publisher,
                 )
                 last_exit = exit_code
                 if not should_continue:
@@ -282,10 +404,12 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     except KeyboardInterrupt:
         log.info("Shutting down LAN mode...")
     finally:
-        if lan_server:
-            lan_server.stop()
         if lan_ws_server:
             lan_ws_server.stop()
+        if lan_server:
+            lan_server.stop()
+            lan_server.close_inventory()
+        _stop_slave_seeder(seeder_server, lan_sync, inventory_publisher)
         lan_sync.stop()
 
     return last_exit
@@ -328,14 +452,35 @@ def _run_as_master(
             # Direct/test callers that don't share a registry get a fresh one;
             # the WSS server below reuses it so both channels stay in sync.
             cid_registry = SlaveCidRegistry(master_cid=config["CID"])
-        lan_server = LANServer(
-            port=lan_sync.port,
-            use_https=True,
-            cert_file=cert_info.cert_file,
-            key_file=cert_info.key_file,
-            cid_guard=cid_registry,
-        )
-        lan_server.start()
+        peer_manager = lan_sync.peer_manager
+        if peer_manager is None:
+            raise RuntimeError("LAN peer manager is unavailable")
+        inventory_store: LanInventoryStore | None = None
+        try:
+            source_service = None
+            if config.get("LAN_PEER_DOWNLOAD", True):
+                inventory_store = LanInventoryStore.for_bucket(config["REMOTE_BUCKET"])
+                inventory_store.activate()
+                source_service = LanSourceService(
+                    bucket=config["REMOTE_BUCKET"],
+                    master_cid=config["CID"],
+                    inventory_store=inventory_store,
+                    peer_snapshot_provider=peer_manager.get_alive_peer_snapshots,
+                )
+            lan_server = LANServer(
+                port=lan_sync.port,
+                use_https=True,
+                cert_file=cert_info.cert_file,
+                key_file=cert_info.key_file,
+                cid_guard=cid_registry,
+                inventory_store=inventory_store,
+                source_service=source_service,
+            )
+            lan_server.start()
+        except Exception:
+            if inventory_store is not None:
+                inventory_store.close()
+            raise
         log.info(f"Master HTTP server on port {lan_sync.port} (HTTPS)")
 
     # Start WebSocket server if not already running
@@ -350,6 +495,7 @@ def _run_as_master(
             # Reuse the registry the HTTP server holds (shared channel guard),
             # also when this is a later iteration that only restarts the WSS.
             cid_registry=cid_registry if cid_registry is not None else lan_server.cid_guard,
+            inventory_store=lan_server.inventory_store,
         )
         # Wire the WebSocket-authoritative liveness signal BEFORE the server
         # starts accepting connections: a slave admitted before the listener
@@ -438,27 +584,51 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
       a parsable ``[FINGERPRINT CHANGED]`` line, emit ``fingerprint_changed`` and
       refuse (possible man-in-the-middle).
     """
+    from hsync_client.pinning import PinStoreError
+
     store = default_pin_store()
     bucket = config["REMOTE_BUCKET"]
+    raw_fingerprint = master.cert_fingerprint
+    if not isinstance(raw_fingerprint, str):
+        log.error(
+            f"{ActionLabel.SECURITY} LAN master {master.cid} advertised an invalid "
+            "certificate fingerprint. Refusing to connect."
+        )
+        return False
+    fingerprint = normalize_fingerprint(raw_fingerprint)
+    if not is_sha256_hex(fingerprint):
+        log.error(
+            f"{ActionLabel.SECURITY} LAN master {master.cid} advertised a non-SHA-256 "
+            "certificate fingerprint. Refusing to connect."
+        )
+        return False
 
-    if config.get("LAN_REQUIRE_PAIRING", False):
-        first_seen = evaluate_pin(store.get(master.cid, bucket), master.cert_fingerprint)
-        if requires_pairing_confirmation(first_seen, require_pairing=True):
-            log.error(
-                f"{ActionLabel.PAIRING_NEEDED} master {master.cid} at {master.address} presented an "
-                f"unpinned certificate and strict pairing is enabled. Refusing to connect; "
-                f"confirm this peer out of band (pin it) to trust it."
-            )
-            emit_event(
-                UiEventName.pairing_needed,
-                peer_cid=master.cid,
-                peer_address=master.address,
-                fingerprint=master.cert_fingerprint,
-                message="LAN master requires explicit pairing confirmation",
-            )
-            return False
+    try:
+        if config.get("LAN_REQUIRE_PAIRING", False):
+            first_seen = evaluate_pin(store.get(master.cid, bucket), fingerprint)
+            if requires_pairing_confirmation(first_seen, require_pairing=True):
+                log.error(
+                    f"{ActionLabel.PAIRING_NEEDED} master {master.cid} at "
+                    f"{master.address} presented an unpinned certificate and strict pairing is "
+                    "enabled. Refusing to connect; confirm this peer out of band (pin it) to "
+                    "trust it."
+                )
+                emit_event(
+                    UiEventName.pairing_needed,
+                    peer_cid=master.cid,
+                    peer_address=master.address,
+                    fingerprint=master.cert_fingerprint,
+                    message="LAN master requires explicit pairing confirmation",
+                )
+                return False
 
-    decision = store.check_and_record(master.cid, bucket, master.cert_fingerprint)
+        decision = store.check_and_record(master.cid, bucket, fingerprint)
+    except PinStoreError as exc:
+        log.error(
+            f"{ActionLabel.SECURITY} Cannot establish durable trust for LAN master "
+            f"{master.cid}: {exc}. Refusing to connect."
+        )
+        return False
     if decision is PinDecision.changed:
         log.error(
             f"{ActionLabel.FINGERPRINT_CHANGED} master {master.cid} at {master.address} presented a "
@@ -486,6 +656,7 @@ def _run_as_slave(
     one_shot: bool,
     peer_manager,
     wait_indefinitely_for_peer: bool = False,
+    inventory_publisher: LanInventoryPublisher | None = None,
 ) -> tuple[bool, int]:
     """Run as client (connect to master).
 
@@ -540,6 +711,19 @@ def _run_as_slave(
 
         set_config(config)
 
+        source_resolver = LanSourceResolver(
+            master_url=master_url,
+            master_cert_fingerprint=master.cert_fingerprint,
+            requester_cid=config["CID"],
+            bucket=config["REMOTE_BUCKET"],
+            lan_key=config["LAN_KEY"],
+            local_bucket=config["LOCAL_BUCKET"],
+            enabled=config.get("LAN_PEER_DOWNLOAD", True),
+            min_size=config.get("LAN_PEER_DOWNLOAD_MIN_SIZE", 1024 * 1024),
+            master_capable=bool(master.peer_download_enabled),
+            timeout=float(config.get("HTTP_TIMEOUT", 30)),
+        )
+
         # Re-derive autotune-managed tuning from the real master RTT (the LAN
         # startup probe is skipped when only the placeholder URL is known)
         _refresh_lan_network_tuning(master, config, log)
@@ -553,12 +737,27 @@ def _run_as_slave(
                 return False, exit_code
             # In continuous mode with dry-run, wait for SYNC/PREVIEW commands
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
-            run(_run_stdin_wait(log))
+            run(
+                _run_stdin_wait(
+                    log,
+                    inventory_observer=inventory_publisher,
+                    source_resolver=source_resolver,
+                )
+            )
         else:
             # Perform initial sync (the master is the transport coordinator)
             try:
                 log_initial_sync_start()
-                result = run(sync(lan_mode=True))
+                if inventory_publisher is None:
+                    result = run(sync(lan_mode=True, source_resolver=source_resolver))
+                else:
+                    result = run(
+                        sync(
+                            lan_mode=True,
+                            inventory_observer=inventory_publisher,
+                            source_resolver=source_resolver,
+                        )
+                    )
             except (AuthenticationError, NetworkError, ServerError):
                 # sync() already logged the failure and emitted the structured
                 # event. A one-shot run maps a transport failure to a fatal
@@ -603,7 +802,11 @@ def _run_as_slave(
                         host=master.address,
                         port=ws_port,
                         use_https=True,
+                        inventory_publisher=inventory_publisher,
+                        source_resolver=source_resolver,
                     ),
+                    inventory_observer=inventory_publisher,
+                    source_resolver=source_resolver,
                 )
             )
         except WatcherStartError:

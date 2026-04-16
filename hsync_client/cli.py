@@ -452,6 +452,14 @@ NoDeltaOpt = Annotated[
         rich_help_panel="Sync",
     ),
 ]
+NoPeerDownloadOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-peer-download",
+        help="Disable peer-assisted downloads and local read-only seeding in LAN mode.",
+        rich_help_panel="LAN Mode",
+    ),
+]
 DeltaMinFileSizeOpt = Annotated[
     int | None,
     typer.Option(
@@ -730,6 +738,17 @@ RequirePairingOpt = Annotated[
         rich_help_panel="LAN Mode",
     ),
 ]
+AllowUnauthenticatedWritesOpt = Annotated[
+    bool,
+    typer.Option(
+        "--allow-unauthenticated-writes",
+        help=(
+            "Dangerous: allow LAN uploads, deletes, and other mutations without "
+            "HSYNC_LAN_KEY. Reads remain available without this option."
+        ),
+        rich_help_panel="LAN Mode",
+    ),
+]
 LanKeyFdOpt = Annotated[
     int | None,
     typer.Option(
@@ -844,6 +863,7 @@ def lan(
     force_master: ForceMasterOpt = False,
     never_master: NeverMasterOpt = False,
     require_pairing: RequirePairingOpt = False,
+    allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
     lan_key_fd: LanKeyFdOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
@@ -860,6 +880,7 @@ def lan(
     max_bandwidth_download: LimitDownloadOpt = None,
     no_compression: NoCompressionOpt = False,
     no_delta: NoDeltaOpt = False,
+    no_peer_download: NoPeerDownloadOpt = False,
     delta_min_file_size: DeltaMinFileSizeOpt = None,
     delta_min_file_size_lan: DeltaMinFileSizeLanOpt = None,
     max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
@@ -965,6 +986,8 @@ def lan(
         force_master=force_master,
         never_master=never_master,
         lan_require_pairing=require_pairing,
+        lan_peer_download_enabled=not no_peer_download,
+        lan_allow_unauthenticated_writes=allow_unauthenticated_writes,
         debug=verbose,
         quiet=quiet,
         logfile=logfile,
@@ -1101,6 +1124,8 @@ def server(
         force_master=False,
         never_master=False,
         lan_require_pairing=False,
+        lan_peer_download_enabled=False,
+        lan_allow_unauthenticated_writes=False,
         debug=verbose,
         quiet=quiet,
         logfile=logfile,

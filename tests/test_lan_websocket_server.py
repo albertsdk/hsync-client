@@ -175,12 +175,16 @@ class TestLANWebSocketServer:
         greeting = json.loads(calls[0])
         assert greeting["type"] == "auth_required"
         assert greeting["protocol_version"] == PROTOCOL_VERSION_LAN
-        assert greeting["capabilities"] == ["tombstones", "vector_clocks"]
+        assert greeting["capabilities"] == [
+            "peer_download",
+            "tombstones",
+            "vector_clocks",
+        ]
         assert json.loads(calls[1]) == {
             "type": "auth",
             "status": "ok",
             "protocol_version": PROTOCOL_VERSION_LAN,
-            "capabilities": ["tombstones", "vector_clocks"],
+            "capabilities": ["peer_download", "tombstones", "vector_clocks"],
         }
         # Client is discarded in the finally block after the async-for exits
         assert ws not in server._clients

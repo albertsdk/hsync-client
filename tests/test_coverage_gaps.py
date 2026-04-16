@@ -17,7 +17,7 @@ from hsync_common.path_validation import is_valid_filename
 
 from hsync_client.config import CONFIG
 from hsync_client.events import EventEmitter, emit_event, init_emitter
-from hsync_client.pinning import PinStore, default_pin_store_path
+from hsync_client.pinning import PinStore, PinStoreError, default_pin_store_path
 from hsync_client.tombstones import (
     clear_deletion,
     get_payload,
@@ -46,26 +46,27 @@ class TestPinningCoverageGaps:
     """Cover PinStore load/save/check_and_record edge cases."""
 
     def test_pin_store_load_corrupt_file(self, tmp_path):
-        """A corrupt pin file is treated as empty."""
+        """A corrupt pin file fails closed."""
         pin_file = tmp_path / "pins.json"
         pin_file.write_text("not valid json")
         store = PinStore(pin_file)
-        assert store.get("cid", "bucket") is None
+        with pytest.raises(PinStoreError, match="corrupt"):
+            store.get("cid", "bucket")
 
     def test_pin_store_load_non_dict(self, tmp_path):
-        """A non-dict JSON is treated as empty."""
+        """A non-dict JSON fails closed."""
         pin_file = tmp_path / "pins.json"
         pin_file.write_text("[1, 2, 3]")
         store = PinStore(pin_file)
-        assert store.get("cid", "bucket") is None
+        with pytest.raises(PinStoreError, match="corrupt"):
+            store.get("cid", "bucket")
 
     def test_pin_store_set_blank_fingerprint(self, tmp_path):
-        """set with a blank fingerprint normalizes to None and is a no-op."""
+        """set rejects a blank mandatory HTTPS fingerprint."""
         pin_file = tmp_path / "pins.json"
         store = PinStore(pin_file)
-        # normalize_fingerprint() only rejects missing/blank input, so this is
-        # the branch that makes PinStore.set() a no-op (nothing persisted).
-        store.set("cid", "bucket", "   ")
+        with pytest.raises(ValueError, match="mandatory"):
+            store.set("cid", "bucket", "   ")
         assert store.get("cid", "bucket") is None
         assert not pin_file.exists()
 

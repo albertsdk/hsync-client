@@ -21,6 +21,8 @@
     "field.ignore_delete": "Ignorer les suppressions (adapté aux sauvegardes)",
     "field.no_compression": "Désactiver la compression zstd",
     "field.delta_enabled": "Activer le transfert delta (synchronisation par blocs style rsync)",
+    "field.lan_peer_download": "Activer les téléchargements LAN assistés par les pairs",
+    "field.lan_unauthenticated_writes": "Dangereux : autoriser les écritures LAN sans clé partagée",
     "field.delta_min_size": "Taille min. fichier delta - serveur (octets, 0 = par défaut)",
     "field.delta_min_size_lan": "Taille min. fichier delta - LAN (octets, 0 = par défaut)",
     "field.bw_upload": "Bande passante max. en émission (ex. 1MB)",

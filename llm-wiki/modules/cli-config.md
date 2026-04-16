@@ -7,7 +7,7 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `main` (parent callback) | `cli.py:750` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
-| `lan` | `:837` | LAN P2P subcommand: shared + LAN-only flags, LAN-only validation, calls `run_sync` |
+| `lan` | `cli.py` | LAN P2P subcommand: shared + LAN-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
 | `server` | `:985` | central-server subcommand: bare `HOSTNAME` positional + `--port` + shared flags, assembles the server URL, calls `run_sync` |
 | `run` | `:1121` | console-script entry |
 | `collect_subcommand_options` | `:89` | introspects each subcommand's long flags for the capabilities document |
@@ -39,7 +39,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | ------ | ---- | ---- |
 | `run_sync` | `main_logic.py:539` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: LAN mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
 | `_check_deletion_risk` | `:285` | warn/prompt on risky delete settings (`--yes` bypass; fails fast with exit 1 when no interactive TTY) |
-| `_check_lan_write_policy` | `:379` | enforce LAN key for unattended writes (`--yes` **or** no interactive TTY, via `is_tty_interactive()`) |
+| `_check_lan_write_policy` | `main_logic.py` | default-deny every write-capable no-key LAN run, independent of TTY/`--yes`; only `--allow-unauthenticated-writes` or `HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
 | `_warn_if_lan_in_container` | `:424` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `:441` | min-free-disk guard |
 | `_check_server_connectivity` | `:1142` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (LAN parity) |
@@ -60,6 +60,12 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `set_debug` / `is_debug` | `:411` / `:432` | debug flag |
 | `load_env_file` | `:33` | dotenv loader |
 | typed getters | `:154`–`:265` | `get_server_url`, `get_api_key`, LAN getters, guard getters, delta getters (`get_delta_enabled`, `get_delta_min_file_size`, `get_delta_min_file_size_lan`), etc. |
+
+Peer-download settings are `HSYNC_LAN_PEER_DOWNLOAD=true`,
+`HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE=1048576`, and
+`HSYNC_LAN_PEER_READ_CAP=2`. `--no-peer-download` is applied as
+`CLI-enabled AND environment-enabled`, so the CLI opt-out is final. The no-key
+write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 
 ## Constants & validators
 

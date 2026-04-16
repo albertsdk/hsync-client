@@ -26,6 +26,14 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL_MAX,
     HEARTBEAT_INTERVAL_MIN,
     HOSTNAME_PATTERN,
+    LAN_PEER_DOWNLOAD_DEFAULT,
+    LAN_PEER_DOWNLOAD_MIN_SIZE_DEFAULT,
+    LAN_PEER_READ_CAP_DEFAULT,
+    LAN_PEER_READ_CAP_MAX,
+    LAN_PEER_READ_CAP_MIN,
+    LAN_PEER_SOURCES_MAX_DEFAULT,
+    LAN_PEER_SOURCES_MAX_MAX,
+    LAN_PEER_SOURCES_MAX_MIN,
     MASS_DELETE_GUARD_DEFAULT,
     MASS_DELETE_PERCENT_DEFAULT,
     MASS_DELETE_THRESHOLD_DEFAULT,
@@ -126,6 +134,32 @@ class EnvSettings(BaseSettings):
             "Strict pairing: refuse a first-seen LAN master certificate until it is "
             "confirmed out of band (disables Trust-On-First-Use auto-pinning)"
         ),
+    )
+    lan_peer_download: bool = Field(
+        default=LAN_PEER_DOWNLOAD_DEFAULT,
+        description="Enable peer-assisted downloads in LAN mode",
+    )
+    lan_peer_download_min_size: int = Field(
+        default=LAN_PEER_DOWNLOAD_MIN_SIZE_DEFAULT,
+        ge=0,
+        le=2**63 - 1,
+        description="Minimum file size in bytes eligible for peer-assisted download",
+    )
+    lan_peer_read_cap: int = Field(
+        default=LAN_PEER_READ_CAP_DEFAULT,
+        ge=LAN_PEER_READ_CAP_MIN,
+        le=LAN_PEER_READ_CAP_MAX,
+        description="Maximum concurrent peer-seeder reads",
+    )
+    lan_peer_sources_max: int = Field(
+        default=LAN_PEER_SOURCES_MAX_DEFAULT,
+        ge=LAN_PEER_SOURCES_MAX_MIN,
+        le=LAN_PEER_SOURCES_MAX_MAX,
+        description="Maximum unique peer sources attempted per file",
+    )
+    lan_allow_unauthenticated_writes: bool = Field(
+        default=False,
+        description="Explicitly allow dangerous no-key LAN mutation requests",
     )
 
     # Sync Settings
@@ -323,6 +357,31 @@ def get_lan_require_pairing() -> bool:
     return get_env_settings().lan_require_pairing
 
 
+def get_lan_peer_download() -> bool:
+    """Get whether LAN peer-assisted download is enabled."""
+    return get_env_settings().lan_peer_download
+
+
+def get_lan_peer_download_min_size() -> int:
+    """Get the minimum peer-assisted download size in bytes."""
+    return get_env_settings().lan_peer_download_min_size
+
+
+def get_lan_peer_read_cap() -> int:
+    """Get the peer seeder's concurrent read cap."""
+    return get_env_settings().lan_peer_read_cap
+
+
+def get_lan_peer_sources_max() -> int:
+    """Get the maximum peer CIDs attempted for one file."""
+    return get_env_settings().lan_peer_sources_max
+
+
+def get_lan_allow_unauthenticated_writes() -> bool:
+    """Get the explicit dangerous opt-in for keyless LAN writes."""
+    return get_env_settings().lan_allow_unauthenticated_writes
+
+
 def get_ignore_delete() -> bool:
     """Get ignore delete setting from environment."""
     return get_env_settings().ignore_delete
@@ -507,6 +566,13 @@ class HsyncConfig(TypedDict):
     LAN_NEVER_MASTER: bool
     # Strict pairing: refuse a first-seen master cert until confirmed out of band
     LAN_REQUIRE_PAIRING: bool
+    # Peer-assisted download requester/seeder controls
+    LAN_PEER_DOWNLOAD: bool
+    LAN_PEER_DOWNLOAD_MIN_SIZE: int
+    LAN_PEER_READ_CAP: int
+    LAN_PEER_SOURCES_MAX: int
+    # Dangerous explicit opt-in: permit keyless mutation requests
+    LAN_ALLOW_UNAUTHENTICATED_WRITES: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Ignore file deletion events (backup mode)

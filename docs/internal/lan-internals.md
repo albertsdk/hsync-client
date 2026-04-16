@@ -135,6 +135,29 @@ When a client reconnects after being offline:
 
 This ensures consistent state across all peers, even after network interruptions.
 
+### Peer-assisted full-download flow
+
+The master remains authoritative for listing metadata and the expected
+lowercase SHA-256. A slave first attempts master delta transfer. If a full body
+is still required and the file meets the configured threshold, the slave sends
+one bounded `(path, sha256)` wantlist to the master's read-only `/files/sources`
+endpoint. The master joins its per-session inventory with live mDNS peers whose
+`seed=true`, excluding the requester and itself.
+
+Each returned source carries its HTTPS URL, CID, certificate fingerprint, and
+compression flag. The requester TOFU-pins `(source CID, bucket)` before opening
+an explicit per-fingerprint HTTP session. It ranks candidates using process
+telemetry, then falls back to the canonical master. Interrupted exact bodies
+retain a `.part` prefix across sources; malformed ranges/totals/source hashes
+and completed hash failures discard it. Only final master transient failures
+enter the existing retry policy. A peer-originated successful transfer event
+adds `source_cid`; master and delta successes omit it.
+
+Continuous non-dry-run slaves run the read-only seeder and publish inventory
+over their master WSS connection. One-shot slaves are requester-only. On role
+change the slave stops accepting seeder requests, withdraws `seed`, stops the
+publisher, and only then starts master services.
+
 
 ## Real-Time Bidirectional Sync
 
@@ -228,6 +251,15 @@ user-facing summary is in [LAN Mode → Security & Pairing](../lan-mode.md#secur
    connection that carries the data: REST via urllib3's `assert_fingerprint`,
    WSS via a post-handshake peer-certificate check — so a mismatch fails the
    handshake instead of leaving a TOCTOU window.
+4. **Independent source pins** — master and seeder connections never share a
+   mutable global fingerprint. Every selected source is persisted under its own
+   `(device ID, bucket)` pin and receives an explicitly pinned HTTP session.
+
+The pin store serializes the complete read-modify-write transaction with a
+sibling lock file, reloads while locked, writes a unique same-directory temp,
+fsyncs the file and parent directory, then atomically replaces the JSON store.
+`--require-pairing` applies to a new master only; source seeders use persistent
+TOFU after source selection.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -276,7 +308,10 @@ user-facing summary is in [LAN Mode → Security & Pairing](../lan-mode.md#secur
 ## API Endpoints
 
 The master exposes HTTP and WebSocket endpoints. All requests carry the shared
-secret (when configured) as a Bearer token: `Authorization: Bearer <key>`.
+secret (when configured) as a Bearer token: `Authorization: Bearer <key>`. With
+no key, read endpoints remain available but filesystem mutations return `403`
+unless `HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES=true` or the equivalent CLI
+opt-in was used. TTY state and `--yes` do not authorize writes.
 
 ### HTTP API
 
@@ -285,6 +320,7 @@ secret (when configured) as a Bearer token: `Authorization: Bearer <key>`.
 | `/api/v1/health` | GET | Health check |
 | `/api/v1/buckets/{bucket}/files` | GET | List files with metadata |
 | `/api/v1/buckets/{bucket}/files/download` | GET | Download a file |
+| `/api/v1/buckets/{bucket}/files/sources` | POST | Resolve bounded exact-hash peer candidates (read-only operation) |
 | `/api/v1/buckets/{bucket}/files` | POST | Upload a file |
 | `/api/v1/buckets/{bucket}/files` | DELETE | Delete a file/directory |
 | `/api/v1/buckets/{bucket}/files` | PATCH | Rename a file/directory |
@@ -333,13 +369,19 @@ GET /api/v1/buckets/photos/files/download?filename=vacation/photo1.jpg HTTP/1.1
 Authorization: Bearer mySecretKey123
 ```
 
-> **Compression**: when compression is enabled, compressible files of at
-> least 100 KB are served with `Content-Encoding: zstd` (the client
-> transparently stream-decompresses). Files above **256 MB** are always
-> served UNCOMPRESSED — the zstd branch buffers the whole file in the
-> master's memory to build the frame, so it is capped, and the raw path
-> keeps `Range`-resume support, which a compressed response cannot offer.
-> `Range` requests are never compressed either.
+> **Compression**: when compression is enabled, eligible files are served with
+> `Content-Encoding: zstd` only when the requester explicitly advertises
+> `Accept-Encoding: zstd`. The sender creates the frame in a bounded temporary
+> file, not RAM. `Range` requests force identity encoding. `Content-Length`
+> always describes wire bytes; the requester validates decoded size separately.
+
+The slave seeder exposes only `/health`, `/time`, and exact-hash download. Its
+download query requires exactly one normalized `filename`, lowercase `sha256`,
+and valid requester `cid`; the currently opened regular file must hash to that
+value. It opens beneath the bucket without following symlinks, hashes and
+streams the same descriptor, enforces a concurrent body cap, and returns
+`409` if local content no longer matches. Mutating and unrelated methods/routes
+return `405`.
 
 > All peer-supplied paths (download `filename`, delete `path`, rename
 > `src`/`dst`, upload `path` + filename) are validated and confined to the
@@ -487,12 +529,16 @@ LAN mode uses mDNS (Multicast DNS) for peer discovery:
 
 - **Service Type**: `_hsync._tcp.local.`
 - **TXT Records**: `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
-  `never_master`, `group`, `delta`
+  `never_master`, `group`, `delta`, `peer_download`, `seed`
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
 
 The `delta` TXT record is advertised only when delta transfer is enabled
 (`HSYNC_DELTA_ENABLED=true`, the default). Peers parse this flag to determine
 whether delta transfer can be used with that peer.
+
+`peer_download=true` advertises protocol implementation. `seed=true` is a
+runtime readiness assertion published only after a continuous slave's HTTPS
+seeder has bound successfully; it is withdrawn before the role is cleaned up.
 
 ### Thread Model
 

@@ -77,6 +77,8 @@ from hsync_client.exceptions import (
     PermanentDownloadError,
     ServerError,
 )
+from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
+from hsync_client.lan_sources import LanCandidateMap, LanSourceResolver
 from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import (
     get_ssl_verify,
@@ -102,7 +104,12 @@ def is_sync_cycle_active() -> bool:
     return _sync_cycle_active.is_set()
 
 
-async def periodic_resync(*, lan_mode: bool = False) -> None:
+async def periodic_resync(
+    *,
+    lan_mode: bool = False,
+    inventory_observer: InventoryObserver | None = None,
+    source_resolver: LanSourceResolver | None = None,
+) -> None:
     """Run full sync cycles at ``CONFIG["RESYNC"]`` until cancelled.
 
     Shared by remote continuous mode and the LAN slave. ``CancelledError`` is
@@ -122,7 +129,14 @@ async def periodic_resync(*, lan_mode: bool = False) -> None:
                 log.debug(skip_msg)
                 continue
             log.info(f"{label} ({CONFIG['RESYNC']} sec.)")
-            await sync(lan_mode=lan_mode)
+            if inventory_observer is None and source_resolver is None:
+                await sync(lan_mode=lan_mode)
+            else:
+                await sync(
+                    lan_mode=lan_mode,
+                    inventory_observer=inventory_observer,
+                    source_resolver=source_resolver,
+                )
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -272,7 +286,11 @@ def log_initial_sync_start() -> None:
     log.info(f"{ActionLabel.INITIAL_SYNC} Initial sync started")
 
 
-async def sync(lan_mode: bool = False) -> SyncCycleResult:
+async def sync(
+    lan_mode: bool = False,
+    inventory_observer: InventoryObserver | None = None,
+    source_resolver: LanSourceResolver | None = None,
+) -> SyncCycleResult:
     """
     Perform a full synchronization between local and remote files.
 
@@ -296,6 +314,8 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
     # Import here to avoid circular import
     from hsync_client.transfer import nothing_to_do
 
+    inventory_observer = inventory_observer or NOOP_INVENTORY_OBSERVER
+
     # Check if local directory exists before starting sync
     if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
@@ -317,6 +337,7 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
 
         # Get file lists from both sides
         local_files = get_files_local()
+        inventory_observer.replace_snapshot(local_files)
         remote_files = get_files_remote()
 
         # Fetch deletion markers so files deleted while this peer was offline
@@ -515,6 +536,7 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
             if file.filepath and Path(file.filepath).exists():
                 try:
                     remove(file.filepath)
+                    inventory_observer.remove_file(file.filepath)
                     sync_state.clear_base(file.filepath)
                     log.info(f'{ActionLabel.DELETE} "{file.filepath}" (not on master)')
                     emit_event(UiEventName.transfer, op="delete", file=file.filepath)
@@ -542,7 +564,11 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         for action in sync_actions:
             if action.name == SyncActionName.download and action.conflict:
                 conflicts += 1
-                _save_conflict_copy(action.file)
+                conflict_path = _save_conflict_copy(action.file)
+                if conflict_path:
+                    conflict_file = File.get(conflict_path)
+                    if conflict_file is not None:
+                        inventory_observer.upsert(conflict_file)
 
         # ── Symlink structural replication ──────────────────────────────
         # Uploads and downloads of symlinks run inline (they carry no payload:
@@ -559,7 +585,10 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
                     log.error(f'Error uploading symlink "{link.filepath}": {e}')
             for link in symlink_downloads:
                 try:
-                    download_symlink(link)
+                    if inventory_observer is NOOP_INVENTORY_OBSERVER:
+                        download_symlink(link)
+                    else:
+                        download_symlink(link, inventory_observer=inventory_observer)
                 except Exception as e:  # pragma: no cover - best-effort
                     log.error(f'Error downloading symlink "{link.filepath}": {e}')
 
@@ -568,8 +597,17 @@ async def sync(lan_mode: bool = False) -> SyncCycleResult:
         if downloads or uploads or permission_uploads:
             # Re-derive concurrency from the live transfer queue profile
             _refresh_concurrency_from_queue(downloads, uploads + permission_uploads)
+            source_candidates = (
+                source_resolver.resolve(downloads) if source_resolver is not None else None
+            )
             await _execute_parallel_transfers(
-                downloads, uploads, transfer_counters, permission_uploads
+                downloads,
+                uploads,
+                transfer_counters,
+                permission_uploads,
+                inventory_observer,
+                source_resolver,
+                source_candidates,
             )
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
@@ -711,6 +749,9 @@ async def _execute_parallel_transfers(
     uploads: list[File],
     counters: dict[str, int] | None = None,
     permission_uploads: list[File] | None = None,
+    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
+    source_resolver: LanSourceResolver | None = None,
+    source_candidates: LanCandidateMap | None = None,
 ) -> None:
     """
     Execute file transfers in parallel using a thread pool.
@@ -743,13 +784,15 @@ async def _execute_parallel_transfers(
     # the start of every sync cycle.
     executor = _get_transfer_executor(max_concurrent)
 
-    async def transfer_with_semaphore(func: Callable[[File], None], file: File) -> None:
+    async def transfer_with_semaphore(
+        func: Callable[[File], None], file: File, *, is_download: bool = False
+    ) -> None:
         """Execute a transfer function with semaphore limiting."""
         async with semaphore:
             # Skip downloads that already failed permanently in this
             # cycle (the skip-set is consulted here too because a realtime
             # event can enqueue a file after the full-sync pre-filter ran).
-            if func is download_file and _is_permanently_failed(file):
+            if is_download and _is_permanently_failed(file):
                 return
             t0 = monotonic()
             try:
@@ -775,19 +818,46 @@ async def _execute_parallel_transfers(
     tasks = []
 
     # Add download tasks
+    from functools import partial
+
+    observed_download: Callable[[File], None]
+    if source_resolver is not None:
+        observed_download = partial(
+            download_file,
+            candidates=source_candidates,
+            source_resolver=source_resolver,
+            inventory_observer=inventory_observer,
+        )
+    elif inventory_observer is not NOOP_INVENTORY_OBSERVER:
+        observed_download = partial(
+            download_file,
+            inventory_observer=inventory_observer,
+        )
+    else:
+        observed_download = download_file
     for file in downloads:
-        tasks.append(transfer_with_semaphore(download_file, file))
+        tasks.append(transfer_with_semaphore(observed_download, file, is_download=True))
 
     # Add upload tasks
+    observed_upload = (
+        upload_file
+        if inventory_observer is NOOP_INVENTORY_OBSERVER
+        else partial(upload_file, inventory_observer=inventory_observer)
+    )
     for file in uploads:
-        tasks.append(transfer_with_semaphore(upload_file, file))
+        tasks.append(transfer_with_semaphore(observed_upload, file))
 
     # Permission-only uploads skip the content dedup on the peer (same-SHA
     # branch applies the new mode); they re-use the same upload machinery.
     if permission_uploads:
-        from functools import partial
-
-        perm_upload = partial(upload_file, permissions_only=True)
+        if inventory_observer is NOOP_INVENTORY_OBSERVER:
+            perm_upload = partial(upload_file, permissions_only=True)
+        else:
+            perm_upload = partial(
+                upload_file,
+                permissions_only=True,
+                inventory_observer=inventory_observer,
+            )
         for file in permission_uploads:
             tasks.append(transfer_with_semaphore(perm_upload, file))
 
@@ -1838,7 +1908,11 @@ def update_dir(data: dict) -> Dir | None:
     return dir
 
 
-def update_file(data: dict) -> None:
+def update_file(
+    data: dict,
+    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
+    source_resolver: LanSourceResolver | None = None,
+) -> None:
     """
     Update a local file based on remote event data.
 
@@ -1904,6 +1978,7 @@ def update_file(data: dict) -> None:
                     f'Causal conflict for "{file_data.filepath}": '
                     "local wins tie-break, skipping download (will upload on next reconcile)"
                 )
+                inventory_observer.upsert(file)
                 return
             # conflict_download: remote wins tie-break — preserve the local
             # copy before overwriting it.
@@ -1917,7 +1992,15 @@ def update_file(data: dict) -> None:
                 log.debug(f'Skipping permanently-failed download: "{file_data.filepath}"')
                 return
             try:
-                download_file(file_data)
+                if inventory_observer is NOOP_INVENTORY_OBSERVER and source_resolver is None:
+                    download_file(file_data)
+                else:
+                    download_file(
+                        file_data,
+                        inventory_observer=inventory_observer,
+                        source_resolver=source_resolver,
+                        refresh_peer_sources=source_resolver is not None,
+                    )
             except PermanentDownloadError as e:
                 _record_permanent_download_failure(file_data, e)
                 return
@@ -1928,8 +2011,11 @@ def update_file(data: dict) -> None:
             # Only permissions differ - update them
             if file_data.permissions:
                 set_permissions(file_data.filepath, file_data.permissions)
+            inventory_observer.upsert(file)
         else:
             log.debug(f'File not changed: "{file_data.filepath}"')
+            if file is not None:
+                inventory_observer.upsert(file)
     else:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
@@ -1938,6 +2024,14 @@ def update_file(data: dict) -> None:
             log.debug(f'Skipping permanently-failed download: "{file.filepath}"')
             return
         try:
-            download_file(file)
+            if inventory_observer is NOOP_INVENTORY_OBSERVER and source_resolver is None:
+                download_file(file)
+            else:
+                download_file(
+                    file,
+                    inventory_observer=inventory_observer,
+                    source_resolver=source_resolver,
+                    refresh_peer_sources=source_resolver is not None,
+                )
         except PermanentDownloadError as e:
             _record_permanent_download_failure(file, e)

@@ -1,12 +1,6 @@
-"""Regression tests for the LAN master compressed-download size cap.
+"""Regression tests for bounded LAN compressed-download staging."""
 
-The compressed download branch buffers the whole file in RAM to build the
-zstd frame. Beyond ``LAN_COMPRESSION_MAX_FILE_BYTES`` the master must fall
-back to the streaming UNCOMPRESSED path instead of spiking its memory (the
-old implementation read up to MAX_INBOUND_SIZE — 10 GB by default — into
-RAM, and refused even larger files with a hard 403).
-"""
-
+import tempfile
 import time
 from unittest.mock import patch
 
@@ -30,13 +24,22 @@ def server():
     srv.stop()
 
 
-def _download(port: int, filename: str) -> tuple[int, dict[str, str], bytes]:
+def _download(
+    port: int,
+    filename: str,
+    *,
+    accept_encoding: str = "identity",
+) -> tuple[int, dict[str, str], bytes]:
     """GET a file from the master, returning (status, headers, body)."""
     import http.client
 
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        conn.request("GET", f"/api/v1/buckets/test/files/download?filename={filename}")
+        conn.request(
+            "GET",
+            f"/api/v1/buckets/test/files/download?filename={filename}",
+            headers={"Accept-Encoding": accept_encoding},
+        )
         response = conn.getresponse()
         body = response.read()
         headers = {k.lower(): v for k, v in response.getheaders()}
@@ -51,19 +54,26 @@ class TestCompressedDownloadCap:
         _, port = server
         (tmp_path / "big.txt").write_bytes(_CONTENT)
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "COMPRESSION_ENABLED": True,
-            },
+        with (
+            patch(
+                "hsync_client.lan_server.CONFIG",
+                {
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "LAN_KEY": None,
+                    "COMPRESSION_ENABLED": True,
+                },
+            ),
+            patch(
+                "hsync_client.lan_server.tempfile.TemporaryFile",
+                wraps=tempfile.TemporaryFile,
+            ) as mock_temporary_file,
         ):
-            status, headers, body = _download(port, "big.txt")
+            status, headers, body = _download(port, "big.txt", accept_encoding="zstd")
 
         assert status == 200
         assert headers.get("content-encoding") == "zstd"
         assert decompress_data(body) == _CONTENT
+        mock_temporary_file.assert_called_once_with(mode="w+b")
 
     def test_file_above_cap_is_served_uncompressed(self, server, tmp_path, monkeypatch):
         """Above the cap the master serves the streaming uncompressed path."""
@@ -81,12 +91,12 @@ class TestCompressedDownloadCap:
                 "COMPRESSION_ENABLED": True,
             },
         ):
-            status, headers, body = _download(port, "big.txt")
+            status, headers, body = _download(port, "big.txt", accept_encoding="zstd")
 
         assert status == 200
         assert "content-encoding" not in headers
         assert body == _CONTENT
-        assert headers.get("x-sha256")
+        assert headers.get("x-checksum-sha256")
 
     def test_compression_disabled_serves_uncompressed(self, server, tmp_path):
         """With compression disabled the plain streaming path serves bytes."""

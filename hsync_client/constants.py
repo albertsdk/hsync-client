@@ -246,6 +246,16 @@ MAX_INBOUND_SIZE_MB_MIN = 0  # 0 = disabled (cap = declared size only)
 MAX_INBOUND_SIZE_MB_MAX = 10_000_000  # 10 TB
 MAX_INBOUND_SIZE_MB_DEFAULT = 10_240  # 10 GB
 
+# LAN peer-assisted download defaults (ADR-0028/0029).
+LAN_PEER_DOWNLOAD_DEFAULT = True
+LAN_PEER_DOWNLOAD_MIN_SIZE_DEFAULT = 1024 * 1024
+LAN_PEER_READ_CAP_DEFAULT = 2
+LAN_PEER_READ_CAP_MIN = 1
+LAN_PEER_READ_CAP_MAX = 32
+LAN_PEER_SOURCES_MAX_DEFAULT = 3
+LAN_PEER_SOURCES_MAX_MIN = 1
+LAN_PEER_SOURCES_MAX_MAX = 8
+
 # Per-worker memory budget for the parallel local-file scan/hash pool
 # (``sync._get_optimal_workers`` → ``get_files_local``). Each worker runs
 # ``_get_single_file_metadata`` → ``File.get`` → ``compute_sha256``

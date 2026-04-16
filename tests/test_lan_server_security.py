@@ -41,6 +41,7 @@ class TestLANRequestHandlerDownloadSecurity:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             # Try path traversal with a file that exists outside bucket
@@ -80,6 +81,7 @@ class TestLANRequestHandlerUploadSecurity:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             # Try path traversal
@@ -123,6 +125,7 @@ class TestLANRequestHandlerDeleteSecurity:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -158,6 +161,7 @@ class TestLANRequestHandlerRenameSecurity:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -202,6 +206,7 @@ class TestLANUploadAbsoluteCap:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
                 "MIN_FREE_DISK_SPACE": 0,
                 "MAX_INBOUND_SIZE": 50,
             },
@@ -236,6 +241,7 @@ class TestLANUploadAbsoluteCap:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
                 "MIN_FREE_DISK_SPACE": 0,
                 "MAX_INBOUND_SIZE": 50,
             },
@@ -263,6 +269,7 @@ class TestLANUploadAbsoluteCap:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
                 "MIN_FREE_DISK_SPACE": 0,
                 "MAX_INBOUND_SIZE": 1024,
             },
@@ -380,6 +387,7 @@ class TestLANMultipartCaps:
             {
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
                 "MIN_FREE_DISK_SPACE": 0,
             },
         ):
@@ -416,6 +424,7 @@ class TestLANRequestHandlerBucketNotConfigured:
             {
                 "LOCAL_BUCKET": "",
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
@@ -434,6 +443,7 @@ class TestLANRequestHandlerBucketNotConfigured:
             {
                 "LOCAL_BUCKET": "",
                 "LAN_KEY": None,
+                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
             },
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"

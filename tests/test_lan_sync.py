@@ -336,6 +336,8 @@ class TestRegisterService:
             assert b"version" in props
             # The liveness heartbeat is always advertised (opaque counter).
             assert props[b"heartbeat"] == b"0"
+            assert props[b"peer_download"] == b"true"
+            assert b"seed" not in props
             # Conditional keys stay absent when the feature is off.
             for key in (
                 b"group",
@@ -380,8 +382,9 @@ class TestRegisterService:
         try:
             props = self._registered_properties(lan, zc)
             assert props[b"group"] == b"team-a"
-            assert props[b"https"] == b"true"
-            assert props[b"cert_fp"] == b"ff00"
+            # Endpoint material is dishonest until a listener has bound.
+            assert b"https" not in props
+            assert b"cert_fp" not in props
             assert props[b"force_master"] == b"true"
             assert props[b"sync_direction"] == b"upload-only"
             assert b"never_master" not in props
@@ -461,6 +464,38 @@ class TestUpdateServerReady:
                 assert dict(new_info.properties)[b"server_ready"] == b"true"
                 # The local node marked itself incumbent (anti-takeover).
                 assert lan.peer_manager._local_server_ready is True
+            finally:
+                lan.stop()
+
+    def test_seed_ready_advertises_reachable_tls_endpoint_without_incumbency(self):
+        """A bound slave seeder advertises seed/TLS but never server_ready."""
+        from hsync_client.lan import LANSync
+
+        lan = LANSync(
+            cid="test123",
+            bucket="photos",
+            use_https=True,
+            cert_fingerprint="ff00",
+        )
+        with (
+            patch("hsync_client.lan.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.lan.ServiceBrowser"),
+        ):
+            lan.start(register_service=True)
+            zc = mock_zc_cls.return_value
+            lan.update_seed_ready(True)
+            try:
+                props = dict(zc.update_service.call_args.args[0].properties)
+                assert props[b"seed"] == b"true"
+                assert props[b"https"] == b"true"
+                assert props[b"cert_fp"] == b"ff00"
+                assert b"server_ready" not in props
+                assert lan.peer_manager._local_server_ready is False
+
+                lan.update_server_ready()
+                props = dict(zc.update_service.call_args.args[0].properties)
+                assert props[b"server_ready"] == b"true"
+                assert b"seed" not in props
             finally:
                 lan.stop()
 

@@ -394,14 +394,27 @@ class TestCheckLanWritePolicy:
             logger=MagicMock(),
         )
 
-    def test_interactive_write_without_key_is_allowed(self):
-        """Interactive runs (no --yes) may write without a key (operator vouches)."""
+    def test_interactive_write_without_key_is_refused(self):
+        """A TTY is context only and does not authorize unauthenticated writes."""
+        with pytest.raises(SystemExit) as exc_info:
+            _check_lan_write_policy(
+                lan_mode=True,
+                lan_key=None,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=MagicMock(),
+            )
+        assert exc_info.value.code == 1
+
+    def test_explicit_unauthenticated_write_opt_in_is_allowed(self):
+        """The dangerous explicit opt-in authorizes a no-key write-capable run."""
         _check_lan_write_policy(
             lan_mode=True,
             lan_key=None,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            auto_confirm=True,
             logger=MagicMock(),
+            allow_unauthenticated_writes=True,
         )
 
     def test_non_interactive_download_only_is_allowed(self):
@@ -564,7 +577,10 @@ class TestStdinCommandHandlers:
         """The SYNC handler syncs with the configured LAN_MODE flag."""
         registered = await self._register_and_capture()
         with (
-            patch("hsync_client.preview.CONFIG", {"LAN_MODE": True}),
+            patch(
+                "hsync_client.preview.CONFIG",
+                {"LAN_MODE": True, "LAN_KEY": "shared-key"},
+            ),
             patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
         ):
             await registered["SYNC"]()
