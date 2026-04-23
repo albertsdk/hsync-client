@@ -8,7 +8,7 @@
 
 import asyncio
 import contextlib
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -106,7 +106,9 @@ class TestProcessWebsocketEvents:
         ):
             with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
-            mock_update.assert_called_once_with(message["src"])
+            mock_update.assert_called_once_with(
+                message["src"], inventory_observer=ANY, source_resolver=ANY
+            )
 
     @pytest.mark.asyncio
     async def test_skips_event_from_same_client(self):
@@ -314,7 +316,9 @@ class TestProcessWebsocketEvents:
         ):
             with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
-            mock_update.assert_called_once_with(message["src"])
+            mock_update.assert_called_once_with(
+                message["src"], inventory_observer=ANY, source_resolver=ANY
+            )
 
     @pytest.mark.asyncio
     async def test_processes_symlink_event(self):
@@ -435,7 +439,7 @@ class TestResync:
 
         call_count = 0
 
-        async def mock_sync(lan_mode: bool = False):
+        async def mock_sync(lan_mode: bool = False, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count >= 2:

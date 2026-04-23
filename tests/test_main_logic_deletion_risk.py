@@ -390,18 +390,16 @@ class TestCheckLanWritePolicy:
             lan_mode=False,
             lan_key=None,
             sync_direction="bidirectional",
-            auto_confirm=True,
             logger=MagicMock(),
         )
 
-    def test_interactive_write_without_key_is_refused(self):
+    def test_write_without_key_is_refused(self):
         """A TTY is context only and does not authorize unauthenticated writes."""
         with pytest.raises(SystemExit) as exc_info:
             _check_lan_write_policy(
                 lan_mode=True,
                 lan_key=None,
                 sync_direction="bidirectional",
-                auto_confirm=False,
                 logger=MagicMock(),
             )
         assert exc_info.value.code == 1
@@ -412,35 +410,32 @@ class TestCheckLanWritePolicy:
             lan_mode=True,
             lan_key=None,
             sync_direction="bidirectional",
-            auto_confirm=True,
             logger=MagicMock(),
             allow_unauthenticated_writes=True,
         )
 
-    def test_non_interactive_download_only_is_allowed(self):
+    def test_download_only_is_allowed(self):
         """download-only never writes to the master, so no key is required."""
         _check_lan_write_policy(
             lan_mode=True,
             lan_key=None,
             sync_direction="download-only",
-            auto_confirm=True,
             logger=MagicMock(),
         )
 
-    def test_non_interactive_write_with_key_is_allowed(self):
-        """A key satisfies the policy for unattended writes over the secure LAN."""
+    def test_write_with_key_is_allowed(self):
+        """A key satisfies the policy for writes over the secure LAN."""
         _check_lan_write_policy(
             lan_mode=True,
             lan_key="secret",
             sync_direction="bidirectional",
-            auto_confirm=True,
             logger=MagicMock(),
         )
 
     # ── Refused scenarios (SystemExit + auth_required event) ─────────
 
-    def test_non_interactive_write_without_key_exits(self):
-        """Unattended write without a key is refused with an AUTH_REQUIRED event."""
+    def test_write_without_key_exits(self):
+        """Write without a key is refused with an AUTH_REQUIRED event."""
         mock_logger = MagicMock()
         with (
             patch("hsync_client.main_logic.emit_event") as mock_emit,
@@ -450,7 +445,6 @@ class TestCheckLanWritePolicy:
                 lan_mode=True,
                 lan_key=None,
                 sync_direction="bidirectional",
-                auto_confirm=True,
                 logger=mock_logger,
             )
         assert exc_info.value.code == 1
@@ -458,8 +452,8 @@ class TestCheckLanWritePolicy:
         assert "AUTH REQUIRED" in error_texts
         mock_emit.assert_called_once()
 
-    def test_non_interactive_upload_only_without_key_exits(self):
-        """upload-only writes to the master and is refused unattended without a key."""
+    def test_upload_only_without_key_exits(self):
+        """upload-only writes to the master and is refused without a key."""
         with (
             patch("hsync_client.main_logic.emit_event"),
             pytest.raises(SystemExit) as exc_info,
@@ -468,30 +462,9 @@ class TestCheckLanWritePolicy:
                 lan_mode=True,
                 lan_key=None,
                 sync_direction="upload-only",
-                auto_confirm=True,
                 logger=MagicMock(),
             )
         assert exc_info.value.code == 1
-
-    def test_non_tty_write_without_key_exits(self):
-        """A TTY-less run (container/cron) without --yes counts as unattended."""
-        mock_logger = MagicMock()
-        with (
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
-            patch("hsync_client.main_logic.emit_event") as mock_emit,
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            _check_lan_write_policy(
-                lan_mode=True,
-                lan_key=None,
-                sync_direction="bidirectional",
-                auto_confirm=False,
-                logger=mock_logger,
-            )
-        assert exc_info.value.code == 1
-        error_texts = " ".join(str(c) for c in mock_logger.error.call_args_list)
-        assert "AUTH REQUIRED" in error_texts
-        mock_emit.assert_called_once()
 
 
 class TestWithStdinCommands:
@@ -584,7 +557,9 @@ class TestStdinCommandHandlers:
             patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
         ):
             await registered["SYNC"]()
-        mock_sync.assert_awaited_once_with(lan_mode=True)
+        mock_sync.assert_awaited_once_with(
+            lan_mode=True, inventory_observer=None, source_resolver=None
+        )
 
     @pytest.mark.asyncio
     async def test_set_sync_direction_valid_invalid_and_noop(self):
@@ -644,7 +619,9 @@ class TestStdinCommandHandlers:
             await registered["SYNC"]()
 
         assert cfg["DRYRUN"] is False
-        mock_sync.assert_awaited_once_with(lan_mode=False)
+        mock_sync.assert_awaited_once_with(
+            lan_mode=False, inventory_observer=None, source_resolver=None
+        )
         handler_inst.stop.assert_called_once()
 
 

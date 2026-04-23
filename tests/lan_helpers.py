@@ -49,6 +49,17 @@ _LAN_KEY = "test-lan-shared-secret"
 _HSYNC_COMMON_DIR = str(Path(__file__).resolve().parent.parent.parent / "hsync-common")
 
 
+def unauth_write_config(bucket, **overrides):
+    """A LAN server ``CONFIG`` with no key and the dangerous write opt-in enabled."""
+    config = {
+        "LOCAL_BUCKET": str(bucket),
+        "LAN_KEY": None,
+        "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
+    }
+    config.update(overrides)
+    return config
+
+
 def _lan_ready_path(local_path: str) -> str:
     """Ready file for a LAN subprocess: a *sibling* of the synced dir.
 

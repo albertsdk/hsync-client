@@ -19,6 +19,8 @@ import pytest
 from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
+from .lan_helpers import unauth_write_config
+
 
 class TestLANResumableUpload:
     """Tests for resumable upload in LAN master mode."""
@@ -36,11 +38,7 @@ class TestLANResumableUpload:
     @pytest.fixture
     def config(self, tmp_path):
         """Base CONFIG for LAN master tests."""
-        return {
-            "LOCAL_BUCKET": str(tmp_path),
-            "LAN_KEY": None,
-            "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-        }
+        return unauth_write_config(tmp_path)
 
     def _upload_url(self, port: int) -> str:
         return f"http://localhost:{port}/api/v1/buckets/test/files"

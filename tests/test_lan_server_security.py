@@ -9,6 +9,8 @@ import pytest
 
 from hsync_client.lan_server import LANServer
 
+from .lan_helpers import unauth_write_config
+
 
 class TestLANRequestHandlerDownloadSecurity:
     """Tests for download security checks."""
@@ -36,14 +38,7 @@ class TestLANRequestHandlerDownloadSecurity:
         test_file = tmp_path / "safe.txt"
         test_file.write_text("safe content")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             # Try path traversal with a file that exists outside bucket
             # Use a relative path that gets resolved outside bucket
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
@@ -76,14 +71,7 @@ class TestLANRequestHandlerUploadSecurity:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             # Try path traversal
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -120,14 +108,7 @@ class TestLANRequestHandlerDeleteSecurity:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "../somefile.txt"}, timeout=5)
 
@@ -156,14 +137,7 @@ class TestLANRequestHandlerRenameSecurity:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url, params={"src": "safe.txt", "dst": "../malicious.txt"}, timeout=5
@@ -203,13 +177,7 @@ class TestLANUploadAbsoluteCap:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-                "MIN_FREE_DISK_SPACE": 0,
-                "MAX_INBOUND_SIZE": 50,
-            },
+            unauth_write_config(tmp_path, MIN_FREE_DISK_SPACE=0, MAX_INBOUND_SIZE=50),
         ):
             # A valid sha256sum makes the cap the ONLY possible rejection
             # reason (no format-gate or checksum-mismatch fallback).
@@ -238,13 +206,7 @@ class TestLANUploadAbsoluteCap:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-                "MIN_FREE_DISK_SPACE": 0,
-                "MAX_INBOUND_SIZE": 50,
-            },
+            unauth_write_config(tmp_path, MIN_FREE_DISK_SPACE=0, MAX_INBOUND_SIZE=50),
         ):
             response = self._post_file(
                 port,
@@ -266,13 +228,7 @@ class TestLANUploadAbsoluteCap:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-                "MIN_FREE_DISK_SPACE": 0,
-                "MAX_INBOUND_SIZE": 1024,
-            },
+            unauth_write_config(tmp_path, MIN_FREE_DISK_SPACE=0, MAX_INBOUND_SIZE=1024),
         ):
             response = self._post_file(
                 port,
@@ -384,12 +340,7 @@ class TestLANMultipartCaps:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-                "MIN_FREE_DISK_SPACE": 0,
-            },
+            unauth_write_config(tmp_path, MIN_FREE_DISK_SPACE=0),
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "t", "path": "x" * (1024 * 1024), "sha256sum": "x" * 64}
@@ -419,14 +370,7 @@ class TestLANRequestHandlerBucketNotConfigured:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": "",
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config("")):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.get(url, timeout=5)
 
@@ -438,14 +382,7 @@ class TestLANRequestHandlerBucketNotConfigured:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": "",
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config("")):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(url, params={"filename": "test.txt"}, timeout=5)
 

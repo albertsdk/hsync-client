@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,6 +59,27 @@ class AckingWebSocket:
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = True
+
+
+def test_legacy_volatile_schema_is_recreated(tmp_path: Path) -> None:
+    database = tmp_path / "inventory.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE inventory_sessions (cid TEXT PRIMARY KEY)")
+    connection.execute("PRAGMA user_version = 0")
+    connection.commit()
+    connection.close()
+
+    store = LanInventoryStore(database, "bucket")
+    token = store.begin_session(CID_A)
+    snapshot = build_lan_inventory_frame(
+        gen=1,
+        seq=0,
+        mode="snapshot",
+        more=False,
+        entries=[{"path": "one.txt", "sha256": DIGEST_A, "size": 1}],
+    )
+    assert store.apply_frame(CID_A, token, snapshot)["status"] == "ok"
+    store.close()
 
 
 def test_store_commits_snapshot_atomically_and_applies_idempotent_delta(tmp_path: Path) -> None:
@@ -112,6 +134,32 @@ def test_store_commits_snapshot_atomically_and_applies_idempotent_delta(tmp_path
     )
     assert store.apply_frame(CID_A, token, gap)["status"] == "resync"
     assert store.holders_for(_query("one.txt", DIGEST_B))[("one.txt", DIGEST_B)]
+    store.close()
+
+
+def test_duplicate_terminal_snapshot_requires_identical_payload(tmp_path: Path) -> None:
+    store = LanInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    token = store.begin_session(CID_A)
+    terminal = build_lan_inventory_frame(
+        gen=1,
+        seq=0,
+        mode="snapshot",
+        more=False,
+        entries=[{"path": "one.txt", "sha256": DIGEST_A, "size": 1}],
+    )
+    assert store.apply_frame(CID_A, token, terminal)["status"] == "ok"
+    assert store.apply_frame(CID_A, token, terminal)["status"] == "ok"
+
+    altered = build_lan_inventory_frame(
+        gen=1,
+        seq=0,
+        mode="snapshot",
+        more=False,
+        entries=[{"path": "other.txt", "sha256": DIGEST_B, "size": 2}],
+    )
+    assert store.apply_frame(CID_A, token, altered)["status"] == "resync"
+    assert store.holders_for(_query("one.txt", DIGEST_A))[("one.txt", DIGEST_A)]
     store.close()
 
 

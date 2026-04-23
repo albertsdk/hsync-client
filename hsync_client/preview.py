@@ -45,7 +45,6 @@ def _lan_write_allowed(direction: str, log) -> bool:
         return True
     if not lan_write_requires_key(
         direction,
-        interactive=False,
         allow_unauthenticated_writes=CONFIG.get("LAN_ALLOW_UNAUTHENTICATED_WRITES", False),
     ):
         return True
@@ -58,22 +57,6 @@ def _lan_write_allowed(direction: str, log) -> bool:
         message="A shared LAN key or explicit unauthenticated-write opt-in is required",
     )
     return False
-
-
-async def _sync_with_inventory_observer(
-    lan_mode: bool,
-    inventory_observer: InventoryObserver | None,
-    source_resolver: LanSourceResolver | None = None,
-) -> None:
-    """Run one sync without changing the established no-observer call shape."""
-    if inventory_observer is None and source_resolver is None:
-        await sync(lan_mode=lan_mode)
-    else:
-        await sync(
-            lan_mode=lan_mode,
-            inventory_observer=inventory_observer,
-            source_resolver=source_resolver,
-        )
 
 
 def _apply_bandwidth(value: object, key: _BANDWIDTH_KEY, name: str, log) -> bool:
@@ -239,7 +222,11 @@ async def _with_stdin_commands(
         lan = CONFIG.get("LAN_MODE", False)
         if not _lan_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
             return
-        await _sync_with_inventory_observer(lan, inventory_observer, source_resolver)
+        await sync(
+            lan_mode=lan,
+            inventory_observer=inventory_observer,
+            source_resolver=source_resolver,
+        )
 
     handler.register("SYNC", _handle_sync)
 
@@ -258,7 +245,11 @@ async def _with_stdin_commands(
         log.info(f"Sync direction changed: {old!r} → {direction!r}")
         # Trigger an immediate resync with the new direction
         lan = CONFIG.get("LAN_MODE", False)
-        await _sync_with_inventory_observer(lan, inventory_observer, source_resolver)
+        await sync(
+            lan_mode=lan,
+            inventory_observer=inventory_observer,
+            source_resolver=source_resolver,
+        )
 
     handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
 
@@ -322,7 +313,11 @@ async def _run_stdin_wait(
             return
         CONFIG["DRYRUN"] = False
         lan = CONFIG.get("LAN_MODE", False)
-        await _sync_with_inventory_observer(lan, inventory_observer, source_resolver)
+        await sync(
+            lan_mode=lan,
+            inventory_observer=inventory_observer,
+            source_resolver=source_resolver,
+        )
         handler.stop()
 
     handler.register("SYNC", _handle_sync)

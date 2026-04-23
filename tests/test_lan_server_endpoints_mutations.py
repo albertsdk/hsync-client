@@ -10,6 +10,8 @@ import pytest
 from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
+from .lan_helpers import unauth_write_config
+
 # A well-formed CID per hsync_common.models.event.CID_PATTERN (21 alphanumeric).
 VALID_CID = "a" * 21
 
@@ -47,14 +49,7 @@ class TestLANRequestHandlerCreateDir:
         _inbound_origin.clear()
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
             response = requests.post(url, params={"path": "a/b/c", "cid": VALID_CID}, timeout=5)
             assert response.status_code == 201
@@ -84,14 +79,7 @@ class TestLANRequestHandlerCreateDir:
         _inbound_origin.clear()
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
             response = requests.post(url, params={"path": "x", "cid": "not-a-valid-cid"}, timeout=5)
             assert response.status_code == 201
@@ -111,14 +99,7 @@ class TestLANRequestHandlerCreateDir:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
             response = requests.post(url, params={"path": "existing", "cid": VALID_CID}, timeout=5)
             assert response.status_code == 201
@@ -150,14 +131,7 @@ class TestLANRequestHandlerDELETE:
         test_file = tmp_path / "to_delete.txt"
         test_file.write_text("content to delete")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "to_delete.txt"}, timeout=5)
 
@@ -175,14 +149,7 @@ class TestLANRequestHandlerDELETE:
         test_dir.mkdir()
         (test_dir / "file.txt").write_text("content")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(
                 url, params={"path": "to_delete_dir", "is_dir": "true"}, timeout=5
@@ -197,14 +164,7 @@ class TestLANRequestHandlerDELETE:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "nonexistent.txt"}, timeout=5)
 
@@ -216,14 +176,7 @@ class TestLANRequestHandlerDELETE:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, timeout=5)
 
@@ -254,14 +207,7 @@ class TestLANRequestHandlerPATCH:
         test_file = tmp_path / "old_name.txt"
         test_file.write_text("content")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url, params={"src": "old_name.txt", "dst": "new_name.txt"}, timeout=5
@@ -282,14 +228,7 @@ class TestLANRequestHandlerPATCH:
         test_dir.mkdir()
         (test_dir / "file.txt").write_text("content")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(url, params={"src": "old_dir", "dst": "new_dir"}, timeout=5)
 
@@ -303,14 +242,7 @@ class TestLANRequestHandlerPATCH:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url, params={"src": "nonexistent.txt", "dst": "new.txt"}, timeout=5
@@ -324,14 +256,7 @@ class TestLANRequestHandlerPATCH:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(url, timeout=5)
 
@@ -354,14 +279,7 @@ class TestLANRequestHandlerPATCH:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url, params={"src": "link.txt", "dst": "renamed-link.txt"}, timeout=5
@@ -405,14 +323,7 @@ class TestLANRequestHandlerSymlink:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "link.txt"}, timeout=5)
 
@@ -435,14 +346,7 @@ class TestLANRequestHandlerSymlink:
         link = tmp_path / "dir-link"
         link.symlink_to("real-dir", target_is_directory=True)
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(
                 url, params={"path": "dir-link", "is_dir": "true"}, timeout=5
@@ -471,14 +375,7 @@ class TestLANRequestHandlerSymlink:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/symlinks"
             inode_before = os.stat(link, follow_symlinks=False).st_ino
             response = requests.post(
@@ -501,14 +398,7 @@ class TestLANRequestHandlerSymlink:
         link = tmp_path / "link.txt"
         link.symlink_to("old-target.txt")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/symlinks"
             response = requests.post(
                 url, params={"path": "link.txt", "target": "new-target.txt"}, timeout=5

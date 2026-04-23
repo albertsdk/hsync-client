@@ -624,7 +624,7 @@ class TestLANPeriodicResync:
 
         call_count = 0
 
-        async def mock_sync(lan_mode: bool = False):
+        async def mock_sync(lan_mode: bool = False, **kwargs):
             nonlocal call_count
             call_count += 1
             assert lan_mode is True

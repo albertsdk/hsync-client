@@ -15,6 +15,8 @@ from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import SlaveCidRegistry
 
+from .lan_helpers import unauth_write_config
+
 
 class TestLANRequestHandler:
     """Tests for LANRequestHandler endpoints."""
@@ -34,14 +36,7 @@ class TestLANRequestHandler:
         """Test health check endpoint."""
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/health")
             response = conn.getresponse()
@@ -121,14 +116,7 @@ class TestLANRequestHandler:
         (tmp_path / "subdir").mkdir()
         (tmp_path / "subdir" / "file3.txt").write_text("content3")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/files")
             response = conn.getresponse()
@@ -147,14 +135,7 @@ class TestLANRequestHandler:
         test_file = tmp_path / "download_test.txt"
         test_file.write_text("download content")
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/files/download?filename=download_test.txt")
             response = conn.getresponse()
@@ -168,14 +149,7 @@ class TestLANRequestHandler:
         """Test download of non-existent file."""
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/files/download?filename=nonexistent.txt")
             response = conn.getresponse()
@@ -187,14 +161,7 @@ class TestLANRequestHandler:
         """Test 404 for unknown endpoints."""
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/unknown/path")
             response = conn.getresponse()
@@ -208,14 +175,7 @@ class TestLANRequestHandler:
 
         srv, port = server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             # Simulate upload like transfer.py does
             url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             data = {
@@ -307,14 +267,7 @@ class TestLANSyncIntegration:
         client_bucket = tmp_path / "client"
         client_bucket.mkdir()
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(master_bucket),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(master_bucket))):
             # Simulate what sync.get_files_remote() does
             url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             response = requests.get(url, timeout=5)
@@ -335,14 +288,7 @@ class TestLANSyncIntegration:
 
         srv, port, master_bucket = master_server
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(master_bucket),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(master_bucket))):
             # Simulate upload like transfer.py does
             url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             data = {
@@ -385,14 +331,7 @@ class TestLANSyncIntegration:
 
         sha = compute_sha256(str(test_file))
 
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(master_bucket),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(master_bucket))):
             url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
             fields = {
                 "cid": "test-client",
@@ -450,14 +389,7 @@ class TestLANDuplicateCidGuard:
             "permissions": "644",
         }
         files = {"file": ("uploaded.txt", b"test content")}
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             return requests.post(url, data=data, files=files, timeout=5).status_code
 
     def test_upload_with_master_cid_is_refused(self, guarded_server, tmp_path):

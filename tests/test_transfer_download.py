@@ -780,6 +780,7 @@ class TestPeerDownloadFallback:
         assert mock_get.call_count == 1
         request = mock_get.call_args
         assert request.kwargs["cert_fingerprint"] == source.cert_fingerprint
+        assert request.kwargs["verify"] is False
         assert request.kwargs["params"] == {
             "filename": "peer.txt",
             "sha256": digest,
@@ -1082,7 +1083,7 @@ class TestDownloadPathLocking:
         active = 0
         max_active = 0
 
-        def fake_attempt(_file):
+        def fake_attempt(_file, **kwargs):
             nonlocal active, max_active
             with guard:
                 active += 1

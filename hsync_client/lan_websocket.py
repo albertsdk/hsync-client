@@ -1801,15 +1801,12 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            if self._inventory_observer is NOOP_INVENTORY_OBSERVER:
-                upload_file(file_obj, check_size=True, from_closed=from_closed)
-            else:
-                upload_file(
-                    file_obj,
-                    check_size=True,
-                    from_closed=from_closed,
-                    inventory_observer=self._inventory_observer,
-                )
+            upload_file(
+                file_obj,
+                check_size=True,
+                from_closed=from_closed,
+                inventory_observer=self._inventory_observer,
+            )
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
 

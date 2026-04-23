@@ -129,14 +129,11 @@ async def periodic_resync(
                 log.debug(skip_msg)
                 continue
             log.info(f"{label} ({CONFIG['RESYNC']} sec.)")
-            if inventory_observer is None and source_resolver is None:
-                await sync(lan_mode=lan_mode)
-            else:
-                await sync(
-                    lan_mode=lan_mode,
-                    inventory_observer=inventory_observer,
-                    source_resolver=source_resolver,
-                )
+            await sync(
+                lan_mode=lan_mode,
+                inventory_observer=inventory_observer,
+                source_resolver=source_resolver,
+            )
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -585,10 +582,7 @@ async def sync(
                     log.error(f'Error uploading symlink "{link.filepath}": {e}')
             for link in symlink_downloads:
                 try:
-                    if inventory_observer is NOOP_INVENTORY_OBSERVER:
-                        download_symlink(link)
-                    else:
-                        download_symlink(link, inventory_observer=inventory_observer)
+                    download_symlink(link, inventory_observer=inventory_observer)
                 except Exception as e:  # pragma: no cover - best-effort
                     log.error(f'Error downloading symlink "{link.filepath}": {e}')
 
@@ -820,44 +814,28 @@ async def _execute_parallel_transfers(
     # Add download tasks
     from functools import partial
 
-    observed_download: Callable[[File], None]
-    if source_resolver is not None:
-        observed_download = partial(
-            download_file,
-            candidates=source_candidates,
-            source_resolver=source_resolver,
-            inventory_observer=inventory_observer,
-        )
-    elif inventory_observer is not NOOP_INVENTORY_OBSERVER:
-        observed_download = partial(
-            download_file,
-            inventory_observer=inventory_observer,
-        )
-    else:
-        observed_download = download_file
+    observed_download: Callable[[File], None] = partial(
+        download_file,
+        candidates=source_candidates,
+        source_resolver=source_resolver,
+        inventory_observer=inventory_observer,
+    )
     for file in downloads:
         tasks.append(transfer_with_semaphore(observed_download, file, is_download=True))
 
     # Add upload tasks
-    observed_upload = (
-        upload_file
-        if inventory_observer is NOOP_INVENTORY_OBSERVER
-        else partial(upload_file, inventory_observer=inventory_observer)
-    )
+    observed_upload = partial(upload_file, inventory_observer=inventory_observer)
     for file in uploads:
         tasks.append(transfer_with_semaphore(observed_upload, file))
 
     # Permission-only uploads skip the content dedup on the peer (same-SHA
     # branch applies the new mode); they re-use the same upload machinery.
     if permission_uploads:
-        if inventory_observer is NOOP_INVENTORY_OBSERVER:
-            perm_upload = partial(upload_file, permissions_only=True)
-        else:
-            perm_upload = partial(
-                upload_file,
-                permissions_only=True,
-                inventory_observer=inventory_observer,
-            )
+        perm_upload = partial(
+            upload_file,
+            permissions_only=True,
+            inventory_observer=inventory_observer,
+        )
         for file in permission_uploads:
             tasks.append(transfer_with_semaphore(perm_upload, file))
 
@@ -1992,15 +1970,12 @@ def update_file(
                 log.debug(f'Skipping permanently-failed download: "{file_data.filepath}"')
                 return
             try:
-                if inventory_observer is NOOP_INVENTORY_OBSERVER and source_resolver is None:
-                    download_file(file_data)
-                else:
-                    download_file(
-                        file_data,
-                        inventory_observer=inventory_observer,
-                        source_resolver=source_resolver,
-                        refresh_peer_sources=source_resolver is not None,
-                    )
+                download_file(
+                    file_data,
+                    inventory_observer=inventory_observer,
+                    source_resolver=source_resolver,
+                    refresh_peer_sources=source_resolver is not None,
+                )
             except PermanentDownloadError as e:
                 _record_permanent_download_failure(file_data, e)
                 return
@@ -2024,14 +1999,11 @@ def update_file(
             log.debug(f'Skipping permanently-failed download: "{file.filepath}"')
             return
         try:
-            if inventory_observer is NOOP_INVENTORY_OBSERVER and source_resolver is None:
-                download_file(file)
-            else:
-                download_file(
-                    file,
-                    inventory_observer=inventory_observer,
-                    source_resolver=source_resolver,
-                    refresh_peer_sources=source_resolver is not None,
-                )
+            download_file(
+                file,
+                inventory_observer=inventory_observer,
+                source_resolver=source_resolver,
+                refresh_peer_sources=source_resolver is not None,
+            )
         except PermanentDownloadError as e:
             _record_permanent_download_failure(file, e)

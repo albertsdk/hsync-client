@@ -1052,7 +1052,9 @@ class TestStdinCommands:
 
             # SYNC triggers a sync using the current LAN_MODE.
             asyncio.run(registered["SYNC"]())
-            mock_sync.assert_awaited_with(lan_mode=True)
+            mock_sync.assert_awaited_with(
+                lan_mode=True, inventory_observer=None, source_resolver=None
+            )
 
             # Valid direction change resyncs; invalid and no-op paths short-circuit.
             asyncio.run(registered["SET_SYNC_DIRECTION"](direction="upload-only"))
@@ -1079,7 +1081,9 @@ class TestStdinCommands:
             asyncio.run(registered["SYNC"]())
 
         assert fake_config["DRYRUN"] is False
-        mock_sync.assert_awaited_once_with(lan_mode=False)
+        mock_sync.assert_awaited_once_with(
+            lan_mode=False, inventory_observer=None, source_resolver=None
+        )
         handler.stop.assert_called_once()
 
     def test_runtime_direction_refuses_unauthenticated_lan_write(self):

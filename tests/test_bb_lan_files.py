@@ -39,14 +39,16 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 
 
 class TestLanPeerDownload:
-    def test_one_shot_requester_excludes_same_address_seeder_and_falls_back(
+    @pytest.mark.parametrize("peer_enabled", (True, False), ids=("peer", "master-only"))
+    def test_one_shot_requester_download_path(
         self,
+        peer_enabled,
         lan_master_dir,
         lan_slave_dir,
         lan_bucket,
         tmp_path,
     ):
-        """Same-address sources are excluded and one-shot falls back to the master."""
+        """Distinct same-address CIDs seed exact bodies; opt-out remains master-only."""
         content = (b"peer-assisted-download\n" * 65536)[: 2 * 1024 * 1024]
         source_path = Path(lan_master_dir) / "peer-source.bin"
         source_path.write_bytes(content)
@@ -71,16 +73,24 @@ class TestLanPeerDownload:
                     str(requester_dir),
                     lan_bucket,
                     never_master=True,
-                    extra_args=("--once", "-v"),
+                    extra_args=("--once", "-v") + (() if peer_enabled else ("--no-peer-download",)),
                 )
                 try:
                     requester.wait(timeout=60)
                     requester_output = _stderr_text(requester)
                     assert requester.returncode == 0, requester_output
                     assert (requester_dir / source_path.name).read_bytes() == content
-                    assert '/files/sources HTTP/1.1" 200' in requester_output
-                    assert f"filename={source_path.name}&cid=" in requester_output
-                    assert f"filename={source_path.name}&sha256=" not in _stderr_text(seeder)
+                    seeder_output = _stderr_text(seeder)
+                    if peer_enabled:
+                        assert '/files/sources HTTP/1.1" 200' in requester_output
+                        assert f"filename={source_path.name}&sha256=" in seeder_output, (
+                            f"requester:\n{requester_output}\nseeder:\n{seeder_output}"
+                        )
+                        assert "source_cid=" in requester_output, requester_output
+                    else:
+                        assert '/files/sources HTTP/1.1" 200' not in requester_output
+                        assert f"filename={source_path.name}&sha256=" not in seeder_output
+                        assert "source_cid=" not in requester_output
                 finally:
                     _terminate(requester)
             finally:

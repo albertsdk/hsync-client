@@ -3,7 +3,7 @@ Tests for client file event handler functionality.
 """
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from watchdog.events import (
@@ -338,7 +338,9 @@ class TestSlaveFileEventHandler:
         file_obj = File("/test/file.txt")
         with patch("hsync_client.transfer.upload_file") as mock_up:
             handler._upload_to_master(file_obj)
-            mock_up.assert_called_once_with(file_obj, check_size=True, from_closed=False)
+            mock_up.assert_called_once_with(
+                file_obj, check_size=True, from_closed=False, inventory_observer=ANY
+            )
 
     def test_upload_to_master_emits_no_intent_line(self, handler):
         """A slave upload produces a single log line (the [UPLOAD] from upload_file).
@@ -366,7 +368,9 @@ class TestSlaveFileEventHandler:
         file_obj = File("/test/file.txt")
         with patch("hsync_client.transfer.upload_file") as mock_up:
             handler._upload_to_master(file_obj, from_closed=True)
-            mock_up.assert_called_once_with(file_obj, check_size=True, from_closed=True)
+            mock_up.assert_called_once_with(
+                file_obj, check_size=True, from_closed=True, inventory_observer=ANY
+            )
 
     def test_upload_to_master_exception(self, handler):
         """Test _upload_to_master logs error on exception."""

@@ -26,6 +26,8 @@ from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_even
 from hsync_client.lan_server import LANServer
 from hsync_client.remote_websocket import REMOTE_DISPATCH_CTX
 
+from .lan_helpers import unauth_write_config
+
 
 class TestInboundEventPathValidation:
     """apply_inbound_event must drop unsafe remote paths (remote + LAN slave)."""
@@ -550,14 +552,7 @@ class TestLANServerHardening:
         (evil / "secret.txt").write_text("secret")
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(bucket),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(bucket))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(url, params={"filename": "../sync-evil/secret.txt"}, timeout=5)
             assert response.status_code in (400, 403, 404)
@@ -573,14 +568,7 @@ class TestLANServerHardening:
         (evil / "keep.txt").write_text("keep")
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(bucket),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(bucket))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "../sync-evil"}, timeout=5)
             assert response.status_code == 400
@@ -596,14 +584,7 @@ class TestLANServerHardening:
         evil.mkdir()
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(bucket),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(bucket))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url, params={"src": "a.txt", "dst": "../sync-evil/a.txt"}, timeout=5
@@ -638,14 +619,7 @@ class TestLANServerHardening:
         import requests
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",
@@ -663,14 +637,7 @@ class TestLANServerHardening:
         import requests
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",
@@ -688,14 +655,7 @@ class TestLANServerHardening:
         import requests
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "t", "path": "", "mtime": "", "ctime": ""}
             files = {"file": ("f.txt", b"real content")}
@@ -711,14 +671,7 @@ class TestLANServerHardening:
         compressed = zstd.ZstdCompressor().compress(content)
 
         srv, port = server
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",
@@ -740,14 +693,7 @@ class TestLANServerHardening:
 
         srv, port = server
         with (
-            patch(
-                "hsync_client.lan_server.CONFIG",
-                {
-                    "LOCAL_BUCKET": str(tmp_path),
-                    "LAN_KEY": None,
-                    "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-                },
-            ),
+            patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
             patch("hsync_client.lan_server.MAX_TOMBSTONE_PAYLOAD_BYTES", 1024),
             patch("hsync_client.tombstones.merge_payload", return_value=0) as mock_merge,
         ):
@@ -772,14 +718,7 @@ class TestLANServerHardening:
 
         srv, port = server
         future = str(time.time() + 10_000_000)
-        with patch(
-            "hsync_client.lan_server.CONFIG",
-            {
-                "LOCAL_BUCKET": str(tmp_path),
-                "LAN_KEY": None,
-                "LAN_ALLOW_UNAUTHENTICATED_WRITES": True,
-            },
-        ):
+        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",

@@ -337,7 +337,6 @@ def _check_lan_write_policy(
     lan_mode: bool,
     lan_key: str | None,
     sync_direction: str,
-    auto_confirm: bool,
     logger: Any,
     allow_unauthenticated_writes: bool = False,
 ) -> None:
@@ -346,8 +345,7 @@ def _check_lan_write_policy(
     A self-signed LAN transport hides traffic but does not prove the master's
     identity, so a client that uploads data must authenticate with
     ``HSYNC_LAN_KEY`` unless the dangerous explicit opt-in is enabled. The policy lives in
-    :func:`hsync_common.protocol.pairing.lan_write_requires_key`; here we apply
-    it. Interactivity is context only and never grants mutation authorization.
+    :func:`hsync_common.protocol.pairing.lan_write_requires_key`; here we apply it.
 
     Raises SystemExit when the policy is violated.
     """
@@ -356,10 +354,8 @@ def _check_lan_write_policy(
 
     from hsync_common.protocol.pairing import lan_write_requires_key
 
-    interactive = not auto_confirm and is_tty_interactive()
     if not lan_write_requires_key(
         sync_direction,
-        interactive=interactive,
         allow_unauthenticated_writes=allow_unauthenticated_writes,
     ):
         return
@@ -948,7 +944,6 @@ def run_sync(
             lan_mode=config["LAN_MODE"],
             lan_key=config["LAN_KEY"],
             sync_direction=config["SYNC_DIRECTION"],
-            auto_confirm=auto_confirm,
             logger=log,
             allow_unauthenticated_writes=config["LAN_ALLOW_UNAUTHENTICATED_WRITES"],
         )

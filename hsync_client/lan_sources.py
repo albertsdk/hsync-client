@@ -15,17 +15,15 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from ipaddress import ip_address, ip_network
-from pathlib import Path
 from time import monotonic
 from types import MappingProxyType
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from hsync_common.constants import CONTENT_TYPE_JSON
 from hsync_common.hashing import is_sha256_hex
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
-from hsync_common.models.tombstone import relpath_in_bucket
-from hsync_common.path_validation import validate_remote_relpath
 from hsync_common.protocol.peer_download import (
     LAN_SOURCES_MAX_BODY_BYTES,
     LAN_SOURCES_MAX_CANDIDATES,
@@ -43,7 +41,7 @@ from requests import RequestException, Response
 
 from hsync_client.lan_inventory import LanInventoryStore
 from hsync_client.pinning import PinStore, PinStoreError, default_pin_store
-from hsync_client.utils import http_post
+from hsync_client.utils import http_post, normalize_bucket_relpath
 
 LAN_SOURCE_CACHE_TTL_S = 10 * 60.0
 
@@ -80,6 +78,28 @@ class ShuffleRng(Protocol):
     def shuffle(self, values: list[PeerSourceSnapshot]) -> None: ...
 
 
+def _compact_json_bytes(value: object) -> bytes:
+    """Serialize one wire payload exactly as the LAN server does."""
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+_FILES_DOWNLOAD_ROUTE = "/api/v1/buckets/{bucket}/files/download"
+
+
+def _download_url_matches_bucket(download_url: str, bucket: str) -> bool:
+    """Bind a validated source endpoint to the requester's expected bucket."""
+    try:
+        path = urlsplit(download_url).path
+    except (UnicodeError, ValueError):
+        return False
+    return path == _FILES_DOWNLOAD_ROUTE.format(bucket=bucket)
+
+
 def build_peer_download_url(bucket: str, address: str, port: int) -> str:
     """Build a complete IPv4/IPv6-safe HTTPS seeder download endpoint."""
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -88,7 +108,7 @@ def build_peer_download_url(bucket: str, address: str, port: int) -> str:
         raise ValueError("IPv6 zone identifiers are unsupported")
     parsed = ip_address(address)
     host = f"[{parsed.compressed}]" if parsed.version == 6 else parsed.compressed
-    return f"https://{host}:{port}/api/v1/buckets/{bucket}/files/download"
+    return f"https://{host}:{port}" + _FILES_DOWNLOAD_ROUTE.format(bucket=bucket)
 
 
 def _same_subnet(requester_address: str, peer_address: str) -> bool:
@@ -163,8 +183,6 @@ class LanSourceService:
                 continue
             try:
                 build_peer_download_url(self.bucket, peer.address, peer.port)
-                if ip_address(peer.address) == ip_address(requester_address):
-                    continue
             except ValueError:
                 continue
             unique.setdefault(peer.cid, peer)
@@ -177,14 +195,7 @@ class LanSourceService:
 
     @staticmethod
     def _compact_size(value: object) -> int:
-        return len(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        )
+        return len(_compact_json_bytes(value))
 
     def resolve(
         self,
@@ -327,7 +338,6 @@ class LanSourceTelemetry:
                 index, source = indexed
                 metrics = self._metrics.get(source.cid)
                 return (
-                    1 if metrics is not None and metrics.cooldown_until > now else 0,
                     metrics.failures if metrics is not None else 0,
                     1 if metrics is None or metrics.rtt_ema is None else 0,
                     metrics.rtt_ema if metrics is not None and metrics.rtt_ema is not None else 0.0,
@@ -337,7 +347,13 @@ class LanSourceTelemetry:
                     source.cid,
                 )
 
-            return tuple(source for _, source in sorted(enumerate(values), key=rank_key))
+            available = (
+                (index, source)
+                for index, source in enumerate(values)
+                if (metrics := self._metrics.get(source.cid)) is None
+                or metrics.cooldown_until <= now
+            )
+            return tuple(source for _, source in sorted(available, key=rank_key))
 
     def record_success(
         self,
@@ -366,9 +382,7 @@ class LanSourceTelemetry:
             metrics.cooldown_until = 0.0
             metrics.last_seen = now
 
-    def record_failure(self, cid: str, kind: PeerFailureKind) -> None:
-        if kind in (PeerFailureKind.not_found, PeerFailureKind.unauthorized):
-            return
+    def record_failure(self, cid: str, _kind: PeerFailureKind) -> None:
         now = self._clock()
         with self._lock:
             metrics = self._metrics.setdefault(cid, _SourceMetrics())
@@ -418,7 +432,7 @@ class LanSourceResolver:
         self._clock = clock
         self._candidates: dict[LanSourceKey, tuple[LanPeerSource, ...]] = {}
         self._candidate_expiry: dict[LanSourceKey, float] = {}
-        self._invalid_until: dict[str, float] = {}
+        self._permanently_invalid_cids: set[str] = set()
         self._lock = threading.Lock()
 
     @property
@@ -434,10 +448,7 @@ class LanSourceResolver:
                 self._candidate_expiry.clear()
 
     def _identity(self, file: File) -> LanSourceKey | None:
-        path = file.filepath or ""
-        if Path(path).is_absolute():
-            path = relpath_in_bucket(path, self._local_bucket) or ""
-        path = validate_remote_relpath(path)
+        path = normalize_bucket_relpath(file.filepath or "", self._local_bucket)
         digest = file.sha256sum or ""
         if (
             path is None
@@ -454,17 +465,59 @@ class LanSourceResolver:
             headers["Authorization"] = f"Bearer {self._lan_key}"
         return headers
 
-    def _active_invalid_cids_locked(self, now: float) -> set[str]:
-        self._invalid_until = {
-            cid: until for cid, until in self._invalid_until.items() if until > now
-        }
-        return set(self._invalid_until)
-
     def _expire_candidate_cache_locked(self, now: float) -> None:
         stale = [key for key, expiry in self._candidate_expiry.items() if expiry <= now]
         for key in stale:
             self._candidate_expiry.pop(key, None)
             self._candidates.pop(key, None)
+
+    def _source_batches(
+        self, identities: Iterable[LanSourceKey]
+    ) -> tuple[tuple[LanSourceKey, ...], ...]:
+        """Split identities by count, request bytes, and empty-response bytes."""
+        request_base = len(_compact_json_bytes({"cid": self._requester_cid, "files": []}))
+        response_base = len(_compact_json_bytes({"files": []}))
+        request_size = request_base
+        response_size = response_base
+        current: list[LanSourceKey] = []
+        batches: list[tuple[LanSourceKey, ...]] = []
+
+        for identity in identities:
+            path, digest = identity
+            request_item = LanSourceFile(path=path, sha256=digest)
+            response_item = LanSourcesResponseFile(
+                path=path,
+                sha256=digest,
+                sources=[],
+            )
+            request_added = len(_compact_json_bytes(request_item)) + bool(current)
+            response_added = len(_compact_json_bytes(response_item)) + bool(current)
+            full = len(current) >= LAN_SOURCES_MAX_FILES
+            too_large = (
+                request_size + request_added > LAN_SOURCES_MAX_BODY_BYTES
+                or response_size + response_added > LAN_SOURCES_MAX_BODY_BYTES
+            )
+            if current and (full or too_large):
+                batches.append(tuple(current))
+                current = []
+                request_size = request_base
+                response_size = response_base
+                request_added = len(_compact_json_bytes(request_item))
+                response_added = len(_compact_json_bytes(response_item))
+
+            if (
+                request_size + request_added > LAN_SOURCES_MAX_BODY_BYTES
+                or response_size + response_added > LAN_SOURCES_MAX_BODY_BYTES
+            ):
+                log.debug("LAN source identity exceeds wire limit; using master-only fallback")
+                continue
+            current.append(identity)
+            request_size += request_added
+            response_size += response_added
+
+        if current:
+            batches.append(tuple(current))
+        return tuple(batches)
 
     def resolve(self, files: Iterable[File]) -> LanCandidateMap:
         """Resolve eligible files in strict batches of at most 500 identities."""
@@ -478,20 +531,37 @@ class LanSourceResolver:
                 continue
             seen_paths.add(identity[0])
             identities.append(identity)
+        try:
+            batches = self._source_batches(identities)
+        except (TypeError, ValueError, UnicodeError):
+            log.debug("LAN source batch serialization failed; using master-only fallback")
+            return MappingProxyType({})
+
         resolved: dict[LanSourceKey, tuple[LanPeerSource, ...]] = {}
-        for offset in range(0, len(identities), LAN_SOURCES_MAX_FILES):
-            batch = identities[offset : offset + LAN_SOURCES_MAX_FILES]
-            payload = build_lan_sources_request(
-                cid=self._requester_cid,
-                files=[LanSourceFile(path=path, sha256=digest) for path, digest in batch],
-            )
+        for batch in batches:
             response: Response | None = None
             try:
+                payload = build_lan_sources_request(
+                    cid=self._requester_cid,
+                    files=[LanSourceFile(path=path, sha256=digest) for path, digest in batch],
+                )
+                request_body = _compact_json_bytes(payload)
+                empty_response = build_lan_sources_response(
+                    files=[
+                        LanSourcesResponseFile(path=path, sha256=digest, sources=[])
+                        for path, digest in batch
+                    ]
+                )
+                if (
+                    len(request_body) > LAN_SOURCES_MAX_BODY_BYTES
+                    or len(_compact_json_bytes(empty_response)) > LAN_SOURCES_MAX_BODY_BYTES
+                ):
+                    raise ValueError("LAN source batch exceeds wire limit")
                 response = http_post(
                     self._sources_url,
                     cert_fingerprint=self._master_cert_fingerprint,
                     headers=self._headers(),
-                    json=payload,
+                    data=request_body,
                     verify=False,
                     timeout=self._timeout,
                     stream=True,
@@ -500,7 +570,13 @@ class LanSourceResolver:
                     continue
                 content = _read_bounded_response(response)
                 clean = validate_lan_sources_response(json.loads(content.decode("utf-8")))
-            except (RequestException, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            except (
+                RequestException,
+                RecursionError,
+                TypeError,
+                UnicodeError,
+                ValueError,
+            ):
                 log.debug("LAN source lookup failed; using master-only fallback")
                 continue
             finally:
@@ -509,24 +585,31 @@ class LanSourceResolver:
             if clean is None:
                 continue
             response_ids = [(item["path"], item["sha256"]) for item in clean["files"]]
-            if response_ids != batch:
+            if tuple(response_ids) != batch:
                 continue
             for item in clean["files"]:
                 key = (item["path"], item["sha256"])
-                resolved[key] = tuple(
-                    LanPeerSource(
-                        cid=source["cid"],
-                        download_url=source["download_url"],
-                        cert_fingerprint=source["cert_fp"],
-                        compression=source["compression"],
+                sources: list[LanPeerSource] = []
+                for source in item["sources"]:
+                    if not _download_url_matches_bucket(source["download_url"], self._bucket):
+                        log.warning(
+                            "Ignoring peer source {} whose URL targets another bucket",
+                            source["cid"],
+                        )
+                        continue
+                    sources.append(
+                        LanPeerSource(
+                            cid=source["cid"],
+                            download_url=source["download_url"],
+                            cert_fingerprint=source["cert_fp"],
+                            compression=source["compression"],
+                        )
                     )
-                    for source in item["sources"]
-                )
+                resolved[key] = tuple(sources)
         now = self._clock()
         expires_at = now + LAN_SOURCE_CACHE_TTL_S
         with self._lock:
             self._expire_candidate_cache_locked(now)
-            self._active_invalid_cids_locked(now)
             self._candidates.update(resolved)
             self._candidate_expiry.update(dict.fromkeys(resolved, expires_at))
         return MappingProxyType(dict(resolved))
@@ -552,7 +635,7 @@ class LanSourceResolver:
                 if expiry is None:
                     return ()
                 values = self._candidates.get(identity, ())
-                invalid = self._active_invalid_cids_locked(now)
+                invalid = set(self._permanently_invalid_cids)
         else:
             values = candidates.get(identity, ())
             with self._lock:
@@ -560,7 +643,7 @@ class LanSourceResolver:
                 self._expire_candidate_cache_locked(now)
                 if expiry is not None and expiry <= now:
                     return ()
-                invalid = self._active_invalid_cids_locked(now)
+                invalid = set(self._permanently_invalid_cids)
         return self._telemetry.rank(source for source in values if source.cid not in invalid)
 
     def request_headers(
@@ -581,6 +664,10 @@ class LanSourceResolver:
 
     def authorize(self, source: LanPeerSource) -> bool:
         """TOFU-pin a source before any connection; fail closed on state faults."""
+        if not _download_url_matches_bucket(source.download_url, self._bucket):
+            log.warning(f"Peer source {source.cid} advertised a URL for another bucket")
+            self.invalidate(source.cid)
+            return False
         try:
             decision = self._pin_store.check_and_record(
                 source.cid,
@@ -593,14 +680,13 @@ class LanSourceResolver:
             return False
         if decision.value == "changed":
             self.record_failure(source, PeerFailureKind.pin_changed)
-            self.invalidate(source.cid)
             return False
         return True
 
     def invalidate(self, cid: str) -> None:
-        """Invalidate one source until the current candidate-cache window expires."""
+        """Invalidate one source permanently for this LAN role session."""
         with self._lock:
-            self._invalid_until[cid] = self._clock() + LAN_SOURCE_CACHE_TTL_S
+            self._permanently_invalid_cids.add(cid)
 
     def record_success(
         self,
@@ -618,9 +704,10 @@ class LanSourceResolver:
         )
 
     def record_failure(self, source: LanPeerSource, kind: PeerFailureKind) -> None:
-        self._telemetry.record_failure(source.cid, kind)
         if kind in (
             PeerFailureKind.unauthorized,
             PeerFailureKind.pin_changed,
         ):
             self.invalidate(source.cid)
+            return
+        self._telemetry.record_failure(source.cid, kind)

@@ -33,8 +33,6 @@ from typing import Any, Protocol
 from hsync_common.hashing import is_sha256_hex
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
-from hsync_common.models.tombstone import relpath_in_bucket
-from hsync_common.path_validation import validate_remote_relpath
 from hsync_common.protocol.peer_download import (
     LAN_INVENTORY_MAX_ENTRIES,
     LAN_INVENTORY_MAX_FRAME_BYTES,
@@ -52,11 +50,27 @@ from hsync_common.protocol.peer_download import (
 )
 from loguru import logger as log
 
+from hsync_client.utils import normalize_bucket_relpath
+
 LAN_INVENTORY_PER_CID_QUOTA = 2_000_000
 LAN_INVENTORY_GLOBAL_QUOTA = 20_000_000
 LAN_INVENTORY_MAX_SESSIONS = 64
 LAN_INVENTORY_STAGING_TTL_S = 5 * 60.0
 LAN_INVENTORY_ACK_TIMEOUT_S = 15.0
+LAN_INVENTORY_SCHEMA_VERSION = 1
+
+
+def _canonical_snapshot_digest(frame: LanInventoryFrame) -> str:
+    """Hash a validated terminal snapshot frame in canonical JSON form."""
+    encoded = json.dumps(
+        frame,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
 
 _FRAME_SIZE_MARGIN = 512
 _ACTIVE_PUBLISHER_LOCK = threading.Lock()
@@ -202,14 +216,6 @@ class LanInventoryStore:
         """Open the canonical database for *bucket*. Call ``activate`` next."""
         return cls(default_lan_inventory_path(bucket), bucket, **kwargs)
 
-    @property
-    def database_path(self) -> Path:
-        return self._path
-
-    @property
-    def bucket(self) -> str:
-        return self._bucket
-
     def _configure(self) -> None:
         self._conn.execute("PRAGMA busy_timeout = 5000")
         mode = self._conn.execute("PRAGMA journal_mode = WAL").fetchone()
@@ -219,6 +225,17 @@ class LanInventoryStore:
         self._conn.execute("PRAGMA foreign_keys = ON")
 
     def _create_schema(self) -> None:
+        current_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if current_version != LAN_INVENTORY_SCHEMA_VERSION:
+            # The routing index is role-local and rebuilt from peer snapshots;
+            # recreating it is safer and simpler than migrating stale state.
+            self._conn.executescript(
+                """
+                DROP TABLE IF EXISTS inventory_staging;
+                DROP TABLE IF EXISTS inventory_holders;
+                DROP TABLE IF EXISTS inventory_sessions;
+                """
+            )
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS inventory_sessions (
@@ -230,6 +247,7 @@ class LanInventoryStore:
                 snapshot_ready INTEGER NOT NULL DEFAULT 0,
                 committed_gen INTEGER,
                 committed_seq INTEGER,
+                committed_digest TEXT,
                 staging_started REAL,
                 disabled INTEGER NOT NULL DEFAULT 0,
                 connected_at REAL NOT NULL
@@ -264,6 +282,7 @@ class LanInventoryStore:
                 ON inventory_staging(cid);
             """
         )
+        self._conn.execute(f"PRAGMA user_version = {LAN_INVENTORY_SCHEMA_VERSION}")
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -341,7 +360,8 @@ class LanInventoryStore:
                     SET token = ?, phase_gen = NULL, expected_seq = 0,
                         last_applied = -1, snapshot_ready = 0,
                         committed_gen = NULL, committed_seq = NULL,
-                        staging_started = NULL, disabled = 0, connected_at = ?
+                        committed_digest = NULL, staging_started = NULL,
+                        disabled = 0, connected_at = ?
                     WHERE cid = ?
                     """,
                     (owner_token, self._clock(), cid),
@@ -406,11 +426,6 @@ class LanInventoryStore:
                 (token,),
             )
         return len(rows)
-
-    def cleanup_expired_staging(self) -> int:
-        """Reclaim stale partial snapshots using the injected monotonic clock."""
-        with self._lock, self._transaction():
-            return self._cleanup_expired_staging_locked()
 
     @staticmethod
     def _wire_counter(value: object) -> int:
@@ -574,6 +589,8 @@ class LanInventoryStore:
         seq = frame["seq"]
         committed_gen = row["committed_gen"]
         committed_seq = row["committed_seq"]
+        committed_digest = row["committed_digest"]
+        terminal_digest = None if frame["more"] else _canonical_snapshot_digest(frame)
 
         if (
             committed_gen is not None
@@ -582,7 +599,9 @@ class LanInventoryStore:
             and seq == int(committed_seq)
             and not frame["more"]
         ):
-            return build_lan_inventory_ack(gen=gen, seq=seq, status="ok")
+            if committed_digest is not None and str(committed_digest) == terminal_digest:
+                return build_lan_inventory_ack(gen=gen, seq=seq, status="ok")
+            return self._resync_locked(cid, token, gen=gen, expected=0)
         if committed_gen is not None and gen <= int(committed_gen):
             return self._resync_locked(cid, token, gen=gen, expected=0)
         if frame["more"] and seq == LAN_WIRE_INT_MAX:
@@ -669,10 +688,10 @@ class LanInventoryStore:
             UPDATE inventory_sessions
             SET phase_gen = ?, expected_seq = ?, last_applied = ?,
                 snapshot_ready = 1, committed_gen = ?, committed_seq = ?,
-                staging_started = NULL
+                committed_digest = ?, staging_started = NULL
             WHERE cid = ? AND token = ?
             """,
-            (gen, min(seq + 1, LAN_WIRE_INT_MAX), seq, gen, seq, cid, token),
+            (gen, min(seq + 1, LAN_WIRE_INT_MAX), seq, gen, seq, terminal_digest, cid, token),
         )
         return build_lan_inventory_ack(gen=gen, seq=seq, status="ok")
 
@@ -823,24 +842,10 @@ class LanInventoryPublisher:
         self._websocket: _PublisherWebSocket | None = None
         self._disabled = False
 
-    @property
-    def disabled(self) -> bool:
-        return self._disabled
-
-    @property
-    def task(self) -> asyncio.Task[None] | None:
-        return self._task
-
     def _normalize_path(self, value: object) -> str | None:
-        if not isinstance(value, str) or not value:
+        if not isinstance(value, str):
             return None
-        candidate = value
-        if Path(value).is_absolute():
-            rel = relpath_in_bucket(value, self._bucket_root)
-            if rel is None:
-                return None
-            candidate = rel
-        return validate_remote_relpath(candidate)
+        return normalize_bucket_relpath(value, self._bucket_root)
 
     def _normalize_entry(
         self, value: File | Mapping[str, object]

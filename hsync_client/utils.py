@@ -26,6 +26,7 @@ from typing import IO, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from requests import Response, Session
 
+from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import (
     FORBIDDEN_FILENAME_CHARS,
     FORBIDDEN_PATH_CHARS,
@@ -33,6 +34,7 @@ from hsync_common.path_validation import (
     has_forbidden_chars,
     has_problematic_trailing,
     is_reserved_name,
+    validate_remote_relpath,
 )
 from hsync_common.permissions import get_permissions as _read_permissions
 from hsync_common.permissions import octal_to_mode, sanitize_remote_permissions
@@ -411,6 +413,25 @@ def ensure_str_path(path: str | bytes | None) -> str:
 def cid_suffix(cid: object) -> str:
     """Return a ``" (CID: <cid>)"`` log suffix, or ``""`` when *cid* is falsy."""
     return f" (CID: {cid})" if cid else ""
+
+
+def normalize_bucket_relpath(raw_path: str, bucket_root: str) -> str | None:
+    """Return the canonical bucket-relative path for a local path, or ``None``.
+
+    Converts an absolute path under *bucket_root* to its relative form and then
+    validates it with ``validate_remote_relpath``. Returns ``None`` for empty,
+    out-of-bucket, or invalid paths (including lone-surrogate paths that cannot
+    be UTF-8 encoded for the wire).
+    """
+    candidate = raw_path
+    if Path(candidate).is_absolute():
+        candidate = relpath_in_bucket(candidate, bucket_root)
+        if candidate is None:
+            return None
+    try:
+        return validate_remote_relpath(candidate)
+    except UnicodeError:
+        return None
 
 
 # =============================================================================

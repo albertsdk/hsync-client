@@ -181,7 +181,7 @@ def test_source_ranking_prefers_same_subnet_and_requires_exact_live_holder(
         files=[{"path": "docs/file.txt", "sha256": DIGEST}],
     )
     sources = response["files"][0]["sources"]
-    assert [source["cid"] for source in sources] == [PEER_B, PEER_D, PEER_C]
+    assert [source["cid"] for source in sources] == [PEER_B, PEER_D, PEER_E, PEER_C]
     assert all(source["download_url"].startswith("https://") for source in sources)
     assert all(source["cert_fp"] == CERT for source in sources)
 
@@ -274,37 +274,82 @@ def _source_resolver(tmp_path: Path, **overrides) -> LanSourceResolver:
     return LanSourceResolver(**values)
 
 
+def _maximum_remote_path(index: int) -> str:
+    """Return a unique valid path at the 4096-byte wire boundary."""
+    parts = ["a" * 255] * 15
+    parts.extend(("b" * 127, f"{index:03d}" + "c" * 125))
+    return "/".join(parts)
+
+
+def _empty_sources_response(_url: str, **kwargs) -> MagicMock:
+    request = json.loads(kwargs["data"])
+    response = MagicMock(status_code=200)
+    payload = build_lan_sources_response(
+        files=[
+            {"path": item["path"], "sha256": item["sha256"], "sources": []}
+            for item in request["files"]
+        ]
+    )
+    content = json.dumps(payload, separators=(",", ":")).encode()
+    response.headers = {"Content-Length": str(len(content))}
+    response.iter_content.return_value = [content]
+    return response
+
+
 def test_requester_batches_once_per_500_and_pins_master_session(tmp_path: Path) -> None:
-    """Initial wantlists are bounded, authenticated, and use the master-only TLS pin."""
+    """Small wantlists use count bounds, compact JSON, auth, and the master pin."""
     files = [
         File(filepath=f"docs/{index}.bin", sha256sum=f"{index:064x}", size=1)
         for index in range(501)
     ]
 
-    def response_for_batch(_url: str, **kwargs):
-        request = kwargs["json"]
-        response = MagicMock(status_code=200)
-        payload = build_lan_sources_response(
-            files=[
-                {"path": item["path"], "sha256": item["sha256"], "sources": []}
-                for item in request["files"]
-            ]
-        )
-        content = json.dumps(payload, separators=(",", ":")).encode()
-        response.headers = {"Content-Length": str(len(content))}
-        response.iter_content.return_value = [content]
-        return response
-
     resolver = _source_resolver(tmp_path)
-    with patch("hsync_client.lan_sources.http_post", side_effect=response_for_batch) as mock_post:
+    with patch(
+        "hsync_client.lan_sources.http_post", side_effect=_empty_sources_response
+    ) as mock_post:
         candidates = resolver.resolve(files)
 
     assert len(candidates) == 501
-    assert [len(call.kwargs["json"]["files"]) for call in mock_post.call_args_list] == [500, 1]
+    assert [len(json.loads(call.kwargs["data"])["files"]) for call in mock_post.call_args_list] == [
+        500,
+        1,
+    ]
     for call in mock_post.call_args_list:
+        assert len(call.kwargs["data"]) <= LAN_SOURCES_MAX_BODY_BYTES
+        assert "json" not in call.kwargs
         assert call.kwargs["cert_fingerprint"] == "f" * 64
         assert call.kwargs["headers"]["Authorization"] == "Bearer shared-key"
         assert call.kwargs["stream"] is True
+
+
+def test_maximum_paths_bound_request_and_guaranteed_empty_response(tmp_path: Path) -> None:
+    """A 500-item max-path wantlist splits before its empty response exceeds 2 MiB."""
+    files = [
+        File(
+            filepath=str(tmp_path / _maximum_remote_path(index)),
+            sha256sum=f"{index:064x}",
+            size=1,
+        )
+        for index in range(500)
+    ]
+    assert all(len(_maximum_remote_path(index).encode("utf-8")) == 4096 for index in range(500))
+
+    resolver = _source_resolver(tmp_path)
+    with patch(
+        "hsync_client.lan_sources.http_post", side_effect=_empty_sources_response
+    ) as mock_post:
+        candidates = resolver.resolve(files)
+
+    assert len(candidates) == 500
+    batches = [json.loads(call.kwargs["data"])["files"] for call in mock_post.call_args_list]
+    assert [len(batch) for batch in batches] == [499, 1]
+    for call, batch in zip(mock_post.call_args_list, batches, strict=True):
+        assert len(call.kwargs["data"]) <= LAN_SOURCES_MAX_BODY_BYTES
+        empty_response = build_lan_sources_response(
+            files=[{**item, "sources": []} for item in batch]
+        )
+        encoded = json.dumps(empty_response, separators=(",", ":")).encode()
+        assert len(encoded) <= LAN_SOURCES_MAX_BODY_BYTES
 
 
 def test_authenticated_capability_overrides_stale_txt_hint(tmp_path: Path) -> None:
@@ -319,6 +364,27 @@ def test_authenticated_capability_overrides_stale_txt_hint(tmp_path: Path) -> No
     locally_disabled = _source_resolver(tmp_path, enabled=False, master_capable=True)
     locally_disabled.set_authenticated_master_capability(True)
     assert locally_disabled.enabled is False
+
+
+@pytest.mark.parametrize(
+    "failure_target",
+    (
+        "hsync_client.lan_sources.build_lan_sources_request",
+        "hsync_client.lan_sources._compact_json_bytes",
+    ),
+)
+def test_source_builder_and_serialization_faults_are_master_only(
+    tmp_path: Path, failure_target: str
+) -> None:
+    file = File(filepath="docs/file.bin", sha256sum=DIGEST, size=1)
+    resolver = _source_resolver(tmp_path)
+
+    with (
+        patch(failure_target, side_effect=ValueError("invalid wire payload")),
+        patch("hsync_client.lan_sources.http_post") as mock_post,
+    ):
+        assert resolver.resolve([file]) == {}
+    mock_post.assert_not_called()
 
 
 def test_source_response_content_length_is_rejected_before_buffering(tmp_path: Path) -> None:
@@ -373,6 +439,38 @@ def test_resolved_candidate_map_expires_after_ten_minutes(tmp_path: Path) -> Non
     assert resolver.candidates_for(file, candidates) == ()
 
 
+def test_wrong_bucket_source_is_rejected_before_tofu(tmp_path: Path) -> None:
+    file = File(filepath="docs/file.bin", sha256sum=DIGEST, size=1)
+    payload = build_lan_sources_response(
+        files=[
+            {
+                "path": "docs/file.bin",
+                "sha256": DIGEST,
+                "sources": [
+                    {
+                        "cid": PEER_B,
+                        "download_url": (
+                            "https://10.0.0.2:8443/api/v1/buckets/other/files/download"
+                        ),
+                        "cert_fp": "b" * 64,
+                        "compression": False,
+                    }
+                ],
+            }
+        ]
+    )
+    content = json.dumps(payload, separators=(",", ":")).encode()
+    response = MagicMock(status_code=200, headers={"Content-Length": str(len(content))})
+    response.iter_content.return_value = [content]
+    resolver = _source_resolver(tmp_path)
+
+    with patch("hsync_client.lan_sources.http_post", return_value=response):
+        candidates = resolver.resolve([file])
+
+    assert candidates[("docs/file.bin", DIGEST)] == ()
+    assert PinStore(tmp_path / "pins.json").get(PEER_B, "bucket") is None
+
+
 def test_requester_tofu_pins_each_source_and_refuses_rotation(tmp_path: Path) -> None:
     """Seeder TOFU is per (source CID, bucket), independent from master pairing."""
     resolver = _source_resolver(tmp_path)
@@ -419,6 +517,20 @@ def test_source_request_headers_never_leak_master_session_state(tmp_path: Path) 
     ) == {"Authorization": "Bearer shared-key", "Accept-Encoding": "identity"}
 
 
+def test_permanent_source_failure_lasts_for_role_session(tmp_path: Path) -> None:
+    resolver = _source_resolver(tmp_path)
+    file = File(filepath="docs/file.bin", sha256sum=DIGEST, size=1)
+    source = LanPeerSource(
+        cid=PEER_B,
+        download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="b" * 64,
+        compression=False,
+    )
+    candidates = {("docs/file.bin", DIGEST): (source,)}
+    resolver.record_failure(source, PeerFailureKind.unauthorized)
+    assert resolver.candidates_for(file, candidates) == ()
+
+
 def test_telemetry_ranking_cooldown_and_ttl_are_deterministic() -> None:
     """Health, RTT, bandwidth, original rank, and TTL follow the frozen tuple."""
     now = [0.0]
@@ -447,11 +559,11 @@ def test_telemetry_ranking_cooldown_and_ttl_are_deterministic() -> None:
     assert [source.cid for source in telemetry.rank(sources)] == [PEER_D, PEER_C, PEER_B]
 
     telemetry.record_failure(PEER_D, PeerFailureKind.conflict)
-    assert [source.cid for source in telemetry.rank(sources)] == [PEER_C, PEER_B, PEER_D]
+    assert [source.cid for source in telemetry.rank(sources)] == [PEER_C, PEER_B]
 
     now[0] = 1.01
     assert [source.cid for source in telemetry.rank(sources)] == [PEER_C, PEER_B, PEER_D]
 
     telemetry.record_failure(PEER_B, PeerFailureKind.not_found)
-    now[0] = 601.0
+    now[0] = 602.0
     assert telemetry.rank(sources) == sources

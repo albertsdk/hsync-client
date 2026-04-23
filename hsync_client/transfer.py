@@ -38,7 +38,6 @@ from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import (
     is_safe_symlink_target,
     resolve_within,
-    validate_remote_relpath,
 )
 from hsync_common.permissions import mode_to_octal
 from hsync_common.text import escape_loguru_markup, safe_json_for_log
@@ -96,6 +95,7 @@ from hsync_client.sync_state import (
 from hsync_client.utils import (
     get_ssl_verify,
     get_throttle_delay,
+    normalize_bucket_relpath,
     path_lock,
     set_permissions,
 )
@@ -429,16 +429,7 @@ class _CountingReader:
 
 def _normalized_download_path(file: File) -> str | None:
     """Return the canonical bucket-relative path used on LAN source requests."""
-    raw_path = str(file.filepath)
-    if Path(raw_path).is_absolute():
-        relative = relpath_in_bucket(raw_path, CONFIG["LOCAL_BUCKET"])
-        if relative is None:
-            return None
-        raw_path = relative
-    try:
-        return validate_remote_relpath(raw_path)
-    except UnicodeError:
-        return None
+    return normalize_bucket_relpath(str(file.filepath), CONFIG["LOCAL_BUCKET"])
 
 
 def _valid_content_range(value: str | None, *, start: int, total: int) -> bool:
@@ -523,24 +514,51 @@ def download_file(
     )
     try:
         with path_lock(dest):
-            if (
-                inventory_observer is NOOP_INVENTORY_OBSERVER
-                and source_resolver is None
-                and candidates is None
-                and not refresh_peer_sources
-            ):
-                attempt(file)
-            else:
-                attempt(
-                    file,
-                    inventory_observer=inventory_observer,
-                    candidates=candidates,
-                    source_resolver=source_resolver,
-                    refresh_peer_sources=refresh_peer_sources,
-                )
+            attempt(
+                file,
+                inventory_observer=inventory_observer,
+                candidates=candidates,
+                source_resolver=source_resolver,
+                refresh_peer_sources=refresh_peer_sources,
+            )
     except (RequestException, ServerError) as exc:
         log.error(f'Download failed after retries for "{file.filepath}": {exc}')
         _emit_transfer_failed("download", file.filepath, str(exc))
+
+
+def _build_download_request(
+    file: File,
+    normalized_path: str,
+    source: LanPeerSource | None,
+    source_resolver: LanSourceResolver | None,
+    resume_offset: int,
+    own_cid: Any,
+) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Build ``(uri, headers, params)`` for a master or peer download."""
+    if source is None:
+        uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/download"
+        headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
+        params: dict[str, str] = {"filename": normalized_path}
+        if own_cid:
+            params["cid"] = own_cid
+    else:
+        if source_resolver is None:
+            raise RuntimeError("peer source requires a resolver")
+        uri = source.download_url
+        headers = source_resolver.request_headers(
+            source,
+            resumed=resume_offset > 0,
+            compression_enabled=CONFIG.get("COMPRESSION_ENABLED", True),
+        )
+        params = {
+            "filename": normalized_path,
+            "sha256": file.sha256sum,
+            "cid": own_cid or "",
+        }
+    if resume_offset > 0:
+        headers["Range"] = f"bytes={resume_offset}-"
+        headers["Accept-Encoding"] = "identity"
+    return uri, headers, params
 
 
 def _download_from_source_attempt(
@@ -685,29 +703,9 @@ def _download_from_source_attempt(
     if normalized_path is None:
         return True
     own_cid = CONFIG.get("CID")
-    if source is None:
-        uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/download"
-        headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
-        params: dict[str, str] = {"filename": normalized_path}
-        if own_cid:
-            params["cid"] = own_cid
-    else:
-        if source_resolver is None:
-            raise RuntimeError("peer source requires a resolver")
-        uri = source.download_url
-        headers = source_resolver.request_headers(
-            source,
-            resumed=resume_offset > 0,
-            compression_enabled=CONFIG.get("COMPRESSION_ENABLED", True),
-        )
-        params = {
-            "filename": normalized_path,
-            "sha256": file.sha256sum,
-            "cid": own_cid or "",
-        }
-    if resume_offset > 0:
-        headers["Range"] = f"bytes={resume_offset}-"
-        headers["Accept-Encoding"] = "identity"
+    uri, headers, params = _build_download_request(
+        file, normalized_path, source, source_resolver, resume_offset, own_cid
+    )
 
     request_started = monotonic()
     try:
@@ -727,6 +725,7 @@ def _download_from_source_attempt(
                 params=params,
                 stream=True,
                 timeout=(2.0, 30.0),
+                verify=False,
                 cert_fingerprint=source.cert_fingerprint,
             )
     except RequestException as exc:

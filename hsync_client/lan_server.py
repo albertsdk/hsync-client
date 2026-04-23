@@ -365,7 +365,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for LAN master server."""
 
     # Reference to the server instance for accessing config
-    server: LANServer  # type: ignore[assignment]
+    server: BoundedThreadingHTTPServer  # type: ignore[assignment]
 
     # HTTP/1.1 keep-alive: connections are reused across requests instead of
     # paying a TCP+TLS handshake per request (the dominant per-file cost for
@@ -392,19 +392,18 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         """Override to use our logger instead of stderr."""
         log.debug(f"{self.address_string()} - {format % args}")
 
-    def _send_json_response(self, status: int, data: dict | list) -> None:
-        """Send a JSON response.
-
-        The body is framed with an exact ``Content-Length``: required for the
-        HTTP/1.1 persistent connection (a body-less framing would leave the
-        client unable to tell where the response ends).
-        """
-        body = json.dumps(
+    @staticmethod
+    def _encode_json_response(data: dict | list) -> bytes:
+        return json.dumps(
             data,
             ensure_ascii=False,
             allow_nan=False,
             separators=(",", ":"),
         ).encode("utf-8")
+
+    def _send_json_response(self, status: int, data: dict | list) -> None:
+        """Send an exactly framed compact JSON response."""
+        body = self._encode_json_response(data)
         self.send_response(status)
         self.send_header("Content-Type", CONTENT_TYPE_JSON)
         self.send_header("Content-Length", str(len(body)))
@@ -467,7 +466,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         return False
 
     def _is_seeder(self) -> bool:
-        return getattr(self.server, "mode", LANServerMode.master) is LANServerMode.seeder
+        return self.server.mode is LANServerMode.seeder
 
     def _send_method_not_allowed(self) -> None:
         # Unsupported seeder requests are never parsed or drained. Closing the
@@ -498,8 +497,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 self._handle_time()
                 return
             download_path = (
-                f"{ENDPOINT_BUCKETS_PREFIX}/{getattr(self.server, 'bucket', '')}"
-                f"{ENDPOINT_FILES_DOWNLOAD_SUFFIX}"
+                f"{ENDPOINT_BUCKETS_PREFIX}/{self.server.bucket}{ENDPOINT_FILES_DOWNLOAD_SUFFIX}"
             )
             if path != download_path:
                 self._send_method_not_allowed()
@@ -517,15 +515,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             ):
                 self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
                 return
-            slots = getattr(self.server, "peer_read_slots", None)
-            if slots is not None and not slots.acquire(blocking=False):
+            slots = self.server.peer_read_slots
+            if slots is None:
+                raise RuntimeError("seeder server is missing its read-cap semaphore")
+            if not slots.acquire(blocking=False):
                 self._send_error_response(HTTP_SERVICE_UNAVAILABLE, "Seeder read cap reached")
                 return
             try:
                 self._handle_download(query, expected_sha256=expected_sha)
             finally:
-                if slots is not None:
-                    slots.release()
+                slots.release()
             return
 
         # Health check
@@ -589,7 +588,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        source_service = getattr(self.server, "source_service", None)
+        source_service = self.server.source_service
         if path.endswith(ENDPOINT_FILES_SOURCES_SUFFIX):
             if source_service is None:
                 self._reject_unread_body(HTTP_NOT_FOUND, "Not found")
@@ -719,6 +718,18 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 )
             except ValueError:
                 self._send_error_response(HTTP_BAD_REQUEST, "Sources response would exceed limit")
+                return
+        if len(self._encode_json_response(response)) > LAN_SOURCES_MAX_BODY_BYTES:
+            response = build_lan_sources_response(
+                files=[
+                    {"path": file["path"], "sha256": file["sha256"], "sources": []}
+                    for file in request["files"]
+                ]
+            )
+            if len(self._encode_json_response(response)) > LAN_SOURCES_MAX_BODY_BYTES:
+                self._send_error_response(
+                    HTTP_CONTENT_TOO_LARGE, "Sources response would exceed limit"
+                )
                 return
         self._send_json_response(HTTP_OK, response)
 

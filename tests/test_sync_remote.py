@@ -248,7 +248,7 @@ class TestExecuteParallelTransfers:
 
         download_calls = []
 
-        def mock_download(file):
+        def mock_download(file, **kwargs):
             download_calls.append(file.filepath)
 
         # Patch in transfer module (local import in _execute_parallel_transfers)
@@ -272,7 +272,7 @@ class TestExecuteParallelTransfers:
 
         upload_calls = []
 
-        def mock_upload(file):
+        def mock_upload(file, **kwargs):
             upload_calls.append(file.filepath)
 
         # Patch in transfer module (local import in _execute_parallel_transfers)
@@ -298,10 +298,10 @@ class TestExecuteParallelTransfers:
         download_calls = []
         upload_calls = []
 
-        def mock_download(file):
+        def mock_download(file, **kwargs):
             download_calls.append(file.filepath)
 
-        def mock_upload(file):
+        def mock_upload(file, **kwargs):
             upload_calls.append(file.filepath)
 
         # Patch in transfer module (local import in _execute_parallel_transfers)
@@ -326,7 +326,7 @@ class TestExecuteParallelTransfers:
 
         call_count = 0
 
-        def mock_download(file):
+        def mock_download(file, **kwargs):
             nonlocal call_count
             call_count += 1
             if file.filepath == "/path/file1.txt":

@@ -70,7 +70,7 @@ class TestUpdateFilePermanentFailure:
             "permissions": "644",
         }
 
-        def _boom(_file):
+        def _boom(_file, **kwargs):
             raise PermanentDownloadError("exceeds max download size")
 
         with (

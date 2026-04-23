@@ -354,15 +354,12 @@ async def _apply_add_or_modify(
         target = _resolve_local_path(src, "filepath") if ctx.mark_receiving else None
         _mark(ctx, target) if target else None
         try:
-            if ctx.inventory_observer is NOOP_INVENTORY_OBSERVER and ctx.source_resolver is None:
-                await asyncio.to_thread(update_file, src)
-            else:
-                await asyncio.to_thread(
-                    update_file,
-                    src,
-                    inventory_observer=ctx.inventory_observer,
-                    source_resolver=ctx.source_resolver,
-                )
+            await asyncio.to_thread(
+                update_file,
+                src,
+                inventory_observer=ctx.inventory_observer,
+                source_resolver=ctx.source_resolver,
+            )
         finally:
             if target:
                 _unmark(ctx, target)

@@ -866,7 +866,7 @@ class TestEventLoopRemainsResponsive:
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
 
         # Simulate a long synchronous download
-        def slow_update(_src):
+        def slow_update(_src, **kwargs):
             _time.sleep(0.4)
 
         # Concurrent ticker to assert the loop kept advancing during the
