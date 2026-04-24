@@ -12,6 +12,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from hsync_client.cli import app
+from hsync_client.config import get_env_settings
 
 runner = CliRunner()
 
@@ -563,11 +564,43 @@ class TestServerHostnameArgument:
         assert mock_run_sync.call_args.kwargs["server_url"] == "https://[::1]:9753"
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_missing_hostname_falls_back_to_env(self, mock_run_sync):
-        """No HOSTNAME leaves server_url None (the HSYNC_SERVER env fallback)."""
-        result = runner.invoke(app, ["server", "-b", "test"])
-        assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["server_url"] is None
+    def test_missing_hostname_resolves_from_env(self, mock_run_sync, monkeypatch):
+        """No HOSTNAME resolves the full URL from HSYNC_SERVER."""
+        monkeypatch.setenv("HSYNC_SERVER", "https://env.example.com:9753")
+        get_env_settings.cache_clear()
+        try:
+            result = runner.invoke(app, ["server", "-b", "test"])
+            assert result.exit_code == 0
+            assert mock_run_sync.call_args.kwargs["server_url"] == "https://env.example.com:9753"
+        finally:
+            get_env_settings.cache_clear()
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_missing_hostname_resolves_from_env_file(self, mock_run_sync, monkeypatch, tmp_path):
+        """A --env-file supplying HSYNC_SERVER satisfies the server requirement."""
+        monkeypatch.delenv("HSYNC_SERVER", raising=False)
+        env_file = tmp_path / "prod.env"
+        env_file.write_text("HSYNC_SERVER=https://file.example.com:9753\n", encoding="utf-8")
+        get_env_settings.cache_clear()
+        try:
+            result = runner.invoke(app, ["server", "-b", "test", "--env-file", str(env_file)])
+            assert result.exit_code == 0
+            assert mock_run_sync.call_args.kwargs["server_url"] == "https://file.example.com:9753"
+        finally:
+            get_env_settings.cache_clear()
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_missing_hostname_without_server_fails_fast(self, mock_run_sync, monkeypatch):
+        """No HOSTNAME and no HSYNC_SERVER is a usage error before run_sync."""
+        monkeypatch.delenv("HSYNC_SERVER", raising=False)
+        get_env_settings.cache_clear()
+        try:
+            result = runner.invoke(app, ["server", "-b", "test"])
+            assert result.exit_code != 0
+            assert "hostname" in result.output.lower()
+            mock_run_sync.assert_not_called()
+        finally:
+            get_env_settings.cache_clear()
 
     def test_rejects_full_url_as_hostname(self):
         """A URL in the hostname slot is a usage error (the scheme is implied)."""

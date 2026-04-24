@@ -8,12 +8,12 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | ------ | ---- | ---- |
 | `main` (parent callback) | `cli.py:750` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
 | `lan` | `cli.py` | LAN P2P subcommand: shared + LAN-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
-| `server` | `:985` | central-server subcommand: bare `HOSTNAME` positional + `--port` + shared flags, assembles the server URL, calls `run_sync` |
+| `server` | `cli.py` `server` | central-server subcommand: bare `HOSTNAME` positional + `--port` + shared flags, resolves the server URL eagerly (bare `HOSTNAME` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
 | `run` | `:1121` | console-script entry |
 | `collect_subcommand_options` | `:89` | introspects each subcommand's long flags for the capabilities document |
 | `capabilities_json_callback` | `:109` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
 | `_validate_bucket` | `:126` | bucket flag validation |
-| `_build_server_url` | `:142` | bare-hostname form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when `--port` is omitted, IPv6 auto-bracketing; rejects URL-like and `host:port` inputs, refuses `--port` without a hostname; `None` hostname → env fallback) |
+| `_build_server_url` | `:142` | bare-hostname form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when `--port` is omitted, IPv6 auto-bracketing; rejects URL-like and `host:port` inputs, refuses `--port` without a hostname); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
 | `_validate_shared_options` | `:185` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
 
 Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
@@ -23,7 +23,11 @@ parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `EnvSettings` fields; bucket/path/direction/the `lan`/`server` subcommand
 selection/`--force-master`/the server `HOSTNAME`+`--port` stay CLI-only
 (the full-URL alternative is the `HSYNC_SERVER` env var; the CLI host wins
-when both are set).
+when both are set). A server-mode run with neither a `HOSTNAME` nor a resolvable
+`HSYNC_SERVER` (shell env or `--env-file`) is rejected at parse time with a
+`typer.BadParameter` usage error, before the banner/logging or `run_sync`
+starts — so the missing server never reaches the deep, late validation inside
+`run_sync`.
 
 Flags map to env keys where `EnvSettings` has a field; capabilities JSON is
 built from `hsync_common.protocol.capabilities.build_capabilities` (schema v2:

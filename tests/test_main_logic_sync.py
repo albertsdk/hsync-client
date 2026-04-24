@@ -510,6 +510,41 @@ class TestRunSync:
             mock_logger.error.assert_called()
             assert any("Server URL is required" in str(c) for c in mock_logger.error.call_args_list)
 
+    def test_missing_server_url_error_is_markup_safe(self, tmp_path):
+        """The missing-server error must not crash the colorized loguru sink.
+
+        Regression: the previous message included ``…'hsync server <hostname>'…``,
+        an unescaped ``<…>`` that loguru's colorizer parsed as a color directive
+        (``ValueError: Tag "<hostname>" does not correspond to any known color
+        directive``), swallowing the real error. With a colorized, non-catching
+        sink the error must render the message verbatim.
+        """
+        from loguru import logger
+
+        from hsync_client.logger import _format_record_colored
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(
+            sink, level="ERROR", format=_format_record_colored, colorize=True, catch=False
+        )
+        try:
+            kwargs = _default_run_sync_kwargs(tmp_path, server_url=None)
+            with (
+                patch("hsync_client.main_logic.setup_logging", return_value=logger),
+                patch("hsync_client.main_logic.get_server_url", return_value=None),
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    run_sync(**kwargs)
+                assert exc_info.value.code == 1
+        finally:
+            logger.remove(handler_id)
+
+        assert any("Server URL is required" in m for m in captured)
+
     def test_lan_mode_uses_placeholder_url(self, tmp_path):
         """In LAN mode without server URL, a placeholder is used."""
         kwargs = _default_run_sync_kwargs(

@@ -15,6 +15,7 @@ global options (``--version``, ``--capabilities-json``, ``--help-symbols``).
 
 import json
 import re
+import sys
 from os import getcwd
 from typing import Annotated
 
@@ -1070,6 +1071,29 @@ def server(
     # Bare-hostname form: assemble the https:// URL (port falls back to the
     # hsync-server default). None → the documented HSYNC_SERVER env fallback.
     server_url = _build_server_url(hostname, port)
+
+    # The bare hostname is mandatory in server mode: when it is omitted, the
+    # full URL must come from HSYNC_SERVER (shell env or --env-file). Resolve
+    # it here so a missing server fails fast with a clean usage error instead of
+    # deep inside run_sync, after the banner and logging are already up.
+    if server_url is None:
+        if env_file:
+            from hsync_client.config import load_env_file
+
+            try:
+                load_env_file(env_file)
+            except FileNotFoundError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                raise typer.Exit(1)
+        from hsync_client.config import get_server_url
+
+        server_url = get_server_url()
+        if not server_url:
+            raise typer.BadParameter(
+                "Missing server hostname: pass it as the HOSTNAME argument "
+                "(e.g. 'hsync server server.example.com') or set the "
+                "HSYNC_SERVER environment variable."
+            )
 
     parsed_bw_upload, parsed_bw_download = _validate_shared_options(
         http_timeout=http_timeout,

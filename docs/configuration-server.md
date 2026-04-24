@@ -40,7 +40,9 @@ hsync server --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 
 With no `HOSTNAME` on the command line the client reads the server URL from
-`HSYNC_SERVER` (set it in the env file, or `export` it in the shell).
+`HSYNC_SERVER` (set it in the env file, or `export` it in the shell). If
+neither is provided, the client exits immediately with a usage error rather
+than starting a connection attempt.
 
 `--env-file` only applies `HSYNC_*` keys recognised by the client settings
 model (for server mode: `HSYNC_SERVER`, `HSYNC_API_KEY`, plus the shared
