@@ -185,6 +185,11 @@ connection that carries the data.
 - **Per-source trust** — each selected seeder is pinned independently by device
   ID and bucket before connecting. `--require-pairing` remains specific to the
   elected master; seeder trust uses persistent TOFU.
+- **Strict pairing (`--require-pairing`)** — disables TOFU for the elected
+  master: a first-seen certificate is refused (logged as `[PAIRING NEEDED]`)
+  instead of being silently trusted. To accept it you confirm its fingerprint
+  through a channel you control ("out of band") and pin it. The exact steps are
+  in [FAQ — LAN P2P Mode → Security & Safety](faq-lan.md#security--safety).
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
 > [LAN Internals → Transport Security](internal/lan-internals.md#transport-security-internals).

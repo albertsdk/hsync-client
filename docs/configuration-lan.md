@@ -34,9 +34,11 @@ The `lan` subcommand and `--force-master` have no environment-variable equivalen
 | `--force-master` | This device wins elections against non-force-master peers. Multiple force-master peers are resolved by the deterministic election algorithm. |
 | `--never-master` | This device always stays a slave. If all peers are never-master, no master is elected and syncing stops. |
 
-`--require-pairing` applies to the elected master only. Peer seeders are selected
-through that master and receive their own persistent `(device ID, bucket)` TOFU
-pin before the requester opens a connection.
+`--require-pairing` applies to the elected master only: a first-seen master
+certificate is refused until its fingerprint is confirmed out of band and pinned
+(see [FAQ — LAN P2P Mode](faq-lan.md#security--safety) for the steps). Peer
+seeders are selected through that master and receive their own persistent
+`(device ID, bucket)` TOFU pin before the requester opens a connection.
 
 ## File Stability & Upload
 

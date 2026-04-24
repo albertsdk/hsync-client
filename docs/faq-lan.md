@@ -26,6 +26,57 @@ No. Each HSYNC instance operates in one mode at a time.
 - Without `LAN_KEY`, the CID is logged as `(unauthenticated)` — you can still
   see which device made a change, but there's no cryptographic guarantee.
 
+**Q: How do I confirm a new master when strict pairing (`--require-pairing`) is enabled?**
+
+Strict pairing disables trust-on-first-use for the elected master: the first
+time a master is seen, the client refuses it (the log shows a
+`[PAIRING NEEDED]` line) instead of silently trusting its certificate. To trust
+it, you confirm the master's certificate fingerprint through a channel you
+control ("out of band") and record that fingerprint as a pin. Two ways:
+
+**Verify the fingerprint out of band, then pin it (most secure).**
+
+1. On the master device, read its certificate fingerprint through a channel you
+   trust (its own screen or console, not the network you are joining). The
+   fingerprint is the SHA-256 of the master's `lan_master_cert.pem`:
+
+   ```bash
+   openssl x509 -in ~/.local/state/hsync/device/lan_master_cert.pem \
+     -noout -fingerprint -sha256
+   ```
+
+   If you set `HSYNC_DEVICE_DIR`, use `"$HSYNC_DEVICE_DIR/lan_master_cert.pem"`.
+
+2. On the slave, start with `--require-pairing`. The master is refused; the log
+   names the master's device ID (its CID) and address, and the desktop/mobile
+   app raises a pairing notification that also shows the fingerprint the slave
+   observed.
+
+3. Compare the two fingerprints. They must match exactly (case, colons and
+   spaces are ignored, but the hex digits must be identical).
+
+4. If they match, record the fingerprint as a pin on the slave. Add one entry to
+   the pin store `~/.local/state/hsync/lan_known_peers.json` (override with
+   `HSYNC_LAN_PIN_FILE`), keyed by `<master-device-id>|<bucket>`:
+
+   ```json
+   {
+     "AbCdEfGhIjKlMnOpQrStU|photos": "a1b2c3d4e5f6…"
+   }
+   ```
+
+   `AbCdEfGhIjKlMnOpQrStU` is the master's device ID from the `[PAIRING NEEDED]`
+   line, `photos` is your bucket, and the value is the verified 64-character
+   fingerprint.
+
+5. Start the sync again — the now-pinned master is accepted.
+
+**Bootstrap on a network you already trust (simpler).**
+
+Run the slave once *without* `--require-pairing`: it pins the master on first
+use. Then restart it *with* `--require-pairing` — the already-pinned master is
+accepted, and from then on only a changed fingerprint is refused.
+
 **Q: What happens if two devices modify the same file?**
 No device is authoritative: HSYNC resolves concurrent edits with a causal
 vector-clock model (ADR-0022). On a true divergence the later
