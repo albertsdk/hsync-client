@@ -6,7 +6,7 @@ file, the content hash it last agreed on with the cluster (**base**) plus a
 Comparing the local clock, the remote clock and the common ancestor lets a peer
 tell whether only one side moved on (dominance) or both did (true concurrency)
 — without trusting wall-clock timestamps. This is immune to clock skew and to
-the false conflicts that arise when files relay through intermediate nodes.
+the false conflicts that arise when files propagate through intermediate nodes.
 
 On a true divergence (concurrent clocks) a **chronological tie-break**
 (ADR-0023) picks the winner: the version with the most recent
@@ -428,7 +428,7 @@ backups if undelete is required.
 | **Upload loses tie-break** | The incoming bytes are preserved as a conflicted copy (`409 conflict_lost`); the stored winner is kept. |
 | **Malformed wire `version` / vclock** | Tolerantly parsed as absent (empty clock); the causal matrix handles it. A malformed stored row is dropped rather than masked. |
 | **Concurrent uploads of the same path** | Serialized per path (file lock); the second sees the version the first registered. |
-| **Relay A → B → C** | No false conflict: merged clocks carry the full causal history through the relay. |
+| **Multi-hop A → B → C** | No false conflict: merged clocks carry the full causal history through every hop. |
 
 ## See also
 

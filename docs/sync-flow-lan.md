@@ -88,8 +88,8 @@ the configured `HSYNC_RESYNC` interval.
 
 ## 7. Conflict Handling
 
-The master is a **transport hub, not an authority**: it relays bytes and
-metadata but never decides conflicts by role. Every peer applies the same
+The master is a **transport hub, not an authority**: it serves bytes and
+relays events but never decides conflicts by role. Every peer applies the same
 causal vector-clock matrix (content identity → causal dominance → later
 `corrected_mtime`, SHA-256 if missing or tied). On a true concurrent divergence, the losing content is
 preserved as `_conflicted_copy_<ts>_<cid>` — by the uploader if its upload loses

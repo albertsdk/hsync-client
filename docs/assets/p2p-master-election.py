@@ -58,12 +58,12 @@ PROG_FILL = (150, 176, 220)
 PHASES = [
     ("1", 2.5, "Three peers A, B, C discovered on the network"),
     ("2", 2.5, "Peer A is elected master (sync coordinator)"),
-    ("3", 5.5, "B and C exchange data through A - A relays to the other peer"),
+    ("3", 5.5, "B wants a file C holds - A resolves the source; B downloads directly from C"),
     ("4", 2.0, "A goes offline / leaves the network"),
     ("5", 2.5, "B is elected as the new master"),
     ("6", 5.5, "C exchanges data with B, and vice versa"),
     ("7", 3.0, "A comes back online - B stays master"),
-    ("8", 5.5, "A resumes syncing through B - every change reaches all peers"),
+    ("8", 5.5, "Peers sync peer-to-peer - the master coordinates and serves fallback"),
 ]
 
 P_START = []
@@ -131,9 +131,11 @@ def chain(steps, color, start, per=0.6, gap=0.6):
         t += gap
 
 
-for _i in range(3):
-    chain([("B", "A"), ("A", "C")], PKT_COLOR["B"], P3_START + _i * 1.7)
-    chain([("C", "A"), ("A", "B")], PKT_COLOR["C"], P3_START + 0.85 + _i * 1.7)
+# Phase 3: master A coordinates, then B and C exchange the file peer-to-peer.
+chain([("B", "A"), ("A", "B")], PKT_COLOR["B"], P3_START)
+for _i in range(2):
+    chain([("C", "B")], PKT_COLOR["C"], P3_START + 1.3 + _i * 1.8)
+    chain([("B", "C")], PKT_COLOR["B"], P3_START + 1.3 + 0.9 + _i * 1.8)
 
 for _i in range(3):
     chain([("C", "B")], PKT_COLOR["C"], P6_START + _i * 1.7)
@@ -142,9 +144,11 @@ for _i in range(3):
 chain([("A", "B")], PKT_COLOR["A"], A_REJOIN_END)
 chain([("B", "A")], PKT_COLOR["B"], A_REJOIN_END + 0.6)
 
-for _i in range(3):
-    chain([("A", "B"), ("B", "C")], PKT_COLOR["A"], P8_START + _i * 1.7)
-    chain([("C", "B"), ("B", "A")], PKT_COLOR["C"], P8_START + 0.85 + _i * 1.7)
+# Phase 8: master B coordinates, then A and C exchange files peer-to-peer.
+chain([("A", "B"), ("B", "A")], PKT_COLOR["A"], P8_START)
+for _i in range(2):
+    chain([("A", "C")], PKT_COLOR["A"], P8_START + 1.3 + _i * 1.8)
+    chain([("C", "A")], PKT_COLOR["C"], P8_START + 1.3 + 0.9 + _i * 1.8)
 
 
 def load_fonts():
@@ -206,6 +210,15 @@ def dashed_line(d, p1, p2, color, width, dash=10, gap=7):
         )
 
 
+def peer_edge_active(a, b, t):
+    for ev in EVENTS:
+        if not (ev["start"] <= t <= ev["start"] + ev["dur"]):
+            continue
+        if {ev["src"], ev["dst"]} == {a, b}:
+            return True
+    return False
+
+
 def draw_edges(d, t):
     m = master_at(t)
     off = offline_set(t)
@@ -217,7 +230,10 @@ def draw_edges(d, t):
         if m is not None and (a == m or b == m):
             d.line((px, py, qx, qy), fill=EDGE_ACTIVE, width=3)
         elif m is not None:
-            dashed_line(d, (px, py), (qx, qy), EDGE_FAINT, 2)
+            if peer_edge_active(a, b, t):
+                d.line((px, py, qx, qy), fill=EDGE_ACTIVE, width=3)
+            else:
+                dashed_line(d, (px, py), (qx, qy), EDGE_FAINT, 2)
         else:
             d.line((px, py, qx, qy), fill=EDGE_FAINT, width=2)
 
@@ -311,12 +327,12 @@ def draw_caption(d, t, F):
 
 
 def draw_header(d, F):
-    center_text(d, W / 2, 24, "P2P Master Election & Relay - LAN Mode", F["title"], TXT)
+    center_text(d, W / 2, 24, "P2P Master Election & Peer Downloads - LAN Mode", F["title"], TXT)
     center_text(
         d,
         W / 2,
         44,
-        "one master acts as the relay channel so every change reaches all peers",
+        "the master coordinates sync; large files transfer peer-to-peer with master fallback",
         F["sub"],
         SUB,
     )

@@ -150,9 +150,10 @@ flowchart TB
 **LAN Mode Flow:**
 1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
 2. **② Elect Master** — One device becomes the master (a transport hub that
-   relays files without ever deciding conflicts by role)
-3. **③ Upload / Download** — Any client uploads or downloads files through
-   the master over HTTPS; the master relays changes to all connected peers
+   coordinates sync without ever deciding conflicts by role)
+3. **③ Upload / Download** — Clients upload files to the master and fetch
+   files from the master or directly from a peer that holds the exact content;
+   the master relays metadata to all connected peers
 
 ```bash
 # 1. Create two folders to share files between them and simulate two distinct devices
@@ -177,7 +178,7 @@ Watch above animation to see what happens.
 
 **Implementation Note (Device Identity):** The `HSYNC_DEVICE_DIR` variable is used here exclusively to simulate two distinct hardware instances on the same host. In standard multi-device deployments, this variable is omitted, and the agent utilizes the default identity path (`~/.local/state/hsync/device/`). See [LAN Mode → Device Identity](docs/lan-mode.md#device-identity).
 
-**Architectural Note (Conflict Resolution):** The `--force-master` flag establishes the initial file ledger. The master acts merely as a transport relay; logical conflicts are resolved deterministically across all nodes using vector clocks. Always assign the initial master role to the endpoint housing the authoritative data.
+**Architectural Note (Conflict Resolution):** The `--force-master` flag establishes the initial file ledger. The master acts merely as a transport hub; logical conflicts are resolved deterministically across all nodes using vector clocks. Always assign the initial master role to the endpoint housing the authoritative data.
 
 > **Note:** For the full P2P setup (master election, pairing, pre-shared secret key `HSYNC_LAN_KEY`, group filtering with `--group`), see [LAN Mode](docs/lan-mode.md).
 

@@ -63,7 +63,7 @@ In plain terms, LAN mode works in three steps:
    [Conflict Resolution](conflict-resolution.md)).
 
 <p align="center">
-  <img src="assets/p2p-master-election.gif" alt="P2P master election and relay — A is elected master and relays traffic between B and C; when A goes offline, B takes over as master; when A returns it rejoins as a subordinate syncing through B, so every change reaches all peers">
+  <img src="assets/p2p-master-election.gif" alt="P2P master election and peer-assisted sync — A is elected master and coordinates sync; B downloads a file directly from C after A resolves the source; when A goes offline, B takes over as master; when A returns it rejoins and peers keep syncing peer-to-peer with the master as fallback">
 </p>
 
 > **Important — local-only files.** In the default **bidirectional** direction,
