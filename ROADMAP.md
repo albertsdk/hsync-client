@@ -6,8 +6,8 @@ community feedback and contributor availability.
 
 ## In Progress
 
-- **Desktop GUI** — [hsync-desktop](https://github.com/albertobasso/hsync-desktop), a cross-platform graphical front-end
-- **Android app** — [hsync-android](https://github.com/albertobasso/hsync-android), native file sync for Android
+- **Desktop GUI** — [hsync-desktop](https://github.com/albertosdk/hsync-desktop), a cross-platform graphical front-end
+- **Android app** — [hsync-android](https://github.com/albertosdk/hsync-android), native file sync for Android
 
 ## Planned
 

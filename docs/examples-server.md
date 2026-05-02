@@ -33,7 +33,7 @@ hsync server server.example.com --port 443 -b documents -p "$HOME/Documents"
 
 > **Buckets must exist before the first sync.** Create them on the server
 > (once) with `hsync-server admin bucket create --bucket <name>` — see the
-> server [Getting Started](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started.md)
+> server [Getting Started](https://github.com/albertosdk/hsync-server/blob/main/docs/getting-started.md)
 > guide. The examples below assume the referenced bucket already exists.
 
 ## 1.1 Sync a personal folder (one-time)

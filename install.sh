@@ -5,7 +5,7 @@ set -euo pipefail
 readonly DEFAULT_VERSION="v1.0.0"
 readonly DEFAULT_INSTALL_DIR="${HOME}/.local/share/hsync-client"
 readonly DEFAULT_SYMLINK_DIR="${HOME}/.local/bin"
-readonly REPO="albertobasso/hsync-client"
+readonly REPO="albertosdk/hsync-client"
 
 INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
 SYMLINK_DIR="${DEFAULT_SYMLINK_DIR}"

@@ -20,7 +20,7 @@ hsync server server.example.com -b mybucket -p /path/to/dir
 ## Try it end-to-end (local)
 
 The fastest way to see HSYNC in action is to run the server and a client on the
-same machine. You need the [server](https://github.com/albertobasso/hsync-server)
+same machine. You need the [server](https://github.com/albertosdk/hsync-server)
 running locally (Docker or Poetry). At first start the server bootstraps an
 admin account and prints its full token once — export it as `HSYNC_API_KEY`.
 
@@ -66,7 +66,7 @@ export HSYNC_API_KEY="hs_<id>_<secret>"
 `HSYNC_API_KEY` holds the **full account token** (`hs_<id>_<secret>`) issued by
 the server — at bootstrap for the admin account, or with
 `hsync-server admin client add --role client` for dedicated accounts (see the
-server [Getting Started](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started.md)
+server [Getting Started](https://github.com/albertosdk/hsync-server/blob/main/docs/getting-started.md)
 guide). `HSYNC_ADMIN_KEY` is a server-side bootstrap secret and has no meaning
 on the client.
 

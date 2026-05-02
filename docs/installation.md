@@ -31,7 +31,7 @@ section for the install steps.
 ## Install prebuilt (recommended)
 
 Every tagged release (`vX.Y.Z`) publishes a complete set of ready-to-run assets
-on the [Releases page](https://github.com/albertobasso/hsync-client/releases):
+on the [Releases page](https://github.com/albertosdk/hsync-client/releases):
 standalone binaries for all supported platforms, Debian/Ubuntu `.deb` packages,
 WD My Cloud OS5 `.bin` installers, an `install.sh` installer script,
 and a `SHA256SUMS` checksum file. See the
@@ -47,15 +47,15 @@ installs it to `~/.local/share/hsync-client`, and creates a symlink in
 **Quick install (one command, latest stable release):**
 
 ```bash
-curl -fsSL https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/albertosdk/hsync-client/releases/latest/download/install.sh | bash
 ```
 
 **Verified install (checksum):**
 
 ```bash
 # Download and verify the installer (latest stable release)
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh"
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/SHA256SUMS"
+curl -fLO "https://github.com/albertosdk/hsync-client/releases/latest/download/install.sh"
+curl -fLO "https://github.com/albertosdk/hsync-client/releases/latest/download/SHA256SUMS"
 sha256sum -c SHA256SUMS --ignore-missing
 
 # Run it
@@ -193,8 +193,8 @@ Clone both repositories side by side, install dependencies, then compile:
 
 ```bash
 # 1. Clone hsync-client and hsync-common as siblings
-git clone https://github.com/albertobasso/hsync-client.git
-git clone https://github.com/albertobasso/hsync-common.git
+git clone https://github.com/albertosdk/hsync-client.git
+git clone https://github.com/albertosdk/hsync-common.git
 
 # 2. Install dependencies (creates .venv, includes the PyInstaller build group)
 cd hsync-client

@@ -3,7 +3,7 @@ Section:	Addon
 Version:	__HSYNC_VERSION__
 Packager:	Alberto Basso
 Email:
-Homepage:	https://github.com/albertobasso/hsync
+Homepage:	https://github.com/albertosdk/hsync
 Description:	HSYNC - file synchronization client, server or LAN P2P
 Icon:		hsync.png
 AddonShowName:	HSYNC

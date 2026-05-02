@@ -3,9 +3,9 @@
 This document describes how the **HSYNC Client** authenticates to a remote peer
 in both **Server Mode** and **LAN P2P Mode**. For the shared contracts (CID format,
 message schema, protocol versioning), see
-[`hsync-common/docs/authentication.md`](https://github.com/albertobasso/hsync-common/blob/main/docs/authentication.md).
+[`hsync-common/docs/authentication.md`](https://github.com/albertosdk/hsync-common/blob/main/docs/authentication.md).
 For the server-side perspective in Server Mode, see
-[`hsync-server/docs/authentication.md`](https://github.com/albertobasso/hsync-server/blob/main/docs/authentication.md).
+[`hsync-server/docs/authentication.md`](https://github.com/albertosdk/hsync-server/blob/main/docs/authentication.md).
 
 ---
 

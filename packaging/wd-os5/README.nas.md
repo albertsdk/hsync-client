@@ -1,6 +1,6 @@
 # HSYNC — WD My Cloud OS5 Package
 
-**HSYNC** keeps your NAS folders in sync — either with a central [HSYNC Server](https://github.com/albertobasso/hsync-server) (Server Mode) or directly with other devices on the same network (LAN Mode, no server required).
+**HSYNC** keeps your NAS folders in sync — either with a central [HSYNC Server](https://github.com/albertosdk/hsync-server) (Server Mode) or directly with other devices on the same network (LAN Mode, no server required).
 
 This is the **WD My Cloud OS5 package**. It installs the HSYNC client as a background service on your NAS.
 
@@ -17,12 +17,12 @@ corporate firewalls, proxies, and cloud environments where other protocols
 
 For a full feature list, operating-mode comparison, and detailed
 documentation, visit the [HSYNC Client
-README](https://github.com/albertobasso/hsync-client/blob/main/README.md).
+README](https://github.com/albertosdk/hsync-client/blob/main/README.md).
 
 ## Installing on your WD My Cloud
 
 1. Download the latest `.bin` package from the
-   [Releases page](https://github.com/albertobasso/hsync-client/releases).
+   [Releases page](https://github.com/albertosdk/hsync-client/releases).
 2. Open the WD My Cloud web dashboard, go to **Apps**, and upload the
    `.bin` file.
 3. Once installed, the HSYNC service starts automatically. Open the app
@@ -65,15 +65,15 @@ hsync lan -b mybucket -p /path/to/dir
 > key over plain HTTP — always use `https://`.
 
 For the complete CLI reference, environment variables, and all options,
-see the [HSYNC Documentation](https://github.com/albertobasso/hsync-client/tree/main/docs).
+see the [HSYNC Documentation](https://github.com/albertosdk/hsync-client/tree/main/docs).
 
 ## Documentation
 
-- [Getting Started](https://github.com/albertobasso/hsync-client/blob/main/docs/getting-started.md)
-- [Server Mode](https://github.com/albertobasso/hsync-client/blob/main/docs/server-mode.md)
-- [LAN Mode](https://github.com/albertobasso/hsync-client/blob/main/docs/lan-mode.md)
-- [Configuration](https://github.com/albertobasso/hsync-client/blob/main/docs/configuration.md)
-- [Examples](https://github.com/albertobasso/hsync-client/blob/main/docs/examples.md)
+- [Getting Started](https://github.com/albertosdk/hsync-client/blob/main/docs/getting-started.md)
+- [Server Mode](https://github.com/albertosdk/hsync-client/blob/main/docs/server-mode.md)
+- [LAN Mode](https://github.com/albertosdk/hsync-client/blob/main/docs/lan-mode.md)
+- [Configuration](https://github.com/albertosdk/hsync-client/blob/main/docs/configuration.md)
+- [Examples](https://github.com/albertosdk/hsync-client/blob/main/docs/examples.md)
 
 ## License
 

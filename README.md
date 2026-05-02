@@ -8,7 +8,7 @@ The **HSYNC Client** is the endpoint software agent deployed on individual devic
 
 It is engineered to operate in two distinct network topologies:
 
-* **Centralized (Server Mode):** The agent authenticates and connects to a centralized hub ([HSYNC Server](https://github.com/albertobasso/hsync-server/blob/main/README.md)).
+* **Centralized (Server Mode):** The agent authenticates and connects to a centralized hub ([HSYNC Server](https://github.com/albertosdk/hsync-server/blob/main/README.md)).
 * **Decentralized (LAN/P2P Mode):** Agents autonomously discover peers via mDNS within the same network segment and dynamically elect a transport coordinator, operating entirely without central infrastructure.
 
 > 👉 **Operational Advisory:** As with any automated filesystem mutation utility, administrators are strongly advised to maintain validated, independent backups prior to initial deployment in production environments.
@@ -16,8 +16,8 @@ It is engineered to operate in two distinct network topologies:
 ---
 
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
-[![CI](https://github.com/albertobasso/hsync-client/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertobasso/hsync-client/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/albertobasso/hsync-client)](https://github.com/albertobasso/hsync-client/releases/latest)
+[![CI](https://github.com/albertosdk/hsync-client/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertosdk/hsync-client/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/albertosdk/hsync-client)](https://github.com/albertosdk/hsync-client/releases/latest)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_WD_My_Cloud-lightgrey.svg)](docs/installation.md)
 
@@ -100,7 +100,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 Deploy the latest stable release across Linux or macOS infrastructure via the automated deployment script:
 
 ```bash
-curl -fsSL https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/albertosdk/hsync-client/releases/latest/download/install.sh | bash
 ```
 
 > Prefer to verify checksums before running, or need a different format
@@ -112,7 +112,7 @@ curl -fsSL https://github.com/albertobasso/hsync-client/releases/latest/download
 HSYNC supports two sync topologies — pick the one that fits your environment:
 
 - **Option A — LAN Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network. Fastest to try: zero infrastructure, works with two terminals on the same machine.
-- **Option B — Server Mode**: Centralized hub. Requires a running [HSYNC Server](https://github.com/albertobasso/hsync-server). Best for multi-site sync over firewalled networks (HTTP/HTTPS only).
+- **Option B — Server Mode**: Centralized hub. Requires a running [HSYNC Server](https://github.com/albertosdk/hsync-server). Best for multi-site sync over firewalled networks (HTTP/HTTPS only).
 
 Both options produce the same result: bidirectional file sync in real time. Choose one and follow the steps below.
 
@@ -241,7 +241,7 @@ docker run -d --name hsync-server --rm \
   -e HSYNC_SSL_KEYFILE_PASSWORD=local-demo-password \
   -e HSYNC_SSL_CERT_DIR=/certs \
   -v hsync-certs:/certs \
-  ghcr.io/albertobasso/hsync-server
+  ghcr.io/albertosdk/hsync-server
 sleep 3
 
 # 2. Create two folders to share files between them and simulate two distinct devices
@@ -268,9 +268,9 @@ cat /tmp/hsync-b/hello.txt   # → hello hsync
 
 **Quick-Start Note (Bootstrap Admin):** This demo uses the bootstrap admin account, which the server creates automatically on first start with the secret in `HSYNC_ADMIN_KEY`. For production, create a dedicated client account per device (see [Server Mode](docs/server-mode.md)).
 
-**Security Note:** `--insecure` skips certificate verification. Use it **only** for local testing against `localhost`. In production, export the server certificate and pass it with `--ca-cert` (see [Server → Connect your clients](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started-docker.md#connect-your-clients)).
+**Security Note:** `--insecure` skips certificate verification. Use it **only** for local testing against `localhost`. In production, export the server certificate and pass it with `--ca-cert` (see [Server → Connect your clients](https://github.com/albertosdk/hsync-server/blob/main/docs/getting-started-docker.md#connect-your-clients)).
 
-> **Note:** For the full Server Mode walkthrough (dedicated accounts, bucket setup, production deployment), see [Server Mode](docs/server-mode.md) and the [Server Getting Started guide](https://github.com/albertobasso/hsync-server/blob/main/docs/getting-started.md).
+> **Note:** For the full Server Mode walkthrough (dedicated accounts, bucket setup, production deployment), see [Server Mode](docs/server-mode.md) and the [Server Getting Started guide](https://github.com/albertosdk/hsync-server/blob/main/docs/getting-started.md).
 
 If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server-needed) instead.
 
@@ -282,7 +282,7 @@ If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
 - [Architecture](docs/internal/architecture.md) - Internal design
-- [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
+- [Architecture Decision Records](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
 - [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
@@ -293,10 +293,10 @@ If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server
 
 ### Associated Ecosystem Components
 
-- [HSYNC Common](https://github.com/albertobasso/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
-- [HSYNC Server](https://github.com/albertobasso/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
-- [HSYNC Desktop](https://github.com/albertobasso/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
-- [HSYNC Android](https://github.com/albertobasso/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
+- [HSYNC Common](https://github.com/albertosdk/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
+- [HSYNC Server](https://github.com/albertosdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
+- [HSYNC Desktop](https://github.com/albertosdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
+- [HSYNC Android](https://github.com/albertosdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
 
 > **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
 > are still under active development and are not yet ready for production use.
@@ -305,7 +305,7 @@ If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server
 
 Security is a primary design pillar. To report potential security vulnerabilities or bypasses, utilize the private reporting channel:
 
-👉 **[Submit a Security Advisory](https://github.com/albertobasso/hsync-client/security/advisories/new)**
+👉 **[Submit a Security Advisory](https://github.com/albertosdk/hsync-client/security/advisories/new)**
 
 Review the [Security Policy](SECURITY.md) for compliance details and infrastructure hardening recommendations.
 

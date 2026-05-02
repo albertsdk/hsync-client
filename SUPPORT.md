@@ -4,8 +4,8 @@
 
 - **[FAQ](docs/faq.md)** — answers to common questions and troubleshooting tips.
 - **[Documentation](docs/README.md)** — complete documentation index: installation, configuration, sync modes, LAN mode, and more.
-- **[GitHub Issues](https://github.com/albertobasso/hsync-client/issues)** — bug reports and feature requests. Please search existing issues before opening a new one.
-- **[GitHub Discussions](https://github.com/albertobasso/hsync-client/discussions)** — community questions, ideas, and general discussion.
+- **[GitHub Issues](https://github.com/albertosdk/hsync-client/issues)** — bug reports and feature requests. Please search existing issues before opening a new one.
+- **[GitHub Discussions](https://github.com/albertosdk/hsync-client/discussions)** — community questions, ideas, and general discussion.
 - **[Security Policy](SECURITY.md)** — how to report security vulnerabilities privately.
 
 ## Before asking for help
