@@ -174,7 +174,7 @@ The LAN WebSocket loop builds **one context per connection** via
 `_build_lan_dispatch_ctx` (`lan_websocket.py`) and passes it to every
 `_handle_lan_event` call; the context-scoped `dir_dedup` factory guarantees the
 cache lives for the whole connection. Remote mode reuses a module-level
-`REMOTE_DISPATCH_CTX` (`remote_websocket.py:249`).
+`REMOTE_DISPATCH_CTX` (`remote_websocket.py:248`).
 
 **Symlink echo marking + idempotency** (`_apply_symlink`,
 `event_dispatch.py:523`): the mutation section (unlink/rmdir cleanup +

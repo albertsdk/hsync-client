@@ -36,7 +36,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 - Orchestrator: `run_sync` (`main_logic.py:539`) — validates, branches to remote or
   LAN, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.
-- Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py:97`);
+- Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py:98`);
   LAN → `lan_handler.run_lan_mode` (`lan_handler.py:109`).
 - Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
   (`constants.py:21`); `CLIENT_NAME = "hsync-client"` (`:32`) feeds the

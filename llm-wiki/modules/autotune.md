@@ -90,7 +90,7 @@ Updates are written to both the global `CONFIG` and the local config dict
 
 ### Remote per-connection refresh (`remote_websocket._refresh_network_tuning`)
 
-`remote_websocket.py:355`, called from `remote_connect` (`:458`) at the top of
+`remote_websocket.py:333`, called from `remote_connect` (`:430`) at the top of
 its reconnect loop, **before every `sync()`** — including the first. Re-derives
 `HTTP_TIMEOUT`, `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT` and
 `RECONNECT_DELAY` from a fresh `measure_rtt`, so a cold start whose startup
@@ -116,9 +116,9 @@ survives the per-cycle refresh, preserving CLI > env > autotune > default.
 
 ### WS reconnect (`remote_websocket.py`)
 
-`remote_websocket.py:355-441` — re-evaluates RTT on reconnect to catch
+`remote_websocket.py:333-397` — re-evaluates RTT on reconnect to catch
 network changes; the reconnect wait itself is the full-jitter exponential
-backoff `_reconnect_delay` (`remote_websocket.py:443`).
+backoff `_reconnect_delay` (`remote_websocket.py:397`).
 
 ## Resolver chain
 

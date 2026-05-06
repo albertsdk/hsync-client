@@ -215,9 +215,11 @@ async def remote_events() -> None:
             # Main event loop - process incoming WebSocket messages
             await _process_remote_events(websocket, bucket)
         except ConnectionClosed as e:
-            # WebSocket connection was closed
-            if e.reason:
-                log.warning(f"Connection closed: {e.reason}")
+            # WebSocket connection was closed. ``ConnectionClosed.reason`` is
+            # deprecated since websockets 13.1; read the received close frame.
+            reason = e.rcvd.reason if e.rcvd is not None else ""
+            if reason:
+                log.warning(f"Connection closed: {reason}")
             else:
                 log.warning("Connection closed.")
             emit_event(UiEventName.status, status="waiting")

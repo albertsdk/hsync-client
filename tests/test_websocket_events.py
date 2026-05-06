@@ -8,6 +8,7 @@
 
 import asyncio
 import contextlib
+import warnings
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -1105,6 +1106,88 @@ class TestRemoteEvents:
 
             # Error should be logged
             assert mock_log.error.called
+
+    @pytest.mark.asyncio
+    async def test_remote_events_logs_close_reason_without_deprecation(self):
+        """A received close frame is logged read from ``rcvd``, not ``.reason``.
+
+        Regression: ``ConnectionClosed.reason`` is deprecated since websockets
+        13.1 (slated for removal), so the handler must decode the received
+        close frame directly.
+        """
+        from json import dumps
+
+        from websockets.exceptions import ConnectionClosed
+        from websockets.frames import Close as CloseFrame
+
+        from hsync_client.remote_websocket import remote_events
+
+        auth_response = {
+            "type": "auth",
+            "status": "ok",
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": [],
+        }
+
+        config = {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+        }
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
+
+        mock_observer = MagicMock()
+        queue_mock = MagicMock()
+        queue_mock.process = AsyncMock()
+        queue_mock.stop = MagicMock()
+
+        # Given a server-initiated close carrying a reason
+        closed = ConnectionClosed(
+            rcvd=CloseFrame(1001, "server going away"),
+            sent=CloseFrame(1000, ""),
+            rcvd_then_sent=True,
+        )
+
+        with (
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", config),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
+            patch(
+                "hsync_client.remote_websocket.create_task", side_effect=_close_coro_and_return_task
+            ),
+            patch("hsync_client.remote_websocket._process_remote_events", side_effect=closed),
+            patch("hsync_client.remote_websocket.log") as mock_log,
+        ):
+            # When the close surfaces out of the event loop
+            with warnings.catch_warnings(record=True) as recorded:
+                warnings.simplefilter("always")
+                await remote_events()
+
+        # Then the received reason is logged…
+        assert any(
+            "server going away" in str(call.args[0]) for call in mock_log.warning.call_args_list
+        )
+        # …without touching the deprecated attribute
+        assert [
+            str(w.message)
+            for w in recorded
+            if issubclass(w.category, DeprecationWarning) and "ConnectionClosed" in str(w.message)
+        ] == []
 
     @pytest.mark.asyncio
     async def test_remote_events_cleans_up_queue_task(self):

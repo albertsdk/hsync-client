@@ -16,7 +16,7 @@ starts the watcher loop. Console script: `cli.run` (`cli.py:1121`).
 
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
-| **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:97`) |
+| **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:98`) |
 | **LAN (P2P)** | `hsync lan` subcommand | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `lan_handler.run_lan_mode` (`lan_handler.py:109`) |
 
 LAN sub-roles: `_run_as_master` (`lan_handler.py:273`) starts `LANServer`
@@ -51,7 +51,7 @@ established:
 
 | Mode | Emission point |
 | ---- | -------------- |
-| Remote (continuous, default) | `remote_websocket.py:212` — after WS auth + `observer.start()` |
+| Remote (continuous, default) | `remote_websocket.py:210` — after WS auth + `observer.start()` |
 | LAN master | `lan_handler.py:346` — after HTTP + WS servers up, mDNS `server_ready`, watcher running |
 | LAN slave | `lan_websocket.py:875` — after watcher start **and** completed master handshake (a failed auth never reaches it) |
 
@@ -76,7 +76,7 @@ WatcherManager (watcher.py:105) ──> BaseFileEventHandler (file_event_handler
                           execute in parallel (_execute_parallel_transfers:267)
 ```
 
-Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:526`) and
+Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:487`) and
 `LANMasterFileEventHandler` (`lan_websocket.py:546`) subclass `BaseFileEventHandler`;
 `LANSlaveFileEventHandler` (`lan_websocket.py:1003`) is a separate watchdog
 `FileSystemEventHandler` for the slave→master upload path.

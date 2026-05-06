@@ -8,11 +8,11 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `remote_events` | `remote_websocket.py:97` | WS connect + auth handshake + watchdog watcher, then the inbound processing loop. **Readiness threshold**: after `observer.start()` it logs `[READY] Client ready for sync — watching …` (`:179`) — the observable marker that the watcher is live and the WS is authenticated |
-| `remote_connect` | `:373` | top-level: initial full sync + optional `resync` task + `remote_events`; reconnect loop with `RECONNECT_DELAY` |
-| `_process_remote_events` | `:253` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:216`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop. Accepts `added`/`modified`/`renamed`/`deleted`/`symlink`: symlink events are propagated by the server (`handle_symlink_event` returns the Event and `ConnectionManager.send_message` broadcasts it to every peer except the sender), so remote-mode clients now replicate symlinks in real time (parity with LAN mode) instead of waiting for the next full sync |
-| `resync` | `:329` | delegates to `sync.periodic_resync(lan_mode=False)` |
-| `RemoteFileEventHandler` | `:526` | watchdog → `upload_file` (threads `from_closed`); realtime uploads run on a process-wide bounded pool (`_get_remote_upload_executor:70`, `REALTIME_UPLOAD_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of inline on the watchdog dispatch thread — a large upload no longer blocks the processing of every subsequent event |
+| `remote_events` | `remote_websocket.py:98` | WS connect + auth handshake + watchdog watcher, then the inbound processing loop. **Readiness threshold**: after `observer.start()` it logs `[READY] Client ready for sync — watching …` (`:210`) — the observable marker that the watcher is live and the WS is authenticated |
+| `remote_connect` | `:411` | top-level: initial full sync + optional `resync` task + `remote_events`; reconnect loop with `RECONNECT_DELAY` |
+| `_process_remote_events` | `:253` | read inbound frames, dispatch via `REMOTE_DISPATCH_CTX` (`:318`); per-message isolation: a malformed JSON frame is dropped (`JSONDecodeError` caught per frame) and apply errors logged — neither kills the connection loop. Accepts `added`/`modified`/`renamed`/`deleted`/`symlink`: symlink events are propagated by the server (`handle_symlink_event` returns the Event and `ConnectionManager.send_message` broadcasts it to every peer except the sender), so remote-mode clients now replicate symlinks in real time (parity with LAN mode) instead of waiting for the next full sync |
+| `resync` | `:328` | delegates to `sync.periodic_resync(lan_mode=False)` |
+| `RemoteFileEventHandler` | `:487` | watchdog → `upload_file` (threads `from_closed`); realtime uploads run on a process-wide bounded pool (`_get_remote_upload_executor:76`, `REALTIME_UPLOAD_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of inline on the watchdog dispatch thread — a large upload no longer blocks the processing of every subsequent event |
 
 ## WS handshake (shared SSOT)
 
@@ -39,9 +39,9 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
 
 ## Reconnect & resilience
 
-- `remote_connect` (`remote_websocket.py:438`) is an infinite loop: each
+- `remote_connect` (`remote_websocket.py:411`) is an infinite loop: each
   iteration re-measures RTT and re-seeds bandwidth (`_refresh_network_tuning()`,
-  `:355`) and runs a full `sync()` before `remote_events`; on `ConnectionClosed`
+  `:333`) and runs a full `sync()` before `remote_events`; on `ConnectionClosed`
   or unexpected error it sleeps a **full-jitter exponential backoff**
   (`_reconnect_delay`: `uniform(0, min(base*2**attempts, RECONNECT_DELAY_MAX))`,
   base = `RECONNECT_DELAY`) and loops again; the attempt counter resets after
