@@ -2,7 +2,7 @@
 
 Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 (transfers) + WebSocket (event propagation). Server REST/WS contract:
-[hsync-server wiki](https://github.com/albertosdk/hsync-server/blob/main/llm-wiki/README.md).
+[hsync-server wiki](https://github.com/albertsdk/hsync-server/blob/main/llm-wiki/README.md).
 
 ## Lifecycle (`remote_websocket.py`)
 
@@ -19,7 +19,7 @@ Default mode: the client syncs a local dir to an `hsync-server` bucket over REST
 The WS auth frame is built from `hsync_common.protocol.handshake`
 (`build_ws_auth_request`): sends `protocol_version` (`PROTOCOL_VERSION_WS`),
 `app_version`, `capabilities`, `token`. A `protocol_version` mismatch is a hard
-fail (disconnect). Server side: [websocket.md](https://github.com/albertosdk/hsync-server/blob/main/llm-wiki/modules/websocket.md).
+fail (disconnect). Server side: [websocket.md](https://github.com/albertsdk/hsync-server/blob/main/llm-wiki/modules/websocket.md).
 
 ## REST transport (`utils.py`)
 

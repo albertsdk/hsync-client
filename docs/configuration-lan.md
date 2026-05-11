@@ -100,4 +100,4 @@ bucket, and path remain CLI arguments.
 
 - [LAN Mode Guide](lan-mode.md) — detailed walkthrough
 - [Authentication — Client-Side](authentication.md) — hello handshake + auth diagrams
-- [LAN Protocol spec](https://github.com/albertosdk/hsync-common/blob/main/docs/lan-protocol.md) — election + security reference
+- [LAN Protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/lan-protocol.md) — election + security reference

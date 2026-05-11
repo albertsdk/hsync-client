@@ -108,4 +108,4 @@ main_logic (orchestration) ← cli ← main
 | LAN master identity | `ssl_utils.py:98` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
 > Human diagrams (modes, event processing, stability, bandwidth): `../docs/internal/architecture.md`.
-> Decision rationale: [decisions.md](decisions.md) → `https://github.com/albertosdk/hsync-common/blob/main/docs/adr/`.
+> Decision rationale: [decisions.md](decisions.md) → `https://github.com/albertsdk/hsync-common/blob/main/docs/adr/`.

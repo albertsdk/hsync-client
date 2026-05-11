@@ -304,4 +304,4 @@ diagrams**, the event-handling flow chart, the conflict-resolution tree, the
 delta-transfer protocol and the retry/timeout model — see [Sync
 Flow](sync-flow.md). The server-side flow (file storage, event broadcast,
 tombstones) is documented in the
-[server Sync Flow](https://github.com/albertosdk/hsync-server/blob/main/docs/sync-flow.md).
+[server Sync Flow](https://github.com/albertsdk/hsync-server/blob/main/docs/sync-flow.md).

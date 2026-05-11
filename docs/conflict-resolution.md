@@ -435,4 +435,4 @@ backups if undelete is required.
 - [Sync Flow](sync-flow.md) — client-side sync flow with conflict handling diagrams.
 - [Architecture](internal/architecture.md) — high-level system overview.
 - [Developer Guide](internal/developer.md) — performance optimizations and internals.
-- [HSYNC Common → Version models](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/architecture.md) — shared version store.
+- [HSYNC Common → Version models](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/architecture.md) — shared version store.

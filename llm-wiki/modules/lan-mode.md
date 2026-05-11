@@ -7,7 +7,7 @@ causal vector-clock arbitration (ADR-0022). Security and election rules are
 SSOT in `hsync-common`.
 
 > **Domain-critical**: before changing discovery/election/security, read
-> [`hsync-common/docs/lan-protocol.md`](https://github.com/albertosdk/hsync-common/blob/main/docs/lan-protocol.md).
+> [`hsync-common/docs/lan-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/lan-protocol.md).
 
 ## Entry & roles (`lan_handler.py`)
 

@@ -87,4 +87,4 @@ See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
 - [LAN Mode Guide](lan-mode.md) — detailed walkthrough
 - [Configuration — LAN P2P Mode](configuration-lan.md) — all LAN-mode CLI options
 - [Authentication — Client-Side](authentication.md) — auth flow diagrams (LAN with/without key)
-- [LAN Protocol spec](https://github.com/albertosdk/hsync-common/blob/main/docs/lan-protocol.md) — authoritative election + security reference
+- [LAN Protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/lan-protocol.md) — authoritative election + security reference

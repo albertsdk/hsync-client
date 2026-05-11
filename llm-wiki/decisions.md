@@ -1,7 +1,7 @@
 # HSYNC Client — Decisions
 
 Ecosystem ADRs are SSOT in `hsync-common`
-([decisions index](https://github.com/albertosdk/hsync-common/blob/main/llm-wiki/decisions.md) →
+([decisions index](https://github.com/albertsdk/hsync-common/blob/main/llm-wiki/decisions.md) →
 `hsync-common/docs/internal/adr/`). This page maps each ADR to the **client code** that
 implements it, plus client-only operational rules.
 
@@ -9,18 +9,18 @@ implements it, plus client-only operational rules.
 
 | ADR | Client implementation |
 | --- | --------------------- |
-| [0001 server-vs-lan-modes](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:539`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
-| [0002 lan-master-election](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0002-lan-master-election.md) | `PeerManager._elect_master` (`lan.py:129`) → calls common `elect_master` |
-| [0003 tombstone-gossip](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
-| [0004 desktop-subprocess-contract](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:109`) |
-| [0005 protocol-versioning](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:170`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
-| [0017 lan-slave-outbound-event-reliability](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
-| [0022 causal-vector-clock-conflict-model](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py:989`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
-| [0023 corrected-mtime-tie-break](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `lan_handler.run_lan_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `lan_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
-| [0025 sqlite-external-state-store](https://github.com/albertosdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + `syncstate.db`); `HSYNC_STATE_DIR` |
+| [0001 server-vs-lan-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:539`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
+| [0002 lan-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-lan-master-election.md) | `PeerManager._elect_master` (`lan.py:129`) → calls common `elect_master` |
+| [0003 tombstone-gossip](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
+| [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:109`) |
+| [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:170`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
+| [0017 lan-slave-outbound-event-reliability](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
+| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py:989`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
+| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `lan_handler.run_lan_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `lan_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
+| [0025 sqlite-external-state-store](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + `syncstate.db`); `HSYNC_STATE_DIR` |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
-in [`lan-protocol.md`](https://github.com/albertosdk/hsync-common/blob/main/docs/lan-protocol.md) and maps to
+in [`lan-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/lan-protocol.md) and maps to
 `pinning.py` + `ssl_utils.py` ([lan-mode.md](modules/lan-mode.md)).
 
 ## Client-only operational rules

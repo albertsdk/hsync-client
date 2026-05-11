@@ -846,7 +846,7 @@ def main(
 
     [bold]Project:[/bold]
 
-        https://github.com/albertosdk/hsync-client
+        https://github.com/albertsdk/hsync-client
 
     [bold]Authors:[/bold]
 

@@ -18,7 +18,7 @@ peer-to-peer LAN mode.
    - Lowest `cid` lexicographically breaks ties
 4. **Role Assignment**: The winner becomes **master**, all others become **slaves**.
 
-See [LAN Protocol spec](https://github.com/albertosdk/hsync-common/blob/main/docs/lan-protocol.md) for the complete
+See [LAN Protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/lan-protocol.md) for the complete
 election algorithm.
 
 ## 2. Master WebSocket Hub

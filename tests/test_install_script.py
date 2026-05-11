@@ -17,7 +17,7 @@ def _write_fake_commands(tmp_path: Path) -> None:
     curl.write_text(
         "#!/usr/bin/env bash\n"
         '[[ -z "${HSYNC_FAKE_CURL_FAIL:-}" ]] || exit 22\n'
-        "printf 'https://github.com/albertosdk/hsync-client/releases/tag/%s\\n' "
+        "printf 'https://github.com/albertsdk/hsync-client/releases/tag/%s\\n' "
         '"${HSYNC_FAKE_LATEST_TAG:-v9.9.9}"\n'
     )
     curl.chmod(0o755)

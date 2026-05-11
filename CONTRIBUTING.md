@@ -157,7 +157,7 @@ testing or for a non-release platform:
    generates `SHA256SUMS`, and creates the GitHub Release with
    auto-generated release notes.
 5. Verify the release on the
-   [Releases page](https://github.com/albertosdk/hsync-client/releases).
+   [Releases page](https://github.com/albertsdk/hsync-client/releases).
 
 > You can also trigger a build-only run (no tag, no Release) via
 > `workflow_dispatch` on the Actions tab — useful for testing build changes

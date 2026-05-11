@@ -13,7 +13,7 @@ you are.
 ### 1. Install
 
 Download the installer script, a prebuilt binary, `.deb`, or WD OS5 `.bin` from
-the [Releases page](https://github.com/albertosdk/hsync-client/releases), or
+the [Releases page](https://github.com/albertsdk/hsync-client/releases), or
 build it from source — full instructions are in [Installation](installation.md).
 
 - [`.deb` package guide](debian-package.md) — systemd service, custom paths, ACLs.
@@ -66,10 +66,10 @@ see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 
 ## Associated Ecosystem Components
 
-- [HSYNC Common](https://github.com/albertosdk/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
-- [HSYNC Server](https://github.com/albertosdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
-- [HSYNC Desktop](https://github.com/albertosdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
-- [HSYNC Android](https://github.com/albertosdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
+- [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
+- [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
+- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
+- [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
 
 > **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
 > are still under active development and are not yet ready for production use.

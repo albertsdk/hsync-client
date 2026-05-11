@@ -34,7 +34,7 @@ jobs:
       - name: Checkout hsync-common
         uses: actions/checkout@v7
         with:
-          repository: albertosdk/hsync-common
+          repository: albertsdk/hsync-common
           ref: main
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}

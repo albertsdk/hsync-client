@@ -1,6 +1,6 @@
 [Unit]
 Description=HSYNC file synchronization client
-Documentation=https://github.com/albertosdk/hsync-client
+Documentation=https://github.com/albertsdk/hsync-client
 After=network-online.target
 Wants=network-online.target
 
