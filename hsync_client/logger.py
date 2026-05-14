@@ -30,11 +30,18 @@ Log format: 2024-01-15T10:30:45.123Z - [12345] INFO: message
 """
 
 import logging
-import os
 import sys
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
+from hsync_common.logger import (
+    DEFAULT_LOG_COMPRESSION,  # noqa: F401  (re-exported for backward compatibility)
+    DEFAULT_LOG_RETENTION,  # noqa: F401  (re-exported for backward compatibility)
+    DEFAULT_LOG_ROTATION,  # noqa: F401  (re-exported for backward compatibility)
+    LEVEL_STYLES,
+    BaseInterceptHandler,
+    get_rotation_config,
+)
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -46,48 +53,16 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-class InterceptHandler(logging.Handler):
+class InterceptHandler(BaseInterceptHandler):
     """
     Handler that intercepts standard logging and redirects to loguru.
 
-    This allows modules using standard logging (logging.getLogger)
-    to have their logs processed through loguru with consistent formatting.
+    Escapes curly braces in messages to prevent loguru from interpreting
+    them as format placeholders (e.g. websockets library logs JSON).
     """
 
-    def emit(self, record: logging.LogRecord) -> None:
-        """Redirect log record to loguru."""
-        # Get corresponding loguru level
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-
-        # Find caller from where originated the logged message
-        frame, depth = logging.currentframe(), 2
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-
-        # Get the message and escape curly braces to prevent loguru from
-        # interpreting them as format placeholders (e.g., websockets library logs JSON)
-        message = record.getMessage()
-        message = message.replace("{", "{{").replace("}", "}}")
-
-        logger.opt(depth=depth, exception=record.exc_info).log(level, message)
-
-
-# =============================================================================
-# Log Rotation Configuration Defaults
-# =============================================================================
-
-# Default rotation: rotate when file reaches 10 MB
-DEFAULT_LOG_ROTATION: Final[str] = "10 MB"
-
-# Default retention: keep logs for 7 days
-DEFAULT_LOG_RETENTION: Final[str] = "7 days"
-
-# Default compression: gzip for space efficiency
-DEFAULT_LOG_COMPRESSION: Final[str] = "gz"
+    def __init__(self) -> None:
+        super().__init__(escape_braces=True)
 
 
 # Context variable for client ID - thread-safe storage for per-session data
@@ -128,19 +103,11 @@ def set_client_id(client_id: str | None) -> None:
 
 
 # =============================================================================
-# Color Configuration (Best Practices)
+# Action Label Color Configuration
 # =============================================================================
 #
-# Following industry-standard log coloring conventions:
-# - Timestamps: dim/muted to reduce visual noise
-# - DEBUG: gray/dim - low priority, verbose information
-# - INFO: default/white - normal operational messages
-# - SUCCESS: green - positive outcomes
-# - WARNING: yellow - attention needed but not critical
-# - ERROR: red - failures that need investigation
-# - CRITICAL: bold red - severe issues requiring immediate action
-#
-# Action symbols use semantic colors:
+# LEVEL_STYLES is shared via hsync_common.logger. Action symbols use
+# semantic colors:
 # - Download (↓): cyan - incoming data
 # - Upload (↑): green - outgoing data (success-like)
 # - Move (→): blue - neutral operation
@@ -149,17 +116,6 @@ def set_client_id(client_id: str | None) -> None:
 # - Permission (⚙): magenta - system/config change
 # - Skip (·): gray - no action taken
 # =============================================================================
-
-# Loguru color tags for terminal output
-# Using loguru's built-in color system for proper terminal compatibility
-LEVEL_STYLES: dict[str, tuple[str, str]] = {
-    "DEBUG": ("<dim>", "</dim>"),
-    "INFO": ("", ""),
-    "SUCCESS": ("<green>", "</green>"),
-    "WARNING": ("<yellow>", "</yellow>"),
-    "ERROR": ("<red>", "</red>"),
-    "CRITICAL": ("<bold><red>", "</red></bold>"),
-}
 
 # Action label color mappings using loguru tags
 LABEL_STYLES: dict[str, tuple[str, str]] = {
@@ -288,18 +244,8 @@ def _format_record_plain(record: "Record") -> str:
     return f"{timestamp} - [{record['process'].id}] {level}: {message}\n"
 
 
-def _get_rotation_config() -> dict[str, str | None]:
-    """
-    Get log rotation configuration from environment variables.
-
-    Returns:
-        Dictionary with rotation, retention, and compression settings.
-    """
-    return {
-        "rotation": os.environ.get("HSYNC_LOG_ROTATION", DEFAULT_LOG_ROTATION),
-        "retention": os.environ.get("HSYNC_LOG_RETENTION", DEFAULT_LOG_RETENTION),
-        "compression": os.environ.get("HSYNC_LOG_COMPRESSION", DEFAULT_LOG_COMPRESSION),
-    }
+# Backward-compatible alias for the shared rotation config helper.
+_get_rotation_config = get_rotation_config
 
 
 def setup_logging(
