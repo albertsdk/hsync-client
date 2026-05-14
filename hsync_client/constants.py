@@ -15,8 +15,19 @@ throughout the application, making them easy to find and modify.
 # Application Info
 # =============================================================================
 
-# Application version
-HSYNC_VERSION = "1.0.0"
+# Re-export shared constants from hsync-common
+from hsync_common.constants import (  # noqa: E402, F401
+    CHUNK_SIZE_LARGE,
+    CHUNK_SIZE_MEDIUM,
+    CHUNK_SIZE_SMALL,
+    FILE_SIZE_MEDIUM,
+    FILE_SIZE_SMALL,
+    HSYNCKEEP_FILENAME,
+    VERSION,
+)
+
+# Application version (re-exported from hsync-common)
+HSYNC_VERSION = VERSION
 
 
 # =============================================================================
@@ -30,20 +41,11 @@ CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
 
 
 # =============================================================================
-# File Transfer Settings
+# File Transfer Settings (chunk sizes re-exported from hsync-common above)
 # =============================================================================
 
 # Default chunk size for MD5 computation (64KB)
 MD5_CHUNK_SIZE = 65536
-
-# Chunk sizes based on file size for optimal transfer
-CHUNK_SIZE_SMALL = 8 * 1024  # 8KB for files < 1MB
-CHUNK_SIZE_MEDIUM = 64 * 1024  # 64KB for files < 100MB
-CHUNK_SIZE_LARGE = 256 * 1024  # 256KB for files >= 100MB
-
-# File size thresholds for chunk size selection
-FILE_SIZE_SMALL = 1_000_000  # 1MB
-FILE_SIZE_MEDIUM = 100_000_000  # 100MB
 
 
 # =============================================================================
@@ -103,15 +105,7 @@ MIN_FREE_DISK_SPACE_MB_MAX = 100_000  # 100 GB
 MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
 
 
-# =============================================================================
-# Sentinel File for Empty Directories
-# =============================================================================
-
-# Sentinel filename placed in empty directories to force sync of the
-# directory structure.  Similar to Git's .gitkeep convention.
-# This file is treated as *not* hidden by is_hidden_file() so it passes
-# through the sync engine, but it is filtered from the desktop UI.
-HSYNCKEEP_FILENAME = ".hsynckeep"
+# HSYNCKEEP_FILENAME is re-exported from hsync_common.constants above
 
 
 # =============================================================================

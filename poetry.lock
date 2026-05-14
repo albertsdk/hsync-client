@@ -493,6 +493,23 @@ test = ["certifi (>=2024)", "cryptography-vectors (==46.0.6)", "pretend (>=0.7)"
 test-randomorder = ["pytest-randomly"]
 
 [[package]]
+name = "hsync-common"
+version = "1.0.0"
+description = "HSYNC Common - shared models, constants, and compression utilities"
+optional = false
+python-versions = ">=3.12,<3.14"
+files = []
+develop = true
+
+[package.dependencies]
+loguru = "^0.7.3"
+zstandard = "^0.25.0"
+
+[package.source]
+type = "directory"
+url = "../hsync-common"
+
+[[package]]
 name = "idna"
 version = "3.11"
 description = "Internationalized Domain Names in Applications (IDNA)"
@@ -1654,4 +1671,4 @@ cffi = ["cffi (>=1.17,<2.0)", "cffi (>=2.0.0b)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<3.14"
-content-hash = "7b49f8048fa24fd6b46644e071d8b74ec26a3d8fd887a40cf613f4153ed01864"
+content-hash = "fb624881a3fa42f6b31e0b70e88e09ef6617a93ccffddc90da286d718fe9bc78"

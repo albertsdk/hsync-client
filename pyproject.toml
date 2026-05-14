@@ -12,6 +12,7 @@ hsync = "hsync_client.main:main"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
+hsync-common = {path = "../hsync-common", develop = true}
 urllib3 = "^2.3.0"
 websockets = "^16.0"
 watchdog = "^6.0.0"
