@@ -19,6 +19,14 @@ from os import stat as os_stat
 from os.path import abspath, exists, normpath
 from pathlib import Path
 
+from hsync_common.path_validation import (
+    FORBIDDEN_FILENAME_CHARS,
+    FORBIDDEN_PATH_CHARS,
+    has_control_chars,
+    has_forbidden_chars,
+    has_problematic_trailing,
+    is_reserved_name,
+)
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
@@ -28,14 +36,9 @@ from hsync_client.constants import (
     CHUNK_SIZE_SMALL,
     CID_ALPHABET,
     CID_LENGTH,
-    CONTROL_CHARS,
     FILE_SIZE_MEDIUM,
     FILE_SIZE_SMALL,
-    FORBIDDEN_FILENAME_CHARS,
-    FORBIDDEN_PATH_CHARS,
     MD5_CHUNK_SIZE,
-    PROBLEMATIC_TRAILING_CHARS,
-    RESERVED_FILENAMES,
 )
 
 # =============================================================================
@@ -136,32 +139,6 @@ def verify_master_fingerprint(url: str) -> bool:
 # =============================================================================
 
 
-def _has_forbidden_chars(name: str, chars: frozenset[str]) -> bool:
-    """Check if name contains any forbidden characters."""
-    return any(char in name for char in chars)
-
-
-def _has_control_chars(name: str) -> bool:
-    """Check if name contains any control characters (ASCII 1-31)."""
-    return any(char in name for char in CONTROL_CHARS)
-
-
-def _is_reserved_name(name: str) -> bool:
-    """
-    Check if name is a Windows reserved filename.
-
-    Handles names with or without extensions (e.g., NUL.txt is also reserved).
-    """
-    # Get base name without extension for checking reserved names
-    base_name = name.split(".")[0].upper() if "." in name else name.upper()
-    return base_name in RESERVED_FILENAMES
-
-
-def _has_problematic_trailing(name: str) -> bool:
-    """Check if name ends with problematic characters (space or period)."""
-    return bool(name) and name[-1] in PROBLEMATIC_TRAILING_CHARS
-
-
 def is_valid_filename(filename: str) -> bool:
     """
     Validate a filename for cross-platform compatibility.
@@ -182,16 +159,16 @@ def is_valid_filename(filename: str) -> bool:
     if not filename:
         return False
 
-    if _has_forbidden_chars(filename, FORBIDDEN_FILENAME_CHARS):
+    if has_forbidden_chars(filename, FORBIDDEN_FILENAME_CHARS):
         return False
 
-    if _has_control_chars(filename):
+    if has_control_chars(filename):
         return False
 
-    if _is_reserved_name(filename):
+    if is_reserved_name(filename):
         return False
 
-    return not _has_problematic_trailing(filename)
+    return not has_problematic_trailing(filename)
 
 
 def is_valid_logfile(path_string: str) -> bool:
@@ -219,19 +196,19 @@ def is_valid_logfile(path_string: str) -> bool:
             name = path.name
 
             # Check for forbidden characters in the filename
-            if _has_forbidden_chars(name, FORBIDDEN_FILENAME_CHARS):
+            if has_forbidden_chars(name, FORBIDDEN_FILENAME_CHARS):
                 return False
 
             # Check for control characters
-            if _has_control_chars(name):
+            if has_control_chars(name):
                 return False
 
             # Check for Windows reserved names (including with extensions)
-            if _is_reserved_name(name):
+            if is_reserved_name(name):
                 return False
 
             # Check for problematic trailing characters
-            if _has_problematic_trailing(name):
+            if has_problematic_trailing(name):
                 return False
 
         else:
@@ -241,9 +218,9 @@ def is_valid_logfile(path_string: str) -> bool:
 
             # Check each part of the path for forbidden and control characters
             for part in path.parts:
-                if _has_forbidden_chars(part, FORBIDDEN_PATH_CHARS):
+                if has_forbidden_chars(part, FORBIDDEN_PATH_CHARS):
                     return False
-                if _has_control_chars(part):
+                if has_control_chars(part):
                     return False
 
         return True
