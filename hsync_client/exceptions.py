@@ -18,30 +18,20 @@ Error Code Format: HSYNC-CXXXX (C = Client)
 - C4XXX: File operation errors
 """
 
-from typing import Any
+from hsync_common.exceptions import HSyncError
 
 
-class HSyncClientError(Exception):
+class HSyncClientError(HSyncError):
     """
     Base exception for all HSYNC Client errors.
 
-    Attributes:
-        message: Human-readable error message.
-        error_code: Unique error code for debugging (e.g., "HSYNC-C1001").
-        details: Optional additional error details.
+    Inherits the common construction contract (``message``, ``error_code``,
+    ``details``, ``to_dict()``) from ``hsync_common.exceptions.HSyncError``
+    and uses the client-specific default error code (``HSYNC-C5000``).
     """
 
     error_code: str = "HSYNC-C5000"
     default_message: str = "An unexpected error occurred"
-
-    def __init__(
-        self,
-        message: str | None = None,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        self.message = message or self.default_message
-        self.details = details or {}
-        super().__init__(self.message)
 
 
 # =============================================================================
