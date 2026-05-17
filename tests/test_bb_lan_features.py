@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import pytest
+from hsync_common.labels import ActionLabel
 
 from .lan_helpers import (
     _lan_ready_path,
@@ -282,8 +283,11 @@ class TestLanKeyless:
             extra_env={"HSYNC_LAN_KEY": None},
         )
         try:
-            # Then it is refused at startup with the write-policy error
-            refused = _wait_for_text_in_stderr(master, "requires authentication", timeout=15)
+            # Then it is refused at startup with the write-policy error. The
+            # assertion anchors on the SSOT marker ([AUTH REQUIRED], see
+            # hsync_common/docs/log-labels.md) rather than the surrounding
+            # prose, which is free to change without breaking the contract.
+            refused = _wait_for_text_in_stderr(master, ActionLabel.AUTH_REQUIRED, timeout=15)
             assert refused, "Keyless unattended write-capable run should hit the write policy"
             # The error line can be drained before the process finishes exiting.
             master.wait(timeout=5)
@@ -310,7 +314,7 @@ class TestLanKeyless:
             # Then it completes discovery (no write-policy error) and stays alive
             alone = _wait_for_text_in_stderr(node, "No other peers discovered", timeout=30)
             assert alone, "Download-only keyless node should complete a discovery round"
-            assert "requires authentication" not in _stderr_text(node), (
+            assert ActionLabel.AUTH_REQUIRED not in _stderr_text(node), (
                 "Download-only keyless run must not trip the write policy"
             )
             assert node.poll() is None, "The node should still be alive, waiting for peers"
