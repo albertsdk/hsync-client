@@ -16,6 +16,7 @@ from hsync_common.compression import (  # noqa: F401
     CONTENT_ENCODING_ZSTD,
     compress_data,
     compress_file_to_file,
+    compression_level,
     decompress_stream,
     should_compress,
 )

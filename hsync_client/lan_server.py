@@ -44,7 +44,7 @@ from urllib.parse import parse_qs, urlparse
 
 import zstandard as zstd
 from hsync_common.clock import clamp_incoming_corrected_mtime
-from hsync_common.compression import COMPRESSION_LEVEL
+from hsync_common.compression import compression_level
 from hsync_common.constants import (
     CONTENT_TYPE_JSON,
     CONTENT_TYPE_OCTET_STREAM,
@@ -216,7 +216,7 @@ def _stage_compressed_body(
     total = 0
     try:
         stream.seek(0)
-        compressor = zstd.ZstdCompressor(level=COMPRESSION_LEVEL)
+        compressor = zstd.ZstdCompressor(level=compression_level(is_lan=True))
         with compressor.stream_writer(staged, closefd=False) as writer:
             while chunk := stream.read(_LAN_UPLOAD_CHUNK_SIZE):
                 digest.update(chunk)

@@ -58,6 +58,7 @@ from loguru import logger as log
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
     compress_data,
+    compression_level,
     decompress_stream,
     should_compress,
 )
@@ -256,7 +257,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         and CONFIG.get("SERVER_COMPRESSION_ENABLED", False)
         and should_compress(file.filepath, len(literals), transfer_type="upload")
     ):
-        payload = compress_data(literals)
+        payload = compress_data(literals, level=compression_level(transfer_type="upload"))
         compressed = True
 
     # Attach the effective causal version (vclock + version_id + the ADR-0023

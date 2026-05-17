@@ -64,6 +64,7 @@ from loguru import logger as log
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
     compress_data,
+    compression_level,
     decompress_stream,
     should_compress,
 )
@@ -280,7 +281,7 @@ def handle_delta_signatures_post(handler) -> None:
         and CONFIG.get("COMPRESSION_ENABLED", False)
         and should_compress(filepath, len(literals), is_lan=True)
     ):
-        payload = compress_data(literals)
+        payload = compress_data(literals, level=compression_level(is_lan=True))
         compressed = True
 
     bucket = CONFIG.get("REMOTE_BUCKET", "")

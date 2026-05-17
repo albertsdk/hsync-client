@@ -48,6 +48,7 @@ from requests.exceptions import SSLError
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
     compress_file_to_file,
+    compression_level,
     decompress_stream,
     should_compress,
 )
@@ -249,7 +250,7 @@ def _compress_to_temp_file(filepath: str) -> str:
     fd, tmp_path = mkstemp(prefix="hsync-upload-", suffix=".zst")
     close(fd)
     try:
-        compress_file_to_file(filepath, tmp_path)
+        compress_file_to_file(filepath, tmp_path, level=compression_level(transfer_type="upload"))
     except BaseException:
         with suppress(OSError):
             remove(tmp_path)
