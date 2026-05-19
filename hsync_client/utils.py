@@ -244,6 +244,38 @@ def is_same_paths(path1: str, path2: str) -> bool:
     return normpath(abspath(path1)) == normpath(abspath(path2))
 
 
+def safe_rmdir_if_empty(dir_path: str, bucket_root: str | None = None) -> bool:
+    """
+    Remove *dir_path* only if it is empty and strictly inside *bucket_root*.
+
+    Acts as a safety wrapper around ``os.rmdir`` to prevent accidental
+    removal of the LOCAL_BUCKET root (which would destroy the sync target).
+
+    Args:
+        dir_path: Directory to remove if empty.
+        bucket_root: Path that must NOT be removed. Defaults to
+            ``CONFIG["LOCAL_BUCKET"]`` when not provided.
+
+    Returns:
+        True if the directory was removed, False otherwise.
+    """
+    from os import listdir, rmdir
+
+    if not dir_path or not exists(dir_path):
+        return False
+    if bucket_root is None:
+        bucket_root = CONFIG.get("LOCAL_BUCKET", "")
+    if bucket_root and is_same_paths(dir_path, bucket_root):
+        return False
+    try:
+        if listdir(dir_path):
+            return False
+        rmdir(dir_path)
+        return True
+    except OSError:
+        return False
+
+
 def ensure_str_path(path: str | bytes | None) -> str:
     """
     Convert a path to string if it's bytes.

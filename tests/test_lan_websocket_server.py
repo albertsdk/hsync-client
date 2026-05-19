@@ -317,3 +317,40 @@ class TestLANWebSocketServer:
         server = LANWebSocketServer(port=9999)
         server._running = True
         assert server.is_running() is True
+
+    def test_start_creates_missing_watch_path(self, tmp_path):
+        """start() recreates the watch_path if it has been removed externally.
+
+        Regression test: previously watchdog.Observer.schedule() raised
+        FileNotFoundError when the bucket directory had been deleted between
+        the previous sync and the start of the watcher, crashing LAN mode.
+        """
+        missing = tmp_path / "deleted_bucket"
+        assert not missing.exists()
+
+        server = LANWebSocketServer(port=9999)
+        config = {"LOCAL_BUCKET": str(missing)}
+        mock_obs = MagicMock()
+
+        def fake_run_loop():
+            server._loop = MagicMock()
+            while server._running:
+                time.sleep(0.05)
+
+        server._run_loop = fake_run_loop
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.Observer") as MockObserver,
+        ):
+            MockObserver.return_value = mock_obs
+            server.start(watch_path=str(missing))
+
+        # The directory must have been created on the fly
+        assert missing.exists() and missing.is_dir()
+        mock_obs.schedule.assert_called_once()
+        mock_obs.start.assert_called_once()
+
+        # Cleanup
+        server._running = False
+        server._thread.join(timeout=2.0)

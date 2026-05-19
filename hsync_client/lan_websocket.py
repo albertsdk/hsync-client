@@ -32,7 +32,7 @@ import sys
 import threading
 from copy import deepcopy
 from os import listdir
-from os.path import exists, islink
+from os.path import exists, getsize, islink
 from os.path import join as path_join
 from time import time
 from typing import Any
@@ -58,6 +58,54 @@ MODIFIED_DEBOUNCE_INTERVAL = 1.0
 def _escape_braces(s: str) -> str:
     """Escape curly braces in string for loguru format."""
     return s.replace("{", "{{").replace("}", "}}")
+
+
+# =============================================================================
+# Inbound File Origin Tracking (echo suppression for LAN master)
+# =============================================================================
+
+# Map of absolute filepath -> (originator_cid, expiration_timestamp).
+# The master populates this map every time it writes / deletes / renames a
+# path on behalf of a peer (via HTTP POST/DELETE/PATCH).  When the watchdog
+# fires the resulting filesystem event, ``LANFileEventHandler._send_event``
+# substitutes the originator's CID into the broadcast so that the original
+# sender (and only that sender) can recognise and discard its own echo.
+_inbound_origin: dict[str, tuple[str, float]] = {}
+_inbound_origin_lock = threading.Lock()
+INBOUND_ORIGIN_TTL = 10.0
+
+
+def mark_inbound_origin(filepath: str, cid: str, ttl: float = INBOUND_ORIGIN_TTL) -> None:
+    """Record that ``filepath`` was just written/changed on behalf of ``cid``."""
+    if not filepath or not cid:
+        return
+    now = time()
+    with _inbound_origin_lock:
+        # Opportunistic GC of expired entries
+        expired = [k for k, (_, exp) in _inbound_origin.items() if exp <= now]
+        for k in expired:
+            _inbound_origin.pop(k, None)
+        _inbound_origin[filepath] = (cid, now + ttl)
+
+
+def consume_inbound_origin(filepath: str) -> str | None:
+    """Return and remove the originator CID for ``filepath`` if still fresh."""
+    if not filepath:
+        return None
+    with _inbound_origin_lock:
+        entry = _inbound_origin.pop(filepath, None)
+    if entry is None:
+        return None
+    cid, expiry = entry
+    if expiry < time():
+        return None
+    return cid
+
+
+def _clear_inbound_origin() -> None:
+    """Test helper: drop every tracked inbound origin entry."""
+    with _inbound_origin_lock:
+        _inbound_origin.clear()
 
 
 # =============================================================================
@@ -240,6 +288,14 @@ class LANWebSocketServer:
         if watch_path is None:
             watch_path = CONFIG["LOCAL_BUCKET"]
 
+        # Ensure watch_path exists: watchdog raises FileNotFoundError otherwise.
+        # This can happen when the bucket has been emptied or removed externally.
+        from os import makedirs
+
+        if not exists(watch_path):
+            log.warning(f"Watch path '{watch_path}' does not exist, creating it")
+            makedirs(watch_path, exist_ok=True)
+
         self._event_handler = LANFileEventHandler(self)
         observer = Observer()
         observer.schedule(self._event_handler, watch_path, recursive=True)
@@ -305,16 +361,33 @@ class LANFileEventHandler(FileSystemEventHandler):
         self._ws_server = ws_server
         self._last_modified: dict[str, float] = {}
 
-    def _send_event(self, event: Event) -> None:
+    def _send_event(
+        self,
+        event: Event,
+        src_abs_path: str | None = None,
+        dst_abs_path: str | None = None,
+    ) -> None:
         """Send an event to all connected clients.
 
         Skipped when SYNC_DIRECTION is 'download-only' (master should not
         broadcast local changes to slaves).
+
+        If ``src_abs_path`` (or ``dst_abs_path``) matches a path that was
+        recently written/deleted/renamed on behalf of a peer via the LAN
+        HTTP API, the originator's CID is substituted into the broadcast
+        so the sender can recognise and discard its own echo.
         """
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             log.debug("Download-only mode: master event not broadcast.")
             return
         event_dict = event.to_dict()
+        origin_cid = None
+        if src_abs_path:
+            origin_cid = consume_inbound_origin(src_abs_path)
+        if origin_cid is None and dst_abs_path:
+            origin_cid = consume_inbound_origin(dst_abs_path)
+        if origin_cid:
+            event_dict["cid"] = origin_cid
         self._ws_server.broadcast_sync(event_dict)
 
     def on_any_event(self, event) -> None:
@@ -341,7 +414,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                     EventName.added,
                     dir_obj,
                 )
-                self._send_event(message)
+                self._send_event(message, src_abs_path=src_path)
         elif not is_hidden_file(src_path) and islink(src_path):
             log.info(f'[LAN SYMLINK] "{src_path}"')
             symlink = Symlink.get(src_path)
@@ -353,7 +426,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                     EventName.symlink,
                     symlink,
                 )
-                self._send_event(message)
+                self._send_event(message, src_abs_path=src_path)
 
     def on_modified(self, event) -> None:
         """Handle file/directory modification events."""
@@ -374,7 +447,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                     EventName.modified,
                     dir_obj,
                 )
-                self._send_event(message)
+                self._send_event(message, src_abs_path=src_path)
 
         # For files, use debouncing on systems without on_closed
         if not SUPPORTS_ON_CLOSED and not event.is_directory and not is_hidden_file(src_path):
@@ -407,7 +480,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                 EventName.modified,
                 file_obj,
             )
-            self._send_event(message)
+            self._send_event(message, src_abs_path=src_path)
 
     def on_moved(self, event) -> None:
         """Handle file/directory move/rename events."""
@@ -469,7 +542,7 @@ class LANFileEventHandler(FileSystemEventHandler):
                 )
 
         if message:
-            self._send_event(message)
+            self._send_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
 
     def on_deleted(self, event) -> None:
         """Handle file/directory deletion events."""
@@ -497,7 +570,7 @@ class LANFileEventHandler(FileSystemEventHandler):
             EventName.deleted,
             obj,
         )
-        self._send_event(message)
+        self._send_event(message, src_abs_path=src_path)
 
 
 # =============================================================================
@@ -540,6 +613,15 @@ async def lan_websocket_client(
     _slave_event_handler = SlaveFileEventHandler(host, http_port, use_https)
     observer = Observer()
     watch_path = CONFIG["LOCAL_BUCKET"]
+
+    # Ensure watch_path exists: watchdog raises FileNotFoundError otherwise.
+    # This can happen when the bucket has been emptied or removed externally.
+    from os import makedirs
+
+    if not exists(watch_path):
+        log.warning(f"Watch path '{watch_path}' does not exist, creating it")
+        makedirs(watch_path, exist_ok=True)
+
     observer.schedule(_slave_event_handler, watch_path, recursive=True)
     observer.start()
     log.info(f"Client file watcher started for bidirectional sync: {watch_path}")
@@ -626,7 +708,7 @@ async def _handle_lan_event(
         event_data: Event dictionary from the master.
         slave_handler: Optional client event handler for marking files as receiving.
     """
-    from os import listdir, makedirs, remove, rename, rmdir
+    from os import makedirs, remove, rename
     from os.path import basename, dirname, exists
     from shutil import rmtree
 
@@ -639,6 +721,17 @@ async def _handle_lan_event(
     dst = event_data.get("dst")
 
     log.debug(f"Received event: {event_name}")
+
+    # Drop events that originated from this very client (echo suppression).
+    # The master substitutes the originator's CID into the broadcast for
+    # operations that it performed on the originator's behalf via the
+    # LAN HTTP API.  Without this filter the originator would re-download
+    # the file it just uploaded.
+    own_cid = CONFIG.get("CID")
+    event_cid = event_data.get("cid")
+    if own_cid and event_cid and event_cid == own_cid:
+        log.debug(f"[LAN ECHO  ] Ignoring own event: {event_name}")
+        return
 
     # Skip events from master when in upload-only mode (no downloads)
     if CONFIG.get("SYNC_DIRECTION") == "upload-only":
@@ -747,13 +840,12 @@ async def _handle_lan_event(
                     remove(file_obj.filepath)
                     parent = dirname(file_obj.filepath)
                     if basename(file_obj.filepath) == HSYNCKEEP_FILENAME:
-                        # Sentinel removed — clean up the now-empty directory
-                        try:
-                            if exists(parent) and not listdir(parent):
-                                rmdir(parent)
-                                log.debug(f'Removed empty directory "{parent}"')
-                        except OSError:
-                            pass
+                        # Sentinel removed — clean up the now-empty directory.
+                        # Never remove the LOCAL_BUCKET root itself.
+                        from hsync_client.utils import safe_rmdir_if_empty
+
+                        if safe_rmdir_if_empty(parent):
+                            log.debug(f'Removed empty directory "{parent}"')
                 finally:
                     unmark_receiving(file_obj.filepath)
 
@@ -914,6 +1006,11 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             )
 
             params = {"path": rel_path, "is_dir": str(is_dir).lower()}
+            # Include our CID so the master can attribute the resulting
+            # filesystem event back to us and suppress the echo broadcast.
+            own_cid = CONFIG.get("CID")
+            if own_cid:
+                params["cid"] = own_cid
             headers: dict[str, str] = {}
             req_headers = CONFIG.get("REQUEST_HEADERS")
             if req_headers and isinstance(req_headers, dict):
@@ -952,6 +1049,11 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             )
 
             params = {"src": src_rel, "dst": dst_rel}
+            # Include our CID so the master can attribute the resulting
+            # filesystem event back to us and suppress the echo broadcast.
+            own_cid = CONFIG.get("CID")
+            if own_cid:
+                params["cid"] = own_cid
             headers: dict[str, str] = {}
             req_headers = CONFIG.get("REQUEST_HEADERS")
             if req_headers and isinstance(req_headers, dict):
@@ -997,7 +1099,21 @@ class SlaveFileEventHandler(FileSystemEventHandler):
             if islink(src_path):
                 # Symlink - upload immediately
                 self._handle_file_upload(src_path)
-            # Regular file creation - will be handled by on_modified or on_closed
+            else:
+                # Files placed via an atomic rename from outside the watched
+                # tree (e.g. file managers using `IN_MOVED_TO` without a
+                # corresponding `IN_MOVED_FROM`, hard-links, `mv` from a
+                # sibling directory, etc.) arrive already complete and will
+                # not generate a subsequent on_closed / on_modified event.
+                # Trigger the upload immediately when the file is non-empty
+                # at creation time; otherwise wait for on_closed / on_modified.
+                try:
+                    size = getsize(src_path)
+                except OSError:
+                    size = 0
+                if size > 0:
+                    log.debug(f'[CLIENT NEW ] "{src_path}" ({size} bytes, complete on create)')
+                    self._handle_file_upload(src_path)
 
     def on_modified(self, event) -> None:
         """Handle file/directory modification events."""

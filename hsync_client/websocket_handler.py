@@ -22,7 +22,7 @@ def _safe_json(obj: object) -> str:
     return dumps(obj).replace("{", "{{").replace("}", "}}")
 
 
-from os import listdir, makedirs, remove, rename, rmdir, unlink
+from os import makedirs, remove, rename, unlink
 from os import symlink as os_symlink
 from os.path import basename, dirname, exists, islink
 from shutil import rmtree
@@ -332,14 +332,13 @@ def _handle_delete_event(src: dict | None) -> None:
             # File exists - remove it
             remove(file.filepath)
             if basename(file.filepath) == HSYNCKEEP_FILENAME:
-                # Sentinel removed — clean up the now-empty directory
+                # Sentinel removed — clean up the now-empty directory.
+                # Never remove the LOCAL_BUCKET root itself.
+                from hsync_client.utils import safe_rmdir_if_empty
+
                 parent = dirname(file.filepath)
-                try:
-                    if exists(parent) and not listdir(parent):
-                        rmdir(parent)
-                        log.debug(f'Removed empty directory "{parent}"')
-                except OSError:
-                    pass
+                if safe_rmdir_if_empty(parent):
+                    log.debug(f'Removed empty directory "{parent}"')
         else:
             log.warning(f'Cannot delete: "{file.filepath}"')
             log.warning(f'Not found: "{file.filepath}"')

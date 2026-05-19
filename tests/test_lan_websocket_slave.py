@@ -609,3 +609,66 @@ class TestSlaveFileEventHandler:
         handler._start_operation(slow_op, name="slow")
         timed_out = handler.wait_pending(timeout=0.1)
         assert timed_out >= 1
+
+    def test_on_created_complete_file_uploads_immediately(self, handler, tmp_path):
+        """A non-empty regular file at on_created (e.g. atomic rename in
+        from outside the watch tree) must trigger an immediate upload
+        because no subsequent on_closed/on_modified is guaranteed."""
+        f = tmp_path / "incoming.txt"
+        f.write_text("hello world")
+        event = FileCreatedEvent(str(f))
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_handle_file_upload") as mock_upload,
+        ):
+            handler.on_created(event)
+            mock_upload.assert_called_once_with(str(f))
+
+    def test_on_created_empty_file_no_immediate_upload(self, handler, tmp_path):
+        """An empty regular file at on_created is left to on_closed /
+        on_modified to avoid uploading partially-written files."""
+        f = tmp_path / "empty.txt"
+        f.write_text("")
+        event = FileCreatedEvent(str(f))
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_handle_file_upload") as mock_upload,
+        ):
+            handler.on_created(event)
+            mock_upload.assert_not_called()
+
+    def test_delete_on_master_sends_own_cid(self, handler):
+        """_delete_on_master must propagate our CID so the master can
+        attribute the delete and suppress the echo broadcast."""
+        config = {
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "remote",
+            "CID": "slave-abc",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.delete") as mock_del,
+        ):
+            mock_del.return_value = MagicMock(status_code=200)
+            handler._delete_on_master("/bucket/file.txt", is_dir=False)
+            kwargs = mock_del.call_args.kwargs
+            assert kwargs["params"]["cid"] == "slave-abc"
+
+    def test_rename_on_master_sends_own_cid(self, handler):
+        """_rename_on_master must propagate our CID so the master can
+        attribute the rename and suppress the echo broadcast."""
+        config = {
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "remote",
+            "CID": "slave-xyz",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("requests.patch") as mock_patch,
+        ):
+            mock_patch.return_value = MagicMock(status_code=200)
+            handler._rename_on_master("/bucket/a.txt", "/bucket/b.txt")
+            kwargs = mock_patch.call_args.kwargs
+            assert kwargs["params"]["cid"] == "slave-xyz"
