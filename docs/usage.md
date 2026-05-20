@@ -100,7 +100,7 @@ hsync -s http://localhost:8765 -b mybucket -p /path/to/local/dir
 
 ### Scenario 2: Continuous Sync (Watch Mode)
 
-Keep files synchronized in real-time:
+Keep files synchronized in real-time. In [bold]LAN Mode[/bold], this behavior is implicit by default.
 
 ```mermaid
 sequenceDiagram
@@ -358,7 +358,8 @@ hsync -s http://localhost:8765 -b shared -w --sync-direction download-only
 
 ### LAN mode with download-only client
 ```bash
-# Client only receives files from master, never uploads local changes
+# Client only receives files from master, never uploads local changes.
+# Note: -w is implicit in LAN mode.
 hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
 ```
 
