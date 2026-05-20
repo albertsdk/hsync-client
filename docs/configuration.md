@@ -11,6 +11,7 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
 | `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
+| `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
 
 ## Environment Files
 
@@ -26,27 +27,51 @@ source prod.env
 
 ## CLI Options
 
+### Connection
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-s, --server` | Server URL | (required or `HSYNC_SERVER`) |
+| `--timeout` | HTTP request timeout in seconds | `30` |
+| `--ca-cert` | Path to CA certificate for self-signed server certs | — |
+| `--insecure` | Skip SSL certificate verification | `false` |
+
+### Sync
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-b, --bucket` | Bucket name | (required) |
+| `-p, --path` | Local directory path | cwd |
+| `-w, --watch` | Watch for changes and sync continuously | `false` |
+| `-i, --interval` | Force full sync every N seconds (requires `-w`) | — |
+| `--retry-delay` | Retry connection after N seconds | `5` |
+| `--stability-delay` | Seconds to wait before uploading modified files | `5` |
+| `--max-wait-timeout` | Maximum time to wait for file stabilization | `120` |
+| `--filter-path` | Sync only files within this subdirectory path | — |
+| `-n, --dry-run` | Show what would be done without making changes | `false` |
+| `--ignore-delete` | Do not propagate file deletions | `false` |
+| `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
+| `--max-bandwidth-upload` | Maximum upload bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
+| `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
+| `--no-compression` | Disable zstd compression for file transfers | `false` |
+| `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `100` |
+
+### Output
+
 | Option | Description |
 |--------|-------------|
-| `-s, --server` | Server URL |
-| `-b, --bucket` | Bucket name (required) |
-| `-p, --path` | Local directory path (default: cwd) |
-| `-w, --watch` | Watch for changes and sync continuously |
-| `-i, --interval` | Force full sync every N seconds (requires `-w`) |
-| `--retry-delay` | Retry connection after N seconds (default: 5) |
-| `-n, --dry-run` | Show what would be done without making changes |
-| `--ignore-delete` | Do not propagate file deletions |
-| `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` |
-| `--max-bandwidth-upload` | Maximum upload bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited |
-| `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited |
 | `-v, --verbose` | Enable verbose output |
 | `-q, --quiet` | Suppress all output |
 | `-o, --output` | Write output to file |
-| `--ca-cert` | Path to CA certificate for self-signed server certs |
-| `--insecure` | Skip SSL certificate verification |
 | `--no-color` | Disable colored output |
 | `--help-symbols` | Show output symbols legend |
+
+### General
+
+| Option | Description |
+|--------|-------------|
 | `-y, --yes` | Skip interactive confirmation prompts (still shows warnings) |
+| `--env-file` | Load environment variables from a file |
 | `-V, --version` | Show version |
 
 ## LAN Mode Options
