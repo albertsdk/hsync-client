@@ -215,7 +215,7 @@ sequenceDiagram
 
 ```bash
 # On all devices - they will discover each other automatically
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### With Authentication
@@ -223,27 +223,27 @@ sequenceDiagram
 ```bash
 # On all devices - use the same key via environment variable
 export HSYNC_LAN_KEY="mySecretKey123"
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # Or inline
-HSYNC_LAN_KEY="mySecretKey123" ./dist/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_KEY="mySecretKey123" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### With Specific Port
 
 ```bash
 # Use a specific port instead of random
-./dist/hsync -b photos -p ~/Pictures --lan-mode --lan-port 9000
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --lan-port 9000
 ```
 
 ### Disable Persistent Mode
 
 ```bash
 # Exit immediately if no peers are found (one-shot sync)
-./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-persistent
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --no-lan-persistent
 
 # Or via environment variable
-HSYNC_LAN_PERSISTENT=false ./dist/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_PERSISTENT=false ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ## Persistent Mode (Default)
@@ -270,7 +270,7 @@ Use `--no-lan-persistent` to disable this behavior and exit after a single sync 
 ### Example Flow
 
 ```
-$ ./dist/hsync -b photos -p ~/Pictures --lan-mode
+$ ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 [INFO] LAN P2P mode enabled
 [INFO] Persistent mode enabled - will wait indefinitely for peers
@@ -332,7 +332,7 @@ CLI argument > Environment variable > Default value
 By default, LAN mode operates without authentication. This is suitable for trusted home networks.
 
 ```bash
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### Shared Secret (Recommended)
@@ -342,7 +342,7 @@ For security, use a shared secret key that all peers must know:
 ```bash
 # All peers must use the same key (via environment variable)
 export HSYNC_LAN_KEY="mySecretKey123"
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 The key is transmitted as a Bearer token in HTTP headers:
@@ -371,13 +371,13 @@ Group filtering allows multiple hsync instances on the same LAN to be isolated. 
 
 ```bash
 # Team A - only sees other Team A peers
-./dist/hsync -b project -p ~/Projects --lan-mode --lan-group "team-a"
+./dist/<platform>/hsync -b project -p ~/Projects --lan-mode --lan-group "team-a"
 
 # Team B - only sees other Team B peers
-./dist/hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
+./dist/<platform>/hsync -b project -p ~/Projects --lan-mode --lan-group "team-b"
 
 # No group - sees ALL peers (including team-a and team-b)
-./dist/hsync -b project -p ~/Projects --lan-mode
+./dist/<platform>/hsync -b project -p ~/Projects --lan-mode
 ```
 
 ### Use Cases
@@ -433,17 +433,17 @@ HTTPS is **enabled by default** in LAN mode. No additional configuration is need
 
 ```bash
 # HTTPS is enabled by default
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # Combine with authentication for maximum security
-HSYNC_LAN_KEY="mySecret" ./dist/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_KEY="mySecret" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # Disable HTTPS (use plain HTTP)
-./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
 
 # Disable via environment variable
 export HSYNC_LAN_HTTPS=false
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### Security Considerations
@@ -706,10 +706,10 @@ Sync photos between laptop and desktop without internet:
 
 ```bash
 # On laptop
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # On desktop
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 ```
 
 ### Office File Sharing
@@ -719,7 +719,7 @@ Share project files between team members on the same network:
 ```bash
 # All team members run:
 export HSYNC_LAN_KEY="team-secret-2024"
-./dist/hsync -b project -p ~/Projects/myproject --lan-mode
+./dist/<platform>/hsync -b project -p ~/Projects/myproject --lan-mode
 ```
 
 ### Backup to NAS
@@ -728,10 +728,10 @@ Sync files to a NAS device on the local network:
 
 ```bash
 # On workstation
-HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p ~/Documents --lan-mode
+HSYNC_LAN_KEY="backup-key" ./dist/<platform>/hsync -b backup -p ~/Documents --lan-mode
 
 # On NAS
-HSYNC_LAN_KEY="backup-key" ./dist/hsync -b backup -p /volume1/backups --lan-mode
+HSYNC_LAN_KEY="backup-key" ./dist/<platform>/hsync -b backup -p /volume1/backups --lan-mode
 ```
 
 ### Directional Sync in LAN Mode
@@ -740,10 +740,10 @@ Use `--sync-direction` on client nodes to control the direction of synchronizati
 
 ```bash
 # Client that only downloads from master (read-only mirror)
-./dist/hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --sync-direction download-only
 
 # Client that only uploads to master (push-only source)
-./dist/hsync -b logs -p ~/Logs --lan-mode --sync-direction upload-only
+./dist/<platform>/hsync -b logs -p ~/Logs --lan-mode --sync-direction upload-only
 ```
 
 > **Note**: During automatic master election, peers with bidirectional sync are preferred. If `--force-master` is used, the peer must have bidirectional sync direction (the client will refuse to start otherwise).
@@ -754,10 +754,10 @@ When running in LAN mode **without `--force-master`** and the shared directory i
 
 ```bash
 # The client will show a warning and ask for confirmation
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # Skip the interactive confirmation (e.g. in scripts or systemd services)
-./dist/hsync -b photos -p ~/Pictures --lan-mode -y
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode -y
 ```
 
 The warning is **not shown** when:

@@ -93,7 +93,7 @@ The client supports encrypted communication via HTTPS and WSS (WebSocket Secure)
 
 ```bash
 # Standard HTTPS connection (certificate verified against system CA store)
-./dist/hsync -s https://server.example.com:8765 -b mybucket
+./dist/<platform>/hsync -s https://server.example.com:8765 -b mybucket
 ```
 
 ### Connecting to a Server with Self-Signed Certificate
@@ -107,14 +107,14 @@ When the server uses a self-signed certificate, you have two options:
 scp server:/path/to/certs/server.crt ./server.crt
 
 # Connect using the CA certificate
-./dist/hsync -s https://server:8765 -b mybucket --ca-cert server.crt
+./dist/<platform>/hsync -s https://server:8765 -b mybucket --ca-cert server.crt
 ```
 
 **Option 2: Disable SSL verification (not recommended for production)**
 
 ```bash
 # Skip certificate verification (insecure!)
-./dist/hsync -s https://server:8765 -b mybucket --insecure
+./dist/<platform>/hsync -s https://server:8765 -b mybucket --insecure
 ```
 
 > ⚠️ **Warning**: Using `--insecure` disables all SSL certificate verification, making the connection vulnerable to man-in-the-middle attacks. Only use this for testing.
@@ -123,12 +123,12 @@ scp server:/path/to/certs/server.crt ./server.crt
 
 **Watch mode with self-signed certificate:**
 ```bash
-./dist/hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
+./dist/<platform>/hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
 ```
 
 **Dry-run with HTTPS:**
 ```bash
-./dist/hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
+./dist/<platform>/hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
 ```
 
 ## File Compression
@@ -173,13 +173,13 @@ HSYNC supports upload and download bandwidth limiting using a **token bucket** a
 
 ```bash
 # Limit upload to 1 MB/s
-./dist/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 1MB
+./dist/<platform>/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 1MB
 
 # Limit download to 500 KB/s
-./dist/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-download 500KB
+./dist/<platform>/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-download 500KB
 
 # Limit both directions
-./dist/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
+./dist/<platform>/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
 ```
 
 ### Supported Formats

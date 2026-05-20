@@ -7,7 +7,7 @@ HSYNC supports different synchronization modes to fit various use cases.
 Performs a synchronization and exits.
 
 ```bash
-./dist/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir
 ```
 
 ## Watch Mode (`-w`)
@@ -20,7 +20,7 @@ Maintains a persistent connection and watches for changes:
 - Propagates changes in real-time
 
 ```bash
-./dist/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
 ```
 
 ## Sync Direction
@@ -37,10 +37,10 @@ Controls the direction of file synchronization:
 
 ```bash
 # Upload-only: push local files to server
-./dist/hsync -s http://server:8765 -b backup -w --sync-direction upload-only
+./dist/<platform>/hsync -s http://server:8765 -b backup -w --sync-direction upload-only
 
 # Download-only: mirror remote content locally
-./dist/hsync -s http://server:8765 -b shared -w --sync-direction download-only
+./dist/<platform>/hsync -s http://server:8765 -b shared -w --sync-direction download-only
 ```
 
 ## LAN Mode (P2P)
@@ -49,13 +49,13 @@ Peer-to-peer synchronization without a centralized server:
 
 ```bash
 # Basic LAN mode (HTTPS enabled)
-./dist/hsync -b photos -p ~/Pictures --lan-mode
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # With authentication
-HSYNC_LAN_KEY="mySecretKey" ./dist/hsync -b photos -p ~/Pictures --lan-mode
+HSYNC_LAN_KEY="mySecretKey" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # Disable HTTPS
-./dist/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
+./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
 ```
 
 ### How It Works
@@ -72,7 +72,7 @@ Force full sync at regular intervals:
 
 ```bash
 # Re-sync every 5 minutes
-./dist/hsync -s http://localhost:8765 -b mybucket -w -i 300
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -w -i 300
 ```
 
 ## Dry Run
@@ -80,5 +80,5 @@ Force full sync at regular intervals:
 Preview operations without making changes:
 
 ```bash
-./dist/hsync -s http://localhost:8765 -b mybucket -n
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -n
 ```
