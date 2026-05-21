@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
 from os.path import exists, join
 from urllib.parse import parse_qs, urlparse
@@ -35,7 +35,6 @@ from loguru import logger as log
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
     compress_data,
-    decompress_data,
     should_compress,
 )
 from hsync_client.config import CONFIG
@@ -156,6 +155,165 @@ def _parse_multipart(
     return form_data, file_data
 
 
+class _StreamingMultipartParser:
+    """
+    Streaming multipart/form-data parser.
+
+    Reads small form fields into memory and streams the file part body via
+    a writer callback (bytes -> None), avoiding loading huge uploads into RAM.
+
+    Usage:
+        parser = _StreamingMultipartParser(rfile, content_length, boundary)
+        form_fields, file_meta = parser.parse(file_writer)
+
+    Where file_meta is (field_name, filename) or None if no file part was found.
+    """
+
+    _READ_CHUNK = 64 * 1024
+
+    def __init__(self, rfile, content_length: int, boundary: bytes) -> None:
+        self._rfile = rfile
+        self._remaining = content_length
+        # Boundary lines in multipart are prefixed with "--"
+        self._boundary = b"--" + boundary
+        self._buf = b""
+
+    def _read_more(self, n: int = _READ_CHUNK) -> bytes:
+        n = min(n, self._remaining)
+        if n <= 0:
+            return b""
+        chunk = self._rfile.read(n)
+        if chunk:
+            self._remaining -= len(chunk)
+            self._buf += chunk
+        return chunk
+
+    def _read_line(self) -> bytes | None:
+        """Read one CRLF-terminated line, replenishing the buffer as needed.
+
+        Returns the line without the trailing CRLF, or None on EOF.
+        """
+        while b"\r\n" not in self._buf:
+            if not self._read_more():
+                break
+        if b"\r\n" not in self._buf:
+            return None
+        line, self._buf = self._buf.split(b"\r\n", 1)
+        return line
+
+    def _read_until_boundary(self, writer) -> str:
+        """Write body bytes to ``writer`` until the next boundary line.
+
+        ``writer`` is a callable accepting bytes (or None to discard).
+        Returns "next" if another part follows, "end" for the closing boundary,
+        or "eof" if the stream ended before any boundary was found.
+        """
+        terminator = b"\r\n" + self._boundary
+        tlen = len(terminator)
+        # Need at least tlen+2 bytes to safely emit, to disambiguate the
+        # trailing CRLF before the boundary from in-body content.
+        safety = tlen + 2
+
+        while True:
+            idx = self._buf.find(terminator)
+            if idx != -1:
+                if writer is not None and idx > 0:
+                    writer(self._buf[:idx])
+                # Consume up to and including the boundary line
+                after_boundary = idx + tlen
+                # The two bytes after the boundary are either b"\r\n" (next
+                # part) or b"--" (final boundary).
+                while len(self._buf) < after_boundary + 2 and self._read_more():
+                    pass
+                marker = self._buf[after_boundary : after_boundary + 2]
+                if marker == b"--":
+                    # Final boundary; advance past trailing CRLF too
+                    self._buf = self._buf[after_boundary + 2 :]
+                    # Discard the optional epilogue CRLF
+                    if self._buf.startswith(b"\r\n"):
+                        self._buf = self._buf[2:]
+                    return "end"
+                # Next part: advance past CRLF
+                self._buf = self._buf[after_boundary + 2 :]
+                return "next"
+
+            # No boundary yet: flush everything except the trailing safety window
+            if len(self._buf) > safety:
+                emit = len(self._buf) - safety
+                if writer is not None:
+                    writer(self._buf[:emit])
+                self._buf = self._buf[emit:]
+
+            if not self._read_more():
+                # EOF: flush whatever remains
+                if writer is not None and self._buf:
+                    writer(self._buf)
+                self._buf = b""
+                return "eof"
+
+    def parse(self, file_open) -> tuple[dict[str, str], tuple[str, str] | None]:
+        """Parse the multipart body.
+
+        ``file_open`` is a callable invoked once when the file part header
+        is decoded, with signature
+        ``file_open(form_fields, field_name, filename) -> writer``
+        where ``writer`` is a callable ``bytes -> None`` receiving successive
+        chunks of the file body. ``form_fields`` is the dict of form fields
+        decoded so far (all fields preceding the file part are guaranteed to
+        be present). Pass ``None`` to ignore the file body.
+
+        Returns ``(form_fields, file_meta)`` where ``file_meta`` is
+        ``(field_name, filename)`` if a file part was seen.
+        """
+        import re
+
+        form_fields: dict[str, str] = {}
+        file_meta: tuple[str, str] | None = None
+
+        # Skip preamble: read lines until we hit the first boundary line
+        while True:
+            line = self._read_line()
+            if line is None:
+                return form_fields, file_meta
+            if line == self._boundary:
+                break
+            if line == self._boundary + b"--":
+                return form_fields, file_meta
+
+        while True:
+            # Parse part headers
+            headers: dict[bytes, bytes] = {}
+            while True:
+                line = self._read_line()
+                if line is None:
+                    return form_fields, file_meta
+                if line == b"":
+                    break
+                if b":" in line:
+                    k, _, v = line.partition(b":")
+                    headers[k.strip().lower()] = v.strip()
+
+            cd = headers.get(b"content-disposition", b"").decode("utf-8", "replace")
+            name_m = re.search(r'name="([^"]*)"', cd)
+            filename_m = re.search(r'filename="([^"]*)"', cd)
+
+            if filename_m and name_m and file_open is not None and file_meta is None:
+                field_name = name_m.group(1)
+                filename = filename_m.group(1)
+                file_meta = (field_name, filename)
+                writer = file_open(form_fields, field_name, filename)
+                marker = self._read_until_boundary(writer)
+            elif name_m:
+                buf = bytearray()
+                marker = self._read_until_boundary(buf.extend)
+                form_fields[name_m.group(1)] = bytes(buf).decode("utf-8", "replace")
+            else:
+                marker = self._read_until_boundary(None)
+
+            if marker in ("end", "eof"):
+                return form_fields, file_meta
+
+
 # =============================================================================
 # Request Handler
 # =============================================================================
@@ -181,6 +339,21 @@ class LANRequestHandler(BaseHTTPRequestHandler):
     def _send_error_response(self, status: int, message: str) -> None:
         """Send an error response."""
         self._send_json_response(status, {"error": message})
+
+    def _send_error_response_safe(self, status: int, message: str) -> None:
+        """Send an error response, silently swallowing socket/SSL failures.
+
+        Used when the peer may have already closed the connection (e.g. a
+        client read timeout during a large upload); without this guard the
+        write would raise ``SSLEOFError``/``BAD_LENGTH`` and pollute the log
+        with a secondary cascading error.
+        """
+        import ssl
+
+        try:
+            self._send_error_response(status, message)
+        except (ssl.SSLError, OSError, BrokenPipeError, ConnectionError) as e:
+            log.debug(f"Suppressed error response on closed socket: {e}")
 
     def _check_auth(self) -> bool:
         """Check authentication if LAN_KEY is configured."""
@@ -646,104 +819,155 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 
     def _handle_upload(self) -> None:
-        """Handle file upload endpoint."""
+        """Handle file upload endpoint (streaming).
+
+        The request body is parsed incrementally so files of arbitrary size
+        can be received without buffering them entirely in RAM. The file part
+        is written directly to a temporary ``.part`` file and atomically
+        renamed on success.
+        """
+        import re
+
         content_type = self.headers.get("Content-Type", "")
 
         if "multipart/form-data" not in content_type:
             self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
             return
 
-        # Parse multipart form data using our custom parser
+        match = re.search(r"boundary=([^\s;]+)", content_type)
+        if not match:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
+            return
+        boundary = match.group(1).encode()
+        if boundary.startswith(b'"') and boundary.endswith(b'"'):
+            boundary = boundary[1:-1]
+
         try:
-            import os
-
-            from hsync_client.utils import set_permissions
-
-            # Read request body
             content_length = int(self.headers.get("Content-Length", 0))
-            if content_length == 0:
-                self._send_error_response(400, "No content")
-                return
+        except ValueError:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid Content-Length")
+            return
+        if content_length <= 0:
+            self._send_error_response(HTTP_BAD_REQUEST, "No content")
+            return
 
-            body = self.rfile.read(content_length)
+        from hsync_client.utils import set_permissions
 
-            # Parse multipart data
-            form_data, file_data = _parse_multipart(body, content_type)
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
 
-            # Extract fields
-            cid = form_data.get("cid", "")
-            path = form_data.get("path", "")
-            mtime = form_data.get("mtime", "")
-            ctime = form_data.get("ctime", "")
-            permissions = form_data.get("permissions", "-rw-rw-r--")
-            is_compressed = form_data.get("compressed", "false").lower() == "true"
+        # Mutable state shared with the file_open callback
+        state: dict[str, object] = {}
+        tmp_path: str | None = None
+        response_sent = False
 
-            # Get uploaded file
-            if "file" not in file_data:
-                self._send_error_response(400, "No file uploaded")
-                return
+        def _file_open(form_fields, field_name, filename):
+            path = form_fields.get("path", "")
+            is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
 
-            filename, file_content = file_data["file"]
-
-            # Decompress if compressed
-            if is_compressed:
-                log.debug(f"Decompressing uploaded file: {len(file_content)} bytes")
-                file_content = decompress_data(file_content)
-
-            # Build destination path
-            local_bucket = CONFIG.get("LOCAL_BUCKET", "")
             dest_dir = join(local_bucket, path) if path else local_bucket
-
-            # Create directory if needed
             os.makedirs(dest_dir, exist_ok=True)
+            dest_path_local = join(dest_dir, filename)
 
-            dest_path = join(dest_dir, filename)
-
-            # Security check
             real_bucket = os.path.realpath(local_bucket)
-            real_dest = os.path.realpath(dest_path)
+            real_dest = os.path.realpath(dest_path_local)
             if not real_dest.startswith(real_bucket):
-                self._send_error_response(HTTP_FORBIDDEN, "Access denied")
+                raise PermissionError("Access denied")
+
+            state["dest_path"] = dest_path_local
+            tmp_path_local = dest_path_local + ".part"
+            state["tmp_path"] = tmp_path_local
+            raw = open(tmp_path_local, "wb")  # noqa: SIM115
+            state["raw"] = raw
+            if is_compressed_local:
+                import zstandard as zstd
+
+                writer = zstd.ZstdDecompressor().stream_writer(raw)
+                state["f"] = writer
+                return writer.write
+            state["f"] = raw
+            return raw.write
+
+        try:
+            form_fields, file_meta = parser.parse(_file_open)
+
+            if file_meta is None or "f" not in state:
+                self._send_error_response(HTTP_BAD_REQUEST, "No file uploaded")
                 return
 
-            # Mark the destination as inbound so the resulting filesystem
-            # event broadcast carries the originator's CID and the sender
-            # discards its own echo instead of re-downloading the file.
+            # Close the writer (flushes zstd frame if used)
+            writer = state["f"]
+            raw = state["raw"]
+            try:
+                if writer is not raw:
+                    writer.close()  # type: ignore[union-attr]
+            finally:
+                raw.close()  # type: ignore[union-attr]
+            state.pop("f", None)
+            state.pop("raw", None)
+
+            tmp_path = state.get("tmp_path")  # type: ignore[assignment]
+            dest_path = state["dest_path"]  # type: ignore[assignment]
+
+            cid = form_fields.get("cid", "")
+            mtime = form_fields.get("mtime", "")
+            ctime = form_fields.get("ctime", "")
+            permissions = form_fields.get("permissions", "-rw-rw-r--")
+
             if cid:
                 from hsync_client.lan_websocket import mark_inbound_origin
 
                 mark_inbound_origin(dest_path, cid)
 
-            # Write file
-            with open(dest_path, "wb") as f:
-                f.write(file_content)
+            os.replace(tmp_path, dest_path)
+            tmp_path = None
 
-            # Set timestamps if provided
             if mtime or ctime:
                 try:
                     mtime_val = float(mtime) if mtime else None
-                    atime_val = mtime_val or float(ctime) if ctime else None
+                    atime_val = mtime_val or (float(ctime) if ctime else None)
                     if mtime_val:
                         os.utime(dest_path, (atime_val or mtime_val, mtime_val))
                 except (ValueError, OSError):
                     pass
 
-            # Set permissions if provided
             if permissions:
                 set_permissions(dest_path, permissions)
 
             log.info(f"Received file from {cid}: {dest_path}")
             self._send_json_response(
                 HTTP_CREATED,
-                {
-                    "info": "File uploaded successfully",
-                    "file": dest_path,
-                },
+                {"info": "File uploaded successfully", "file": dest_path},
             )
+            response_sent = True
 
+        except PermissionError:
+            self._send_error_response_safe(HTTP_FORBIDDEN, "Access denied")
+            response_sent = True
         except Exception as e:
             log.error(f"Error handling upload: {e}")
-            self._send_error_response(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
+            if not response_sent:
+                self._send_error_response_safe(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
+        finally:
+            # Cleanup tmp file on failure
+            if tmp_path and exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            # Close any still-open file handle from a failed stream
+            f_obj = state.get("f")
+            if f_obj is not None:
+                try:
+                    f_obj.close()  # type: ignore[union-attr]
+                except Exception:
+                    pass
+            raw_obj = state.get("raw")
+            if raw_obj is not None:
+                try:
+                    raw_obj.close()  # type: ignore[union-attr]
+                except Exception:
+                    pass
 
 
 # =============================================================================
@@ -805,7 +1029,9 @@ class LANServer:
             log.warning("LAN server already running")
             return
 
-        self._server = HTTPServer(("0.0.0.0", self._port), LANRequestHandler)
+        self._server = ThreadingHTTPServer(("0.0.0.0", self._port), LANRequestHandler)
+        # Daemonize per-request threads so they don't block process shutdown
+        self._server.daemon_threads = True
 
         # Wrap socket with SSL if HTTPS is enabled
         if self._use_https:

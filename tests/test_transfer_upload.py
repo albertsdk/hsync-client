@@ -496,11 +496,13 @@ class TestUploadResumable:
             patch("hsync_client.transfer.compute_md5", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
-            # Check that post was called with offset in data
+            # The upload body is now streamed; the offset form field is
+            # encoded inside the multipart body. Materialize the body and
+            # verify it carries the expected offset.
             call_kwargs = mock_post.call_args
-            if call_kwargs:
-                data = call_kwargs.kwargs.get("data", {})
-                assert data.get("offset") == 10
+            assert call_kwargs is not None
+            body = b"".join(call_kwargs.kwargs.get("data", iter(())))
+            assert b'name="offset"\r\n\r\n10\r\n' in body
 
 
 class TestUploadEdgeCases:
