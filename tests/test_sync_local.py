@@ -242,8 +242,8 @@ class TestGetSyncActions:
 class TestGetSyncActionsLanMode:
     """Tests for get_sync_actions function in LAN mode."""
 
-    def test_delete_action_for_local_only_file_in_lan_mode(self, tmp_path):
-        """Local-only file triggers delete action in LAN mode (master is source of truth)."""
+    def test_delete_action_for_local_only_file_in_lan_download_only(self, tmp_path):
+        """Local-only file triggers delete only in LAN download-only mode (mirror master)."""
         local_file = tmp_path / "local_only.txt"
         local_file.write_text("local content")
 
@@ -251,10 +251,47 @@ class TestGetSyncActionsLanMode:
         assert file is not None
         local_files = [file.to_dict()]
 
-        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch(
+            "hsync_client.sync.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "download-only"},
+        ):
             result = get_sync_actions([], local_files, lan_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.delete
+
+    def test_upload_action_for_local_only_file_in_lan_bidirectional(self, tmp_path):
+        """Local-only file is uploaded to master in LAN bidirectional mode."""
+        local_file = tmp_path / "local_only.txt"
+        local_file.write_text("local content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+
+        with patch(
+            "hsync_client.sync.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"},
+        ):
+            result = get_sync_actions([], local_files, lan_mode=True)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.upload
+
+    def test_upload_action_for_local_only_file_in_lan_upload_only(self, tmp_path):
+        """Local-only file is uploaded to master in LAN upload-only mode."""
+        local_file = tmp_path / "local_only.txt"
+        local_file.write_text("local content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+
+        with patch(
+            "hsync_client.sync.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "upload-only"},
+        ):
+            result = get_sync_actions([], local_files, lan_mode=True)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.upload
 
     def test_upload_action_for_local_only_file_in_server_mode(self, tmp_path):
         """Local-only file triggers upload action in server mode (default)."""

@@ -217,6 +217,12 @@ def _check_deletion_risk(
     if lan_mode and force_master:
         return
 
+    # Only download-only mode can wipe local-only files at the initial sync.
+    # Bidirectional (server or LAN) uploads local-only files instead of
+    # deleting them; remote delete events are expected normal behaviour.
+    if sync_direction != "download-only":
+        return
+
     # A directory is considered "empty" for deletion-risk purposes when it
     # contains no user data: hidden/temp/backup files and the .hsynckeep
     # sentinel are system artefacts and do not represent user content.
@@ -238,21 +244,10 @@ def _check_deletion_risk(
     if not has_user_content:
         return
 
-    # Determine risk reason
-    if lan_mode and not force_master:
-        reason = (
-            "LAN mode without force-master: the master peer is the source "
-            "of truth and local files not present on the master will be deleted"
-        )
-    elif sync_direction == "download-only":
-        reason = (
-            "download-only mode: remote deletions will be applied locally "
-            "and local-only files may be removed"
-        )
-    else:
-        # bidirectional server mode – remote delete events can remove local files
-        # but this is expected normal behaviour; no warning needed
-        return
+    reason = (
+        "download-only mode: remote deletions will be applied locally "
+        "and local-only files may be removed"
+    )
 
     logger.warning(
         f"The shared directory '{local_path}' is not empty and the current "

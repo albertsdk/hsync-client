@@ -131,17 +131,31 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
         assert "DELETE" in warning_texts
 
+    def test_lan_bidirectional_no_warning(self, tmp_path):
+        """No warning for bidirectional LAN: local-only files are uploaded, not deleted."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+        _check_deletion_risk(
+            local_path=str(tmp_path),
+            lan_mode=True,
+            force_master=False,
+            sync_direction="bidirectional",
+            auto_confirm=False,
+            logger=mock_logger,
+        )
+        mock_logger.warning.assert_not_called()
+
     # ── Risky scenarios ──────────────────────────────────────────────
 
-    def test_lan_no_force_master_warns(self, tmp_path):
-        """Warns when LAN mode without force-master and non-empty dir."""
+    def test_lan_download_only_warns(self, tmp_path):
+        """Warns when LAN mode is download-only and dir is non-empty."""
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
@@ -150,7 +164,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
@@ -158,7 +172,7 @@ class TestCheckDeletionRisk:
         assert mock_logger.warning.call_count >= 2
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
         assert "DELETE" in warning_texts
-        assert "LAN" in warning_texts
+        assert "download-only" in warning_texts
 
     def test_download_only_warns(self, tmp_path):
         """Warns when download-only mode and non-empty dir."""
@@ -193,7 +207,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=True,
                 logger=mock_logger,
             )
@@ -213,7 +227,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
@@ -229,7 +243,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
@@ -244,7 +258,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
@@ -262,7 +276,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
@@ -279,7 +293,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )
@@ -299,7 +313,7 @@ class TestCheckDeletionRisk:
                 local_path=str(tmp_path),
                 lan_mode=True,
                 force_master=False,
-                sync_direction="bidirectional",
+                sync_direction="download-only",
                 auto_confirm=False,
                 logger=mock_logger,
             )

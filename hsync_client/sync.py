@@ -80,8 +80,10 @@ async def sync(lan_mode: bool = False) -> None:
     transfers and avoid overwhelming the server.
 
     Args:
-        lan_mode: If True, master is source of truth - files existing only
-            locally will be deleted instead of uploaded.
+        lan_mode: If True, sync is coordinated against a LAN master peer.
+            Local-only files are uploaded to the master in bidirectional and
+            upload-only modes; they are deleted only in download-only mode
+            (slave mirrors the master).
     """
     # Import here to avoid circular import
     from hsync_client.transfer import nothing_to_do
@@ -483,8 +485,9 @@ def get_sync_actions(
     Args:
         remote_files: List of file metadata from server.
         local_files: List of file metadata from local filesystem.
-        lan_mode: If True, master is source of truth - files existing only
-            locally will be deleted instead of uploaded.
+        lan_mode: If True, sync targets a LAN master peer. Local-only files
+            are uploaded in bidirectional/upload-only modes and deleted only
+            when SYNC_DIRECTION is "download-only".
 
     Returns:
         List of SyncAction objects describing required operations.
@@ -542,11 +545,12 @@ def get_sync_actions(
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
             file = File.get(local_file_dict["filepath"])
             if file:
-                if lan_mode:
-                    # In LAN mode, master is source of truth - delete local files not on master
+                if lan_mode and CONFIG.get("SYNC_DIRECTION") == "download-only":
+                    # LAN download-only slave mirrors master - delete local-only files
                     sync_actions.append(SyncAction(file, SyncActionName.delete))
                 else:
-                    # In server mode, upload local files not on server
+                    # Default: upload local-only files (server mode and LAN
+                    # bidirectional/upload-only converge toward shared state)
                     sync_actions.append(SyncAction(file, SyncActionName.upload))
 
     # ── Filter actions based on sync direction ──────────────────────
