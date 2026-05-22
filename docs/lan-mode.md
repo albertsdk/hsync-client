@@ -27,8 +27,6 @@ flowchart TB
     style C2C fill:#f3e5f5,stroke:#7b1fa2
 ```
 
-![LAN Mode Overview](images/lan-mode-1.png)
-
 ## Key Features
 
 | Feature | Description |
@@ -86,8 +84,6 @@ flowchart TB
     B_WATCH -->|"④ Monitor"| B_FILES
 ```
 
-![LAN Architecture](images/lan-mode-2.png)
-
 ### Discovery and Election Flow
 
 ```mermaid
@@ -123,8 +119,6 @@ sequenceDiagram
     C->>A: Sync files via HTTP
 ```
 
-![Discovery Flow](images/lan-mode-3.png)
-
 ### Synchronization Flow
 
 During initial sync (when a client connects or reconnects), the **master is the source of truth**:
@@ -149,8 +143,6 @@ sequenceDiagram
     C->>C: Remove files that exist only locally
     Note right of C: Master is source of truth<br/>Local-only files are deleted
 ```
-
-![Sync Flow](images/lan-mode-4.png)
 
 > **Important**: In LAN mode, files that exist only on the client (not on master) are **deleted locally** during initial sync. This ensures that if a file was deleted on the master while the client was offline, the deletion is correctly propagated when the client reconnects.
 
@@ -497,8 +489,6 @@ flowchart TD
     style CID fill:#e8f5e9,stroke:#2e7d32
 ```
 
-![Master Election](images/lan-mode-5.png)
-
 **Rules:**
 - The `sync_direction` of each peer is shared via mDNS TXT records during discovery
 - `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
@@ -836,5 +826,3 @@ flowchart TB
     HTTP -.->|"⑤ Requests"| MAIN
     HB -.->|"⑥ Peer Timeout"| MAIN
 ```
-
-![Thread Model](images/lan-mode-6.png)

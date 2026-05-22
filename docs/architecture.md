@@ -59,8 +59,6 @@ graph TB
     SYNC -->|"⑪ Read/Write"| FS
 ```
 
-![System Overview](images/architecture-1.png)
-
 ## Component Description
 
 | Component | Description |
@@ -121,8 +119,6 @@ graph LR
     transfer --> compression
 ```
 
-![Module Structure](images/architecture-2.png)
-
 ## Synchronization Modes
 
 ### Single Sync Mode
@@ -136,8 +132,6 @@ stateDiagram-v2
     Compare --> Execute: ⑤ Execute sync actions
     Execute --> [*]: ⑥ Complete
 ```
-
-![Single Sync Mode](images/architecture-3.png)
 
 ### Watch Mode (Continuous)
 
@@ -163,8 +157,6 @@ stateDiagram-v2
     Reconnecting --> Connected: ⑦ Reconnected
     Reconnecting --> [*]: ⑧ Max retries exceeded
 ```
-
-![Watch Mode](images/architecture-4.png)
 
 ### Sync Direction Filtering
 
@@ -244,8 +236,6 @@ flowchart TD
     R5 -->|"⑤→⑥"| A4
 ```
 
-![Event Processing](images/architecture-5.png)
-
 **Sync direction filtering in watch mode:**
 
 - When `upload-only`: remote events (⑤) are **skipped** — only local events (①) are processed and uploaded
@@ -280,8 +270,6 @@ flowchart TD
     WAIT --> CHECK
     CHECK -->|"⑥ Yes"| UPLOAD[Upload file]
 ```
-
-![File Change Detection](images/architecture-8.png)
 
 **Platform-specific behavior:**
 
@@ -337,8 +325,6 @@ flowchart LR
     CFG --> K
     CFG --> O
 ```
-
-![Configuration Flow](images/architecture-6.png)
 
 ### Pre-Sync Safety Check (Deletion Risk)
 
@@ -397,8 +383,6 @@ flowchart TB
     T4 -->|"⑤"| U2
     D1 & D2 & U1 & U2 -->|"⑥"| API
 ```
-
-![Parallel Transfers](images/architecture-7.png)
 
 **Configuration:**
 - `HSYNC_MAX_CONCURRENT_TRANSFERS`: Controls maximum parallel transfers (default: 5)
