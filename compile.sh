@@ -9,16 +9,25 @@
 #   ./compile.sh [options]
 #
 # Options:
-#   -c, --clean    Clean build artifacts before building
-#   -h, --help     Show this help message
+#   -c, --clean             Clean build artifacts before building
+#   -t, --target TARGET     Build target (default: native)
+#                           Supported:
+#                               native               host OS / arch
+#                               wd-ex2-ultra-os5     WD My Cloud EX2 Ultra OS5
+#                                                    (ARMv7, packaged as .bin)
+#   -h, --help              Show this help message
 #
 # Requirements:
-#   - Python virtual environment (.venv) with dependencies installed
-#   - Run 'poetry install' before first build
+#   - native target: Python virtual environment (.venv); run 'poetry install'
+#   - wd-ex2-ultra-os5: Docker with qemu-user-static (binfmt) configured
 #
 # Output:
-#   - dist/<os>-<arch>/hsync[.exe]   Standalone platform-aware executable
-#     e.g. dist/linux-amd64/hsync, dist/darwin-arm64/hsync, dist/windows-amd64/hsync.exe
+#   native:
+#     - dist/<os>-<arch>/hsync[.exe]   Standalone platform-aware executable
+#       e.g. dist/linux-amd64/hsync, dist/darwin-arm64/hsync
+#   wd-ex2-ultra-os5:
+#     - dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_hsync_<ver>.bin
+#                                       Installable through the OS5 dashboard
 #
 # Author: Alberto Basso
 # =============================================================================
@@ -67,14 +76,16 @@ readonly PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
 # -----------------------------------------------------------------------------
 
 if [[ -t 1 ]]; then
-    readonly RED='\033[0;31m'
-    readonly GREEN='\033[0;32m'
-    readonly YELLOW='\033[0;33m'
-    readonly BLUE='\033[0;34m'
-    readonly CYAN='\033[0;36m'
-    readonly BOLD='\033[1m'
-    readonly DIM='\033[2m'
-    readonly RESET='\033[0m'
+    # ANSI-C quoting ($'...') so the variables hold the actual ESC byte and
+    # render correctly with plain ``printf``/``cat`` as well as ``echo -e``.
+    readonly RED=$'\033[0;31m'
+    readonly GREEN=$'\033[0;32m'
+    readonly YELLOW=$'\033[0;33m'
+    readonly BLUE=$'\033[0;34m'
+    readonly CYAN=$'\033[0;36m'
+    readonly BOLD=$'\033[1m'
+    readonly DIM=$'\033[2m'
+    readonly RESET=$'\033[0m'
 else
     readonly RED=''
     readonly GREEN=''
@@ -118,15 +129,21 @@ ${BOLD}Usage:${RESET}
     ./compile.sh [options]
 
 ${BOLD}Options:${RESET}
-    -c, --clean    Clean build artifacts before building
-    -h, --help     Show this help message
+    -c, --clean             Clean build artifacts before building
+    -t, --target TARGET     Build target (default: native)
+                            Supported: native, wd-ex2-ultra-os5
+    -h, --help              Show this help message
 
 ${BOLD}Examples:${RESET}
-    ./compile.sh           # Build the binary
-    ./compile.sh --clean   # Clean and rebuild
+    ./compile.sh                                # Native host build
+    ./compile.sh --clean                        # Clean and rebuild
+    ./compile.sh --target wd-ex2-ultra-os5      # ARMv7 .bin for WD OS5
 
 ${BOLD}Output:${RESET}
-    ${OUTPUT_DIR}/${APP_NAME}${BIN_EXT}   Standalone executable (platform: ${PLATFORM})
+    native:
+        ${OUTPUT_DIR}/${APP_NAME}${BIN_EXT}   Standalone executable (platform: ${PLATFORM})
+    wd-ex2-ultra-os5:
+        dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_${APP_NAME}_<ver>.bin
 EOF
 }
 
@@ -300,11 +317,172 @@ cleanup_temp_files() {
 }
 
 # -----------------------------------------------------------------------------
+# WD My Cloud EX2 Ultra (OS5) build
+# -----------------------------------------------------------------------------
+
+# Configuration for the wd-ex2-ultra-os5 target.
+readonly WDOS5_DIR="packaging/wd-os5"
+readonly WDOS5_SRC_APKG="${WDOS5_DIR}/Apkg"
+readonly WDOS5_OUTPUT_DIR="${OUTPUT_BASE}/wd-ex2-ultra-os5"
+readonly WDOS5_BUILD_DIR="${BUILD_DIR}/wdos5"
+readonly WDOS5_STAGE_DIR="${WDOS5_BUILD_DIR}/Apkg"
+readonly WDOS5_BUILDER_IMAGE="hsync-wdos5-builder:armv7"
+readonly WDOS5_MKSAPKG_URL="https://raw.githubusercontent.com/WDCommunity/wdpksrc/master/mksapkg-OS5"
+readonly WDOS5_CACHE_DIR="${WDOS5_DIR}/.cache"
+readonly WDOS5_MKSAPKG="${WDOS5_CACHE_DIR}/mksapkg-OS5"
+readonly WDOS5_MODEL="MyCloudEX2Ultra"
+
+# Build the .bin installer for WD My Cloud OS5 (ARMv7).
+build_wd_os5() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${APP_NAME} v${version} for wd-ex2-ultra-os5 (ARMv7)..."
+
+    # --- prerequisites ---------------------------------------------------
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the wd-ex2-ultra-os5 target."
+        exit 1
+    fi
+    if [[ ! -d "${WDOS5_SRC_APKG}" ]]; then
+        log_error "Packaging tree missing: ${WDOS5_SRC_APKG}"
+        exit 1
+    fi
+    mkdir -p "${WDOS5_OUTPUT_DIR}" "${WDOS5_CACHE_DIR}" "${WDOS5_BUILD_DIR}"
+
+    # --- qemu-user-static (binfmt) --------------------------------------
+    log_step "Registering qemu-user-static binfmt handlers (idempotent)..."
+    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
+        >/dev/null 2>&1 || log_warn "qemu-user-static registration skipped (may already be active)"
+
+    # --- builder image ---------------------------------------------------
+    log_step "Building Docker image ${WDOS5_BUILDER_IMAGE} (cached after first run)..."
+    docker build \
+        --platform linux/arm/v7 \
+        -t "${WDOS5_BUILDER_IMAGE}" \
+        -f "${WDOS5_DIR}/Dockerfile.builder" \
+        "${WDOS5_DIR}"
+
+    # --- PyInstaller in the emulated container --------------------------
+    # The binary is dropped under build/wdos5/bin/ so the source tree stays
+    # clean. The staging copy of Apkg/ (built below) picks it up from there.
+    #
+    # The repository root (parent of ``hsync-client``) is mounted as ``/repo``
+    # so the ``hsync-common = {path = "../hsync-common"}`` path dependency in
+    # ``pyproject.toml`` resolves inside the container. Workdir is the
+    # ``hsync-client`` subdir so all the script's relative paths still work.
+    local repo_root
+    repo_root="$(cd .. && pwd)"
+    log_step "Running PyInstaller + icon generation inside the ARMv7 container..."
+    docker run --rm \
+        --platform linux/arm/v7 \
+        -v "${repo_root}:/repo" \
+        -w /repo/hsync-client \
+        -e LC_ALL=C \
+        -e PYTHONWARNINGS=ignore \
+        "${WDOS5_BUILDER_IMAGE}" \
+        bash -c "
+            set -euo pipefail
+            poetry config virtualenvs.in-project true
+            poetry install --no-root --only main
+            poetry run pyinstaller \
+                --clean --onefile --strip \
+                --name ${APP_NAME} \
+                --distpath ${WDOS5_BUILD_DIR}/bin \
+                --workpath ${WDOS5_BUILD_DIR}/work \
+                --specpath ${WDOS5_BUILD_DIR}/work \
+                --log-level ERROR \
+                --hidden-import websockets.legacy \
+                --hidden-import websockets.legacy.client \
+                --hidden-import websockets.client \
+                --hidden-import websockets.exceptions \
+                --hidden-import watchdog.observers \
+                --hidden-import watchdog.events \
+                --hidden-import rich._unicode_data \
+                --hidden-import rich._unicode_data._versions \
+                --exclude-module pytest --exclude-module pytest_asyncio \
+                --exclude-module pytest_cov --exclude-module tkinter \
+                --exclude-module unittest --exclude-module pdb \
+                --exclude-module doctest --exclude-module pip \
+                --exclude-module setuptools --exclude-module wheel \
+                --exclude-module pkg_resources --exclude-module rapidfuzz \
+                ${ENTRY_POINT}
+            # Generate the app icon inside the container so Pillow doesn't
+            # need to be installed on the host.
+            python3 -m pip install --quiet pillow
+            python3 packaging/wd-os5/scripts/generate_icon.py \
+                --out packaging/wd-os5/Apkg/hsync.png
+        "
+
+    local built_bin="${WDOS5_BUILD_DIR}/bin/${APP_NAME}"
+    if [[ ! -f "${built_bin}" ]]; then
+        log_error "ARMv7 binary not produced at ${built_bin}"
+        exit 1
+    fi
+
+    # --- stage Apkg/ for mksapkg ----------------------------------------
+    # mksapkg-OS5 packs the directory in place, so we materialise a
+    # disposable copy under build/ to keep the source tree pristine and to
+    # avoid mutating the apkg.rc template with the rendered version.
+    log_step "Staging Apkg tree at ${WDOS5_STAGE_DIR}..."
+    rm -rf "${WDOS5_STAGE_DIR}"
+    mkdir -p "${WDOS5_STAGE_DIR}"
+    cp -a "${WDOS5_SRC_APKG}/." "${WDOS5_STAGE_DIR}/"
+
+    mkdir -p "${WDOS5_STAGE_DIR}/bin"
+    cp -f "${built_bin}" "${WDOS5_STAGE_DIR}/bin/${APP_NAME}"
+    chmod 0755 "${WDOS5_STAGE_DIR}/bin/${APP_NAME}"
+
+    log_step "Injecting version ${version} into staged apkg.rc..."
+    sed -i.bak -e "s/__HSYNC_VERSION__/${version}/g" \
+        "${WDOS5_STAGE_DIR}/apkg.rc"
+    rm -f "${WDOS5_STAGE_DIR}/apkg.rc.bak"
+    echo "${version}" > "${WDOS5_STAGE_DIR}/VERSION"
+
+    # --- mksapkg-OS5 -----------------------------------------------------
+    if [[ ! -x "${WDOS5_MKSAPKG}" ]]; then
+        log_step "Fetching mksapkg-OS5 from WDCommunity/wdpksrc..."
+        curl -fsSL "${WDOS5_MKSAPKG_URL}" -o "${WDOS5_MKSAPKG}"
+        chmod 0755 "${WDOS5_MKSAPKG}"
+    fi
+
+    log_step "Building OS5 .bin package..."
+    local mksapkg_abs stage_abs out_abs
+    mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
+    stage_abs="$(cd "${WDOS5_STAGE_DIR}" && pwd)"
+    out_abs="$(cd "${WDOS5_OUTPUT_DIR}" && pwd)"
+
+    ( cd "${stage_abs}" && "${mksapkg_abs}" -E -s -m "${WDOS5_MODEL}" -o "${out_abs}" )
+
+    local bin_path
+    bin_path="$(ls -t "${out_abs}/${WDOS5_MODEL}_${APP_NAME}_"*.bin 2>/dev/null | head -1)"
+    if [[ -z "${bin_path}" || ! -f "${bin_path}" ]]; then
+        log_error "mksapkg-OS5 did not produce a .bin under ${out_abs}/"
+        exit 1
+    fi
+
+    local size
+    size="$(du -h "${bin_path}" | cut -f1)"
+    echo
+    log_ok "WD OS5 package built!"
+    echo
+    echo -e "  ${BOLD}Package:${RESET}  ${bin_path}"
+    echo -e "  ${BOLD}Model:${RESET}    ${WDOS5_MODEL}"
+    echo -e "  ${BOLD}Arch:${RESET}     linux/arm/v7 (glibc <= 2.28 / works up to 2.30)"
+    echo -e "  ${BOLD}Size:${RESET}     ${size}"
+    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo
+    echo -e "${DIM}Install via My Cloud OS5 dashboard:${RESET}"
+    echo -e "${DIM}  Apps → Install an App manually → choose this .bin${RESET}"
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
 main() {
     local do_clean=false
+    local target="native"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -312,6 +490,11 @@ main() {
             -c|--clean)
                 do_clean=true
                 shift
+                ;;
+            -t|--target)
+                [[ $# -ge 2 ]] || { log_error "--target requires a value"; exit 1; }
+                target="$2"
+                shift 2
                 ;;
             -h|--help)
                 show_help
@@ -333,17 +516,35 @@ main() {
     echo -e "${DIM}────────────────────${RESET}"
     echo
 
-    # Check prerequisites
-    check_prerequisites
-
-    # Clean if requested
-    if [[ "${do_clean}" == true ]]; then
-        clean_artifacts
-        echo
-    fi
-
-    # Build
-    build_binary
+    case "${target}" in
+        native)
+            check_prerequisites
+            if [[ "${do_clean}" == true ]]; then
+                clean_artifacts
+                echo
+            fi
+            build_binary
+            ;;
+        wd-ex2-ultra-os5)
+            # Only pyproject.toml is required (poetry runs inside the container).
+            if [[ ! -f "pyproject.toml" ]]; then
+                log_error "pyproject.toml not found. Run from the project root."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning wd-ex2-ultra-os5 artifacts..."
+                rm -rf "${WDOS5_OUTPUT_DIR}" "${WDOS5_BUILD_DIR}"
+                docker image rm -f "${WDOS5_BUILDER_IMAGE}" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_wd_os5
+            ;;
+        *)
+            log_error "Unknown target: ${target}"
+            echo "Supported targets: native, wd-ex2-ultra-os5"
+            exit 1
+            ;;
+    esac
 }
 
 main "$@"
