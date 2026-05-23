@@ -12,6 +12,8 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
+| `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync (disables built-in filters) | `false` |
+| `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
 
 ## Environment Files
 
@@ -55,6 +57,8 @@ source prod.env
 | `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
 | `--no-compression` | Disable zstd compression for file transfers | `false` |
 | `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `100` |
+| `--sync-hidden` | Include hidden/system files in sync (disables built-in filters) | `false` |
+| `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
 
 ### Output
 
@@ -198,3 +202,74 @@ Bandwidth values accept human-readable suffixes:
 
 - Minimum: 1 KB/s (1,024 bytes/s)
 - Maximum: 100 MB/s (104,857,600 bytes/s)
+
+## Ignore Files (`.hsyncignore`)
+
+HSYNC supports a per-bucket ignore file with the same syntax as `.gitignore`.
+Place a `.hsyncignore` file in the **root of the local bucket directory** to
+control which files and directories are excluded from synchronization.
+
+### Default behaviour
+
+By default (without `.hsyncignore` and without `--sync-hidden`), HSYNC
+automatically excludes:
+
+- Files whose name starts with `.` (e.g. `.DS_Store`, `.git/`)
+- Temporary / editor swap files (`.swp`, `~`, `.bak`, `.tmp`, etc.)
+- Lock files (`.~lock.*#`)
+- Numbered temporary files (`4913`)
+
+The sentinel file `.hsynckeep` is **always included** regardless of any rule.
+
+### `.hsyncignore` syntax
+
+The file follows [gitignore pattern syntax](https://git-scm.com/docs/gitignore):
+
+| Pattern | Effect |
+|---------|--------|
+| `*.log` | Ignore all `.log` files anywhere in the bucket |
+| `/build/` | Ignore the `build/` directory only at the root |
+| `!important.log` | Re-include `important.log` even if `*.log` would ignore it |
+| `**/__pycache__/` | Ignore all `__pycache__` directories recursively |
+
+### Examples
+
+```
+# Ignore build artefacts
+/dist/
+/build/
+
+# Ignore Python cache
+**/__pycache__/
+*.pyc
+
+# Ignore editor files (already in defaults; explicit for clarity)
+*.swp
+
+# Re-include a specific log file
+!important.log
+```
+
+### Including hidden files
+
+Use `--sync-hidden` (or `HSYNC_SYNC_HIDDEN=true`) to disable the built-in
+hidden-file patterns.  Only patterns in `.hsyncignore` and `--ignore-patterns`
+will then be applied:
+
+```bash
+# Sync hidden files too, but still exclude build artefacts via .hsyncignore
+hsync -s http://server:8765 -b mybucket --sync-hidden
+```
+
+### Extra patterns via CLI
+
+Pass extra patterns without creating a `.hsyncignore` file:
+
+```bash
+hsync -s http://server:8765 -b mybucket --ignore-patterns "*.log,/build/,/dist/"
+```
+
+### Hot-reload
+
+The client watches `.hsyncignore` for changes while it is running.  Any
+modification to the file is picked up automatically — no restart required.

@@ -48,6 +48,8 @@ mindmap
       --stability-delay
       --sync-direction
       --ignore-delete
+      --sync-hidden
+      --ignore-patterns
       --max-bandwidth-upload
       --max-bandwidth-download
     Network
@@ -134,6 +136,8 @@ flowchart TD
 | `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
+| `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync | `false` |
+| `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
 
 ### Environment Files
 
