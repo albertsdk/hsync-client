@@ -1,0 +1,51 @@
+{
+    "app.title": "HSYNC",
+    "section.mode": "Modo",
+    "section.paths": "Rutas",
+    "section.lan": "Opciones LAN",
+    "section.server": "Opciones del servidor",
+    "section.behaviour": "Comportamiento de sincronización",
+
+    "field.mode": "Modo",
+    "field.role": "Rol",
+    "field.path": "Ruta local",
+    "field.bucket": "Bucket",
+    "field.lan_persistent": "Persistente (seguir intentando cuando no hay pares)",
+    "field.lan_https": "HTTPS entre pares",
+    "field.lan_group": "Grupo LAN (opcional)",
+    "field.discovery_timeout": "Tiempo de descubrimiento (s)",
+    "field.server": "URL del servidor",
+    "field.api_key": "Clave API",
+    "field.watch": "Vigilar cambios continuamente",
+    "field.interval": "Intervalo de re-sincronización forzada (s, 0 = off)",
+    "field.ignore_delete": "Ignorar eliminaciones (apto para copia de seguridad)",
+    "field.no_compression": "Desactivar compresión zstd",
+    "field.bw_upload": "Ancho de banda máx. de subida (p. ej. 1MB)",
+    "field.bw_download": "Ancho de banda máx. de bajada (p. ej. 1MB)",
+    "field.min_free_mb": "Espacio libre mínimo (MB, 0 = off)",
+    "field.verbose": "Log detallado",
+
+    "mode.lan": "LAN (peer-to-peer)",
+    "mode.server": "Servidor (servidor HSYNC central)",
+    "role.auto":   "Auto (bidireccional, elección automática)",
+    "role.master": "Maestro (el NAS guarda la copia autoritativa)",
+    "role.slave":  "Esclavo (el NAS es una réplica de solo lectura)",
+
+    "action.save":    "Guardar",
+    "action.start":   "Iniciar",
+    "action.stop":    "Detener",
+    "action.restart": "Reiniciar",
+
+    "status.running": "en ejecución",
+    "status.stopped": "detenido",
+    "status.unknown": "desconocido",
+
+    "toast.saved":       "Configuración guardada",
+    "toast.save_error":  "Error al guardar",
+    "toast.load_error":  "Error al cargar la configuración",
+    "toast.started":     "Servicio iniciado",
+    "toast.stopped":     "Servicio detenido",
+    "toast.restarted":   "Servicio reiniciado",
+
+    "footer.version": "Versión"
+}

@@ -1,0 +1,19 @@
+Package:	hsync
+Version:	__HSYNC_VERSION__
+Packager:	Alberto Basso
+Email:
+Homepage:	https://github.com/albertobasso/hsync
+Description:	HSYNC — file synchronization client (server or LAN P2P)
+Icon:		hsync.png
+AddonShowName:	HSYNC
+AddonIndexPage:	index.html
+AddonUsedPort:
+InstDepend:
+InstConflict:
+StartDepend:
+StartConflict:
+CenterType:
+UserControl:
+MinFWVer:	5.00.000
+MaxFWVer:
+IndividualFlag:	0

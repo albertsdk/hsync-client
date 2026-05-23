@@ -82,6 +82,14 @@ class EnvSettings(BaseSettings):
     compression_enabled: bool = Field(
         default=True, description="Enable zstd compression for file transfers"
     )
+    sync_hidden: bool = Field(
+        default=False,
+        description="Include hidden/system files in sync (disables built-in filters)",
+    )
+    ignore_patterns: str = Field(
+        default="",
+        description="Comma-separated extra gitignore-style patterns (layered on .hsyncignore)",
+    )
 
 
 @lru_cache
@@ -160,6 +168,21 @@ def get_ignore_delete() -> bool:
 def get_compression_enabled() -> bool:
     """Get compression enabled setting from environment."""
     return get_env_settings().compression_enabled
+
+
+def get_sync_hidden() -> bool:
+    """Get sync-hidden setting from environment."""
+    return get_env_settings().sync_hidden
+
+
+def get_ignore_patterns() -> list[str]:
+    """Return extra gitignore patterns parsed from the env variable.
+
+    The env value is a comma-separated string; empty entries are
+    dropped and surrounding whitespace is stripped.
+    """
+    raw = get_env_settings().ignore_patterns or ""
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
 
 # Legacy exports for backward compatibility (read at import time)
@@ -275,6 +298,10 @@ class HsyncConfig(TypedDict):
     MAX_BANDWIDTH_DOWNLOAD: int | None
     # Minimum free disk space in MB before sync (0 = disabled)
     MIN_FREE_DISK_SPACE: int
+    # Include hidden/system files in sync (disables built-in filters)
+    SYNC_HIDDEN: bool
+    # Extra gitignore-style patterns layered on top of .hsyncignore
+    IGNORE_PATTERNS: list[str]
 
 
 # =============================================================================
