@@ -461,12 +461,13 @@ build_wd_os5() {
         exit 1
     fi
 
-    local size
+    local size bin_abs
     size="$(du -h "${bin_path}" | cut -f1)"
+    bin_abs="$(cd "$(dirname "${bin_path}")" && pwd)/$(basename "${bin_path}")"
+
     echo
     log_ok "WD OS5 package built!"
     echo
-    echo -e "  ${BOLD}Package:${RESET}  ${bin_path}"
     echo -e "  ${BOLD}Model:${RESET}    ${WDOS5_MODEL}"
     echo -e "  ${BOLD}Arch:${RESET}     linux/arm/v7 (glibc <= 2.28 / works up to 2.30)"
     echo -e "  ${BOLD}Size:${RESET}     ${size}"
@@ -474,6 +475,13 @@ build_wd_os5() {
     echo
     echo -e "${DIM}Install via My Cloud OS5 dashboard:${RESET}"
     echo -e "${DIM}  Apps → Install an App manually → choose this .bin${RESET}"
+    echo
+    # Final highlighted block — easy to spot and copy
+    local sep="────────────────────────────────────────────────────────────"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo -e "${GREEN}${BOLD}  📦  Installation package:${RESET}"
+    echo -e "${GREEN}${BOLD}      ${bin_abs}${RESET}"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
 }
 
 # -----------------------------------------------------------------------------
