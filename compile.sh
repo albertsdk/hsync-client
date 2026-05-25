@@ -15,11 +15,16 @@
 #                               native               host OS / arch
 #                               wd-ex2-ultra-os5     WD My Cloud EX2 Ultra OS5
 #                                                    (ARMv7, packaged as .bin)
+#                               wd-os5-all           Every WD OS5 model
+#                                                    (builds one binary per
+#                                                     arch, packages all 10
+#                                                     models in dist/wd-os5/)
 #   -h, --help              Show this help message
 #
 # Requirements:
 #   - native target: Python virtual environment (.venv); run 'poetry install'
-#   - wd-ex2-ultra-os5: Docker with qemu-user-static (binfmt) configured
+#   - wd-ex2-ultra-os5 / wd-os5-all: Docker with qemu-user-static (binfmt)
+#     configured (used for ARMv7 emulation on amd64 hosts).
 #
 # Output:
 #   native:
@@ -28,6 +33,8 @@
 #   wd-ex2-ultra-os5:
 #     - dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_hsync_<ver>.bin
 #                                       Installable through the OS5 dashboard
+#   wd-os5-all:
+#     - dist/wd-os5/<MODEL>_hsync_<ver>.bin   one .bin per supported model
 #
 # Author: Alberto Basso
 # =============================================================================
@@ -131,19 +138,22 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Options:${RESET}
     -c, --clean             Clean build artifacts before building
     -t, --target TARGET     Build target (default: native)
-                            Supported: native, wd-ex2-ultra-os5
+                            Supported: native, wd-ex2-ultra-os5, wd-os5-all
     -h, --help              Show this help message
 
 ${BOLD}Examples:${RESET}
     ./compile.sh                                # Native host build
     ./compile.sh --clean                        # Clean and rebuild
     ./compile.sh --target wd-ex2-ultra-os5      # ARMv7 .bin for WD OS5
+    ./compile.sh --target wd-os5-all            # All 10 WD OS5 models
 
 ${BOLD}Output:${RESET}
     native:
         ${OUTPUT_DIR}/${APP_NAME}${BIN_EXT}   Standalone executable (platform: ${PLATFORM})
     wd-ex2-ultra-os5:
         dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_${APP_NAME}_<ver>.bin
+    wd-os5-all:
+        dist/wd-os5/<MODEL>_${APP_NAME}_<ver>.bin (one per model)
 EOF
 }
 
@@ -511,6 +521,258 @@ build_wd_os5() {
 }
 
 # -----------------------------------------------------------------------------
+# WD My Cloud OS5 — All models
+# -----------------------------------------------------------------------------
+
+# Package a single WD OS5 model .bin installer from a pre-built binary.
+#
+# Args:
+#   $1  model      — mksapkg-OS5 model name (e.g. MyCloudEX2Ultra)
+#   $2  binary     — path to the compiled hsync binary for this arch
+#   $3  version    — version string (e.g. 1.2.3)
+#   $4  stage_base — directory under which a disposable <model>/Apkg/ is created
+#   $5  mksapkg    — absolute path to the mksapkg-OS5 executable
+#   $6  out_abs    — absolute path to the final output directory
+_wdos5_package_model() {
+    local model="$1" binary_path="$2" version="$3"
+    local stage_base="$4" mksapkg_abs="$5" out_abs="$6"
+
+    # Disposable staging copy so the source tree stays pristine.
+    local stage_dir="${stage_base}/${model}/Apkg"
+    rm -rf "${stage_dir}"
+    mkdir -p "${stage_dir}"
+    cp -a "${WDOS5_SRC_APKG}/." "${stage_dir}/"
+
+    # Place the binary.
+    mkdir -p "${stage_dir}/bin"
+    cp -f "${binary_path}" "${stage_dir}/bin/${APP_NAME}"
+    chmod 0755 "${stage_dir}/bin/${APP_NAME}"
+    # Lifecycle hook scripts must be executable or the install fails silently.
+    chmod 0755 "${stage_dir}"/*.sh 2>/dev/null || true
+
+    # Inject version.
+    sed -i.bak -e "s/__HSYNC_VERSION__/${version}/g" "${stage_dir}/apkg.rc"
+    rm -f "${stage_dir}/apkg.rc.bak"
+    echo "${version}" > "${stage_dir}/VERSION"
+
+    # mksapkg-OS5 drops the .bin in the *parent* of its CWD.
+    local stage_abs stage_parent
+    stage_abs="$(cd "${stage_dir}" && pwd)"
+    stage_parent="$(dirname "${stage_abs}")"
+
+    rm -f "${stage_parent}/${model}_${APP_NAME}_"*.bin
+    ( cd "${stage_abs}" && "${mksapkg_abs}" -E -s -m "${model}" )
+
+    local produced
+    produced="$(ls -t "${stage_parent}/${model}_${APP_NAME}_"*.bin 2>/dev/null | head -1)"
+    if [[ -z "${produced}" || ! -f "${produced}" ]]; then
+        log_error "mksapkg-OS5 did not produce a .bin for ${model}"
+        return 1
+    fi
+    mv -f "${produced}" "${out_abs}/"
+    log_ok "  → $(basename "${produced}")"
+}
+
+# Build .bin installers for every WD My Cloud OS5 model (10 total).
+#
+# Two Docker builds are performed — one per CPU family — and the same
+# PyInstaller binary is shared across all models of that family:
+#
+#   ARMv7 (4 models) → arm32v7/debian:buster
+#       MyCloudEX2Ultra  WDMyCloudMirror  WDMyCloud  WDCloud
+#
+#   amd64 (6 models) → amd64/debian:buster
+#       WDMyCloudEX2100  WDMyCloudEX4100  WDMyCloudDL2100
+#       WDMyCloudDL4100  MyCloudPR2100    MyCloudPR4100
+#
+# Output: dist/wd-os5/<MODEL>_hsync_<ver>.bin
+build_wd_os5_all() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${APP_NAME} v${version} for all 10 WD My Cloud OS5 models..."
+
+    # ── prerequisites ─────────────────────────────────────────────────────────
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the wd-os5-all target."
+        exit 1
+    fi
+    if [[ ! -d "${WDOS5_SRC_APKG}" ]]; then
+        log_error "Packaging tree missing: ${WDOS5_SRC_APKG}"
+        exit 1
+    fi
+
+    local all_out="${OUTPUT_BASE}/wd-os5"
+    local all_build="${BUILD_DIR}/wdos5/all"
+    mkdir -p "${all_out}" "${WDOS5_CACHE_DIR}"
+
+    # ── mksapkg-OS5 ──────────────────────────────────────────────────────────
+    if [[ ! -x "${WDOS5_MKSAPKG}" ]]; then
+        log_step "Fetching mksapkg-OS5 from WDCommunity/wdpksrc..."
+        curl -fsSL "${WDOS5_MKSAPKG_URL}" -o "${WDOS5_MKSAPKG}"
+        chmod 0755 "${WDOS5_MKSAPKG}"
+    fi
+    local mksapkg_abs
+    mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
+
+    local repo_root
+    repo_root="$(cd .. && pwd)"
+
+    # ── qemu (ARMv7 emulation on amd64 hosts) ────────────────────────────────
+    log_step "Registering qemu-user-static binfmt handlers (idempotent)..."
+    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
+        >/dev/null 2>&1 || log_warn "qemu-user-static registration skipped (may already be active)"
+
+    # Common PyInstaller flags — used for both arch builds.
+    local pyinstaller_flags="
+        --clean --onefile --strip
+        --name ${APP_NAME}
+        --log-level ERROR
+        --hidden-import websockets.legacy
+        --hidden-import websockets.legacy.client
+        --hidden-import websockets.client
+        --hidden-import websockets.exceptions
+        --hidden-import watchdog.observers
+        --hidden-import watchdog.events
+        --hidden-import rich._unicode_data
+        --hidden-import rich._unicode_data._versions
+        --exclude-module pytest --exclude-module pytest_asyncio
+        --exclude-module pytest_cov --exclude-module tkinter
+        --exclude-module unittest --exclude-module pdb
+        --exclude-module doctest --exclude-module pip
+        --exclude-module setuptools --exclude-module wheel
+        --exclude-module pkg_resources --exclude-module rapidfuzz
+        ${ENTRY_POINT}"
+
+    # Helper: run poetry install + PyInstaller inside a container.
+    # Args: docker_platform  bin_dir  work_dir  builder_tag
+    _run_pyinstaller_in_docker() {
+        local docker_platform="$1" bin_dir="$2" work_dir="$3" builder_tag="$4"
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -v "${repo_root}:/repo" \
+            -w /repo/hsync-client \
+            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
+            -e POETRY_REQUESTS_TIMEOUT=300 \
+            "${builder_tag}" \
+            bash -c "
+                set -euo pipefail
+                poetry config virtualenvs.in-project true
+                poetry config installer.max-workers 4
+                install_ok=0
+                for attempt in 1 2 3; do
+                    if poetry install --no-root --only main; then install_ok=1; break; fi
+                    echo \"poetry install attempt \${attempt}/3 failed, retrying in 10s...\" >&2
+                    sleep 10
+                done
+                [ \"\${install_ok}\" -eq 1 ] || { echo 'poetry install failed after 3 attempts' >&2; exit 1; }
+                poetry run pyinstaller \
+                    ${pyinstaller_flags} \
+                    --distpath ${bin_dir} \
+                    --workpath ${work_dir} \
+                    --specpath ${work_dir}
+            "
+    }
+
+    # ── ARMv7 binary ──────────────────────────────────────────────────────────
+    echo
+    log_step "─── ARMv7 build ───────────────────────────────────────"
+    local armv7_tag="hsync-wdos5-builder:armv7"
+    local armv7_bin_dir="${all_build}/armv7/bin"
+    local armv7_work_dir="${all_build}/armv7/work"
+    mkdir -p "${armv7_bin_dir}" "${armv7_work_dir}"
+
+    log_step "Building Docker image ${armv7_tag}..."
+    docker build \
+        --platform linux/arm/v7 \
+        --build-arg BASE_IMAGE=arm32v7/debian:buster \
+        --build-arg TARGET_PLATFORM=linux/arm/v7 \
+        -t "${armv7_tag}" \
+        -f "${WDOS5_DIR}/Dockerfile.builder" \
+        "${WDOS5_DIR}"
+
+    log_step "Compiling ARMv7 binary inside container..."
+    _run_pyinstaller_in_docker linux/arm/v7 "${armv7_bin_dir}" "${armv7_work_dir}" "${armv7_tag}"
+
+    local armv7_binary="${armv7_bin_dir}/${APP_NAME}"
+    if [[ ! -f "${armv7_binary}" ]]; then
+        log_error "ARMv7 binary not produced at ${armv7_binary}"
+        exit 1
+    fi
+    log_ok "ARMv7 binary ready ($(du -h "${armv7_binary}" | cut -f1))"
+
+    # ── amd64 binary ──────────────────────────────────────────────────────────
+    echo
+    log_step "─── amd64 build ───────────────────────────────────────"
+    local amd64_tag="hsync-wdos5-builder:amd64"
+    local amd64_bin_dir="${all_build}/amd64/bin"
+    local amd64_work_dir="${all_build}/amd64/work"
+    mkdir -p "${amd64_bin_dir}" "${amd64_work_dir}"
+
+    log_step "Building Docker image ${amd64_tag}..."
+    docker build \
+        --platform linux/amd64 \
+        --build-arg BASE_IMAGE=amd64/debian:buster \
+        --build-arg TARGET_PLATFORM=linux/amd64 \
+        -t "${amd64_tag}" \
+        -f "${WDOS5_DIR}/Dockerfile.builder" \
+        "${WDOS5_DIR}"
+
+    log_step "Compiling amd64 binary inside container..."
+    _run_pyinstaller_in_docker linux/amd64 "${amd64_bin_dir}" "${amd64_work_dir}" "${amd64_tag}"
+
+    local amd64_binary="${amd64_bin_dir}/${APP_NAME}"
+    if [[ ! -f "${amd64_binary}" ]]; then
+        log_error "amd64 binary not produced at ${amd64_binary}"
+        exit 1
+    fi
+    log_ok "amd64 binary ready ($(du -h "${amd64_binary}" | cut -f1))"
+
+    # ── Package all 10 models ─────────────────────────────────────────────────
+    local stage_base="${all_build}/stage"
+    local out_abs
+    out_abs="$(cd "${all_out}" && pwd)"
+
+    local -a armv7_models=("MyCloudEX2Ultra" "WDMyCloudMirror" "WDMyCloud" "WDCloud")
+    local -a amd64_models=("WDMyCloudEX2100" "WDMyCloudEX4100" "WDMyCloudDL2100" \
+                            "WDMyCloudDL4100" "MyCloudPR2100" "MyCloudPR4100")
+
+    echo
+    log_step "─── Packaging ARMv7 models (${#armv7_models[@]}) ─────────────────────────────"
+    for model in "${armv7_models[@]}"; do
+        _wdos5_package_model "${model}" "${armv7_binary}" "${version}" \
+            "${stage_base}" "${mksapkg_abs}" "${out_abs}"
+    done
+
+    echo
+    log_step "─── Packaging amd64 models (${#amd64_models[@]}) ─────────────────────────────"
+    for model in "${amd64_models[@]}"; do
+        _wdos5_package_model "${model}" "${amd64_binary}" "${version}" \
+            "${stage_base}" "${mksapkg_abs}" "${out_abs}"
+    done
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    local total=$(( ${#armv7_models[@]} + ${#amd64_models[@]} ))
+    echo
+    log_ok "All ${total} WD OS5 packages built!"
+    echo
+    echo -e "  ${BOLD}Version:${RESET}   ${version}"
+    echo -e "  ${BOLD}Output:${RESET}    ${out_abs}/"
+    echo
+    echo -e "  ${BOLD}ARMv7 (${#armv7_models[@]}):${RESET}  ${armv7_models[*]}"
+    echo -e "  ${BOLD}amd64 (${#amd64_models[@]}):${RESET}  ${amd64_models[*]}"
+    echo
+    local sep="────────────────────────────────────────────────────────────"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo -e "${GREEN}${BOLD}  📦  Installation packages:${RESET}"
+    for f in "${out_abs}/"*_"${APP_NAME}"_*.bin; do
+        [[ -f "${f}" ]] && echo -e "${GREEN}${BOLD}      $(basename "${f}")${RESET}"
+    done
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -573,9 +835,24 @@ main() {
             fi
             build_wd_os5
             ;;
+        wd-os5-all)
+            if [[ ! -f "pyproject.toml" ]]; then
+                log_error "pyproject.toml not found. Run from the project root."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning wd-os5-all artifacts..."
+                rm -rf "${OUTPUT_BASE}/wd-os5" "${BUILD_DIR}/wdos5/all"
+                docker image rm -f \
+                    "hsync-wdos5-builder:armv7" \
+                    "hsync-wdos5-builder:amd64" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_wd_os5_all
+            ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: native, wd-ex2-ultra-os5"
+            echo "Supported targets: native, wd-ex2-ultra-os5, wd-os5-all"
             exit 1
             ;;
     esac
