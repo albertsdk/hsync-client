@@ -335,7 +335,12 @@ readonly WDOS5_DIR="packaging/wd-os5"
 readonly WDOS5_SRC_APKG="${WDOS5_DIR}/Apkg"
 readonly WDOS5_OUTPUT_DIR="${OUTPUT_BASE}/wd-ex2-ultra-os5"
 readonly WDOS5_BUILD_DIR="${BUILD_DIR}/wdos5"
-readonly WDOS5_STAGE_DIR="${WDOS5_BUILD_DIR}/Apkg"
+# NOTE: the staging directory **must** be named after the package
+# (``Package:`` field of apkg.rc / ``APP_NAME``) because mksapkg-OS5 tars its
+# CWD basename verbatim, and WD OS5 rejects the .bin at upload time with
+# ``Failed to load the app package for installation`` if the root directory
+# inside the tar is not the package name.
+readonly WDOS5_STAGE_DIR="${WDOS5_BUILD_DIR}/${APP_NAME}"
 readonly WDOS5_BUILDER_IMAGE="hsync-wdos5-builder:armv7"
 readonly WDOS5_MKSAPKG_URL="https://raw.githubusercontent.com/WDCommunity/wdpksrc/master/mksapkg-OS5"
 readonly WDOS5_CACHE_DIR="${WDOS5_DIR}/.cache"
@@ -530,15 +535,20 @@ build_wd_os5() {
 #   $1  model      — mksapkg-OS5 model name (e.g. MyCloudEX2Ultra)
 #   $2  binary     — path to the compiled hsync binary for this arch
 #   $3  version    — version string (e.g. 1.2.3)
-#   $4  stage_base — directory under which a disposable <model>/Apkg/ is created
+#   $4  stage_base — directory under which a disposable <model>/<APP_NAME>/
+#                    staging tree is created (the inner dir name must equal
+#                    APP_NAME or OS5 rejects the .bin at upload time)
 #   $5  mksapkg    — absolute path to the mksapkg-OS5 executable
 #   $6  out_abs    — absolute path to the final output directory
 _wdos5_package_model() {
     local model="$1" binary_path="$2" version="$3"
     local stage_base="$4" mksapkg_abs="$5" out_abs="$6"
 
-    # Disposable staging copy so the source tree stays pristine.
-    local stage_dir="${stage_base}/${model}/Apkg"
+    # Disposable staging copy so the source tree stays pristine. The inner
+    # directory **must** be named after the package (APP_NAME) — mksapkg-OS5
+    # tars its CWD basename verbatim and OS5 rejects packages whose tar root
+    # is not the Package: name with ``Failed to load the app package``.
+    local stage_dir="${stage_base}/${model}/${APP_NAME}"
     rm -rf "${stage_dir}"
     mkdir -p "${stage_dir}"
     cp -a "${WDOS5_SRC_APKG}/." "${stage_dir}/"
