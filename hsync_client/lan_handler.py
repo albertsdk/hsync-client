@@ -225,6 +225,7 @@ def _run_as_master(
                 use_https=True,
                 cert_file=cert_info.cert_file,
                 key_file=cert_info.key_file,
+                key_password=cert_info.key_password,
             )
         else:
             lan_server = LANServer(port=lan_sync.port)
@@ -242,6 +243,7 @@ def _run_as_master(
                 use_https=True,
                 cert_file=cert_info.cert_file,
                 key_file=cert_info.key_file,
+                key_password=cert_info.key_password,
             )
         else:
             lan_ws_server = LANWebSocketServer(port=ws_port)

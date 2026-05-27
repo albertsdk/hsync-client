@@ -8,6 +8,7 @@ import hashlib
 import os
 import ssl
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
@@ -24,10 +25,11 @@ class TestCertificateInfo:
     """Tests for CertificateInfo dataclass."""
 
     def test_default_fields(self):
-        """cert_file and key_file default to None."""
+        """cert_file, key_file and key_password default to empty/None."""
         info = CertificateInfo(cert_pem=b"cert", key_pem=b"key", fingerprint="abc")
         assert info.cert_file is None
         assert info.key_file is None
+        assert info.key_password == b""
 
     def test_all_fields(self):
         """All fields can be set."""
@@ -35,23 +37,43 @@ class TestCertificateInfo:
             cert_pem=b"cert",
             key_pem=b"key",
             fingerprint="abc",
+            key_password=b"secret",
             cert_file="/tmp/cert.pem",
             key_file="/tmp/key.pem",
         )
         assert info.cert_file == "/tmp/cert.pem"
         assert info.key_file == "/tmp/key.pem"
+        assert info.key_password == b"secret"
 
 
 class TestGenerateSelfSignedCert:
     """Tests for generate_self_signed_cert function."""
 
     def test_generates_cert_and_key(self):
-        """Certificate and key are generated as PEM bytes."""
+        """Certificate and encrypted PKCS#8 key are generated as PEM bytes."""
         info = generate_self_signed_cert()
         assert isinstance(info.cert_pem, bytes)
         assert isinstance(info.key_pem, bytes)
         assert b"BEGIN CERTIFICATE" in info.cert_pem
-        assert b"BEGIN RSA PRIVATE KEY" in info.key_pem or b"BEGIN PRIVATE KEY" in info.key_pem
+        assert b"BEGIN ENCRYPTED PRIVATE KEY" in info.key_pem
+
+    def test_key_password_is_generated(self):
+        """A non-empty session password is generated."""
+        info = generate_self_signed_cert()
+        assert isinstance(info.key_password, bytes)
+        assert len(info.key_password) == 32
+
+    def test_key_password_decrypts_key(self):
+        """The generated password can decrypt the key."""
+        info = generate_self_signed_cert()
+        key = serialization.load_pem_private_key(info.key_pem, password=info.key_password)
+        assert key is not None
+
+    def test_key_password_is_unique_per_call(self):
+        """Each call generates a fresh session password."""
+        info1 = generate_self_signed_cert()
+        info2 = generate_self_signed_cert()
+        assert info1.key_password != info2.key_password
 
     def test_fingerprint_is_hex_sha256(self):
         """Fingerprint is a 64-char hex SHA-256 digest."""
@@ -100,8 +122,15 @@ class TestGenerateSelfSignedCert:
 class TestSaveCertToTempFiles:
     """Tests for save_cert_to_temp_files function."""
 
+    @staticmethod
+    def _cleanup(saved):
+        import shutil
+
+        if saved.cert_file:
+            shutil.rmtree(os.path.dirname(saved.cert_file), ignore_errors=True)
+
     def test_creates_temp_files(self):
-        """Temporary files are created with cert and key content."""
+        """Temporary files are created with cert and (encrypted) key content."""
         info = generate_self_signed_cert()
         saved = save_cert_to_temp_files(info)
 
@@ -116,22 +145,66 @@ class TestSaveCertToTempFiles:
             with open(saved.key_file, "rb") as f:
                 assert f.read() == info.key_pem
         finally:
-            if saved.cert_file:
-                os.unlink(saved.cert_file)
-            if saved.key_file:
-                os.unlink(saved.key_file)
+            self._cleanup(saved)
 
-    def test_preserves_fingerprint(self):
-        """Saved CertificateInfo preserves the original fingerprint."""
+    def test_preserves_fingerprint_and_password(self):
+        """Saved CertificateInfo preserves fingerprint and key_password."""
         info = generate_self_signed_cert()
         saved = save_cert_to_temp_files(info)
         try:
             assert saved.fingerprint == info.fingerprint
+            assert saved.key_password == info.key_password
         finally:
-            if saved.cert_file:
-                os.unlink(saved.cert_file)
-            if saved.key_file:
-                os.unlink(saved.key_file)
+            self._cleanup(saved)
+
+    def test_temp_dir_has_restrictive_permissions(self):
+        """The temp directory is created with 0o700 permissions."""
+        info = generate_self_signed_cert()
+        saved = save_cert_to_temp_files(info)
+        try:
+            tmpdir = os.path.dirname(saved.cert_file)  # type: ignore[arg-type]
+            assert (os.stat(tmpdir).st_mode & 0o777) == 0o700
+        finally:
+            self._cleanup(saved)
+
+    def test_key_file_has_restrictive_permissions(self):
+        """The key file is created with 0o600 permissions."""
+        info = generate_self_signed_cert()
+        saved = save_cert_to_temp_files(info)
+        try:
+            assert (os.stat(saved.key_file).st_mode & 0o777) == 0o600  # type: ignore[arg-type]
+        finally:
+            self._cleanup(saved)
+
+    def test_key_on_disk_is_encrypted(self):
+        """The key written on disk is always PKCS#8 encrypted."""
+        info = generate_self_signed_cert()
+        saved = save_cert_to_temp_files(info)
+        try:
+            with open(saved.key_file, "rb") as f:  # type: ignore[arg-type]
+                pem = f.read()
+            assert pem.startswith(b"-----BEGIN ENCRYPTED PRIVATE KEY-----")
+            # Wrong password cannot decrypt
+            with pytest.raises(ValueError):
+                serialization.load_pem_private_key(pem, password=b"wrong")
+            # Correct session password can decrypt
+            key = serialization.load_pem_private_key(pem, password=saved.key_password)
+            assert key is not None
+        finally:
+            self._cleanup(saved)
+
+    def test_refuses_without_password(self):
+        """save_cert_to_temp_files refuses a CertificateInfo without password."""
+        info = generate_self_signed_cert()
+        # Strip the password to simulate a misuse
+        bad = CertificateInfo(
+            cert_pem=info.cert_pem,
+            key_pem=info.key_pem,
+            fingerprint=info.fingerprint,
+            key_password=b"",
+        )
+        with pytest.raises(ValueError, match="key_password is required"):
+            save_cert_to_temp_files(bad)
 
 
 class TestCreateFingerprintSslContext:

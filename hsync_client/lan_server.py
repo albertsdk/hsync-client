@@ -989,6 +989,7 @@ class LANServer:
         use_https: bool = False,
         cert_file: str | None = None,
         key_file: str | None = None,
+        key_password: bytes | None = None,
     ) -> None:
         """
         Initialize the LAN server.
@@ -998,11 +999,14 @@ class LANServer:
             use_https: Whether to use HTTPS instead of HTTP.
             cert_file: Path to SSL certificate file (required if use_https=True).
             key_file: Path to SSL private key file (required if use_https=True).
+            key_password: Password used to decrypt ``key_file`` (required if
+                ``use_https=True``; the on-disk key is always encrypted).
         """
         self._port = port
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
+        self._key_password = key_password
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._running = False
@@ -1010,6 +1014,8 @@ class LANServer:
         # Validate HTTPS configuration
         if use_https and (not cert_file or not key_file):
             raise ValueError("cert_file and key_file are required when use_https=True")
+        if use_https and not key_password:
+            raise ValueError("key_password is required when use_https=True")
 
     @property
     def port(self) -> int:
@@ -1036,7 +1042,11 @@ class LANServer:
         # Wrap socket with SSL if HTTPS is enabled
         if self._use_https:
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ssl_context.load_cert_chain(self._cert_file, self._key_file)  # type: ignore
+            ssl_context.load_cert_chain(
+                self._cert_file,  # type: ignore[arg-type]
+                self._key_file,  # type: ignore[arg-type]
+                password=self._key_password,
+            )
             self._server.socket = ssl_context.wrap_socket(
                 self._server.socket,
                 server_side=True,
