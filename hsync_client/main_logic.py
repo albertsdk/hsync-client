@@ -495,12 +495,16 @@ def run_sync(
     set_client_id(cid)
     log.info(f"Session CID: {cid}")
 
+    # Resolve API key once: FD-pipe value takes precedence over env var
+    resolved_api_key = api_key_from_fd or get_api_key()
+
     # Populate global configuration dictionary
     config: HsyncConfig = {
         "API": {
             "buckets": f"{effective_server_url}/api/v1/buckets",
             "events": f"{ws_url}/api/v1/buckets",
         },
+        "API_KEY": resolved_api_key,
         "CID": cid,
         "DRYRUN": dryrun,
         "LOCAL_BUCKET": local_path,
@@ -511,7 +515,7 @@ def run_sync(
         "REMOTE_BUCKET": bucket,
         "REQUEST_HEADERS": {
             "accept": "application/json",
-            "Authorization": f"Bearer {api_key_from_fd or get_api_key()}",
+            "Authorization": f"Bearer {resolved_api_key}",
             "X-Client-Name": basename(__file__),
             "X-Client-Version": HSYNC_VERSION,
         },

@@ -41,7 +41,7 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 # Debounce interval for on_modified fallback (seconds)
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
-from hsync_client.config import CONFIG, HSYNC_API_KEY
+from hsync_client.config import CONFIG, get_api_key
 from hsync_client.constants import HSYNC_VERSION, HSYNCKEEP_FILENAME
 from hsync_client.event_queue import EventQueue
 from hsync_client.lan import check_version_compatibility
@@ -113,7 +113,7 @@ async def remote_events() -> None:
         # Include client version for compatibility checking
         auth_message = {
             "type": "auth",
-            "token": HSYNC_API_KEY,
+            "token": CONFIG.get("API_KEY") or get_api_key(),
             "version": HSYNC_VERSION,
         }
         await websocket.send(dumps(auth_message))
