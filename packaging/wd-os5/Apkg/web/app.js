@@ -1,8 +1,8 @@
 /*
  * HSYNC web UI controller.
  *
- * - Loads / persists configuration through config_get.cgi and config_set.cgi.
- * - Drives the daemon (start/stop/restart/status) through service.cgi.
+ * - Loads / persists configuration through config_get.php and config_set.php.
+ * - Drives the daemon (start/stop/restart/status) through service.php.
  * - Lightweight i18n: JSON dictionaries under i18n/, language selectable
  *   from the header and remembered in localStorage.
  *
@@ -10,6 +10,11 @@
  */
 (function () {
     'use strict';
+
+    // Absolute base path: the dashboard injects this HTML via jQuery .load()
+    // into a page served from a different URL, so relative fetch() calls
+    // would resolve against the dashboard origin instead of /apps/hsync/.
+    const BASE = '/apps/hsync';
 
     const SUPPORTED = ['en', 'it', 'de', 'es', 'fr'];
     const CHECKBOX_KEYS = [
@@ -35,7 +40,7 @@
 
     async function loadLang(lang) {
         try {
-            const r = await fetch(`i18n/${lang}.json`, { cache: 'no-store' });
+            const r = await fetch(`${BASE}/i18n/${lang}.json`, { cache: 'no-store' });
             dict = await r.json();
         } catch (_) {
             dict = {};
@@ -56,7 +61,7 @@
     }
 
     function buildLangSelect() {
-        const sel = $('#lang-select');
+        const sel = $('#hsync-lang-select');
         SUPPORTED.forEach((code) => {
             const opt = document.createElement('option');
             opt.value = code;
@@ -83,13 +88,13 @@
                 el.value = cfg[key] || '';
             }
         });
-        if (cfg.__VERSION__) $('#app-version').textContent = cfg.__VERSION__;
+        if (cfg.__VERSION__) $('#hsync-app-version').textContent = cfg.__VERSION__;
         syncModeVisibility();
     }
 
     function collectConfig() {
         const out = {};
-        $$('#config-form [name]').forEach((el) => {
+        $$('#hsync-config-form [name]').forEach((el) => {
             if (el.type === 'checkbox') {
                 out[el.name] = el.checked ? 'true' : 'false';
             } else {
@@ -103,15 +108,15 @@
 
     function syncModeVisibility() {
         const mode = $('#HSYNC_MODE').value;
-        $('#lan-options').hidden    = (mode !== 'lan');
-        $('#server-options').hidden = (mode !== 'server');
+        $('#hsync-lan-options').hidden    = (mode !== 'lan');
+        $('#hsync-server-options').hidden = (mode !== 'server');
     }
 
     // -----------------------------------------------------------------
     // Backend calls
     // -----------------------------------------------------------------
     async function loadConfig() {
-        const r = await fetch('config_get.cgi', { cache: 'no-store' });
+        const r = await fetch(`${BASE}/config_get.php`, { cache: 'no-store' });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
     }
@@ -119,7 +124,7 @@
     async function saveConfig(cfg) {
         const body = new URLSearchParams();
         Object.keys(cfg).forEach((k) => body.append(k, cfg[k] == null ? '' : cfg[k]));
-        const r = await fetch('config_set.cgi', {
+        const r = await fetch(`${BASE}/config_set.php`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: body.toString(),
@@ -129,23 +134,23 @@
     }
 
     async function service(action) {
-        const r = await fetch(`service.cgi?action=${encodeURIComponent(action)}`);
+        const r = await fetch(`${BASE}/service.php?action=${encodeURIComponent(action)}`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
     }
 
     function setStatus(running) {
-        const b = $('#status-badge');
-        b.classList.remove('badge-running', 'badge-stopped', 'badge-unknown');
-        if (running === true)       { b.classList.add('badge-running'); b.textContent = t('status.running', 'running'); }
-        else if (running === false) { b.classList.add('badge-stopped'); b.textContent = t('status.stopped', 'stopped'); }
-        else                        { b.classList.add('badge-unknown'); b.textContent = t('status.unknown', 'unknown'); }
+        const b = $('#hsync-status-badge');
+        b.classList.remove('hsync-badge-running', 'hsync-badge-stopped', 'hsync-badge-unknown');
+        if (running === true)       { b.classList.add('hsync-badge-running'); b.textContent = t('status.running', 'running'); }
+        else if (running === false) { b.classList.add('hsync-badge-stopped'); b.textContent = t('status.stopped', 'stopped'); }
+        else                        { b.classList.add('hsync-badge-unknown'); b.textContent = t('status.unknown', 'unknown'); }
     }
 
     function toast(msg, kind) {
-        const el = $('#toast');
+        const el = $('#hsync-toast');
         el.textContent = msg;
-        el.className = kind || '';
+        el.className = kind ? ('hsync-toast-' + kind) : '';
         el.hidden = false;
         setTimeout(() => { el.hidden = true; }, 4000);
     }
@@ -158,7 +163,13 @@
     // -----------------------------------------------------------------
     // Wiring
     // -----------------------------------------------------------------
-    document.addEventListener('DOMContentLoaded', async () => {
+    // The dashboard injects this HTML via jQuery .load() after its own
+    // DOMContentLoaded has already fired, so listening for that event
+    // would never run init(). The script is placed at the end of the
+    // body, so all referenced elements already exist when it runs.
+    async function init() {
+        if (!$('#hsync-app')) return; // not in DOM yet (defensive)
+
         buildLangSelect();
         await loadLang(pickLang());
 
@@ -167,8 +178,7 @@
 
         $('#HSYNC_MODE').addEventListener('change', syncModeVisibility);
 
-        $('#config-form').addEventListener('submit', async (ev) => {
-            ev.preventDefault();
+        $('#hsync-btn-save').addEventListener('click', async () => {
             try {
                 await saveConfig(collectConfig());
                 toast(t('toast.saved', 'Configuration saved'), 'ok');
@@ -177,11 +187,17 @@
             }
         });
 
-        $('#btn-start')  .addEventListener('click', async () => { try { await service('start');   toast(t('toast.started', 'Service started'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
-        $('#btn-stop')   .addEventListener('click', async () => { try { await service('stop');    toast(t('toast.stopped', 'Service stopped'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
-        $('#btn-restart').addEventListener('click', async () => { try { await service('restart'); toast(t('toast.restarted', 'Service restarted'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+        $('#hsync-btn-start')  .addEventListener('click', async () => { try { await service('start');   toast(t('toast.started', 'Service started'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+        $('#hsync-btn-stop')   .addEventListener('click', async () => { try { await service('stop');    toast(t('toast.stopped', 'Service stopped'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
+        $('#hsync-btn-restart').addEventListener('click', async () => { try { await service('restart'); toast(t('toast.restarted', 'Service restarted'), 'ok'); } catch (e) { toast(e.message, 'error'); } refreshStatus(); });
 
         refreshStatus();
         setInterval(refreshStatus, 10000);
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();

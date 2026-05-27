@@ -92,7 +92,7 @@ class TestIsFileStable:
 
     def test_empty_filepath_returns_true(self):
         """Empty filepath returns True (stable)."""
-        file = File(filepath="", md5sum="abc123", size=100)
+        file = File(filepath="", sha256sum="abc123", size=100)
         assert is_file_stable(file) is True
 
     def test_stable_file_returns_true(self, tmp_path):
@@ -100,7 +100,7 @@ class TestIsFileStable:
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
-        file = File(filepath=str(test_file), md5sum="abc123", size=12)
+        file = File(filepath=str(test_file), sha256sum="abc123", size=12)
 
         with patch("hsync_client.transfer.time_sleep"):  # Skip waiting
             result = is_file_stable(file, interval=0)

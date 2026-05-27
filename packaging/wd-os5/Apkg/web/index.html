@@ -4,141 +4,345 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HSYNC</title>
-    <link rel="icon" type="image/png" href="hsync.png">
-    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-    <img src="hsync.png" alt="HSYNC" class="logo">
+
+<style>
+/*
+ * HSYNC web UI for WD My Cloud OS5.
+ * Every selector is rooted at #hsync-app (or uses an hsync- prefixed class/id)
+ * so the dashboard CSS cannot match by accident; this avoids the need for
+ * !important on most properties. !important is kept only on a few layout
+ * primitives (display, box-sizing, width, margin, padding, float, position)
+ * that the dashboard reset rules tend to clobber regardless of specificity.
+ * Inlined to survive AJAX/jQuery injection by the NAS dashboard.
+ */
+
+#hsync-app {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    color: #161D1D;
+    background: transparent;
+    padding: 4px 0;
+    box-sizing: border-box !important;
+}
+#hsync-app *, #hsync-app *::before, #hsync-app *::after {
+    box-sizing: border-box !important;
+}
+
+/* ---- header strip (teal bar inside the injected panel) ---- */
+#hsync-app .hsync-header {
+    display: flex !important;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px !important;
+    background: #006A6A;
+    color: #fff;
+    margin: 0 0 12px 0 !important;
+    border-radius: 4px;
+}
+#hsync-app .hsync-header .hsync-logo { width: 24px; height: 24px; }
+#hsync-app .hsync-header h1 {
+    font-size: 16px;
+    margin: 0 !important;
+    flex: 1;
+    color: #fff;
+}
+#hsync-app .hsync-header-right { display: flex !important; align-items: center; gap: 10px; }
+#hsync-app .hsync-header-right select {
+    background: #004f50;
+    color: #fff;
+    border: 1px solid #004f50;
+    border-radius: 4px;
+    padding: 4px 6px !important;
+    font-size: 12px;
+    width: auto !important;
+}
+
+#hsync-app .hsync-badge {
+    padding: 3px 8px !important;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+#hsync-app .hsync-badge-running { background: #2e7d32; color: #fff; }
+#hsync-app .hsync-badge-stopped { background: #b3261e; color: #fff; }
+#hsync-app .hsync-badge-unknown { background: #b08000; color: #fff; }
+
+/* ---- sections (replaces <fieldset>) ---- */
+#hsync-app .hsync-section {
+    display: block !important;
+    background: #ffffff;
+    border: 1px solid #cfd8d8;
+    border-radius: 6px;
+    margin: 0 0 14px 0 !important;
+    padding: 14px 16px !important;
+    float: none !important;
+    position: static !important;
+    overflow: visible;
+}
+#hsync-app .hsync-legend {
+    display: block !important;
+    font-size: 13px;
+    font-weight: 600;
+    color: #004f50;
+    margin: 0 0 10px 0 !important;
+    padding: 0 0 6px 0 !important;
+    border-bottom: 1px solid #cfd8d8;
+}
+
+/* ---- labels ---- */
+#hsync-app .hsync-label {
+    display: block !important;
+    margin: 8px 0 !important;
+    padding: 0 !important;
+    float: none !important;
+    position: static !important;
+}
+#hsync-app .hsync-label > span {
+    display: block !important;
+    font-size: 12px;
+    color: #4f5757;
+    margin: 0 0 3px 0 !important;
+}
+#hsync-app .hsync-label.hsync-check {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    flex-direction: row;
+}
+#hsync-app .hsync-label.hsync-check > span {
+    display: inline !important;
+    color: #161D1D;
+    font-size: 14px;
+    margin: 0 !important;
+}
+#hsync-app .hsync-label.hsync-check > input[type="checkbox"] {
+    width: auto !important;
+    flex-shrink: 0;
+    margin: 0 !important;
+}
+
+/* ---- inputs & selects ---- */
+#hsync-app .hsync-section input[type="text"],
+#hsync-app .hsync-section input[type="url"],
+#hsync-app .hsync-section input[type="password"],
+#hsync-app .hsync-section input[type="number"],
+#hsync-app .hsync-section select {
+    display: block !important;
+    width: 100% !important;
+    padding: 7px 10px !important;
+    margin: 0 !important;
+    float: none !important;
+    position: static !important;
+    font-size: 14px;
+    border: 1px solid #cfd8d8;
+    border-radius: 4px;
+    background: #fff;
+    color: #161D1D;
+}
+
+/* ---- buttons ---- */
+#hsync-app .hsync-actions {
+    display: flex !important;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 14px 0 0 0 !important;
+    align-items: center;
+}
+#hsync-app .hsync-btn {
+    display: inline-block !important;
+    padding: 8px 16px !important;
+    margin: 0 !important;
+    float: none !important;
+    position: static !important;
+    border: 1px solid #cfd8d8;
+    border-radius: 4px;
+    background: #fff;
+    color: #161D1D;
+    font-size: 14px;
+    cursor: pointer;
+}
+#hsync-app .hsync-btn:hover { background: #f0f4f4; }
+#hsync-app .hsync-btn-primary {
+    background: #006A6A;
+    color: #fff;
+    border-color: #006A6A;
+}
+#hsync-app .hsync-btn-primary:hover { background: #004f50; }
+
+/* ---- toast ---- */
+#hsync-app #hsync-toast {
+    display: block !important;
+    margin: 10px 0 0 0 !important;
+    padding: 10px 12px !important;
+    border-radius: 4px;
+    background: #eef5f5;
+    border: 1px solid #cfd8d8;
+    color: #161D1D;
+}
+#hsync-app #hsync-toast[hidden] { display: none !important; }
+#hsync-app #hsync-toast.hsync-toast-error {
+    background: #fdecec; border-color: #b3261e; color: #b3261e;
+}
+#hsync-app #hsync-toast.hsync-toast-ok {
+    background: #ecf6ed; border-color: #2e7d32; color: #2e7d32;
+}
+
+/* ---- footer ---- */
+#hsync-app .hsync-footer {
+    display: block !important;
+    text-align: right;
+    color: #4f5757;
+    padding: 8px 0 !important;
+    font-size: 11px;
+    border-top: 1px solid #cfd8d8;
+    margin: 16px 0 0 0 !important;
+}
+</style>
+
+<div id="hsync-app">
+
+<div class="hsync-header">
+    <img src="/apps/hsync/hsync.png" alt="HSYNC" class="hsync-logo">
     <h1 data-i18n="app.title">HSYNC</h1>
-    <div class="header-right">
-        <span id="status-badge" class="badge badge-unknown" data-i18n="status.unknown">unknown</span>
-        <select id="lang-select" aria-label="Language"></select>
+    <div class="hsync-header-right">
+        <span id="hsync-status-badge" class="hsync-badge hsync-badge-unknown" data-i18n="status.unknown">unknown</span>
+        <select id="hsync-lang-select" aria-label="Language"></select>
     </div>
-</header>
+</div>
 
-<main>
-    <form id="config-form" autocomplete="off">
+<!--
+    Plain <div>, not <form>: the dashboard wraps the injected HTML
+    inside its own <form>, and nested forms are silently flattened
+    by the browser, causing the Save button to submit the outer form
+    and trigger a full reload. We handle "Save" as a normal button click.
+-->
+<div id="hsync-config-form">
 
-        <!-- Mode ------------------------------------------------------- -->
-        <fieldset>
-            <legend data-i18n="section.mode">Mode</legend>
-            <label>
-                <span data-i18n="field.mode">Mode</span>
-                <select name="HSYNC_MODE" id="HSYNC_MODE">
-                    <option value="lan" data-i18n="mode.lan">LAN (peer-to-peer)</option>
-                    <option value="server" data-i18n="mode.server">Server (central HSYNC server)</option>
-                </select>
-            </label>
-            <label>
-                <span data-i18n="field.role">Role</span>
-                <select name="HSYNC_ROLE" id="HSYNC_ROLE">
-                    <option value="auto"   data-i18n="role.auto">Auto (bidirectional, automatic election)</option>
-                    <option value="master" data-i18n="role.master">Master (NAS holds the authoritative copy)</option>
-                    <option value="slave"  data-i18n="role.slave">Slave (NAS is a read-only replica)</option>
-                </select>
-            </label>
-        </fieldset>
+    <!-- Mode ------------------------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.mode">Mode</div>
+        <label class="hsync-label">
+            <span data-i18n="field.mode">Mode</span>
+            <select name="HSYNC_MODE" id="HSYNC_MODE">
+                <option value="lan" data-i18n="mode.lan">LAN (peer-to-peer)</option>
+                <option value="server" data-i18n="mode.server">Server (central HSYNC server)</option>
+            </select>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.role">Role</span>
+            <select name="HSYNC_ROLE" id="HSYNC_ROLE">
+                <option value="auto"   data-i18n="role.auto">Auto (bidirectional, automatic election)</option>
+                <option value="master" data-i18n="role.master">Master (NAS holds the authoritative copy)</option>
+                <option value="slave"  data-i18n="role.slave">Slave (NAS is a read-only replica)</option>
+            </select>
+        </label>
+    </div>
 
-        <!-- Paths ------------------------------------------------------ -->
-        <fieldset>
-            <legend data-i18n="section.paths">Paths</legend>
-            <label>
-                <span data-i18n="field.path">Local path</span>
-                <input type="text" name="HSYNC_PATH" id="HSYNC_PATH" placeholder="/mnt/HD/HD_a2/hsync/data">
-            </label>
-            <label>
-                <span data-i18n="field.bucket">Bucket</span>
-                <input type="text" name="HSYNC_BUCKET" id="HSYNC_BUCKET" pattern="^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$" placeholder="hsync">
-            </label>
-        </fieldset>
+    <!-- Paths ------------------------------------------------------ -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.paths">Paths</div>
+        <label class="hsync-label">
+            <span data-i18n="field.path">Local path</span>
+            <input type="text" name="HSYNC_PATH" id="HSYNC_PATH" placeholder="/mnt/HD/HD_a2/hsync/data">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bucket">Bucket</span>
+            <input type="text" name="HSYNC_BUCKET" id="HSYNC_BUCKET" pattern="^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$" placeholder="hsync">
+        </label>
+    </div>
 
-        <!-- LAN -------------------------------------------------------- -->
-        <fieldset id="lan-options">
-            <legend data-i18n="section.lan">LAN options</legend>
-            <label class="check">
-                <input type="checkbox" name="HSYNC_LAN_PERSISTENT" id="HSYNC_LAN_PERSISTENT">
-                <span data-i18n="field.lan_persistent">Persistent (keep retrying when no peer is found)</span>
-            </label>
-            <label class="check">
-                <input type="checkbox" name="HSYNC_LAN_HTTPS" id="HSYNC_LAN_HTTPS">
-                <span data-i18n="field.lan_https">HTTPS between peers</span>
-            </label>
-            <label>
-                <span data-i18n="field.lan_group">LAN group (optional)</span>
-                <input type="text" name="HSYNC_LAN_GROUP" id="HSYNC_LAN_GROUP">
-            </label>
-            <label>
-                <span data-i18n="field.discovery_timeout">Discovery timeout (s)</span>
-                <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="1" max="600">
-            </label>
-        </fieldset>
+    <!-- LAN -------------------------------------------------------- -->
+    <div class="hsync-section" id="hsync-lan-options">
+        <div class="hsync-legend" data-i18n="section.lan">LAN options</div>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_LAN_PERSISTENT" id="HSYNC_LAN_PERSISTENT">
+            <span data-i18n="field.lan_persistent">Persistent (keep retrying when no peer is found)</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_LAN_HTTPS" id="HSYNC_LAN_HTTPS">
+            <span data-i18n="field.lan_https">HTTPS between peers</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.lan_group">LAN group (optional)</span>
+            <input type="text" name="HSYNC_LAN_GROUP" id="HSYNC_LAN_GROUP">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.discovery_timeout">Discovery timeout (s)</span>
+            <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="1" max="600">
+        </label>
+    </div>
 
-        <!-- Server ----------------------------------------------------- -->
-        <fieldset id="server-options" hidden>
-            <legend data-i18n="section.server">Server options</legend>
-            <label>
-                <span data-i18n="field.server">Server URL</span>
-                <input type="url" name="HSYNC_SERVER" id="HSYNC_SERVER" placeholder="https://hsync.example.com">
-            </label>
-            <label>
-                <span data-i18n="field.api_key">API key</span>
-                <input type="password" name="HSYNC_API_KEY" id="HSYNC_API_KEY" autocomplete="new-password">
-            </label>
-        </fieldset>
+    <!-- Server ----------------------------------------------------- -->
+    <div class="hsync-section" id="hsync-server-options" hidden>
+        <div class="hsync-legend" data-i18n="section.server">Server options</div>
+        <label class="hsync-label">
+            <span data-i18n="field.server">Server URL</span>
+            <input type="url" name="HSYNC_SERVER" id="HSYNC_SERVER" placeholder="https://hsync.example.com">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.api_key">API key</span>
+            <input type="password" name="HSYNC_API_KEY" id="HSYNC_API_KEY" autocomplete="new-password">
+        </label>
+    </div>
 
-        <!-- Sync behaviour --------------------------------------------- -->
-        <fieldset>
-            <legend data-i18n="section.behaviour">Sync behaviour</legend>
-            <label class="check">
-                <input type="checkbox" name="HSYNC_WATCH" id="HSYNC_WATCH">
-                <span data-i18n="field.watch">Watch for changes continuously</span>
-            </label>
-            <label>
-                <span data-i18n="field.interval">Forced re-sync interval (s, 0 = off)</span>
-                <input type="number" name="HSYNC_INTERVAL" id="HSYNC_INTERVAL" min="0">
-            </label>
-            <label class="check">
-                <input type="checkbox" name="HSYNC_IGNORE_DELETE" id="HSYNC_IGNORE_DELETE">
-                <span data-i18n="field.ignore_delete">Ignore deletions (backup-friendly)</span>
-            </label>
-            <label class="check">
-                <input type="checkbox" name="HSYNC_NO_COMPRESSION" id="HSYNC_NO_COMPRESSION">
-                <span data-i18n="field.no_compression">Disable zstd compression</span>
-            </label>
-            <label>
-                <span data-i18n="field.bw_upload">Max upload bandwidth (e.g. 1MB)</span>
-                <input type="text" name="HSYNC_MAX_BW_UPLOAD" id="HSYNC_MAX_BW_UPLOAD">
-            </label>
-            <label>
-                <span data-i18n="field.bw_download">Max download bandwidth (e.g. 1MB)</span>
-                <input type="text" name="HSYNC_MAX_BW_DOWNLOAD" id="HSYNC_MAX_BW_DOWNLOAD">
-            </label>
-            <label>
-                <span data-i18n="field.min_free_mb">Minimum free disk space (MB, 0 = off)</span>
-                <input type="number" name="HSYNC_MIN_FREE_DISK_MB" id="HSYNC_MIN_FREE_DISK_MB" min="0">
-            </label>
-            <label class="check">
-                <input type="checkbox" name="HSYNC_VERBOSE" id="HSYNC_VERBOSE">
-                <span data-i18n="field.verbose">Verbose log</span>
-            </label>
-        </fieldset>
+    <!-- Sync behaviour --------------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.behaviour">Sync behaviour</div>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_WATCH" id="HSYNC_WATCH">
+            <span data-i18n="field.watch">Watch for changes continuously</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.interval">Forced re-sync interval (s, 0 = off)</span>
+            <input type="number" name="HSYNC_INTERVAL" id="HSYNC_INTERVAL" min="0">
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_IGNORE_DELETE" id="HSYNC_IGNORE_DELETE">
+            <span data-i18n="field.ignore_delete">Ignore deletions (backup-friendly)</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_NO_COMPRESSION" id="HSYNC_NO_COMPRESSION">
+            <span data-i18n="field.no_compression">Disable zstd compression</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bw_upload">Max upload bandwidth (e.g. 1MB)</span>
+            <input type="text" name="HSYNC_MAX_BW_UPLOAD" id="HSYNC_MAX_BW_UPLOAD">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bw_download">Max download bandwidth (e.g. 1MB)</span>
+            <input type="text" name="HSYNC_MAX_BW_DOWNLOAD" id="HSYNC_MAX_BW_DOWNLOAD">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.min_free_mb">Minimum free disk space (MB, 0 = off)</span>
+            <input type="number" name="HSYNC_MIN_FREE_DISK_MB" id="HSYNC_MIN_FREE_DISK_MB" min="0">
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_VERBOSE" id="HSYNC_VERBOSE">
+            <span data-i18n="field.verbose">Verbose log</span>
+        </label>
+    </div>
 
-        <!-- Actions ---------------------------------------------------- -->
-        <div class="actions">
-            <button type="submit" class="primary" data-i18n="action.save">Save</button>
-            <button type="button" id="btn-start" data-i18n="action.start">Start</button>
-            <button type="button" id="btn-stop"  data-i18n="action.stop">Stop</button>
-            <button type="button" id="btn-restart" data-i18n="action.restart">Restart</button>
-        </div>
-        <p id="toast" hidden></p>
-    </form>
-</main>
+    <!-- Actions ---------------------------------------------------- -->
+    <div class="hsync-actions">
+        <button type="button" id="hsync-btn-save"    class="hsync-btn hsync-btn-primary" data-i18n="action.save">Save</button>
+        <button type="button" id="hsync-btn-start"   class="hsync-btn" data-i18n="action.start">Start</button>
+        <button type="button" id="hsync-btn-stop"    class="hsync-btn" data-i18n="action.stop">Stop</button>
+        <button type="button" id="hsync-btn-restart" class="hsync-btn" data-i18n="action.restart">Restart</button>
+    </div>
+    <p id="hsync-toast" hidden></p>
+</div>
 
-<footer>
-    <span data-i18n="footer.version">Version</span>: <span id="app-version">—</span>
-</footer>
+<div class="hsync-footer">
+    <span data-i18n="footer.version">Version</span>: <span id="hsync-app-version">—</span>
+</div>
+</div><!-- #hsync-app -->
 
-<script src="app.js" defer></script>
+<!-- We include the script directly in the body to ensure jQuery execution -->
+<script src="/apps/hsync/app.js"></script>
 </body>
 </html>

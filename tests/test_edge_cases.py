@@ -186,11 +186,11 @@ class TestFileLocking:
             assert result is None
 
 
-class TestMD5Performance:
-    """Performance tests for MD5 computation."""
+class TestSHA256Performance:
+    """Performance tests for SHA-256 computation."""
 
-    def test_md5_chunking_performance(self, tmp_path):
-        """Test that chunking MD5 computation performs reasonably."""
+    def test_sha256_chunking_performance(self, tmp_path):
+        """Test that chunking SHA-256 computation performs reasonably."""
         # Create a 10MB test file
         test_file = tmp_path / "large_file.bin"
         with open(test_file, "wb") as f:
@@ -198,42 +198,42 @@ class TestMD5Performance:
             f.write(b"x" * (10 * 1024 * 1024))
 
         start = time.time()
-        md5sum = File._compute_md5(str(test_file))
+        sha256sum = File._compute_sha256(str(test_file))
         elapsed = time.time() - start
 
         # Should complete in reasonable time (< 2 seconds for 10MB)
         assert elapsed < 2.0
-        assert len(md5sum) == 32  # MD5 is 32 hex chars
+        assert len(sha256sum) == 64  # SHA-256 is 64 hex chars
 
         # Verify correctness
         import hashlib
 
-        expected = hashlib.md5(open(test_file, "rb").read()).hexdigest()
-        assert md5sum == expected
+        expected = hashlib.sha256(open(test_file, "rb").read()).hexdigest()
+        assert sha256sum == expected
 
-    def test_md5_small_file(self, tmp_path):
-        """Test MD5 on small file."""
+    def test_sha256_small_file(self, tmp_path):
+        """Test SHA-256 on small file."""
         test_file = tmp_path / "small.txt"
         test_file.write_text("hello world")
 
-        md5sum = File._compute_md5(str(test_file))
+        sha256sum = File._compute_sha256(str(test_file))
 
         import hashlib
 
-        expected = hashlib.md5(b"hello world").hexdigest()
-        assert md5sum == expected
+        expected = hashlib.sha256(b"hello world").hexdigest()
+        assert sha256sum == expected
 
-    def test_md5_empty_file(self, tmp_path):
-        """Test MD5 on empty file."""
+    def test_sha256_empty_file(self, tmp_path):
+        """Test SHA-256 on empty file."""
         test_file = tmp_path / "empty.txt"
         test_file.write_text("")
 
-        md5sum = File._compute_md5(str(test_file))
+        sha256sum = File._compute_sha256(str(test_file))
 
         import hashlib
 
-        expected = hashlib.md5(b"").hexdigest()
-        assert md5sum == expected
+        expected = hashlib.sha256(b"").hexdigest()
+        assert sha256sum == expected
 
 
 class TestEdgeCasesFileOperations:
@@ -285,7 +285,7 @@ class TestEdgeCasesFileOperations:
             "filepath": str(tmp_path / "test.txt"),
             "mtime": int(time.time()),
             "size": 10,
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "permissions": "-rw-r--r--",
         }
 
@@ -303,7 +303,7 @@ class TestEdgeCasesFileOperations:
             with patch("hsync_client.transfer.download_file") as mock_download:
                 update_file(remote_data)
 
-                # Should not download since content matches (mock only checks md5)
+                # Should not download since content matches (mock only checks sha256)
                 # but may set permissions
                 # The key is it shouldn't crash
                 mock_download.assert_called()

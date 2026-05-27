@@ -7,10 +7,8 @@
 # place. Persistent user data and config live under /mnt/HD/HD_a2/hsync/ and
 # are never touched here.
 
-set -u
-
 LOG=/tmp/debug_apkg
-echo "APKG_DEBUG: $0 $*" >> "$LOG"
+[ -f "$LOG" ] && echo "APKG_DEBUG: $0 $*" >> "$LOG"
 
 NAS_PROG="/shares/Volume_1/Nas_Prog"
 APKG_MODULE="hsync"

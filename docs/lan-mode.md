@@ -566,7 +566,7 @@ Authorization: Bearer mySecretKey123
     "size": 2048576,
     "mtime": 1706000000,
     "ctime": 1705900000,
-    "md5sum": "d41d8cd98f00b204e9800998ecf8427e",
+    "sha256sum": "d41d8cd98f00b204e9800998ecf8427e",
     "permissions": "-rw-r--r--"
   }
 ]

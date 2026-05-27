@@ -20,6 +20,7 @@ HSYNC_ENV_FILE="${HSYNC_CONFIG_DIR}/hsync.env"
 HSYNC_LOG_FILE="${HSYNC_LOG_DIR}/hsync.log"
 HSYNC_PID_FILE="${HSYNC_RUN_DIR}/hsync.pid"
 
-# Web UI is symlinked here by init.sh so it shows up under the stock
-# apache docroot at http://<NAS>/${APKG_NAME}/.
-WEB_ROOT="/var/www/${APKG_NAME}"
+# Web UI is symlinked here by install.sh / init.sh so the dashboard finds
+# the icon and the configuration page at http://<NAS>/apps/${APKG_NAME}/.
+# This is the convention used by the stock OS5 apps (Transmission, clamAV…).
+WEB_ROOT="/var/www/apps/${APKG_NAME}"

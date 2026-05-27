@@ -11,7 +11,7 @@ from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
     _suppress_insecure_warning,
     bytes_to_human_readable,
-    compute_md5,
+    compute_sha256,
     ensure_str_path,
     get_chunk_size,
     get_cid,
@@ -240,30 +240,36 @@ class TestBytesToHumanReadable:
         assert bytes_to_human_readable(1024**4) == "1.00TB"
 
 
-class TestComputeMd5:
-    """Tests for compute_md5 function."""
+class TestComputeSha256:
+    """Tests for compute_sha256 function."""
 
-    def test_compute_md5_empty_file(self):
-        """Test MD5 of empty file."""
+    def test_compute_sha256_empty_file(self):
+        """Test SHA-256 of empty file."""
         with tempfile.NamedTemporaryFile(delete=False) as f:
             f.write(b"")
             temp_path = f.name
 
         try:
-            # MD5 of empty string
-            assert compute_md5(temp_path) == "d41d8cd98f00b204e9800998ecf8427e"
+            # SHA-256 of empty string
+            assert (
+                compute_sha256(temp_path)
+                == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            )
         finally:
             os.unlink(temp_path)
 
-    def test_compute_md5_known_content(self):
-        """Test MD5 of known content."""
+    def test_compute_sha256_known_content(self):
+        """Test SHA-256 of known content."""
         with tempfile.NamedTemporaryFile(delete=False) as f:
             f.write(b"hello world")
             temp_path = f.name
 
         try:
-            # MD5 of "hello world"
-            assert compute_md5(temp_path) == "5eb63bbbe01eeed093cb22bb8f5acdc3"
+            # SHA-256 of "hello world"
+            assert (
+                compute_sha256(temp_path)
+                == "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+            )
         finally:
             os.unlink(temp_path)
 

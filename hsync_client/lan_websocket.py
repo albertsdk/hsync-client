@@ -46,7 +46,7 @@ from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.models.dir import Dir, is_hidden_dir
 from hsync_client.models.event import Event, EventName
-from hsync_client.models.file import File, invalidate_md5_cache, is_hidden_file
+from hsync_client.models.file import File, invalidate_sha256_cache, is_hidden_file
 from hsync_client.models.symlink import Symlink
 from hsync_client.utils import ensure_str_path, is_same_paths
 
@@ -477,7 +477,7 @@ class LANFileEventHandler(FileSystemEventHandler):
             return
 
         log.info(f'[LAN FILE  ] "{src_path}"')
-        invalidate_md5_cache(src_path)
+        invalidate_sha256_cache(src_path)
         file_obj = File.get(src_path)
         if file_obj:
             message = Event(
@@ -533,8 +533,8 @@ class LANFileEventHandler(FileSystemEventHandler):
                 return
 
             log.info(f'[LAN RENAME] "{src_path}" -> "{dest_path}"')
-            invalidate_md5_cache(src_path)
-            invalidate_md5_cache(dest_path)
+            invalidate_sha256_cache(src_path)
+            invalidate_sha256_cache(dest_path)
             dst = File.get(dest_path)
             if dst:
                 src = deepcopy(dst)
@@ -1207,7 +1207,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         if not exists(src_path):
             return
 
-        invalidate_md5_cache(src_path)
+        invalidate_sha256_cache(src_path)
         file_obj = File.get(src_path)
         if file_obj:
             # Bytes estimate lets ``wait_pending`` scale its timeout when
@@ -1312,7 +1312,7 @@ class SlaveFileEventHandler(FileSystemEventHandler):
         # Hidden to visible - treat as creation
         if src_hidden and not dest_hidden:
             if not event.is_directory and exists(dest_path):
-                invalidate_md5_cache(dest_path)
+                invalidate_sha256_cache(dest_path)
                 file_obj = File.get(dest_path)
                 if file_obj:
                     try:

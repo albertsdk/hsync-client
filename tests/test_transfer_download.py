@@ -19,7 +19,7 @@ class TestDownloadFile:
 
     def test_network_error_logs_and_returns(self, tmp_path):
         """Network error during download is logged."""
-        file = File(filepath="/path/to/file.txt", md5sum="abc123", size=100)
+        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
 
         with (
             patch(
@@ -40,7 +40,7 @@ class TestDownloadFile:
 
     def test_auth_error_401_returns(self, tmp_path):
         """401 response returns without downloading."""
-        file = File(filepath="/path/to/file.txt", md5sum="abc123", size=100)
+        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -62,7 +62,7 @@ class TestDownloadFile:
 
     def test_not_found_404_returns(self, tmp_path):
         """404 response returns without downloading."""
-        file = File(filepath="/path/to/file.txt", md5sum="abc123", size=100)
+        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -84,7 +84,7 @@ class TestDownloadFile:
 
     def test_server_error_500_returns(self, tmp_path):
         """500 response returns without downloading."""
-        file = File(filepath="/path/to/file.txt", md5sum="abc123", size=100)
+        file = File(filepath="/path/to/file.txt", sha256sum="abc123", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -104,11 +104,11 @@ class TestDownloadFile:
         ):
             download_file(file)
 
-    def test_successful_download_with_md5_verification(self, tmp_path):
-        """Successful download verifies MD5 and moves file."""
+    def test_successful_download_with_sha256_verification(self, tmp_path):
+        """Successful download verifies SHA-256 and moves file."""
         file = File(
             filepath="subdir/file.txt",
-            md5sum="d41d8cd98f00b204e9800998ecf8427e",  # MD5 of empty file
+            sha256sum="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",  # SHA-256 of empty file
             size=0,
             mtime=1000,
             ctime=1000,
@@ -132,7 +132,8 @@ class TestDownloadFile:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch(
-                "hsync_client.transfer.compute_md5", return_value="d41d8cd98f00b204e9800998ecf8427e"
+                "hsync_client.transfer.compute_sha256",
+                return_value="d41d8cd98f00b204e9800998ecf8427e",
             ),
             patch("hsync_client.transfer.move") as mock_move,
             patch("hsync_client.transfer.utime") as mock_utime,
@@ -144,9 +145,9 @@ class TestDownloadFile:
             mock_utime.assert_called_once()
             mock_set_perms.assert_called_once()
 
-    def test_md5_mismatch_returns_without_saving(self, tmp_path):
-        """MD5 mismatch logs error and returns."""
-        file = File(filepath="file.txt", md5sum="expected_md5", size=100)
+    def test_sha256_mismatch_returns_without_saving(self, tmp_path):
+        """SHA-256 mismatch logs error and returns."""
+        file = File(filepath="file.txt", sha256sum="expected_sha256", size=100)
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -164,7 +165,7 @@ class TestDownloadFile:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_md5", return_value="different_md5"),
+            patch("hsync_client.transfer.compute_sha256", return_value="different_sha256"),
             patch("hsync_client.transfer.move") as mock_move,
             patch("hsync_client.transfer.remove"),
         ):
@@ -179,7 +180,7 @@ class TestDownloadFileResume:
         """Test download resumes from existing partial file."""
         file = File(
             filepath="file.txt",
-            md5sum="abc123def",
+            sha256sum="abc123def",
             size=1000,
             mtime=1000,
             ctime=1000,
@@ -206,7 +207,7 @@ class TestDownloadFileResume:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
             patch("hsync_client.transfer.move"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
@@ -220,7 +221,7 @@ class TestDownloadFileResume:
         """Test download restarts when partial file is too large."""
         file = File(
             filepath="file.txt",
-            md5sum="abc123def",
+            sha256sum="abc123def",
             size=100,
             mtime=1000,
             ctime=1000,
@@ -248,7 +249,7 @@ class TestDownloadFileResume:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
             patch("hsync_client.transfer.move"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
@@ -266,7 +267,7 @@ class TestDownloadFileResume:
 
         file = File(
             filepath="file.txt",
-            md5sum="abc123",
+            sha256sum="abc123",
             size=7,
             mtime=1000,  # Older than actual file
             ctime=1000,
@@ -298,7 +299,7 @@ class TestDownloadFileResume:
         """Test download restarts when 416 is received."""
         file = File(
             filepath="file.txt",
-            md5sum="abc123def",
+            sha256sum="abc123def",
             size=1000,
             mtime=1000,
             ctime=1000,
@@ -330,7 +331,7 @@ class TestDownloadFileResume:
             ),
             patch("hsync_client.transfer.get", side_effect=[mock_response_416, mock_response_200]),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
             patch("hsync_client.transfer.move"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
@@ -350,7 +351,7 @@ class TestDownloadCompressed:
 
         file = File(
             filepath="file.txt",
-            md5sum="abc123def",
+            sha256sum="abc123def",
             size=100,
             mtime=1000,
             ctime=1000,
@@ -378,7 +379,7 @@ class TestDownloadCompressed:
             ),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.compute_md5", return_value="abc123def"),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
             patch("hsync_client.transfer.move") as mock_move,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),

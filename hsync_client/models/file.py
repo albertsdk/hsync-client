@@ -13,8 +13,8 @@ from hsync_common.ignore import get_active_matcher
 from hsync_common.models.file import (  # noqa: F401
     File,
     FileDict,
-    clear_md5_cache,
-    invalidate_md5_cache,
+    clear_sha256_cache,
+    invalidate_sha256_cache,
 )
 from hsync_common.models.file import is_hidden_file as _orig_is_hidden_file
 

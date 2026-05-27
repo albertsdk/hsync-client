@@ -56,7 +56,7 @@ class TestProcessWebsocketEvents:
             "bucket": "testbucket",
             "src": {
                 "filepath": "newfile.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
@@ -253,7 +253,7 @@ class TestProcessWebsocketEvents:
             "bucket": "testbucket",
             "src": {
                 "filepath": "modifiedfile.txt",
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,

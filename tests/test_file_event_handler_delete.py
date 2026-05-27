@@ -49,7 +49,7 @@ class TestHandleDeleteEvent:
         # Use relative paths
         src = {
             "filepath": "to_delete.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
@@ -68,7 +68,7 @@ class TestHandleDeleteEvent:
         # Use relative paths
         src = {
             "filepath": "missing.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
@@ -88,7 +88,7 @@ class TestHandleDeleteEvent:
 
         src = {
             "filepath": "keep_me.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
@@ -112,7 +112,7 @@ class TestHandleDeleteEvent:
 
         src = {
             "filepath": "emptydir/.hsynckeep",
-            "md5sum": "d41d8cd98f00b204e9800998ecf8427e",
+            "sha256sum": "bb25b1c2b2a7427401c823a90904a759e2bd7425205b0702bca5e27e937e7cff",
             "mtime": 1000,
             "ctime": 1000,
             "size": 0,

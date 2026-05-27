@@ -53,7 +53,7 @@ from hsync_client.lan_handler import run_lan_mode
 # Backward compatibility alias
 _run_lan_mode = run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
-from hsync_client.models.file import clear_md5_cache
+from hsync_client.models.file import clear_sha256_cache
 from hsync_client.models.sync_action import SyncActionName
 from hsync_client.retry import retry_on_connection_error
 from hsync_client.stdin_commands import StdinCommandHandler
@@ -88,8 +88,8 @@ def _run_preview(log) -> None:
     """
     log.info("--- Preview (dry-run) ---")
     try:
-        # Clear MD5 cache so every file is re-hashed with fresh content
-        clear_md5_cache()
+        # Clear SHA-256 cache so every file is re-hashed with fresh content
+        clear_sha256_cache()
 
         # Ensure empty directories have sentinel files
         ensure_hsynckeep_files()
@@ -117,22 +117,22 @@ def _run_preview(log) -> None:
             a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)
         ]
 
-        # Detect renames: DELETE + DOWNLOAD pairs with same md5sum and size.
+        # Detect renames: DELETE + DOWNLOAD pairs with same sha256sum and size.
         # When a file is renamed on the master, the client sees a delete of
         # the old path and a download of the new path.  If both share the
-        # same md5 checksum and size the operation is really just a rename.
+        # same sha256 checksum and size the operation is really just a rename.
         renames: list[tuple] = []  # (delete_action, download_action)
         if deletes and downloads:
             delete_by_hash: dict[tuple, list] = {}
             for action in deletes:
-                key = (action.file.md5sum, action.file.size or 0)
-                if key[0]:  # md5sum must be available
+                key = (action.file.sha256sum, action.file.size or 0)
+                if key[0]:  # sha256sum must be available
                     delete_by_hash.setdefault(key, []).append(action)
 
             matched_download_idx: set[int] = set()
             matched_delete_ids: set[int] = set()
             for i, dl_action in enumerate(downloads):
-                key = (dl_action.file.md5sum, dl_action.file.size or 0)
+                key = (dl_action.file.sha256sum, dl_action.file.size or 0)
                 if key[0] and key in delete_by_hash:
                     for del_action in delete_by_hash[key]:
                         if id(del_action) not in matched_delete_ids:

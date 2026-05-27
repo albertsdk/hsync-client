@@ -97,7 +97,7 @@ class TestGetSyncActions:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 100,
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -139,7 +139,7 @@ class TestGetSyncActions:
                 "mtime": mtime,
                 "ctime": mtime,
                 "size": 7,
-                "md5sum": local_file_dict["md5sum"],
+                "sha256sum": local_file_dict["sha256sum"],
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -165,7 +165,7 @@ class TestGetSyncActions:
                 "mtime": local_mtime + 1000,  # Remote is newer
                 "ctime": local_mtime + 1000,
                 "size": 7,
-                "md5sum": "different_md5",
+                "sha256sum": "different_sha256",
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -191,7 +191,7 @@ class TestGetSyncActions:
                 "mtime": local_mtime - 1000,  # Remote is older
                 "ctime": local_mtime - 1000,
                 "size": 7,
-                "md5sum": "different_md5",
+                "sha256sum": "different_sha256",
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -224,7 +224,7 @@ class TestGetSyncActions:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 0,
-                "md5sum": "d41d8cd98f00b204e9800998ecf8427e",
+                "sha256sum": "bb25b1c2b2a7427401c823a90904a759e2bd7425205b0702bca5e27e937e7cff",
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -316,7 +316,7 @@ class TestGetSyncActionsLanMode:
                 "mtime": 1000000,
                 "ctime": 1000000,
                 "size": 10,
-                "md5sum": "abc123",
+                "sha256sum": "abc123",
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -344,7 +344,7 @@ class TestGetSyncActionsLanMode:
                 "mtime": mtime,
                 "ctime": mtime,
                 "size": 7,
-                "md5sum": local_file_dict["md5sum"],
+                "sha256sum": local_file_dict["sha256sum"],
                 "permissions": "-rw-r--r--",
             }
         ]
@@ -372,7 +372,7 @@ class TestGetSyncActionsLanMode:
                 "mtime": local_mtime + 100,
                 "ctime": local_mtime + 100,
                 "size": 11,
-                "md5sum": "different",
+                "sha256sum": "different",
                 "permissions": "-rw-r--r--",
             }
         ]

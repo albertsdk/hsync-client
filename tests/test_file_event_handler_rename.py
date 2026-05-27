@@ -56,7 +56,7 @@ class TestHandleRenameEvent:
         # Use relative paths
         src = {
             "filepath": "source.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
@@ -64,7 +64,7 @@ class TestHandleRenameEvent:
         }
         dst = {
             "filepath": "dest.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
@@ -83,7 +83,7 @@ class TestHandleRenameEvent:
         """Downloads destination file when source doesn't exist."""
         src = {
             "filepath": "missing.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,
@@ -91,7 +91,7 @@ class TestHandleRenameEvent:
         }
         dst = {
             "filepath": "dest.txt",
-            "md5sum": "abc123",
+            "sha256sum": "abc123",
             "mtime": 1000,
             "ctime": 1000,
             "size": 7,

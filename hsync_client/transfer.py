@@ -34,7 +34,7 @@ from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.models.file import File
 from hsync_client.utils import (
     bytes_to_human_readable,
-    compute_md5,
+    compute_sha256,
     get_chunk_size,
     get_ssl_verify,
     get_throttle_delay,
@@ -168,18 +168,18 @@ def download_file(file: File) -> None:
     Download a file from the remote server with resume support.
 
     Streams the file to a partial file location (.part extension), verifies
-    MD5 checksum, then moves it to the final destination. Preserves timestamps
+    SHA-256 checksum, then moves it to the final destination. Preserves timestamps
     and permissions from the remote file.
 
     If a partial file exists from a previous interrupted download, resumes
     from where it left off using HTTP Range requests.
 
     Args:
-        file: File object with remote metadata (filepath, md5sum, etc.).
+        file: File object with remote metadata (filepath, sha256sum, etc.).
 
     Raises:
         DownloadError: If download fails.
-        ChecksumError: If MD5 checksum doesn't match.
+        ChecksumError: If SHA-256 checksum doesn't match.
         FileWriteError: If file cannot be saved locally.
     """
     # Validate required file attributes
@@ -272,6 +272,7 @@ def download_file(file: File) -> None:
         if exists(partial_file_path):
             remove(partial_file_path)
 
+    cleanup_partial = True
     try:
         # Check if response is compressed
         content_encoding = response.headers.get("Content-Encoding", "")
@@ -305,17 +306,19 @@ def download_file(file: File) -> None:
                     if delay > 0:
                         time_sleep(delay)
 
-        # Verify MD5 checksum of complete file
-        md5sum = compute_md5(partial_file_path)
-        if md5sum != file.md5sum:
+        # Verify SHA-256 checksum of complete file
+        sha256sum = compute_sha256(partial_file_path)
+        if sha256sum != file.sha256sum:
             log.error(
-                f'"{file.filepath}" (Invalid checksum: expected {file.md5sum}, {md5sum} given)'
+                f'"{file.filepath}" (Invalid checksum: expected {file.sha256sum}, {sha256sum} given)'
             )
-            # Keep partial file for potential manual inspection, but rename it
+            # Keep partial file for potential manual inspection
+            cleanup_partial = False
             return
 
         # Move partial file to final destination
         move(partial_file_path, full_save_path)
+        cleanup_partial = False
         log.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
         # Preserve timestamps from remote file
@@ -330,6 +333,10 @@ def download_file(file: File) -> None:
         log.error(f'Permission denied saving "{file.filepath}": {e}')
     except OSError as e:
         log.error(f'Error saving file "{file.filepath}": {e}')
+    finally:
+        if cleanup_partial and partial_file_path and exists(partial_file_path):
+            remove(partial_file_path)
+            log.debug(f"Cleaned up partial file: {partial_file_path}")
 
 
 # =============================================================================
@@ -391,13 +398,13 @@ def is_file_stable(file: File, interval: int | None = None) -> bool:
 # =============================================================================
 
 
-def _get_upload_status(filename: str, md5sum: str, size: int) -> tuple[str, int]:
+def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, int]:
     """
     Check upload status for resumable uploads.
 
     Args:
         filename: Path to the file within the bucket.
-        md5sum: Expected MD5 checksum of the complete file.
+        sha256sum: Expected SHA-256 checksum of the complete file.
         size: Total file size.
 
     Returns:
@@ -415,7 +422,7 @@ def _get_upload_status(filename: str, md5sum: str, size: int) -> tuple[str, int]
         response = get(
             uri,
             headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
-            params={"filename": filename, "md5sum": md5sum, "size": size},
+            params={"filename": filename, "sha256sum": sha256sum, "size": size},
             verify=get_ssl_verify(),
             timeout=CONFIG.get("HTTP_TIMEOUT", 30),
         )
@@ -433,7 +440,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
     If check_size is True, waits for the file to stop being written
     to before uploading. Sends file with metadata including timestamps,
-    MD5 checksum, and permissions.
+    SHA-256 checksum, and permissions.
 
     If a previous upload was interrupted, resumes from where it left off.
 
@@ -466,7 +473,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
         # Refresh file metadata after write is complete
         file.size = getsize(file.filepath)
-        file.md5sum = compute_md5(file.filepath)
+        file.sha256sum = compute_sha256(file.filepath)
 
         log.debug(f'Written file: "{file.filepath}" ({bytes_to_human_readable(file.size)})')
 
@@ -487,10 +494,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
             return
 
         # Check for resumable upload
-        if file.md5sum is None:
+        if file.sha256sum is None:
             status, offset = "new", 0
         else:
-            status, offset = _get_upload_status(filename, file.md5sum, file.size)
+            status, offset = _get_upload_status(filename, file.sha256sum, file.size)
 
         if status == "complete":
             log.debug(f'"{file.filepath}" (already present on server)')
@@ -509,7 +516,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             "ctime": file.ctime,
             "mtime": file.mtime,
             "size": file.size,
-            "md5sum": file.md5sum,
+            "sha256sum": file.sha256sum,
             "permissions": file.permissions,
             "offset": offset,
         }

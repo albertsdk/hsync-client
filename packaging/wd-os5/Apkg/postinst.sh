@@ -7,9 +7,7 @@
 # here. The hook is kept for symmetry with the OS5 lifecycle and to make
 # future migration logic (config schema bumps) trivial to add.
 
-set -u
-
 LOG=/tmp/debug_apkg
-echo "APKG_DEBUG: $0 $*" >> "$LOG"
+[ -f "$LOG" ] && echo "APKG_DEBUG: $0 $*" >> "$LOG"
 
 exit 0
