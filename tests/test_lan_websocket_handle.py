@@ -6,27 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hsync_client.lan_websocket import SlaveFileEventHandler, _escape_braces, _handle_lan_event
-
-
-class TestEscapeBraces:
-    """Tests for _escape_braces helper function."""
-
-    def test_escape_single_braces(self):
-        """Test escaping single curly braces."""
-        assert _escape_braces("test {value}") == "test {{value}}"
-
-    def test_escape_multiple_braces(self):
-        """Test escaping multiple curly braces."""
-        assert _escape_braces("{a} and {b}") == "{{a}} and {{b}}"
-
-    def test_no_braces(self):
-        """Test string without braces."""
-        assert _escape_braces("no braces here") == "no braces here"
-
-    def test_empty_string(self):
-        """Test empty string."""
-        assert _escape_braces("") == ""
+from hsync_client.lan_websocket import LANSlaveFileEventHandler, _handle_lan_event
 
 
 class TestHandleLanEvent:
@@ -53,8 +33,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
 
@@ -77,8 +57,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_dir") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
             await _handle_lan_event(event_data)
 
@@ -105,8 +85,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
 
@@ -144,7 +124,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # File should be renamed
@@ -176,7 +156,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # File should be deleted
@@ -207,7 +187,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": True,
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # File should still exist
@@ -234,8 +214,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
 
@@ -256,8 +236,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
 
@@ -285,8 +265,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
 
@@ -309,7 +289,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         assert not src_dir.exists()
@@ -336,7 +316,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash – just logs a warning
 
@@ -368,7 +348,7 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         # Neither file exists – no crash
@@ -392,7 +372,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         assert not target.exists()
@@ -423,7 +403,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
         assert not sentinel.exists()
@@ -449,11 +429,11 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        handler = SlaveFileEventHandler("host", 8765, use_https=False)
+        handler = LANSlaveFileEventHandler("host", 8765, use_https=False)
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file"),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file"),
         ):
             await _handle_lan_event(event_data, slave_handler=handler)
 
@@ -474,7 +454,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash
 
@@ -499,7 +479,7 @@ class TestHandleLanEvent:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.lan_websocket.CONFIG", config):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
         # Should not crash
 
@@ -526,8 +506,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
             mock_update.assert_not_called()
@@ -555,8 +535,8 @@ class TestHandleLanEvent:
         }
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file") as mock_update,
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
             await _handle_lan_event(event_data)
             mock_update.assert_called_once()
@@ -646,8 +626,8 @@ class TestEventLoopRemainsResponsive:
                 ticks.append(_time.monotonic())
 
         with (
-            patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("hsync_client.sync.update_file", side_effect=slow_update),
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.update_file", side_effect=slow_update),
         ):
             await asyncio.gather(_handle_lan_event(event_data), ticker())
 

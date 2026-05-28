@@ -15,16 +15,16 @@ from watchdog.events import (
     FileMovedEvent,
 )
 
-from hsync_client.lan_websocket import SlaveFileEventHandler
+from hsync_client.lan_websocket import LANSlaveFileEventHandler
 
 
 class TestSlaveFileEventHandler:
-    """Tests for SlaveFileEventHandler class."""
+    """Tests for LANSlaveFileEventHandler class."""
 
     @pytest.fixture
     def handler(self):
-        """Create a SlaveFileEventHandler instance."""
-        return SlaveFileEventHandler(
+        """Create a LANSlaveFileEventHandler instance."""
+        return LANSlaveFileEventHandler(
             master_host="192.168.1.100",
             master_port=8765,
             use_https=False,
@@ -32,7 +32,7 @@ class TestSlaveFileEventHandler:
 
     def test_handler_creation(self):
         """Test creating a client file event handler."""
-        handler = SlaveFileEventHandler("192.168.1.100", 8765, use_https=True)
+        handler = LANSlaveFileEventHandler("192.168.1.100", 8765, use_https=True)
         assert handler._master_host == "192.168.1.100"
         assert handler._master_port == 8765
         assert handler._use_https is True
