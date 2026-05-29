@@ -14,7 +14,7 @@ This module contains the core synchronization logic extracted from main.py.
 import contextlib
 import sys
 from asyncio import run
-from os.path import basename, exists
+from pathlib import Path
 from re import sub
 from typing import Any
 
@@ -317,24 +317,20 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
     _log = _logging.getLogger(__name__)
 
     try:
-        from os.path import exists as _exists
-
         from hsync_common.constants import HSYNCIGNORE_FILENAME
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
 
         class _HsyncignoreHandler(FileSystemEventHandler):
             def on_modified(self, event) -> None:  # type: ignore[override]
-                from os.path import basename as _basename
-
-                if _basename(event.src_path) == HSYNCIGNORE_FILENAME:
+                if Path(event.src_path).name == HSYNCIGNORE_FILENAME:
                     _log.debug(".hsyncignore changed — reloading ignore matcher")
                     matcher.reload()
 
             def on_created(self, event) -> None:  # type: ignore[override]
                 self.on_modified(event)
 
-        if not _exists(bucket_root):
+        if not Path(bucket_root).exists():
             return None
 
         observer = Observer()
@@ -461,7 +457,7 @@ def run_sync(
     log.info(f"HSYNC Client v{HSYNC_VERSION}")
 
     # Validate local directory exists
-    if not exists(local_path):
+    if not Path(local_path).exists():
         log.error(f"Directory '{local_path}' does not exist")
         return
 
@@ -516,7 +512,7 @@ def run_sync(
         "REQUEST_HEADERS": {
             "accept": "application/json",
             "Authorization": f"Bearer {resolved_api_key}",
-            "X-Client-Name": basename(__file__),
+            "X-Client-Name": Path(__file__).name,
             "X-Client-Version": HSYNC_VERSION,
         },
         "RECONNECT_DELAY": reconnect_delay,
@@ -565,12 +561,12 @@ def run_sync(
     _hsyncignore_observer = _start_hsyncignore_watcher(local_path, _matcher)
 
     # Check if local directory exists at startup
-    if not exists(local_path):
+    if not Path(local_path).exists():
         log.error(f"Local directory '{local_path}' does not exist")
         return
 
     # Check for file deletion risk before syncing
-    if not dryrun and exists(local_path):
+    if not dryrun and Path(local_path).exists():
         _check_deletion_risk(
             local_path=local_path,
             lan_mode=lan_mode,

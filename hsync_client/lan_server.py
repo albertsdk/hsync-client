@@ -27,7 +27,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from os import walk
-from os.path import exists, join
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger as log
@@ -453,7 +453,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from client."""
         from os import makedirs, rename
-        from os.path import dirname
 
         src_rel = query.get("src", [None])[0]
         dst_rel = query.get("dst", [None])[0]
@@ -468,15 +467,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         # Build full paths
-        src_path = join(local_bucket, src_rel)
-        dst_path = join(local_bucket, dst_rel)
+        src_path = str(Path(local_bucket) / src_rel)
+        dst_path = str(Path(local_bucket) / dst_rel)
 
         # Security check: ensure paths are within bucket
         try:
-            real_bucket = os.path.realpath(local_bucket)
-            real_src = os.path.realpath(src_path)
+            real_bucket = str(Path(local_bucket).resolve())
+            real_src = str(Path(src_path).resolve())
             # For dst, check parent since it doesn't exist yet
-            real_dst_parent = os.path.realpath(dirname(dst_path) or local_bucket)
+            real_dst_parent = str(Path(dst_path).parent.resolve())
             if not real_src.startswith(real_bucket) or not real_dst_parent.startswith(real_bucket):
                 self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
                 return
@@ -484,14 +483,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
-        if not exists(src_path):
+        if not Path(src_path).exists():
             self._send_error_response(HTTP_NOT_FOUND, "Source not found")
             return
 
         try:
             # Create parent directory if needed
-            dst_parent = dirname(dst_path)
-            if dst_parent and not exists(dst_parent):
+            dst_parent = str(Path(dst_path).parent)
+            if dst_parent and not Path(dst_parent).exists():
                 makedirs(dst_parent, exist_ok=True)
 
             # Mark both paths as inbound so the master's filesystem watcher
@@ -530,12 +529,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         # Build full path
-        full_path = join(local_bucket, rel_path)
+        full_path = str(Path(local_bucket) / rel_path)
 
         # Security check: ensure path is within bucket
         try:
-            real_bucket = os.path.realpath(local_bucket)
-            real_path = os.path.realpath(full_path)
+            real_bucket = str(Path(local_bucket).resolve())
+            real_path = str(Path(full_path).resolve())
             if not real_path.startswith(real_bucket):
                 self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
                 return
@@ -543,7 +542,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
-        if not exists(full_path):
+        if not Path(full_path).exists():
             # Already deleted, return success
             self._send_json_response(HTTP_OK, {"info": "File already deleted"})
             return
@@ -563,8 +562,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             else:
                 log.info(f"Deleting file from client request: {full_path}")
                 os.remove(full_path)
-                parent = os.path.dirname(full_path)
-                if os.path.basename(full_path) == HSYNCKEEP_FILENAME:
+                parent = str(Path(full_path).parent)
+                if Path(full_path).name == HSYNCKEEP_FILENAME:
                     # Sentinel removed — clean up the now-empty directory
                     self._cleanup_empty_dir(parent)
                 else:
@@ -584,8 +583,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         After a file is deleted the parent directory may become empty.
         Placing a sentinel preserves the directory structure during sync.
         """
-        parent = os.path.dirname(deleted_file)
-        if not parent or not exists(parent) or not os.path.isdir(parent):
+        parent = str(Path(deleted_file).parent)
+        if not parent or not Path(parent).exists() or not Path(parent).is_dir():
             return
         try:
             entries = os.listdir(parent)
@@ -594,8 +593,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         has_syncable = any(not is_hidden_file(e) for e in entries)
         if has_syncable:
             return
-        sentinel = join(parent, HSYNCKEEP_FILENAME)
-        if not exists(sentinel):
+        sentinel = str(Path(parent) / HSYNCKEEP_FILENAME)
+        if not Path(sentinel).exists():
             try:
                 open(sentinel, "w").close()  # noqa: SIM115
                 log.debug(f'Created sentinel "{sentinel}"')
@@ -612,7 +611,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         """
         from hsync_client.utils import safe_rmdir_if_empty
 
-        if not dir_path or not exists(dir_path) or not os.path.isdir(dir_path):
+        if not dir_path or not Path(dir_path).exists() or not Path(dir_path).is_dir():
             return
         if safe_rmdir_if_empty(dir_path):
             log.debug(f'Removed empty directory "{dir_path}"')
@@ -636,7 +635,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         filter_path = query.get("path", [None])[0]
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
-        if not local_bucket or not exists(local_bucket):
+        if not local_bucket or not Path(local_bucket).exists():
             self._send_error_response(HTTP_NOT_FOUND, "Bucket not found")
             return
 
@@ -650,7 +649,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 if is_hidden_file(file):
                     continue
 
-                file_obj = File.get(join(root, file))
+                file_obj = File.get(str(Path(root) / file))
                 if file_obj:
                     file_dict = file_obj.to_dict()
                     # Normalize path to be relative to bucket (like server does)
@@ -725,19 +724,17 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         # Build full path - filename is relative to bucket
         if filename.startswith("/"):
-            filepath = join(local_bucket, filename.lstrip("/"))
+            filepath = str(Path(local_bucket) / filename.lstrip("/"))
         else:
-            filepath = join(local_bucket, filename)
+            filepath = str(Path(local_bucket) / filename)
 
-        if not exists(filepath):
+        if not Path(filepath).exists():
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
 
         # Security check: ensure file is within bucket
-        import os.path
-
-        real_bucket = os.path.realpath(local_bucket)
-        real_file = os.path.realpath(filepath)
+        real_bucket = str(Path(local_bucket).resolve())
+        real_file = str(Path(filepath).resolve())
         if not real_file.startswith(real_bucket):
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
@@ -865,12 +862,12 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             path = form_fields.get("path", "")
             is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
 
-            dest_dir = join(local_bucket, path) if path else local_bucket
+            dest_dir = str(Path(local_bucket) / path) if path else local_bucket
             os.makedirs(dest_dir, exist_ok=True)
-            dest_path_local = join(dest_dir, filename)
+            dest_path_local = str(Path(dest_dir) / filename)
 
-            real_bucket = os.path.realpath(local_bucket)
-            real_dest = os.path.realpath(dest_path_local)
+            real_bucket = str(Path(local_bucket).resolve())
+            real_dest = str(Path(dest_path_local).resolve())
             if not real_dest.startswith(real_bucket):
                 raise PermissionError("Access denied")
 
@@ -950,7 +947,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 self._send_error_response_safe(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
         finally:
             # Cleanup tmp file on failure
-            if tmp_path and exists(tmp_path):
+            if tmp_path and Path(tmp_path).exists():
                 try:
                     os.remove(tmp_path)
                 except OSError:
