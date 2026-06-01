@@ -863,7 +863,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
 
             dest_dir = str(Path(local_bucket) / path) if path else local_bucket
-            os.makedirs(dest_dir, exist_ok=True)
+            Path(dest_dir).mkdir(parents=True, exist_ok=True)
             dest_path_local = str(Path(dest_dir) / filename)
 
             real_bucket = str(Path(local_bucket).resolve())
