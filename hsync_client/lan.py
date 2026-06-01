@@ -205,7 +205,21 @@ class PeerManager:
         self._peers: dict[str, Peer] = {}
         self._lock = threading.Lock()
         self._master_cid: str | None = None
+        self._local_server_ready = False
         self._on_master_change: Callable[[Peer | None], None] | None = None
+
+    def set_local_server_ready(self, ready: bool) -> None:
+        """Mark the local node as actively serving (incumbent master).
+
+        A node that is already serving its bucket wins master election over
+        newcomers (even ``force_master`` ones), preventing takeover and
+        split-brain for the same bucket.
+        """
+        with self._lock:
+            if self._local_server_ready == ready:
+                return
+            self._local_server_ready = ready
+            self._elect_master()
 
     @property
     def local_cid(self) -> str:
@@ -326,41 +340,57 @@ class PeerManager:
         Elect the master peer.
 
         Election priority (highest to lowest):
-        1. force_master flag (if set, that peer wins)
-        2. Bidirectional sync_direction preference (bidirectional wins)
-        3. Earliest startup_time (first started wins)
-        4. Lowest CID lexicographically (tiebreaker)
+        1. server_ready flag (an already-serving incumbent master wins;
+           prevents takeover and split-brain for the same bucket)
+        2. force_master flag (if set, that peer wins)
+        3. Bidirectional sync_direction preference (bidirectional wins)
+        4. Earliest startup_time (first started wins)
+        5. Lowest CID lexicographically (tiebreaker)
 
         This includes the local client in the election.
         """
         # Build list of candidates with their election criteria
-        # Each candidate: (cid, force_master, startup_time, sync_direction)
-        candidates: list[tuple[str, bool, float, str]] = [
-            (self._local_cid, self._force_master, self._startup_time, self._sync_direction)
+        # Each candidate: (cid, force_master, startup_time, sync_direction, server_ready)
+        candidates: list[tuple[str, bool, float, str, bool]] = [
+            (
+                self._local_cid,
+                self._force_master,
+                self._startup_time,
+                self._sync_direction,
+                self._local_server_ready,
+            )
         ]
 
         for peer in self._peers.values():
             if peer.is_alive():
                 candidates.append(
-                    (peer.cid, peer.force_master, peer.startup_time, peer.sync_direction)
+                    (
+                        peer.cid,
+                        peer.force_master,
+                        peer.startup_time,
+                        peer.sync_direction,
+                        peer.server_ready,
+                    )
                 )
 
         if not candidates:
             new_master_cid = None
         else:
-            # Sort by: force_master (desc), bidirectional preference,
-            #          startup_time (asc), cid (asc)
+            # Sort by: server_ready (desc), force_master (desc),
+            #          bidirectional preference, startup_time (asc), cid (asc)
+            # not server_ready: False=0 < True=1, so an incumbent master wins
             # not force_master: False=0 < True=1, so force_master=True first
             # sync_direction != "bidirectional": False=0 < True=1,
             #   so bidirectional peers come first
-            candidates.sort(key=lambda c: (not c[1], c[3] != "bidirectional", c[2], c[0]))
+            candidates.sort(key=lambda c: (not c[4], not c[1], c[3] != "bidirectional", c[2], c[0]))
             new_master_cid = candidates[0][0]
 
         # Detect force_master conflicts
         force_master_candidates = [c for c in candidates if c[1]]
         if len(force_master_candidates) > 1:
             winner_cid = force_master_candidates[0][0]
-            for loser_cid, _, _, _ in force_master_candidates[1:]:
+            for loser in force_master_candidates[1:]:
+                loser_cid = loser[0]
                 loser_peer = self._peers.get(loser_cid)
                 winner_peer = self._peers.get(winner_cid)
                 if loser_cid == self._local_cid:
@@ -778,6 +808,10 @@ class LANSync:
 
         # Re-register with server_ready=true
         self._register_service(server_ready=True)
+        # Mark ourselves as incumbent so the election won't hand the master
+        # role to a newcomer (prevents takeover/split-brain on this bucket).
+        if self._peer_manager:
+            self._peer_manager.set_local_server_ready(True)
         log.info("Updated mDNS service: server_ready=true")
 
     def stop(self) -> None:

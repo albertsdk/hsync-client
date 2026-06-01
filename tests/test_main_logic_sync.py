@@ -388,7 +388,10 @@ class TestRunSync:
         os.write(w_fd, b"my-secret-key\n")
         os.close(w_fd)
 
-        kwargs = _default_run_sync_kwargs(tmp_path, api_key_fd=r_fd)
+        # An API key is only transmitted over HTTPS, so use an https:// URL.
+        kwargs = _default_run_sync_kwargs(
+            tmp_path, api_key_fd=r_fd, server_url="https://localhost:8000"
+        )
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
@@ -404,6 +407,31 @@ class TestRunSync:
             # set_config should have been called with config containing the key
             config_arg = mock_set_cfg.call_args[0][0]
             assert "my-secret-key" in config_arg["REQUEST_HEADERS"]["Authorization"]
+
+    def test_api_key_over_http_aborts(self, tmp_path):
+        """run_sync refuses to send an API key over an unencrypted http:// URL."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b"my-secret-key\n")
+        os.close(w_fd)
+
+        kwargs = _default_run_sync_kwargs(
+            tmp_path, api_key_fd=r_fd, server_url="http://localhost:8000"
+        )
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch("hsync_client.main_logic.run"),
+        ):
+            mock_logger = MagicMock()
+            mock_log_setup.return_value = mock_logger
+            run_sync(**kwargs)
+            # Aborted before configuring: set_config is never called
+            mock_set_cfg.assert_not_called()
+            assert any("not HTTPS" in str(c) for c in mock_logger.error.call_args_list)
 
     def test_env_file_loading_failure(self, tmp_path):
         """run_sync exits when env file is not found."""
