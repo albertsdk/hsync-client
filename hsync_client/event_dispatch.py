@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from os import makedirs, remove, rename, unlink
+from os import remove, rename, unlink
 from os import symlink as os_symlink
 from pathlib import Path
 from shutil import rmtree
@@ -192,7 +192,7 @@ async def _rename_path(
             log.info(f'{_tag(ctx.log_prefix, "RENAME")} "{src_path}" -> "{dst_path}"')
             parent = str(Path(dst_path).parent)
             if parent and not Path(parent).exists():
-                makedirs(parent, exist_ok=True)
+                Path(parent).mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(rename, src_path, dst_path)
         elif ctx.recover_on_missing_rename_src:
             log.warning(f'Cannot rename: "{src_path}" -> "{dst_path}"')
@@ -258,7 +258,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
         )
         parent = str(Path(link.filepath).parent)
         if not Path(parent).exists():
-            makedirs(parent, exist_ok=True)
+            Path(parent).mkdir(parents=True, exist_ok=True)
         if Path(link.filepath).is_symlink() or Path(link.filepath).exists():
             unlink(link.filepath)
         await asyncio.to_thread(os_symlink, target, link.filepath)

@@ -11,7 +11,7 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
-from os import makedirs, remove, utime
+from os import remove, utime
 from pathlib import Path
 from shutil import move
 from time import sleep as time_sleep
@@ -183,7 +183,7 @@ def download_file(file: File) -> None:
     # Prepare destination directory and partial file path
     relative_dir = str(Path(file.filepath).parent)
     dest_dir = str(Path(CONFIG["LOCAL_BUCKET"]) / relative_dir.lstrip("/"))
-    makedirs(dest_dir, exist_ok=True)
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
 
     full_save_path = str(Path(dest_dir) / file.name.lstrip("/"))
     partial_file_path = f"{full_save_path}.part"

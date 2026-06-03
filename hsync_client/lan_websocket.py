@@ -302,11 +302,9 @@ class LANWebSocketServer:
 
         # Ensure watch_path exists: watchdog raises FileNotFoundError otherwise.
         # This can happen when the bucket has been emptied or removed externally.
-        from os import makedirs
-
         if not Path(watch_path).exists():
             log.warning(f"Watch path '{watch_path}' does not exist, creating it")
-            makedirs(watch_path, exist_ok=True)
+            Path(watch_path).mkdir(parents=True, exist_ok=True)
 
         self._event_handler = LANMasterFileEventHandler(self)
         observer = Observer()
@@ -458,11 +456,9 @@ async def lan_websocket_client(
 
     # Ensure watch_path exists: watchdog raises FileNotFoundError otherwise.
     # This can happen when the bucket has been emptied or removed externally.
-    from os import makedirs
-
     if not Path(watch_path).exists():
         log.warning(f"Watch path '{watch_path}' does not exist, creating it")
-        makedirs(watch_path, exist_ok=True)
+        Path(watch_path).mkdir(parents=True, exist_ok=True)
 
     observer.schedule(_slave_event_handler, watch_path, recursive=True)
     observer.start()
