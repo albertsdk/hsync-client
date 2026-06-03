@@ -82,7 +82,7 @@ class TestEventQueue:
 
         assert queue.websocket == mock_websocket
         assert queue.queue.empty()
-        assert len(queue.failed_events) == 0
+        assert queue._pending_retry is None
         assert queue._running is False
 
     @pytest.mark.asyncio
@@ -119,29 +119,33 @@ class TestEventQueue:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_retry_failed_events(self, mock_websocket):
-        """Test retry of failed events when backoff expires."""
+    async def test_pending_retry_blocks_newer_events(self, mock_websocket):
+        """A failed event held for retry blocks newer events until ready."""
         queue = EventQueue(mock_websocket)
 
-        # Add event with expired backoff
-        expired_event = QueuedEvent(data={"name": "test"})
-        expired_event.retry_count = 1
-        expired_event.next_retry_time = time() - 10  # In the past
-        queue.failed_events.append(expired_event)
+        # A newer event is already waiting in the queue...
+        await queue.enqueue({"name": "newer"})
 
-        # Add event with future backoff
-        future_event = QueuedEvent(data={"name": "future"})
-        future_event.retry_count = 1
-        future_event.next_retry_time = time() + 100  # In the future
-        queue.failed_events.append(future_event)
+        # ...but a failed event is pending with a not-yet-elapsed backoff.
+        pending = QueuedEvent(data={"name": "pending"})
+        pending.retry_count = 1
+        pending.next_retry_time = time() + 100  # not ready yet
+        queue._pending_retry = pending
 
-        await queue._retry_failed_events()
+        # While the pending event is not ready, nothing is returned: the
+        # newer event must not overtake it.
+        assert await queue._next_event() is None
+        assert queue._pending_retry is pending
 
-        # Expired event should be moved to queue
-        assert not queue.queue.empty()
-        # Future event should still be in failed_events
-        assert len(queue.failed_events) == 1
-        assert queue.failed_events[0].data["name"] == "future"
+        # Once the backoff elapses, the pending event is returned first.
+        pending.next_retry_time = time() - 1
+        event = await queue._next_event()
+        assert event is pending
+        assert queue._pending_retry is None
+
+        # Only afterwards is the newer queued event delivered.
+        event = await queue._next_event()
+        assert event.data["name"] == "newer"
 
     def test_stop(self, mock_websocket):
         """Test stopping the queue."""
@@ -169,23 +173,24 @@ class TestEventQueue:
         mock_websocket.send.assert_called()
 
     @pytest.mark.asyncio
-    async def test_process_retries_failed_event(self, mock_websocket):
-        """Test that failed events are retried with backoff."""
-        # First call fails, second succeeds
-        mock_websocket.send = AsyncMock(side_effect=[Exception("fail"), None])
+    async def test_failed_event_is_held_for_retry(self, mock_websocket):
+        """A failed send holds the event for retry instead of dropping it."""
+        mock_websocket.send = AsyncMock(side_effect=Exception("fail"))
         queue = EventQueue(mock_websocket)
 
         await queue.enqueue({"name": "added"})
 
-        # Run process briefly
+        # Run process briefly (less than the 1s backoff, so it stays pending).
         async def run_and_stop():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
             queue.stop()
 
         await asyncio.gather(queue.process(), run_and_stop())
 
-        # Event should have been added to failed_events
-        # (may or may not still be there depending on timing)
+        # Event failed once and is now awaiting retry, not silently dropped.
+        assert queue._pending_retry is not None
+        assert queue._pending_retry.data["name"] == "added"
+        assert queue._pending_retry.retry_count == 1
 
     @pytest.mark.asyncio
     async def test_process_drops_after_max_retries(self, mock_websocket):
@@ -193,11 +198,14 @@ class TestEventQueue:
         mock_websocket.send = AsyncMock(side_effect=Exception("always fail"))
         queue = EventQueue(mock_websocket)
 
-        # Create event that has already failed MAX_RETRIES times
-        event = QueuedEvent(data={"name": "doomed"})
+        # Model the real flow: a held event always originates from a
+        # queue.get(), so the queue has one unfinished task to balance the
+        # final task_done() on drop.
+        await queue.enqueue({"name": "doomed"})
+        event = await queue.queue.get()
         event.retry_count = MAX_RETRIES
-        event.next_retry_time = 0  # Ready to retry now
-        queue.failed_events.append(event)
+        event.next_retry_time = 0  # Ready to retry immediately
+        queue._pending_retry = event
 
         # Run process briefly
         async def run_and_stop():
@@ -206,4 +214,5 @@ class TestEventQueue:
 
         await asyncio.gather(queue.process(), run_and_stop())
 
-        # Event should be dropped (not in failed_events anymore after processing)
+        # The doomed event is dropped and no longer held.
+        assert queue._pending_retry is None
