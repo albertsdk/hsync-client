@@ -8,6 +8,7 @@ import pytest
 
 from hsync_client.validators import (
     valid_bucket,
+    valid_bucket_path,
     valid_max_wait_timeout,
     valid_reconnect_delay,
     valid_resync,
@@ -109,6 +110,26 @@ class TestValidBucket:
         """Test bucket names with spaces are rejected."""
         with pytest.raises(ArgumentTypeError, match="must be alphanumeric"):
             valid_bucket("my bucket")
+
+
+class TestValidBucketPath:
+    """Tests for valid_bucket_path function."""
+
+    def test_plain_path_accepted(self):
+        """A normal relative path is accepted and returned unchanged."""
+        assert valid_bucket_path("my/bucket/dir") == "my/bucket/dir"
+
+    def test_double_dots_in_name_accepted(self):
+        """Directory names that merely embed '..' must not be rejected."""
+        assert valid_bucket_path("my..backup") == "my..backup"
+        assert valid_bucket_path("data/v1..2") == "data/v1..2"
+
+    def test_traversal_rejected(self):
+        """Genuine parent-directory traversal must still be rejected."""
+        with pytest.raises(ArgumentTypeError, match="traversal sequence"):
+            valid_bucket_path("../secret")
+        with pytest.raises(ArgumentTypeError, match="traversal sequence"):
+            valid_bucket_path("foo/../../bar")
 
 
 class TestValidMaxWaitTimeout:

@@ -15,6 +15,8 @@ from argparse import ArgumentTypeError
 from collections.abc import Callable
 from pathlib import Path
 
+from hsync_common.path_validation import has_dotdot_component
+
 from hsync_client.constants import (
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
@@ -237,8 +239,9 @@ def valid_bucket_path(value: str) -> str:
     # Normalize the path to resolve any .. or . components
     normalized = normpath(value)
 
-    # Check for path traversal attempts
-    if ".." in normalized:
+    # Check for path traversal attempts (".." as a component, not substring,
+    # so legitimate names like "my..backup" are not rejected)
+    if has_dotdot_component(normalized):
         raise ArgumentTypeError(
             "Path contains invalid traversal sequence (..). "
             "Paths outside the bucket directory are not allowed."
@@ -253,30 +256,6 @@ def valid_bucket_path(value: str) -> str:
     return value
 
 
-def validate_path_safe(path: str, base_dir: str) -> bool:
-    """
-    Validate that a path is safe and within the base directory.
-
-    This is a runtime security check to prevent path traversal attacks.
-    It verifies that the resolved path is within the specified base directory.
-
-    Args:
-        path: The path to validate.
-        base_dir: The base directory that the path should be within.
-
-    Returns:
-        True if the path is safe, False otherwise.
-    """
-    try:
-        base = Path(base_dir).resolve()
-        target = (Path(base_dir) / path).resolve()
-
-        # Ensure the resolved path is within the base directory
-        return target.is_relative_to(base)
-    except (ValueError, OSError):
-        return False
-
-
 __all__ = [
     "create_int_range_validator",
     "valid_reconnect_delay",
@@ -286,5 +265,4 @@ __all__ = [
     "valid_http_timeout",
     "valid_max_wait_timeout",
     "valid_bucket_path",
-    "validate_path_safe",
 ]
