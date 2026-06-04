@@ -56,6 +56,7 @@ ENDPOINT_TIME = f"{API_PREFIX}/time"
 ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
 ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
+ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
 
 # Content Types
 CONTENT_TYPE_JSON = "application/json"
@@ -401,6 +402,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._handle_download(query)
             return
 
+        # Tombstones: /api/v1/buckets/{bucket}/tombstones
+        if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_tombstones()
+            return
+
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
 
     def do_POST(self) -> None:
@@ -410,6 +416,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
+
+        # Tombstone gossip (slave -> master): /api/v1/buckets/{bucket}/tombstones
+        if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_tombstones_merge()
+            return
 
         # Upload file: /api/v1/buckets/{bucket}/files
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
@@ -666,6 +677,47 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         file_list.sort(key=lambda x: x.get("mtime", 0))
 
         self._send_json_response(HTTP_OK, file_list)
+
+    def _handle_tombstones(self) -> None:
+        """Serve this peer's deletion markers so slaves avoid resurrection."""
+        from hsync_client.tombstones import get_payload
+
+        try:
+            self._send_json_response(HTTP_OK, get_payload())
+        except Exception as e:  # pragma: no cover - defensive
+            log.error(f"Error serving tombstones: {e}")
+            self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading tombstones")
+
+    def _handle_tombstones_merge(self) -> None:
+        """Merge a slave-pushed tombstone payload into the local store (gossip up).
+
+        Lets a peer that holds deletion markers the current master lacks (e.g.
+        accumulated while it was a former master) propagate them, so a freshly
+        elected master converges to the union of known deletions.
+        """
+        from hsync_client.tombstones import merge_payload
+
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid Content-Length")
+            return
+        if content_length <= 0:
+            self._send_json_response(HTTP_OK, {"merged": 0})
+            return
+
+        try:
+            raw = self.rfile.read(content_length)
+            payload = json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid JSON body")
+            return
+        if not isinstance(payload, dict):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid tombstone payload")
+            return
+
+        merged = merge_payload(payload)
+        self._send_json_response(HTTP_OK, {"merged": merged})
 
     def _parse_range_header(self, range_header: str, file_size: int) -> tuple[int, int] | None:
         """

@@ -23,9 +23,9 @@ from sys import exc_info
 from traceback import print_tb
 from typing import cast
 
-from hsync_common.models.tombstone import tombstone_key
+from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
 from loguru import logger as log
-from requests import RequestException, get
+from requests import RequestException, get, post
 
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
@@ -119,6 +119,18 @@ async def sync(lan_mode: bool = False) -> None:
         # Fetch deletion markers so files deleted while this peer was offline
         # are not resurrected during the full reconciliation below.
         tombstones = get_tombstones_remote()
+
+        # In LAN mode the master is elected and can change, so each peer keeps
+        # its own persistent store and gossips it: merge the master's markers
+        # into our store, decide using the accumulated union, then push our
+        # union back so a freshly elected master converges to all deletions.
+        if lan_mode:
+            from hsync_client.tombstones import get_payload, merge_payload
+
+            merge_payload(tombstones)
+            union = get_payload()
+            push_tombstones_remote(union)
+            tombstones = cast("dict[str, dict]", union)
 
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(
@@ -532,6 +544,39 @@ def get_tombstones_remote() -> dict[str, dict]:
             message=f"Error downloading tombstones: {e}",
             details={"url": uri},
         )
+
+
+def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
+    """
+    Push this peer's deletion markers to the current LAN master (gossip up).
+
+    Best-effort by design: a master that does not expose the endpoint (older
+    version), an empty payload, or any transport/HTTP failure is swallowed so
+    the rest of the sync proceeds unchanged. This is only used in LAN mode,
+    where every peer persists its own store and a freshly elected master must
+    converge to the union of all known deletions.
+
+    Args:
+        payload: Mapping of hashed path to tombstone entry to send.
+    """
+    if not payload:
+        return
+
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/tombstones"
+    try:
+        if not verify_master_fingerprint(uri):
+            log.debug("Skipping tombstone push: fingerprint verification failed")
+            return
+
+        post(
+            uri,
+            json=cast(dict, dict(payload)),
+            headers=cast(dict, CONFIG["REQUEST_HEADERS"]),
+            verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+        )
+    except RequestException as e:
+        log.debug(f"Tombstone push failed (non-fatal): {e}")
 
 
 # =============================================================================

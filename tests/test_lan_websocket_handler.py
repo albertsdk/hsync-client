@@ -188,6 +188,77 @@ class TestLANFileEventHandler:
             # Should broadcast the event
             ws_server.broadcast_sync.assert_called_once()
 
+    def test_on_deleted_file_records_tombstone(self, handler, ws_server, tmp_path):
+        """The master chokepoint records a deletion marker for a removed file."""
+        from hsync_common.models.tombstone import tombstone_key
+
+        from hsync_client import tombstones as ts_mod
+
+        event = FileDeletedEvent(str(tmp_path / "deleted.txt"))
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.tombstones.CONFIG", config),
+        ):
+            ts_mod.reset_cache()
+            handler.on_deleted(event)
+
+            assert tombstone_key("deleted.txt") in ts_mod.get_payload()
+            ts_mod.reset_cache()
+
+    def test_on_deleted_directory_records_nothing(self, handler, ws_server, tmp_path):
+        """A directory deletion carries no content hash and records no tombstone."""
+        from hsync_client import tombstones as ts_mod
+
+        event = DirDeletedEvent(str(tmp_path / "mydir"))
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.tombstones.CONFIG", config),
+        ):
+            ts_mod.reset_cache()
+            handler.on_deleted(event)
+
+            assert ts_mod.get_payload() == {}
+            ts_mod.reset_cache()
+
+    def test_on_file_ready_clears_tombstone(self, handler, ws_server, tmp_path):
+        """Re-creating a file clears any prior deletion marker for that path."""
+        from hsync_client import tombstones as ts_mod
+        from hsync_client.models.file import File
+
+        target = tmp_path / "back.txt"
+        target.write_text("content")
+        config = {
+            "CID": "c",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "r",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.tombstones.CONFIG", config),
+        ):
+            ts_mod.reset_cache()
+            ts_mod.record_deletion(str(target), sha256sum="old", timestamp=1000)
+
+            handler._on_file_ready(File(str(target)), str(target))
+
+            assert ts_mod.get_payload() == {}
+            ts_mod.reset_cache()
+
     def test_on_deleted_ignore_delete_mode(self, handler, ws_server, tmp_path):
         """Test that deletions are ignored in ignore-delete mode."""
         test_file = tmp_path / "deleted.txt"

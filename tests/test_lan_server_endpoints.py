@@ -8,7 +8,9 @@ from http.client import HTTPConnection
 from unittest.mock import patch
 
 import pytest
+from hsync_common.models.tombstone import tombstone_key
 
+from hsync_client import tombstones as ts_mod
 from hsync_client.lan import get_free_port
 from hsync_client.lan_server import LANServer
 
@@ -978,3 +980,126 @@ class TestLANServerEdgeCases:
         """Test stopping a not running server is safe."""
         server = LANServer(port=9999)
         server.stop()  # Should not raise
+
+
+class TestLANRequestHandlerTombstones:
+    """Tests for the tombstone gossip endpoints (GET serve + POST merge)."""
+
+    @pytest.fixture
+    def server(self):
+        """Create and start a test server."""
+        port = get_free_port()
+        server = LANServer(port=port)
+        server.start()
+        time.sleep(0.1)
+        yield server, port
+        server.stop()
+
+    def test_get_empty_returns_empty_object(self, server, tmp_path):
+        """With no recorded deletions the endpoint serves an empty mapping."""
+        srv, port = server
+
+        with (
+            patch(
+                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            ),
+            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ts_mod.reset_cache()
+            conn = HTTPConnection("localhost", port, timeout=5)
+            conn.request("GET", "/api/v1/buckets/test/tombstones")
+            response = conn.getresponse()
+
+            assert response.status == 200
+            assert json.loads(response.read().decode()) == {}
+            conn.close()
+            ts_mod.reset_cache()
+
+    def test_get_serves_recorded_tombstones(self, server, tmp_path):
+        """A locally recorded deletion is returned by the GET endpoint."""
+        srv, port = server
+        ts = int(time.time())
+
+        with (
+            patch(
+                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            ),
+            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ts_mod.reset_cache()
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=ts)
+
+            conn = HTTPConnection("localhost", port, timeout=5)
+            conn.request("GET", "/api/v1/buckets/test/tombstones")
+            response = conn.getresponse()
+
+            assert response.status == 200
+            data = json.loads(response.read().decode())
+            assert data[tombstone_key("gone.txt")] == {"ts": ts, "sha256": "abc"}
+            conn.close()
+            ts_mod.reset_cache()
+
+    def test_post_merges_pushed_payload(self, server, tmp_path):
+        """A pushed payload is merged and then visible through the GET endpoint."""
+        import requests
+
+        srv, port = server
+        key = tombstone_key("pushed.txt")
+        ts = int(time.time())
+
+        with (
+            patch(
+                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            ),
+            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ts_mod.reset_cache()
+            url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
+            payload = {key: {"ts": ts, "sha256": "def"}}
+
+            response = requests.post(url, json=payload, timeout=5)
+            assert response.status_code == 200
+            assert response.json()["merged"] == 1
+
+            # The merged marker is now served back.
+            assert ts_mod.get_payload()[key] == {"ts": ts, "sha256": "def"}
+            ts_mod.reset_cache()
+
+    def test_post_empty_body_merges_nothing(self, server, tmp_path):
+        """An empty body is accepted and merges zero entries."""
+        import requests
+
+        srv, port = server
+
+        with (
+            patch(
+                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            ),
+            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ts_mod.reset_cache()
+            url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
+            response = requests.post(url, data=b"", timeout=5)
+
+            assert response.status_code == 200
+            assert response.json()["merged"] == 0
+            ts_mod.reset_cache()
+
+    def test_post_invalid_json_returns_400(self, server, tmp_path):
+        """A malformed body is rejected with a 400."""
+        import requests
+
+        srv, port = server
+
+        with (
+            patch(
+                "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None}
+            ),
+            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ts_mod.reset_cache()
+            url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
+            response = requests.post(url, data=b"not-json", timeout=5)
+
+            assert response.status_code == 400
+            ts_mod.reset_cache()

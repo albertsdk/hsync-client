@@ -7,10 +7,12 @@
 """Tests for local file operations in sync module."""
 
 import os
+import time
 from unittest.mock import patch
 
 from hsync_common.models.tombstone import tombstone_key
 
+from hsync_client import tombstones as ts_mod
 from hsync_client.models.file import File
 from hsync_client.models.sync_action import SyncActionName
 from hsync_client.sync import (
@@ -18,6 +20,7 @@ from hsync_client.sync import (
     _tombstone_deletes_local,
     get_files_local,
     get_sync_actions,
+    push_tombstones_remote,
 )
 
 
@@ -582,3 +585,133 @@ class TestGetSyncActionsTombstones:
             result = get_sync_actions([], local_files, tombstones={})
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
+
+
+class TestClientTombstonesModule:
+    """Tests for the per-peer tombstone store (hsync_client.tombstones)."""
+
+    def test_record_then_payload_uses_hashed_key(self, tmp_path):
+        """A recorded deletion appears in the payload under its hashed key."""
+        ts = int(time.time())
+        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ts_mod.reset_cache()
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=ts)
+
+            payload = ts_mod.get_payload()
+            key = tombstone_key("gone.txt")
+            assert key in payload
+            assert payload[key] == {"ts": ts, "sha256": "abc"}
+            ts_mod.reset_cache()
+
+    def test_record_persists_and_reloads(self, tmp_path):
+        """The marker survives a cache reset by being read back from the side-car."""
+        ts = int(time.time())
+        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ts_mod.reset_cache()
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=ts)
+            # Drop the in-memory cache so the next access loads from disk.
+            ts_mod.reset_cache()
+
+            assert tombstone_key("gone.txt") in ts_mod.get_payload()
+            ts_mod.reset_cache()
+
+    def test_clear_removes_marker(self, tmp_path):
+        """clear_deletion drops a previously recorded marker."""
+        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ts_mod.reset_cache()
+            ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=1000)
+            ts_mod.clear_deletion(str(tmp_path / "gone.txt"))
+
+            assert ts_mod.get_payload() == {}
+            ts_mod.reset_cache()
+
+    def test_merge_payload_lww(self, tmp_path):
+        """merge_payload adds newer remote markers and reports the change count."""
+        now = int(time.time())
+        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ts_mod.reset_cache()
+            ts_mod.record_deletion(str(tmp_path / "a.txt"), sha256sum="a", timestamp=now)
+
+            key_a = tombstone_key("a.txt")
+            key_b = tombstone_key("b.txt")
+            remote = {
+                key_a: {"ts": now + 1000, "sha256": "a2"},  # newer wins
+                key_b: {"ts": now - 1000, "sha256": "b"},  # new entry
+            }
+            changed = ts_mod.merge_payload(remote)
+
+            payload = ts_mod.get_payload()
+            assert changed == 2
+            assert payload[key_a] == {"ts": now + 1000, "sha256": "a2"}
+            assert payload[key_b] == {"ts": now - 1000, "sha256": "b"}
+            ts_mod.reset_cache()
+
+    def test_record_outside_bucket_is_noop(self, tmp_path):
+        """A path that does not resolve inside the bucket records nothing."""
+        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ts_mod.reset_cache()
+            # The bucket root itself has an empty relative path.
+            ts_mod.record_deletion(str(tmp_path), sha256sum="abc", timestamp=1000)
+
+            assert ts_mod.get_payload() == {}
+            ts_mod.reset_cache()
+
+
+class TestPushTombstonesRemote:
+    """Tests for the best-effort gossip-up push helper."""
+
+    _CONFIG = {
+        "API": {"buckets": "https://master/api/v1/buckets"},
+        "REMOTE_BUCKET": "remote",
+        "REQUEST_HEADERS": {"Authorization": "Bearer x"},
+    }
+
+    def test_empty_payload_does_not_post(self):
+        """An empty payload short-circuits without any network call."""
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.post") as mock_post,
+        ):
+            push_tombstones_remote({})
+            mock_post.assert_not_called()
+
+    def test_non_empty_payload_posts_to_master(self):
+        """A non-empty payload is POSTed to the master tombstones endpoint."""
+        payload = {tombstone_key("a.txt"): {"ts": 1, "sha256": "a"}}
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.verify_master_fingerprint", return_value=True),
+            patch("hsync_client.sync.get_ssl_verify", return_value=True),
+            patch("hsync_client.sync.post") as mock_post,
+        ):
+            push_tombstones_remote(payload)
+
+            assert mock_post.call_count == 1
+            args, kwargs = mock_post.call_args
+            assert args[0] == "https://master/api/v1/buckets/remote/tombstones"
+            assert kwargs["json"] == payload
+
+    def test_fingerprint_failure_skips_post(self):
+        """A failed fingerprint check prevents the push without raising."""
+        payload = {tombstone_key("a.txt"): {"ts": 1, "sha256": "a"}}
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.verify_master_fingerprint", return_value=False),
+            patch("hsync_client.sync.post") as mock_post,
+        ):
+            push_tombstones_remote(payload)
+            mock_post.assert_not_called()
+
+    def test_request_exception_is_swallowed(self):
+        """A transport error never propagates out of the best-effort push."""
+        from requests import RequestException
+
+        payload = {tombstone_key("a.txt"): {"ts": 1, "sha256": "a"}}
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.verify_master_fingerprint", return_value=True),
+            patch("hsync_client.sync.get_ssl_verify", return_value=True),
+            patch("hsync_client.sync.post", side_effect=RequestException("boom")),
+        ):
+            # Must not raise.
+            push_tombstones_remote(payload)
