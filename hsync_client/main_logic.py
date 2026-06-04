@@ -63,6 +63,7 @@ from hsync_client.sync import (
     get_files_local,
     get_files_remote,
     get_sync_actions,
+    get_tombstones_remote,
     sync,
 )
 from hsync_client.utils import (
@@ -96,8 +97,11 @@ def _run_preview(log) -> None:
 
         local_files = get_files_local()
         remote_files = get_files_remote()
+        tombstones = get_tombstones_remote()
         lan_mode = CONFIG.get("LAN_MODE", False)
-        sync_actions = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
+        sync_actions = get_sync_actions(
+            remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
+        )
 
         def _is_sentinel(action) -> bool:
             """Return True if the action concerns a .hsynckeep sentinel."""

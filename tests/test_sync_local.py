@@ -9,9 +9,16 @@
 import os
 from unittest.mock import patch
 
+from hsync_common.models.tombstone import tombstone_key
+
 from hsync_client.models.file import File
 from hsync_client.models.sync_action import SyncActionName
-from hsync_client.sync import _save_conflict_copy, get_files_local, get_sync_actions
+from hsync_client.sync import (
+    _save_conflict_copy,
+    _tombstone_deletes_local,
+    get_files_local,
+    get_sync_actions,
+)
 
 
 class TestGetFilesLocal:
@@ -468,3 +475,110 @@ class TestConflictResolution:
             False,
         )
         assert _save_conflict_copy(file_obj) is None
+
+
+class TestTombstoneDecision:
+    """Unit tests for the _tombstone_deletes_local data-safe rule."""
+
+    def test_matching_content_and_older_local_deletes(self):
+        """Same content and a deletion newer than the local file: delete."""
+        entry = {"ts": 1000, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is True
+
+    def test_matching_content_but_recreated_after_keeps(self):
+        """Same content but re-created clearly after the deletion: keep (upload)."""
+        entry = {"ts": 1000, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, local_mtime=2000, local_sha256="abc") is False
+
+    def test_different_content_keeps(self):
+        """Different content is treated as a local edit/re-creation: keep."""
+        entry = {"ts": 5000, "sha256": "abc"}
+        assert _tombstone_deletes_local(entry, local_mtime=100, local_sha256="xyz") is False
+
+    def test_legacy_marker_newer_deletion_deletes(self):
+        """No recorded hash falls back to timestamps: clearly newer deletion deletes."""
+        entry = {"ts": 1000, "sha256": None}
+        assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is True
+
+    def test_legacy_marker_older_deletion_keeps(self):
+        """No recorded hash and an older deletion than the local file: keep."""
+        entry = {"ts": 800, "sha256": None}
+        assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is False
+
+
+class TestGetSyncActionsTombstones:
+    """Tests for the tombstone-driven branch in get_sync_actions."""
+
+    def test_solo_local_deleted_when_tombstone_matches(self, tmp_path):
+        """A solo-local file unchanged since a remote deletion is removed, not uploaded."""
+        local_file = tmp_path / "gone.txt"
+        local_file.write_text("content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+        tombstones = {
+            tombstone_key("gone.txt"): {
+                "ts": (file.mtime or 0) + 100,
+                "sha256": file.sha256sum,
+            }
+        }
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions([], local_files, tombstones=tombstones)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.delete
+
+    def test_solo_local_uploaded_when_content_differs(self, tmp_path):
+        """A tombstone for a different content hash never deletes: the file is uploaded."""
+        local_file = tmp_path / "gone.txt"
+        local_file.write_text("content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+        tombstones = {
+            tombstone_key("gone.txt"): {
+                "ts": (file.mtime or 0) + 100,
+                "sha256": "deadbeef" * 8,
+            }
+        }
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions([], local_files, tombstones=tombstones)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.upload
+
+    def test_solo_local_uploaded_when_recreated_after_deletion(self, tmp_path):
+        """A matching-content file re-created after the deletion is kept (uploaded)."""
+        local_file = tmp_path / "gone.txt"
+        local_file.write_text("content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+        tombstones = {
+            tombstone_key("gone.txt"): {
+                "ts": (file.mtime or 0) - 100,
+                "sha256": file.sha256sum,
+            }
+        }
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions([], local_files, tombstones=tombstones)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.upload
+
+    def test_solo_local_uploaded_without_tombstone(self, tmp_path):
+        """With no matching tombstone the solo-local file is uploaded as before."""
+        local_file = tmp_path / "fresh.txt"
+        local_file.write_text("content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions([], local_files, tombstones={})
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.upload

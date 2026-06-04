@@ -23,6 +23,7 @@ from sys import exc_info
 from traceback import print_tb
 from typing import cast
 
+from hsync_common.models.tombstone import tombstone_key
 from loguru import logger as log
 from requests import RequestException, get
 
@@ -115,8 +116,14 @@ async def sync(lan_mode: bool = False) -> None:
         local_files = get_files_local()
         remote_files = get_files_remote()
 
+        # Fetch deletion markers so files deleted while this peer was offline
+        # are not resurrected during the full reconciliation below.
+        tombstones = get_tombstones_remote()
+
         # Determine what actions need to be taken
-        sync_actions = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
+        sync_actions = get_sync_actions(
+            remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
+        )
 
         log.info(f"Sync actions: {len(sync_actions)} files to process")
 
@@ -470,6 +477,63 @@ def get_files_remote() -> list[dict]:
         )
 
 
+@retry_on_network_error(max_attempts=3, min_wait=1, max_wait=10)
+def get_tombstones_remote() -> dict[str, dict]:
+    """
+    Get deletion markers (tombstones) from the server.
+
+    Makes an HTTP GET request to retrieve the tombstone payload: a mapping
+    of hashed bucket-relative path to ``{"ts": <deletion timestamp>,
+    "sha256": <content hash of the deleted file>}``. Clients use these
+    markers to avoid resurrecting files deleted while they were offline.
+
+    Degrades gracefully: a server that does not expose the endpoint (older
+    version) or any non-200 response yields an empty mapping, so the rest of
+    the sync proceeds unchanged.
+
+    Returns:
+        Mapping of hashed path to tombstone entry (possibly empty).
+
+    Raises:
+        NetworkError: If the request fails after retries.
+        AuthenticationError: If authentication fails (401/403).
+    """
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/tombstones"
+    try:
+        # Verify master certificate fingerprint for LAN HTTPS mode
+        if not verify_master_fingerprint(uri):
+            raise NetworkError(
+                message="Master certificate fingerprint verification failed",
+                details={"url": uri},
+            )
+
+        response = get(
+            uri,
+            headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
+            verify=get_ssl_verify(),
+            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+        )
+
+        if response.status_code == 401:
+            raise AuthenticationError(message="Invalid API key")
+        if response.status_code == 403:
+            raise AuthenticationError(message="API key required")
+        if response.status_code != 200:
+            log.debug(
+                f"Tombstones unavailable (status {response.status_code}); "
+                "skipping deletion reconciliation"
+            )
+            return {}
+
+        data = response.json()
+        return data if isinstance(data, dict) else {}
+    except RequestException as e:
+        raise NetworkError(
+            message=f"Error downloading tombstones: {e}",
+            details={"url": uri},
+        )
+
+
 # =============================================================================
 # Sync Action Determination
 # =============================================================================
@@ -479,10 +543,42 @@ def get_files_remote() -> list[dict]:
 MTIME_TOLERANCE = 2
 
 
+def _tombstone_deletes_local(entry: dict, local_mtime: int, local_sha256: str) -> bool:
+    """
+    Decide whether a tombstone justifies deleting a solo-local file.
+
+    The rule is intentionally data-safe: a local file that exists only on this
+    peer is removed *only* when it is byte-identical to the file that was
+    deleted elsewhere and was not (re-)created after that deletion. Any local
+    edit (different content) or a clearly newer mtime is treated as an
+    intentional re-creation and the file is kept (uploaded) instead.
+
+    Args:
+        entry: Tombstone entry ``{"ts": int, "sha256": str | None}``.
+        local_mtime: Modification time of the local file.
+        local_sha256: Content hash of the local file.
+
+    Returns:
+        True if the local file should be deleted, False to keep/upload it.
+    """
+    deleted_sha = entry.get("sha256")
+    ts = int(entry.get("ts", 0))
+
+    if deleted_sha and local_sha256:
+        # Same content as the deleted file: a stale copy unless re-created
+        # after the deletion (guards against path reuse).
+        return deleted_sha == local_sha256 and local_mtime <= ts + MTIME_TOLERANCE
+
+    # No content hash to compare (legacy marker): fall back to timestamps and
+    # delete only when the deletion is clearly newer than the local file.
+    return ts - local_mtime > MTIME_TOLERANCE
+
+
 def get_sync_actions(
     remote_files: list[dict] | None = None,
     local_files: list[dict] | None = None,
     lan_mode: bool = False,
+    tombstones: dict[str, dict] | None = None,
 ) -> list[SyncAction]:
     """
     Determine sync actions by comparing local and remote file lists.
@@ -502,6 +598,10 @@ def get_sync_actions(
         lan_mode: If True, sync targets a LAN master peer. Local-only files
             are uploaded in bidirectional/upload-only modes and deleted only
             when SYNC_DIRECTION is "download-only".
+        tombstones: Optional deletion-marker payload from the server, keyed by
+            hashed bucket-relative path. When a file exists only locally and a
+            matching tombstone shows it was deleted elsewhere, the local copy
+            is removed instead of being re-uploaded (resurrection guard).
 
     Returns:
         List of SyncAction objects describing required operations.
@@ -510,6 +610,8 @@ def get_sync_actions(
         remote_files = []
     if local_files is None:
         local_files = []
+    if tombstones is None:
+        tombstones = {}
 
     sync_actions: list[SyncAction] = []
     remote_filepaths: set[str] = set()
@@ -567,6 +669,17 @@ def get_sync_actions(
             if file:
                 if lan_mode and CONFIG.get("SYNC_DIRECTION") == "download-only":
                     # LAN download-only slave mirrors master - delete local-only files
+                    sync_actions.append(SyncAction(file, SyncActionName.delete))
+                elif (entry := tombstones.get(tombstone_key(local_file_info.filepath))) and (
+                    _tombstone_deletes_local(entry, file.mtime or 0, file.sha256sum or "")
+                ):
+                    # The file was deleted elsewhere while this peer was offline
+                    # and the local copy is unchanged: remove it instead of
+                    # resurrecting it on the master.
+                    log.info(
+                        f'[TOMBSTONE  ] "{file.filepath}" deleted remotely while offline; '
+                        "removing local copy"
+                    )
                     sync_actions.append(SyncAction(file, SyncActionName.delete))
                 else:
                     # Default: upload local-only files (server mode and LAN

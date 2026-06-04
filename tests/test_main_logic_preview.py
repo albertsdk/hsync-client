@@ -25,6 +25,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=[]),
         ):
             _run_preview(mock_logger)
@@ -53,6 +54,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=[download_action]),
         ):
             _run_preview(mock_logger)
@@ -81,6 +83,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=[upload_action]),
         ):
             _run_preview(mock_logger)
@@ -109,6 +112,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=[delete_action]),
         ):
             _run_preview(mock_logger)
@@ -137,6 +141,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=[synced_action]),
         ):
             _run_preview(mock_logger)
@@ -171,6 +176,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch(
                 "hsync_client.main_logic.get_sync_actions",
                 return_value=[delete_action, download_action],
@@ -202,6 +208,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=[sentinel_action]),
         ):
             _run_preview(mock_logger)
@@ -258,6 +265,7 @@ class TestRunPreview:
             patch("hsync_client.main_logic.ensure_hsynckeep_files"),
             patch("hsync_client.main_logic.get_files_local", return_value=[]),
             patch("hsync_client.main_logic.get_files_remote", return_value=[]),
+            patch("hsync_client.main_logic.get_tombstones_remote", return_value={}),
             patch("hsync_client.main_logic.get_sync_actions", return_value=actions),
         ):
             _run_preview(mock_logger)
