@@ -617,7 +617,14 @@ class TestLANRequestHandlerPATCH:
 class TestLANRequestHandlerInboundOriginMarking:
     """Tests that POST/DELETE/PATCH record the originator CID so the master's
     filesystem watcher rebroadcasts the resulting event with that CID,
-    letting the sender suppress its own echo."""
+    letting the sender suppress its own echo.
+
+    The CID is only honoured on authenticated requests (LAN_KEY configured):
+    without authentication any LAN peer could spoof another peer's CID and
+    suppress its events, so an unauthenticated CID must be ignored.
+    """
+
+    _KEY = "secret-lan-key"
 
     @pytest.fixture
     def server(self):
@@ -643,12 +650,13 @@ class TestLANRequestHandlerInboundOriginMarking:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": self._KEY},
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "peer-1", "path": "", "mtime": "", "ctime": ""}
             files = {"file": ("inbound.txt", b"hello")}
-            response = requests.post(url, data=data, files=files, timeout=5)
+            headers = {"Authorization": f"Bearer {self._KEY}"}
+            response = requests.post(url, data=data, files=files, headers=headers, timeout=5)
             assert response.status_code == 201
             assert consume_inbound_origin(str(tmp_path / "inbound.txt")) == "peer-1"
 
@@ -667,14 +675,99 @@ class TestLANRequestHandlerInboundOriginMarking:
 
         with patch(
             "hsync_client.lan_server.CONFIG",
-            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": self._KEY},
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
-            response = requests.delete(url, params={"path": "gone.txt", "cid": "peer-2"}, timeout=5)
+            headers = {"Authorization": f"Bearer {self._KEY}"}
+            response = requests.delete(
+                url, params={"path": "gone.txt", "cid": "peer-2"}, headers=headers, timeout=5
+            )
             assert response.status_code == 200
             assert consume_inbound_origin(str(target)) == "peer-2"
 
     def test_rename_marks_inbound_origin_for_both_paths(self, server, tmp_path):
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _clear_inbound_origin,
+            consume_inbound_origin,
+        )
+
+        srv, port = server
+        _clear_inbound_origin()
+        src = tmp_path / "src.txt"
+        src.write_text("x")
+        dst = tmp_path / "dst.txt"
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": self._KEY},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            headers = {"Authorization": f"Bearer {self._KEY}"}
+            response = requests.patch(
+                url,
+                params={"src": "src.txt", "dst": "dst.txt", "cid": "peer-3"},
+                headers=headers,
+                timeout=5,
+            )
+            assert response.status_code == 200
+            assert consume_inbound_origin(str(src)) == "peer-3"
+            assert consume_inbound_origin(str(dst)) == "peer-3"
+
+    def test_upload_ignores_cid_when_unauthenticated(self, server, tmp_path):
+        """Without LAN_KEY the CID is untrusted: the upload still succeeds but
+        no inbound origin is recorded (spoofing mitigation)."""
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _clear_inbound_origin,
+            consume_inbound_origin,
+        )
+
+        srv, port = server
+        _clear_inbound_origin()
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            data = {"cid": "spoofed", "path": "", "mtime": "", "ctime": ""}
+            files = {"file": ("inbound.txt", b"hello")}
+            response = requests.post(url, data=data, files=files, timeout=5)
+            assert response.status_code == 201
+            assert (tmp_path / "inbound.txt").exists()
+            assert consume_inbound_origin(str(tmp_path / "inbound.txt")) is None
+
+    def test_delete_ignores_cid_when_unauthenticated(self, server, tmp_path):
+        """Without LAN_KEY the delete still happens but the CID is not recorded."""
+        import requests
+
+        from hsync_client.lan_websocket import (
+            _clear_inbound_origin,
+            consume_inbound_origin,
+        )
+
+        srv, port = server
+        _clear_inbound_origin()
+        target = tmp_path / "gone.txt"
+        target.write_text("bye")
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            response = requests.delete(
+                url, params={"path": "gone.txt", "cid": "spoofed"}, timeout=5
+            )
+            assert response.status_code == 200
+            assert not target.exists()
+            assert consume_inbound_origin(str(target)) is None
+
+    def test_rename_ignores_cid_when_unauthenticated(self, server, tmp_path):
+        """Without LAN_KEY the rename still happens but the CID is not recorded."""
         import requests
 
         from hsync_client.lan_websocket import (
@@ -695,12 +788,13 @@ class TestLANRequestHandlerInboundOriginMarking:
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url,
-                params={"src": "src.txt", "dst": "dst.txt", "cid": "peer-3"},
+                params={"src": "src.txt", "dst": "dst.txt", "cid": "spoofed"},
                 timeout=5,
             )
             assert response.status_code == 200
-            assert consume_inbound_origin(str(src)) == "peer-3"
-            assert consume_inbound_origin(str(dst)) == "peer-3"
+            assert dst.exists()
+            assert consume_inbound_origin(str(src)) is None
+            assert consume_inbound_origin(str(dst)) is None
 
 
 class TestLANRequestHandlerRange:

@@ -506,9 +506,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             # Mark both paths as inbound so the master's filesystem watcher
             # broadcasts the resulting `renamed` event with the originator
-            # CID, allowing the sender to discard its own echo.
+            # CID, allowing the sender to discard its own echo.  The CID is
+            # only honoured on authenticated requests: without LAN_KEY any LAN
+            # peer could spoof another peer's CID and suppress its events.
             origin_cid = query.get("cid", [None])[0]
-            if origin_cid:
+            if origin_cid and CONFIG.get("LAN_KEY"):
                 from hsync_client.lan_websocket import mark_inbound_origin
 
                 mark_inbound_origin(src_path, origin_cid)
@@ -559,9 +561,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         # Mark the path as inbound so the resulting `deleted` event from the
-        # filesystem watcher is broadcast with the originator's CID.
+        # filesystem watcher is broadcast with the originator's CID.  Honoured
+        # only on authenticated requests; an unauthenticated CID is untrusted
+        # and ignored.
         origin_cid = query.get("cid", [None])[0]
-        if origin_cid:
+        if origin_cid and CONFIG.get("LAN_KEY"):
             from hsync_client.lan_websocket import mark_inbound_origin
 
             mark_inbound_origin(full_path, origin_cid)
@@ -963,7 +967,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             ctime = form_fields.get("ctime", "")
             permissions = form_fields.get("permissions", "-rw-rw-r--")
 
-            if cid:
+            # Honour the echo-suppression CID only on authenticated requests;
+            # an unauthenticated CID is untrusted and ignored.
+            if cid and CONFIG.get("LAN_KEY"):
                 from hsync_client.lan_websocket import mark_inbound_origin
 
                 mark_inbound_origin(dest_path, cid)
