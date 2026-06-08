@@ -58,9 +58,15 @@ for asset in "${APKG_PATH}"/web/*; do
 done
 chmod 0755 "${APKG_PATH}"/web/*.php 2>/dev/null || true
 
-# Persistent layout on the data volume.
+# Persistent layout on the data volume. Ownership is locked to root and the
+# config directory is not writable by group/other: hsync.env is sourced as
+# root by start.sh, so a config writable by a local NAS user (e.g. the
+# "share" group) would let that user inject shell commands and escalate to
+# root at the next service start (local privilege escalation).
 mkdir -p "${HSYNC_DATA_DIR}" "${HSYNC_CONFIG_DIR}" "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}"
-chmod 0775 "${HSYNC_ROOT}" "${HSYNC_DATA_DIR}" "${HSYNC_CONFIG_DIR}" "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}"
+chown 0:0 "${HSYNC_ROOT}" "${HSYNC_DATA_DIR}" "${HSYNC_CONFIG_DIR}" "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}" 2>/dev/null || true
+chmod 0755 "${HSYNC_ROOT}" "${HSYNC_DATA_DIR}" "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}"
+chmod 0750 "${HSYNC_CONFIG_DIR}"
 
 # Seed a default configuration on a fresh install. Existing user config is
 # preserved (postinst.sh restores from the preinst backup if present).
@@ -103,6 +109,7 @@ HSYNC_MIN_FREE_DISK_MB=""
 # Logging
 HSYNC_VERBOSE="false"
 EOF
+    chown 0:0 "${HSYNC_ENV_FILE}" 2>/dev/null || true
     chmod 0640 "${HSYNC_ENV_FILE}"
 fi
 

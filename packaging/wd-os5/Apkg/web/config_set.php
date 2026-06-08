@@ -83,9 +83,12 @@ foreach (KEYS as $key) {
     $lines[] = "{$key}='{$escaped}'";
 }
 
-// Write atomically: temp file → rename.
+// Write atomically: temp file → rename. The config dir and the resulting
+// file must not be writable by group/other: hsync.env is sourced as root by
+// start.sh, so a non-root-writable config would allow local privilege
+// escalation. PHP runs as root here, so the rename keeps root ownership.
 if (!is_dir(HSYNC_CONFIG)) {
-    mkdir(HSYNC_CONFIG, 0755, true);
+    mkdir(HSYNC_CONFIG, 0750, true);
 }
 $tmp = tempnam(HSYNC_CONFIG, '.hsync.env.');
 if ($tmp === false) {
@@ -96,5 +99,6 @@ if ($tmp === false) {
 file_put_contents($tmp, implode("\n", $lines) . "\n");
 chmod($tmp, 0640);
 rename($tmp, HSYNC_ENV);
+chmod(HSYNC_ENV, 0640);
 
 echo '{"ok":true}';
