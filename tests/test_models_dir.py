@@ -94,3 +94,28 @@ class TestDirModel:
             perms = Dir._get_permissions(temp_dir)
             assert perms.startswith("d")
             assert len(perms) == 10
+
+
+class TestTombstoneReexports:
+    """Tombstone symbols are re-exported from hsync_client.models (2.15)."""
+
+    def test_tombstone_symbols_importable_from_package(self):
+        from hsync_client.models import (
+            TombstoneEntry,
+            TombstoneStore,
+            relpath_in_bucket,
+            tombstone_key,
+        )
+
+        assert TombstoneEntry is not None
+        assert TombstoneStore is not None
+        assert callable(tombstone_key)
+        assert callable(relpath_in_bucket)
+
+    def test_reexports_are_canonical_common_objects(self):
+        from hsync_common.models import tombstone as common_tombstone
+
+        from hsync_client.models import TombstoneStore, tombstone_key
+
+        assert TombstoneStore is common_tombstone.TombstoneStore
+        assert tombstone_key is common_tombstone.tombstone_key

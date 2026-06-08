@@ -25,6 +25,12 @@ from hsync_common.models import (  # noqa: F401
     is_hidden_dir,
     is_hidden_file,
 )
+from hsync_common.models.tombstone import (  # noqa: F401
+    TombstoneEntry,
+    TombstoneStore,
+    relpath_in_bucket,
+    tombstone_key,
+)
 
 __all__ = [
     "Dir",
@@ -36,8 +42,12 @@ __all__ = [
     "SyncAction",
     "SyncActionName",
     "Symlink",
+    "TombstoneEntry",
+    "TombstoneStore",
     "clear_sha256_cache",
     "invalidate_sha256_cache",
     "is_hidden_dir",
     "is_hidden_file",
+    "relpath_in_bucket",
+    "tombstone_key",
 ]
