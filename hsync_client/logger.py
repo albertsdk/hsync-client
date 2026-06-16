@@ -45,7 +45,7 @@ from hsync_common.logger import (
 from loguru import logger
 
 if TYPE_CHECKING:
-    from loguru import Record
+    from loguru import Logger, Record
 
 
 # =============================================================================
@@ -253,7 +253,7 @@ def setup_logging(
     quiet: bool = False,
     logfile: str | None = None,
     no_color: bool = False,
-) -> "logger":  # type: ignore[valid-type]
+) -> "Logger":
     """
     Configure and return the HSYNC client logger.
 

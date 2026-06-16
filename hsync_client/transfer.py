@@ -425,10 +425,15 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
         if not verify_master_fingerprint(uri):
             return "new", 0
 
+        params: dict[str, str | int] = {
+            "filename": filename,
+            "sha256sum": sha256sum,
+            "size": size,
+        }
         response = get(
             uri,
             headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
-            params={"filename": filename, "sha256sum": sha256sum, "size": size},
+            params=params,
             verify=get_ssl_verify(),
             timeout=CONFIG.get("HTTP_TIMEOUT", 30),
         )
