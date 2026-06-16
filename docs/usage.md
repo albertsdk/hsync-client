@@ -2,8 +2,6 @@
 
 This document provides detailed usage instructions for the HSYNC Client.
 
-> **Note**: Diagrams are written in Mermaid. If they don't render, run `./generate-diagrams.sh` to generate PNG images in the `images/` directory.
-
 ## Quick Start
 
 ```mermaid
