@@ -136,7 +136,9 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 - ⚡ Parallel file transfers (configurable concurrency)
 - 👁️ Real-time file system monitoring (watchdog)
 - ✅ SHA-256-based file integrity verification
+- 🗜️ Zstandard (zstd) transfer compression
 - 🔗 Symbolic link synchronization support
+- 🙈 `.hsyncignore` (gitignore-style) filtering
 - 📦 Compilable to standalone binary (PyInstaller)
 
 ### Server Mode
