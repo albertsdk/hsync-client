@@ -183,7 +183,7 @@ sequenceDiagram
     B->>B: File deleted (watchdog)
     B->>M: DELETE file
     M->>M: Master deletes file
-    M-->>A: WebSocket: removed event
+    M-->>A: WebSocket: deleted event
     A->>A: Delete local file
 ```
 
@@ -545,7 +545,7 @@ The master also runs a WebSocket server (on port+1) for real-time event propagat
 - `added` - File/directory created
 - `modified` - File modified
 - `renamed` - File/directory renamed
-- `removed` - File/directory deleted
+- `deleted` - File/directory deleted
 - `symlink` - Symbolic link created
 
 ### List Files

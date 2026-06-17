@@ -168,11 +168,11 @@ See [Getting Started](docs/getting-started.md) for detailed instructions.
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) - Build and run
-- [Configuration](docs/configuration.md) - Environment variables and CLI options
+- [Configuration](docs/configuration.md) - Environment variables and CLI options (complete reference)
 - [Sync Modes](docs/sync-modes.md) - Single, Watch, LAN modes
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
 - [Architecture](docs/architecture.md) - Internal design
-- [Usage](docs/usage.md) - CLI reference, log labels, error handling
+- [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
 
 ## Version

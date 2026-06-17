@@ -35,36 +35,51 @@ hsync -s <server_url> -b <bucket_name> [options]
 ```mermaid
 mindmap
   root((hsync))
-    Required
+    Connection
       -s, --server
+      --timeout
+      --ca-cert
+      --insecure
+    Sync
       -b, --bucket
-    Paths
       -p, --path
-    Sync Options
       -w, --watch
       -i, --interval
-      --stability-delay
       --sync-direction
+      --stability-delay
+      --max-wait-timeout
+      --filter-path
       --ignore-delete
       --sync-hidden
       --ignore-patterns
+      --no-compression
+      --min-free-disk-space
       --max-bandwidth-upload
       --max-bandwidth-download
-    Network
-      --retry-delay
-      --insecure
+    LAN
+      --lan-mode
+      --lan-port
+      --lan-group
+      --no-lan-https
+      --no-lan-persistent
+      --force-master
+      --discovery-timeout
     Output
       -v, --verbose
       -q, --quiet
       -o, --output
       --no-color
-    Safety
-      -y, --yes
     Other
+      -y, --yes
       -n, --dry-run
+      --env-file
       -V, --version
       --help-symbols
 ```
+
+> For the **complete option reference** (descriptions, defaults and accepted
+> values) see [Configuration → CLI Options](configuration.md#cli-options).
+> `HSYNC_LAN_KEY` is set via environment variable only.
 
 ## Usage Scenarios
 
@@ -127,29 +142,11 @@ flowchart TD
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HSYNC_SERVER` | Default server URL | (use `-s`) |
-| `HSYNC_API_KEY` | API key for authentication | (required) |
-| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers | `5` |
-| `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
-| `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
-| `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync | `false` |
-| `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
+Environment variables and the provided `dev.env` / `prod.env` templates are
+documented in the single configuration reference:
 
-### Environment Files
-
-Use the provided environment templates for easy setup:
-
-```bash
-# Development (HTTP, localhost)
-source dev.env
-hsync -b mybucket -w
-
-# Production (HTTPS, remote server)
-source prod.env
-hsync -b mybucket -w
-```
+- [Configuration → Environment Variables](configuration.md#environment-variables)
+- [Configuration → Environment Files](configuration.md#environment-files)
 
 ## Examples
 
