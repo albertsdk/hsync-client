@@ -8,10 +8,18 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from requests import RequestException
 
 from hsync_client.models.file import File
 from hsync_client.transfer import upload_file
+
+_BASE_CONFIG = {
+    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+    "REMOTE_BUCKET": "test",
+    "REQUEST_HEADERS": {"X-API-Key": "test"},
+    "CID": "test-client",
+}
 
 
 class TestUploadFile:
@@ -382,6 +390,91 @@ class TestUploadCompressed:
         ):
             upload_file(file, check_size=False)
 
+    def test_compressed_branch_sends_zstd_header(self, tmp_path):
+        """When should_compress() is True the body is zstd-compressed (201 path)."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("compress me " * 50)
+
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=test_file.stat().st_size,
+            mtime=1000,
+            ctime=1000,
+            permissions="-rw-r--r--",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "COMPRESSION_ENABLED": True,
+                    "SERVER_COMPRESSION_ENABLED": True,
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.should_compress", return_value=True),
+            patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+        ):
+            upload_file(file, check_size=False)
+            kwargs = mock_post.call_args.kwargs
+            assert kwargs["headers"].get("Content-Encoding") == "zstd"
+            assert kwargs["data"]["compressed"] == "true"
+            assert kwargs["data"]["compressed_size"] > 0
+
+    def test_compressed_branch_wraps_throttled_reader(self, tmp_path):
+        """An upload bandwidth limit wraps the compressed body in a throttled reader."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("compress me " * 50)
+
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=test_file.stat().st_size,
+            mtime=1000,
+            ctime=1000,
+            permissions="-rw-r--r--",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "COMPRESSION_ENABLED": True,
+                    "SERVER_COMPRESSION_ENABLED": True,
+                    "MAX_BANDWIDTH_UPLOAD": 1024,
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.should_compress", return_value=True),
+            patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+        ):
+            from hsync_client.transfer import _ThrottledFileReader
+
+            upload_file(file, check_size=False)
+            files = mock_post.call_args.kwargs["files"]
+            assert isinstance(files["file"][1], _ThrottledFileReader)
+
     def test_upload_compression_skipped_when_resuming(self, tmp_path):
         """Test compression is skipped when resuming."""
         test_file = tmp_path / "file.txt"
@@ -573,3 +666,157 @@ class TestUploadEdgeCases:
             upload_file(file, check_size=False)
             # Should not call post
             mock_post.assert_not_called()
+
+
+class TestThrottledFileReader:
+    """Tests for the _ThrottledFileReader wrapper."""
+
+    def test_proxies_unknown_attributes(self):
+        """Attributes not defined on the wrapper proxy to the inner file."""
+        from io import BytesIO
+
+        from hsync_client.transfer import _ThrottledFileReader
+
+        inner = BytesIO(b"payload")
+        reader = _ThrottledFileReader(inner, bandwidth_limit=None)
+        # ``name`` only exists on the inner object → proxied via __getattr__
+        assert reader.seekable() is True
+        reader.seek(0)
+        assert reader.tell() == 0
+
+    def test_read_without_limit_skips_throttle(self):
+        """No bandwidth limit means no delay is computed."""
+        from io import BytesIO
+
+        from hsync_client.transfer import _ThrottledFileReader
+
+        reader = _ThrottledFileReader(BytesIO(b"abcdef"), bandwidth_limit=None)
+        with patch("hsync_client.transfer.get_throttle_delay") as mock_delay:
+            assert reader.read() == b"abcdef"
+            mock_delay.assert_not_called()
+
+    def test_read_with_limit_applies_delay(self):
+        """A positive delay triggers a sleep after the read."""
+        from io import BytesIO
+
+        from hsync_client.transfer import _ThrottledFileReader
+
+        reader = _ThrottledFileReader(
+            BytesIO(b"abcdef"), bandwidth_limit=1024, transfer_key="upload"
+        )
+        with (
+            patch("hsync_client.transfer.get_throttle_delay", return_value=0.01) as mock_delay,
+            patch("hsync_client.transfer.time_sleep") as mock_sleep,
+        ):
+            assert reader.read() == b"abcdef"
+            mock_delay.assert_called_once()
+            mock_sleep.assert_called_once_with(0.01)
+
+    def test_read_with_limit_zero_delay_no_sleep(self):
+        """A zero delay does not call sleep even with a limit set."""
+        from io import BytesIO
+
+        from hsync_client.transfer import _ThrottledFileReader
+
+        reader = _ThrottledFileReader(BytesIO(b"abcdef"), bandwidth_limit=1024)
+        with (
+            patch("hsync_client.transfer.get_throttle_delay", return_value=0.0),
+            patch("hsync_client.transfer.time_sleep") as mock_sleep,
+        ):
+            assert reader.read() == b"abcdef"
+            mock_sleep.assert_not_called()
+
+    def test_read_empty_data_skips_throttle(self):
+        """Reading past EOF returns b'' and skips throttling."""
+        from io import BytesIO
+
+        from hsync_client.transfer import _ThrottledFileReader
+
+        inner = BytesIO(b"")
+        reader = _ThrottledFileReader(inner, bandwidth_limit=1024)
+        with patch("hsync_client.transfer.get_throttle_delay") as mock_delay:
+            assert reader.read() == b""
+            mock_delay.assert_not_called()
+
+
+class TestUploadCompressedResponses:
+    """Error-status handling within the compressed-upload branch."""
+
+    @pytest.mark.parametrize("status_code", [401, 403, 409, 500])
+    def test_compressed_branch_handles_error_statuses(self, tmp_path, status_code):
+        """Non-201 responses on the compressed path are handled without raising."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("compress me " * 50)
+
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=test_file.stat().st_size,
+            mtime=1000,
+            ctime=1000,
+            permissions="-rw-r--r--",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+
+        config = {
+            **_BASE_CONFIG,
+            "LOCAL_BUCKET": str(tmp_path),
+            "COMPRESSION_ENABLED": True,
+            "SERVER_COMPRESSION_ENABLED": True,
+        }
+
+        with (
+            patch("hsync_client.transfer.CONFIG", config),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.should_compress", return_value=True),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+        ):
+            upload_file(file, check_size=False)
+
+
+class TestUploadStatusBranches:
+    """Cover the early-status branches of upload_file."""
+
+    def test_fingerprint_failure_aborts(self, tmp_path):
+        """A failed master-fingerprint check aborts before posting."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("content")
+
+        file = File(filepath=str(test_file), sha256sum="abc123", size=7)
+        config = {**_BASE_CONFIG, "LOCAL_BUCKET": str(tmp_path)}
+
+        with (
+            patch("hsync_client.transfer.CONFIG", config),
+            patch("hsync_client.transfer.verify_master_fingerprint", return_value=False),
+            patch("hsync_client.transfer.post") as mock_post,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+        ):
+            upload_file(file, check_size=False)
+            mock_post.assert_not_called()
+
+    def test_sha256sum_none_treated_as_new(self, tmp_path):
+        """A file with no sha256sum skips the status check and uploads as new."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("content")
+
+        file = File(filepath=str(test_file), sha256sum=None, size=7, mtime=1000, ctime=1000)
+        config = {**_BASE_CONFIG, "LOCAL_BUCKET": str(tmp_path)}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        with (
+            patch("hsync_client.transfer.CONFIG", config),
+            patch("hsync_client.transfer._get_upload_status") as mock_status,
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+        ):
+            upload_file(file, check_size=False)
+            # sha256sum is None → status check is skipped entirely.
+            mock_status.assert_not_called()
