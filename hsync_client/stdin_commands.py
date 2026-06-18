@@ -26,6 +26,7 @@ keyword arguments to the handler.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from collections.abc import Callable
 from typing import Any
@@ -109,7 +110,7 @@ class StdinCommandHandler:
 
                 # Call handler (sync or async) with remaining fields
                 try:
-                    if asyncio.iscoroutinefunction(handler):
+                    if inspect.iscoroutinefunction(handler):
                         await handler(**data)
                     else:
                         handler(**data)

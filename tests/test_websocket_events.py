@@ -13,6 +13,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+class _CancelledTask:
+    """Small awaitable task double for create_task cleanup tests."""
+
+    def __init__(self):
+        self.cancel = MagicMock()
+
+    def __await__(self):
+        async def _raise_cancelled():
+            raise asyncio.CancelledError()
+
+        return _raise_cancelled().__await__()
+
+
+def _close_coro_and_return_task(coro, task: _CancelledTask | None = None) -> _CancelledTask:
+    """Consume a coroutine passed to create_task without scheduling it."""
+    if hasattr(coro, "close"):
+        coro.close()
+    return task or _CancelledTask()
+
+
 class TestProcessWebsocketEvents:
     """Tests for _process_remote_events function."""
 
@@ -800,7 +820,8 @@ class TestRemoteEvents:
         mock_observer = MagicMock()
         ssl_context_used = {}
 
-        def mock_connect(uri, **kwargs):
+        def mock_connect(_uri, **kwargs):
+            del _uri
             ssl_context_used["context"] = kwargs.get("ssl")
             return mock_websocket
 
@@ -867,16 +888,6 @@ class TestRemoteEvents:
         queue_mock.process = AsyncMock()
         queue_mock.stop = MagicMock()
 
-        async def mock_create_task(coro):
-            """Create a mock task that raises CancelledError when awaited."""
-            task = AsyncMock()
-            task.cancel = MagicMock()
-
-            async def await_coro():
-                raise asyncio.CancelledError()
-
-            return task
-
         with (
             patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
             patch("hsync_client.remote_websocket.CONFIG", config),
@@ -884,16 +895,16 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
             patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
-            patch("hsync_client.remote_websocket.create_task", side_effect=mock_create_task),
+            patch(
+                "hsync_client.remote_websocket.create_task", side_effect=_close_coro_and_return_task
+            ),
             patch(
                 "hsync_client.remote_websocket._process_remote_events",
                 side_effect=Exception("Unexpected error"),
             ),
             patch("hsync_client.remote_websocket.log") as mock_log,
         ):
-            # Should not raise exception
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await remote_events()
+            await remote_events()
 
             # Error should be logged
             assert mock_log.error.called
@@ -934,9 +945,12 @@ class TestRemoteEvents:
         mock_observer.start = MagicMock()
 
         queue_mock = MagicMock()
-        mock_task = AsyncMock()
-        queue_mock.process = mock_task
+        mock_task = _CancelledTask()
+        queue_mock.process = AsyncMock()
         queue_mock.stop = MagicMock()
+
+        def mock_create_task(coro):
+            return _close_coro_and_return_task(coro, mock_task)
 
         with (
             patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
@@ -949,7 +963,7 @@ class TestRemoteEvents:
                 "hsync_client.remote_websocket._process_remote_events",
                 side_effect=Exception("Stop"),
             ),
-            patch("hsync_client.remote_websocket.create_task", return_value=mock_task),
+            patch("hsync_client.remote_websocket.create_task", side_effect=mock_create_task),
         ):
             with contextlib.suppress(Exception):
                 await remote_events()

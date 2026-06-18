@@ -11,7 +11,14 @@ This module provides WebSocket connection management and event handling
 for real-time synchronization with the server.
 """
 
-from asyncio import Task, create_task, get_running_loop, run_coroutine_threadsafe, sleep
+from asyncio import (
+    CancelledError,
+    Task,
+    create_task,
+    get_running_loop,
+    run_coroutine_threadsafe,
+    sleep,
+)
 from json import dumps, loads
 from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 
@@ -170,6 +177,8 @@ async def remote_events() -> None:
             queue_task.cancel()
             try:
                 await queue_task
+            except CancelledError:
+                pass  # Expected after cancellation
             except Exception:
                 pass  # Task was cancelled
             # Clean up file system observer
