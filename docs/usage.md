@@ -26,9 +26,18 @@ flowchart LR
 
 ### Basic Syntax
 
+HSYNC runs in one of two mutually exclusive operating modes:
+
 ```bash
+# Server Mode — connect to a central HSYNC server
 hsync -s <server_url> -b <bucket_name> [options]
+
+# LAN Mode — peer-to-peer, no server (mDNS discovery, implicit watch)
+hsync --lan-mode -b <bucket_name> [options]
 ```
+
+See [Sync Modes → Operating Modes](sync-modes.md#operating-modes-server-vs-lan)
+for when to use each.
 
 ### Options Overview
 

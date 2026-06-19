@@ -2,6 +2,35 @@
 
 HSYNC supports different synchronization modes to fit various use cases.
 
+## Operating Modes: Server vs LAN
+
+Before choosing *how often* and in *which direction* to sync, you choose the
+**operating mode** — the topology the client runs in. The two modes are
+mutually exclusive and selected per invocation.
+
+| Aspect | Server Mode | LAN Mode (P2P) |
+|--------|-------------|----------------|
+| Topology | Clients connect to a central server | Peers connect directly to each other |
+| Enable with | `-s/--server` | `--lan-mode` |
+| Server required | Yes | No |
+| Authentication | `HSYNC_API_KEY` | `HSYNC_LAN_KEY` (optional) |
+| Discovery | Explicit server URL | Automatic via mDNS/Bonjour |
+| Watch mode | Opt-in (`-w`) | Implicit |
+| Works offline / no internet | No (needs reachable server) | Yes (same LAN) |
+| Best for | Remote sync, multiple sites, always-on hub | Devices on the same network |
+
+```bash
+# Server Mode — central hub
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir
+
+# LAN Mode — peer-to-peer, no server (run on each device)
+./dist/<platform>/hsync -b mybucket -p /path/to/dir --lan-mode
+```
+
+The sections below (single / watch / sync direction) apply to **both**
+operating modes. See [LAN Mode](lan-mode.md) for the P2P architecture and
+master election.
+
 ## Single Mode (Default)
 
 Performs a synchronization and exits.
