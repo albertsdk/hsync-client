@@ -138,13 +138,13 @@ class TestDownloadFile:
                 "hsync_client.transfer.compute_sha256",
                 return_value=expected_sha,
             ),
-            patch("hsync_client.transfer.move") as mock_move,
+            patch("hsync_client.transfer.replace") as mock_replace,
             patch("hsync_client.transfer.utime") as mock_utime,
             patch("hsync_client.transfer.set_permissions") as mock_set_perms,
             patch("hsync_client.transfer.remove"),
         ):
             download_file(file)
-            mock_move.assert_called_once()
+            mock_replace.assert_called_once()
             mock_utime.assert_called_once()
             mock_set_perms.assert_called_once()
 
@@ -169,11 +169,11 @@ class TestDownloadFile:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.compute_sha256", return_value="different_sha256"),
-            patch("hsync_client.transfer.move") as mock_move,
+            patch("hsync_client.transfer.replace") as mock_replace,
             patch("hsync_client.transfer.remove"),
         ):
             download_file(file)
-            mock_move.assert_not_called()
+            mock_replace.assert_not_called()
 
 
 class TestDownloadFileResume:
@@ -211,7 +211,7 @@ class TestDownloadFileResume:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
-            patch("hsync_client.transfer.move"),
+            patch("hsync_client.transfer.replace"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),
@@ -253,7 +253,7 @@ class TestDownloadFileResume:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
-            patch("hsync_client.transfer.move"),
+            patch("hsync_client.transfer.replace"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),
@@ -335,7 +335,7 @@ class TestDownloadFileResume:
             patch("hsync_client.transfer.get", side_effect=[mock_response_416, mock_response_200]),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
-            patch("hsync_client.transfer.move"),
+            patch("hsync_client.transfer.replace"),
             patch("hsync_client.transfer.remove") as mock_remove,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),
@@ -383,9 +383,9 @@ class TestDownloadCompressed:
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123def"),
-            patch("hsync_client.transfer.move") as mock_move,
+            patch("hsync_client.transfer.replace") as mock_replace,
             patch("hsync_client.transfer.utime"),
             patch("hsync_client.transfer.set_permissions"),
         ):
             download_file(file)
-            mock_move.assert_called()
+            mock_replace.assert_called()
