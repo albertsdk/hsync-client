@@ -13,7 +13,7 @@ header('Cache-Control: no-store');
 
 define('APKG_PATH', '/shares/Volume_1/Nas_Prog/hsync');
 define('HSYNC_PID', '/mnt/HD/HD_a2/hsync/run/hsync.pid');
-define('BINARY',    'hsync');
+define('HSYNC_BINARY', 'hsync');
 
 /**
  * Check whether the hsync daemon is currently running.
@@ -32,7 +32,7 @@ function isRunning(): bool {
     }
     // --- 2. pidof fallback ---
     if (function_exists('shell_exec')) {
-        $out = @shell_exec('pidof ' . escapeshellarg(BINARY) . ' 2>/dev/null');
+        $out = @shell_exec('pidof ' . escapeshellarg(HSYNC_BINARY) . ' 2>/dev/null');
         return ($out !== null && trim($out) !== '');
     }
     return false;
