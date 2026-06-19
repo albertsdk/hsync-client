@@ -478,6 +478,10 @@ def main(
         HSYNC_API_KEY   API key for authentication
         HSYNC_LAN_KEY   Shared secret for LAN mode authentication
 
+    [bold]Project:[/bold]
+
+        https://github.com/albertobasso/hsync-client
+
     [bold]Authors:[/bold]
 
         Alberto Basso
