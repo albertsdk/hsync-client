@@ -254,9 +254,10 @@ class PeerManager:
         """
         Check if a peer's group is compatible with this client's group.
 
-        Filtering logic (Option B - backward compatible):
-        - If BOTH have a group defined -> groups must match
-        - If at least one has no group -> compatible (no filtering)
+        The group is a strict partition key: a peer is compatible only when
+        its group is exactly equal to this client's group. "No group"
+        (``None``) is itself a distinct partition, so a peer without a group
+        matches only other peers without a group.
 
         Args:
             peer_group: The peer's group (or None if not set).
@@ -264,10 +265,6 @@ class PeerManager:
         Returns:
             True if the peer is compatible, False otherwise.
         """
-        # If at least one has no group, they are compatible
-        if self._group is None or peer_group is None:
-            return True
-        # Both have groups, they must match
         return self._group == peer_group
 
     def add_peer(self, peer: Peer) -> None:
