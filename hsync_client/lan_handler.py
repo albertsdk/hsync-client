@@ -45,35 +45,27 @@ def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
         master: The master Peer object.
         config: Current hsync configuration.
     """
+    from hsync_common.clock import measure_clock_offset
     from requests import RequestException
     from requests import get as http_get
 
     from hsync_client.utils import get_ssl_verify
 
-    master_url = master.get_server_url()
-    time_url = f"{master_url}/api/v1/time"
+    time_url = f"{master.get_server_url()}/api/v1/time"
 
     try:
-        t1 = time.time()
-        response = http_get(
+        result = measure_clock_offset(
             time_url,
+            http_get=http_get,
             headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
             verify=get_ssl_verify(),
             timeout=config.get("HTTP_TIMEOUT", 30),
         )
-        t3 = time.time()
-
-        if response.status_code != 200:
-            log.debug(f"Clock sync: /api/v1/time returned {response.status_code}, skipping")
+        if result is None:
+            log.debug("Clock sync: /api/v1/time unavailable or missing timestamp, skipping")
             return
 
-        t2 = response.json().get("timestamp")
-        if t2 is None:
-            log.debug("Clock sync: no timestamp in response, skipping")
-            return
-
-        rtt = t3 - t1
-        offset = t2 - (t1 + rtt / 2)
+        offset, rtt = result
         master.clock_offset = offset
 
         if abs(offset) > CLOCK_SKEW_THRESHOLD:
