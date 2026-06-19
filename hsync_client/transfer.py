@@ -13,6 +13,7 @@ synchronizing files with the remote server.
 
 from os import fsync, remove, replace, utime
 from pathlib import Path
+from shutil import disk_usage
 from time import sleep as time_sleep
 from typing import cast
 
@@ -211,6 +212,24 @@ def download_file(file: File) -> None:
                 f"{bytes_to_human_readable(resume_offset)}/{bytes_to_human_readable(file.size)}"
             )
 
+    # Size-aware disk space guard: skip the file if the target filesystem
+    # cannot hold the remaining bytes plus the configured reserve, avoiding a
+    # mid-transfer ENOSPC that would waste bandwidth and leave a .part behind.
+    reserve_mb = CONFIG.get("MIN_FREE_DISK_SPACE", 0)
+    if reserve_mb and reserve_mb > 0:
+        try:
+            free = disk_usage(dest_dir).free
+            required = reserve_mb * 1024 * 1024 + max(file.size - resume_offset, 0)
+            if free < required:
+                log.error(
+                    f'Insufficient disk space for "{file.filepath}": '
+                    f"{free // (1024 * 1024)} MB available, "
+                    f"{required // (1024 * 1024)} MB required"
+                )
+                return
+        except OSError as e:
+            log.warning(f"Could not check disk space: {e}")
+
     # Prepare request headers with Range if resuming
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/download"
     headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
@@ -331,9 +350,10 @@ def download_file(file: File) -> None:
         cleanup_partial = False
         log.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
 
-        # Preserve timestamps from remote file
-        if file.ctime is not None and file.mtime is not None:
-            utime(full_save_path, (file.ctime, file.mtime))
+        # Restore the modification time from the remote file. POSIX ctime is
+        # not settable, so it is intentionally not restored; atime mirrors mtime.
+        if file.mtime is not None:
+            utime(full_save_path, (file.mtime, file.mtime))
 
         # Apply permissions
         if file.permissions:

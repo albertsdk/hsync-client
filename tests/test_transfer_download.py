@@ -146,7 +146,42 @@ class TestDownloadFile:
             download_file(file)
             mock_replace.assert_called_once()
             mock_utime.assert_called_once()
+            # atime mirrors mtime; ctime is not restored (POSIX ctime is not settable)
+            assert mock_utime.call_args.args[1] == (file.mtime, file.mtime)
             mock_set_perms.assert_called_once()
+
+    def test_download_skipped_when_insufficient_disk_space(self, tmp_path):
+        """Size-aware guard skips the download when free space is too low."""
+        file = File(
+            filepath="big.bin",
+            sha256sum="abc123",
+            size=10 * 1024 * 1024,
+            mtime=1000,
+            ctime=1000,
+        )
+
+        fake_usage = MagicMock()
+        fake_usage.free = 1 * 1024 * 1024  # only 1 MB free
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "MIN_FREE_DISK_SPACE": 100,  # 100 MB reserve
+                },
+            ),
+            patch("hsync_client.transfer.disk_usage", return_value=fake_usage),
+            patch("hsync_client.transfer.get") as mock_get,
+            patch("hsync_client.transfer.replace") as mock_replace,
+        ):
+            download_file(file)
+            # Guard fires before any network request or final commit
+            mock_get.assert_not_called()
+            mock_replace.assert_not_called()
 
     def test_sha256_mismatch_returns_without_saving(self, tmp_path):
         """SHA-256 mismatch logs error and returns."""
