@@ -25,6 +25,12 @@ if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
 
 
+# Seconds to wait before warning that no master has been elected (e.g. when every
+# peer in the group is configured with --never-master). Emitted as a parsable
+# ``[NO_MASTER]`` warning so front-ends (desktop UI) can surface a notification.
+NO_MASTER_WARNING_TIMEOUT = 60.0
+
+
 def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
     """
     Measure clock offset between this client and the master using round-trip HTTP.
@@ -132,13 +138,21 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
         use_https=config["LAN_HTTPS"],
         cert_fingerprint=cert_info.fingerprint if cert_info else None,
         force_master=config["LAN_FORCE_MASTER"],
+        never_master=config["LAN_NEVER_MASTER"],
         sync_direction=config["SYNC_DIRECTION"],
     )
+    if config["LAN_NEVER_MASTER"]:
+        log.info("Never-master mode enabled - this client will always remain a client/slave")
     # Start discovery and register service for peer discovery
     peer_manager = lan_sync.start(register_service=True)
 
     lan_server = None
     lan_ws_server = None
+
+    # Track how long the group has been without an elected master so we can warn
+    # once after NO_MASTER_WARNING_TIMEOUT (e.g. when every peer is never-master).
+    no_master_since: float | None = None
+    no_master_warned = False
 
     try:
         while True:
@@ -146,6 +160,8 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
             lan_sync.wait_for_discovery(timeout=config["DISCOVERY_TIMEOUT"])
 
             if peer_manager.is_master():
+                no_master_since = None
+                no_master_warned = False
                 lan_server, lan_ws_server = _run_as_master(
                     config=config,
                     log=log,
@@ -169,6 +185,26 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                 # loop only exits via KeyboardInterrupt or by losing the
                 # master role and being elected slave on a later iteration.
             else:
+                # Warn (once) if no master has been elected for a while: this
+                # happens when every reachable peer is in never-master mode.
+                if peer_manager.get_master_cid() is None:
+                    now = time.time()
+                    if no_master_since is None:
+                        no_master_since = now
+                    elif not no_master_warned and (
+                        now - no_master_since >= NO_MASTER_WARNING_TIMEOUT
+                    ):
+                        log.warning(
+                            f"[NO_MASTER] No master elected after "
+                            f"{int(now - no_master_since)}s. All discovered peers "
+                            f"may be configured with --never-master; no node will "
+                            f"serve files and synchronization cannot proceed."
+                        )
+                        no_master_warned = True
+                else:
+                    no_master_since = None
+                    no_master_warned = False
+
                 should_continue = _run_as_slave(
                     config=config,
                     log=log,

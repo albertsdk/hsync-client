@@ -30,6 +30,7 @@
     "role.auto":   "Auto (bidirezionale, elezione automatica)",
     "role.master": "Master (il NAS conserva la copia autorevole)",
     "role.slave":  "Slave (il NAS è una replica in sola lettura)",
+    "role.never_master": "Mai master (sincronizza in entrambe le direzioni ma non diventa mai master)",
 
     "action.save":    "Salva",
     "action.start":   "Avvia",

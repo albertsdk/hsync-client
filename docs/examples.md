@@ -174,6 +174,25 @@ hsync -b laptop-backup -p ~ --lan-mode --sync-direction upload-only
 > `--sync-direction upload-only`/`download-only` on the same peer — the
 > master must remain bidirectional. Apply the direction on the slaves.
 
+### 2.4 Keep a peer in sync but never let it become master
+
+Use `--never-master` on machines that should participate in the sync but
+must never serve as the authoritative node — e.g. a kiosk/display, a
+low-power device, or a laptop that is frequently offline. The peer still
+syncs bidirectionally; it is simply excluded from master election.
+
+```bash
+# On the kiosk / low-power device (syncs both ways, never master)
+hsync -b signage -p /var/lib/signage --lan-mode --never-master
+
+# On the always-on PC (eligible master)
+hsync -b signage -p /srv/signage --lan-mode
+```
+
+> **Note**: `--never-master` cannot be combined with `--force-master`
+> (they request opposite behaviour). If **every** peer is `--never-master`,
+> no master is elected and a `[NO_MASTER]` warning is logged after 60 s.
+
 ### 2.4 One-shot LAN sync (no continuous listening)
 
 Sync once when a peer is found and then exit. Handy from a script, a

@@ -72,6 +72,7 @@ mindmap
       --no-lan-https
       --no-lan-persistent
       --force-master
+      --never-master
       --discovery-timeout
     Output
       -v, --verbose
@@ -166,4 +167,4 @@ End-user oriented examples have moved to a dedicated document:
   two devices, push-only backups, read-only mirrors, scripted /
   unattended execution, bandwidth tuning and more.
 
-> **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. See [LAN Mode > Master Election](lan-mode.md#master-election) for the full election algorithm.
+> **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. Use `--never-master` to keep a peer out of the election entirely (incompatible with `--force-master`); if every peer is `--never-master`, no master is elected and a `[NO_MASTER]` warning is logged after 60 s. See [LAN Mode > Master Election](lan-mode.md#master-election) for the full election algorithm.

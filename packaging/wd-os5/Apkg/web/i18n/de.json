@@ -30,6 +30,7 @@
     "role.auto":   "Auto (bidirektional, automatische Wahl)",
     "role.master": "Master (NAS hält die autoritative Kopie)",
     "role.slave":  "Slave (NAS ist eine schreibgeschützte Replik)",
+    "role.never_master": "Nie Master (synchronisiert in beide Richtungen, wird aber nie Master)",
 
     "action.save":    "Speichern",
     "action.start":   "Starten",

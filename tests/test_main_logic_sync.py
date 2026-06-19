@@ -222,6 +222,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     lan_https: bool
     lan_persistent: bool
     force_master: bool
+    never_master: bool
     debug: bool
     quiet: bool
     logfile: str | None
@@ -262,6 +263,7 @@ def _default_run_sync_kwargs(
         "lan_https": False,
         "lan_persistent": False,
         "force_master": False,
+        "never_master": False,
         "debug": False,
         "quiet": False,
         "logfile": None,

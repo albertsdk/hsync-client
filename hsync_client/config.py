@@ -76,6 +76,10 @@ class EnvSettings(BaseSettings):
     lan_persistent: bool = Field(
         default=True, description="Stay active indefinitely waiting for peers"
     )
+    never_master: bool = Field(
+        default=False,
+        description="Never become master in LAN mode (always remain a client/slave)",
+    )
 
     # Sync Settings
     ignore_delete: bool = Field(
@@ -191,6 +195,11 @@ def get_lan_persistent() -> bool:
     return get_env_settings().lan_persistent
 
 
+def get_never_master() -> bool:
+    """Get never-master mode from environment."""
+    return get_env_settings().never_master
+
+
 def get_ignore_delete() -> bool:
     """Get ignore delete setting from environment."""
     return get_env_settings().ignore_delete
@@ -302,6 +311,8 @@ class HsyncConfig(TypedDict):
     LAN_PERSISTENT: bool
     # Force this client to be master in LAN mode
     LAN_FORCE_MASTER: bool
+    # Never let this client become master in LAN mode (always client/slave)
+    LAN_NEVER_MASTER: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Ignore file deletion events (backup mode)

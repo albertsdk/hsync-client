@@ -32,6 +32,7 @@ flowchart TB
 | **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
 | **Automatic Master Election** | Priority: `force_master` > bidirectional preference > earliest startup > lowest CID |
+| **Passive Peers** | `--never-master` keeps a peer out of the election; it syncs but never becomes master |
 | **Real-Time Sync** | WebSocket-based instant event propagation (implicit `--watch`) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
 | **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
@@ -286,11 +287,16 @@ $ ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 | `--no-lan-persistent` | Disable persistent mode (exit when no peers) | Persistent enabled |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--force-master` | Force this peer to be the LAN master | `false` |
+| `--never-master` | Never let this peer become master; it stays a client/slave | `false` |
 | `-y, --yes` | Skip deletion risk confirmation prompt (still shows the warning) | `false` |
 
 > **Note**: For security, the LAN authentication key is only available via the `HSYNC_LAN_KEY` environment variable (not as a CLI option).
 
 > ⚠️ **Error**: `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only`. The client will refuse to start with an error message. The LAN master must always operate in bidirectional mode.
+
+> ⚠️ **Error**: `--never-master` is **incompatible** with `--force-master` (they request opposite behaviour). The client will refuse to start if both are set.
+
+> ⚠️ **Warning**: If **every** discovered peer runs with `--never-master`, no node can serve files. After a 60-second grace period the client logs a parsable `[NO_MASTER]` warning so front-ends (Desktop/Android UI) can notify the user.
 
 > ⚠️ **Warning**: During automatic master election, peers with **bidirectional** sync are preferred. If no bidirectional peer is available and a non-bidirectional peer becomes master, a WARNING is logged indicating that synchronization capabilities may be limited for other peers.
 
@@ -308,6 +314,7 @@ All LAN options can also be configured via environment variables:
 | `HSYNC_LAN_GROUP` | Group name for peer filtering | `None` |
 | `HSYNC_LAN_HTTPS` | Enable/disable HTTPS (`true`/`false`) | `true` |
 | `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
+| `HSYNC_NEVER_MASTER` | Never let this peer become master (`true`/`false`) | `false` |
 
 ### Configuration Priority
 
@@ -474,9 +481,12 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 | 3 | **Earliest startup** | Among equal peers, the one that started first wins |
 | 4 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
 
+> **Note**: Peers running with `--never-master` are **excluded from the candidate pool** before any of the criteria above are applied. They never win the election, regardless of startup time or CID.
+
 ```mermaid
 flowchart TD
-    START["All candidates"] --> FM{"Any peer with<br/>force_master?"}
+    START["All candidates"] --> NM["Exclude never_master peers"]
+    NM --> FM{"Any peer with<br/>force_master?"}
     FM -->|"Yes"| FM_WIN["force_master peer wins"]
     FM -->|"No"| BIDIR{"Any peer with<br/>bidirectional sync?"}
     BIDIR -->|"Yes"| BIDIR_POOL["Filter: bidirectional peers only"]
@@ -492,9 +502,12 @@ flowchart TD
 ```
 
 **Rules:**
-- The `sync_direction` of each peer is shared via mDNS TXT records during discovery
+- The `sync_direction` and `never_master` flag of each peer are shared via mDNS TXT records during discovery
 - `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
+- `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)
+- `--never-master` is **incompatible** with `--force-master` — the client will refuse to start
 - If a non-bidirectional peer is elected as master (no bidirectional peers available), a **WARNING** is logged
+- If **all** discovered peers are `--never-master`, no master is elected; after 60 s a `[NO_MASTER]` warning is logged
 - If the master goes offline, a new election occurs among remaining peers
 
 ### Examples
@@ -520,6 +533,21 @@ Peer A: CID=abc123, upload-only,    startup=10:00
 Peer B: CID=def456, download-only,  startup=10:01
 → Winner: Peer A (both non-bidirectional, A started earlier)
 ⚠️ WARNING: Master has sync_direction=upload-only
+```
+
+**Scenario 4**: A peer opts out with `--never-master`
+```
+Peer A: CID=abc123, bidirectional, never_master=true,  startup=10:00
+Peer B: CID=def456, bidirectional, never_master=false, startup=10:01
+→ Winner: Peer B (A is excluded from the candidate pool despite lower CID / earlier startup)
+```
+
+**Scenario 5**: Every peer is `--never-master` (no master can be elected)
+```
+Peer A: CID=abc123, never_master=true, startup=10:00
+Peer B: CID=def456, never_master=true, startup=10:01
+→ No master elected; candidate pool is empty
+⚠️ WARNING: [NO_MASTER] no master elected after 60s — all peers are never-master
 ```
 
 ## API Endpoints

@@ -30,6 +30,7 @@
     "role.auto":   "Auto (bidireccional, elección automática)",
     "role.master": "Maestro (el NAS guarda la copia autoritativa)",
     "role.slave":  "Esclavo (el NAS es una réplica de solo lectura)",
+    "role.never_master": "Nunca maestro (sincroniza en ambos sentidos pero nunca es maestro)",
 
     "action.save":    "Guardar",
     "action.start":   "Iniciar",

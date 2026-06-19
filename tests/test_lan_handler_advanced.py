@@ -26,6 +26,7 @@ def _make_lan_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "LAN_GROUP": None,
         "LAN_HTTPS": False,
         "LAN_FORCE_MASTER": False,
+        "LAN_NEVER_MASTER": False,
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "LAN_KEY": None,
@@ -459,6 +460,54 @@ class TestRunLanModeOuterLoopMasterPath:
         assert len(sleep_calls) >= 3, (
             "Outer loop must keep calling _run_as_master while the master role "
             "is held, regardless of LAN_PERSISTENT"
+        )
+
+
+class TestRunLanModeNoMasterWarning:
+    """Tests for the [NO_MASTER] warning emitted when no master is elected.
+
+    This happens, for example, when every discovered peer is configured
+    with --never-master so the candidate list is empty.
+    """
+
+    def test_no_master_warning_after_timeout(self, tmp_path):
+        """A parsable [NO_MASTER] warning is logged once after the timeout."""
+        from hsync_client import lan_handler
+        from hsync_client.lan_handler import NO_MASTER_WARNING_TIMEOUT, run_lan_mode
+
+        config = _make_lan_config(tmp_path, LAN_PERSISTENT=True)
+        mock_log = MagicMock()
+
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.is_master.return_value = False
+        mock_peer_mgr.get_master_cid.return_value = None
+
+        mock_lan_sync = MagicMock()
+        mock_lan_sync.start.return_value = mock_peer_mgr
+        mock_lan_sync.port = 9000
+
+        # First slave iteration continues the loop; the second breaks it so
+        # the test terminates deterministically.
+        slave_calls: list[int] = []
+
+        def _slave(**_kw: Any) -> bool:
+            slave_calls.append(1)
+            return len(slave_calls) < 2
+
+        # time.time advances past the warning threshold between iterations.
+        times = iter([100.0, 100.0 + NO_MASTER_WARNING_TIMEOUT + 1.0])
+
+        with (
+            patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
+            patch.object(lan_handler, "_run_as_slave", side_effect=_slave),
+            patch("time.time", side_effect=lambda: next(times)),
+        ):
+            run_lan_mode(config, mock_log)
+
+        warnings = [str(c.args[0]) for c in mock_log.warning.call_args_list if c.args]
+        no_master_warnings = [w for w in warnings if "[NO_MASTER]" in w]
+        assert len(no_master_warnings) == 1, (
+            f"expected exactly one [NO_MASTER] warning, got {warnings!r}"
         )
 
 
