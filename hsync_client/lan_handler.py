@@ -16,6 +16,7 @@ from re import sub
 from typing import TYPE_CHECKING
 
 from hsync_client.config import set_config
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import CLOCK_SKEW_THRESHOLD, LANSync
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_websocket import LANWebSocketServer, lan_websocket_client
@@ -192,6 +193,10 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
                             f"may be configured with --never-master; no node will "
                             f"serve files and synchronization cannot proceed."
                         )
+                        emit_event(
+                            UiEventName.no_master,
+                            elapsed=int(now - no_master_since),
+                        )
                         no_master_warned = True
                 else:
                     no_master_since = None
@@ -335,6 +340,7 @@ def _run_as_slave(
 
         master_url = master.get_server_url()
         log.info(f"Connecting to master: {master.cid} at {master_url}")
+        emit_event(UiEventName.server, url=master_url)
 
         if master.use_https and master.cert_fingerprint:
             log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
