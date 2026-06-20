@@ -96,7 +96,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `HSYNC_LAN_KEY` | Shared secret for LAN authentication (env var only) |
 | `--lan-group` | Group name for peer filtering |
 | `--no-lan-https` | Disable HTTPS (enabled by default) |
-| `--discovery-timeout` | Peer discovery timeout in seconds |
+| `--discovery-timeout` | Initial peer discovery timeout in seconds (`0` = wait indefinitely) |
 
 ## SSL/TLS (HTTPS/WSS)
 

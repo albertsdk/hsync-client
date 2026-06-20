@@ -219,6 +219,22 @@ class TestTyperCli:
         assert call_kwargs["logfile"] is None
         assert call_kwargs["resync"] is None
         assert call_kwargs["env_file"] is None
+        assert call_kwargs["discovery_timeout"] is None
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_discovery_timeout_accepts_zero(self, mock_run_sync):
+        """--discovery-timeout 0 is accepted as wait-indefinitely."""
+        result = runner.invoke(app, ["-b", "test", "--lan-mode", "--discovery-timeout", "0"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["discovery_timeout"] == 0
+
+    def test_help_documents_discovery_timeout_zero(self):
+        """Help output documents the 0 = wait indefinitely convention."""
+        # Force a wide terminal so Rich does not word-wrap the help text and
+        # split the documented sentinel across lines.
+        result = runner.invoke(app, ["--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "0 = wait indefinitely" in result.output
 
     @patch("hsync_client.main_logic.run_sync")
     def test_env_file_option(self, mock_run_sync):
@@ -368,6 +384,12 @@ class TestCLIValidation:
         )
         assert result.exit_code != 0
         assert "max wait" in result.output.lower() or "timeout" in result.output.lower()
+
+    def test_rejects_negative_discovery_timeout(self):
+        """CLI rejects negative --discovery-timeout values."""
+        result = runner.invoke(app, ["-b", "test", "--lan-mode", "--discovery-timeout", "-1"])
+        assert result.exit_code != 0
+        assert "discovery timeout" in result.output.lower()
 
     def test_rejects_invalid_sync_direction(self):
         """CLI rejects invalid --sync-direction value."""

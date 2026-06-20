@@ -18,6 +18,7 @@ import typer
 from hsync_client.constants import (
     BANDWIDTH_MAX,
     BANDWIDTH_MIN,
+    DISCOVERY_TIMEOUT_DEFAULT,
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
@@ -318,14 +319,18 @@ def main(
         ),
     ] = 0,
     discovery_timeout: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--discovery-timeout",
-            help="Time to wait for peer discovery.",
+            help=(
+                "Time to wait for initial LAN peer discovery in seconds "
+                f"(default: {DISCOVERY_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
+            ),
             metavar="SEC",
+            show_default=False,
             rich_help_panel="LAN Mode",
         ),
-    ] = 10,
+    ] = None,
     lan_group: Annotated[
         str | None,
         typer.Option(
@@ -518,6 +523,8 @@ def main(
         raise typer.BadParameter(
             f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}."
         )
+    if discovery_timeout is not None and discovery_timeout < 0:
+        raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
     _VALID_SYNC_DIRECTIONS = ("bidirectional", "upload-only", "download-only")
     if sync_direction not in _VALID_SYNC_DIRECTIONS:
         raise typer.BadParameter(

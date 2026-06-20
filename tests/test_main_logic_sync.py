@@ -12,9 +12,10 @@ import pytest
 from typing_extensions import TypedDict
 
 from hsync_client.config import get_env_settings
-from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
+from hsync_client.constants import DISCOVERY_TIMEOUT_DEFAULT, FILE_STABILITY_INTERVAL_DEFAULT
 from hsync_client.main_logic import (
     _check_server_connectivity,
+    _get_discovery_timeout_value,
     _get_stability_delay_value,
     run_sync,
 )
@@ -81,6 +82,76 @@ class TestGetStabilityDelayValue:
                 os.environ["HSYNC_STABILITY_DELAY"] = old
             else:
                 os.environ.pop("HSYNC_STABILITY_DELAY", None)
+            get_env_settings.cache_clear()
+
+
+class TestGetDiscoveryTimeoutValue:
+    """Tests for _get_discovery_timeout_value function."""
+
+    def test_cli_value_takes_priority(self):
+        """CLI argument is used when provided."""
+        assert _get_discovery_timeout_value(15) == 15
+
+    def test_cli_zero_means_wait_indefinitely(self):
+        """CLI value of 0 is valid and preserved."""
+        assert _get_discovery_timeout_value(0) == 0
+
+    def test_env_value_used_when_no_cli(self):
+        """Environment variable is used when CLI argument is None."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_DISCOVERY_TIMEOUT")
+        os.environ["HSYNC_DISCOVERY_TIMEOUT"] = "20"
+        try:
+            get_env_settings.cache_clear()
+            assert _get_discovery_timeout_value(None) == 20
+        finally:
+            if old is not None:
+                os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
+            else:
+                os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
+            get_env_settings.cache_clear()
+
+    def test_env_zero_means_wait_indefinitely(self):
+        """Environment value of 0 is valid and preserved."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_DISCOVERY_TIMEOUT")
+        os.environ["HSYNC_DISCOVERY_TIMEOUT"] = "0"
+        try:
+            get_env_settings.cache_clear()
+            assert _get_discovery_timeout_value(None) == 0
+        finally:
+            if old is not None:
+                os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
+            else:
+                os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
+            get_env_settings.cache_clear()
+
+    def test_default_when_no_cli_no_env(self):
+        """Default constant is used when neither CLI nor env is set."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_DISCOVERY_TIMEOUT")
+        os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
+        try:
+            get_env_settings.cache_clear()
+            assert _get_discovery_timeout_value(None) == DISCOVERY_TIMEOUT_DEFAULT
+        finally:
+            if old is not None:
+                os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
+            get_env_settings.cache_clear()
+
+    def test_cli_overrides_env(self):
+        """CLI argument overrides environment variable."""
+        get_env_settings.cache_clear()
+        old = os.environ.get("HSYNC_DISCOVERY_TIMEOUT")
+        os.environ["HSYNC_DISCOVERY_TIMEOUT"] = "99"
+        try:
+            get_env_settings.cache_clear()
+            assert _get_discovery_timeout_value(5) == 5
+        finally:
+            if old is not None:
+                os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
+            else:
+                os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
             get_env_settings.cache_clear()
 
 
@@ -217,7 +288,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     max_bandwidth_download: int | None
     lan_mode: bool
     lan_port: int
-    discovery_timeout: int
+    discovery_timeout: int | None
     lan_group: str | None
     lan_https: bool
     lan_persistent: bool
@@ -323,6 +394,51 @@ class TestRunSync:
             run_sync(**kwargs)
             # run_lan_mode should have been called
             mock_lan.assert_called_once()
+
+    def test_lan_mode_uses_default_discovery_timeout_when_unset(self, tmp_path):
+        """LAN discovery timeout defaults to 10 when CLI and env are unset."""
+        kwargs = _default_run_sync_kwargs(
+            tmp_path,
+            server_url=None,
+            lan_mode=True,
+            discovery_timeout=None,
+        )
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.main_logic.get_discovery_timeout", return_value=None),
+            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+        ):
+            mock_log_setup.return_value = MagicMock()
+            run_sync(**kwargs)
+
+        config_arg = mock_lan.call_args.args[0]
+        assert config_arg["DISCOVERY_TIMEOUT"] == DISCOVERY_TIMEOUT_DEFAULT
+
+    def test_lan_mode_preserves_zero_discovery_timeout(self, tmp_path):
+        """LAN discovery timeout of 0 is preserved as wait-indefinitely."""
+        kwargs = _default_run_sync_kwargs(
+            tmp_path,
+            server_url=None,
+            lan_mode=True,
+            discovery_timeout=0,
+        )
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+            patch("hsync_client.main_logic.set_config"),
+            patch("hsync_client.main_logic.set_debug"),
+        ):
+            mock_log_setup.return_value = MagicMock()
+            run_sync(**kwargs)
+
+        config_arg = mock_lan.call_args.args[0]
+        assert config_arg["DISCOVERY_TIMEOUT"] == 0
 
     def test_invalid_logfile_returns_early(self, tmp_path):
         """run_sync returns when logfile path is invalid."""

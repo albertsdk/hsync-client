@@ -103,7 +103,7 @@ The web UI exposes the following options (all map 1:1 to `hsync` CLI flags):
 | Role                | `--force-master` + `--sync-direction`          | Auto (no force, bidirectional)   |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | Group               | `--lan-group`                                  | _empty_                          |
-| Discovery timeout   | `--discovery-timeout`                          | `10`                             |
+| Discovery timeout   | `--discovery-timeout`                          | `10` (`0` = wait indefinitely)   |
 | LAN HTTPS           | `--no-lan-https/`                              | enabled                          |
 | Persistent LAN      | `--no-lan-persistent/`                         | enabled                          |
 | Server URL          | `-s / --server`                                | _empty_                          |

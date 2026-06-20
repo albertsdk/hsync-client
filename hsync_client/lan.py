@@ -33,7 +33,7 @@ from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNC_VERSION
+from hsync_client.constants import DISCOVERY_TIMEOUT_DEFAULT, HSYNC_VERSION
 from hsync_client.events import UiEventName, emit_event
 
 # =============================================================================
@@ -48,7 +48,7 @@ HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
 HSYNC_LAN_PORT = 0
 
 # Discovery timeout in seconds
-DISCOVERY_TIMEOUT = 10
+DISCOVERY_TIMEOUT = DISCOVERY_TIMEOUT_DEFAULT
 
 # Heartbeat interval in seconds
 HEARTBEAT_INTERVAL = 5
@@ -968,7 +968,7 @@ class LANSync:
         Wait for peer discovery to complete.
 
         Args:
-            timeout: Maximum time to wait for discovery in seconds.
+            timeout: Time to wait for this discovery polling window in seconds.
         """
         log.info(f"Waiting {timeout}s for peer discovery...")
         time.sleep(timeout)

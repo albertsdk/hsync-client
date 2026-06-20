@@ -24,7 +24,7 @@ def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "LAN_KEY": None,
-        "DISCOVERY_TIMEOUT": 0,
+        "DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "LAN_PERSISTENT": False,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
