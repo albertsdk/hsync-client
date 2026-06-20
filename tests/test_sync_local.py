@@ -11,6 +11,7 @@ import os
 import time
 from unittest.mock import patch
 
+from hsync_common.models.file import clear_sha256_cache
 from hsync_common.models.tombstone import tombstone_key
 
 from hsync_client import sync_state as ss_mod
@@ -868,3 +869,140 @@ class TestClientSyncStateModule:
             ss_mod.reset_cache()
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
             ss_mod.reset_cache()
+
+
+# Fixed mtime (unix seconds) shared by every peer and the server below, so the
+# end-to-end merge can only be driven by content hashes: this proves the §7
+# resolution is clock-independent rather than relying on timestamps.
+_E2E_MTIME = 1_000_000
+
+
+class TestThreeWayMergeEndToEnd:
+    """Full two-peer round-trip exercising the §7 lifecycle on real on-disk state.
+
+    A shared in-memory ``server`` stands in for the master; two peers each own a
+    bucket directory and a persistent ``.hsyncstate`` side-car. Every round runs
+    the real :func:`get_sync_actions` and then applies the decided transfers
+    exactly as the sync loop does (writing content and recording the synced
+    base), flushing and dropping the in-memory cache between rounds to simulate a
+    process restart. All mtimes are pinned to ``_E2E_MTIME`` so only the recorded
+    base can decide the direction.
+    """
+
+    @staticmethod
+    def _touch(path, text: str) -> str:
+        """Write *text* at *path* with the pinned mtime; return its sha256."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        os.utime(path, (_E2E_MTIME, _E2E_MTIME))
+        return _sha(text)
+
+    @staticmethod
+    def _remote_list(server: dict) -> list[dict]:
+        """Render the shared server state as a list-files payload."""
+        return [
+            {
+                "filepath": rel,
+                "name": rel,
+                "sha256sum": entry["sha"],
+                "mtime": _E2E_MTIME,
+                "ctime": _E2E_MTIME,
+                "size": len(entry["content"]),
+                "permissions": "-rw-r--r--",
+            }
+            for rel, entry in server.items()
+        ]
+
+    @staticmethod
+    def _apply(action, bucket, server: dict) -> None:
+        """Mirror the sync loop's side effects for one decided action."""
+        # Uploads carry an absolute local path; downloads carry the bucket-
+        # relative remote path. Normalize both to an absolute path in the bucket.
+        fp = action.file.filepath or ""
+        abs_path = fp if os.path.isabs(fp) else str(bucket / fp)
+        rel = os.path.relpath(abs_path, str(bucket))
+        if action.name == SyncActionName.upload:
+            content = (bucket / rel).read_text()
+            server[rel] = {"content": content, "sha": _sha(content)}
+            ss_mod.record_base(abs_path, _sha(content))
+        elif action.name == SyncActionName.download:
+            # On a conflict the real loop first saves a conflict copy of the
+            # local file; here we just assert the flag and let the master win.
+            entry = server[rel]
+            (bucket / rel).parent.mkdir(parents=True, exist_ok=True)
+            (bucket / rel).write_text(entry["content"])
+            os.utime(bucket / rel, (_E2E_MTIME, _E2E_MTIME))
+            ss_mod.record_base(abs_path, entry["sha"])
+        # SyncActionName.nothing: get_sync_actions already refreshed the base.
+
+    def _round(self, bucket, server: dict) -> list:
+        """Run one full sync round for the peer rooted at *bucket*."""
+        cfg = {"LOCAL_BUCKET": str(bucket)}
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.sync_state.CONFIG", cfg),
+        ):
+            ss_mod.reset_cache()  # fresh process: base is loaded from .hsyncstate
+            clear_sha256_cache()  # mtimes are pinned, so re-hash content each round
+            actions = get_sync_actions(self._remote_list(server), get_files_local(), tombstones={})
+            for action in actions:
+                self._apply(action, bucket, server)
+            ss_mod.flush()
+            ss_mod.reset_cache()
+        return actions
+
+    @staticmethod
+    def _only(actions: list, name):
+        """Return the single action with *name* (assert exactly one)."""
+        matching = [a for a in actions if a.name == name]
+        assert len(matching) == 1, f"expected one {name}, got {[a.name for a in actions]}"
+        return matching[0]
+
+    def test_two_peer_lifecycle_is_clock_independent(self, tmp_path):
+        """First sync, clean one-sided edits, a true conflict, then convergence."""
+        peer_a = tmp_path / "peerA"
+        peer_b = tmp_path / "peerB"
+        peer_a.mkdir()
+        peer_b.mkdir()
+        server: dict = {}
+
+        # Round 1 - A authors doc.txt and uploads it; the server starts empty.
+        sha_v1 = self._touch(peer_a / "doc.txt", "v1")
+        actions = self._round(peer_a, server)
+        self._only(actions, SyncActionName.upload)
+        assert server["doc.txt"]["sha"] == sha_v1
+
+        # Round 1 - B has nothing locally yet: a clean download (no conflict).
+        actions = self._round(peer_b, server)
+        assert self._only(actions, SyncActionName.download).conflict is False
+        assert (peer_b / "doc.txt").read_text() == "v1"
+
+        # Round 2 - A edits only locally: remote still matches A's base -> upload.
+        sha_v2 = self._touch(peer_a / "doc.txt", "v2")
+        actions = self._round(peer_a, server)
+        self._only(actions, SyncActionName.upload)
+        assert server["doc.txt"]["sha"] == sha_v2
+
+        # Round 2 - B untouched since base: clean download of v2 (no conflict).
+        actions = self._round(peer_b, server)
+        assert self._only(actions, SyncActionName.download).conflict is False
+        assert (peer_b / "doc.txt").read_text() == "v2"
+
+        # Round 3 - concurrent divergence from the shared base v2.
+        self._touch(peer_a / "doc.txt", "vA")
+        self._touch(peer_b / "doc.txt", "vB")
+        # A wins the race and uploads first.
+        actions = self._round(peer_a, server)
+        self._only(actions, SyncActionName.upload)
+        assert server["doc.txt"]["sha"] == _sha("vA")
+        # B now sees both sides changed since base v2 -> conflict (remote wins,
+        # the local copy is preserved by the real loop). Every mtime is equal, so
+        # only the recorded base can produce this verdict.
+        actions = self._round(peer_b, server)
+        assert self._only(actions, SyncActionName.download).conflict is True
+        assert (peer_b / "doc.txt").read_text() == "vA"
+
+        # Round 4 - both peers now agree on vA: nothing left to do.
+        for peer in (peer_a, peer_b):
+            actions = self._round(peer, server)
+            assert all(a.name == SyncActionName.nothing for a in actions), [a.name for a in actions]
