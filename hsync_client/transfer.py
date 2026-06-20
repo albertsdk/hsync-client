@@ -39,6 +39,24 @@ from hsync_client.utils import (
 CONTENT_ENCODING_ZSTD = "zstd"
 
 
+def _record_synced_base(file: File) -> None:
+    """Record the just-synced content hash as the new common-ancestor base.
+
+    After a successful transfer (or a no-op because the server already held the
+    file), local and remote agree on ``file.sha256sum``; persisting it lets the
+    next reconciliation use a clock-independent three-way merge (see ``§7``).
+    Bookkeeping failures are swallowed so they never abort a successful transfer.
+    """
+    try:
+        from hsync_client.sync_state import flush, record_base
+
+        if file.filepath and file.sha256sum:
+            record_base(file.filepath, file.sha256sum)
+            flush()
+    except Exception as e:  # pragma: no cover - bookkeeping must never break sync
+        log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
+
+
 class _ThrottledFileReader:
     """Wraps a file object and applies bandwidth throttling on read().
 
@@ -359,6 +377,9 @@ def download_file(file: File) -> None:
         if file.permissions:
             set_permissions(full_save_path, file.permissions)
 
+        # Local now matches the remote content: remember it as the merge base.
+        _record_synced_base(file)
+
     except PermissionError as e:
         log.error(f'Permission denied saving "{file.filepath}": {e}')
     except OSError as e:
@@ -538,6 +559,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
         if status == "complete":
             log.debug(f'"{file.filepath}" (already present on server)')
+            _record_synced_base(file)
             return
 
         if status == "resumable" and offset > 0:
@@ -612,12 +634,14 @@ def upload_file(file: File, check_size: bool = True) -> None:
             )
             if response.status_code == 201:
                 log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                _record_synced_base(file)
             elif response.status_code == 401:
                 log.error(f'Authentication failed uploading "{file.filepath}"')
             elif response.status_code == 403:
                 log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
                 log.debug(f'"{file.filepath}" (already present)')
+                _record_synced_base(file)
             elif response.status_code >= 500:
                 log.error(f'Server error uploading "{file.filepath}": {response.status_code}')
             else:
@@ -648,6 +672,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
             )
             if response.status_code == 201:
                 log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                _record_synced_base(file)
             elif response.status_code == 202:
                 # Partial upload received - file still incomplete
                 result = response.json()
@@ -662,6 +687,7 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 log.error(f'Access denied uploading "{file.filepath}"')
             elif response.status_code == 409:
                 log.debug(f'"{file.filepath}" (already present)')
+                _record_synced_base(file)
             elif response.status_code >= 500:
                 log.error(f'Server error uploading "{file.filepath}": {response.status_code}')
             else:

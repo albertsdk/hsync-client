@@ -24,9 +24,11 @@ from traceback import print_tb
 from typing import cast
 
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
+from hsync_common.models.version import SyncDecision, resolve_three_way
 from loguru import logger as log
 from requests import RequestException, get, post
 
+from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
@@ -139,6 +141,10 @@ async def sync(lan_mode: bool = False) -> None:
 
         log.info(f"Sync actions: {len(sync_actions)} files to process")
 
+        # Drop merge-base records for files that no longer exist locally so the
+        # sync-state side-car stays bounded (downloads re-record after transfer).
+        sync_state.retain([str(f.get("filepath", "")) for f in local_files])
+
         # Separate actions by type
         downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
         uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload]
@@ -154,6 +160,7 @@ async def sync(lan_mode: bool = False) -> None:
             if file.filepath and Path(file.filepath).exists():
                 try:
                     remove(file.filepath)
+                    sync_state.clear_base(file.filepath)
                     log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
@@ -167,6 +174,10 @@ async def sync(lan_mode: bool = False) -> None:
         # Execute transfers in parallel using thread pool
         if downloads or uploads:
             await _execute_parallel_transfers(downloads, uploads)
+
+        # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete)
+        # in a single atomic write at the end of the cycle.
+        sync_state.flush()
 
         log.info("Sync completed successfully")
 
@@ -678,18 +689,26 @@ def get_sync_actions(
         local_mtime = local_file.mtime if local_file and local_file.mtime else 0
 
         if local_file:
+            base_hash = sync_state.get_base_hash(local_file.filepath or "")
             action, timedelta = _compare_files(
                 remote_file,
                 local_file,
                 remote_mtime,
                 local_mtime,
                 lan_mode,
+                base_hash,
             )
 
-            # A download with timedelta == 0 in this branch is the unconvincing
-            # tie from _compare_files (same mtime, different content): the remote
-            # wins but the local copy must be preserved before being overwritten.
+            # A download with timedelta == 0 in this branch is a conflict: either
+            # the unconvincing legacy tie (same mtime, different content) or a
+            # three-way divergence. The remote wins but the local copy must be
+            # preserved before being overwritten.
             is_conflict = action == SyncActionName.download and timedelta == 0
+
+            # Files already in sync: refresh the merge base to the shared hash so
+            # a later one-sided edit resolves cleanly via the three-way merge.
+            if action == SyncActionName.nothing and local_file.sha256sum:
+                sync_state.record_base(local_file.filepath or "", local_file.sha256sum)
 
             sync_actions.append(
                 SyncAction(
@@ -753,9 +772,16 @@ def _compare_files(
     remote_mtime: int,
     local_mtime: int,
     lan_mode: bool,
+    base_hash: str | None = None,
 ) -> tuple[SyncActionName, int]:
     """
-    Compare two files using intelligent mtime + SHA-256 strategy.
+    Compare two files, preferring a clock-independent three-way merge.
+
+    When a common-ancestor ``base_hash`` is recorded (``§7``), the direction is
+    decided from content hashes alone: if only one side changed since the base it
+    wins, and if both changed it is a genuine conflict (remote wins, local copy
+    preserved). Without a recorded base the legacy mtime + SHA-256 heuristic is
+    used so first-ever syncs and upgraded peers behave exactly as before.
 
     Args:
         remote_file: File metadata from remote/server.
@@ -763,10 +789,35 @@ def _compare_files(
         remote_mtime: Remote file modification time.
         local_mtime: Local file modification time.
         lan_mode: Whether running in LAN mode.
+        base_hash: Last-synced common-ancestor content hash, if known.
 
     Returns:
-        Tuple of (action, timedelta).
+        Tuple of (action, timedelta). A download with ``timedelta == 0`` flags a
+        conflict to the caller.
     """
+    decision = resolve_three_way(
+        local_file.sha256sum or None,
+        remote_file.sha256sum or None,
+        base_hash,
+    )
+    if decision is SyncDecision.in_sync:
+        return SyncActionName.nothing, 0
+    if decision is SyncDecision.download:
+        # Only the remote changed since base: take it (clock-independent, so the
+        # timedelta is forced positive to never be mistaken for a conflict tie).
+        return SyncActionName.download, max(remote_mtime - local_mtime, 1)
+    if decision is SyncDecision.upload:
+        # Only the local side changed since base: push it.
+        return SyncActionName.upload, max(local_mtime - remote_mtime, 1)
+    if decision is SyncDecision.conflict:
+        # Both sides diverged from the base: remote wins, local copy preserved.
+        log.debug(
+            f'Three-way conflict for "{remote_file.filepath}": '
+            "both local and remote changed since the last sync"
+        )
+        return SyncActionName.download, 0
+
+    # decision is unknown_base -> fall back to the legacy mtime/SHA-256 heuristic.
     mtime_diff = abs(remote_mtime - local_mtime)
 
     if mtime_diff > MTIME_TOLERANCE:

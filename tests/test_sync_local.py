@@ -6,12 +6,14 @@
 
 """Tests for local file operations in sync module."""
 
+import hashlib
 import os
 import time
 from unittest.mock import patch
 
 from hsync_common.models.tombstone import tombstone_key
 
+from hsync_client import sync_state as ss_mod
 from hsync_client import tombstones as ts_mod
 from hsync_client.models.file import File
 from hsync_client.models.sync_action import SyncActionName
@@ -715,3 +717,154 @@ class TestPushTombstonesRemote:
         ):
             # Must not raise.
             push_tombstones_remote(payload)
+
+
+def _sha(text: str) -> str:
+    """SHA-256 hex digest of a short text payload (test helper)."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+class TestThreeWayMerge:
+    """get_sync_actions resolves direction from a recorded base, clock-independently."""
+
+    @staticmethod
+    def _remote(relpath: str, sha256: str, mtime: int) -> dict:
+        # Bucket-relative filepath: get_sync_actions joins it with LOCAL_BUCKET.
+        return {
+            "filepath": relpath,
+            "name": relpath,
+            "sha256sum": sha256,
+            "mtime": mtime,
+            "ctime": mtime,
+            "size": 1,
+            "permissions": "-rw-r--r--",
+        }
+
+    def _run(self, tmp_path, *, local_text, remote_sha, base_hash):
+        """Drive get_sync_actions with equal mtimes so only the base decides."""
+        local_file = tmp_path / "f.txt"
+        local_file.write_text(local_text)
+        lf = File.get(str(local_file))
+        assert lf is not None
+        remote = self._remote("f.txt", remote_sha, lf.mtime or 0)
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ss_mod.reset_cache()
+            if base_hash is not None:
+                ss_mod.record_base(str(local_file), base_hash)
+            result = get_sync_actions([remote], [lf.to_dict()], tombstones={})
+            base_after = ss_mod.get_base_hash(str(local_file))
+            ss_mod.reset_cache()
+        return lf, result, base_after
+
+    def test_only_remote_changed_downloads_despite_equal_mtime(self, tmp_path):
+        """Local matches base, remote moved on: clean download (no conflict)."""
+        # base == local content hash; remote diverged -> clean download.
+        _, result, _ = self._run(
+            tmp_path, local_text="LOCAL", remote_sha=_sha("REMOTE"), base_hash=_sha("LOCAL")
+        )
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
+        assert getattr(result[0], "conflict", False) is False
+
+    def test_only_local_changed_uploads_despite_equal_mtime(self, tmp_path):
+        """Remote matches base, local moved on: clean upload (no conflict)."""
+        base = _sha("BASE")
+        _, result, _ = self._run(tmp_path, local_text="LOCAL", remote_sha=base, base_hash=base)
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.upload
+        assert getattr(result[0], "conflict", False) is False
+
+    def test_both_changed_is_conflict(self, tmp_path):
+        """Both sides diverged from base: remote wins but local is preserved."""
+        _, result, _ = self._run(
+            tmp_path, local_text="LOCAL", remote_sha=_sha("REMOTE"), base_hash=_sha("BASE")
+        )
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
+        assert getattr(result[0], "conflict", False) is True
+
+    def test_identical_content_is_in_sync_and_refreshes_base(self, tmp_path):
+        """Equal content needs no action and refreshes the recorded base."""
+        local_file = tmp_path / "f.txt"
+        local_file.write_text("SAME")
+        lf = File.get(str(local_file))
+        assert lf is not None
+        remote = self._remote("f.txt", lf.sha256sum or "", lf.mtime or 0)
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+        ):
+            ss_mod.reset_cache()
+            result = get_sync_actions([remote], [lf.to_dict()], tombstones={})
+            base_after = ss_mod.get_base_hash(str(local_file))
+            ss_mod.reset_cache()
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.nothing
+        assert base_after == lf.sha256sum
+
+    def test_unknown_base_falls_back_to_legacy_tie(self, tmp_path):
+        """With no recorded base, an equal-mtime content clash uses the legacy tie."""
+        _, result, _ = self._run(
+            tmp_path, local_text="LOCAL", remote_sha=_sha("REMOTE"), base_hash=None
+        )
+        # Legacy: same mtime, different content -> remote wins, marked conflict.
+        assert len(result) == 1
+        assert result[0].name == SyncActionName.download
+        assert getattr(result[0], "conflict", False) is True
+
+
+class TestClientSyncStateModule:
+    """Tests for the per-peer sync-state store (hsync_client.sync_state)."""
+
+    def test_record_then_get_base_hash(self, tmp_path):
+        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ss_mod.reset_cache()
+            ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
+            assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
+            ss_mod.reset_cache()
+
+    def test_record_empty_hash_is_noop(self, tmp_path):
+        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ss_mod.reset_cache()
+            ss_mod.record_base(str(tmp_path / "a.txt"), "")
+            assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) is None
+            ss_mod.reset_cache()
+
+    def test_record_outside_bucket_is_noop(self, tmp_path):
+        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ss_mod.reset_cache()
+            ss_mod.record_base(str(tmp_path), "hh")  # bucket root -> empty relpath
+            assert ss_mod.get_base_hash(str(tmp_path)) is None
+            ss_mod.reset_cache()
+
+    def test_clear_base_removes_entry(self, tmp_path):
+        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ss_mod.reset_cache()
+            ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
+            ss_mod.clear_base(str(tmp_path / "a.txt"))
+            assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) is None
+            ss_mod.reset_cache()
+
+    def test_retain_drops_absent_paths(self, tmp_path):
+        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ss_mod.reset_cache()
+            ss_mod.record_base(str(tmp_path / "keep.txt"), "h1")
+            ss_mod.record_base(str(tmp_path / "drop.txt"), "h2")
+            dropped = ss_mod.retain([str(tmp_path / "keep.txt")])
+            assert dropped == 1
+            assert ss_mod.get_base_hash(str(tmp_path / "keep.txt")) == "h1"
+            assert ss_mod.get_base_hash(str(tmp_path / "drop.txt")) is None
+            ss_mod.reset_cache()
+
+    def test_flush_persists_and_reloads(self, tmp_path):
+        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ss_mod.reset_cache()
+            ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
+            ss_mod.flush()
+            # Drop the in-memory cache so the next access loads from the side-car.
+            ss_mod.reset_cache()
+            assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
+            ss_mod.reset_cache()
