@@ -1,0 +1,13 @@
+Package: hsync-client
+Version: __VERSION__
+Architecture: __ARCH__
+Maintainer: Alberto Basso <17047798+albertobasso@users.noreply.github.com>
+Section: utils
+Priority: optional
+Homepage: https://github.com/albertobasso/hsync-client
+Description: HSYNC - file synchronization client
+ HSYNC keeps directories in sync across machines and NAS devices.
+ .
+ Supports LAN peer-to-peer (no cloud) and remote server modes
+ with real-time file watching, compression, and bandwidth control.
+Depends: adduser, systemd

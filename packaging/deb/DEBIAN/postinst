@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# postinst — Debian maintainer script, runs after package installation.
+#
+# Creates the system user for the daemon, ensures directories exist with
+# correct ownership, and registers the systemd unit. The service is NOT
+# enabled or started: the administrator must opt in explicitly with
+# ``systemctl enable --now hsync.service``.
+
+set -e
+
+HSYNC_USER="_hsync"
+HSYNC_GROUP="_hsync"
+CONFIG_DIR="/etc/hsync"
+LOG_DIR="/var/log/hsync"
+DATA_DIR="/var/lib/hsync"
+
+# ── System user ──────────────────────────────────────────────────────────
+if ! getent group "${HSYNC_GROUP}" >/dev/null 2>&1; then
+    addgroup --system --quiet "${HSYNC_GROUP}"
+fi
+if ! id "${HSYNC_USER}" >/dev/null 2>&1; then
+    adduser --system --quiet \
+        --ingroup "${HSYNC_GROUP}" \
+        --no-create-home \
+        --shell /usr/sbin/nologin \
+        "${HSYNC_USER}"
+fi
+
+# ── Directories ──────────────────────────────────────────────────────────
+mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}"
+chown root:root "${CONFIG_DIR}" 2>/dev/null || true
+chmod 0750 "${CONFIG_DIR}"
+chown "${HSYNC_USER}:${HSYNC_GROUP}" "${LOG_DIR}" 2>/dev/null || true
+chmod 0750 "${LOG_DIR}"
+# Data directory: synced by the daemon (HSYNC_PATH) and listed in the
+# service's ReadWritePaths, so it must exist and be writable by _hsync.
+chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}" 2>/dev/null || true
+chmod 0750 "${DATA_DIR}"
+
+# ── Config file permissions (conffile) ────────────────────────────────────
+# dpkg marks /etc/hsync/hsync.conf as a conffile, so its contents are
+# preserved across upgrades. It may hold secrets (API key, LAN key), so it is
+# restricted to root only — systemd reads the EnvironmentFile as root before
+# dropping to the _hsync user, so the daemon never needs direct read access.
+if [ -f "${CONFIG_DIR}/hsync.conf" ]; then
+    chown root:root "${CONFIG_DIR}/hsync.conf" 2>/dev/null || true
+    chmod 0600 "${CONFIG_DIR}/hsync.conf" 2>/dev/null || true
+fi
+
+# ── systemd ──────────────────────────────────────────────────────────────
+# Only register the unit; do NOT enable it (no automatic start at boot).
+# The administrator enables it explicitly: systemctl enable --now hsync.service
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+exit 0

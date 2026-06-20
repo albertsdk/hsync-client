@@ -1,0 +1,431 @@
+.\" Man page for HSYNC — file synchronization client
+.\" =====================================================================
+
+.TH HSYNC 1 "2025-06-20" "hsync 1.0" "User Commands"
+.
+.\" ---------------------------------------------------------------------
+.SH NAME
+hsync \- file synchronization client (Server and LAN P2P modes)
+.
+.\" ---------------------------------------------------------------------
+.SH SYNOPSIS
+.SY hsync
+.OP \-b NAME
+.OP \-s URL
+.OP \-p DIR
+.OP \-w
+.RI [ OPTIONS ]
+.YS
+.
+.SY hsync
+.B \-\-help
+.YS
+.
+.SY hsync
+.B \-\-version
+.YS
+.
+.\" ---------------------------------------------------------------------
+.SH DESCRIPTION
+.B hsync
+keeps directories in sync across machines and NAS devices.
+It supports two operating modes:
+.
+.TP 4
+\(bu
+.B Server Mode:
+Clients connect to a central HSYNC server.
+The server hosts shared directories ("buckets") and coordinates
+synchronization between all connected clients.
+.
+.TP 4
+\(bu
+.B LAN Mode (P2P):
+Clients discover each other automatically via mDNS on the local network.
+One peer is elected
+.B master
+and the others become
+.BR slaves .
+No central server is required. Communication can be encrypted with HTTPS
+and authenticated with a shared secret (HSYNC_LAN_KEY).
+.
+.SS Features
+\(bu Real-time file watching with
+.I inotify
+\& (Linux)
+.br
+\(bu Compression of transferred data via zstd
+.br
+\(bu Bandwidth throttling per transfer direction
+.br
+\(bu Exclusion patterns (.hsyncignore, gitignore-style)
+.br
+\(bu Dry-run preview mode
+.br
+\(bu Structured JSON-Lines status output for GUI integration
+.
+.\" ---------------------------------------------------------------------
+.SH OPTIONS
+.B hsync
+options are organised in logical groups.
+.
+.\" --- Required ---
+.SS Required
+.TP
+.BR \-b ", " \-\-bucket =\fINAME\fP
+Remote bucket name. Alphanumeric characters, hyphens, and underscores
+are allowed (not at the beginning or end).
+This option is mandatory.
+.
+.\" --- Connection ---
+.SS Connection
+.TP
+.BR \-s ", " \-\-server =\fIURL\fP
+Server URL
+.RI ( https://server.example.com ).
+Can also be set via the
+.B HSYNC_SERVER
+environment variable. Required for Server Mode.
+.TP
+.B \-\-insecure
+Skip SSL/TLS certificate verification (not recommended).
+.TP
+.BR \-\-ca\-cert =\fIFILE\fP
+Path to a custom CA certificate file for self-signed server certificates.
+.TP
+.BR \-\-timeout =\fISEC\fP
+HTTP request timeout in seconds (default:
+.BR 30 ;
+range: 1\(en300).
+.TP
+.BR \-\-api\-key\-fd =\fIFD\fP
+Read the API key from the given file descriptor. This is a hidden option
+intended for secure passing of secrets from a parent process.
+.TP
+.BR \-\-lan\-key\-fd =\fIFD\fP
+Read the LAN shared secret from the given file descriptor. Hidden option.
+.TP
+.BR \-\-events\-json\-fd =\fIFD\fP
+Write structured JSON-Lines status events to the given file descriptor.
+Hidden option intended for GUI integration.
+.
+.\" --- Sync ---
+.SS Sync
+.TP
+.BR \-p ", " \-\-path =\fIDIR\fP
+Local directory to synchronize (default: current directory).
+.TP
+.BR \-w ", " \-\-watch
+Watch for file changes and sync continuously.
+.TP
+.BR \-i ", " \-\-interval =\fISEC\fP
+Force a full re-scan every
+.I SEC
+seconds (requires
+.BR \-w ;
+range: 20\(en3600).
+.TP
+.BR \-\-retry\-delay =\fISEC\fP
+Wait
+.I SEC
+seconds before retrying a failed connection (default:
+.BR 5 ;
+range: 1\(en60).
+.TP
+.BR \-\-stability\-delay =\fISEC\fP
+Seconds to wait after a file stops changing before uploading it
+(default: 5; range: 1\(en60).
+.TP
+.BR \-\-max\-wait\-timeout =\fISEC\fP
+Maximum time to wait for a file to stabilize (default:
+.BR 120 ;
+range: 10\(en3600).
+.TP
+.BR \-\-filter\-path =\fIPATH\fP
+Sync only files within this subdirectory path.
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would be done without making any changes.
+.TP
+.B \-\-ignore\-delete
+Do not propagate file deletions. Useful for backup scenarios
+where you never want remote files deleted when they disappear locally.
+.TP
+.BR \-\-sync\-direction =\fIDIR\fP
+Sync direction. One of:
+.BR bidirectional " (default),"
+.BR upload\-only ", or"
+.BR download\-only .
+.TP
+.BR \-\-max\-bandwidth\-upload =\fIRATE\fP
+Maximum upload bandwidth
+.RI ( e.g. " 1MB ", " 500KB ").
+0 = unlimited.
+.TP
+.BR \-\-max\-bandwidth\-download =\fIRATE\fP
+Maximum download bandwidth (same format as above).
+.TP
+.B \-\-no\-compression
+Disable zstd compression for file transfers.
+.TP
+.BR \-\-min\-free\-disk\-space =\fIMB\fP
+Minimum free disk space in MB before sync is paused
+(default:
+.BR 500 ;
+range: 0\(en100000, 0 = disabled).
+.TP
+.B \-\-sync\-hidden
+Include hidden/system files in synchronization (disables built-in exclusion filters).
+.TP
+.BR \-\-ignore\-patterns =\fIPATTERNS\fP
+Comma-separated extra gitignore-style patterns.
+Layered on
+.B .hsyncignore
+(if present in the synced directory).
+.
+.\" --- LAN Mode ---
+.SS LAN Mode
+.TP
+.B \-\-lan\-mode
+Enable LAN peer-to-peer mode without a central server.
+.TP
+.BR \-\-lan\-port =\fIPORT\fP
+Port to use when acting as LAN master (default: 0 = auto).
+.TP
+.BR \-\-discovery\-timeout =\fISEC\fP
+Time to wait for initial LAN peer discovery
+(default:
+.BR 10 ;
+0 = wait indefinitely).
+.TP
+.BR \-\-lan\-group =\fIGROUP\fP
+Group name for LAN peer filtering. Only peers with the same group
+will discover each other.
+.TP
+.B \-\-no\-lan\-https
+Disable HTTPS for LAN mode (use plain HTTP). Enabled by default.
+.TP
+.B \-\-no\-lan\-persistent
+Exit when no LAN peers are found instead of waiting indefinitely.
+.TP
+.B \-\-force\-master
+Force this client to always act as master in LAN mode.
+.TP
+.B \-\-never\-master
+Never become master in LAN mode (always remain a slave).
+.
+.\" --- Output ---
+.SS Output
+.TP
+.BR \-v ", " \-\-verbose
+Enable verbose (debug) output.
+.TP
+.BR \-q ", " \-\-quiet
+Suppress all output.
+.TP
+.BR \-o ", " \-\-output =\fIFILE\fP
+Write output to
+.I FILE
+instead of the terminal.
+.TP
+.B \-\-no\-color
+Disable colored output.
+.TP
+.B \-\-help\-symbols
+Show a legend of the output symbols.
+.
+.\" --- General ---
+.SS General
+.TP
+.BR \-y ", " \-\-yes
+Skip interactive confirmation prompts (warnings are still shown).
+.TP
+.BR \-\-env\-file =\fIPATH\fP
+Load environment variables from a file (KEY=VALUE, one per line).
+.TP
+.BR \-V ", " \-\-version
+Show version and exit.
+.TP
+.BR \-h ", " \-\-help
+Show the built-in help and exit.
+.
+.\" ---------------------------------------------------------------------
+.SH SYNCHRONISATION DIRECTIONS
+.TP
+.B bidirectional
+Files are synced in both directions: local changes are pushed, remote changes
+are pulled. This is the default and the only mode compatible with
+.B \-\-force\-master
+in LAN Mode.
+.TP
+.B upload\-only
+Only local changes are pushed to the server/master.
+Remote changes are ignored.
+.TP
+.B download\-only
+Only remote changes are pulled from the server/master.
+Local changes are ignored.
+.
+.\" ---------------------------------------------------------------------
+.SH LAN MODE DETAILS
+In
+.B LAN Mode
+.RB ( \-\-lan\-mode ),
+clients on the same local network discover each other automatically
+using
+.B mDNS
+(Bonjour/Avahi).
+.
+.P
+One peer is dynamically elected as
+.BR master .
+The master serves the bucket to other peers and acts as the source
+of truth.  Slaves connect to the master via HTTPS (or plain HTTP if
+.B \-\-no\-lan\-https
+is given).
+.
+.P
+A shared secret can be set via the
+.B HSYNC_LAN_KEY
+environment variable to authenticate peers. Only clients with the same
+key can join the session.
+.
+.P
+Use
+.B \-\-lan\-group
+to isolate multiple independent sync groups on the same network.
+.
+.\" ---------------------------------------------------------------------
+.SH ENVIRONMENT
+.TP
+.B HSYNC_SERVER
+Server URL (alternative to
+.BR \-s ).
+.TP
+.B HSYNC_API_KEY
+API key for authenticating with the server.
+.TP
+.B HSYNC_LAN_KEY
+Shared secret for LAN mode peer authentication.
+.TP
+.B HSYNC_MAX_CONCURRENT_TRANSFERS
+Maximum number of concurrent file transfers (default:
+.BR 5 ).
+.
+.\" ---------------------------------------------------------------------
+.SH FILES
+.TP
+.I /etc/hsync/hsync.conf
+System-wide configuration file (read by the systemd service).
+Uses KEY=VALUE format.
+.TP
+.I /var/log/hsync/hsync.log
+Log file written by the systemd service.
+.TP
+.I .hsyncignore
+Per-directory ignore file (gitignore syntax).
+Placed in the root of the synced directory.
+.TP
+.I .hsynckeep
+Marker file that forces a directory to be kept even if it would otherwise
+be empty after synchronization.
+.
+.\" ---------------------------------------------------------------------
+.SH EXAMPLES
+.TP
+Basic sync with a remote server:
+.RS
+.EX
+hsync \-b photos \-s https://server.example.com
+.EE
+.RE
+.TP
+Sync a specific local directory:
+.RS
+.EX
+hsync \-b documents \-s https://server.example.com \-p ~/Documents
+.EE
+.RE
+.TP
+Continuous watch mode:
+.RS
+.EX
+hsync \-b projects \-s https://server.example.com \-w
+.EE
+.RE
+.TP
+Dry-run preview (no changes made):
+.RS
+.EX
+hsync \-b backup \-s https://server.example.com \-n
+.EE
+.RE
+.TP
+LAN peer-to-peer mode:
+.RS
+.EX
+hsync \-b shared \-\-lan\-mode
+.EE
+.RE
+.TP
+LAN mode with authentication and a specific group:
+.RS
+.EX
+HSYNC_LAN_KEY=mysecret hsync \-b shared \-\-lan\-mode \-\-lan\-group home
+.EE
+.RE
+.TP
+Backup mode (upload only, never delete remote files):
+.RS
+.EX
+hsync \-b backup \-s https://server.example.com \-\-sync\-direction upload\-only \-\-ignore\-delete
+.EE
+.RE
+.TP
+Bandwidth-limited sync:
+.RS
+.EX
+hsync \-b media \-s https://server.example.com \-\-max\-bandwidth\-upload 2MB
+.EE
+.RE
+.
+.\" ---------------------------------------------------------------------
+.SH SIGNALS
+.TP
+.B SIGINT ", " SIGTERM
+Graceful shutdown. The running daemon will complete any in-progress
+transfers before exiting.
+.
+.\" ---------------------------------------------------------------------
+.SH EXIT STATUS
+.TP
+.B 0
+Synchronisation completed successfully (one-shot mode) or daemon exited
+cleanly.
+.TP
+.B 1
+An error occurred (configuration, network, or I/O).
+.
+.\" ---------------------------------------------------------------------
+.SH SEE ALSO
+.BR hsync.service (5),
+.BR hsync.conf (5)
+.P
+.RS
+Project homepage:
+.UR https://github.com/albertobasso/hsync-client
+.UE
+.RE
+.
+.\" ---------------------------------------------------------------------
+.SH AUTHORS
+Written by
+.MT 17047798+albertobasso@users.noreply.github.com
+Alberto Basso
+.ME .
+.
+.\" ---------------------------------------------------------------------
+.SH BUGS
+Report issues at
+.UR https://github.com/albertobasso/hsync-client/issues
+.UE .

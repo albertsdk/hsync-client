@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# postrm — Debian maintainer script, runs after package removal.
+#
+# On purge: removes configuration and log directories.
+# On remove (without purge): keeps user data and logs.
+
+set -e
+
+HSYNC_USER="_hsync"
+HSYNC_GROUP="_hsync"
+CONFIG_DIR="/etc/hsync"
+LOG_DIR="/var/log/hsync"
+
+case "$1" in
+    purge)
+        rm -rf "${CONFIG_DIR}" 2>/dev/null || true
+        rm -rf "${LOG_DIR}" 2>/dev/null || true
+        # Remove the system user and group on purge.
+        if id "${HSYNC_USER}" >/dev/null 2>&1; then
+            userdel "${HSYNC_USER}" 2>/dev/null || true
+        fi
+        if getent group "${HSYNC_GROUP}" >/dev/null 2>&1; then
+            groupdel "${HSYNC_GROUP}" 2>/dev/null || true
+        fi
+        ;;
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # Keep user data and logs.
+        ;;
+    *)
+        ;;
+esac
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+exit 0
