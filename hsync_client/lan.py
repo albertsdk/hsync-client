@@ -30,6 +30,11 @@ from dataclasses import dataclass, field
 # canonical home is hsync_common.clock.
 from hsync_common.clock import CLOCK_SKEW_THRESHOLD  # noqa: F401
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
+from hsync_common.protocol.lan import (
+    SYNC_DIRECTION_BIDIRECTIONAL,
+    ElectionCandidate,
+    election_sort_key,
+)
 from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
@@ -321,51 +326,42 @@ class PeerManager:
         always remain clients/slaves. If every node is ``never_master`` the
         candidate list is empty and no master is elected.
         """
-        # Build list of candidates with their election criteria.
-        # Each candidate: (cid, force_master, startup_time, sync_direction, server_ready)
-        # never_master nodes are excluded entirely so they are never elected.
-        candidates: list[tuple[str, bool, float, str, bool]] = []
-        if not self._never_master:
-            candidates.append(
-                (
-                    self._local_cid,
-                    self._force_master,
-                    self._startup_time,
-                    self._sync_direction,
-                    self._local_server_ready,
-                )
+        # Build the candidate list (local node + every alive peer) and delegate
+        # the ordering to the shared, cross-language algorithm in hsync_common so
+        # the Python client and Android never diverge. ``never_master`` nodes are
+        # carried through and filtered by the shared sort key.
+        candidates: list[ElectionCandidate] = [
+            ElectionCandidate(
+                cid=self._local_cid,
+                force_master=self._force_master,
+                startup_time=self._startup_time,
+                sync_direction=self._sync_direction,
+                server_ready=self._local_server_ready,
+                never_master=self._never_master,
             )
-
+        ]
         for peer in self._peers.values():
-            if peer.is_alive() and not peer.never_master:
+            if peer.is_alive():
                 candidates.append(
-                    (
-                        peer.cid,
-                        peer.force_master,
-                        peer.startup_time,
-                        peer.sync_direction,
-                        peer.server_ready,
+                    ElectionCandidate(
+                        cid=peer.cid,
+                        force_master=peer.force_master,
+                        startup_time=peer.startup_time,
+                        sync_direction=peer.sync_direction,
+                        server_ready=peer.server_ready,
+                        never_master=peer.never_master,
                     )
                 )
 
-        if not candidates:
-            new_master_cid = None
-        else:
-            # Sort by: server_ready (desc), force_master (desc),
-            #          bidirectional preference, startup_time (asc), cid (asc)
-            # not server_ready: False=0 < True=1, so an incumbent master wins
-            # not force_master: False=0 < True=1, so force_master=True first
-            # sync_direction != "bidirectional": False=0 < True=1,
-            #   so bidirectional peers come first
-            candidates.sort(key=lambda c: (not c[4], not c[1], c[3] != "bidirectional", c[2], c[0]))
-            new_master_cid = candidates[0][0]
+        eligible = sorted((c for c in candidates if not c.never_master), key=election_sort_key)
+        new_master_cid = eligible[0].cid if eligible else None
 
         # Detect force_master conflicts
-        force_master_candidates = [c for c in candidates if c[1]]
+        force_master_candidates = [c for c in eligible if c.force_master]
         if len(force_master_candidates) > 1:
-            winner_cid = force_master_candidates[0][0]
+            winner_cid = force_master_candidates[0].cid
             for loser in force_master_candidates[1:]:
-                loser_cid = loser[0]
+                loser_cid = loser.cid
                 loser_peer = self._peers.get(loser_cid)
                 winner_peer = self._peers.get(winner_cid)
                 if loser_cid == self._local_cid:
@@ -429,14 +425,14 @@ class PeerManager:
             if new_master_cid == self._local_cid:
                 if self._force_master:
                     reason = "force_master"
-                elif self._sync_direction == "bidirectional":
+                elif self._sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
                     reason = "bidirectional preference"
                 else:
                     reason = "earliest startup"
                 log.info(
                     f"This client elected as MASTER (CID: {self._local_cid}, reason: {reason})"
                 )
-                if self._sync_direction != "bidirectional":
+                if self._sync_direction != SYNC_DIRECTION_BIDIRECTIONAL:
                     log.warning(
                         f"This client is master with "
                         f"sync_direction={self._sync_direction}. "
@@ -448,11 +444,11 @@ class PeerManager:
                 if master_peer:
                     if master_peer.force_master:
                         reason = "force_master"
-                    elif master_peer.sync_direction == "bidirectional":
+                    elif master_peer.sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
                         reason = "bidirectional preference"
                     else:
                         reason = "earliest startup"
-                    if master_peer.sync_direction != "bidirectional":
+                    if master_peer.sync_direction != SYNC_DIRECTION_BIDIRECTIONAL:
                         log.warning(
                             f"Master {new_master_cid} has "
                             f"sync_direction={master_peer.sync_direction}. "
