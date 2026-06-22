@@ -9,6 +9,7 @@
 import runpy
 from unittest.mock import patch
 
+import typer
 from typer.testing import CliRunner
 
 from hsync_client.cli import app
@@ -467,3 +468,47 @@ class TestCLIValidation:
                 ],
             )
             assert result.exit_code == 0
+
+
+class TestCapabilitiesJson:
+    """Tests for the --capabilities-json eager option (DESIGN_REVIEW §8)."""
+
+    def test_prints_valid_capabilities_document(self):
+        """--capabilities-json emits a parseable document and exits cleanly."""
+        from hsync_common.protocol.capabilities import (
+            CAPABILITIES_SCHEMA_VERSION,
+            parse_capabilities,
+        )
+
+        result = runner.invoke(app, ["--capabilities-json"])
+        assert result.exit_code == 0
+        doc = parse_capabilities(result.output)
+        assert doc is not None
+        assert doc["schema_version"] == CAPABILITIES_SCHEMA_VERSION
+
+    def test_advertises_real_cli_options(self):
+        """The document reports the actual long-form flags of the command."""
+        from hsync_common.protocol.capabilities import parse_capabilities
+
+        result = runner.invoke(app, ["--capabilities-json"])
+        doc = parse_capabilities(result.output)
+        assert doc is not None
+        for flag in ("--lan-mode", "--never-master", "--force-master", "--require-pairing"):
+            assert flag in doc["cli_options"]
+
+    def test_does_not_require_bucket(self):
+        """The eager option short-circuits before bucket validation."""
+        result = runner.invoke(app, ["--capabilities-json"])
+        assert result.exit_code == 0
+        assert "missing option" not in result.output.lower()
+
+    def test_collect_cli_options_introspects_command(self):
+        """collect_cli_options returns sorted long-form flags from the command."""
+        from hsync_client.cli import app as typer_app
+        from hsync_client.cli import collect_cli_options
+
+        command = typer.main.get_command(typer_app)
+        flags = collect_cli_options(command)
+        assert flags == sorted(flags)
+        assert all(f.startswith("--") for f in flags)
+        assert "--version" in flags
