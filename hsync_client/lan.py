@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 # CLOCK_SKEW_THRESHOLD is re-exported here for backwards compatibility; its
 # canonical home is hsync_common.clock.
 from hsync_common.clock import CLOCK_SKEW_THRESHOLD  # noqa: F401
+from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
 from loguru import logger as log
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 
@@ -76,47 +77,6 @@ def get_free_port() -> int:
         s.listen(1)
         port = s.getsockname()[1]
     return port
-
-
-def check_version_compatibility(local_version: str, peer_version: str) -> tuple[bool, str]:
-    """
-    Check if peer version is compatible with local version using Semver.
-
-    Compatibility rules:
-    - Different major version → incompatible (False, "major_mismatch")
-    - Different minor version → warning but allowed (True, "minor_mismatch")
-    - Different patch version → compatible (True, "compatible")
-    - Same version → compatible (True, "compatible")
-
-    Args:
-        local_version: Local HSYNC version (e.g., "1.0.0").
-        peer_version: Peer's HSYNC version.
-
-    Returns:
-        Tuple of (is_compatible, reason).
-    """
-    try:
-        local_parts = local_version.split(".")
-        peer_parts = peer_version.split(".")
-
-        # Ensure we have at least major.minor.patch
-        while len(local_parts) < 3:
-            local_parts.append("0")
-        while len(peer_parts) < 3:
-            peer_parts.append("0")
-
-        # Compare major version
-        if local_parts[0] != peer_parts[0]:
-            return (False, "major_mismatch")
-
-        # Compare minor version
-        if local_parts[1] != peer_parts[1]:
-            return (True, "minor_mismatch")
-
-        return (True, "compatible")
-    except Exception:
-        # If we can't parse versions, assume compatible with warning
-        return (True, "parse_error")
 
 
 # =============================================================================
@@ -600,6 +560,9 @@ class HsyncServiceListener(ServiceListener):
             # Version is optional - default to "0.0.0" for old clients
             version_bytes = properties.get(b"version", b"")
             version = version_bytes.decode("utf-8") if version_bytes else "0.0.0"
+            # Wire-protocol version: a mismatch is a hard failure (no legacy peers)
+            protocol_bytes = properties.get(b"protocol", b"")
+            protocol = protocol_bytes.decode("utf-8") if protocol_bytes else ""
             # Group is optional - empty string means no group
             group_bytes = properties.get(b"group", b"")
             group = group_bytes.decode("utf-8") if group_bytes else None
@@ -647,24 +610,14 @@ class HsyncServiceListener(ServiceListener):
                 log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
                 return
 
-            # Check version compatibility
-            is_compatible, reason = check_version_compatibility(HSYNC_VERSION, version)
-            if not is_compatible:
+            # Enforce the wire-protocol version: peers on a different protocol
+            # are ignored outright (capabilities never bridge protocol versions).
+            if protocol != PROTOCOL_VERSION_LAN:
                 log.warning(
-                    f"Ignoring peer {cid} with incompatible version {version} "
-                    f"(local: {HSYNC_VERSION}, reason: {reason})"
+                    f"Ignoring peer {cid} with incompatible protocol "
+                    f"{protocol or 'missing'} (local: {PROTOCOL_VERSION_LAN})"
                 )
                 return
-
-            if reason == "minor_mismatch":
-                log.warning(
-                    f"Peer {cid} has different minor version {version} "
-                    f"(local: {HSYNC_VERSION}). Sync may have issues."
-                )
-            elif reason == "parse_error":
-                log.warning(
-                    f"Could not parse version for peer {cid}: {version}. Proceeding with caution."
-                )
 
             # Get address and port
             addresses = info.parsed_addresses()
@@ -905,6 +858,7 @@ class LANSync:
             "cid": self._cid,
             "bucket": self._bucket,
             "version": HSYNC_VERSION,
+            "protocol": PROTOCOL_VERSION_LAN,
         }
         # Add group if specified
         if self._group:

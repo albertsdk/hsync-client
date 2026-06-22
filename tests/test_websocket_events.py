@@ -560,8 +560,9 @@ class TestRemoteEvents:
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "1.0.0",
-            "compression_enabled": True,
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": ["compression"],
         }
 
         # Mock event message to stop the loop
@@ -609,10 +610,6 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
             patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
-            patch(
-                "hsync_client.remote_websocket.check_version_compatibility",
-                return_value=(True, None),
-            ),
         ):
             MockEventQueue.return_value = MagicMock()
             mock_process.side_effect = Exception("Stop loop")
@@ -663,19 +660,19 @@ class TestRemoteEvents:
             mock_websocket.recv.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_remote_events_version_incompatible(self):
-        """remote_events returns early when version is incompatible."""
+    async def test_remote_events_protocol_incompatible(self):
+        """remote_events returns early when the server protocol mismatches."""
         from json import dumps
 
         from hsync_client.remote_websocket import remote_events
 
-        # Mock auth response with version incompatibility
+        # Auth accepted but the server speaks a different wire protocol.
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "0.1.0",
-            "error": "version_incompatible",
-            "server_version": "0.1.0",
+            "protocol_version": "ws/999",
+            "app_version": "1.0.0",
+            "capabilities": [],
         }
 
         config = {
@@ -697,82 +694,11 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
-            patch(
-                "hsync_client.remote_websocket.check_version_compatibility",
-                return_value=(False, "version_too_old"),
-            ),
         ):
             await remote_events()
 
-            # Should return early
+            # Should return early after sending the auth frame.
             mock_websocket.send.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_remote_events_version_warning(self):
-        """remote_events logs warning for minor version mismatch."""
-        from json import dumps
-
-        from hsync_client.remote_websocket import remote_events
-
-        auth_response = {
-            "type": "auth",
-            "status": "ok",
-            "version": "1.1.0",
-            "compression_enabled": False,
-        }
-
-        event_message = {
-            "name": "added",
-            "cid": "other_client",
-            "bucket": "testbucket",
-            "src": {"path": "newdir"},
-        }
-
-        config = {
-            "CID": "my_client",
-            "LOCAL_BUCKET": "/tmp/bucket",
-            "REMOTE_BUCKET": "testbucket",
-            "NO_VERIFY_SSL": False,
-            "CA_CERT": None,
-            "SERVER_COMPRESSION_ENABLED": False,
-            "API": {"events": "wss://api.example.com/events"},
-        }
-
-        mock_websocket = AsyncMock()
-        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
-        mock_websocket.__aexit__ = AsyncMock(return_value=None)
-        mock_websocket.send = AsyncMock()
-        mock_websocket.recv = AsyncMock(
-            side_effect=[
-                dumps(auth_response),
-                dumps(event_message),
-                Exception("Stop loop"),
-            ]
-        )
-
-        mock_observer = MagicMock()
-
-        with (
-            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
-            patch("hsync_client.remote_websocket.CONFIG", config),
-            patch("hsync_client.event_dispatch.CONFIG", config),
-            patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
-            patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
-            patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
-            patch(
-                "hsync_client.remote_websocket.check_version_compatibility",
-                return_value=(True, "minor_mismatch"),
-            ),
-            patch("hsync_client.remote_websocket.log") as mock_log,
-        ):
-            MockEventQueue.return_value = MagicMock()
-            mock_process.side_effect = Exception("Stop loop")
-
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(remote_events(), timeout=1.0)
-
-            # Should log warning for minor mismatch
-            assert mock_log.warning.called
 
     @pytest.mark.asyncio
     async def test_remote_events_ssl_no_verify(self):
@@ -784,8 +710,9 @@ class TestRemoteEvents:
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "1.0.0",
-            "compression_enabled": False,
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": [],
         }
 
         event_message = {
@@ -832,10 +759,6 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.EventQueue") as MockEventQueue,
             patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
-            patch(
-                "hsync_client.remote_websocket.check_version_compatibility",
-                return_value=(True, None),
-            ),
         ):
             MockEventQueue.return_value = MagicMock()
             mock_process.side_effect = Exception("Stop loop")
@@ -857,8 +780,9 @@ class TestRemoteEvents:
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "1.0.0",
-            "compression_enabled": False,
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": [],
         }
 
         config = {
@@ -919,8 +843,9 @@ class TestRemoteEvents:
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "1.0.0",
-            "compression_enabled": False,
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": [],
         }
 
         config = {
@@ -990,8 +915,9 @@ class TestRemoteEventsAuthToken:
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "1.0.0",
-            "compression_enabled": False,
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": [],
         }
 
         config = {
@@ -1023,10 +949,6 @@ class TestRemoteEventsAuthToken:
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
             patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
-            patch(
-                "hsync_client.remote_websocket.check_version_compatibility",
-                return_value=(True, None),
-            ),
             patch("hsync_client.remote_websocket.get_api_key", return_value="env-fallback"),
         ):
             MockEventQueue.return_value = MagicMock()
@@ -1050,8 +972,9 @@ class TestRemoteEventsAuthToken:
         auth_response = {
             "type": "auth",
             "status": "ok",
-            "version": "1.0.0",
-            "compression_enabled": False,
+            "protocol_version": "ws/1",
+            "app_version": "1.0.0",
+            "capabilities": [],
         }
 
         config = {
@@ -1083,10 +1006,6 @@ class TestRemoteEventsAuthToken:
             patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
             patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
-            patch(
-                "hsync_client.remote_websocket.check_version_compatibility",
-                return_value=(True, None),
-            ),
             patch(
                 "hsync_client.remote_websocket.get_api_key",
                 return_value="env-var-token",
