@@ -514,7 +514,7 @@ class TestTombstoneDecision:
 
 
 class TestMassDeletionGuard:
-    """Unit tests for the _mass_deletion_blocked safety guard (§12)."""
+    """Unit tests for the _mass_deletion_blocked safety guard."""
 
     _CONFIG = {
         "MASS_DELETE_GUARD": True,
@@ -924,13 +924,13 @@ class TestClientSyncStateModule:
 
 
 # Fixed mtime (unix seconds) shared by every peer and the server below, so the
-# end-to-end merge can only be driven by content hashes: this proves the §7
+# end-to-end merge can only be driven by content hashes: this proves the
 # resolution is clock-independent rather than relying on timestamps.
 _E2E_MTIME = 1_000_000
 
 
 class TestThreeWayMergeEndToEnd:
-    """Full two-peer round-trip exercising the §7 lifecycle on real on-disk state.
+    """Full two-peer round-trip exercising the lifecycle on real on-disk state.
 
     A shared in-memory ``server`` stands in for the master; two peers each own a
     bucket directory and a persistent ``.hsyncstate`` side-car. Every round runs

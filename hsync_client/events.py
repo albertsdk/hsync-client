@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Structured UI-event emitter for hsync-client (DESIGN_REVIEW §3 / P0-B).
+Structured UI-event emitter for hsync-client.
 
 A parent process (e.g. the Desktop GUI) passes a writable file descriptor via
 ``--events-json-fd``; the client then writes one JSON object per line to it

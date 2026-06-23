@@ -1,5 +1,5 @@
 """
-Tests for hsync_client.pinning (LAN Trust-On-First-Use certificate store, §5).
+Tests for hsync_client.pinning (LAN Trust-On-First-Use certificate store).
 """
 
 import os

@@ -46,7 +46,7 @@ from hsync_client.utils import path_lock, safe_rmdir_if_empty
 
 
 def _remove_locked(filepath: str) -> bool:
-    """Remove *filepath* under its per-path lock (§14); return True if removed.
+    """Remove *filepath* under its per-path lock; return True if removed.
 
     Re-checks existence inside the lock so a concurrent transfer that just
     (re)wrote the same path is not torn by the delete.

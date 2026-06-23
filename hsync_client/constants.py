@@ -68,7 +68,7 @@ MAX_WAIT_TIMEOUT_MAX = 3600
 MAX_WAIT_TIMEOUT_DEFAULT = 120  # 2 minutes
 
 # When a file never stabilizes within MAX_WAIT_TIMEOUT the upload is rescheduled
-# for a later attempt instead of being forced (§15), avoiding a "torn" upload of
+# for a later attempt instead of being forced, avoiding a "torn" upload of
 # a file still being written. After UPLOAD_MAX_RESCHEDULES deferrals the file is
 # skipped and left to the next file-system event (on_closed) or periodic resync.
 UPLOAD_RESCHEDULE_DELAY_DEFAULT = 30  # seconds between deferred attempts
@@ -85,7 +85,7 @@ UPLOAD_MAX_RESCHEDULES_DEFAULT = 5
 MAX_CONCURRENT_TRANSFERS = int(__import__("os").environ.get("HSYNC_MAX_CONCURRENT_TRANSFERS", "5"))
 
 # =============================================================================
-# Per-File Transfer Retry/Backoff (§11)
+# Per-File Transfer Retry/Backoff
 # =============================================================================
 
 # A single transient network blip (timeout, connection reset, 5xx) must not
@@ -96,7 +96,7 @@ TRANSFER_RETRY_MIN_WAIT_DEFAULT = 1  # seconds
 TRANSFER_RETRY_MAX_WAIT_DEFAULT = 10  # seconds
 
 # =============================================================================
-# Mass-Deletion Guard (§12)
+# Mass-Deletion Guard
 # =============================================================================
 
 # A master that (temporarily) exposes an empty or wrong bucket must not be able

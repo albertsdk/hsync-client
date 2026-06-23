@@ -360,7 +360,7 @@ class TestLANWebSocketServer:
 
 
 class TestLANPeriodicResync:
-    """Tests for _lan_periodic_resync (§13)."""
+    """Tests for _lan_periodic_resync."""
 
     @pytest.mark.asyncio
     async def test_calls_sync_periodically(self):

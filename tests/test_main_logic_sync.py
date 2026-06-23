@@ -161,7 +161,7 @@ class TestGetDiscoveryTimeoutValue:
 
 
 class TestGetResyncValue:
-    """Tests for _get_resync_value function (§13)."""
+    """Tests for _get_resync_value function."""
 
     def test_cli_value_takes_priority(self):
         """CLI argument is used when provided."""

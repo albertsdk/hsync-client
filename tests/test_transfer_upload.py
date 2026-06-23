@@ -20,7 +20,7 @@ _BASE_CONFIG = {
     "REMOTE_BUCKET": "test",
     "REQUEST_HEADERS": {"X-API-Key": "test"},
     "CID": "test-client",
-    # Disable retry/backoff (§11) so error-status paths resolve in one attempt.
+    # Disable retry/backoff so error-status paths resolve in one attempt.
     "TRANSFER_RETRY_ATTEMPTS": 1,
 }
 
@@ -166,7 +166,7 @@ class TestUploadFile:
                     "LOCAL_BUCKET": str(tmp_path),
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "CID": "test-client",
-                    # Disable retry/backoff (§11): a 5xx is raised and surfaced once.
+                    # Disable retry/backoff: a 5xx is raised and surfaced once.
                     "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
@@ -210,7 +210,7 @@ class TestUploadFile:
                     "LOCAL_BUCKET": str(tmp_path),
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "CID": "test-client",
-                    # Disable retry/backoff (§11) so a single attempt is asserted.
+                    # Disable retry/backoff so a single attempt is asserted.
                     "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
@@ -219,12 +219,12 @@ class TestUploadFile:
         ):
             mock_post.side_effect = RequestException("Connection error")
             upload_file(file, check_size=False)
-            # Retry disabled (§11): the single failing attempt is asserted.
+            # Retry disabled: the single failing attempt is asserted.
             mock_post.assert_called_once()
 
 
 class TestUploadRetry:
-    """Retry/backoff and transfer_failed surfacing for uploads (§11)."""
+    """Retry/backoff and transfer_failed surfacing for uploads."""
 
     def test_transient_error_retries_then_emits_transfer_failed(self, tmp_path):
         """A persistent 5xx is retried then surfaced as transfer_failed."""
@@ -302,7 +302,7 @@ class TestUploadFileMaxWaitTimeout:
             upload_file(file, check_size=True)
 
     def test_upload_reschedules_after_max_wait(self, tmp_path):
-        """An unstable file is rescheduled (not force-uploaded) after timeout (§15)."""
+        """An unstable file is rescheduled (not force-uploaded) after timeout."""
         test_file = tmp_path / "file.txt"
         test_file.write_text("test content")
 
@@ -377,7 +377,7 @@ class TestUploadFileMaxWaitTimeout:
 
 
 class TestRescheduleUpload:
-    """Tests for _reschedule_upload deferred-upload logic (§15)."""
+    """Tests for _reschedule_upload deferred-upload logic."""
 
     def _make_file(self, tmp_path):
         test_file = tmp_path / "file.txt"

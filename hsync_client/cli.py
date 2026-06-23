@@ -60,8 +60,8 @@ def collect_cli_options(command: typer.core.TyperCommand) -> list[str]:
     """Return the sorted long-form option flags exposed by ``command``.
 
     Introspects the underlying click command so the advertised CLI surface can
-    never drift from the real interface (DESIGN_REVIEW §8): every ``--flag`` an
-    option declares (primary and secondary) is reported as a supported option.
+    never drift from the real interface: every ``--flag`` an option declares
+    (primary and secondary) is reported as a supported option.
     """
     flags: set[str] = set()
     for param in command.params:
@@ -74,7 +74,7 @@ def collect_cli_options(command: typer.core.TyperCommand) -> list[str]:
 
 
 def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
-    """Print the binary's capabilities document as JSON and exit (§8)."""
+    """Print the binary's capabilities document as JSON and exit."""
     if not value:
         return
     doc = build_capabilities(

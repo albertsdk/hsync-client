@@ -356,7 +356,7 @@ def warn_if_inotify_watch_limit_low(watch_path: str) -> None:
 
 
 # =============================================================================
-# Per-Path Serialization (§14)
+# Per-Path Serialization
 # =============================================================================
 
 # One re-usable lock per local path, created on demand and reference-counted so

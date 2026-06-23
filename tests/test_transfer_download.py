@@ -32,7 +32,7 @@ class TestDownloadFile:
                     "REMOTE_BUCKET": "test",
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "LOCAL_BUCKET": str(tmp_path),
-                    # Disable retry/backoff (§11) so a single attempt is asserted.
+                    # Disable retry/backoff so a single attempt is asserted.
                     "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
@@ -102,7 +102,7 @@ class TestDownloadFile:
                     "REMOTE_BUCKET": "test",
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "LOCAL_BUCKET": str(tmp_path),
-                    # Disable retry/backoff (§11): a 5xx is raised and surfaced once.
+                    # Disable retry/backoff: a 5xx is raised and surfaced once.
                     "TRANSFER_RETRY_ATTEMPTS": 1,
                 },
             ),
@@ -219,7 +219,7 @@ class TestDownloadFile:
 
 
 class TestDownloadRetry:
-    """Retry/backoff and transfer_failed surfacing for downloads (§11)."""
+    """Retry/backoff and transfer_failed surfacing for downloads."""
 
     def test_transient_error_retries_then_emits_transfer_failed(self, tmp_path):
         """A persistent transient error is retried then surfaced as transfer_failed."""
@@ -470,7 +470,7 @@ class TestDownloadCompressed:
 
 
 class TestDownloadPathLocking:
-    """Concurrency tests for per-path serialization of downloads (§14)."""
+    """Concurrency tests for per-path serialization of downloads."""
 
     def _run_concurrent(self, files, tmp_path):
         """Run download_file on *files* from threads, tracking max concurrency."""

@@ -1,4 +1,4 @@
-# CI — hsync-client (§6)
+# CI — hsync-client
 # Lint + tests for the CLI / LAN P2P client. hsync-client depends on the shared
 # library through a Poetry path dependency (../hsync-common), so the sibling repo
 # is checked out alongside it. The pytest run includes the LAN/pairing behaviour
