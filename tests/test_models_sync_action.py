@@ -34,7 +34,7 @@ class TestSyncAction:
             filepath="/bucket/test.txt",
             size=100,
             sha256sum="abc123",
-            permissions="-rw-r--r--",
+            permissions="644",
         )
 
     def test_init_basic(self, sample_file):
@@ -77,7 +77,7 @@ class TestFormatTimedelta:
     @pytest.fixture
     def sample_file(self):
         """Create a sample File for testing."""
-        return File(filepath="/test.txt", size=0, sha256sum="", permissions="-rw-r--r--")
+        return File(filepath="/test.txt", size=0, sha256sum="", permissions="644")
 
     def test_zero_seconds(self, sample_file):
         """Zero seconds returns '0s'."""

@@ -998,7 +998,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             cid = form_fields.get("cid", "")
             mtime = form_fields.get("mtime", "")
             ctime = form_fields.get("ctime", "")
-            permissions = form_fields.get("permissions", "-rw-rw-r--")
+            permissions = form_fields.get("permissions", "664")
 
             # Honour the echo-suppression CID only on authenticated requests;
             # an unauthenticated CID is untrusted and ignored.

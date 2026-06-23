@@ -12,13 +12,11 @@ file operations, and data formatting.
 """
 
 import secrets
-import stat
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
 from os import chmod, walk
-from os import stat as os_stat
 from os.path import abspath, normpath
 from pathlib import Path
 
@@ -30,6 +28,8 @@ from hsync_common.path_validation import (
     has_problematic_trailing,
     is_reserved_name,
 )
+from hsync_common.permissions import get_permissions as _read_permissions
+from hsync_common.permissions import octal_to_mode
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
@@ -481,17 +481,15 @@ def compute_sha256(filepath: str, chunk_size: int = SHA256_CHUNK_SIZE) -> str:
 
 def get_permissions(obj_path: str) -> str:
     """
-    Get file permissions in symbolic notation.
+    Get file permissions as a canonical octal string.
 
     Args:
         obj_path: Path to the file or directory.
 
     Returns:
-        Permission string like '-rw-r--r--'.
+        Octal permission string like '644'.
     """
-    obj_stat = os_stat(obj_path)
-    permissions = obj_stat.st_mode
-    return stat.filemode(permissions)
+    return _read_permissions(obj_path)
 
 
 def get_chunk_size(file_size: int | None) -> int:
@@ -520,27 +518,20 @@ def get_chunk_size(file_size: int | None) -> int:
 
 def set_permissions(file_path: str, permissions: str) -> None:
     """
-    Set file permissions from symbolic notation.
+    Set file permissions from a canonical octal string.
 
-    Converts symbolic permission string (e.g., '-rw-r--r--') to
-    octal mode and applies it to the file.
+    Converts the octal permission string (e.g., '644') to a numeric
+    mode and applies it to the file.
 
     Args:
         file_path: Path to the file.
-        permissions: Symbolic permission string (10 characters).
+        permissions: Octal permission string (e.g., '644').
     """
     # Skip if permissions already match
     if Path(file_path).exists() and permissions == get_permissions(file_path):
         return
 
-    # Parse symbolic permissions to octal mode
-    mode = 0
-    permission_types = {"r": 4, "w": 2, "x": 1}
-    for i, section in enumerate([permissions[1:4], permissions[4:7], permissions[7:10]]):
-        for char in section:
-            if char in permission_types:
-                mode |= permission_types[char] << (6 - (i * 3))
-
+    mode = octal_to_mode(permissions)
     log.debug(f'[PERMISSION] Set permission "{permissions}" to {file_path}')
     chmod(file_path, mode)
 

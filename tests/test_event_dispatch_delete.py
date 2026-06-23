@@ -23,7 +23,7 @@ class TestApplyInboundDeleteEvent:
 
         event = {
             "name": "deleted",
-            "src": {"path": "to_delete", "permissions": "drwxr-xr-x"},
+            "src": {"path": "to_delete", "permissions": "755"},
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
 
@@ -36,7 +36,7 @@ class TestApplyInboundDeleteEvent:
         """Handles missing directory gracefully."""
         event = {
             "name": "deleted",
-            "src": {"path": "missing", "permissions": "drwxr-xr-x"},
+            "src": {"path": "missing", "permissions": "755"},
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
 
@@ -56,7 +56,7 @@ class TestApplyInboundDeleteEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
@@ -76,7 +76,7 @@ class TestApplyInboundDeleteEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
         config = {"LOCAL_BUCKET": str(tmp_path)}
@@ -97,7 +97,7 @@ class TestApplyInboundDeleteEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
         config = {"LOCAL_BUCKET": str(tmp_path), "IGNORE_DELETE": True}
@@ -122,7 +122,7 @@ class TestApplyInboundDeleteEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 0,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
         config = {"LOCAL_BUCKET": str(tmp_path), "IGNORE_DELETE": False}

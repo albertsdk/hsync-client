@@ -23,7 +23,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -47,7 +47,7 @@ class TestHandleLanEvent:
             "name": "added",
             "src": {
                 "path": "newdir",
-                "permissions": "drwxr-xr-x",
+                "permissions": "755",
             },
         }
 
@@ -75,7 +75,7 @@ class TestHandleLanEvent:
                 "mtime": 2000,
                 "ctime": 1000,
                 "size": 20,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -107,7 +107,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
             "dst": {
                 "filepath": "new.txt",
@@ -115,7 +115,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -146,7 +146,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -177,7 +177,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 7,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -204,7 +204,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -255,7 +255,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "permissions": "lrwxrwxrwx",
+                "permissions": "777",
             },
         }
 
@@ -280,8 +280,8 @@ class TestHandleLanEvent:
 
         event_data = {
             "name": "renamed",
-            "src": {"path": "olddir", "permissions": "drwxr-xr-x"},
-            "dst": {"path": "newdir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "olddir", "permissions": "755"},
+            "dst": {"path": "newdir", "permissions": "755"},
         }
 
         config = {
@@ -306,7 +306,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
             # no "dst"
         }
@@ -331,7 +331,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
             "dst": {
                 "filepath": "new.txt",
@@ -339,7 +339,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -363,7 +363,7 @@ class TestHandleLanEvent:
 
         event_data = {
             "name": "deleted",
-            "src": {"path": "deldir", "permissions": "drwxr-xr-x"},
+            "src": {"path": "deldir", "permissions": "755"},
         }
 
         config = {
@@ -393,7 +393,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 0,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -420,7 +420,7 @@ class TestHandleLanEvent:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -445,7 +445,7 @@ class TestHandleLanEvent:
         """Test deleted dir event when dir doesn't exist (no crash)."""
         event_data = {
             "name": "deleted",
-            "src": {"path": "nonexistent", "permissions": "drwxr-xr-x"},
+            "src": {"path": "nonexistent", "permissions": "755"},
         }
 
         config = {
@@ -469,7 +469,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 1,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -495,7 +495,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -524,7 +524,7 @@ class TestHandleLanEvent:
                 "mtime": 1,
                 "ctime": 1,
                 "size": 10,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
 
@@ -606,7 +606,7 @@ class TestEventLoopRemainsResponsive:
                 "mtime": 1000,
                 "ctime": 1000,
                 "size": 9_000_000_000,
-                "permissions": "-rw-r--r--",
+                "permissions": "644",
             },
         }
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}

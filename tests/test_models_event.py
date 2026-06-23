@@ -49,7 +49,7 @@ class TestEvent:
 
     def test_init_with_dir(self):
         """Test event creation with Dir source."""
-        d = Dir(path="/local/bucket/subdir", permissions="drwxr-xr-x")
+        d = Dir(path="/local/bucket/subdir", permissions="755")
         event = Event(
             cid="client-123",
             localpath="/local/bucket",
@@ -118,8 +118,8 @@ class TestEvent:
 
     def test_to_dict_with_dst(self):
         """Test serialization with destination."""
-        src = Dir(path="/local/bucket/old_dir", permissions="drwxr-xr-x")
-        dst = Dir(path="/local/bucket/new_dir", permissions="drwxr-xr-x")
+        src = Dir(path="/local/bucket/old_dir", permissions="755")
+        dst = Dir(path="/local/bucket/new_dir", permissions="755")
 
         event = Event(
             cid="client-123",

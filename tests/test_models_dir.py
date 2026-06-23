@@ -32,20 +32,20 @@ class TestDirModel:
 
     def test_init_basic(self):
         """Test basic initialization."""
-        d = Dir(path="/path/to/dir", permissions="drwxr-xr-x")
+        d = Dir(path="/path/to/dir", permissions="755")
         assert d.path == "/path/to/dir"
-        assert d.permissions == "drwxr-xr-x"
+        assert d.permissions == "755"
 
     def test_to_dict(self):
         """Test conversion to dictionary."""
-        d = Dir(path="/path/to/dir", permissions="drwxr-xr-x")
+        d = Dir(path="/path/to/dir", permissions="755")
         result = d.to_dict()
         assert result["path"] == "/path/to/dir"
-        assert result["permissions"] == "drwxr-xr-x"
+        assert result["permissions"] == "755"
 
     def test_repr(self):
         """Test string representation."""
-        d = Dir(path="/test", permissions="drwxr-xr-x")
+        d = Dir(path="/test", permissions="755")
         repr_str = repr(d)
         assert "Dir" in repr_str
         assert "/test" in repr_str
@@ -57,7 +57,7 @@ class TestDirModel:
             assert d is not None
             assert d.path == temp_dir
             assert d.permissions is not None
-            assert d.permissions.startswith("d")
+            assert d.permissions.isdigit()
 
     def test_get_nonexistent_dir(self):
         """Test Dir.get with non-existent directory."""
@@ -77,14 +77,14 @@ class TestDirModel:
 
     def test_from_dict(self):
         """Test Dir.from_dict."""
-        data = {"path": "/bucket/subdir", "permissions": "drwxr-xr-x"}
+        data = {"path": "/bucket/subdir", "permissions": "755"}
         d = Dir.from_dict(data, localpath="/bucket", strip_localpath=True)
         assert d.path == "subdir"
-        assert d.permissions == "drwxr-xr-x"
+        assert d.permissions == "755"
 
     def test_from_dict_no_strip(self):
         """Test Dir.from_dict without stripping localpath."""
-        data = {"path": "subdir", "permissions": "drwxr-xr-x"}
+        data = {"path": "subdir", "permissions": "755"}
         d = Dir.from_dict(data, localpath="/bucket", strip_localpath=False)
         assert d.path == "/bucket/subdir"
 
@@ -92,8 +92,8 @@ class TestDirModel:
         """Test _get_permissions with real directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
             perms = Dir._get_permissions(temp_dir)
-            assert perms.startswith("d")
-            assert len(perms) == 10
+            assert perms.isdigit()
+            assert len(perms) == 3
 
 
 class TestTombstoneReexports:
