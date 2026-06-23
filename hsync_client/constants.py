@@ -89,6 +89,19 @@ TRANSFER_RETRY_MIN_WAIT_DEFAULT = 1  # seconds
 TRANSFER_RETRY_MAX_WAIT_DEFAULT = 10  # seconds
 
 # =============================================================================
+# Mass-Deletion Guard (§12)
+# =============================================================================
+
+# A master that (temporarily) exposes an empty or wrong bucket must not be able
+# to wipe valid local data in a single reconciliation cycle. When a cycle would
+# delete more than an absolute count or a percentage of the local files, the
+# deletions are paused (skipped) and surfaced for confirmation instead. A master
+# with 0 files is always treated as a suspect state, never as a delete command.
+MASS_DELETE_GUARD_DEFAULT = True
+MASS_DELETE_THRESHOLD_DEFAULT = 50  # absolute deletions per cycle (0 = disabled)
+MASS_DELETE_PERCENT_DEFAULT = 50  # percentage of total local files (0 = disabled)
+
+# =============================================================================
 # CLI Validation Limits
 # =============================================================================
 

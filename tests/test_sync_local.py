@@ -19,6 +19,7 @@ from hsync_client import tombstones as ts_mod
 from hsync_client.models.file import File
 from hsync_client.models.sync_action import SyncActionName
 from hsync_client.sync import (
+    _mass_deletion_blocked,
     _save_conflict_copy,
     _tombstone_deletes_local,
     get_files_local,
@@ -510,6 +511,57 @@ class TestTombstoneDecision:
         """No recorded hash and an older deletion than the local file: keep."""
         entry = {"ts": 800, "sha256": None}
         assert _tombstone_deletes_local(entry, local_mtime=900, local_sha256="abc") is False
+
+
+class TestMassDeletionGuard:
+    """Unit tests for the _mass_deletion_blocked safety guard (§12)."""
+
+    _CONFIG = {
+        "MASS_DELETE_GUARD": True,
+        "MASS_DELETE_THRESHOLD": 50,
+        "MASS_DELETE_PERCENT": 50,
+    }
+
+    def test_below_thresholds_allows(self):
+        """A handful of deletions on a large bucket proceeds normally."""
+        with patch("hsync_client.sync.CONFIG", self._CONFIG):
+            blocked, reason = _mass_deletion_blocked(5, local_count=1000, remote_count=995)
+        assert blocked is False
+        assert reason == ""
+
+    def test_absolute_threshold_trips(self):
+        """Reaching the absolute deletion count trips the guard."""
+        with patch("hsync_client.sync.CONFIG", self._CONFIG):
+            blocked, reason = _mass_deletion_blocked(50, local_count=1000, remote_count=950)
+        assert blocked is True
+        assert "absolute threshold" in reason
+
+    def test_percentage_threshold_trips(self):
+        """Deleting at least the configured percentage of local files trips."""
+        with patch("hsync_client.sync.CONFIG", self._CONFIG):
+            blocked, reason = _mass_deletion_blocked(10, local_count=20, remote_count=10)
+        assert blocked is True
+        assert "%" in reason
+
+    def test_empty_master_always_suspect(self):
+        """An empty master trips the guard regardless of thresholds."""
+        with patch("hsync_client.sync.CONFIG", self._CONFIG):
+            blocked, reason = _mass_deletion_blocked(1, local_count=1, remote_count=0)
+        assert blocked is True
+        assert "empty bucket" in reason
+
+    def test_no_deletions_allows(self):
+        """A cycle with no deletions never trips, even with an empty master."""
+        with patch("hsync_client.sync.CONFIG", self._CONFIG):
+            blocked, _ = _mass_deletion_blocked(0, local_count=0, remote_count=0)
+        assert blocked is False
+
+    def test_disabled_guard_allows(self):
+        """When the guard is disabled, even an empty master proceeds."""
+        config = {**self._CONFIG, "MASS_DELETE_GUARD": False}
+        with patch("hsync_client.sync.CONFIG", config):
+            blocked, _ = _mass_deletion_blocked(100, local_count=100, remote_count=0)
+        assert blocked is False
 
 
 class TestGetSyncActionsTombstones:

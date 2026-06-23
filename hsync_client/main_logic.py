@@ -36,6 +36,9 @@ from hsync_client.config import (
     get_lan_persistent,
     get_lan_port,
     get_lan_require_pairing,
+    get_mass_delete_guard,
+    get_mass_delete_percent,
+    get_mass_delete_threshold,
     get_never_master,
     get_peer_timeout,
     get_server_url,
@@ -664,6 +667,9 @@ def run_sync(
         "IGNORE_PATTERNS": ignore_patterns
         if ignore_patterns is not None
         else get_ignore_patterns(),
+        "MASS_DELETE_GUARD": get_mass_delete_guard(),
+        "MASS_DELETE_THRESHOLD": get_mass_delete_threshold(),
+        "MASS_DELETE_PERCENT": get_mass_delete_percent(),
     }
 
     set_config(config)
