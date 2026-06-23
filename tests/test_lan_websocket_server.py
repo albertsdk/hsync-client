@@ -3,6 +3,7 @@ Tests for LAN WebSocket server functionality.
 """
 
 import asyncio
+import contextlib
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -356,3 +357,48 @@ class TestLANWebSocketServer:
         # Cleanup
         server._running = False
         server._thread.join(timeout=2.0)
+
+
+class TestLANPeriodicResync:
+    """Tests for _lan_periodic_resync (§13)."""
+
+    @pytest.mark.asyncio
+    async def test_calls_sync_periodically(self):
+        """The LAN resync loop performs a full sync at the configured interval."""
+        from hsync_client.lan_websocket import CONFIG, _lan_periodic_resync
+
+        call_count = 0
+
+        async def mock_sync(lan_mode: bool = False):
+            nonlocal call_count
+            call_count += 1
+            assert lan_mode is True
+            if call_count >= 2:
+                raise RuntimeError("Stop after 2 calls")
+
+        with (
+            patch.dict(CONFIG, {"RESYNC": 0.01}),
+            patch("hsync_client.sync.sync", mock_sync),
+        ):
+            with contextlib.suppress(Exception):
+                await _lan_periodic_resync()
+
+        assert call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_cancellation_is_propagated(self):
+        """Cancelling the resync task raises CancelledError out of the loop."""
+        from hsync_client.lan_websocket import CONFIG, _lan_periodic_resync
+
+        async def slow_sync(lan_mode: bool = False):
+            return None
+
+        with (
+            patch.dict(CONFIG, {"RESYNC": 10}),
+            patch("hsync_client.sync.sync", slow_sync),
+        ):
+            task = asyncio.create_task(_lan_periodic_resync())
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task

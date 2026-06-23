@@ -43,6 +43,7 @@ from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File
 from hsync_client.sync import sync
 from hsync_client.transfer import upload_file
+from hsync_client.utils import warn_if_inotify_watch_limit_low
 
 # Global resync task reference for cancellation on reconnect
 _resync_task: Task[None] | None = None
@@ -162,6 +163,7 @@ async def remote_events() -> None:
 
         # Set up local file system watcher with event queue
         event_handler = RemoteFileEventHandler(websocket, loop, event_queue)
+        warn_if_inotify_watch_limit_low(CONFIG["LOCAL_BUCKET"])
         observer = Observer()
         observer.schedule(event_handler, CONFIG["LOCAL_BUCKET"], recursive=True)
         observer.start()

@@ -51,7 +51,7 @@ from hsync_client.file_event_handler import (
 from hsync_client.models.dir import is_hidden_dir
 from hsync_client.models.event import Event, EventName
 from hsync_client.models.file import File, invalidate_sha256_cache, is_hidden_file
-from hsync_client.utils import ensure_str_path
+from hsync_client.utils import ensure_str_path, warn_if_inotify_watch_limit_low
 
 # Conservative minimum effective LAN bandwidth used to derive the dynamic
 # ``wait_pending`` timeout from the total bytes still in flight (10 MB/s).
@@ -307,6 +307,7 @@ class LANWebSocketServer:
             Path(watch_path).mkdir(parents=True, exist_ok=True)
 
         self._event_handler = LANMasterFileEventHandler(self)
+        warn_if_inotify_watch_limit_low(watch_path)
         observer = Observer()
         observer.schedule(self._event_handler, watch_path, recursive=True)
         observer.start()
@@ -495,9 +496,17 @@ async def lan_websocket_client(
         log.warning(f"Watch path '{watch_path}' does not exist, creating it")
         Path(watch_path).mkdir(parents=True, exist_ok=True)
 
+    warn_if_inotify_watch_limit_low(watch_path)
     observer.schedule(_slave_event_handler, watch_path, recursive=True)
     observer.start()
     log.info(f"Client file watcher started for bidirectional sync: {watch_path}")
+
+    # Periodic full resync as a safety net against silently missed
+    # file-system events (e.g. inotify queue overflow). The master is the
+    # source of truth in LAN mode, so a full sync pulls back any drift.
+    resync_task: asyncio.Task[None] | None = None
+    if CONFIG.get("RESYNC"):
+        resync_task = asyncio.create_task(_lan_periodic_resync())
 
     # Set up SSL context for WSS
     # Note: Certificate fingerprint was already verified during initial HTTP sync.
@@ -557,6 +566,11 @@ async def lan_websocket_client(
     except Exception as e:
         log.error(f"WebSocket connection error: {e}")
     finally:
+        # Stop the periodic resync task before tearing down the watcher.
+        if resync_task is not None:
+            resync_task.cancel()
+            with contextlib.suppress(Exception):
+                await resync_task
         # Wait for pending client→master operations to complete before
         # returning to the discovery loop (which triggers a full sync).
         # This prevents race conditions where a rename/upload/delete is
@@ -568,6 +582,26 @@ async def lan_websocket_client(
         observer.join(timeout=2.0)
         _slave_event_handler = None
         log.info("Client file watcher stopped")
+
+
+async def _lan_periodic_resync() -> None:
+    """Periodic full resync for the LAN slave (safety net for missed events).
+
+    Runs as a background task while connected to the master, performing a
+    full sync at the configured ``RESYNC`` interval to recover any
+    file-system events dropped by the watcher (e.g. inotify overflow).
+    """
+    from hsync_client.sync import sync
+
+    try:
+        while True:
+            await asyncio.sleep(CONFIG["RESYNC"] or 60)
+            log.info(f"LAN force resync ({CONFIG['RESYNC']} sec.)")
+            await sync(lan_mode=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug(f"LAN resync task stopped: {e}")
 
 
 async def _handle_lan_event(
