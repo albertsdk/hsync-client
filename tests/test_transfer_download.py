@@ -6,6 +6,8 @@
 
 """Tests for download transfer functionality."""
 
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 from requests import RequestException
@@ -465,3 +467,58 @@ class TestDownloadCompressed:
         ):
             download_file(file)
             mock_replace.assert_called()
+
+
+class TestDownloadPathLocking:
+    """Concurrency tests for per-path serialization of downloads (§14)."""
+
+    def _run_concurrent(self, files, tmp_path):
+        """Run download_file on *files* from threads, tracking max concurrency."""
+        guard = threading.Lock()
+        start = threading.Barrier(len(files))
+        active = 0
+        max_active = 0
+
+        def fake_attempt(_file):
+            nonlocal active, max_active
+            with guard:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with guard:
+                active -= 1
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "TRANSFER_RETRY_ATTEMPTS": 1},
+            ),
+            patch("hsync_client.transfer._download_file_attempt", side_effect=fake_attempt),
+        ):
+
+            def worker(f):
+                start.wait()
+                download_file(f)
+
+            threads = [threading.Thread(target=worker, args=(f,)) for f in files]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        return max_active
+
+    def test_same_path_downloads_are_serialized(self, tmp_path):
+        """Two downloads of the same path never overlap their critical section."""
+        files = [
+            File(filepath="dir/file.txt", sha256sum="abc", size=10),
+            File(filepath="dir/file.txt", sha256sum="abc", size=10),
+        ]
+        assert self._run_concurrent(files, tmp_path) == 1
+
+    def test_distinct_path_downloads_run_concurrently(self, tmp_path):
+        """Downloads of distinct paths are not serialized by the per-path lock."""
+        files = [
+            File(filepath="dir/a.txt", sha256sum="abc", size=10),
+            File(filepath="dir/b.txt", sha256sum="abc", size=10),
+        ]
+        assert self._run_concurrent(files, tmp_path) == 2

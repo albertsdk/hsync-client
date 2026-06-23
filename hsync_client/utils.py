@@ -13,6 +13,9 @@ file operations, and data formatting.
 
 import secrets
 import stat
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from hashlib import sha256
 from os import chmod, walk
 from os import stat as os_stat
@@ -350,6 +353,52 @@ def warn_if_inotify_watch_limit_low(watch_path: str) -> None:
             )
     except Exception as exc:  # pragma: no cover - diagnostics must never break startup
         log.debug(f"inotify watch-limit check skipped: {exc}")
+
+
+# =============================================================================
+# Per-Path Serialization (§14)
+# =============================================================================
+
+# One re-usable lock per local path, created on demand and reference-counted so
+# the registry never grows unbounded. Operations on the same path (parallel
+# transfers, watcher-triggered uploads, inbound downloads/deletes) run in worker
+# threads; serializing them here prevents interleaved writes that would silently
+# lose an update on a single path.
+_path_locks: dict[str, list] = {}
+_path_locks_guard = threading.Lock()
+
+
+@contextmanager
+def path_lock(path: str) -> Iterator[None]:
+    """Serialize concurrent filesystem operations on a single local *path*.
+
+    Returns a context manager holding an exclusive, process-wide lock keyed on
+    the normalized absolute path. Distinct paths never block one another; the
+    per-path lock entry is dropped once no waiter holds it so the registry stays
+    bounded.
+
+    Args:
+        path: Local filesystem path to serialize on.
+    """
+    key = normpath(abspath(path))
+    with _path_locks_guard:
+        entry = _path_locks.get(key)
+        if entry is None:
+            entry = [threading.Lock(), 0]
+            _path_locks[key] = entry
+        entry[1] += 1
+        lock = entry[0]
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        with _path_locks_guard:
+            entry = _path_locks.get(key)
+            if entry is not None:
+                entry[1] -= 1
+                if entry[1] <= 0:
+                    del _path_locks[key]
 
 
 # =============================================================================

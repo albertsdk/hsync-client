@@ -42,7 +42,20 @@ from hsync_client.models.file import File
 from hsync_client.models.symlink import Symlink
 from hsync_client.sync import update_dir, update_file
 from hsync_client.transfer import download_file
-from hsync_client.utils import safe_rmdir_if_empty
+from hsync_client.utils import path_lock, safe_rmdir_if_empty
+
+
+def _remove_locked(filepath: str) -> bool:
+    """Remove *filepath* under its per-path lock (§14); return True if removed.
+
+    Re-checks existence inside the lock so a concurrent transfer that just
+    (re)wrote the same path is not torn by the delete.
+    """
+    with path_lock(filepath):
+        if Path(filepath).exists():
+            remove(filepath)
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -235,7 +248,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
             if Path(file_obj.filepath).exists():
                 log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{file_obj.filepath}"')
                 emit_event(UiEventName.transfer, op="delete", file=file_obj.filepath)
-                await asyncio.to_thread(remove, file_obj.filepath)
+                await asyncio.to_thread(_remove_locked, file_obj.filepath)
                 if Path(file_obj.filepath).name == HSYNCKEEP_FILENAME:
                     parent = str(Path(file_obj.filepath).parent)
                     if safe_rmdir_if_empty(parent):
