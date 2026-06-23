@@ -11,6 +11,7 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
+import threading
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
@@ -25,9 +26,12 @@ from hsync_client.compression import compress_data, decompress_data, should_comp
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
+    MAX_WAIT_TIMEOUT_DEFAULT,
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
+    UPLOAD_MAX_RESCHEDULES_DEFAULT,
+    UPLOAD_RESCHEDULE_DELAY_DEFAULT,
 )
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import ServerError
@@ -561,7 +565,43 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
     return "new", 0
 
 
-def upload_file(file: File, check_size: bool = True) -> None:
+def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
+    """
+    Defer an upload whose file never stabilized within MAX_WAIT_TIMEOUT (§15).
+
+    A file still being written is not uploaded ("torn" upload); instead a new
+    attempt is scheduled after ``UPLOAD_RESCHEDULE_DELAY`` seconds via a daemon
+    ``threading.Timer``, which keeps the worker/observer thread free. The number
+    of deferrals is bounded by ``UPLOAD_MAX_RESCHEDULES``: once exhausted the
+    file is skipped and left to the next file-system event (``on_closed``) or the
+    periodic resync.
+
+    Args:
+        file: File object whose upload is being deferred.
+        reschedules_left: Remaining deferrals; resolved from CONFIG on the first
+                          call (None) and decremented on each subsequent one.
+    """
+    if reschedules_left is None:
+        reschedules_left = CONFIG.get("UPLOAD_MAX_RESCHEDULES", UPLOAD_MAX_RESCHEDULES_DEFAULT)
+
+    if reschedules_left <= 0:
+        log.warning(
+            f'File "{file.filepath}" did not stabilize after max reschedules; '
+            "skipping (will retry on next file-system event or periodic resync)"
+        )
+        return
+
+    delay = CONFIG.get("UPLOAD_RESCHEDULE_DELAY", UPLOAD_RESCHEDULE_DELAY_DEFAULT)
+    log.info(
+        f'File "{file.filepath}" still being written; rescheduling upload in '
+        f"{delay}s ({reschedules_left} attempt(s) left)"
+    )
+    timer = threading.Timer(delay, upload_file, args=(file, True, reschedules_left - 1))
+    timer.daemon = True
+    timer.start()
+
+
+def upload_file(file: File, check_size: bool = True, _reschedules_left: int | None = None) -> None:
     """
     Upload a file to the remote server with per-file retry/backoff (§11).
 
@@ -571,11 +611,17 @@ def upload_file(file: File, check_size: bool = True) -> None:
     leave the file unsynced; permanent errors (4xx) are never retried. When every
     attempt is exhausted the failure is surfaced as a ``transfer_failed`` event.
 
+    A file that does not stabilize within ``MAX_WAIT_TIMEOUT`` is not uploaded in
+    a half-written ("torn") state: the upload is rescheduled for a later attempt
+    via :func:`_reschedule_upload`, bounded by ``UPLOAD_MAX_RESCHEDULES`` (§15).
+
     If a previous upload was interrupted, resumes from where it left off.
 
     Args:
         file: File object to upload.
         check_size: If True, wait for file writes to complete first.
+        _reschedules_left: Internal; remaining deferred attempts when this call
+                           originates from a rescheduled Timer (§15).
     """
     # Validate required file attributes
     if not file.filepath:
@@ -584,16 +630,21 @@ def upload_file(file: File, check_size: bool = True) -> None:
 
     if check_size:
         # Wait for file to stop being written, with timeout
-        max_wait = CONFIG.get("MAX_WAIT_TIMEOUT", 120)
+        max_wait = CONFIG.get("MAX_WAIT_TIMEOUT", MAX_WAIT_TIMEOUT_DEFAULT)
         elapsed = 0
+        stabilized = True
         while not is_file_stable(file):
             if elapsed >= max_wait:
-                log.warning(
-                    f'File "{file.filepath}" did not stabilize within {max_wait}s, uploading anyway'
-                )
+                stabilized = False
                 break
             time_sleep(1)
             elapsed += 1
+
+        if not stabilized:
+            # File never stopped being written within the wait window: defer the
+            # upload instead of transferring a half-written file (§15).
+            _reschedule_upload(file, _reschedules_left)
+            return
 
         # Refresh file metadata after write is complete
         file.size = Path(file.filepath).stat().st_size
