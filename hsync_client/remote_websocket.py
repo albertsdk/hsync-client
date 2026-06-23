@@ -19,6 +19,7 @@ from asyncio import (
     run_coroutine_threadsafe,
     sleep,
 )
+from contextlib import suppress
 from json import dumps, loads
 from ssl import CERT_NONE, CERT_REQUIRED, Purpose, create_default_context
 
@@ -287,13 +288,13 @@ async def remote_connect() -> None:
             # Perform initial sync before entering event loop
             await sync()
 
-            # Cancel previous resync task if it exists
+            # Cancel previous resync task if it exists. CancelledError is a
+            # BaseException, so awaiting the task we just cancelled re-raises
+            # it and must be suppressed explicitly.
             if _resync_task is not None and not _resync_task.done():
                 _resync_task.cancel()
-                try:
+                with suppress(CancelledError):
                     await _resync_task
-                except Exception:
-                    pass  # Task was cancelled, ignore
 
             # Start background resync task if configured
             if CONFIG["RESYNC"]:
