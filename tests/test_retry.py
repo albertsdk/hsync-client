@@ -7,13 +7,14 @@ Tests retry decorators with exponential backoff for network operations.
 import pytest
 from requests import RequestException
 
-from hsync_client.exceptions import NetworkError
+from hsync_client.exceptions import NetworkError, ServerError
 from hsync_client.retry import (
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MAX_WAIT,
     DEFAULT_MIN_WAIT,
     retry_on_connection_error,
     retry_on_network_error,
+    retry_on_transient_transfer_error,
 )
 
 
@@ -137,6 +138,68 @@ class TestRetryOnConnectionError:
             nonlocal call_count
             call_count += 1
             raise NetworkError("custom error")
+
+        with pytest.raises(NetworkError):
+            failing()
+
+        assert call_count == 1
+
+
+class TestRetryOnTransientTransferError:
+    """Tests for retry_on_transient_transfer_error decorator (§11)."""
+
+    def test_success_no_retry(self):
+        """Successful function is not retried."""
+        call_count = 0
+
+        @retry_on_transient_transfer_error(max_attempts=3)
+        def successful():
+            nonlocal call_count
+            call_count += 1
+            return "ok"
+
+        assert successful() == "ok"
+        assert call_count == 1
+
+    def test_retries_on_request_exception(self):
+        """Connection-level errors are retried."""
+        call_count = 0
+
+        @retry_on_transient_transfer_error(max_attempts=3, min_wait=0, max_wait=0.01)
+        def failing():
+            nonlocal call_count
+            call_count += 1
+            raise RequestException("connection refused")
+
+        with pytest.raises(RequestException):
+            failing()
+
+        assert call_count == 3
+
+    def test_retries_on_server_error(self):
+        """Server-side 5xx (ServerError) is retried."""
+        call_count = 0
+
+        @retry_on_transient_transfer_error(max_attempts=2, min_wait=0, max_wait=0.01)
+        def failing():
+            nonlocal call_count
+            call_count += 1
+            raise ServerError("500")
+
+        with pytest.raises(ServerError):
+            failing()
+
+        assert call_count == 2
+
+    def test_does_not_retry_on_network_error(self):
+        """A plain NetworkError (e.g. permanent) is NOT retried."""
+        call_count = 0
+
+        @retry_on_transient_transfer_error(max_attempts=3, min_wait=0, max_wait=0.01)
+        def failing():
+            nonlocal call_count
+            call_count += 1
+            raise NetworkError("auth")
 
         with pytest.raises(NetworkError):
             failing()

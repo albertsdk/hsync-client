@@ -23,9 +23,16 @@ from requests import RequestException, get, post
 
 from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
-from hsync_client.constants import FILE_STABILITY_INTERVAL_DEFAULT
+from hsync_client.constants import (
+    FILE_STABILITY_INTERVAL_DEFAULT,
+    TRANSFER_RETRY_ATTEMPTS_DEFAULT,
+    TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+    TRANSFER_RETRY_MIN_WAIT_DEFAULT,
+)
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.exceptions import ServerError
 from hsync_client.models.file import File
+from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.utils import (
     bytes_to_human_readable,
     compute_sha256,
@@ -38,6 +45,20 @@ from hsync_client.utils import (
 
 # Content-Encoding header value for zstd compression
 CONTENT_ENCODING_ZSTD = "zstd"
+
+
+def _transfer_retry_params() -> tuple[int, float, float]:
+    """Return ``(max_attempts, min_wait, max_wait)`` for per-file retries (§11)."""
+    return (
+        CONFIG.get("TRANSFER_RETRY_ATTEMPTS", TRANSFER_RETRY_ATTEMPTS_DEFAULT),
+        CONFIG.get("TRANSFER_RETRY_MIN_WAIT", TRANSFER_RETRY_MIN_WAIT_DEFAULT),
+        CONFIG.get("TRANSFER_RETRY_MAX_WAIT", TRANSFER_RETRY_MAX_WAIT_DEFAULT),
+    )
+
+
+def _emit_transfer_failed(op: str, filepath: str, message: str) -> None:
+    """Surface a permanent/exhausted transfer failure as a structured event (§11)."""
+    emit_event(UiEventName.transfer_failed, op=op, file=filepath, message=message)
 
 
 def _record_synced_base(file: File) -> None:
@@ -177,7 +198,36 @@ def _upload_timeout() -> tuple[float, float | None]:
 
 def download_file(file: File) -> None:
     """
-    Download a file from the remote server with resume support.
+    Download a file from the remote server with per-file retry/backoff (§11).
+
+    Wraps :func:`_download_file_attempt` in an exponential-backoff retry policy
+    so a single transient network blip (timeout, connection reset, 5xx) does not
+    leave the file unsynced until the next full sync. Permanent errors (4xx) are
+    never retried. When every attempt is exhausted the failure is surfaced as a
+    ``transfer_failed`` event for the UI.
+
+    Args:
+        file: File object with remote metadata (filepath, sha256sum, etc.).
+    """
+    # Validate required file attributes
+    if not file.filepath or not file.name:
+        log.error("Invalid file metadata: missing filepath or name")
+        return
+
+    max_attempts, min_wait, max_wait = _transfer_retry_params()
+    attempt = retry_on_transient_transfer_error(max_attempts, min_wait, max_wait)(
+        _download_file_attempt
+    )
+    try:
+        attempt(file)
+    except (RequestException, ServerError) as exc:
+        log.error(f'Download failed after retries for "{file.filepath}": {exc}')
+        _emit_transfer_failed("download", file.filepath, str(exc))
+
+
+def _download_file_attempt(file: File) -> None:
+    """
+    Perform a single download attempt with resume support (§11).
 
     Streams the file to a partial file location (.part extension), verifies
     SHA-256 checksum, then moves it to the final destination. Preserves timestamps
@@ -186,19 +236,17 @@ def download_file(file: File) -> None:
     If a partial file exists from a previous interrupted download, resumes
     from where it left off using HTTP Range requests.
 
+    Transient failures are raised (``RequestException`` for connection-level
+    errors, ``ServerError`` for 5xx) so the caller's retry policy can react;
+    permanent errors (4xx, checksum mismatch) are logged and swallowed.
+
     Args:
         file: File object with remote metadata (filepath, sha256sum, etc.).
 
     Raises:
-        DownloadError: If download fails.
-        ChecksumError: If SHA-256 checksum doesn't match.
-        FileWriteError: If file cannot be saved locally.
+        RequestException: On a connection-level error (retryable).
+        ServerError: On a server-side 5xx response (retryable).
     """
-    # Validate required file attributes
-    if not file.filepath or not file.name:
-        log.error("Invalid file metadata: missing filepath or name")
-        return
-
     # Prepare destination directory and partial file path
     relative_dir = str(Path(file.filepath).parent)
     dest_dir = str(Path(CONFIG["LOCAL_BUCKET"]) / relative_dir.lstrip("/"))
@@ -260,18 +308,15 @@ def download_file(file: File) -> None:
         log.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
         return
 
-    try:
-        response = get(
-            uri,
-            headers=headers,
-            params={"filename": file.filepath},
-            stream=True,
-            verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
-        )
-    except RequestException as e:
-        log.error(f'Network error downloading "{file.filepath}": {e}')
-        return
+    # A connection-level error here propagates to the retry wrapper (§11).
+    response = get(
+        uri,
+        headers=headers,
+        params={"filename": file.filepath},
+        stream=True,
+        verify=get_ssl_verify(),
+        timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+    )
 
     log.debug(f"Request URI: {uri}")
     log.debug(f"Request Header: {safe_json_for_log(headers)}")
@@ -294,8 +339,11 @@ def download_file(file: File) -> None:
         # Retry without Range header
         download_file(file)
         return
+    if response.status_code >= 500:
+        # Transient server-side failure: raise so the retry wrapper backs off.
+        raise ServerError(f'Server error downloading "{file.filepath}": {response.status_code}')
     if response.status_code not in (200, 206):
-        log.error(f'Server error downloading "{file.filepath}": {response.status_code}')
+        log.error(f'Unexpected status downloading "{file.filepath}": {response.status_code}')
         return
 
     # If server returned 200 instead of 206, it doesn't support Range - restart
@@ -499,22 +547,19 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
 
 def upload_file(file: File, check_size: bool = True) -> None:
     """
-    Upload a file to the remote server with resume support.
+    Upload a file to the remote server with per-file retry/backoff (§11).
 
-    If check_size is True, waits for the file to stop being written
-    to before uploading. Sends file with metadata including timestamps,
-    SHA-256 checksum, and permissions.
+    If check_size is True, waits for the file to stop being written to before
+    uploading. The actual transfer is wrapped in an exponential-backoff retry
+    policy so a single transient blip (timeout, connection reset, 5xx) does not
+    leave the file unsynced; permanent errors (4xx) are never retried. When every
+    attempt is exhausted the failure is surfaced as a ``transfer_failed`` event.
 
     If a previous upload was interrupted, resumes from where it left off.
 
     Args:
         file: File object to upload.
         check_size: If True, wait for file writes to complete first.
-
-    Raises:
-        FileReadError: If file cannot be read.
-        NetworkError: If upload request fails.
-        AuthenticationError: If authentication fails.
     """
     # Validate required file attributes
     if not file.filepath:
@@ -544,6 +589,33 @@ def upload_file(file: File, check_size: bool = True) -> None:
         upload_file(file, False)
         return
 
+    max_attempts, min_wait, max_wait = _transfer_retry_params()
+    attempt = retry_on_transient_transfer_error(max_attempts, min_wait, max_wait)(
+        _upload_file_attempt
+    )
+    try:
+        attempt(file)
+    except (RequestException, ServerError) as exc:
+        log.error(f'Upload failed after retries for "{file.filepath}": {exc}')
+        _emit_transfer_failed("upload", file.filepath, str(exc))
+
+
+def _upload_file_attempt(file: File) -> None:
+    """
+    Perform a single upload attempt with resume support (§11).
+
+    Transient failures are raised (``RequestException`` for connection-level
+    errors, ``ServerError`` for 5xx) so the caller's retry policy can react;
+    permanent local errors (missing file, permission denied) are logged and
+    swallowed.
+
+    Args:
+        file: File object to upload.
+
+    Raises:
+        RequestException: On a connection-level error (retryable).
+        ServerError: On a server-side 5xx response (retryable).
+    """
     try:
         # Prepare upload request
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
@@ -655,7 +727,10 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 log.debug(f'"{file.filepath}" (already present)')
                 _record_synced_base(file)
             elif response.status_code >= 500:
-                log.error(f'Server error uploading "{file.filepath}": {response.status_code}')
+                # Transient server-side failure: raise so the wrapper backs off.
+                raise ServerError(
+                    f'Server error uploading "{file.filepath}": {response.status_code}'
+                )
             else:
                 response.raise_for_status()
         else:
@@ -708,15 +783,16 @@ def upload_file(file: File, check_size: bool = True) -> None:
                 log.debug(f'"{file.filepath}" (already present)')
                 _record_synced_base(file)
             elif response.status_code >= 500:
-                log.error(f'Server error uploading "{file.filepath}": {response.status_code}')
+                # Transient server-side failure: raise so the wrapper backs off.
+                raise ServerError(
+                    f'Server error uploading "{file.filepath}": {response.status_code}'
+                )
             else:
                 response.raise_for_status()
     except FileNotFoundError:
         log.error(f'File not found: "{file.filepath}"')
     except PermissionError:
         log.error(f'Permission denied reading: "{file.filepath}"')
-    except RequestException as e:
-        log.error(f'Network error uploading "{file.filepath}": {e}')
 
 
 # =============================================================================
