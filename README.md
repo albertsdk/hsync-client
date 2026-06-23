@@ -172,7 +172,7 @@ See [Getting Started](docs/getting-started.md) for detailed instructions.
 - [Sync Modes](docs/sync-modes.md) - Single, Watch, LAN modes
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
 - [Architecture](docs/architecture.md) - Internal design
-- [Architecture Decision Records](../hsync-common/docs/adr/README.md) - Why the stable, cross-project decisions were made
+- [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
 - [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
@@ -181,8 +181,8 @@ See [Getting Started](docs/getting-started.md) for detailed instructions.
 
 ### Related projects
 
-- [HSYNC Common](../hsync-common/README.md) - Shared models, constants, and utilities used by the client
-- [HSYNC Server](../hsync-server/README.md) - Central synchronization server (Server Mode)
+- [HSYNC Common](https://github.com/albertobasso/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
+- [HSYNC Server](https://github.com/albertobasso/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
 
 ## Version
 
