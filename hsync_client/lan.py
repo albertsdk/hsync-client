@@ -26,9 +26,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-# CLOCK_SKEW_THRESHOLD is re-exported here for backwards compatibility; its
-# canonical home is hsync_common.clock.
-from hsync_common.clock import CLOCK_SKEW_THRESHOLD  # noqa: F401
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_LAN
 from hsync_common.protocol.lan import (
     SYNC_DIRECTION_BIDIRECTIONAL,

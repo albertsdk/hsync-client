@@ -7,8 +7,7 @@ import tempfile
 from datetime import UTC, datetime
 
 import pytest
-
-from hsync_client.models.file import File, is_hidden_file
+from hsync_common.models.file import File, is_hidden_file
 
 
 class TestIsHiddenFile:

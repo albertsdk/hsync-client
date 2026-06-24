@@ -12,10 +12,7 @@ from unittest.mock import patch
 from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
     _suppress_insecure_warning,
-    bytes_to_human_readable,
-    compute_sha256,
     ensure_str_path,
-    get_chunk_size,
     get_cid,
     get_permissions,
     get_ssl_verify,
@@ -214,92 +211,6 @@ class TestGetCid:
         cids = "".join(get_cid() for _ in range(100))
         # With 64-char alphabet and 2100 chars, probability of no - or _ is negligible
         assert "-" in cids or "_" in cids
-
-
-class TestBytesToHumanReadable:
-    """Tests for bytes_to_human_readable function."""
-
-    def test_bytes(self):
-        """Test bytes formatting."""
-        assert bytes_to_human_readable(0) == "0.00B"
-        assert bytes_to_human_readable(512) == "512.00B"
-        assert bytes_to_human_readable(1023) == "1023.00B"
-
-    def test_kilobytes(self):
-        """Test kilobytes formatting."""
-        assert bytes_to_human_readable(1024) == "1.00KB"
-        assert bytes_to_human_readable(1536) == "1.50KB"
-
-    def test_megabytes(self):
-        """Test megabytes formatting."""
-        assert bytes_to_human_readable(1024 * 1024) == "1.00MB"
-        assert bytes_to_human_readable(1.5 * 1024 * 1024) == "1.50MB"
-
-    def test_gigabytes(self):
-        """Test gigabytes formatting."""
-        assert bytes_to_human_readable(1024**3) == "1.00GB"
-
-    def test_terabytes(self):
-        """Test terabytes formatting."""
-        assert bytes_to_human_readable(1024**4) == "1.00TB"
-
-
-class TestComputeSha256:
-    """Tests for compute_sha256 function."""
-
-    def test_compute_sha256_empty_file(self):
-        """Test SHA-256 of empty file."""
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"")
-            temp_path = f.name
-
-        try:
-            # SHA-256 of empty string
-            assert (
-                compute_sha256(temp_path)
-                == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-            )
-        finally:
-            os.unlink(temp_path)
-
-    def test_compute_sha256_known_content(self):
-        """Test SHA-256 of known content."""
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"hello world")
-            temp_path = f.name
-
-        try:
-            # SHA-256 of "hello world"
-            assert (
-                compute_sha256(temp_path)
-                == "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-            )
-        finally:
-            os.unlink(temp_path)
-
-
-class TestGetChunkSize:
-    """Tests for get_chunk_size function."""
-
-    def test_none_returns_default(self):
-        """Test None file size returns default 64KB."""
-        assert get_chunk_size(None) == 64 * 1024
-
-    def test_small_file_under_1mb(self):
-        """Test small file returns 8KB chunk."""
-        assert get_chunk_size(500_000) == 8 * 1024
-        assert get_chunk_size(999_999) == 8 * 1024
-
-    def test_medium_file_under_100mb(self):
-        """Test medium file returns 64KB chunk."""
-        assert get_chunk_size(1_000_000) == 64 * 1024
-        assert get_chunk_size(50_000_000) == 64 * 1024
-        assert get_chunk_size(99_999_999) == 64 * 1024
-
-    def test_large_file_over_100mb(self):
-        """Test large file returns 256KB chunk."""
-        assert get_chunk_size(100_000_000) == 256 * 1024
-        assert get_chunk_size(1_000_000_000) == 256 * 1024
 
 
 class TestGetPermissions:

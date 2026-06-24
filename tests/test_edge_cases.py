@@ -15,8 +15,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from hsync_client.models.file import File
+from hsync_common.models.file import File
 
 
 class TestFilePermissions:
@@ -261,7 +260,7 @@ class TestEdgeCasesFileOperations:
 
     def test_hidden_file_detection(self):
         """Test hidden file detection patterns."""
-        from hsync_client.models.file import is_hidden_file
+        from hsync_common.models.file import is_hidden_file
 
         assert is_hidden_file(".hidden") is True
         assert is_hidden_file("file.txt") is False
@@ -271,7 +270,7 @@ class TestEdgeCasesFileOperations:
 
     def test_sentinel_not_hidden(self):
         """Test that .hsynckeep sentinel file is never considered hidden."""
-        from hsync_client.models.file import is_hidden_file
+        from hsync_common.models.file import is_hidden_file
 
         assert is_hidden_file(".hsynckeep") is False
 
@@ -457,8 +456,9 @@ class TestLANHandler:
         """Test _measure_clock_offset logs warning on large clock skew."""
         import time
 
+        from hsync_common.clock import CLOCK_SKEW_THRESHOLD
+
         from hsync_client.config import HsyncConfig
-        from hsync_client.lan import CLOCK_SKEW_THRESHOLD
         from hsync_client.lan_handler import _measure_clock_offset
 
         mock_master = MagicMock()

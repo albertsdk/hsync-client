@@ -18,6 +18,9 @@ from shutil import disk_usage
 from time import sleep as time_sleep
 from typing import cast
 
+from hsync_common.format import format_bytes
+from hsync_common.hashing import adaptive_chunk_size, compute_sha256
+from hsync_common.models.file import File
 from hsync_common.text import safe_json_for_log
 from loguru import logger as log
 from requests import RequestException, get, post
@@ -35,12 +38,8 @@ from hsync_client.constants import (
 )
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import ServerError
-from hsync_client.models.file import File
 from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.utils import (
-    bytes_to_human_readable,
-    compute_sha256,
-    get_chunk_size,
     get_ssl_verify,
     get_throttle_delay,
     path_lock,
@@ -294,7 +293,7 @@ def _download_file_attempt(file: File) -> None:
         elif resume_offset > 0:
             log.info(
                 f'[RESUME    ] "{file.filepath}" from '
-                f"{bytes_to_human_readable(resume_offset)}/{bytes_to_human_readable(file.size)}"
+                f"{format_bytes(resume_offset)}/{format_bytes(file.size)}"
             )
 
     # Size-aware disk space guard: skip the file if the target filesystem
@@ -380,15 +379,14 @@ def _download_file_attempt(file: File) -> None:
         is_compressed = content_encoding.lower() == CONTENT_ENCODING_ZSTD
 
         # Calculate optimal chunk size based on file size
-        chunk_size = get_chunk_size(file.size)
+        chunk_size = adaptive_chunk_size(file.size)
 
         if is_compressed and resume_offset == 0:
             # Compressed response - download all and decompress
             # (compression is not used with resume)
             compressed_data = response.content
             log.debug(
-                f"Decompressing {bytes_to_human_readable(len(compressed_data))} "
-                f"-> ~{bytes_to_human_readable(file.size)}"
+                f"Decompressing {format_bytes(len(compressed_data))} -> ~{format_bytes(file.size)}"
             )
             decompressed_data = decompress_data(compressed_data)
             with open(partial_file_path, "wb") as f:
@@ -438,7 +436,7 @@ def _download_file_attempt(file: File) -> None:
         # rename) so a partially written file is never visible at the target path
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
-        log.info(f'[DOWNLOAD  ] "{full_save_path}" {bytes_to_human_readable(file.size)}')
+        log.info(f'[DOWNLOAD  ] "{full_save_path}" {format_bytes(file.size)}')
         emit_event(UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0)
 
         # Restore the modification time from the remote file. POSIX ctime is
@@ -511,8 +509,8 @@ def is_file_stable(file: File, interval: int | None = None) -> bool:
 
     log.debug(
         f'Writing file: "{file.filepath}" '
-        f"(size: {bytes_to_human_readable(last_size)} -> "
-        f"{bytes_to_human_readable(current_size)}, "
+        f"(size: {format_bytes(last_size)} -> "
+        f"{format_bytes(current_size)}, "
         f"mtime: {last_mtime} -> {current_mtime})"
     )
 
@@ -650,7 +648,7 @@ def upload_file(file: File, check_size: bool = True, _reschedules_left: int | No
         file.size = Path(file.filepath).stat().st_size
         file.sha256sum = compute_sha256(file.filepath)
 
-        log.debug(f'Written file: "{file.filepath}" ({bytes_to_human_readable(file.size)})')
+        log.debug(f'Written file: "{file.filepath}" ({format_bytes(file.size)})')
 
         # Recursive call with check_size=False to do actual upload
         upload_file(file, False)
@@ -712,7 +710,7 @@ def _upload_file_attempt(file: File) -> None:
         if status == "resumable" and offset > 0:
             log.info(
                 f'[RESUME    ] "{file.filepath}" from '
-                f"{bytes_to_human_readable(offset)}/{bytes_to_human_readable(file.size)}"
+                f"{format_bytes(offset)}/{format_bytes(file.size)}"
             )
 
         # Build form data with file metadata
@@ -750,8 +748,8 @@ def _upload_file_attempt(file: File) -> None:
             compressed_data = compress_data(file_data)
             compression_ratio = len(compressed_data) / len(file_data) * 100
             log.debug(
-                f"Compressed {bytes_to_human_readable(len(file_data))} -> "
-                f"{bytes_to_human_readable(len(compressed_data))} "
+                f"Compressed {format_bytes(len(file_data))} -> "
+                f"{format_bytes(len(compressed_data))} "
                 f"({compression_ratio:.1f}%)"
             )
 
@@ -780,7 +778,7 @@ def _upload_file_attempt(file: File) -> None:
                 timeout=_upload_timeout(),
             )
             if response.status_code == 201:
-                log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                log.info(f'[UPLOAD    ] "{file.filepath}" {format_bytes(file.size)}')
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
@@ -828,7 +826,7 @@ def _upload_file_attempt(file: File) -> None:
                 timeout=_upload_timeout(),
             )
             if response.status_code == 201:
-                log.info(f'[UPLOAD    ] "{file.filepath}" {bytes_to_human_readable(file.size)}')
+                log.info(f'[UPLOAD    ] "{file.filepath}" {format_bytes(file.size)}')
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )

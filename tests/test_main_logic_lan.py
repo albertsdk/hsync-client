@@ -8,11 +8,11 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 from hsync_client.config import HsyncConfig
-from hsync_client.main_logic import _run_lan_mode
+from hsync_client.main_logic import run_lan_mode
 
 
 def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
-    """Return a minimal config dict suitable for _run_lan_mode."""
+    """Return a minimal config dict suitable for run_lan_mode."""
     defaults: dict[str, object] = {
         "CID": "test-cid",
         "REMOTE_BUCKET": "test-bucket",
@@ -38,7 +38,7 @@ def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:
 
 
 class TestRunLanMode:
-    """Tests for _run_lan_mode function."""
+    """Tests for run_lan_mode function."""
 
     def test_no_peers_non_persistent_exits(self, tmp_path):
         """Non-persistent mode with no peers exits with warning."""
@@ -55,7 +55,7 @@ class TestRunLanMode:
         mock_lan_sync.port = 9000
 
         with patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         assert any("alone" in str(c) for c in mock_log.warning.call_args_list)
         mock_lan_sync.stop.assert_called_once()
@@ -83,7 +83,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.LANWebSocketServer", return_value=mock_ws_server),
             patch("time.sleep", side_effect=KeyboardInterrupt),
         ):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         mock_lan_server.start.assert_called_once()
         mock_ws_server.start.assert_called_once_with(watch_path=str(tmp_path))
@@ -120,7 +120,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         mock_run.assert_called_once()
         assert any("master" in str(c).lower() for c in mock_log.info.call_args_list)
@@ -154,7 +154,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         # No sync attempted and a protocol-mismatch warning was emitted.
         mock_run.assert_not_called()
@@ -188,7 +188,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler._measure_clock_offset"),
             patch("hsync_client.lan_handler._run_preview") as mock_preview,
         ):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         mock_preview.assert_called_once_with(mock_log)
 
@@ -209,7 +209,7 @@ class TestRunLanMode:
         mock_lan_sync.wait_for_discovery.side_effect = KeyboardInterrupt
 
         with patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         mock_lan_sync.stop.assert_called_once()
         assert any("Shutting down" in str(c) for c in mock_log.info.call_args_list)
@@ -240,7 +240,7 @@ class TestRunLanMode:
                 "hsync_client.ssl_utils.save_cert_to_temp_files", return_value=mock_cert_info
             ) as mock_save,
         ):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         mock_gen.assert_called_once()
         mock_save.assert_called_once_with(mock_cert_info)
@@ -279,7 +279,7 @@ class TestRunLanMode:
             patch("hsync_client.lan_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            _run_lan_mode(config, mock_log)
+            run_lan_mode(config, mock_log)
 
         # wait_for_discovery should be called twice (first loop: not ready, second: ready)
         assert mock_lan_sync.wait_for_discovery.call_count == 2

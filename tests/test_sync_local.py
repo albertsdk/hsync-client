@@ -11,13 +11,12 @@ import os
 import time
 from unittest.mock import patch
 
-from hsync_common.models.file import clear_sha256_cache
+from hsync_common.models.file import File, clear_sha256_cache
+from hsync_common.models.sync_action import SyncActionName
 from hsync_common.models.tombstone import tombstone_key
 
 from hsync_client import sync_state as ss_mod
 from hsync_client import tombstones as ts_mod
-from hsync_client.models.file import File
-from hsync_client.models.sync_action import SyncActionName
 from hsync_client.sync import (
     _mass_deletion_blocked,
     _save_conflict_copy,

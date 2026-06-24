@@ -9,8 +9,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from hsync_client.models.file import File
+from hsync_common.models.file import File
 
 
 class TestGetFilesRemote:

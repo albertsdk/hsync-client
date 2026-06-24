@@ -15,7 +15,6 @@ import secrets
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from hashlib import sha256
 from os import chmod, walk
 from os.path import abspath, normpath
 from pathlib import Path
@@ -34,16 +33,10 @@ from loguru import logger as log
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
-    CHUNK_SIZE_LARGE,
-    CHUNK_SIZE_MEDIUM,
-    CHUNK_SIZE_SMALL,
     CID_ALPHABET,
     CID_LENGTH,
-    FILE_SIZE_MEDIUM,
-    FILE_SIZE_SMALL,
     INOTIFY_MAX_USER_WATCHES_PATH,
     INOTIFY_WATCH_WARN_RATIO,
-    SHA256_CHUNK_SIZE,
 )
 
 # =============================================================================
@@ -432,51 +425,9 @@ def get_cid(length: int = CID_LENGTH) -> str:
 # =============================================================================
 
 
-def bytes_to_human_readable(size_bytes: float) -> str:
-    """
-    Convert bytes to human-readable format.
-
-    Automatically selects the appropriate unit (B, KB, MB, GB, etc.)
-    and formats with 2 decimal places.
-
-    Args:
-        size_bytes: Number of bytes to convert.
-
-    Returns:
-        Formatted string like "1.50MB" or "256.00KB".
-    """
-    units = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
-    index = 0
-    while size_bytes >= 1024 and index < len(units) - 1:
-        size_bytes /= 1024.0
-        index += 1
-    return f"{size_bytes:.2f}{units[index]}"
-
-
 # =============================================================================
 # File Operations
 # =============================================================================
-
-
-def compute_sha256(filepath: str, chunk_size: int = SHA256_CHUNK_SIZE) -> str:
-    """
-    Compute the SHA-256 checksum of a file.
-
-    Reads the file in chunks to avoid loading large files entirely
-    into memory.
-
-    Args:
-        filepath: Path to the file.
-        chunk_size: Size of chunks to read (default: SHA256_CHUNK_SIZE).
-
-    Returns:
-        SHA-256 hash as hexadecimal string.
-    """
-    hash_sha256 = sha256()
-    with open(filepath, "rb") as f:
-        for chunk in iter(lambda: f.read(chunk_size), b""):
-            hash_sha256.update(chunk)
-    return hash_sha256.hexdigest()
 
 
 def get_permissions(obj_path: str) -> str:
@@ -490,30 +441,6 @@ def get_permissions(obj_path: str) -> str:
         Octal permission string like '644'.
     """
     return _read_permissions(obj_path)
-
-
-def get_chunk_size(file_size: int | None) -> int:
-    """
-    Calculate optimal chunk size based on file size.
-
-    Uses larger chunks for bigger files to improve transfer efficiency
-    while keeping memory usage reasonable.
-
-    Args:
-        file_size: Size of the file in bytes, or None if unknown.
-
-    Returns:
-        Optimal chunk size in bytes (8KB to 256KB).
-    """
-    if file_size is None:
-        return CHUNK_SIZE_MEDIUM  # Default 64KB for unknown size
-
-    if file_size < FILE_SIZE_SMALL:  # < 1MB
-        return CHUNK_SIZE_SMALL  # 8KB
-    elif file_size < FILE_SIZE_MEDIUM:  # < 100MB
-        return CHUNK_SIZE_MEDIUM  # 64KB
-    else:
-        return CHUNK_SIZE_LARGE  # 256KB
 
 
 def set_permissions(file_path: str, permissions: str) -> None:

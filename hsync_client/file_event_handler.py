@@ -29,14 +29,14 @@ from copy import deepcopy
 from pathlib import Path
 from time import time
 
+from hsync_common.models.dir import Dir, is_hidden_dir
+from hsync_common.models.event import Event, EventName
+from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_file
+from hsync_common.models.symlink import Symlink
 from loguru import logger as log
 from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHandler
 
 from hsync_client.config import CONFIG
-from hsync_client.models.dir import Dir, is_hidden_dir
-from hsync_client.models.event import Event, EventName
-from hsync_client.models.file import File, invalidate_sha256_cache, is_hidden_file
-from hsync_client.models.symlink import Symlink
 from hsync_client.utils import ensure_str_path, is_same_paths
 
 # on_closed is delivered by watchdog only on Linux (inotify).

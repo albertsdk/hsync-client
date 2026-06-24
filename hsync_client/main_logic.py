@@ -18,7 +18,10 @@ from pathlib import Path
 from re import sub
 from typing import Any
 
+from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+from hsync_common.models.file import clear_sha256_cache
+from hsync_common.models.sync_action import SyncActionName
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 
 from hsync_client.config import (
@@ -57,14 +60,9 @@ from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
     RESYNC_DEFAULT,
 )
-from hsync_client.lan_handler import run_lan_mode
-
-# Backward compatibility alias
-_run_lan_mode = run_lan_mode
 from hsync_client.events import UiEventName, emit_event, init_emitter
+from hsync_client.lan_handler import run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
-from hsync_client.models.file import clear_sha256_cache
-from hsync_client.models.sync_action import SyncActionName
 from hsync_client.remote_websocket import remote_connect
 from hsync_client.retry import retry_on_connection_error
 from hsync_client.stdin_commands import StdinCommandHandler
@@ -77,7 +75,6 @@ from hsync_client.sync import (
     sync,
 )
 from hsync_client.utils import (
-    bytes_to_human_readable,
     get_cid,
     is_valid_logfile,
     reset_bandwidth_throttle,
@@ -163,14 +160,14 @@ def _run_preview(log) -> None:
         # Emit structured messages for each file status (text log + event channel)
         for action in synced:
             size = action.file.size or 0
-            log.info(f'[SYNCED      ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            log.info(f'[SYNCED      ] "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="synced", file=action.file.filepath, size=size
             )
         for del_action, dl_action in renames:
             size = dl_action.file.size or 0
             log.info(
-                f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({bytes_to_human_readable(size)})'
+                f'[TO_RENAME   ] "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({format_bytes(size)})'
             )
             emit_event(
                 UiEventName.rename_status,
@@ -180,19 +177,19 @@ def _run_preview(log) -> None:
             )
         for action in downloads:
             size = action.file.size or 0
-            log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            log.info(f'[TO_DOWNLOAD ] "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="to_download", file=action.file.filepath, size=size
             )
         for action in uploads:
             size = action.file.size or 0
-            log.info(f'[TO_UPLOAD   ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            log.info(f'[TO_UPLOAD   ] "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="to_upload", file=action.file.filepath, size=size
             )
         for action in deletes:
             size = action.file.size or 0
-            log.info(f'[TO_DELETE   ] "{action.file.filepath}" ({bytes_to_human_readable(size)})')
+            log.info(f'[TO_DELETE   ] "{action.file.filepath}" ({format_bytes(size)})')
             emit_event(
                 UiEventName.file_status, state="to_delete", file=action.file.filepath, size=size
             )
@@ -280,8 +277,8 @@ def _check_deletion_risk(
     """
     from os import walk
 
-    from hsync_client.models.dir import is_hidden_dir
-    from hsync_client.models.file import is_hidden_file
+    from hsync_common.models.dir import is_hidden_dir
+    from hsync_common.models.file import is_hidden_file
 
     # upload-only never deletes local files
     if sync_direction == "upload-only":
@@ -801,9 +798,9 @@ def run_sync(
 
     # Log bandwidth limits if configured
     if (upload_limit := config.get("MAX_BANDWIDTH_UPLOAD")) is not None:
-        log.info(f"Upload bandwidth limit: {bytes_to_human_readable(float(upload_limit))}/s")
+        log.info(f"Upload bandwidth limit: {format_bytes(float(upload_limit))}/s")
     if (download_limit := config.get("MAX_BANDWIDTH_DOWNLOAD")) is not None:
-        log.info(f"Download bandwidth limit: {bytes_to_human_readable(float(download_limit))}/s")
+        log.info(f"Download bandwidth limit: {format_bytes(float(download_limit))}/s")
 
     # Execute Sync
     if config["DRYRUN"] and continuous:
@@ -892,12 +889,12 @@ async def _with_stdin_commands(log, coro) -> None:
                 return
 
         upload_str = (
-            bytes_to_human_readable(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"
+            format_bytes(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"
             if CONFIG["MAX_BANDWIDTH_UPLOAD"]
             else "unlimited"
         )
         download_str = (
-            bytes_to_human_readable(CONFIG["MAX_BANDWIDTH_DOWNLOAD"]) + "/s"
+            format_bytes(CONFIG["MAX_BANDWIDTH_DOWNLOAD"]) + "/s"
             if CONFIG["MAX_BANDWIDTH_DOWNLOAD"]
             else "unlimited"
         )

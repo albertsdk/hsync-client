@@ -5,7 +5,7 @@ Tests for Symlink model.
 import os
 import tempfile
 
-from hsync_client.models.symlink import Symlink
+from hsync_common.models.symlink import Symlink
 
 
 class TestSymlinkModel:

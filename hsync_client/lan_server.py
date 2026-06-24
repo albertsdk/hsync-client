@@ -32,6 +32,8 @@ from shutil import disk_usage
 from typing import IO
 from urllib.parse import parse_qs, urlparse
 
+from hsync_common.models.dir import is_hidden_dir
+from hsync_common.models.file import File, is_hidden_file
 from loguru import logger as log
 
 from hsync_client.compression import (
@@ -41,8 +43,6 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
-from hsync_client.models.dir import is_hidden_dir
-from hsync_client.models.file import File, is_hidden_file
 
 # =============================================================================
 # Constants

@@ -2,10 +2,10 @@
 Tests for Event model.
 """
 
-from hsync_client.models.dir import Dir
-from hsync_client.models.event import Event, EventName
-from hsync_client.models.file import File
-from hsync_client.models.symlink import Symlink
+from hsync_common.models.dir import Dir
+from hsync_common.models.event import Event, EventName
+from hsync_common.models.file import File
+from hsync_common.models.symlink import Symlink
 
 
 class TestEventName:

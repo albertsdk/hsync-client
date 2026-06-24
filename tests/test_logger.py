@@ -11,18 +11,23 @@ from datetime import UTC
 from typing import Any, cast
 from unittest.mock import MagicMock
 
-from hsync_client.logger import (
+from hsync_common.logger import (
     DEFAULT_LOG_COMPRESSION,
     DEFAULT_LOG_RETENTION,
     DEFAULT_LOG_ROTATION,
-    LABEL_STYLES,
     LEVEL_STYLES,
+)
+from hsync_common.logger import (
+    get_rotation_config as _get_rotation_config,
+)
+
+from hsync_client.logger import (
+    LABEL_STYLES,
     InterceptHandler,
     _colorize_labels,
     _format_record_colored,
     _format_record_plain,
     _get_json_data,
-    _get_rotation_config,
     get_client_id,
     set_client_id,
     setup_logging,
