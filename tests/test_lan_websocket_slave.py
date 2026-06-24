@@ -253,7 +253,7 @@ class TestSlaveFileEventHandler:
         }
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.delete") as mock_del,
+            patch("hsync_client.utils.http_delete") as mock_del,
         ):
             mock_del.return_value = MagicMock(status_code=200)
             handler._delete_on_master("/bucket/file.txt", is_dir=False)
@@ -264,7 +264,7 @@ class TestSlaveFileEventHandler:
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.delete") as mock_del,
+            patch("hsync_client.utils.http_delete") as mock_del,
         ):
             mock_del.return_value = MagicMock(status_code=500)
             handler._delete_on_master("/bucket/file.txt")  # no raise
@@ -274,7 +274,7 @@ class TestSlaveFileEventHandler:
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.delete", side_effect=Exception("net err")),
+            patch("hsync_client.utils.http_delete", side_effect=Exception("net err")),
         ):
             handler._delete_on_master("/bucket/file.txt")  # no raise
 
@@ -287,7 +287,7 @@ class TestSlaveFileEventHandler:
         }
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.patch") as mock_patch,
+            patch("hsync_client.utils.http_patch") as mock_patch,
         ):
             mock_patch.return_value = MagicMock(status_code=200)
             handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
@@ -298,7 +298,7 @@ class TestSlaveFileEventHandler:
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.patch") as mock_patch,
+            patch("hsync_client.utils.http_patch") as mock_patch,
         ):
             mock_patch.return_value = MagicMock(status_code=500)
             handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
@@ -308,7 +308,7 @@ class TestSlaveFileEventHandler:
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.patch", side_effect=Exception("fail")),
+            patch("hsync_client.utils.http_patch", side_effect=Exception("fail")),
         ):
             handler._rename_on_master("/bucket/a", "/bucket/b")  # no raise
 
@@ -671,7 +671,7 @@ class TestSlaveFileEventHandler:
         }
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.delete") as mock_del,
+            patch("hsync_client.utils.http_delete") as mock_del,
         ):
             mock_del.return_value = MagicMock(status_code=200)
             handler._delete_on_master("/bucket/file.txt", is_dir=False)
@@ -688,7 +688,7 @@ class TestSlaveFileEventHandler:
         }
         with (
             patch("hsync_client.lan_websocket.CONFIG", config),
-            patch("requests.patch") as mock_patch,
+            patch("hsync_client.utils.http_patch") as mock_patch,
         ):
             mock_patch.return_value = MagicMock(status_code=200)
             handler._rename_on_master("/bucket/a.txt", "/bucket/b.txt")

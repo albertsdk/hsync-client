@@ -363,8 +363,7 @@ class TestLANHandler:
         mock_response.status_code = 200
         mock_response.json.return_value = {"timestamp": 1000.0}
 
-        # http_get is imported as: from requests import get as http_get
-        with patch("requests.get", return_value=mock_response):
+        with patch("hsync_client.utils.http_get", return_value=mock_response):
             with patch("hsync_client.utils.get_ssl_verify", return_value=True):
                 _measure_clock_offset(mock_master, mock_config, mock_log)
 
@@ -391,7 +390,7 @@ class TestLANHandler:
         mock_response = MagicMock()
         mock_response.status_code = 404
 
-        with patch("requests.get", return_value=mock_response):
+        with patch("hsync_client.utils.http_get", return_value=mock_response):
             with patch("hsync_client.utils.get_ssl_verify", return_value=True):
                 _measure_clock_offset(mock_master, mock_config, mock_log)
 
@@ -419,7 +418,7 @@ class TestLANHandler:
         mock_response.status_code = 200
         mock_response.json.return_value = {}  # No timestamp
 
-        with patch("requests.get", return_value=mock_response):
+        with patch("hsync_client.utils.http_get", return_value=mock_response):
             with patch("hsync_client.utils.get_ssl_verify", return_value=True):
                 _measure_clock_offset(mock_master, mock_config, mock_log)
 
@@ -445,7 +444,10 @@ class TestLANHandler:
         )
         mock_log = MagicMock()
 
-        with patch("requests.get", side_effect=RequestException("Connection failed")):
+        with patch(
+            "hsync_client.utils.http_get",
+            side_effect=RequestException("Connection failed"),
+        ):
             with patch("hsync_client.utils.get_ssl_verify", return_value=True):
                 _measure_clock_offset(mock_master, mock_config, mock_log)
 
@@ -481,7 +483,7 @@ class TestLANHandler:
         mock_response.status_code = 200
         mock_response.json.return_value = {"timestamp": large_timestamp}
 
-        with patch("requests.get", return_value=mock_response):
+        with patch("hsync_client.utils.http_get", return_value=mock_response):
             with patch("hsync_client.utils.get_ssl_verify", return_value=True):
                 _measure_clock_offset(mock_master, mock_config, mock_log)
 

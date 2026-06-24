@@ -353,7 +353,6 @@ class TestCheckLanWritePolicy:
         """Outside LAN mode the policy never applies, even without a key."""
         _check_lan_write_policy(
             lan_mode=False,
-            lan_https=False,
             lan_key=None,
             sync_direction="bidirectional",
             auto_confirm=True,
@@ -364,7 +363,6 @@ class TestCheckLanWritePolicy:
         """Interactive runs (no --yes) may write without a key (operator vouches)."""
         _check_lan_write_policy(
             lan_mode=True,
-            lan_https=False,
             lan_key=None,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -375,18 +373,16 @@ class TestCheckLanWritePolicy:
         """download-only never writes to the master, so no key is required."""
         _check_lan_write_policy(
             lan_mode=True,
-            lan_https=False,
             lan_key=None,
             sync_direction="download-only",
             auto_confirm=True,
             logger=MagicMock(),
         )
 
-    def test_non_interactive_write_with_key_over_https_is_allowed(self):
-        """A key over HTTPS satisfies the policy for unattended writes."""
+    def test_non_interactive_write_with_key_is_allowed(self):
+        """A key satisfies the policy for unattended writes over the secure LAN."""
         _check_lan_write_policy(
             lan_mode=True,
-            lan_https=True,
             lan_key="secret",
             sync_direction="bidirectional",
             auto_confirm=True,
@@ -404,7 +400,6 @@ class TestCheckLanWritePolicy:
         ):
             _check_lan_write_policy(
                 lan_mode=True,
-                lan_https=True,
                 lan_key=None,
                 sync_direction="bidirectional",
                 auto_confirm=True,
@@ -415,22 +410,6 @@ class TestCheckLanWritePolicy:
         assert "AUTH_REQUIRED" in error_texts
         mock_emit.assert_called_once()
 
-    def test_non_interactive_write_key_over_plain_http_exits(self):
-        """A key over plain HTTP cannot satisfy the policy (the key is dropped)."""
-        with (
-            patch("hsync_client.main_logic.emit_event"),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            _check_lan_write_policy(
-                lan_mode=True,
-                lan_https=False,
-                lan_key="secret",
-                sync_direction="bidirectional",
-                auto_confirm=True,
-                logger=MagicMock(),
-            )
-        assert exc_info.value.code == 1
-
     def test_non_interactive_upload_only_without_key_exits(self):
         """upload-only writes to the master and is refused unattended without a key."""
         with (
@@ -439,7 +418,6 @@ class TestCheckLanWritePolicy:
         ):
             _check_lan_write_policy(
                 lan_mode=True,
-                lan_https=True,
                 lan_key=None,
                 sync_direction="upload-only",
                 auto_confirm=True,

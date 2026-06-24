@@ -30,8 +30,8 @@ informed of remediation progress.
 - **Transport security** — HTTPS/WSS supported. Use `--ca-cert` to trust a
   self-signed server certificate. `--insecure` disables verification and should
   be used only for testing.
-- **LAN mode (P2P)** — HTTPS by default with per-session self-signed
-  certificates and fingerprint verification; optional shared-secret
+- **LAN mode (P2P)** — HTTPS/WSS only, with a persistent self-signed identity and
+  connection-level fingerprint pinning (TOFU); optional shared-secret
   authentication (`HSYNC_LAN_KEY`) and group isolation (`--lan-group`).
 - **Integrity** — transfers are verified with SHA-256 checksums.
 

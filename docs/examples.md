@@ -233,21 +233,11 @@ hsync -b code -p ~/Code --lan-mode --lan-group dev
 
 ### 2.7 LAN with a fixed port (firewalled environments)
 
-By default the embedded HTTP server binds to a random port. Pin it when
+By default the embedded HTTPS server binds to a random port. Pin it when
 you need to open a specific port in a firewall.
 
 ```bash
 hsync -b shared -p ~/Shared --lan-mode --lan-port 9000
-```
-
-### 2.8 LAN without HTTPS (trusted network only)
-
-LAN mode uses self-signed HTTPS by default with a fingerprint exchanged
-via mDNS. Disable HTTPS only on trusted networks for slightly lower
-overhead:
-
-```bash
-hsync -b shared -p ~/Shared --lan-mode --no-lan-https
 ```
 
 ---

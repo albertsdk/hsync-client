@@ -18,6 +18,10 @@ from contextlib import contextmanager
 from os import chmod, walk
 from os.path import abspath, normpath
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from requests import Response, Session
 
 from hsync_common.path_validation import (
     FORBIDDEN_FILENAME_CHARS,
@@ -82,54 +86,51 @@ def get_ssl_verify() -> bool | str:
     return True
 
 
-def verify_master_fingerprint(url: str) -> bool:
-    """
-    Verify the master's SSL certificate fingerprint before making a request.
+def get_http_session() -> "Session":
+    """Build a ``requests.Session`` that pins the LAN master cert when required.
 
-    This should be called before making HTTPS requests to the LAN master
-    when MASTER_CERT_FINGERPRINT is set.
-
-    Args:
-        url: The URL to verify (used to extract host and port).
+    When ``MASTER_CERT_FINGERPRINT`` is set the session mounts a
+    :class:`~hsync_client.ssl_utils.FingerprintHTTPAdapter`, which binds the
+    SHA-256 fingerprint check to the very TLS connection that carries the
+    request. This eliminates the previous TOCTOU gap where the certificate was
+    probed on a separate connection and the real request ran with
+    ``verify=False``. Outside LAN fingerprint mode the session behaves like a
+    plain one; per-request ``verify`` (from :func:`get_ssl_verify`) still
+    governs chain validation for remote mode.
 
     Returns:
-        True if fingerprint matches or no fingerprint verification needed.
-        False if fingerprint doesn't match.
+        A configured :class:`requests.Session`.
     """
-    expected_fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
-    if not expected_fingerprint:
-        return True  # No fingerprint verification needed
+    from requests import Session
 
-    from urllib.parse import urlparse
+    session = Session()
+    fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
+    if fingerprint:
+        from hsync_client.ssl_utils import FingerprintHTTPAdapter
 
-    from hsync_client.ssl_utils import get_server_cert_fingerprint
+        _suppress_insecure_warning()
+        session.mount("https://", FingerprintHTTPAdapter(str(fingerprint)))
+    return session
 
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        return True  # Not HTTPS, no fingerprint to verify
 
-    host = parsed.hostname
-    port = parsed.port or 443
+def http_get(url: str, **kwargs) -> "Response":
+    """GET ``url`` through a fingerprint-pinned session (see :func:`get_http_session`)."""
+    return get_http_session().get(url, **kwargs)
 
-    if not host:
-        log.warning("Cannot verify fingerprint: no host in URL")
-        return False
 
-    actual_fingerprint = get_server_cert_fingerprint(host, port)
-    if not actual_fingerprint:
-        log.warning(f"Cannot get certificate from {host}:{port}")
-        return False
+def http_post(url: str, **kwargs) -> "Response":
+    """POST to ``url`` through a fingerprint-pinned session."""
+    return get_http_session().post(url, **kwargs)
 
-    if actual_fingerprint.lower() != expected_fingerprint.lower():
-        log.error(
-            f"Certificate fingerprint mismatch!\n"
-            f"  Expected: {expected_fingerprint}\n"
-            f"  Actual:   {actual_fingerprint}"
-        )
-        return False
 
-    log.debug(f"Certificate fingerprint verified: {actual_fingerprint[:16]}...")
-    return True
+def http_delete(url: str, **kwargs) -> "Response":
+    """DELETE ``url`` through a fingerprint-pinned session."""
+    return get_http_session().delete(url, **kwargs)
+
+
+def http_patch(url: str, **kwargs) -> "Response":
+    """PATCH ``url`` through a fingerprint-pinned session."""
+    return get_http_session().patch(url, **kwargs)
 
 
 # =============================================================================

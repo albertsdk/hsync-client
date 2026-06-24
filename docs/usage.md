@@ -69,7 +69,6 @@ mindmap
       --lan-mode
       --lan-port
       --lan-group
-      --no-lan-https
       --no-lan-persistent
       --force-master
       --never-master

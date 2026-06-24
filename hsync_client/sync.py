@@ -34,7 +34,7 @@ from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
 from hsync_common.models.version import SyncDecision, resolve_three_way
 from loguru import logger as log
-from requests import RequestException, get, post
+from requests import RequestException
 
 from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
@@ -42,7 +42,16 @@ from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.retry import retry_on_network_error
-from hsync_client.utils import get_ssl_verify, set_permissions, verify_master_fingerprint
+from hsync_client.utils import (
+    get_ssl_verify,
+    set_permissions,
+)
+from hsync_client.utils import (
+    http_get as get,
+)
+from hsync_client.utils import (
+    http_post as post,
+)
 
 # =============================================================================
 # Main Sync Function
@@ -520,13 +529,6 @@ def get_files_remote() -> list[dict]:
     """
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
     try:
-        # Verify master certificate fingerprint for LAN HTTPS mode
-        if not verify_master_fingerprint(uri):
-            raise NetworkError(
-                message="Master certificate fingerprint verification failed",
-                details={"url": uri},
-            )
-
         # Build query parameters
         params: dict[str, str] = {}
         # Add path filter if specified
@@ -582,13 +584,6 @@ def get_tombstones_remote() -> dict[str, dict]:
     """
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/tombstones"
     try:
-        # Verify master certificate fingerprint for LAN HTTPS mode
-        if not verify_master_fingerprint(uri):
-            raise NetworkError(
-                message="Master certificate fingerprint verification failed",
-                details={"url": uri},
-            )
-
         response = get(
             uri,
             headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
@@ -634,10 +629,6 @@ def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
 
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/tombstones"
     try:
-        if not verify_master_fingerprint(uri):
-            log.debug("Skipping tombstone push: fingerprint verification failed")
-            return
-
         post(
             uri,
             json=cast(dict, dict(payload)),

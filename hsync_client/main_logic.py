@@ -34,7 +34,6 @@ from hsync_client.config import (
     get_ignore_delete,
     get_ignore_patterns,
     get_lan_group,
-    get_lan_https,
     get_lan_key,
     get_lan_persistent,
     get_lan_port,
@@ -342,7 +341,6 @@ def _check_deletion_risk(
 
 def _check_lan_write_policy(
     lan_mode: bool,
-    lan_https: bool,
     lan_key: str | None,
     sync_direction: str,
     auto_confirm: bool,
@@ -368,19 +366,19 @@ def _check_lan_write_policy(
     if not lan_write_requires_key(sync_direction, interactive=interactive):
         return
 
-    # A key is only effective over HTTPS; it is dropped over plain HTTP, so plain
-    # HTTP can never satisfy the policy for unattended writes.
-    if lan_key and lan_https:
+    # The shared key authenticates writes; over the HTTPS-only LAN transport a
+    # present key always satisfies the policy.
+    if lan_key:
         return
 
     logger.error(
         "[AUTH_REQUIRED] Non-interactive LAN write requires authentication. "
-        "Set HSYNC_LAN_KEY (with HSYNC_LAN_HTTPS enabled) to upload to the master, "
-        "or run interactively (omit --yes), or use --sync-direction download-only."
+        "Set HSYNC_LAN_KEY to upload to the master, or run interactively "
+        "(omit --yes), or use --sync-direction download-only."
     )
     emit_event(
         UiEventName.auth_required,
-        message="A shared LAN key (HSYNC_LAN_KEY over HTTPS) is required for non-interactive writes",
+        message="A shared LAN key (HSYNC_LAN_KEY) is required for non-interactive writes",
     )
     raise SystemExit(1)
 
@@ -480,7 +478,6 @@ def run_sync(
     lan_port: int,
     discovery_timeout: int | None,
     lan_group: str | None,
-    lan_https: bool,
     lan_persistent: bool,
     force_master: bool,
     never_master: bool,
@@ -667,7 +664,6 @@ def run_sync(
         "PEER_TIMEOUT": get_peer_timeout() or 15,
         "LAN_KEY": lan_key_from_fd or get_lan_key(),
         "LAN_GROUP": lan_group or get_lan_group(),
-        "LAN_HTTPS": lan_https or get_lan_https(),
         "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),
         "LAN_FORCE_MASTER": force_master,
         "LAN_NEVER_MASTER": never_master or get_never_master(),
@@ -730,7 +726,6 @@ def run_sync(
     if not dryrun:
         _check_lan_write_policy(
             lan_mode=config["LAN_MODE"],
-            lan_https=config["LAN_HTTPS"],
             lan_key=config["LAN_KEY"],
             sync_direction=config["SYNC_DIRECTION"],
             auto_confirm=auto_confirm,

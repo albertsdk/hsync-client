@@ -14,6 +14,7 @@ from hsync_client.utils import (
     _suppress_insecure_warning,
     ensure_str_path,
     get_cid,
+    get_http_session,
     get_permissions,
     get_ssl_verify,
     is_same_paths,
@@ -21,7 +22,6 @@ from hsync_client.utils import (
     is_valid_logfile,
     path_lock,
     set_permissions,
-    verify_master_fingerprint,
     warn_if_inotify_watch_limit_low,
 )
 
@@ -395,63 +395,39 @@ class TestSuppressInsecureWarning:
             utils_mod._insecure_warning_suppressed = old_flag
 
 
-class TestVerifyMasterFingerprint:
-    """Tests for verify_master_fingerprint function."""
+class TestGetHttpSession:
+    """Tests for get_http_session and connection-level fingerprint pinning."""
 
-    def test_no_fingerprint_returns_true(self):
-        """Returns True when no MASTER_CERT_FINGERPRINT is configured."""
+    def test_plain_session_without_fingerprint(self):
+        """No MASTER_CERT_FINGERPRINT → no fingerprint adapter is mounted."""
+        from hsync_client.ssl_utils import FingerprintHTTPAdapter
+
         original = CONFIG.copy()
         try:
             CONFIG.pop("MASTER_CERT_FINGERPRINT", None)
-            assert verify_master_fingerprint("https://192.168.1.100:8443") is True
+            session = get_http_session()
+            try:
+                adapter = session.get_adapter("https://192.168.1.100:8443")
+                assert not isinstance(adapter, FingerprintHTTPAdapter)
+            finally:
+                session.close()
         finally:
             set_config(original)
 
-    def test_http_url_returns_true(self):
-        """Returns True for HTTP (non-HTTPS) URL even with fingerprint set."""
-        original = CONFIG.copy()
-        try:
-            CONFIG["MASTER_CERT_FINGERPRINT"] = "abc123"
-            assert verify_master_fingerprint("http://192.168.1.100:8080") is True
-        finally:
-            set_config(original)
+    def test_mounts_fingerprint_adapter(self):
+        """MASTER_CERT_FINGERPRINT → an HTTPS fingerprint adapter is mounted."""
+        from hsync_client.ssl_utils import FingerprintHTTPAdapter
 
-    def test_fingerprint_match_returns_true(self):
-        """Returns True when fingerprint matches."""
-        original = CONFIG.copy()
-        try:
-            CONFIG["MASTER_CERT_FINGERPRINT"] = "deadbeef" * 8
-            with patch(
-                "hsync_client.ssl_utils.get_server_cert_fingerprint",
-                return_value="deadbeef" * 8,
-            ):
-                assert verify_master_fingerprint("https://192.168.1.100:8443") is True
-        finally:
-            set_config(original)
-
-    def test_fingerprint_mismatch_returns_false(self):
-        """Returns False when fingerprint does not match."""
         original = CONFIG.copy()
         try:
             CONFIG["MASTER_CERT_FINGERPRINT"] = "deadbeef" * 8
-            with patch(
-                "hsync_client.ssl_utils.get_server_cert_fingerprint",
-                return_value="cafebabe" * 8,
-            ):
-                assert verify_master_fingerprint("https://192.168.1.100:8443") is False
-        finally:
-            set_config(original)
-
-    def test_server_unreachable_returns_false(self):
-        """Returns False when server certificate cannot be retrieved."""
-        original = CONFIG.copy()
-        try:
-            CONFIG["MASTER_CERT_FINGERPRINT"] = "abc123"
-            with patch(
-                "hsync_client.ssl_utils.get_server_cert_fingerprint",
-                return_value=None,
-            ):
-                assert verify_master_fingerprint("https://192.168.1.100:8443") is False
+            session = get_http_session()
+            try:
+                adapter = session.get_adapter("https://192.168.1.100:8443")
+                assert isinstance(adapter, FingerprintHTTPAdapter)
+                assert adapter._assert_fingerprint == "deadbeef" * 8
+            finally:
+                session.close()
         finally:
             set_config(original)
 

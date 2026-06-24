@@ -146,7 +146,7 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 ### LAN Mode (P2P)
 - 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
 - 👑 **Automatic master election** - peers with bidirectional sync are preferred as master
-- � **HTTPS by default** - self-signed certificate per session with fingerprint verification
+- 🔒 **HTTPS/WSS only** - persistent self-signed identity with connection-level fingerprint pinning (TOFU)
 - 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
 - �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
 

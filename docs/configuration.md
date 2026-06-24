@@ -108,10 +108,9 @@ server URL is required — peers are discovered automatically via mDNS, so
 | Option | Description |
 |--------|-------------|
 | `--lan-mode` | Enable LAN P2P mode (no server required) |
-| `--lan-port` | Port for LAN HTTP server (0 = random) |
+| `--lan-port` | Port for the LAN HTTPS server (0 = random) |
 | `HSYNC_LAN_KEY` | Shared secret for LAN authentication (env var only) |
 | `--lan-group` | Group name for peer filtering |
-| `--no-lan-https` | Disable HTTPS (enabled by default) |
 | `--discovery-timeout` | Initial peer discovery timeout in seconds (`0` = wait indefinitely) |
 
 ## SSL/TLS (HTTPS/WSS)

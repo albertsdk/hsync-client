@@ -103,7 +103,9 @@ class PinStore:
         """Classify ``observed_fp`` against the stored pin, pinning on first use.
 
         A first sighting (``trusted``) is persisted so the next run can detect a
-        change; ``matched``/``changed``/``no_fingerprint`` never mutate the store.
+        change; ``matched``/``changed`` never mutate the store. ``observed_fp``
+        must be present (LAN transport is HTTPS-only); a missing fingerprint is a
+        contract violation and :func:`evaluate_pin` raises.
         """
         with self._lock:
             data = self._load()

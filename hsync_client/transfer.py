@@ -23,7 +23,7 @@ from hsync_common.hashing import adaptive_chunk_size, compute_sha256
 from hsync_common.models.file import File
 from hsync_common.text import safe_json_for_log
 from loguru import logger as log
-from requests import RequestException, get, post
+from requests import RequestException
 
 from hsync_client.compression import compress_data, decompress_data, should_compress
 from hsync_client.config import CONFIG
@@ -44,7 +44,12 @@ from hsync_client.utils import (
     get_throttle_delay,
     path_lock,
     set_permissions,
-    verify_master_fingerprint,
+)
+from hsync_client.utils import (
+    http_get as get,
+)
+from hsync_client.utils import (
+    http_post as post,
 )
 
 # Content-Encoding header value for zstd compression
@@ -320,12 +325,8 @@ def _download_file_attempt(file: File) -> None:
     if resume_offset > 0:
         headers["Range"] = f"bytes={resume_offset}-"
 
-    # Verify master certificate fingerprint for LAN HTTPS mode
-    if not verify_master_fingerprint(uri):
-        log.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
-        return
-
-    # A connection-level error here propagates to the retry wrapper.
+    # A connection-level error here propagates to the retry wrapper. In LAN
+    # mode the session pins the master cert fingerprint on this very connection.
     response = get(
         uri,
         headers=headers,
@@ -539,10 +540,6 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
     try:
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/upload-status"
 
-        # Verify master certificate fingerprint for LAN HTTPS mode
-        if not verify_master_fingerprint(uri):
-            return "new", 0
-
         params: dict[str, str | int] = {
             "filename": filename,
             "sha256sum": sha256sum,
@@ -690,11 +687,6 @@ def _upload_file_attempt(file: File) -> None:
         prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
         path = str(Path(file.filepath).parent).rstrip("/").removeprefix(prefix).lstrip("/")
         filename = f"{path}/{Path(file.filepath).name}" if path else Path(file.filepath).name
-
-        # Verify master certificate fingerprint for LAN HTTPS mode
-        if not verify_master_fingerprint(uri):
-            log.error(f'Certificate fingerprint verification failed for "{file.filepath}"')
-            return
 
         # Check for resumable upload
         if file.sha256sum is None:

@@ -104,7 +104,6 @@ The web UI exposes the following options (all map 1:1 to `hsync` CLI flags):
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | Group               | `--lan-group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `10` (`0` = wait indefinitely)   |
-| LAN HTTPS           | `--no-lan-https/`                              | enabled                          |
 | Persistent LAN      | `--no-lan-persistent/`                         | enabled                          |
 | Server URL          | `-s / --server`                                | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |

@@ -891,24 +891,6 @@ class TestUploadCompressedResponses:
 class TestUploadStatusBranches:
     """Cover the early-status branches of upload_file."""
 
-    def test_fingerprint_failure_aborts(self, tmp_path):
-        """A failed master-fingerprint check aborts before posting."""
-        test_file = tmp_path / "file.txt"
-        test_file.write_text("content")
-
-        file = File(filepath=str(test_file), sha256sum="abc123", size=7)
-        config = {**_BASE_CONFIG, "LOCAL_BUCKET": str(tmp_path)}
-
-        with (
-            patch("hsync_client.transfer.CONFIG", config),
-            patch("hsync_client.transfer.verify_master_fingerprint", return_value=False),
-            patch("hsync_client.transfer.post") as mock_post,
-            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
-            patch("hsync_client.transfer.is_file_stable", return_value=True),
-        ):
-            upload_file(file, check_size=False)
-            mock_post.assert_not_called()
-
     def test_sha256sum_none_treated_as_new(self, tmp_path):
         """A file with no sha256sum skips the status check and uploads as new."""
         test_file = tmp_path / "file.txt"

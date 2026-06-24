@@ -77,14 +77,11 @@ Controls the direction of file synchronization:
 Peer-to-peer synchronization without a centralized server:
 
 ```bash
-# Basic LAN mode (HTTPS enabled)
+# Basic LAN mode (HTTPS is mandatory)
 ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
 
 # With authentication
 HSYNC_LAN_KEY="mySecretKey" ./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode
-
-# Disable HTTPS
-./dist/<platform>/hsync -b photos -p ~/Pictures --lan-mode --no-lan-https
 ```
 
 ### How It Works
