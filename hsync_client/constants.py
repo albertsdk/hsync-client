@@ -55,6 +55,12 @@ CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
 # 5 seconds is a reasonable compromise.
 FILE_STABILITY_INTERVAL_DEFAULT = 5
 
+# Fast re-check interval (seconds) used when an upload is triggered by an
+# on_closed (IN_CLOSE_WRITE) event: the close already signals write completion,
+# so a single short re-check is enough to absorb edge cases (NFS chunked writes,
+# rapid multi-close, non-atomic saves) before trusting the close and uploading.
+STABILITY_DELAY_ON_CLOSED = 0.3
+
 # Limits for stability delay configuration
 STABILITY_DELAY_MIN = 1
 STABILITY_DELAY_MAX = 60

@@ -424,7 +424,7 @@ class TestFileEventHandler:
 
             self.handler.on_closed(event)
 
-            mock_upload.assert_called_once_with(mock_file)
+            mock_upload.assert_called_once_with(mock_file, from_closed=True)
 
     # -- on_created symlink --
 
@@ -540,7 +540,7 @@ class TestFileEventHandler:
             mock_file = MagicMock()
             mock_get.return_value = mock_file
             self.handler.on_modified(event)
-            mock_upload.assert_called_once_with(mock_file)
+            mock_upload.assert_called_once_with(mock_file, from_closed=False)
 
     def test_on_modified_non_linux_debounces(self):
         """on_modified debounces rapid modifications on non-Linux."""

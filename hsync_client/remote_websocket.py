@@ -357,6 +357,6 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         else:
             run_coroutine_threadsafe(self.websocket.send(dumps(message_dict)), self.loop)
 
-    def _on_file_ready(self, file: File, src_path: str) -> None:
+    def _on_file_ready(self, file: File, src_path: str, from_closed: bool = False) -> None:
         """Upload the file via HTTP to the central server."""
-        upload_file(file)
+        upload_file(file, from_closed=from_closed)

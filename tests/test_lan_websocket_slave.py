@@ -234,7 +234,16 @@ class TestSlaveFileEventHandler:
         file_obj = File("/test/file.txt")
         with patch("hsync_client.transfer.upload_file") as mock_up:
             handler._upload_to_master(file_obj)
-            mock_up.assert_called_once_with(file_obj, check_size=True)
+            mock_up.assert_called_once_with(file_obj, check_size=True, from_closed=False)
+
+    def test_upload_to_master_forwards_from_closed(self, handler):
+        """An on_closed-triggered upload enables the fast stability re-check."""
+        from hsync_common.models.file import File
+
+        file_obj = File("/test/file.txt")
+        with patch("hsync_client.transfer.upload_file") as mock_up:
+            handler._upload_to_master(file_obj, from_closed=True)
+            mock_up.assert_called_once_with(file_obj, check_size=True, from_closed=True)
 
     def test_upload_to_master_exception(self, handler):
         """Test _upload_to_master logs error on exception."""
