@@ -41,6 +41,8 @@ from hsync_common.logger import (
 )
 from loguru import logger
 
+from hsync_client.constants import ActionLabel as AL
+
 if TYPE_CHECKING:
     from loguru import Logger, Record
 
@@ -114,28 +116,30 @@ def set_client_id(client_id: str | None) -> None:
 # - Skip (·): gray - no action taken
 # =============================================================================
 
-# Action label color mappings using loguru tags
+# Action label color mappings using loguru tags. Keyed by the centralized
+# ActionLabel values (hsync_client.constants) so the colorized text always
+# matches what the emit sites produce.
 LABEL_STYLES: dict[str, tuple[str, str]] = {
     # Sync operations
-    "[DOWNLOAD  ]": ("<cyan>", "</cyan>"),
-    "[UPLOAD    ]": ("<green>", "</green>"),
-    "[RESUME    ]": ("<cyan>", "</cyan>"),
-    "[MOVE      ]": ("<blue>", "</blue>"),
-    "[REMOVE    ]": ("<red>", "</red>"),
-    "[DELETE    ]": ("<red>", "</red>"),
-    "[CREATE    ]": ("<green>", "</green>"),
-    "[PERMISSION]": ("<magenta>", "</magenta>"),
-    "[SYMLINK   ]": ("<blue>", "</blue>"),
-    "[IN SYNC   ]": ("<dim>", "</dim>"),
-    "[SKIP      ]": ("<dim>", "</dim>"),
-    "[IGNORE DEL]": ("<yellow>", "</yellow>"),
+    AL.DOWNLOAD: ("<cyan>", "</cyan>"),
+    AL.UPLOAD: ("<green>", "</green>"),
+    AL.RESUME: ("<cyan>", "</cyan>"),
+    AL.MOVE: ("<blue>", "</blue>"),
+    AL.REMOVE: ("<red>", "</red>"),
+    AL.DELETE: ("<red>", "</red>"),
+    AL.CREATE: ("<green>", "</green>"),
+    AL.PERMISSION: ("<magenta>", "</magenta>"),
+    AL.SYMLINK: ("<blue>", "</blue>"),
+    AL.IN_SYNC: ("<dim>", "</dim>"),
+    AL.SKIP: ("<dim>", "</dim>"),
+    AL.IGNORE_DEL: ("<yellow>", "</yellow>"),
     # LAN client operations
-    "[CLIENT UP  ]": ("<green>", "</green>"),
-    "[CLIENT DEL ]": ("<red>", "</red>"),
-    "[CLIENT REN ]": ("<blue>", "</blue>"),
-    "[CLIENT DIR ]": ("<green>", "</green>"),
-    "[CLIENT KEEP]": ("<dim>", "</dim>"),
-    "[CLIENT IGN ]": ("<yellow>", "</yellow>"),
+    AL.CLIENT_UP: ("<green>", "</green>"),
+    AL.CLIENT_DEL: ("<red>", "</red>"),
+    AL.CLIENT_REN: ("<blue>", "</blue>"),
+    AL.CLIENT_DIR: ("<green>", "</green>"),
+    AL.CLIENT_KEEP: ("<dim>", "</dim>"),
+    AL.CLIENT_IGN: ("<yellow>", "</yellow>"),
 }
 
 

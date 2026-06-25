@@ -11,10 +11,11 @@ This module contains all magic numbers and constant values used
 throughout the application, making them easy to find and modify.
 """
 
+from enum import StrEnum
+
 # =============================================================================
 # Application Info
 # =============================================================================
-
 # Re-export shared constants from hsync-common
 from hsync_common.constants import (  # noqa: E402, F401
     CHUNK_SIZE_LARGE,
@@ -164,15 +165,44 @@ INOTIFY_WATCH_WARN_RATIO = 0.9
 # Action Labels for Logging
 # =============================================================================
 
-# Action labels with column alignment (10 chars for alignment)
-ACTION_LABEL = {
-    "download": "[DOWNLOAD  ]",
-    "upload": "[UPLOAD    ]",
-    "move": "[MOVE      ]",
-    "remove": "[REMOVE    ]",
-    "create": "[CREATE    ]",
-    "permission": "[PERMISSION]",
-    "symlink": "[SYMLINK   ]",
-    "skip": "[SKIP      ]",
-    "nothing": "[IN SYNC   ]",
-}
+
+class ActionLabel(StrEnum):
+    """Single source of truth for the bracketed action labels in log lines.
+
+    Labels are minimalist (no padding): the log line already carries a
+    variable-width level token before the message, so column alignment is not
+    achievable and dynamic-width tags keep the output clean and maintainable.
+    """
+
+    # Sync operations
+    DOWNLOAD = "[DOWNLOAD]"
+    UPLOAD = "[UPLOAD]"
+    RESUME = "[RESUME]"
+    MOVE = "[MOVE]"
+    REMOVE = "[REMOVE]"
+    DELETE = "[DELETE]"
+    CREATE = "[CREATE]"
+    PERMISSION = "[PERMISSION]"
+    SYMLINK = "[SYMLINK]"
+    IN_SYNC = "[IN SYNC]"
+    SKIP = "[SKIP]"
+    IGNORE_DEL = "[IGNORE DEL]"
+    CONFLICT = "[CONFLICT]"
+    GUARD = "[GUARD]"
+    TOMBSTONE = "[TOMBSTONE]"
+    # Preview (dry-run)
+    SYNCED = "[SYNCED]"
+    TO_DOWNLOAD = "[TO_DOWNLOAD]"
+    TO_UPLOAD = "[TO_UPLOAD]"
+    TO_DELETE = "[TO_DELETE]"
+    TO_RENAME = "[TO_RENAME]"
+    # LAN client operations
+    CLIENT_UP = "[CLIENT UP]"
+    CLIENT_DEL = "[CLIENT DEL]"
+    CLIENT_REN = "[CLIENT REN]"
+    CLIENT_DIR = "[CLIENT DIR]"
+    CLIENT_NEW = "[CLIENT NEW]"
+    CLIENT_KEEP = "[CLIENT KEEP]"
+    CLIENT_IGN = "[CLIENT IGN]"
+    # LAN master broadcast
+    LAN_FILE = "[LAN FILE]"

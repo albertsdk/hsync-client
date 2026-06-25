@@ -45,7 +45,7 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
@@ -402,7 +402,7 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
 
     def _on_file_ready(self, file: File, src_path: str) -> None:
         """Broadcast a ``modified`` event so slaves can pull the new bytes."""
-        log.info(f'[LAN FILE  ] "{src_path}"')
+        log.info(f'{ActionLabel.LAN_FILE} "{src_path}"')
         # A (re-)created/modified file invalidates any prior deletion marker so
         # peers do not delete the freshly written file on their next full sync.
         # Best-effort: tombstone bookkeeping must never break event propagation.
@@ -798,7 +798,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         from hsync_client.transfer import upload_file
 
         try:
-            log.info(f'[CLIENT UP  ] "{file_obj.filepath}"')
+            log.info(f'{ActionLabel.CLIENT_UP} "{file_obj.filepath}"')
             upload_file(file_obj, check_size=True)
         except Exception as e:
             log.error(f"Failed to upload to master: {e}")
@@ -831,7 +831,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            log.info(f'[CLIENT DEL ] "{filepath}"')
+            log.info(f'{ActionLabel.CLIENT_DEL} "{filepath}"')
             response = http_delete(
                 url,
                 params=params,
@@ -874,7 +874,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                     if isinstance(k, str) and isinstance(v, str):
                         headers[k] = v
 
-            log.info(f'[CLIENT REN ] "{src_path}" -> "{dst_path}"')
+            log.info(f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dst_path}"')
             response = http_patch(
                 url,
                 params=params,
@@ -905,7 +905,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             # Create a .hsynckeep sentinel so the empty directory is
             # synced to the master.  The watchdog will pick up the new
             # file and trigger an upload via on_closed / on_modified.
-            log.debug(f'[CLIENT DIR ] "{src_path}"')
+            log.debug(f'{ActionLabel.CLIENT_DIR} "{src_path}"')
             self._ensure_sentinel(src_path)
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
@@ -925,7 +925,9 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                 except OSError:
                     size = 0
                 if size > 0:
-                    log.debug(f'[CLIENT NEW ] "{src_path}" ({size} bytes, complete on create)')
+                    log.debug(
+                        f'{ActionLabel.CLIENT_NEW} "{src_path}" ({size} bytes, complete on create)'
+                    )
                     self._handle_file_upload(src_path)
 
     def on_modified(self, event) -> None:
@@ -1021,7 +1023,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if not Path(sentinel).exists():
             try:
                 open(sentinel, "w").close()  # noqa: SIM115
-                log.debug(f'[CLIENT KEEP] Created sentinel "{sentinel}"')
+                log.debug(f'{ActionLabel.CLIENT_KEEP} Created sentinel "{sentinel}"')
             except OSError as exc:
                 log.warning(f'Cannot create sentinel "{sentinel}": {exc}')
 
@@ -1045,7 +1047,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip if in ignore-delete mode
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug("[CLIENT IGN ] Deletion ignored (ignore-delete mode)")
+            log.debug(f"{ActionLabel.CLIENT_IGN} Deletion ignored (ignore-delete mode)")
             return
 
         # Notify master about deletion

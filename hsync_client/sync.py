@@ -38,7 +38,7 @@ from requests import RequestException
 
 from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS
+from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_CONCURRENT_TRANSFERS, ActionLabel
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.retry import retry_on_network_error
@@ -208,7 +208,7 @@ async def sync(lan_mode: bool = False) -> None:
         blocked, reason = _mass_deletion_blocked(len(deletes), len(local_files), len(remote_files))
         if blocked:
             log.warning(
-                f"[GUARD     ] Mass-deletion guard tripped ({reason}); "
+                f"{ActionLabel.GUARD} Mass-deletion guard tripped ({reason}); "
                 f"skipping {len(deletes)} deletion(s) this cycle"
             )
             emit_event(
@@ -225,7 +225,7 @@ async def sync(lan_mode: bool = False) -> None:
                 try:
                     remove(file.filepath)
                     sync_state.clear_base(file.filepath)
-                    log.info(f'[DELETE    ] "{file.filepath}" (not on master)')
+                    log.info(f'{ActionLabel.DELETE} "{file.filepath}" (not on master)')
                     emit_event(UiEventName.transfer, op="delete", file=file.filepath)
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
@@ -791,7 +791,7 @@ def get_sync_actions(
                     # and the local copy is unchanged: remove it instead of
                     # resurrecting it on the master.
                     log.info(
-                        f'[TOMBSTONE  ] "{file.filepath}" deleted remotely while offline; '
+                        f'{ActionLabel.TOMBSTONE} "{file.filepath}" deleted remotely while offline; '
                         "removing local copy"
                     )
                     sync_actions.append(SyncAction(file, SyncActionName.delete))
@@ -924,7 +924,7 @@ def _save_conflict_copy(file: File) -> str | None:
     try:
         copy2(file.filepath, conflict_path)
         log.warning(
-            f'[CONFLICT  ] "{file.filepath}" differs from remote at identical '
+            f'{ActionLabel.CONFLICT} "{file.filepath}" differs from remote at identical '
             f'mtime; local copy saved as "{conflict_path}"'
         )
         return conflict_path
