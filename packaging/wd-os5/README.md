@@ -94,14 +94,25 @@ and firmware upgrades.
 
 ## Configuration
 
-The web UI exposes the following options (all map 1:1 to `hsync` CLI flags):
+The web UI exposes the following options (all map 1:1 to `hsync` CLI flags).
+The shipped defaults are tuned for using the NAS as a **backup target**: it is
+the authoritative LAN **master** and **ignores client-side deletions**, so the
+backup never loses files because a source host removed them. Adjust from the UI
+for other use cases.
+
+The LAN transport is **HTTPS/WSS-only** (protocol `lan/1`): the master serves
+over TLS with a persistent self-signed identity and advertises its certificate
+fingerprint, which slaves pin (Trust-On-First-Use). There is no plain-HTTP
+option to configure.
 
 | UI field            | CLI flag                                       | Default                          |
 | ------------------- | ---------------------------------------------- | -------------------------------- |
 | Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
 | Mode                | `--lan-mode` vs `-s / --server`                | LAN                              |
-| Role                | `--force-master` + `--sync-direction`          | Auto (no force, bidirectional)   |
+| Role                | `--force-master` + `--sync-direction`          | Master (NAS authoritative)       |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
+| LAN shared key      | `HSYNC_LAN_KEY` env var                        | _empty_                          |
+| Strict pairing      | `--require-pairing`                            | off                              |
 | Group               | `--lan-group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `10` (`0` = wait indefinitely)   |
 | Persistent LAN      | `--no-lan-persistent/`                         | enabled                          |
@@ -109,7 +120,7 @@ The web UI exposes the following options (all map 1:1 to `hsync` CLI flags):
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
 | Watch mode          | `-w / --watch`                                 | on (service mode)                |
 | Resync interval     | `-i / --interval`                              | `0` (off)                        |
-| Ignore deletions    | `--ignore-delete`                              | off                              |
+| Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |
 | Bandwidth limits    | `--max-bandwidth-upload/--download`            | unlimited                        |
 | Compression         | `--no-compression`                             | enabled                          |
 | Min free disk space | `--min-free-disk-space`                        | service default                  |
