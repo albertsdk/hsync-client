@@ -29,13 +29,15 @@ jobs:
           path: hsync-client
 
       # Path dependency: ../hsync-common must sit next to this repo.
-      # For a private hsync-common, add `token: ${{ secrets.HSYNC_COMMON_PAT }}`.
+      # hsync-common is a private repo, so the default GITHUB_TOKEN cannot read
+      # it; authenticate with a PAT stored in the HSYNC_COMMON_PAT secret.
       - name: Checkout hsync-common
         uses: actions/checkout@v4
         with:
           repository: albertobasso/hsync-common
           ref: main
           path: hsync-common
+          token: ${{ secrets.HSYNC_COMMON_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
