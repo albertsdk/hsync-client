@@ -27,15 +27,21 @@ class TestGetOptimalWorkers:
 
     def test_medium_file_count_uses_up_to_4_workers(self):
         """For medium file counts (10-99), should use up to 4 workers."""
-        assert _get_optimal_workers(10) == 4
-        assert _get_optimal_workers(50) == 4
-        assert _get_optimal_workers(99) == 4
+        # Pin CPU count so the file-count tier is what's under test, not the
+        # core count of the (possibly low-core) CI runner.
+        with patch("hsync_client.sync.cpu_count", return_value=8):
+            assert _get_optimal_workers(10) == 4
+            assert _get_optimal_workers(50) == 4
+            assert _get_optimal_workers(99) == 4
 
     def test_large_file_count_uses_up_to_8_workers(self):
         """For large file counts (>=100), should use up to 8 workers."""
-        assert _get_optimal_workers(100) == 8
-        assert _get_optimal_workers(500) == 8
-        assert _get_optimal_workers(1000) == 8
+        # Pin CPU count so the file-count tier is what's under test, not the
+        # core count of the (possibly low-core) CI runner.
+        with patch("hsync_client.sync.cpu_count", return_value=8):
+            assert _get_optimal_workers(100) == 8
+            assert _get_optimal_workers(500) == 8
+            assert _get_optimal_workers(1000) == 8
 
     def test_respects_cpu_count(self):
         """Should not exceed available CPU cores."""
@@ -52,7 +58,10 @@ class TestGetOptimalWorkers:
 
     def test_environment_variable_override(self):
         """Should respect HSYNC_MAX_FILE_WORKERS environment variable."""
-        with patch.dict(os.environ, {"HSYNC_MAX_FILE_WORKERS": "6"}):
+        with (
+            patch("hsync_client.sync.cpu_count", return_value=8),
+            patch.dict(os.environ, {"HSYNC_MAX_FILE_WORKERS": "6"}),
+        ):
             # Should use the env value, capped by CPU and file count
             assert _get_optimal_workers(100) == 6
 
@@ -72,7 +81,10 @@ class TestGetOptimalWorkers:
 
     def test_environment_variable_exceeds_files(self):
         """Should cap env value at file count."""
-        with patch.dict(os.environ, {"HSYNC_MAX_FILE_WORKERS": "10"}):
+        with (
+            patch("hsync_client.sync.cpu_count", return_value=8),
+            patch.dict(os.environ, {"HSYNC_MAX_FILE_WORKERS": "10"}),
+        ):
             # With only 5 files, should use 5 (env var takes precedence)
             assert _get_optimal_workers(5) == 5
 
