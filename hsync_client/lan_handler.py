@@ -259,7 +259,15 @@ def _run_as_master(
     """
     del persistent  # master role is always continuous; flag kept for API symmetry
 
-    log.info("This client is the MASTER - acting as sync coordinator")
+    # The discovery loop re-enters this function on every iteration while we
+    # remain master. ``lan_server is None`` is true only on the first call
+    # (or after we lost and re-won the role, which stops the servers), so it
+    # is the natural gate for the one-shot startup messages and avoids
+    # spamming the role/Ctrl+C notices once per second.
+    first_activation = lan_server is None
+
+    if first_activation:
+        log.info("This client is the MASTER - acting as sync coordinator")
 
     # Start HTTPS server if not already running (LAN transport is HTTPS-only)
     if lan_server is None:
@@ -292,7 +300,8 @@ def _run_as_master(
         # Update mDNS service to indicate server is ready
         lan_sync.update_server_ready()
 
-    log.info("Press Ctrl+C to stop...")
+    if first_activation:
+        log.info("Press Ctrl+C to stop...")
     # Yield back to the outer discovery loop after a short idle window
     # so master/peer election can be re-evaluated.  If we are still
     # master on the next iteration, the outer loop will call us again
