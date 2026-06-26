@@ -43,7 +43,7 @@ from hsync_common.models.file import (
     is_hidden_file,
     is_partial_file,
 )
-from hsync_common.text import escape_loguru_braces
+from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -209,7 +209,7 @@ class LANWebSocketServer:
             async for message in websocket:
                 # Currently we don't expect messages from slaves
                 # but we keep the connection alive
-                log.debug(f"Received from {client_addr}: {escape_loguru_braces(message)}")
+                log.debug(f"Received from {client_addr}: {escape_loguru_markup(message)}")
         except Exception as e:
             log.debug(f"WebSocket client {client_addr} disconnected: {e}")
         finally:

@@ -39,6 +39,7 @@ from hsync_common.logger import (
     build_record_formatter,
     get_rotation_config,
 )
+from hsync_common.text import escape_loguru_markup
 from loguru import logger
 
 from hsync_client.constants import ActionLabel as AL
@@ -56,12 +57,13 @@ class InterceptHandler(BaseInterceptHandler):
     """
     Handler that intercepts standard logging and redirects to loguru.
 
-    Escapes curly braces in messages to prevent loguru from interpreting
-    them as format placeholders (e.g. websockets library logs JSON).
+    Escapes loguru markup in messages so braces (e.g. JSON logged by the
+    websockets library) and angle brackets (e.g. ``<locals>`` in tenacity
+    retry messages) are rendered verbatim instead of being parsed.
     """
 
     def __init__(self) -> None:
-        super().__init__(escape_braces=True)
+        super().__init__(escape_markup=True)
 
 
 # Context variable for client ID - thread-safe storage for per-session data
@@ -188,14 +190,12 @@ def _get_json_data(record: "Record") -> dict | None:
 
 
 def _append_json_data(record: "Record", message: str) -> str:
-    """Append a pretty-printed, brace-escaped json_data payload to a message."""
+    """Append a pretty-printed, markup-escaped json_data payload to a message."""
     import json
 
     json_data = _get_json_data(record)
     if json_data:
-        json_str = json.dumps(json_data, indent=2, default=str)
-        # Escape curly braces so loguru does not treat them as placeholders.
-        json_str = json_str.replace("{", "{{").replace("}", "}}")
+        json_str = escape_loguru_markup(json.dumps(json_data, indent=2, default=str))
         message = f"{message}\n{json_str}"
     return message
 
