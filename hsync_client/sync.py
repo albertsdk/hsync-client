@@ -29,6 +29,7 @@ from hsync_common.models.file import (
     clear_sha256_cache,
     invalidate_sha256_cache,
     is_hidden_file,
+    is_partial_file,
 )
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
@@ -75,7 +76,7 @@ def _cleanup_partial_files() -> int:
 
     for root, _dirs, files in walk(local_bucket):
         for file in files:
-            if file.endswith(".part"):
+            if is_partial_file(file):
                 partial_path = str(Path(root) / file)
                 try:
                     remove(partial_path)
