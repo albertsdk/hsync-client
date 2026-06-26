@@ -992,3 +992,51 @@ class TestUploadStatusBranches:
             upload_file(file, check_size=False)
             # sha256sum is None → status check is skipped entirely.
             mock_status.assert_not_called()
+
+
+class TestBuildMultipartStreaming:
+    """Tests for the streaming multipart body and its length advertisement."""
+
+    def test_returns_sized_body_with_exact_length(self, tmp_path):
+        """Body advertises a length equal to the bytes it actually streams."""
+        from hsync_client.transfer import _build_multipart_streaming
+
+        test_file = tmp_path / "payload.bin"
+        test_file.write_bytes(b"x" * 1234)
+
+        body, content_type = _build_multipart_streaming(
+            str(test_file), {"sha256sum": "abc"}, boundary="boundary123"
+        )
+
+        assert content_type == "multipart/form-data; boundary=boundary123"
+        streamed = b"".join(body)
+        assert len(body) == len(streamed)
+
+    def test_requests_frames_with_content_length_not_chunked(self, tmp_path):
+        """requests must use Content-Length, never Transfer-Encoding: chunked.
+
+        Sending both framing headers yields a request strict HTTP/1.1 parsers
+        (h11/uvicorn) reject as malformed; the sized body prevents that.
+        """
+        from requests import Request, Session
+
+        from hsync_client.transfer import _build_multipart_streaming
+
+        test_file = tmp_path / "payload.bin"
+        test_file.write_bytes(b"y" * 4096)
+
+        body, content_type = _build_multipart_streaming(
+            str(test_file), {"sha256sum": "abc"}, boundary="boundary123"
+        )
+
+        prepared = Session().prepare_request(
+            Request(
+                "POST",
+                "https://localhost:8765/x",
+                headers={"Content-Type": content_type},
+                data=body,
+            )
+        )
+
+        assert "Transfer-Encoding" not in prepared.headers
+        assert prepared.headers["Content-Length"] == str(len(body))
