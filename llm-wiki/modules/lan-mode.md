@@ -1,0 +1,71 @@
+# hsync-client — LAN (P2P) mode
+
+Server-less mode: peers discover each other on the LAN (mDNS), **elect a master**,
+and the master serves files over HTTPS/WSS while slaves sync to it. Security and
+election rules are SSOT in `hsync-common`.
+
+> **Domain-critical**: before changing discovery/election/security, read
+> [`hsync-common/docs/LAN_PROTOCOL.md`](../../../hsync-common/docs/LAN_PROTOCOL.md).
+
+## Entry & roles (`lan_handler.py`)
+
+| Symbol | Line | Role |
+| ------ | ---- | ---- |
+| `run_lan_mode` | `lan_handler.py:109` | start discovery, elect, branch to role |
+| `_run_as_master` | `:237` | start `LANServer` + `LANWebSocketServer` + watcher |
+| `_run_as_slave` | `:371` | TOFU-pin master, then connect + sync |
+| `_evaluate_master_pin` | `:314` | apply pin decision before slave connect |
+| `_measure_clock_offset` | `:44` | NTP-style skew vs master |
+| `NO_MASTER_WARNING_TIMEOUT` | `:41` | warn when no master appears |
+
+## Discovery & election (`lan.py`)
+
+| Symbol | Line | Role |
+| ------ | ---- | ---- |
+| `LANSync` | `lan.py:654` | top-level LAN coordinator |
+| `PeerManager` | `:129` | tracks peers, runs election, heartbeats |
+| `Peer` | `:90` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
+| `HsyncServiceListener` | `:501` | Zeroconf callbacks (add/update/remove) |
+| `get_free_port` | `:68` | bind an ephemeral serving port |
+| `HSYNC_SERVICE_TYPE` | `:47` | `_hsync._tcp.local.` mDNS type |
+
+Election is delegated to the common SSOT: `PeerManager._elect_master` builds
+`ElectionCandidate`s and calls `hsync_common.protocol.lan.elect_master`
+(bidirectional peers preferred; `--force-master`/`--never-master` honored). TXT
+records advertise `protocol`, `cert_fp`, `sync_direction`; protocol-mismatched
+peers are ignored.
+
+## Master server (`lan_server.py`, `lan_websocket.py`)
+
+| Symbol | Line | Role |
+| ------ | ---- | ---- |
+| `LANServer` | `lan_server.py:1067` | HTTPS file server (REST mirror of hsync-server) |
+| `LANRequestHandler` | `:328` | per-request handler; endpoints `API_PREFIX` (`:55`) |
+| `_StreamingMultipartParser` / `_parse_multipart` | `:164` / `:87` | streaming upload parsing |
+| `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) |
+| `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast |
+
+## Slave client (`lan_websocket.py`)
+
+| Symbol | Line | Role |
+| ------ | ---- | ---- |
+| `lan_websocket_client` | `lan_websocket.py:468` | connect to master WSS, verify cert fp, sync |
+| `_handle_lan_event` | `:636` | apply inbound master events locally |
+| `LANSlaveFileEventHandler` | `:667` | slave-local FS changes → upload to master |
+| `_lan_periodic_resync` | `:616` | periodic full reconcile (§13) |
+| echo suppression | `:85`/`:98` | `mark_inbound_origin` / `consume_inbound_origin` (TTL `:82`) |
+
+## Security: TOFU pinning + persistent identity
+
+| Concern | Code | Notes |
+| ------- | ---- | ----- |
+| Pin store | `pinning.py:56` (`PinStore`) | disk-backed, `0o600` (`_PIN_FILE_MODE:39`); key `_pin_key:51`; path `default_pin_store_path:42` / `PIN_FILE_ENV:35` |
+| Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed`/`pairing_needed` |
+| Master identity | `ssl_utils.py:98` (`load_or_create_master_cert`) | persistent cert/key (`MASTER_CERT_VALIDITY_DAYS:45`) → stable fp across restarts |
+| Connection pinning | `ssl_utils.py:171`/`:194`/`:228` | `create_fingerprint_ssl_context`, `FingerprintHTTPAdapter`, `verify_peer_cert_fingerprint` (no TOCTOU) |
+
+HTTPS/WSS is mandatory in LAN mode (no plaintext fallback). Write-capable sync in
+non-interactive mode requires a LAN key (`main_logic._check_lan_write_policy`).
+
+> Human guide: `../docs/lan-mode.md`. Election/security rationale:
+> ADRs 0001/0002 + `LAN_PROTOCOL.md` (see [decisions.md](../decisions.md)).
