@@ -296,6 +296,25 @@ class TestCheckServerConnectivity:
             assert result is False
             mock_logger.error.assert_called()
 
+    def test_ssl_plaintext_mismatch_hint(self):
+        """An HTTPS client hitting a plaintext server logs an actionable hint."""
+        from requests.exceptions import SSLError
+
+        mock_logger = MagicMock()
+        err = SSLError("[SSL: WRONG_VERSION_NUMBER] wrong version number")
+
+        with patch("requests.get", side_effect=err):
+            result = _check_server_connectivity(
+                server_url="https://localhost:8000",
+                timeout=10,
+                verify_ssl=True,
+                logger=mock_logger,
+            )
+
+        assert result is False
+        logged = mock_logger.error.call_args[0][0]
+        assert "plaintext HTTP" in logged
+
     def test_successful_with_ssl_disabled(self):
         """Test successful connection with SSL verification disabled."""
         mock_logger = MagicMock()
@@ -332,6 +351,45 @@ class TestCheckServerConnectivity:
 
             # 404 is < 500, so it's considered successful
             assert result is True
+
+
+class TestDiagnoseConnectionError:
+    """Tests for diagnose_connection_error TLS hint helper."""
+
+    def test_plaintext_signature_returns_hint(self):
+        from requests.exceptions import SSLError
+
+        from hsync_client.utils import diagnose_connection_error
+
+        err = SSLError("[SSL: RECORD_LAYER_FAILURE] record layer failure")
+        hint = diagnose_connection_error(err, "https://host:8000")
+        assert hint is not None
+        assert "plaintext HTTP" in hint
+        assert "https://host:8000" in hint
+
+    def test_certificate_verify_failed_returns_ca_hint(self):
+        from requests.exceptions import SSLError
+
+        from hsync_client.utils import diagnose_connection_error
+
+        err = SSLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        hint = diagnose_connection_error(err, "https://host:8000")
+        assert hint is not None
+        assert "--ca-cert" in hint
+
+    def test_non_ssl_error_returns_none(self):
+        from requests import RequestException
+
+        from hsync_client.utils import diagnose_connection_error
+
+        assert diagnose_connection_error(RequestException("refused"), "http://h") is None
+
+    def test_unrecognized_ssl_error_returns_none(self):
+        from requests.exceptions import SSLError
+
+        from hsync_client.utils import diagnose_connection_error
+
+        assert diagnose_connection_error(SSLError("some other tls issue"), "https://h") is None
 
 
 # ── Helper for run_sync tests ────────────────────────────────────────
@@ -522,10 +580,11 @@ class TestRunSync:
 
     def test_server_connectivity_failure_returns(self, tmp_path):
         """run_sync returns when server connectivity check fails."""
-        kwargs = _default_run_sync_kwargs(tmp_path)
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=False),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -537,10 +596,13 @@ class TestRunSync:
 
     def test_single_sync_mode(self, tmp_path):
         """run_sync runs a single sync when not continuous and not dryrun."""
-        kwargs = _default_run_sync_kwargs(tmp_path, continuous=False, dryrun=False)
+        kwargs = _default_run_sync_kwargs(
+            tmp_path, continuous=False, dryrun=False, server_url="https://localhost:8000"
+        )
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -554,10 +616,13 @@ class TestRunSync:
 
     def test_legend_display(self, tmp_path):
         """run_sync displays legend when requested."""
-        kwargs = _default_run_sync_kwargs(tmp_path, legend=True)
+        kwargs = _default_run_sync_kwargs(
+            tmp_path, legend=True, server_url="https://localhost:8000"
+        )
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -619,6 +684,25 @@ class TestRunSync:
             # Aborted before configuring: set_config is never called
             mock_set_cfg.assert_not_called()
             assert any("not HTTPS" in str(c) for c in mock_logger.error.call_args_list)
+
+    def test_missing_api_key_aborts(self, tmp_path):
+        """run_sync fails fast with a clear message when no API key is configured."""
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value=""),
+            patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+        ):
+            mock_logger = MagicMock()
+            mock_log_setup.return_value = mock_logger
+            run_sync(**kwargs)
+            # Aborted before configuring or contacting the server.
+            mock_set_cfg.assert_not_called()
+            mock_check.assert_not_called()
+            assert any("No API key configured" in str(c) for c in mock_logger.error.call_args_list)
 
     def test_env_file_loading_failure(self, tmp_path):
         """run_sync exits when env file is not found."""
