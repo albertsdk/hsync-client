@@ -18,7 +18,7 @@ small web UI for configuring the service without SSH access.
 | Firmware          | Stock My Cloud OS 5                                |
 | glibc on device   | up to `GLIBC_2.30` (verified on firmware 5.x)      |
 | Build base image  | `debian:buster` (`arm32v7`) — `glibc_2.28`         |
-| Python on device  | not required (PyInstaller `--onefile`, standalone) |
+| Python on device  | not required (PyInstaller `--onedir`, standalone)  |
 
 The build base is **Debian 10 (buster)** so the produced binary depends only
 on `GLIBC ≤ 2.28`, which is comfortably below the `2.30` ceiling exposed by
@@ -26,19 +26,31 @@ the stock OS5 firmware.
 
 ## Build flow
 
+The builder image bakes the third-party dependencies **and** the application
+sources as cached layers, so the slow ARMv7 native compilation (a static
+OpenSSL 3, cryptography, zstandard, the PyInstaller bootloader) happens once at
+`docker build` time instead of on every run. Editing application code rebuilds
+only the cheap source layers and reuses the cached dependency install; the
+per-run container does nothing but produce the frozen binary.
+
 ```
 host (x86_64)                    qemu-user-static (armv7)
 ─────────────                    ────────────────────────
 compile.sh --target wd-ex2-ultra-os5
     │
-    ├── docker build -f Dockerfile.builder ──► hsync-wdos5-builder:armv7
-    │       (debian:buster + Python 3.12 + Poetry + PyInstaller)
+    ├── stage build context ───────────────► build/wdos5/ctx/
+    │       (hsync-client + hsync-common manifests & sources)
     │
-    ├── docker run … pyinstaller --onefile ──► build/wdos5/bin/hsync
+    ├── docker build -f Dockerfile.builder ──► hsync-wdos5-builder:armv7
+    │       debian:buster + Python 3.12 + Rust + static OpenSSL 3 + Poetry
+    │       + poetry install (deps, cached layer) + baked sources
+    │
+    ├── docker run … pyinstaller --onedir ──► build/wdos5/bin/hsync/
+    │       (deps already installed; only the binary is produced)
     │
     ├── generate icon  ─────────────────────► Apkg/hsync.png
     │
-    ├── stage Apkg/ + binary + apkg.rc ────► build/wdos5/Apkg/
+    ├── stage Apkg/ + binary + apkg.rc ────► build/wdos5/hsync/
     │       (apkg.rc has __HSYNC_VERSION__ replaced by pyproject version)
     │
     └── mksapkg-OS5 -E -s -m MyCloudEX2Ultra
@@ -48,14 +60,14 @@ compile.sh --target wd-ex2-ultra-os5
 
 The source `Apkg/` tree is **never mutated** by the build: the binary and
 the rendered `apkg.rc` are written to a disposable staging copy under
-`build/wdos5/Apkg/`, and `mksapkg-OS5` packs that copy.
+`build/wdos5/hsync/`, and `mksapkg-OS5` packs that copy.
 
 ## Directory layout
 
 ```
 packaging/wd-os5/
 ├── README.md                # this file
-├── Dockerfile.builder       # ARMv7 buster + Python 3.12 + PyInstaller
+├── Dockerfile.builder       # buster + Python 3.12 + Poetry + cached deps + sources
 ├── Apkg/                    # source tree consumed by mksapkg-OS5
 │   ├── apkg.rc              # package metadata (version is injected at build)
 │   ├── env                  # shared variables, sourced by every script
@@ -152,3 +164,20 @@ The web UI ships with the same five locales as the desktop / Android clients:
 * The builder image is built locally and is **not** published to any
   registry. Re-run `compile.sh --target wd-ex2-ultra-os5 --clean` to force a
   rebuild.
+* The **dependency install** is a cached Docker layer keyed on
+  `pyproject.toml` + `poetry.lock` (for both `hsync-client` and the
+  `hsync-common` path-dependency). It is recompiled only when those manifests
+  change; editing application code reuses the cached layer and rebuilds only
+  the cheap source layers. The slow ARMv7 native build (cryptography,
+  zstandard, the PyInstaller bootloader) therefore happens once and is
+  persisted by BuildKit, surviving interrupted runs.
+* **OpenSSL 3 (ARMv7).** `cryptography` (pinned `>=48,<50`, resolving to
+  49.0.0) refuses to compile against OpenSSL < 3.0.0, but Debian Buster ships
+  only 1.1.1. The builder therefore compiles a **static** OpenSSL 3
+  (`OPENSSL_VERSION` in `Dockerfile.builder`, SHA256-pinned) into
+  `/opt/openssl3` and points the Rust `openssl-sys` build at it via
+  `OPENSSL_DIR` + `OPENSSL_STATIC=1`, so the `cryptography` extension embeds
+  OpenSSL 3 statically and the bundle stays self-contained on the NAS. The
+  CPython `ssl` module keeps using the system libssl 1.1.1. Bumping
+  `OPENSSL_VERSION` requires updating `OPENSSL_SHA256` in lock-step. On amd64
+  this layer is unused (prebuilt manylinux `cryptography` wheels apply).
