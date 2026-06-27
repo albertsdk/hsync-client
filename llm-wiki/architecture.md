@@ -57,9 +57,10 @@ watchdog Observer ──> BaseFileEventHandler (file_event_handler.py:49)
                           execute in parallel (_execute_parallel_transfers:267)
 ```
 
-Mode-specific handlers subclass the base: `RemoteFileEventHandler`
-(`remote_websocket.py:324`), `LANMasterFileEventHandler` (`lan_websocket.py:363`),
-`LANSlaveFileEventHandler` (`lan_websocket.py:667`).
+Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:324`) and
+`LANMasterFileEventHandler` (`lan_websocket.py:363`) subclass `BaseFileEventHandler`;
+`LANSlaveFileEventHandler` (`lan_websocket.py:667`) is a separate watchdog
+`FileSystemEventHandler` for the slave→master upload path.
 
 ## Layering
 
