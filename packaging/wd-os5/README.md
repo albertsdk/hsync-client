@@ -53,8 +53,11 @@ compile.sh --target wd-ex2-ultra-os5
     ├── stage Apkg/ + binary + apkg.rc ────► build/wdos5/hsync/
     │       (apkg.rc has __HSYNC_VERSION__ replaced by pyproject version)
     │
-    └── mksapkg-OS5 -E -s -m MyCloudEX2Ultra
-            │
+    ├── docker build -f Dockerfile.mksapkg ──► hsync-wdos5-mksapkg:bullseye
+    │       debian:bullseye + libxml2.so.2 + OpenSSL 1.1.1 (bf-cbc)
+    │
+    └── docker run … mksapkg-OS5 -E -s -m MyCloudEX2Ultra
+            │       (staging parent mounted at /work; cached tool bind-mounted)
             └─► dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_hsync_<ver>.bin
 ```
 
@@ -62,12 +65,20 @@ The source `Apkg/` tree is **never mutated** by the build: the binary and
 the rendered `apkg.rc` are written to a disposable staging copy under
 `build/wdos5/hsync/`, and `mksapkg-OS5` packs that copy.
 
+`mksapkg-OS5` itself runs inside a small `debian:bullseye` container rather
+than on the host: the prebuilt tool is linked against `libxml2.so.2` and shells
+out to `openssl bf-cbc` to sign `apkg.sign`, neither of which modern hosts
+provide (e.g. Ubuntu 26.04 ships libxml2 `.so.16` and OpenSSL 3 hides bf-cbc
+behind the legacy provider). The container carries both, so packaging is
+reproducible regardless of the host distribution.
+
 ## Directory layout
 
 ```
 packaging/wd-os5/
 ├── README.md                # this file
 ├── Dockerfile.builder       # buster + Python 3.12 + Poetry + cached deps + sources
+├── Dockerfile.mksapkg       # bullseye runtime for mksapkg-OS5 (libxml2.so.2 + bf-cbc)
 ├── Apkg/                    # source tree consumed by mksapkg-OS5
 │   ├── apkg.rc              # package metadata (version is injected at build)
 │   ├── env                  # shared variables, sourced by every script
@@ -161,6 +172,15 @@ The web UI ships with the same five locales as the desktop / Android clients:
   [WDCommunity/wdpksrc](https://github.com/WDCommunity/wdpksrc) repository
   the first time `compile.sh --target wd-ex2-ultra-os5` runs and cached
   under `packaging/wd-os5/.cache/`.
+* **Containerized mksapkg.** The cached tool is executed inside the
+  `hsync-wdos5-mksapkg:bullseye` image (built locally from
+  `Dockerfile.mksapkg`, not published to any registry) rather than on the host.
+  The prebuilt x86-64 binary links against `libxml2.so.2` and signs `apkg.sign`
+  by shelling out to `openssl bf-cbc`; Debian Bullseye still provides both,
+  whereas modern hosts ship libxml2 `.so.16` and gate bf-cbc behind the OpenSSL
+  3 legacy provider. The staging dir's parent is bind-mounted at `/work` (since
+  `mksapkg-OS5` drops the `.bin` in the parent of its CWD) and the container
+  runs as the host uid so artifacts stay caller-owned.
 * The builder image is built locally and is **not** published to any
   registry. Re-run `compile.sh --target wd-ex2-ultra-os5 --clean` to force a
   rebuild.

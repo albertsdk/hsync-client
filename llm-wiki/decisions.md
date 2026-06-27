@@ -37,6 +37,11 @@ in [`LAN_PROTOCOL.md`](../../hsync-common/docs/LAN_PROTOCOL.md) and maps to
   (`utils.py:411`) to avoid concurrent writes to the same file.
 - **Packaging lock-step**: any `HSYNC_*` flag/default change requires the
   synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
+- **Containerized mksapkg**: `mksapkg-OS5` runs inside the
+  `hsync-wdos5-mksapkg` image (`packaging/wd-os5/Dockerfile.mksapkg`) via
+  `_wdos5_run_mksapkg` (`compile.sh:947`), not on the host — the prebuilt tool
+  needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts. The
+  former host `openssl bf-cbc` shim was removed.
 
 > New decisions affecting multiple repos: add the ADR in `hsync-common` first,
 > then map it here.
