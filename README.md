@@ -16,6 +16,73 @@ Synchronize files between a local directory and a remote **bucket**. A bucket is
 - In **Server Mode**, clients connect to a centralized server.
 - In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no central server required.
 
+## Why HSYNC?
+
+HSYNC is designed to synchronize files using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
+
+Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
+
+| Tool | Required Protocol | Default Port(s) | Works over HTTP only? |
+|------|-------------------|------------------|-----------------------|
+| **HSYNC** | HTTP / HTTPS | 80 / 443 | ✅ **Yes** |
+| **rsync** | SSH or rsync daemon | 22 / 873 | ❌ No |
+| **scp / sftp** | SSH | 22 | ❌ No |
+| **Unison** | SSH or direct socket | 22 / custom | ❌ No |
+| **Syncthing** | BEP (custom protocol) | 22000 | ❌ No |
+| **FTP / FTPS** | FTP | 20–21 / 990 | ❌ No |
+| **Rclone** | Varies (S3, SFTP, etc.) | Varies | ⚠️ Partial (backend-dependent) |
+
+**When to choose HSYNC:**
+
+- 🏢 **Corporate networks** — only ports 80/443 are open through the firewall
+- ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
+- 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
+- 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
+
+Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate proxies, reverse proxies, load balancers, and CDNs without any special configuration.
+
+## Features
+
+### Core
+- 🔄 Bidirectional file synchronization
+- ⬆️ Upload-only and ⬇️ download-only sync directions
+- ⚡ Parallel file transfers (configurable concurrency)
+- 👁️ Real-time file system monitoring (watchdog)
+- ✅ SHA-256-based file integrity verification
+- 🗜️ Zstandard (zstd) transfer compression
+- 🔗 Symbolic link synchronization support
+- 🙈 `.hsyncignore` (gitignore-style) filtering
+- 📦 Compilable to standalone binary (PyInstaller)
+
+### Server Mode
+- 📡 WebSocket connection for remote events
+- 🔐 API Key authentication (secure first-message auth)
+- 🔒 SSL/TLS support
+- 💓 WebSocket heartbeat for reliable connections
+- � Event queue with exponential backoff retry
+
+### LAN Mode (P2P)
+- 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
+- 👑 **Automatic master election** - peers with bidirectional sync are preferred as master
+- 🔒 **HTTPS/WSS only** - persistent self-signed identity with connection-level fingerprint pinning (TOFU)
+- 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
+- �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
+
+
+## Quick Start
+
+```bash
+# Build
+poetry install
+./compile.sh
+# Binary output: dist/<os>-<arch>/hsync  (e.g. dist/linux-amd64/hsync)
+
+# Run  (replace <platform> with your os-arch, e.g. linux-amd64)
+./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
+```
+
+See [Getting Started](docs/getting-started.md) for detailed instructions.
+
 ## Quick Overview
 
 ```mermaid
@@ -97,73 +164,6 @@ flowchart LR
 4. **④ Sync Files** — Master uploads changes to client
 
 In LAN mode, the master is the source of truth and slaves sync from it. Both directions are supported for bidirectional sync peers.
-
-## Why HSYNC?
-
-HSYNC is designed to synchronize files using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
-
-Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
-
-| Tool | Required Protocol | Default Port(s) | Works over HTTP only? |
-|------|-------------------|------------------|-----------------------|
-| **HSYNC** | HTTP / HTTPS | 80 / 443 | ✅ **Yes** |
-| **rsync** | SSH or rsync daemon | 22 / 873 | ❌ No |
-| **scp / sftp** | SSH | 22 | ❌ No |
-| **Unison** | SSH or direct socket | 22 / custom | ❌ No |
-| **Syncthing** | BEP (custom protocol) | 22000 | ❌ No |
-| **FTP / FTPS** | FTP | 20–21 / 990 | ❌ No |
-| **Rclone** | Varies (S3, SFTP, etc.) | Varies | ⚠️ Partial (backend-dependent) |
-
-**When to choose HSYNC:**
-
-- 🏢 **Corporate networks** — only ports 80/443 are open through the firewall
-- ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
-- 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
-- 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
-
-Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate proxies, reverse proxies, load balancers, and CDNs without any special configuration.
-
-## Features
-
-### Core
-- 🔄 Bidirectional file synchronization
-- ⬆️ Upload-only and ⬇️ download-only sync directions
-- ⚡ Parallel file transfers (configurable concurrency)
-- 👁️ Real-time file system monitoring (watchdog)
-- ✅ SHA-256-based file integrity verification
-- 🗜️ Zstandard (zstd) transfer compression
-- 🔗 Symbolic link synchronization support
-- 🙈 `.hsyncignore` (gitignore-style) filtering
-- 📦 Compilable to standalone binary (PyInstaller)
-
-### Server Mode
-- 📡 WebSocket connection for remote events
-- 🔐 API Key authentication (secure first-message auth)
-- 🔒 SSL/TLS support
-- 💓 WebSocket heartbeat for reliable connections
-- � Event queue with exponential backoff retry
-
-### LAN Mode (P2P)
-- 🌐 **No server required** - peers discover each other via mDNS (Bonjour/Avahi)
-- 👑 **Automatic master election** - peers with bidirectional sync are preferred as master
-- 🔒 **HTTPS/WSS only** - persistent self-signed identity with connection-level fingerprint pinning (TOFU)
-- 🔑 **Shared secret authentication** - optional `HSYNC_LAN_KEY` for trusted networks
-- �️ **Group filtering** - isolate sync groups on the same LAN with `--lan-group`
-
-
-## Quick Start
-
-```bash
-# Build
-poetry install
-./compile.sh
-# Binary output: dist/<os>-<arch>/hsync  (e.g. dist/linux-amd64/hsync)
-
-# Run  (replace <platform> with your os-arch, e.g. linux-amd64)
-./dist/<platform>/hsync -s http://localhost:8765 -b mybucket -p /path/to/dir -w
-```
-
-See [Getting Started](docs/getting-started.md) for detailed instructions.
 
 ## Documentation
 

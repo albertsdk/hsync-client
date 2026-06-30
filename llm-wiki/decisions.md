@@ -42,6 +42,25 @@ in [`LAN_PROTOCOL.md`](../../hsync-common/docs/LAN_PROTOCOL.md) and maps to
   `_wdos5_run_mksapkg` (`compile.sh:947`), not on the host — the prebuilt tool
   needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts. The
   former host `openssl bf-cbc` shim was removed.
+- **Host-uid container builds**: containerized build steps drop to the host
+  `uid:gid` so artifacts under `build/`/`dist/` stay caller-owned — otherwise
+  root-owned output breaks the `rm -rf build` cleanup of a later native build
+  (`cleanup_temp_files`). Covers WD OS5 (`_wdos5_run_mksapkg`; PyInstaller
+  `_run_pyinstaller_in_docker` (`compile.sh:1000`)) and `deb-all`'s in-container
+  PyInstaller (`compile.sh:742`, with `HOME=/tmp` for the poetry/PyInstaller
+  caches). The `deb-all` `dpkg-deb` step stays **root** (so the `.deb`'s
+  internal `/usr`,`/etc` are owned `root:root`) and instead `chown`s the
+  host-mounted stage + produced `.deb` back to the caller afterwards
+  (`compile.sh:849`); the archive's captured ownership is unaffected.
+- **Tag-driven release** (`.github/workflows/release.yml`): pushing a `vX.Y.Z`
+  tag gates on lint+test, then builds native binaries on per-OS matrix runners
+  (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
+  — PyInstaller cannot cross-compile) plus the Linux-only `deb-all`/`wd-os5-all`
+  packages, and publishes them with `SHA256SUMS` to the GitHub Release. macOS
+  binaries are unsigned (documented `xattr` workaround in `docs/installation.md`).
+- **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
+  (`.venv/Scripts` vs `.venv/bin`, `compile.sh:92`) and `--strip` is omitted on
+  Windows (`STRIP_FLAG`, `compile.sh:99`) since binutils is unavailable there.
 
 > New decisions affecting multiple repos: add the ADR in `hsync-common` first,
 > then map it here.

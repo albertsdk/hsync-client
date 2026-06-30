@@ -1,0 +1,130 @@
+name: Release
+
+# Publish prebuilt client binaries, .deb packages and WD OS5 .bin installers as
+# GitHub Release assets when a vX.Y.Z tag is pushed. PyInstaller cannot
+# cross-compile, so native binaries are built on per-OS matrix runners; the
+# Linux-only packages are built in a separate job via Docker + qemu.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: hsync-client }
+      - uses: actions/checkout@v5
+        with:
+          repository: albertobasso/hsync-common
+          ref: main
+          path: hsync-common
+          token: ${{ secrets.HSYNC_COMMON_PAT }}
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pipx install poetry
+      - name: Lint and test
+        working-directory: hsync-client
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction
+          poetry run ruff check .
+          poetry run ruff format --check .
+          poetry run pytest -q
+
+  build-binaries:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    target: linux-amd64,   archive: tar }
+          - { os: ubuntu-24.04-arm, target: linux-arm64,   archive: tar }
+          - { os: macos-latest,     target: darwin-arm64,  archive: tar }
+          - { os: macos-13,         target: darwin-amd64,  archive: tar }
+          - { os: windows-latest,   target: windows-amd64, archive: zip }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: hsync-client }
+      - uses: actions/checkout@v5
+        with:
+          repository: albertobasso/hsync-common
+          ref: main
+          path: hsync-common
+          token: ${{ secrets.HSYNC_COMMON_PAT }}
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pipx install poetry
+      - name: Build native binary
+        working-directory: hsync-client
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --with build --no-interaction
+          ./compile.sh
+      - name: Package binary
+        working-directory: hsync-client
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release-out
+          cd "dist/${{ matrix.target }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "../../release-out/hsync-${version}-${{ matrix.target }}.zip" hsync.exe
+          else
+            tar czf "../../release-out/hsync-${version}-${{ matrix.target }}.tar.gz" hsync
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: hsync-client/release-out/*
+
+  build-packages:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: hsync-client }
+      - uses: actions/checkout@v5
+        with:
+          repository: albertobasso/hsync-common
+          ref: main
+          path: hsync-common
+          token: ${{ secrets.HSYNC_COMMON_PAT }}
+      - name: Build .deb and WD OS5 packages
+        working-directory: hsync-client
+        run: |
+          ./compile.sh --target deb-all
+          ./compile.sh --target wd-os5-all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            hsync-client/dist/deb/*.deb
+            hsync-client/dist/wd-os5/*.bin
+
+  release:
+    needs: [build-binaries, build-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true

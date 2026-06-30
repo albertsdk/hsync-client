@@ -193,7 +193,7 @@ hsync -b signage -p /srv/signage --lan-mode
 > (they request opposite behaviour). If **every** peer is `--never-master`,
 > no master is elected and a `[NO_MASTER]` warning is logged after 60 s.
 
-### 2.4 One-shot LAN sync (no continuous listening)
+### 2.5 One-shot LAN sync (no continuous listening)
 
 Sync once when a peer is found and then exit. Handy from a script, a
 `udev` rule on USB-tethered devices, or a manual "pull the latest"
@@ -209,7 +209,7 @@ Equivalent via environment variable:
 HSYNC_LAN_PERSISTENT=false hsync -b photos -p ~/Pictures --lan-mode
 ```
 
-### 2.5 Read-only LAN slave (download-only)
+### 2.6 Read-only LAN slave (download-only)
 
 Subscribe to changes from the master without ever pushing local edits
 back — e.g. a digital signage display that mirrors a content folder.
@@ -218,7 +218,7 @@ back — e.g. a digital signage display that mirrors a content folder.
 hsync -b signage -p /opt/signage --lan-mode --sync-direction download-only
 ```
 
-### 2.6 Multiple isolated groups on the same LAN
+### 2.7 Multiple isolated groups on the same LAN
 
 Use `--lan-group` (or `HSYNC_LAN_GROUP`) to partition peers on the same
 network — only peers with the same group name see each other.
@@ -231,7 +231,7 @@ hsync -b assets -p ~/Assets --lan-mode --lan-group design
 hsync -b code -p ~/Code --lan-mode --lan-group dev
 ```
 
-### 2.7 LAN with a fixed port (firewalled environments)
+### 2.8 LAN with a fixed port (firewalled environments)
 
 By default the embedded HTTPS server binds to a random port. Pin it when
 you need to open a specific port in a firewall.

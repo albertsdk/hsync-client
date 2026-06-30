@@ -38,6 +38,7 @@
     "action.start":   "Iniciar",
     "action.stop":    "Detener",
     "action.restart": "Reiniciar",
+    "action.log":     "Ver registro",
 
     "status.running": "en ejecución",
     "status.stopped": "detenido",
@@ -49,6 +50,12 @@
     "toast.started":     "Servicio iniciado",
     "toast.stopped":     "Servicio detenido",
     "toast.restarted":   "Servicio reiniciado",
+    "toast.log_error":   "No se pudo cargar el registro",
+
+    "log.title":  "Registro de la aplicación",
+    "log.follow": "Desplazamiento automático",
+    "log.clear":  "Limpiar",
+    "log.close":  "Cerrar",
 
     "footer.version": "Versión"
 }
