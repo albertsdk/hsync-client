@@ -58,6 +58,54 @@ hsync --help
 
 The package installs the `hsync` command system-wide.
 
+#### Run as a boot service (systemd)
+
+The `.deb` ships a systemd unit that starts `hsync` automatically at boot.
+Configuration is read from `/etc/hsync/hsync.conf` (an environment file loaded
+by the unit). By default the service runs in **LAN mode** with continuous
+watch as the `_hsync` system user; see the comments in
+`/etc/hsync/hsync.conf` to switch to Server Mode.
+
+> ⚠️ The service runs non-interactively (`--yes`) with bidirectional sync, so
+> `HSYNC_LAN_KEY` **must be set** in `/etc/hsync/hsync.conf` before enabling
+> it — otherwise the client aborts with `[AUTH_REQUIRED]`. All peers in the
+> same LAN group must share the same key. The default config also sets
+> `HSYNC_LAN_CERT_DIR=/var/lib/hsync/lan_cert` because the `_hsync` system
+> user has no home directory.
+
+```bash
+# 1. Edit the configuration (bucket, path, LAN key, …)
+sudo nano /etc/hsync/hsync.conf
+
+# 2. Enable and start the service at boot
+sudo systemctl enable --now hsync.service
+
+# 3. Check status / logs
+sudo systemctl status hsync.service
+sudo tail -f /var/log/hsync/hsync.log
+```
+
+> ⚙️ **Custom sync path**
+>
+> The default `HSYNC_PATH` is `/var/lib/hsync`. If you change it to a directory
+> under `/home` (e.g. `/home/alice/Documents`), the service can **read** those
+> files (thanks to `ProtectHome=read-only`) but cannot **write** to them unless
+> you also update the service's `ReadWritePaths`:
+>
+> ```bash
+> sudo systemctl edit hsync.service
+> ```
+>
+> Add the following (replace the path with your own):
+>
+> ```ini
+> [Service]
+> ReadWritePaths=/home/alice/Documents
+> ```
+
+For the full list of configuration parameters (environment variables and CLI
+options), see the [Configuration guide](configuration.md).
+
 ### WD My Cloud OS5 (.bin)
 
 Per-model `.bin` installers are provided for supported WD My Cloud OS5 devices

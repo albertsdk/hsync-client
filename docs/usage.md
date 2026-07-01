@@ -50,29 +50,29 @@ Use `--help-symbols` to display this legend in the terminal.
 
 | Label | Meaning | Description |
 |-------|---------|-------------|
-| `[IN SYNC   ]` | In sync | File already in sync (no action required) |
-| `[SKIP      ]` | Skip | File skipped |
-| `[DOWNLOAD  ]` | Download | Downloading from server / master |
-| `[UPLOAD    ]` | Upload | Uploading to server / master |
-| `[RESUME    ]` | Resume | Resuming partial upload or download |
-| `[MOVE      ]` | Move | Renaming / moving file or directory |
-| `[REMOVE    ]` | Remove | Removing file or directory |
-| `[CREATE    ]` | Create | Creating directory |
-| `[DELETE    ]` | Delete | Deleting local file not present on master (LAN mode) |
+| `[IN SYNC]` | In sync | File already in sync (no action required) |
+| `[SKIP]` | Skip | File skipped |
+| `[DOWNLOAD]` | Download | Downloading from server / master |
+| `[UPLOAD]` | Upload | Uploading to server / master |
+| `[RESUME]` | Resume | Resuming partial upload or download |
+| `[MOVE]` | Move | Renaming / moving file or directory |
+| `[REMOVE]` | Remove | Removing file or directory |
+| `[CREATE]` | Create | Creating directory |
+| `[DELETE]` | Delete | Deleting local file not present on master (LAN mode) |
 | `[PERMISSION]` | Permissions | Setting file / directory permissions |
-| `[SYMLINK   ]` | Symlink | Creating symbolic link |
+| `[SYMLINK]` | Symlink | Creating symbolic link |
 | `[IGNORE DEL]` | Ignore delete | Deletion ignored (backup / ignore-delete mode) |
 
 ### LAN Client Operations
 
 | Label | Meaning | Description |
 |-------|---------|-------------|
-| `[CLIENT UP  ]` | Client upload | Client uploads file to master |
-| `[CLIENT DEL ]` | Client delete | Client deletes file on master |
-| `[CLIENT REN ]` | Client rename | Client renames file on master |
-| `[CLIENT DIR ]` | Client dir | Client creates directory on master |
+| `[CLIENT UP]` | Client upload | Client uploads file to master |
+| `[CLIENT DEL]` | Client delete | Client deletes file on master |
+| `[CLIENT REN]` | Client rename | Client renames file on master |
+| `[CLIENT DIR]` | Client dir | Client creates directory on master |
 | `[CLIENT KEEP]` | Client sentinel | Client creates sentinel file (`.hsynckeep`) |
-| `[CLIENT IGN ]` | Client ignore | Client ignores deletion (ignore-delete mode) |
+| `[CLIENT IGN]` | Client ignore | Client ignores deletion (ignore-delete mode) |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 

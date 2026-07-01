@@ -1,12 +1,27 @@
 name: Release
 
 # Publish prebuilt client binaries, .deb packages and WD OS5 .bin installers as
-# GitHub Release assets when a vX.Y.Z tag is pushed. PyInstaller cannot
-# cross-compile, so native binaries are built on per-OS matrix runners; the
-# Linux-only packages are built in a separate job via Docker + qemu.
+# GitHub Release assets. Two triggers:
+#
+# 1. vX.Y.Z tag pushed  →  create a formal Release (bumped version).
+# 2. workflow_dispatch  →  build artifacts without a tag (useful for testing;
+#                          optionally create a draft Release).
+#
+# PyInstaller cannot cross-compile, so native binaries are built on per-OS
+# matrix runners; the Linux-only packages are built via Docker + qemu.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Create a GitHub Release (otherwise just build artifacts)"
+        type: boolean
+        default: false
+      version_suffix:
+        description: "Optional version suffix (e.g. 'dev', 'test123')"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -66,6 +81,20 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - run: pipx install poetry
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            BASE=$(grep -E '^version\s*=' hsync-client/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            SUFFIX="${{ inputs.version_suffix }}"
+            if [ -n "$SUFFIX" ]; then
+              echo "version=${BASE}-${SUFFIX}" >> "$GITHUB_OUTPUT"
+            else
+              echo "version=${BASE}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
       - name: Build native binary
         working-directory: hsync-client
         run: |
@@ -75,7 +104,7 @@ jobs:
       - name: Package binary
         working-directory: hsync-client
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.version.outputs.version }}"
           mkdir -p release-out
           cd "dist/${{ matrix.target }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
@@ -125,6 +154,7 @@ jobs:
           cd assets
           sha256sum * > SHA256SUMS
       - uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push' || inputs.create_release
         with:
           files: assets/*
           generate_release_notes: true

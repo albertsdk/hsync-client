@@ -81,7 +81,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--max-bandwidth-upload` | Maximum upload bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
 | `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
 | `--no-compression` | Disable zstd compression for file transfers | `false` |
-| `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `100` |
+| `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `500` |
 | `--sync-hidden` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
 
@@ -138,7 +138,8 @@ protocol internals see [LAN Internals](lan-internals.md).
 | `HSYNC_LAN_PERSISTENT` | Stay active indefinitely waiting for peers | `true` |
 | `HSYNC_NEVER_MASTER` | Never become master (`true`/`false`) | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Strict pairing — disable TOFU auto-pinning (`true`/`false`) | `false` |
-| `HSYNC_LAN_CERT_DIR` | Directory holding the persistent LAN master keypair | `~/.local/state/hsync/lan_cert` |
+| `HSYNC_LAN_CERT_DIR` | Directory holding the persistent LAN master keypair | `$XDG_STATE_HOME/hsync/lan_cert` or `~/.local/state/hsync/lan_cert` |
+| `HSYNC_LAN_PIN_FILE` | File storing the pinned fingerprints of known LAN peers (TOFU) | `$XDG_STATE_HOME/hsync/lan_known_peers.json` or `~/.local/state/hsync/lan_known_peers.json` |
 
 ### Incompatibilities & Priority
 
@@ -177,7 +178,7 @@ token.
 
 ```bash
 # Standard HTTPS connection (certificate verified against system CA store)
-./dist/<platform>/hsync -s https://server.example.com:8765 -b mybucket
+hsync -s https://server.example.com:8765 -b mybucket
 ```
 
 ### Connecting to a Server with Self-Signed Certificate
@@ -191,14 +192,14 @@ When the server uses a self-signed certificate, you have two options:
 scp server:/path/to/certs/server.crt ./server.crt
 
 # Connect using the CA certificate
-./dist/<platform>/hsync -s https://server:8765 -b mybucket --ca-cert server.crt
+hsync -s https://server:8765 -b mybucket --ca-cert server.crt
 ```
 
 **Option 2: Disable SSL verification (not recommended for production)**
 
 ```bash
 # Skip certificate verification (insecure!)
-./dist/<platform>/hsync -s https://server:8765 -b mybucket --insecure
+hsync -s https://server:8765 -b mybucket --insecure
 ```
 
 > ⚠️ **Warning**: Using `--insecure` disables all SSL certificate verification, making the connection vulnerable to man-in-the-middle attacks. Only use this for testing.
@@ -207,12 +208,12 @@ scp server:/path/to/certs/server.crt ./server.crt
 
 **Watch mode with self-signed certificate:**
 ```bash
-./dist/<platform>/hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
+hsync -s https://server:8765 -b mybucket -w --ca-cert server.crt
 ```
 
 **Dry-run with HTTPS:**
 ```bash
-./dist/<platform>/hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
+hsync -s https://server:8765 -b mybucket -n --ca-cert server.crt
 ```
 
 ## File Compression
@@ -257,13 +258,13 @@ HSYNC supports upload and download bandwidth limiting using a **token bucket** a
 
 ```bash
 # Limit upload to 1 MB/s
-./dist/<platform>/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 1MB
+hsync -s https://server.example.com:8765 -b mybucket -w --max-bandwidth-upload 1MB
 
 # Limit download to 500 KB/s
-./dist/<platform>/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-download 500KB
+hsync -s https://server.example.com:8765 -b mybucket -w --max-bandwidth-download 500KB
 
 # Limit both directions
-./dist/<platform>/hsync -s http://server:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
+hsync -s https://server.example.com:8765 -b mybucket -w --max-bandwidth-upload 2MB --max-bandwidth-download 1MB
 ```
 
 ### Supported Formats
@@ -338,7 +339,7 @@ will then be applied:
 
 ```bash
 # Sync hidden files too, but still exclude build artefacts via .hsyncignore
-hsync -s http://server:8765 -b mybucket --sync-hidden
+hsync -s https://server.example.com:8765 -b mybucket --sync-hidden
 ```
 
 ### Extra patterns via CLI
@@ -346,7 +347,7 @@ hsync -s http://server:8765 -b mybucket --sync-hidden
 Pass extra patterns without creating a `.hsyncignore` file:
 
 ```bash
-hsync -s http://server:8765 -b mybucket --ignore-patterns "*.log,/build/,/dist/"
+hsync -s https://server.example.com:8765 -b mybucket --ignore-patterns "*.log,/build/,/dist/"
 ```
 
 ### Hot-reload

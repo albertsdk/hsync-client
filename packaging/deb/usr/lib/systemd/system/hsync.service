@@ -18,8 +18,12 @@ StandardError=append:/var/log/hsync/hsync.log
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/hsync /var/log/hsync
+# ProtectHome=read-only allows the service to read files under /home
+# (e.g. when HSYNC_PATH points to a user's home directory).
+# If you change HSYNC_PATH to a path under /home, you must also add
+# that path to ReadWritePaths below (use: systemctl edit hsync.service).
+ProtectHome=read-only
+ReadWritePaths=/var/lib/hsync /var/lib/hsync/lan_cert /var/log/hsync
 ReadOnlyPaths=/etc/hsync
 
 [Install]

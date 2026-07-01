@@ -29,12 +29,14 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | Document | What it covers |
 | -------- | -------------- |
 | [installation.md](installation.md) | Install a prebuilt binary, `.deb`, or `.bin`, or build from source. |
+| [debian-package.md](debian-package.md) | Detailed guide for the `.deb` package: service, custom paths, ACLs. |
 | [getting-started.md](getting-started.md) | Build, choose a mode, and run your first sync. |
 | [usage.md](usage.md) | Complete command-line reference and common workflows. |
 | [sync-modes.md](sync-modes.md) | Server vs LAN modes, sync directions, and conflict handling. |
 | [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
 | [configuration.md](configuration.md) | Single reference for every CLI option and environment variable. |
 | [examples.md](examples.md) | Practical, copy-paste usage recipes. |
+| [sync-flow.md](sync-flow.md) | Client-side sync flow: initial sync, watch mode, conflict resolution, retry. |
 | [faq.md](faq.md) | Frequently asked questions and why to choose HSYNC. |
 | [architecture.md](architecture.md) | How the client is structured internally. |
 | [lan-internals.md](lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
