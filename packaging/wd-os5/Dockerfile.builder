@@ -100,6 +100,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # instead of ``$(nproc)``: under qemu-user emulation (ARMv7) each gcc process
 # has significant memory overhead, and the 16 GB Actions runner can OOM with
 # the full ``$(nproc)`` parallelism, killing the build with exit code 1.
+#
+# ``ac_cv_sizeof_time_t`` is seeded explicitly: under qemu-user emulation the
+# CPython ``configure`` runtime probe for ``sizeof(time_t)`` is unreliable and
+# can leave ``SIZEOF_TIME_T`` undefined in ``pyconfig.h``. That makes both the
+# ``#if SIZEOF_TIME_T == SIZEOF_LONG_LONG`` / ``== SIZEOF_LONG`` branches in
+# ``Python/pytime.c`` evaluate ``SIZEOF_TIME_T`` as empty, so ``PY_TIME_T_MIN``
+# is never ``#define``-d and compilation fails with
+# ``error: 'PY_TIME_T_MIN' undeclared``. We instead measure the size with a
+# tiny C program compiled by the (target-native under qemu) gcc and feed the
+# result into configure's cache. The size is returned via the program's exit
+# code, so ``|| TT_SIZE=$?`` is used to capture it without tripping ``set -e``.
 RUN set -eux; \
     update-ca-certificates --fresh; \
     for attempt in 1 2 3; do \
@@ -113,11 +124,19 @@ RUN set -eux; \
     mkdir -p /tmp/python-src; \
     tar -xJf /tmp/python.tar.xz -C /tmp/python-src --strip-components=1; \
     cd /tmp/python-src; \
+    printf '#include <time.h>\nint main(void){return (int)sizeof(time_t);}\n' > /tmp/tt.c; \
+    gcc /tmp/tt.c -o /tmp/tt_bin; \
+    TT_SIZE=0; /tmp/tt_bin || TT_SIZE=$?; \
+    echo "detected sizeof(time_t) = ${TT_SIZE} bytes"; \
+    test "${TT_SIZE}" = 4 -o "${TT_SIZE}" = 8; \
     ./configure \
         --prefix=/opt/python3.12 \
         --enable-shared \
         --with-ensurepip=install \
+        ac_cv_sizeof_time_t="${TT_SIZE}" \
         LDFLAGS=-Wl,-rpath=/opt/python3.12/lib; \
+    echo "=== pyconfig.h SIZEOF_TIME_T / SIZEOF_LONG ==="; \
+    grep -E 'define SIZEOF_TIME_T|define SIZEOF_LONG' pyconfig.h || true; \
     make -j4; \
     make install; \
     /opt/python3.12/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
