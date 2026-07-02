@@ -24,26 +24,52 @@ peer-to-peer on the LAN:
 
 See [Getting Started](getting-started.md) for the full walkthrough.
 
+## Where to start
+
+- **Installing for the first time?** → Start with [Installation](installation.md).
+- **First sync?** → Follow the [Getting Started](getting-started.md) guide.
+- **Coming from another tool?** → See the [Migration Guide](migration.md).
+- **All CLI options?** → Check [Configuration](configuration.md).
+- **Peer-to-peer on the LAN?** → Read [LAN Mode](lan-mode.md).
+- **Contributing?** → See the [Developer Guide](developer.md).
+
 ## Documentation map
+
+### Getting Started
 
 | Document | What it covers |
 | -------- | -------------- |
 | [installation.md](installation.md) | Install a prebuilt binary, `.deb`, or `.bin`, or build from source. |
 | [debian-package.md](debian-package.md) | Detailed guide for the `.deb` package: service, custom paths, ACLs. |
 | [getting-started.md](getting-started.md) | Build, choose a mode, and run your first sync. |
+| [migration.md](migration.md) | Migrate to HSYNC from rsync, Syncthing, cloud storage, or manual copies. |
+
+### Usage & Configuration
+
+| Document | What it covers |
+| -------- | -------------- |
 | [usage.md](usage.md) | Complete command-line reference and common workflows. |
+| [configuration.md](configuration.md) | Single reference for every CLI option and environment variable. |
 | [sync-modes.md](sync-modes.md) | Server vs LAN modes, sync directions, and conflict handling. |
 | [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
-| [configuration.md](configuration.md) | Single reference for every CLI option and environment variable. |
 | [examples.md](examples.md) | Practical, copy-paste usage recipes. |
+
+### How It Works
+
+| Document | What it covers |
+| -------- | -------------- |
 | [sync-flow.md](sync-flow.md) | Client-side sync flow: initial sync, watch mode, event queue, retry. |
-| [conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling (for contributors). |
-| [faq.md](faq.md) | Frequently asked questions and why to choose HSYNC. |
 | [architecture.md](architecture.md) | How the client is structured internally. |
+| [faq.md](faq.md) | Frequently asked questions and why to choose HSYNC. |
+
+### For Contributors
+
+| Document | What it covers |
+| -------- | -------------- |
+| [conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling. |
 | [lan-internals.md](lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
-| [developer.md](developer.md) | Internal implementation details: module structure, performance optimizations, error handling (for contributors). |
-| [testing.md](testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing (for contributors). |
-| [migration.md](migration.md) | Migrate to HSYNC from rsync, Syncthing, cloud storage, or manual copies. |
+| [developer.md](developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
+| [testing.md](testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |
 
 ## Related projects
 
