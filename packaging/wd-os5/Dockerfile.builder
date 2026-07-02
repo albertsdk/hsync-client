@@ -101,6 +101,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # has significant memory overhead, and the 16 GB Actions runner can OOM with
 # the full ``$(nproc)`` parallelism, killing the build with exit code 1.
 #
+# ``make`` is additionally wrapped in a retry loop (``-j4``, ``-j4``, then a
+# final ``-j1``): under qemu-user emulation individual gcc invocations can crash
+# with a SIGSEGV (exit code 139) on otherwise valid translation units (e.g.
+# ``Python/_warnings.c``). These crashes are non-deterministic and depend on
+# emulated thread scheduling / memory pressure, so simply re-running ``make``
+# (which resumes from the already-produced ``.o`` files) succeeds; the ``-j1``
+# fallback maximises the odds on the last attempt.
+#
 # ``ac_cv_sizeof_time_t`` is seeded explicitly: under qemu-user emulation the
 # CPython ``configure`` runtime probe for ``sizeof(time_t)`` is unreliable and
 # can leave ``SIZEOF_TIME_T`` undefined in ``pyconfig.h``. That makes both the
@@ -137,7 +145,13 @@ RUN set -eux; \
         LDFLAGS=-Wl,-rpath=/opt/python3.12/lib; \
     echo "=== pyconfig.h SIZEOF_TIME_T / SIZEOF_LONG ==="; \
     grep -E 'define SIZEOF_TIME_T|define SIZEOF_LONG' pyconfig.h || true; \
-    make -j4; \
+    for jobs in 4 4 1; do \
+        echo "make -j${jobs} (attempt with ${jobs} job(s))"; \
+        if make -j"${jobs}"; then break; fi; \
+        rc=$?; \
+        echo "make -j${jobs} failed with exit code ${rc}; retrying (qemu gcc segfaults are non-deterministic)..." >&2; \
+        if [ "${jobs}" = 1 ]; then echo "make failed even with -j1, giving up" >&2; exit "${rc}"; fi; \
+    done; \
     make install; \
     /opt/python3.12/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
     rm -rf /tmp/python-src /tmp/python.tar.xz
@@ -223,7 +237,9 @@ RUN set -eux; \
 # into the ``_rust`` shared object.
 #
 # ``make -j`` is capped at 4 (same rationale as the CPython build above) to
-# avoid OOM kills under qemu-user emulation on GitHub Actions runners.
+# avoid OOM kills under qemu-user emulation on GitHub Actions runners, and is
+# wrapped in the same ``-j4 / -j4 / -j1`` retry loop to survive non-deterministic
+# qemu gcc SIGSEGV (exit code 139) crashes.
 ARG OPENSSL_VERSION
 ARG OPENSSL_SHA256
 RUN set -eux; \
@@ -236,7 +252,13 @@ RUN set -eux; \
     cd /tmp/openssl-src; \
     ./config --prefix=/opt/openssl3 --openssldir=/opt/openssl3 \
         no-shared no-tests -fPIC; \
-    make -j4; \
+    for jobs in 4 4 1; do \
+        echo "make -j${jobs} (attempt with ${jobs} job(s))"; \
+        if make -j"${jobs}"; then break; fi; \
+        rc=$?; \
+        echo "make -j${jobs} failed with exit code ${rc}; retrying (qemu gcc segfaults are non-deterministic)..." >&2; \
+        if [ "${jobs}" = 1 ]; then echo "make failed even with -j1, giving up" >&2; exit "${rc}"; fi; \
+    done; \
     make install_sw; \
     rm -rf /tmp/openssl-src /tmp/openssl.tar.gz
 
