@@ -36,10 +36,14 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
 | [configuration.md](configuration.md) | Single reference for every CLI option and environment variable. |
 | [examples.md](examples.md) | Practical, copy-paste usage recipes. |
-| [sync-flow.md](sync-flow.md) | Client-side sync flow: initial sync, watch mode, conflict resolution, retry. |
+| [sync-flow.md](sync-flow.md) | Client-side sync flow: initial sync, watch mode, event queue, retry. |
+| [conflict-resolution.md](conflict-resolution.md) | Three-way merge algorithm, version store, and conflict handling (for contributors). |
 | [faq.md](faq.md) | Frequently asked questions and why to choose HSYNC. |
 | [architecture.md](architecture.md) | How the client is structured internally. |
 | [lan-internals.md](lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
+| [developer.md](developer.md) | Internal implementation details: module structure, performance optimizations, error handling (for contributors). |
+| [testing.md](testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing (for contributors). |
+| [migration.md](migration.md) | Migrate to HSYNC from rsync, Syncthing, cloud storage, or manual copies. |
 
 ## Related projects
 
