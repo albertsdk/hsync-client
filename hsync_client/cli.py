@@ -24,6 +24,8 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
+    MAX_CONCURRENT_TRANSFERS_MAX,
+    MAX_CONCURRENT_TRANSFERS_MIN,
     MAX_WAIT_TIMEOUT_MAX,
     MAX_WAIT_TIMEOUT_MIN,
     MIN_FREE_DISK_SPACE_MB_DEFAULT,
@@ -303,6 +305,15 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = False,
+    max_concurrent_transfers: Annotated[
+        int | None,
+        typer.Option(
+            "--max-concurrent-transfers",
+            help="Maximum number of concurrent file transfers (1-20).",
+            metavar="N",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
     min_free_disk_space: Annotated[
         int,
         typer.Option(
@@ -326,6 +337,32 @@ def main(
             "--ignore-patterns",
             help="Comma-separated extra gitignore-style patterns (layered on .hsyncignore).",
             metavar="PATTERNS",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    mass_delete_guard: Annotated[
+        bool,
+        typer.Option(
+            "--mass-delete-guard/--no-mass-delete-guard",
+            help="Enable/disable the mass-deletion safety guard.",
+            rich_help_panel="Sync",
+        ),
+    ] = True,
+    mass_delete_threshold: Annotated[
+        int | None,
+        typer.Option(
+            "--mass-delete-threshold",
+            help="Absolute number of deletions per cycle that trips the guard (0 = disabled).",
+            metavar="N",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    mass_delete_percent: Annotated[
+        int | None,
+        typer.Option(
+            "--mass-delete-percent",
+            help="Percentage of local files whose deletion trips the guard (0 = disabled).",
+            metavar="PCT",
             rich_help_panel="Sync",
         ),
     ] = None,
@@ -625,6 +662,23 @@ def main(
                 f"Download bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
             )
 
+    # Validate max-concurrent-transfers range
+    if max_concurrent_transfers is not None and (
+        max_concurrent_transfers < MAX_CONCURRENT_TRANSFERS_MIN
+        or max_concurrent_transfers > MAX_CONCURRENT_TRANSFERS_MAX
+    ):
+        raise typer.BadParameter(
+            f"--max-concurrent-transfers must be between "
+            f"{MAX_CONCURRENT_TRANSFERS_MIN} and {MAX_CONCURRENT_TRANSFERS_MAX}."
+        )
+
+    # Validate mass-delete-threshold range
+    if mass_delete_threshold is not None and mass_delete_threshold < 0:
+        raise typer.BadParameter("--mass-delete-threshold must be >= 0 (0 = disabled).")
+    # Validate mass-delete-percent range
+    if mass_delete_percent is not None and (mass_delete_percent < 0 or mass_delete_percent > 100):
+        raise typer.BadParameter("--mass-delete-percent must be between 0 and 100 (0 = disabled).")
+
     # Import and call the actual main logic
     from hsync_client.main_logic import run_sync
 
@@ -668,6 +722,10 @@ def main(
         min_free_disk_space=min_free_disk_space,
         sync_hidden=sync_hidden,
         ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
+        max_concurrent_transfers=max_concurrent_transfers,
+        mass_delete_guard=mass_delete_guard,
+        mass_delete_threshold=mass_delete_threshold,
+        mass_delete_percent=mass_delete_percent,
     )
 
 

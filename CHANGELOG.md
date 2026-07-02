@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Perf**: `_record_synced_base()` no longer calls `flush()` after every
+  transfer. The merged sync-state is now persisted only once at the end of
+  the sync cycle (in `sync_state.flush()`), avoiding redundant per-file
+  rewrites of the entire `.hsyncstate` side-car. This significantly reduces
+  disk I/O when syncing many small files.
+
 ## [1.0.0] — 2025-12-xx
 
 ### Added

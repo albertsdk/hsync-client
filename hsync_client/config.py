@@ -115,6 +115,14 @@ class EnvSettings(BaseSettings):
         description="Comma-separated extra gitignore-style patterns (layered on .hsyncignore)",
     )
 
+    # Transfer Settings
+    max_concurrent_transfers: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="Maximum number of concurrent file transfers (1-20)",
+    )
+
     # Tombstone Configuration
     tombstone_ttl_days: int = Field(
         default=TOMBSTONE_TTL_DAYS_DEFAULT,
@@ -267,6 +275,11 @@ def get_mass_delete_percent() -> int:
     return get_env_settings().mass_delete_percent
 
 
+def get_max_concurrent_transfers() -> int | None:
+    """Get max concurrent transfers from environment (None = use default)."""
+    return get_env_settings().max_concurrent_transfers
+
+
 # =============================================================================
 # Configuration TypedDict
 # =============================================================================
@@ -381,6 +394,8 @@ class HsyncConfig(TypedDict):
     MASS_DELETE_THRESHOLD: int
     # Percentage of local files whose deletion trips the guard (0 = disabled)
     MASS_DELETE_PERCENT: int
+    # Maximum number of concurrent file transfers (downloads/uploads)
+    MAX_CONCURRENT_TRANSFERS: int
 
 
 # =============================================================================

@@ -182,6 +182,29 @@ Comma-separated extra gitignore-style patterns.
 Layered on
 .B .hsyncignore
 (if present in the synced directory).
+.TP
+.BR \-\-mass\-delete\-guard " / " \-\-no\-mass\-delete\-guard
+Enable or disable the mass-deletion safety guard. When enabled (default:
+.BR on ),
+a cycle that would delete more files than the configured thresholds is paused
+instead.
+.TP
+.BR \-\-mass\-delete\-threshold =\fIN\fP
+Absolute number of deletions per synchronisation cycle that trips the
+mass-deletion guard (default:
+.BR 50 ;
+set to 0 to disable the absolute threshold).
+.TP
+.BR \-\-mass\-delete\-percent =\fIPCT\fP
+Percentage of local files whose deletion trips the mass-deletion guard
+(default:
+.BR 50 ;
+set to 0 to disable the percentage threshold).
+.TP
+.BR \-\-max\-concurrent\-transfers =\fIN\fP
+Maximum number of concurrent file transfers (default:
+.BR 5 ;
+range: 1\(en20).
 .
 .\" --- LAN Mode ---
 .SS LAN Mode
