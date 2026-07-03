@@ -147,8 +147,8 @@ RUN set -eux; \
     grep -E 'define SIZEOF_TIME_T|define SIZEOF_LONG' pyconfig.h || true; \
     for jobs in 4 4 1; do \
         echo "make -j${jobs} (attempt with ${jobs} job(s))"; \
-        if make -j"${jobs}"; then break; fi; \
-        rc=$?; \
+        rc=0; make -j"${jobs}" || rc=$?; \
+        if [ "${rc}" = 0 ]; then break; fi; \
         echo "make -j${jobs} failed with exit code ${rc}; retrying (qemu gcc segfaults are non-deterministic)..." >&2; \
         if [ "${jobs}" = 1 ]; then echo "make failed even with -j1, giving up" >&2; exit "${rc}"; fi; \
     done; \
@@ -254,8 +254,8 @@ RUN set -eux; \
         no-shared no-tests -fPIC; \
     for jobs in 4 4 1; do \
         echo "make -j${jobs} (attempt with ${jobs} job(s))"; \
-        if make -j"${jobs}"; then break; fi; \
-        rc=$?; \
+        rc=0; make -j"${jobs}" || rc=$?; \
+        if [ "${rc}" = 0 ]; then break; fi; \
         echo "make -j${jobs} failed with exit code ${rc}; retrying (qemu gcc segfaults are non-deterministic)..." >&2; \
         if [ "${jobs}" = 1 ]; then echo "make failed even with -j1, giving up" >&2; exit "${rc}"; fi; \
     done; \
