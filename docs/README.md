@@ -74,6 +74,9 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 ## Related projects
 
 - [hsync-server](https://github.com/albertobasso/hsync-server/blob/main/docs/README.md) — the central server.
-- [hsync-desktop](https://github.com/albertobasso/hsync-desktop/blob/main/docs/README.md) — desktop GUI front-end.
-- [hsync-android](https://github.com/albertobasso/hsync-android/blob/main/docs/README.md) — the Android app.
+- [hsync-desktop](https://github.com/albertobasso/hsync-desktop/blob/main/docs/README.md) — desktop GUI front-end *(in development)*.
+- [hsync-android](https://github.com/albertobasso/hsync-android/blob/main/docs/README.md) — the Android app *(in development)*.
 - [hsync-common](https://github.com/albertobasso/hsync-common/blob/main/docs/README.md) — shared models and protocol.
+
+> **Note:** The desktop GUI (`hsync-desktop`) and the Android app (`hsync-android`)
+> are still under active development and are not yet ready for production use.

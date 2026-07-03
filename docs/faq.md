@@ -23,7 +23,9 @@ the relevant guide.
   safety check guards against mass-deletion, and transfers are resumable with
   SHA-256 integrity verification.
 - **Open ecosystem.** The same engine powers the CLI, a desktop GUI, an Android
-  app, and ships ready for WD My Cloud OS5 NAS devices.
+  app, and ships ready for WD My Cloud OS5 NAS devices. The desktop GUI and
+  Android app are still under development; the CLI is the production-ready
+  client today.
 
 ### Do I need a server to use HSYNC?
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Docs**: Note in the user documentation (`README.md`, `faq.md`) that the
+  desktop GUI (`hsync-desktop`) and Android app (`hsync-android`) are still
+  under active development and not yet ready for production use.
+- **Perf**: `_record_synced_base()` no longer calls `flush()` after every
+  transfer. The merged sync-state is now persisted only once at the end of
+  the sync cycle (in `sync_state.flush()`), avoiding redundant per-file
+  rewrites of the entire `.hsyncstate` side-car. This significantly reduces
+  disk I/O when syncing many small files.
+
 ### Fixed
 - **Build**: Fix CI "Build .deb and WD OS5 packages" failure in the CPython
   source-compile step where compilation aborted with
@@ -25,13 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retried up to 3 times to survive transient CDN failures. The same
   `make -j4` cap is applied to the static OpenSSL 3 build in the WD OS5
   builder image.
-
-### Changed
-- **Perf**: `_record_synced_base()` no longer calls `flush()` after every
-  transfer. The merged sync-state is now persisted only once at the end of
-  the sync cycle (in `sync_state.flush()`), avoiding redundant per-file
-  rewrites of the entire `.hsyncstate` side-car. This significantly reduces
-  disk I/O when syncing many small files.
 
 ## [1.0.0] — 2025-12-xx
 
