@@ -162,6 +162,22 @@ jobs:
     needs: [build-binaries, build-packages]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+        with: { path: hsync-client }
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            BASE=$(grep -E '^version\s*=' hsync-client/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            SUFFIX="${{ inputs.version_suffix }}"
+            if [ -n "$SUFFIX" ]; then
+              echo "tag=v${BASE}-${SUFFIX}" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag=v${BASE}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
       - uses: actions/download-artifact@v8
         with:
           path: assets
@@ -181,5 +197,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         if: github.event_name == 'push' || inputs.create_release
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: assets/*
           generate_release_notes: true
