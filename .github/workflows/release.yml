@@ -166,6 +166,14 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      - name: Flatten assets
+        run: |
+          cd assets
+          # download-artifact preserves the artifact's internal directory
+          # structure, so the packages artifact lands under deb/ and wd-os5/.
+          # Move every file to the top level for flat release assets.
+          find . -mindepth 2 -type f -exec mv -t . {} +
+          find . -mindepth 1 -type d -empty -delete
       - name: Generate checksums
         run: |
           cd assets
