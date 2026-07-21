@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Deps**: Updated runtime and development dependencies: typer 0.27.0,
+  zeroconf 0.150.0, aiofiles 25.1.0 (via hsync-common), cffi 2.1.0,
+  charset-normalizer 3.4.9, coverage 7.15.2, filelock 3.31.2, librt 0.13.0,
+  mypy 2.3.0, platformdirs 4.10.1, ruff 0.15.22, virtualenv 21.6.1.
+  Constraint ranges for `typer` and `zeroconf` widened accordingly.
 - **Docs**: Note in the user documentation (`README.md`, `faq.md`) that the
   desktop GUI (`hsync-desktop`) and Android app (`hsync-android`) are still
   under active development and not yet ready for production use.
