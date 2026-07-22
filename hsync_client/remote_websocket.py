@@ -37,7 +37,7 @@ from watchdog.observers import Observer
 from websockets import ConnectionClosed, connect
 
 from hsync_client.config import CONFIG, get_api_key
-from hsync_client.constants import HSYNC_VERSION
+from hsync_client.constants import HSYNC_VERSION, WS_MAX_MESSAGE_BYTES
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event
@@ -92,13 +92,16 @@ async def remote_events() -> None:
             ssl_context.check_hostname = True
             ssl_context.verify_mode = CERT_REQUIRED
 
-    # Connect to WebSocket endpoint with heartbeat
+    # Connect to WebSocket endpoint with heartbeat. ``max_size`` is set
+    # explicitly (events carry file metadata, never bulk content) instead of
+    # relying on the library default.
     async with connect(
         uri,
         ssl=ssl_context,
         ping_interval=30,
         ping_timeout=10,
         close_timeout=5,
+        max_size=WS_MAX_MESSAGE_BYTES,
     ) as websocket:
         log.info(f"WebSocket connected to {uri}")
         emit_event(UiEventName.status, status="connected")

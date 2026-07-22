@@ -103,6 +103,11 @@ TRANSFER_RETRY_ATTEMPTS_DEFAULT = 3
 TRANSFER_RETRY_MIN_WAIT_DEFAULT = 1  # seconds
 TRANSFER_RETRY_MAX_WAIT_DEFAULT = 10  # seconds
 
+# Maximum accepted WebSocket message size. Events carry file metadata only
+# (never bulk content), so a small explicit bound is safe and prevents a
+# hostile peer from flooding memory with giant frames.
+WS_MAX_MESSAGE_BYTES = 4 * 1024 * 1024  # 4 MiB
+
 # =============================================================================
 # Mass-Deletion Guard
 # =============================================================================

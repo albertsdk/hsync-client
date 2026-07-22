@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Inbound path validation**: every path received from a remote peer
+  (central server events, LAN master events, remote listings) is validated
+  before any local filesystem operation: traversal (`..`), absolute paths,
+  drive letters, backslashes, forbidden/control characters and internal
+  engine files (`.hsyncignore`, `.hsyncstate`, `.hsynctombstones`, `*.part`)
+  are rejected, logged and surfaced as the new `security_rejected` UI event.
+  Symlink events also require the target to stay inside the bucket
+- **LAN master confinement**: download/delete/rename/upload endpoints now
+  validate and confine peer-supplied paths with
+  `resolve()` + `relative_to()` instead of `startswith`, closing the
+  sibling-directory bypass (e.g. bucket `/data/sync` vs `/data/sync-evil`)
+- **Decompression-bomb protection**: compressed downloads are
+  stream-decompressed straight to disk capped at the declared file size (the
+  payload is never fully buffered in memory); LAN-master compressed uploads
+  abort when the decompressed bytes exceed the declared `size`
+- **Upload integrity on the LAN master**: the `sha256sum` form field is
+  mandatory and verified before the atomic rename, so corrupt or
+  attacker-controlled content is never committed nor propagated to slaves
+- **Permissions hardening**: setuid/setgid/sticky bits are stripped from
+  peer-supplied permission strings before being applied locally
+- **Tombstone gossip hardening**: oversized POST bodies are rejected, and the
+  store validation now lives in `hsync-common` (sha256-hex keys, future
+  timestamps beyond 300 s rejected, 100 000-entry cap)
+- **Wire-supplied mtimes** are clamped to `now + 5 min` on the LAN master
+  (conflict-engineering mitigation); WebSocket connections declare an
+  explicit 4 MiB `max_size`
+
+### Removed
+- **LAN master**: dead `_parse_multipart` helper (superseded by the streaming
+  multipart parser)
+- **Utils**: duplicated `is_valid_filename` (use the `hsync-common` SSOT)
+
 ### Changed
 - **Deps**: Updated runtime and development dependencies: typer 0.27.0,
   zeroconf 0.150.0, aiofiles 25.1.0 (via hsync-common), cffi 2.1.0,

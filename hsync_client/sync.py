@@ -34,6 +34,7 @@ from hsync_common.models.file import (
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
 from hsync_common.models.version import SyncDecision, resolve_three_way
+from hsync_common.path_validation import validate_remote_relpath
 from loguru import logger as log
 from requests import RequestException
 
@@ -733,6 +734,15 @@ def get_sync_actions(
         # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
         if Path(str(remote_file_info.get("filepath", ""))).name == HSYNCKEEP_FILENAME:
             continue
+        # The remote listing is untrusted input (hostile server or LAN
+        # master): drop entries whose path is unsafe or names an internal
+        # engine artifact instead of acting on them.
+        if validate_remote_relpath(str(remote_file_info.get("filepath", ""))) is None:
+            log.warning(
+                f"[SECURITY] Ignoring unsafe remote listing entry: "
+                f'"{remote_file_info.get("filepath")}"'
+            )
+            continue
         remote_file = File.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
         local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
 
@@ -957,6 +967,11 @@ def update_dir(data: dict) -> Dir | None:
     Returns:
         Dir object representing the local directory, or None if invalid.
     """
+    # Remote event data is untrusted input: refuse unsafe paths.
+    if validate_remote_relpath(str(data.get("path", ""))) is None:
+        log.warning(f'[SECURITY] Rejected unsafe remote directory: "{data.get("path")}"')
+        return None
+
     # Get local directory if it exists
     dir = Dir.get(data["path"], CONFIG["LOCAL_BUCKET"])
 
@@ -990,6 +1005,11 @@ def update_file(data: dict) -> None:
     """
     # Import here to avoid circular import
     from hsync_client.transfer import download_file
+
+    # Remote event data is untrusted input: refuse unsafe paths.
+    if validate_remote_relpath(str(data.get("filepath", ""))) is None:
+        log.warning(f'[SECURITY] Rejected unsafe remote file: "{data.get("filepath")}"')
+        return
 
     file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"], False)
 

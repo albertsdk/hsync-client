@@ -35,6 +35,7 @@ from hsync_common.models.dir import Dir
 from hsync_common.models.event import EventName
 from hsync_common.models.file import File
 from hsync_common.models.symlink import Symlink
+from hsync_common.path_validation import is_safe_symlink_target, validate_remote_relpath
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
@@ -90,6 +91,26 @@ def _tag(prefix: str, name: str) -> str:
     return f"[{prefix}{name}]"
 
 
+def _wire_relpath(payload: dict) -> str | None:
+    """Return the bucket-relative path carried by an event payload, if any."""
+    for key in ("filepath", "path"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _reject_unsafe(event_name: object, rel: str | None, ctx: EventDispatchContext) -> None:
+    """Log and surface the rejection of an unsafe remote-supplied path."""
+    log.warning(f"{_tag(ctx.log_prefix, 'SECURITY')} Rejected unsafe {event_name} path: {rel!r}")
+    emit_event(
+        UiEventName.security_rejected,
+        op=str(event_name),
+        path=rel or "",
+        message="unsafe remote path rejected",
+    )
+
+
 def _mark(ctx: EventDispatchContext, path: str) -> None:
     if ctx.mark_receiving:
         ctx.mark_receiving(path)
@@ -123,6 +144,17 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
     if not src:
         log.warning("Event missing 'src' field")
         return
+
+    # Paths arriving from a remote peer are untrusted input: reject
+    # traversal, absolute paths, backslashes and internal engine artifacts
+    # before any local filesystem operation is derived from them. This is the
+    # single choke point covering remote mode (hostile server) and LAN slave
+    # mode (hostile master) alike.
+    for payload in (p for p in (src, dst) if isinstance(p, dict)):
+        rel = _wire_relpath(payload)
+        if rel is None or validate_remote_relpath(rel) is None:
+            _reject_unsafe(event_name, rel, ctx)
+            return
 
     if event_name in {EventName.added.value, EventName.modified.value}:
         await _apply_add_or_modify(src, ctx)
@@ -269,6 +301,12 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
         link.filepath = f"{CONFIG['LOCAL_BUCKET']}/{link.filepath.lstrip('/')}"
         target = link.target
         if not (link.filepath and target):
+            return
+        # The link location is already confined by the inbound gate; the
+        # target must also stay inside the bucket, otherwise a hostile peer
+        # could plant a symlink to arbitrary local files (e.g. /etc/passwd).
+        if not is_safe_symlink_target(link.filepath, target, CONFIG["LOCAL_BUCKET"]):
+            _reject_unsafe(EventName.symlink.value, target, ctx)
             return
         log.info(
             f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{link.filepath}" -> "{target}"'

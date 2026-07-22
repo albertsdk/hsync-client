@@ -23,6 +23,7 @@ from hsync_common.compression import (  # noqa: F401
     compress_data,
     compress_file,
     decompress_data,
+    decompress_stream,
     should_compress,
 )
 from loguru import logger as log

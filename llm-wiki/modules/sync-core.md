@@ -11,12 +11,12 @@ and LAN modes.
 | `get_files_local` | `sync.py:452` | scan local tree (parallel, adaptive workers `_get_optimal_workers:409`) |
 | `get_files_remote` | `sync.py:515` | fetch remote file list |
 | `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:566` / `:615` | tombstone exchange |
-| `get_sync_actions` | `sync.py:684` | diff → `SyncAction`s; applies `--sync-direction` filter |
+| `get_sync_actions` | `sync.py:690` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`) |
 | `_compare_files` | `sync.py:820` | per-file decision (hash/mtime + base via sync_state) |
 | `_save_conflict_copy` | `sync.py:905` | write a conflict copy on three-way conflict |
 | `_execute_parallel_transfers` | `sync.py:267` | run downloads+uploads via `asyncio.Semaphore` (`MAX_CONCURRENT_TRANSFERS`, `constants.py:90`) |
 | `_mass_deletion_blocked` | `sync.py:94` | §12 guard: pause when deletions exceed threshold/percent or empty master |
-| `update_file` / `update_dir` | `sync.py:976` / `:942` | apply inbound metadata |
+| `update_file` / `update_dir` | `sync.py:996` / `:957` | apply inbound metadata; reject unsafe remote paths |
 | `ensure_hsynckeep_files` | `sync.py:326` | keep empty dirs via sentinel |
 | `_cleanup_partial_files` | `sync.py:62` | drop stale `.part` files |
 
@@ -27,16 +27,23 @@ Tombstone-vs-local decision: `_tombstone_deletes_local` (`sync.py:653`,
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `download_file` / `_download_file_attempt` | `transfer.py:248` / `:281` | retry wrapper + one attempt (raises transient → retry) |
-| `upload_file` / `_upload_file_attempt` | `transfer.py:665` / `:735` | retry wrapper + one attempt; resumable via `.part` + offset |
-| `_get_upload_status` | `transfer.py:554` | query server for resume offset |
-| `is_file_stable` / `_wait_for_stable_file` | `transfer.py:498` / `:591` | size+mtime stability gate; fast path on `from_closed` |
-| `_reschedule_upload` | `transfer.py:627` | §15: defer torn-file uploads (bounded) |
-| `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:148` / `:125` | streaming multipart |
-| `_ThrottledFileReader` | `transfer.py:95` | bandwidth throttle on upload reads |
-| `_record_synced_base` | `transfer.py:77` | persist merge base after success (sync_state) |
-| `_emit_transfer_failed` | `transfer.py:72` | emit `transfer_failed` UI event on exhaustion |
-| `_local_dest_path` | `transfer.py:236` | resolve local target (used with `path_lock`) |
+| `download_file` / `_download_file_attempt` | `transfer.py:270` / `:316` | retry wrapper + one attempt (raises transient → retry) |
+| `upload_file` / `_upload_file_attempt` | `transfer.py:697` / `:770` | retry wrapper + one attempt; resumable via `.part` + offset |
+| `_get_upload_status` | `transfer.py:598` | query server for resume offset |
+| `is_file_stable` / `_wait_for_stable_file` | `transfer.py:542` / `:635` | size+mtime stability gate; fast path on `from_closed` |
+| `_reschedule_upload` | `transfer.py:671` | §15: defer torn-file uploads (bounded) |
+| `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:154` / `:131` | streaming multipart |
+| `_ThrottledFileReader` | `transfer.py:101` | bandwidth throttle on upload reads |
+| `_record_synced_base` | `transfer.py:80` | persist merge base after success (sync_state) |
+| `_emit_transfer_failed` | `transfer.py:75` | emit `transfer_failed` UI event on exhaustion |
+| `_local_dest_path` | `transfer.py:242` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
+| `_open_partial_no_follow` | `transfer.py:257` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
+
+Compressed downloads stream through `decompress_stream` capped at the declared
+file size (anti decompression-bomb, `transfer.py:448`); the payload is never
+fully buffered in memory. Wire-supplied permissions go through
+`utils.set_permissions` (`utils.py:492`) which strips setuid/setgid/sticky bits
+(`sanitize_remote_permissions`).
 
 Transfers are serialized per local path via `utils.path_lock` (`utils.py:411`, §14).
 Retry policy: `retry.retry_on_transient_transfer_error` (`retry.py:105`); params
@@ -44,11 +51,18 @@ from `constants.py:99`–`:101`.
 
 ## event_dispatch.py — apply inbound events
 
-`apply_inbound_event` (`event_dispatch.py:103`) routes a remote event dict to
-`_apply_add_or_modify` (`:137`), `_apply_rename` (`:167`), `_apply_delete` (`:221`,
-locked via `_remove_locked:48`), `_apply_symlink` (`:263`). Echo suppression uses
+`apply_inbound_event` (`event_dispatch.py:124`) routes a remote event dict to
+`_apply_add_or_modify` (`:158`), `_apply_rename` (`:188`), `_apply_delete` (`:242`,
+locked via `_remove_locked:48`), `_apply_symlink` (`:295`). Echo suppression uses
 the per-event `EventDispatchContext` (`:62`) marking (`_mark:93`/`_unmark:98`).
-Path resolution: `_resolve_local_path` (`:157`).
+Path resolution: `_resolve_local_path` (`:178`).
+
+**Inbound path security gate** (`:139`): every src/dst path is validated with
+`hsync_common.path_validation.validate_remote_relpath` before dispatch —
+traversal, absolute paths, backslashes and internal engine files
+(`.hsync*`/`*.part`) are dropped, logged `[SECURITY]` and surfaced as a
+`security_rejected` UI event (`_reject_unsafe:103`). `_apply_symlink` also
+validates the link target with `is_safe_symlink_target`.
 
 ## file_event_handler.py — watchdog adapter
 
