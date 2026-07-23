@@ -35,7 +35,12 @@ from hsync_common.models.dir import Dir
 from hsync_common.models.event import EventName
 from hsync_common.models.file import File
 from hsync_common.models.symlink import Symlink
-from hsync_common.path_validation import is_safe_symlink_target, validate_remote_relpath
+from hsync_common.path_validation import (
+    is_safe_symlink_target,
+    resolve_within,
+    validate_remote_relpath,
+    wire_relpaths,
+)
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
@@ -91,13 +96,20 @@ def _tag(prefix: str, name: str) -> str:
     return f"[{prefix}{name}]"
 
 
-def _wire_relpath(payload: dict) -> str | None:
-    """Return the bucket-relative path carried by an event payload, if any."""
-    for key in ("filepath", "path"):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
+def _confined_local(rel: object, event_name: object, ctx: EventDispatchContext) -> str | None:
+    """Resolve a wire path inside ``LOCAL_BUCKET``, rejecting symlink escapes.
+
+    The inbound gate validates paths lexically, but lexical safety cannot stop
+    a symlink *inside* the bucket from redirecting the operation outside it
+    (e.g. the bucket legitimately contains ``docs -> /home/user`` and a
+    hostile peer sends ``deleted`` for ``docs/passwd``). Returns the confined
+    absolute path, or ``None`` after logging/emitting the rejection.
+    """
+    bucket = CONFIG.get("LOCAL_BUCKET", "")
+    local = resolve_within(bucket, rel) if isinstance(rel, str) and bucket else None
+    if local is None:
+        _reject_unsafe(event_name, rel if isinstance(rel, str) else None, ctx)
+    return local
 
 
 def _reject_unsafe(event_name: object, rel: str | None, ctx: EventDispatchContext) -> None:
@@ -151,9 +163,9 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
     # single choke point covering remote mode (hostile server) and LAN slave
     # mode (hostile master) alike.
     for payload in (p for p in (src, dst) if isinstance(p, dict)):
-        rel = _wire_relpath(payload)
-        if rel is None or validate_remote_relpath(rel) is None:
-            _reject_unsafe(event_name, rel, ctx)
+        rels = wire_relpaths(payload)
+        if not rels or any(validate_remote_relpath(rel) is None for rel in rels):
+            _reject_unsafe(event_name, rels[0] if rels else None, ctx)
             return
 
     if event_name in {EventName.added.value, EventName.modified.value}:
@@ -203,20 +215,25 @@ async def _apply_rename(src: dict, dst: dict | None, ctx: EventDispatchContext) 
         return
 
     if "path" in src:
-        src_dir = Dir.from_dict(src, CONFIG["LOCAL_BUCKET"])
-        dst_dir = Dir.from_dict(dst, CONFIG["LOCAL_BUCKET"])
+        src_local = _confined_local(src.get("path"), EventName.renamed.value, ctx)
+        dst_local = _confined_local(dst.get("path"), EventName.renamed.value, ctx)
+        if src_local is None or dst_local is None:
+            return
         await _rename_path(
-            src_dir.path,
-            dst_dir.path,
+            src_local,
+            dst_local,
             ctx,
             recover=lambda: update_dir(dst),
         )
     elif "filepath" in src:
-        src_file = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
+        src_local = _confined_local(src.get("filepath"), EventName.renamed.value, ctx)
+        dst_local = _confined_local(dst.get("filepath"), EventName.renamed.value, ctx)
+        if src_local is None or dst_local is None:
+            return
         dst_file = File.from_dict(dst, CONFIG["LOCAL_BUCKET"], False)
         await _rename_path(
-            src_file.filepath,
-            dst_file.filepath,
+            src_local,
+            dst_local,
             ctx,
             recover=lambda: download_file(dst_file),
         )
@@ -257,39 +274,39 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
         return
 
     if "path" in src:
-        dir_obj = Dir.from_dict(src, CONFIG["LOCAL_BUCKET"])
-        if not dir_obj.path:
+        local = _confined_local(src.get("path"), EventName.deleted.value, ctx)
+        if local is None:
             return
-        _mark(ctx, dir_obj.path)
+        _mark(ctx, local)
         try:
-            if Path(dir_obj.path).exists():
-                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{dir_obj.path}"')
-                emit_event(UiEventName.transfer, op="delete", file=dir_obj.path)
-                await asyncio.to_thread(rmtree, dir_obj.path, False)
+            if Path(local).exists():
+                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"')
+                emit_event(UiEventName.transfer, op="delete", file=local)
+                await asyncio.to_thread(rmtree, local, False)
             else:
-                log.warning(f'Cannot delete: "{dir_obj.path}"')
-                log.warning(f'Not found: "{dir_obj.path}"')
+                log.warning(f'Cannot delete: "{local}"')
+                log.warning(f'Not found: "{local}"')
         finally:
-            _unmark(ctx, dir_obj.path)
+            _unmark(ctx, local)
     elif "filepath" in src:
-        file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
-        if not file_obj.filepath:
+        local = _confined_local(src.get("filepath"), EventName.deleted.value, ctx)
+        if local is None:
             return
-        _mark(ctx, file_obj.filepath)
+        _mark(ctx, local)
         try:
-            if Path(file_obj.filepath).exists():
-                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{file_obj.filepath}"')
-                emit_event(UiEventName.transfer, op="delete", file=file_obj.filepath)
-                await asyncio.to_thread(_remove_locked, file_obj.filepath)
-                if Path(file_obj.filepath).name == HSYNCKEEP_FILENAME:
-                    parent = str(Path(file_obj.filepath).parent)
+            if Path(local).exists():
+                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"')
+                emit_event(UiEventName.transfer, op="delete", file=local)
+                await asyncio.to_thread(_remove_locked, local)
+                if Path(local).name == HSYNCKEEP_FILENAME:
+                    parent = str(Path(local).parent)
                     if safe_rmdir_if_empty(parent):
                         log.debug(f'Removed empty directory "{parent}"')
             else:
-                log.warning(f'Cannot delete: "{file_obj.filepath}"')
-                log.warning(f'Not found: "{file_obj.filepath}"')
+                log.warning(f'Cannot delete: "{local}"')
+                log.warning(f'Not found: "{local}"')
         finally:
-            _unmark(ctx, file_obj.filepath)
+            _unmark(ctx, local)
 
 
 async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
@@ -298,25 +315,26 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
         if src.get("type") != "symlink":
             return
         link = Symlink.from_dict(src)
-        link.filepath = f"{CONFIG['LOCAL_BUCKET']}/{link.filepath.lstrip('/')}"
-        target = link.target
-        if not (link.filepath and target):
+        # The link location must be confined (a symlink *inside* the bucket
+        # could otherwise redirect the create/unlink outside it); the target
+        # must also stay inside the bucket, otherwise a hostile peer could
+        # plant a symlink to arbitrary local files (e.g. /etc/passwd).
+        local = _confined_local(link.filepath, EventName.symlink.value, ctx)
+        if local is None:
             return
-        # The link location is already confined by the inbound gate; the
-        # target must also stay inside the bucket, otherwise a hostile peer
-        # could plant a symlink to arbitrary local files (e.g. /etc/passwd).
-        if not is_safe_symlink_target(link.filepath, target, CONFIG["LOCAL_BUCKET"]):
+        target = link.target
+        if not target:
+            return
+        if not is_safe_symlink_target(local, target, CONFIG["LOCAL_BUCKET"]):
             _reject_unsafe(EventName.symlink.value, target, ctx)
             return
-        log.info(
-            f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{link.filepath}" -> "{target}"'
-        )
-        parent = str(Path(link.filepath).parent)
+        log.info(f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{local}" -> "{target}"')
+        parent = str(Path(local).parent)
         if not Path(parent).exists():
             Path(parent).mkdir(parents=True, exist_ok=True)
-        if Path(link.filepath).is_symlink() or Path(link.filepath).exists():
-            unlink(link.filepath)
-        await asyncio.to_thread(os_symlink, target, link.filepath)
+        if Path(local).is_symlink() or Path(local).exists():
+            unlink(local)
+        await asyncio.to_thread(os_symlink, target, local)
     elif "filepath" in src:
         file_obj = File.from_dict(src, CONFIG["LOCAL_BUCKET"], False)
         if file_obj.filepath:

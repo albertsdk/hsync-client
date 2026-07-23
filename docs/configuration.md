@@ -83,6 +83,7 @@ server URL is required — peers are discovered automatically via mDNS, so
 | `--max-bandwidth-download` | Maximum download bandwidth (e.g., `1MB`, `500KB`). `0` = unlimited | — |
 | `--no-compression` | Disable zstd compression for file transfers | `false` |
 | `--min-free-disk-space` | Minimum free disk space in MB before sync. `0` = disabled | `500` |
+| `--max-download-size` | Maximum size in MB of a single inbound file (download or received LAN upload), enforced as an absolute cap on top of the peer-declared size. `0` = disabled | `10240` |
 | `--sync-hidden` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `--ignore-patterns` | Comma-separated extra gitignore-style patterns (layered on `.hsyncignore`) | — |
 | `--mass-delete-guard` | Enable the mass-deletion safety guard (pause deletions over threshold) | `true` |

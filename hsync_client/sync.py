@@ -34,7 +34,7 @@ from hsync_common.models.file import (
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, tombstone_key
 from hsync_common.models.version import SyncDecision, resolve_three_way
-from hsync_common.path_validation import validate_remote_relpath
+from hsync_common.path_validation import resolve_within, validate_remote_relpath
 from loguru import logger as log
 from requests import RequestException
 
@@ -743,8 +743,22 @@ def get_sync_actions(
                 f'"{remote_file_info.get("filepath")}"'
             )
             continue
-        remote_file = File.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
-        local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
+        # One malformed entry (bogus types for size/mtime, unreadable local
+        # stat) must not stall the whole reconciliation cycle.
+        try:
+            remote_file = File.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
+            local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
+        except (ValueError, TypeError, OverflowError, AttributeError, OSError) as e:
+            log.warning(
+                f"[SECURITY] Ignoring malformed remote listing entry "
+                f'"{remote_file_info.get("filepath")}": {e}'
+            )
+            # The entry IS on the remote (the listing says so) even though it
+            # cannot be compared: skipping it as "absent" would queue the
+            # local copy for deletion in download-only mode (or a spurious
+            # re-upload otherwise). Count it as remotely present instead.
+            remote_filepaths.add(str(remote_file_info["filepath"]).lstrip("/"))
+            continue
 
         # Track remote paths for later comparison
         if remote_file.filepath:
@@ -971,6 +985,11 @@ def update_dir(data: dict) -> Dir | None:
     if validate_remote_relpath(str(data.get("path", ""))) is None:
         log.warning(f'[SECURITY] Rejected unsafe remote directory: "{data.get("path")}"')
         return None
+    # Lexical safety is not enough: a symlink *inside* the bucket could still
+    # redirect the mkdir/permission change outside it.
+    if resolve_within(CONFIG["LOCAL_BUCKET"], str(data.get("path", ""))) is None:
+        log.warning(f'[SECURITY] Rejected remote directory escaping bucket: "{data.get("path")}"')
+        return None
 
     # Get local directory if it exists
     dir = Dir.get(data["path"], CONFIG["LOCAL_BUCKET"])
@@ -1009,6 +1028,11 @@ def update_file(data: dict) -> None:
     # Remote event data is untrusted input: refuse unsafe paths.
     if validate_remote_relpath(str(data.get("filepath", ""))) is None:
         log.warning(f'[SECURITY] Rejected unsafe remote file: "{data.get("filepath")}"')
+        return
+    # Lexical safety is not enough: a symlink *inside* the bucket could still
+    # redirect local metadata operations outside it.
+    if resolve_within(CONFIG["LOCAL_BUCKET"], str(data.get("filepath", ""))) is None:
+        log.warning(f'[SECURITY] Rejected remote file escaping bucket: "{data.get("filepath")}"')
         return
 
     file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"], False)

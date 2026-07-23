@@ -260,6 +260,32 @@ class TestListingValidation:
         )
         assert len(actions) == 1
 
+    def test_uncomparable_entry_counts_as_remotely_present(self, tmp_path):
+        """A listing entry that cannot be compared (local stat OSError) must
+        be skipped for comparison but still count as remotely present —
+        otherwise a download-only slave would DELETE the local copy."""
+        from hsync_client.sync import get_sync_actions
+
+        local = tmp_path / "present.txt"
+        local.write_text("keep me")
+        remote_entry = {"filepath": "present.txt", "size": 1, "mtime": 1, "sha256sum": "a" * 64}
+
+        with (
+            patch(
+                "hsync_client.sync.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "download-only"},
+            ),
+            patch("hsync_client.sync.File.get", side_effect=OSError("EMFILE")),
+        ):
+            actions = get_sync_actions(
+                [remote_entry],
+                [{"filepath": "present.txt"}],
+                lan_mode=True,
+            )
+
+        assert all(a.action != "delete" for a in actions)
+        assert actions == []
+
 
 class TestUpdateGuards:
     def test_update_file_rejects_traversal(self, tmp_path):

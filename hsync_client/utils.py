@@ -11,6 +11,7 @@ This module provides common utility functions for path handling,
 file operations, and data formatting.
 """
 
+import os
 import secrets
 import threading
 from collections.abc import Iterator
@@ -18,7 +19,7 @@ from contextlib import contextmanager
 from os import chmod, walk
 from os.path import abspath, normpath
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from requests import Response, Session
@@ -373,6 +374,44 @@ def warn_if_inotify_watch_limit_low(watch_path: str) -> None:
 # lose an update on a single path.
 _path_locks: dict[str, list] = {}
 _path_locks_guard = threading.Lock()
+
+
+def open_partial_no_follow(path: str, write_mode: str) -> IO[bytes]:
+    """Open a ``.part`` file for writing without following planted symlinks.
+
+    Uses ``O_NOFOLLOW`` where the platform supports it so a symlink raced in
+    between path validation and file creation cannot redirect the write
+    outside the bucket. On platforms without ``O_NOFOLLOW`` (Windows) the
+    flag is omitted and the confinement checks remain the defense.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if "a" in write_mode else os.O_TRUNC)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags, 0o666), write_mode)
+
+
+def inbound_size_cap(declared_size: int | None, max_download_size: int) -> int | None:
+    """Effective cap in bytes on the bytes written to disk for one inbound file.
+
+    Single implementation of the anti decompression-bomb bound shared by
+    downloads (`transfer.py`) and LAN-master received uploads (`lan_server.py`).
+    The peer-declared size alone is not a safe bound: a hostile peer can
+    declare an arbitrary size and expand a bomb (or stream an undeclared-length
+    body) up to it on disk before the SHA-256 check discards the content.
+
+    Args:
+        declared_size: The peer-declared file size (``None``/``0`` = unknown).
+        max_download_size: The absolute ``MAX_DOWNLOAD_SIZE`` config in bytes
+            (``0`` = disabled): caps the declared value, and is the only bound
+            when no size is declared.
+
+    Returns ``None`` when uncapped (no declared size and the absolute cap
+    disabled); ``0`` means "nothing may be written" (callers requiring a
+    numeric cap map ``None`` to their own strict default).
+    """
+    declared = declared_size or 0
+    if max_download_size > 0:
+        return min(declared, max_download_size) if declared > 0 else max_download_size
+    return declared if declared > 0 else None
 
 
 @contextmanager

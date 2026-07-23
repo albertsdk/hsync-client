@@ -149,6 +149,7 @@ option to configure.
 | Bandwidth limits    | `--max-bandwidth-upload/--download`            | unlimited                        |
 | Compression         | `--no-compression`                             | enabled                          |
 | Min free disk space | `--min-free-disk-space`                        | service default                  |
+| Max inbound size    | `--max-download-size`                          | service default                  |
 | Max concurrent      | `--max-concurrent-transfers`                   | `5`                              |
 | Mass-delete guard   | `--mass-delete-guard/--no-mass-delete-guard`   | on                               |
 | Mass-delete thresh  | `--mass-delete-threshold`                      | `50` (0 = disabled)              |

@@ -15,6 +15,32 @@ from hsync_client.remote_websocket import REMOTE_DISPATCH_CTX
 class TestApplyInboundSymlinkEvent:
     """Tests for the ``symlink`` branch of :func:`apply_inbound_event`."""
 
+    async def test_symlink_location_rejected_through_in_bucket_symlink(self, tmp_path):
+        """The link location is confined too: an in-bucket symlink must not
+        redirect the create/unlink outside the bucket."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        (bucket / "docs").symlink_to(outside)
+        target = bucket / "target.txt"
+        target.write_text("content")
+
+        event = {
+            "name": "symlink",
+            "src": {
+                "type": "symlink",
+                "filepath": "docs/evil-link.txt",
+                "target": str(target),
+            },
+        }
+        config = {"LOCAL_BUCKET": str(bucket)}
+
+        with patch("hsync_client.event_dispatch.CONFIG", config):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert not (outside / "evil-link.txt").exists()
+
     async def test_symlink_creation_success(self, tmp_path):
         """Successfully creates symlink at the requested path."""
         target = tmp_path / "target.txt"

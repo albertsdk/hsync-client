@@ -25,6 +25,7 @@
     "field.bw_upload": "Max upload bandwidth (e.g. 1MB)",
     "field.bw_download": "Max download bandwidth (e.g. 1MB)",
     "field.min_free_mb": "Minimum free disk space (MB, 0 = off)",
+    "field.max_download_mb": "Max inbound file size (MB, 0 = off)",
     "field.verbose": "Verbose log",
 
     "mode.lan": "LAN (peer-to-peer)",

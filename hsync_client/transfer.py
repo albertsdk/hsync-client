@@ -11,18 +11,18 @@ This module provides upload and download functionality for
 synchronizing files with the remote server.
 """
 
-import os
+import hmac
 import threading
 from collections.abc import Iterator
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
 from time import sleep as time_sleep
-from typing import IO, cast
+from typing import cast
 
 import zstandard as zstd
 from hsync_common.format import format_bytes
-from hsync_common.hashing import adaptive_chunk_size, compute_sha256
+from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
 from hsync_common.path_validation import resolve_within
 from hsync_common.text import safe_json_for_log
@@ -49,6 +49,7 @@ from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.utils import (
     get_ssl_verify,
     get_throttle_delay,
+    inbound_size_cap,
     path_lock,
     set_permissions,
 )
@@ -57,6 +58,9 @@ from hsync_client.utils import (
 )
 from hsync_client.utils import (
     http_post as post,
+)
+from hsync_client.utils import (
+    open_partial_no_follow as _open_partial_no_follow,
 )
 
 # Content-Encoding header value for zstd compression
@@ -254,19 +258,6 @@ def _local_dest_path(file: File) -> str | None:
     return resolve_within(CONFIG["LOCAL_BUCKET"], file.filepath)
 
 
-def _open_partial_no_follow(path: str, write_mode: str) -> IO[bytes]:
-    """Open a ``.part`` file for writing without following planted symlinks.
-
-    Uses ``O_NOFOLLOW`` where the platform supports it so a symlink raced in
-    between path validation and file creation cannot redirect the write
-    outside the bucket. On platforms without ``O_NOFOLLOW`` (Windows) the
-    flag is omitted and the confinement checks remain the defense.
-    """
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if "a" in write_mode else os.O_TRUNC)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    return os.fdopen(os.open(path, flags, 0o666), write_mode)
-
-
 def download_file(file: File) -> None:
     """
     Download a file from the remote server with per-file retry/backoff.
@@ -454,11 +445,17 @@ def _download_file_attempt(file: File) -> None:
             # hard output cap (anti decompression-bomb): the payload comes
             # from a remote peer, so neither the compressed body nor the
             # expanded content is ever fully buffered in memory. The cap is
-            # the declared size: the real content must match it exactly (the
-            # SHA-256 check below verifies integrity against the listing).
+            # min(declared size, MAX_DOWNLOAD_SIZE): the real content must
+            # match the declared size exactly (the SHA-256 check below
+            # verifies integrity against the listing), and the absolute cap
+            # keeps a hostile peer from expanding a bomb up to an arbitrarily
+            # large declaration.
             response.raw.decode_content = False
             with _open_partial_no_follow(partial_file_path, "wb") as f:
-                for chunk in decompress_stream(response.raw, max_output_size=file.size or 0):
+                write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_DOWNLOAD_SIZE", 0))
+                for chunk in decompress_stream(
+                    response.raw, max_output_size=write_cap if write_cap is not None else 0
+                ):
                     f.write(chunk)
                 # Flush OS buffers to disk before the file is considered written
                 f.flush()
@@ -467,10 +464,22 @@ def _download_file_attempt(file: File) -> None:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
             dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
+            write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_DOWNLOAD_SIZE", 0))
+            written = resume_offset
             with _open_partial_no_follow(partial_file_path, write_mode) as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if not chunk:
                         break
+                    written += len(chunk)
+                    if write_cap is not None and written > write_cap:
+                        # Over-cap body (hostile or simply larger than the
+                        # configured maximum): permanent failure — the
+                        # partial file is dropped in ``finally``.
+                        log.error(
+                            f'"{file.filepath}" exceeds the maximum download size '
+                            f"({write_cap} bytes) — download aborted"
+                        )
+                        return
                     f.write(chunk)
                     # Throttle download if bandwidth limit is set
                     delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")
@@ -484,19 +493,23 @@ def _download_file_attempt(file: File) -> None:
         sha256sum = compute_sha256(partial_file_path)
         server_sha256 = response.headers.get("X-Checksum-SHA256")
 
-        # Check 1: Client-computed hash vs. server-asserted current hash
-        if server_sha256 and sha256sum != server_sha256:
-            log.error(
-                f'"{file.filepath}" '
-                f"(Server checksum mismatch: expected {server_sha256}, computed {sha256sum})"
-            )
-            cleanup_partial = False
-            return
+        # Check 1: Client-computed hash vs. server-asserted current hash.
+        # The header is untrusted: only digests with a valid shape are
+        # compared (hmac.compare_digest raises TypeError on non-ASCII).
+        if server_sha256 and is_sha256_hex(server_sha256):
+            if not hmac.compare_digest(sha256sum, server_sha256):
+                log.error(
+                    f'"{file.filepath}" '
+                    f"(Server checksum mismatch: expected {server_sha256}, computed {sha256sum})"
+                )
+                cleanup_partial = False
+                return
 
         # Check 2: Client-computed hash vs. listing metadata hash (stale-safe fallback)
-        if sha256sum != file.sha256sum:
+        expected_sha = file.sha256sum or ""
+        if not is_sha256_hex(expected_sha) or not hmac.compare_digest(sha256sum, expected_sha):
             log.error(
-                f'"{file.filepath}" (Invalid checksum: expected {file.sha256sum}, {sha256sum} given)'
+                f'"{file.filepath}" (Invalid checksum: expected {expected_sha}, {sha256sum} given)'
             )
             cleanup_partial = False
             return
@@ -626,7 +639,18 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
         )
         if response.status_code == 200:
             data = response.json()
-            return data.get("status", "new"), data.get("offset", 0)
+            status, offset = data.get("status", "new"), data.get("offset", 0)
+            # The server is untrusted: a negative, non-integer or oversized
+            # offset would corrupt the resumed stream (mismatched
+            # Content-Length) — clamp anything suspicious back to a fresh
+            # upload. (bool is an int subclass: exclude it explicitly.)
+            offset_is_int = isinstance(offset, int) and not isinstance(offset, bool)
+            if status == "resumable" and (
+                not offset_is_int or offset < 0 or (size > 0 and offset > size)
+            ):
+                log.warning(f"Ignoring invalid resumable offset from server: {offset!r}")
+                return "new", 0
+            return status, offset if offset_is_int else 0
     except RequestException:
         pass
     return "new", 0

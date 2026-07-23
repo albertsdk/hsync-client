@@ -248,8 +248,13 @@ async def _process_remote_events(websocket, bucket: str) -> None:
             continue
 
         # Echo suppression, upload-only filter, and the per-event apply
-        # logic are delegated to the unified dispatcher.
-        await apply_inbound_event(message, REMOTE_DISPATCH_CTX)
+        # logic are delegated to the unified dispatcher. One malformed event
+        # must not kill the connection loop (the LAN client loop isolates
+        # per-message failures the same way).
+        try:
+            await apply_inbound_event(message, REMOTE_DISPATCH_CTX)
+        except Exception as e:
+            log.error(f"Failed to apply inbound event {message.get('name')!r}: {e}")
 
 
 # =============================================================================

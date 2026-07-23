@@ -42,17 +42,25 @@ peers are ignored.
 | `LANServer` | `lan_server.py:1048` | HTTPS file server (REST mirror of hsync-server) |
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
-| `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the declared size (decompression-bomb cap) |
+| `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_DOWNLOAD_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`) |
 | `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast |
 
 Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`
 prefix checks — sibling directories cannot bypass confinement). Uploads require
-a matching `sha256sum` form field (verified before the atomic rename), clamp
-far-future mtimes (`MTIME_MAX_FUTURE_SKEW_SECONDS`), and cap decompressed bytes
-at the declared `size`. Tombstone gossip POST bodies are size-capped
-(`MAX_TOMBSTONE_PAYLOAD_BYTES`).
+a matching `sha256sum` form field (format-validated with `is_sha256_hex`,
+verified with `hmac.compare_digest` before the atomic rename), clamp
+far-future mtimes (`MTIME_MAX_FUTURE_SKEW_SECONDS`), and cap the bytes landing
+on disk at `min(declared size, MAX_DOWNLOAD_SIZE)` — the declared size alone is
+not a safe bound against a hostile peer, and uploads with no declared size are
+capped at `MAX_DOWNLOAD_SIZE` outright. The `.part` temp file is opened with
+`O_NOFOLLOW` (`utils.open_partial_no_follow`), so a raced symlink cannot
+redirect the streamed write. Multipart form fields (64 KiB) and part-header
+lines (8 KiB) are memory-capped; only the file part streams. Tombstone gossip
+POST bodies are size-capped (`MAX_TOMBSTONE_PAYLOAD_BYTES`). The
+echo-suppression `cid` on upload/delete/rename is honoured only when it passes
+`is_valid_cid` *and* the request is authenticated (`LAN_KEY` set).
 
 ## Slave client (`lan_websocket.py`)
 

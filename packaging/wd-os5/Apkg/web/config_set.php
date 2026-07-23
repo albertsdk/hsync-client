@@ -45,7 +45,8 @@ const KEYS = [
     'HSYNC_LAN_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
     'HSYNC_SERVER', 'HSYNC_API_KEY',
     'HSYNC_WATCH', 'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_NO_COMPRESSION',
-    'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB', 'HSYNC_VERBOSE',
+    'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB',
+    'HSYNC_MAX_DOWNLOAD_SIZE_MB', 'HSYNC_VERBOSE',
 ];
 
 $lines = ['# HSYNC configuration — written by config_set.php on ' . gmdate('Y-m-d\TH:i:s\Z')];
@@ -67,6 +68,7 @@ foreach (KEYS as $key) {
         case 'HSYNC_DISCOVERY_TIMEOUT':
         case 'HSYNC_INTERVAL':
         case 'HSYNC_MIN_FREE_DISK_MB':
+        case 'HSYNC_MAX_DOWNLOAD_SIZE_MB':
             if (!preg_match('/^[0-9]*$/', $val)) $val = '';
             break;
         case 'HSYNC_LAN_PERSISTENT':

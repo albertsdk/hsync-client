@@ -25,6 +25,7 @@
     "field.bw_upload": "Banda massima in upload (es. 1MB)",
     "field.bw_download": "Banda massima in download (es. 1MB)",
     "field.min_free_mb": "Spazio libero minimo (MB, 0 = off)",
+    "field.max_download_mb": "Dimensione massima file in ingresso (MB, 0 = off)",
     "field.verbose": "Log verboso",
 
     "mode.lan": "LAN (peer-to-peer)",
