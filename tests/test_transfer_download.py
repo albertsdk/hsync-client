@@ -11,10 +11,12 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
 from hsync_common.models.file import File
 from requests import RequestException
 
 from hsync_client.events import UiEventName
+from hsync_client.exceptions import PermanentDownloadError
 from hsync_client.transfer import download_file
 
 
@@ -595,12 +597,16 @@ class TestDownloadSizeCap:
         mock_response.headers = {}
         mock_response.iter_content.return_value = [content]
 
+        # H8: a permanent over-cap failure now raises PermanentDownloadError
+        # (instead of returning silently) so the caller can skip the file on
+        # subsequent resync cycles.
         with (
             patch("hsync_client.transfer.CONFIG", self._config(tmp_path, 50)),
             patch("hsync_client.transfer.get", return_value=mock_response),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
         ):
-            download_file(file)
+            with pytest.raises(PermanentDownloadError):
+                download_file(file)
 
         assert not (tmp_path / "big.txt").exists()
         assert not (tmp_path / "big.txt.part").exists()

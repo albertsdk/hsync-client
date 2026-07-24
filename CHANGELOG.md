@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Permanent download failure skip-set (H8)**: a download that fails
+  permanently (e.g. declared size exceeds the configured cap) now raises
+  `PermanentDownloadError`, which the sync caller catches, records in a
+  per-cycle skip-set (keyed by `filepath|sha256`), and emits a
+  `transfer_failed` UI event. The file is no longer retried on every resync
+  tick within the same cycle. Also fixed a latent `NameError` (the exception
+  was raised but never imported in `transfer.py`) and an `IndentationError`
+  on the compressed-download branch.
+- **LAN master thread cap (H5)**: the LAN master HTTP server now caps
+  concurrent request threads with a `BoundedSemaphore` (default 32) instead
+  of spawning an unbounded thread per connection, preventing FD/memory
+  exhaustion under a flood of peer requests. The compressed-download branch
+  now falls back to a sane absolute cap when `MAX_DOWNLOAD_SIZE` is not
+  configured.
 - **Inbound path validation**: every path received from a remote peer
   (central server events, LAN master events, remote listings) is validated
   before any local filesystem operation: traversal (`..`), absolute paths,

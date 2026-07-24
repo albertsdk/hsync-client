@@ -42,7 +42,12 @@ from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
+from hsync_client.exceptions import (
+    AuthenticationError,
+    NetworkError,
+    PermanentDownloadError,
+    ServerError,
+)
 from hsync_client.retry import retry_on_network_error
 from hsync_client.utils import (
     get_ssl_verify,
@@ -54,6 +59,33 @@ from hsync_client.utils import (
 from hsync_client.utils import (
     http_post as post,
 )
+
+# =============================================================================
+# Permanent failure skip-set (H8)
+# =============================================================================
+
+# Filepaths that hit a permanent download failure (e.g. declared size exceeds
+# the configured cap) within the current sync cycle. Keyed by
+# ``filepath|sha256sum`` so a file that legitimately changes on the remote
+# (new content hash) is retried, while the identical hostile entry is not
+# re-downloaded on every resync tick. Cleared at the start of each cycle.
+_permanent_download_failures: set[str] = set()
+
+
+def _permanent_skip_key(file: File) -> str:
+    """Stable key for a permanently-failed download (path + content hash)."""
+    return f"{file.filepath}|{file.sha256sum or ''}"
+
+
+def _reset_permanent_failures() -> None:
+    """Clear the skip-set at the beginning of each sync cycle."""
+    _permanent_download_failures.clear()
+
+
+def _is_permanently_failed(file: File) -> bool:
+    """True if this exact file (path + hash) already failed permanently."""
+    return _permanent_skip_key(file) in _permanent_download_failures
+
 
 # =============================================================================
 # Main Sync Function
@@ -189,6 +221,11 @@ async def sync(lan_mode: bool = False) -> None:
             remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
         )
 
+        # H8: a fresh sync cycle starts — clear the per-cycle skip-set of
+        # permanently-failed downloads so a file that failed last tick is
+        # retried once (it may have been fixed on the remote).
+        _reset_permanent_failures()
+
         log.info(f"Sync actions: {len(sync_actions)} files to process")
 
         # Drop merge-base records for files that no longer exist locally so the
@@ -200,6 +237,11 @@ async def sync(lan_mode: bool = False) -> None:
         uploads = [a.file for a in sync_actions if a.name == SyncActionName.upload]
         deletes = [a.file for a in sync_actions if a.name == SyncActionName.delete]
         nothing = [a.file for a in sync_actions if a.name == SyncActionName.nothing]
+
+        # H8: drop downloads that already failed permanently earlier in this
+        # same cycle (e.g. two sync_actions entries for the same file, or a
+        # real-time event re-queuing it while the full sync is running).
+        downloads = [f for f in downloads if not _is_permanently_failed(f)]
 
         # Log files that are already in sync (no I/O needed)
         for file in nothing:
@@ -298,9 +340,28 @@ async def _execute_parallel_transfers(
         async def transfer_with_semaphore(func: Callable[[File], None], file: File) -> None:
             """Execute a transfer function with semaphore limiting."""
             async with semaphore:
+                # H8: skip downloads that already failed permanently in this
+                # cycle (the skip-set is consulted here too because a realtime
+                # event can enqueue a file after the full-sync pre-filter ran).
+                if func is download_file and _is_permanently_failed(file):
+                    return
                 try:
                     # Run synchronous function in thread pool
                     await loop.run_in_executor(executor, func, file)
+                except PermanentDownloadError as e:
+                    # Permanent failure (e.g. over the size cap): record it so
+                    # the file is not retried on every resync tick, and notify
+                    # the UI. The partial file is already dropped in transfer.py.
+                    _permanent_download_failures.add(_permanent_skip_key(file))
+                    log.warning(
+                        f'Permanent download failure for "{file.filepath}" '
+                        f"(skipped for this cycle): {e}"
+                    )
+                    emit_event(
+                        UiEventName.transfer_failed,
+                        file=file.filepath,
+                        reason=str(e),
+                    )
                 except Exception as e:
                     log.error(f"Transfer error for {file.filepath}: {e}")
 
@@ -1058,7 +1119,25 @@ def update_file(data: dict) -> None:
             ):
                 _save_conflict_copy(file)
             file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
-            download_file(file_data)
+            # H8: skip if this exact file already failed permanently in this
+            # cycle (realtime event re-queuing while the full sync runs).
+            if _is_permanently_failed(file_data):
+                log.debug(f'Skipping permanently-failed download: "{file_data.filepath}"')
+                return
+            try:
+                download_file(file_data)
+            except PermanentDownloadError as e:
+                _permanent_download_failures.add(_permanent_skip_key(file_data))
+                log.warning(
+                    f'Permanent download failure for "{file_data.filepath}" '
+                    f"(skipped for this cycle): {e}"
+                )
+                emit_event(
+                    UiEventName.transfer_failed,
+                    file=file_data.filepath,
+                    reason=str(e),
+                )
+                return
             # Invalidate cached SHA-256 — file content has changed
             if file_data.filepath:
                 invalidate_sha256_cache(file_data.filepath)
@@ -1071,4 +1150,19 @@ def update_file(data: dict) -> None:
     else:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
-        download_file(file)
+        # H8: skip if this exact file already failed permanently in this cycle.
+        if _is_permanently_failed(file):
+            log.debug(f'Skipping permanently-failed download: "{file.filepath}"')
+            return
+        try:
+            download_file(file)
+        except PermanentDownloadError as e:
+            _permanent_download_failures.add(_permanent_skip_key(file))
+            log.warning(
+                f'Permanent download failure for "{file.filepath}" (skipped for this cycle): {e}'
+            )
+            emit_event(
+                UiEventName.transfer_failed,
+                file=file.filepath,
+                reason=str(e),
+            )

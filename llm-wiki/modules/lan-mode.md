@@ -40,6 +40,7 @@ peers are ignored.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `LANServer` | `lan_server.py:1048` | HTTPS file server (REST mirror of hsync-server) |
+| `BoundedThreadingHTTPServer` | `:66` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap on concurrent request threads (H5, default `LAN_SERVER_MAX_THREADS=32`) |
 | `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_DOWNLOAD_SIZE`) — (decompression-bomb containment) |

@@ -44,7 +44,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.exceptions import ServerError
+from hsync_client.exceptions import PermanentDownloadError, ServerError
 from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.utils import (
     get_ssl_verify,
@@ -188,10 +188,15 @@ def _build_multipart_streaming(
             f"{value}\r\n".encode()
         )
 
+    # Sanitize the filename for use in the multipart header: a double quote
+    # would close the quoted-string early and CRLF sequences would inject
+    # arbitrary headers into the body. Replace them with underscores so the
+    # header stays well-formed even with a hostile local filename.
+    safe_filename = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
     file_header = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="{file_field_name}"; '
-        f'filename="{filename}"\r\n'
+        f'filename="{safe_filename}"\r\n'
         f"Content-Type: application/octet-stream\r\n\r\n"
     ).encode()
     file_trailer = b"\r\n"
@@ -440,26 +445,35 @@ def _download_file_attempt(file: File) -> None:
         # Calculate optimal chunk size based on file size
         chunk_size = adaptive_chunk_size(file.size)
 
-        if is_compressed and resume_offset == 0:
-            # Compressed response — stream-decompress straight to disk with a
-            # hard output cap (anti decompression-bomb): the payload comes
-            # from a remote peer, so neither the compressed body nor the
-            # expanded content is ever fully buffered in memory. The cap is
-            # min(declared size, MAX_DOWNLOAD_SIZE): the real content must
-            # match the declared size exactly (the SHA-256 check below
-            # verifies integrity against the listing), and the absolute cap
-            # keeps a hostile peer from expanding a bomb up to an arbitrarily
-            # large declaration.
-            response.raw.decode_content = False
-            with _open_partial_no_follow(partial_file_path, "wb") as f:
-                write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_DOWNLOAD_SIZE", 0))
-                for chunk in decompress_stream(
-                    response.raw, max_output_size=write_cap if write_cap is not None else 0
-                ):
-                    f.write(chunk)
-                # Flush OS buffers to disk before the file is considered written
-                f.flush()
-                fsync(f.fileno())
+        if is_compressed:
+            # L17: a compressed response cannot be resumed with a Range
+            # request — the zstd frame would be appended raw to the partial,
+            # corrupting it. If we have a partial from a previous attempt,
+            # discard it and restart the decompression from byte 0.
+            if resume_offset > 0:
+                log.debug("Compressed download with resume offset — restarting from scratch")
+                resume_offset = 0
+                if Path(partial_file_path).exists():
+                    remove(partial_file_path)
+                # Compressed response — stream-decompress straight to disk with a
+                # hard output cap (anti decompression-bomb): the payload comes
+                # from a remote peer, so neither the compressed body nor the
+                # expanded content is ever fully buffered in memory. The cap is
+                # min(declared size, MAX_DOWNLOAD_SIZE): the real content must
+                # match the declared size exactly (the SHA-256 check below
+                # verifies integrity against the listing), and the absolute cap
+                # keeps a hostile peer from expanding a bomb up to an arbitrarily
+                # large declaration.
+                response.raw.decode_content = False
+                with _open_partial_no_follow(partial_file_path, "wb") as f:
+                    write_cap = inbound_size_cap(file.size, CONFIG.get("MAX_DOWNLOAD_SIZE", 0))
+                    for chunk in decompress_stream(
+                        response.raw, max_output_size=write_cap if write_cap is not None else 0
+                    ):
+                        f.write(chunk)
+                    # Flush OS buffers to disk before the file is considered written
+                    f.flush()
+                    fsync(f.fileno())
         else:
             # Stream file content to partial file (append if resuming)
             write_mode = "ab" if resume_offset > 0 and response.status_code == 206 else "wb"
@@ -475,11 +489,17 @@ def _download_file_attempt(file: File) -> None:
                         # Over-cap body (hostile or simply larger than the
                         # configured maximum): permanent failure — the
                         # partial file is dropped in ``finally``.
+                        # H8: raise a PermanentDownloadError so the caller
+                        # can add the filepath to a skip-set and stop
+                        # retrying this file on every resync cycle.
                         log.error(
                             f'"{file.filepath}" exceeds the maximum download size '
                             f"({write_cap} bytes) — download aborted"
                         )
-                        return
+                        raise PermanentDownloadError(
+                            f'"{file.filepath}" exceeds the maximum download size '
+                            f"({write_cap} bytes)"
+                        )
                     f.write(chunk)
                     # Throttle download if bandwidth limit is set
                     delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")

@@ -181,12 +181,28 @@ def create_fingerprint_ssl_context(expected_fingerprint: str) -> ssl.SSLContext:
 
     Returns:
         An SSL context configured for fingerprint verification.
+
+    Raises:
+        ValueError: If *expected_fingerprint* is empty or not a valid
+            SHA-256 hex digest. The context is **never** returned in a
+            fail-open state: a missing fingerprint means no trust, not
+            blind trust.
     """
-    # Create a context that doesn't verify the certificate chain
-    # We'll verify the fingerprint manually
+    from hsync_common.hashing import is_sha256_hex
+
+    # Fail-closed: an empty or malformed fingerprint must never produce a
+    # CERT_NONE context that silently accepts any certificate. The caller
+    # must provide a valid pinned fingerprint or the connection cannot be
+    # established at all.
+    if not expected_fingerprint or not is_sha256_hex(expected_fingerprint):
+        raise ValueError("A valid SHA-256 fingerprint is required for fingerprint SSL context")
+
     ctx = create_urllib3_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    # The fingerprint is enforced by the caller via assert_fingerprint on
+    # the urllib3 PoolManager / FingerprintHTTPAdapter; the context itself
+    # only disables chain validation (trust is established by the pin).
 
     return ctx
 
