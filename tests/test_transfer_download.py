@@ -597,7 +597,7 @@ class TestDownloadSizeCap:
         mock_response.headers = {}
         mock_response.iter_content.return_value = [content]
 
-        # H8: a permanent over-cap failure now raises PermanentDownloadError
+        # A permanent over-cap failure now raises PermanentDownloadError
         # (instead of returning silently) so the caller can skip the file on
         # subsequent resync cycles.
         with (
