@@ -55,9 +55,11 @@ from hsync_client.config import (
 from hsync_client.constants import (
     DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
+    HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     MAX_DOWNLOAD_SIZE_MB_DEFAULT,
+    PEER_TIMEOUT,
     RESYNC_DEFAULT,
     ActionLabel,
 )
@@ -713,8 +715,8 @@ def run_sync(
         "LAN_MODE": lan_mode,
         "LAN_PORT": lan_port or get_lan_port() or 0,
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
-        "HEARTBEAT_INTERVAL": get_heartbeat_interval() or 5,
-        "PEER_TIMEOUT": get_peer_timeout() or 15,
+        "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
+        "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
         "LAN_KEY": lan_key_from_fd or get_lan_key(),
         "LAN_GROUP": lan_group or get_lan_group(),
         "LAN_PERSISTENT": lan_persistent or get_lan_persistent(),

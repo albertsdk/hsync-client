@@ -546,9 +546,7 @@ class TestInboundOriginTracker:
     """Tests for the inbound origin tracking helpers used for echo suppression."""
 
     def setup_method(self):
-        from hsync_client.lan_websocket import _clear_inbound_origin
-
-        _clear_inbound_origin()
+        pass
 
     def test_mark_and_consume_returns_cid(self):
         from hsync_client.lan_websocket import consume_inbound_origin, mark_inbound_origin

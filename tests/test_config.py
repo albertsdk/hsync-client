@@ -6,57 +6,19 @@ Tests configuration management: set/get config, debug mode, env getters, load_en
 
 import os
 import tempfile
-from typing import cast
 
 import pytest
 
 from hsync_client.config import (
-    CONFIG,
     EnvSettings,
-    HsyncConfig,
     get_api_key,
-    get_config,
     get_env_settings,
     get_resync,
     get_server_url,
     is_debug,
     load_env_file,
-    set_config,
     set_debug,
 )
-
-
-class TestSetGetConfig:
-    """Tests for set_config and get_config."""
-
-    def test_set_and_get_config(self):
-        """set_config updates global CONFIG, get_config retrieves it."""
-        original = CONFIG.copy()
-        try:
-            test_config = cast(HsyncConfig, {"CID": "test123", "DRYRUN": True})
-            set_config(test_config)
-            result = get_config()
-            assert result["CID"] == "test123"
-            assert result["DRYRUN"] is True
-        finally:
-            set_config(original)
-
-    def test_set_config_clears_previous(self):
-        """set_config replaces previous values entirely."""
-        original = CONFIG.copy()
-        try:
-            set_config(cast(HsyncConfig, {"CID": "first", "DRYRUN": False}))
-            set_config(cast(HsyncConfig, {"CID": "second"}))
-            result = get_config()
-            assert result["CID"] == "second"
-            assert "DRYRUN" not in result
-        finally:
-            set_config(original)
-
-    def test_get_config_returns_same_object(self):
-        """get_config returns the global CONFIG (same reference)."""
-        result = get_config()
-        assert result is CONFIG
 
 
 class TestSetDebug:

@@ -33,6 +33,7 @@ from hsync_client.compression import compress_data, decompress_stream, should_co
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     FILE_STABILITY_INTERVAL_DEFAULT,
+    HTTP_TIMEOUT_DEFAULT,
     MAX_WAIT_TIMEOUT_DEFAULT,
     PARTIAL_DOWNLOAD_SUFFIX,
     STABILITY_DELAY_ON_CLOSED,
@@ -239,7 +240,7 @@ def _upload_timeout() -> tuple[float, float | None]:
     keep the socket busy for many minutes; the connect timeout still
     catches unreachable servers quickly.
     """
-    connect = float(CONFIG.get("HTTP_TIMEOUT", 30))
+    connect = float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
     return connect, None
 
 
@@ -655,7 +656,7 @@ def _get_upload_status(filename: str, sha256sum: str, size: int) -> tuple[str, i
             headers=cast(dict[str, str], CONFIG["REQUEST_HEADERS"]),
             params=params,
             verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
         if response.status_code == 200:
             data = response.json()

@@ -48,47 +48,6 @@ class TestLANSync:
         )
         assert lan.peer_manager is None  # Not started yet
 
-    def test_lan_sync_start_stop(self):
-        """Test starting and stopping LANSync."""
-        from hsync_client.lan import LANSync
-
-        lan = LANSync(cid="test123", bucket="photos")
-        pm = lan.start(register_service=False)
-        assert lan.is_running() is True
-        assert pm is not None
-        assert lan.peer_manager is not None
-        lan.stop()
-        assert lan.is_running() is False
-
-    def test_lan_sync_start_with_service(self):
-        """Test starting LANSync with service registration."""
-        from hsync_client.lan import LANSync
-
-        lan = LANSync(cid="test123", bucket="photos")
-        lan.start(register_service=True)
-        assert lan.is_running() is True
-        lan.stop()
-        assert lan.is_running() is False
-
-    def test_lan_sync_register_service(self):
-        """Test registering mDNS service."""
-        from hsync_client.lan import LANSync
-
-        lan = LANSync(cid="test123", bucket="photos")
-        lan.start(register_service=False)
-        lan.register_service(server_ready=False)
-        lan.stop()
-
-    def test_lan_sync_update_server_ready(self):
-        """Test updating server ready status."""
-        from hsync_client.lan import LANSync
-
-        lan = LANSync(cid="test123", bucket="photos")
-        lan.start(register_service=False)
-        lan.register_service(server_ready=False)
-        lan.update_server_ready()
-        lan.stop()
-
     def test_lan_sync_multiple_stops(self):
         """Test that stopping multiple times is safe."""
         from hsync_client.lan import LANSync

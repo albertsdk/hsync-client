@@ -26,9 +26,6 @@ from hsync_client.tombstones import (
     merge_payload,
     record_deletion,
 )
-from hsync_client.tombstones import (
-    reset_cache as reset_tombstone_cache,
-)
 from hsync_client.utils import (
     ensure_str_path,
     get_cid,
@@ -222,35 +219,26 @@ class TestPinningCoverageGaps:
 class TestSyncStateCoverageGaps:
     """Cover sync_state empty-relpath and empty-base-hash branches."""
 
-    def setup_method(self):
-        reset_tombstone_cache()
-
-    def teardown_method(self):
-        reset_tombstone_cache()
-
     def test_get_base_hash_empty_bucket(self):
         """get_base_hash returns None when LOCAL_BUCKET is empty."""
         CONFIG["LOCAL_BUCKET"] = ""
-        from hsync_client.sync_state import get_base_hash, reset_cache
+        from hsync_client.sync_state import get_base_hash
 
-        reset_cache()
         assert get_base_hash("/some/path") is None
 
     def test_record_base_empty_hash(self, tmp_path):
         """record_base is a no-op when base_hash is empty."""
         CONFIG["LOCAL_BUCKET"] = str(tmp_path)
-        from hsync_client.sync_state import record_base, reset_cache
+        from hsync_client.sync_state import record_base
 
-        reset_cache()
         record_base(str(tmp_path / "file.txt"), "")
         # Must not raise
 
     def test_clear_base_empty_bucket(self):
         """clear_base is a no-op when LOCAL_BUCKET is empty."""
         CONFIG["LOCAL_BUCKET"] = ""
-        from hsync_client.sync_state import clear_base, reset_cache
+        from hsync_client.sync_state import clear_base
 
-        reset_cache()
         clear_base("/some/path")
         # Must not raise
 
@@ -260,11 +248,9 @@ class TestSyncStateCoverageGaps:
         from hsync_client.sync_state import (
             flush,
             get_sync_state_store,
-            reset_cache,
             retain,
         )
 
-        reset_cache()
         store = get_sync_state_store()
         store.record("keep.txt", "hash1")
         store.record("drop.txt", "hash2")
@@ -281,12 +267,6 @@ class TestSyncStateCoverageGaps:
 
 class TestTombstonesCoverageGaps:
     """Cover tombstone empty-relpath, merge, and payload branches."""
-
-    def setup_method(self):
-        reset_tombstone_cache()
-
-    def teardown_method(self):
-        reset_tombstone_cache()
 
     def test_record_deletion_path_outside_bucket(self, tmp_path):
         """record_deletion is a no-op (empty relpath) when the path is the bucket root."""

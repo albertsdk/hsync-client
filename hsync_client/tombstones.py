@@ -92,8 +92,3 @@ def merge_payload(payload: dict[str, TombstoneEntry] | None) -> int:
 def get_payload() -> dict[str, TombstoneEntry]:
     """Return the JSON-serializable tombstone payload for serving/pushing."""
     return get_tombstone_store().to_payload()
-
-
-def reset_cache() -> None:
-    """Clear the in-memory store cache (primarily for tests)."""
-    _stores.clear()

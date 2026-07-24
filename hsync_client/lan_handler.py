@@ -23,7 +23,7 @@ from hsync_common.protocol.pairing import (
 )
 
 from hsync_client.config import set_config
-from hsync_client.constants import DISCOVERY_POLL_INTERVAL
+from hsync_client.constants import DISCOVERY_POLL_INTERVAL, HTTP_TIMEOUT_DEFAULT
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.lan import LANSync
 from hsync_client.lan_server import LANServer
@@ -68,7 +68,7 @@ def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
             http_get=http_get,
             headers={k: str(v) for k, v in config["REQUEST_HEADERS"].items()},
             verify=get_ssl_verify(),
-            timeout=config.get("HTTP_TIMEOUT", 30),
+            timeout=config.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
         if result is None:
             log.debug("Clock sync: /api/v1/time unavailable or missing timestamp, skipping")

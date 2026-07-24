@@ -132,7 +132,6 @@ BANDWIDTH_MAX = 100 * 1024 * 1024  # 100 MB/s maximum
 # Reconnection delay limits (seconds)
 RECONNECT_DELAY_MIN = 1
 RECONNECT_DELAY_MAX = 60
-RECONNECT_DELAY_DEFAULT = 5
 
 # Resync interval limits (seconds)
 RESYNC_MIN = 20
@@ -147,14 +146,18 @@ HTTP_TIMEOUT_MIN = 1
 HTTP_TIMEOUT_MAX = 300
 HTTP_TIMEOUT_DEFAULT = 30
 
+# LAN heartbeat / peer timeout defaults (seconds)
+HEARTBEAT_INTERVAL = 5
+PEER_TIMEOUT = 15
+
 # LAN discovery timeout (seconds)
 # 0 is reserved as the CLI/env sentinel for "wait indefinitely".
 DISCOVERY_TIMEOUT_DEFAULT = 10
 # Polling window used when discovery waits indefinitely (timeout == 0): how often
 # the LAN loop wakes up to re-evaluate peer/master state. Matches the LAN
-# heartbeat cadence (HEARTBEAT_INTERVAL) so we react within one announce cycle
-# without busy-spinning while no peer is present.
-DISCOVERY_POLL_INTERVAL = 5
+# heartbeat cadence so we react within one announce cycle without busy-spinning
+# while no peer is present.
+DISCOVERY_POLL_INTERVAL = HEARTBEAT_INTERVAL
 
 # Minimum free disk space limits (MB)
 MIN_FREE_DISK_SPACE_MB_MIN = 0  # 0 = disabled

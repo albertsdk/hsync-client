@@ -105,9 +105,3 @@ def flush() -> None:
     """Persist the local bucket's sync-state to its side-car file."""
     with _lock:
         get_sync_state_store().save()
-
-
-def reset_cache() -> None:
-    """Clear the in-memory store cache (primarily for tests)."""
-    with _lock:
-        _stores.clear()

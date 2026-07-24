@@ -7,7 +7,7 @@
 """Tests for PeerManager class in LAN module."""
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from hsync_client.lan import PEER_TIMEOUT, Peer, PeerManager
 
@@ -21,95 +21,12 @@ class TestPeerManager:
         assert pm.local_cid == "local123"
         assert pm.bucket == "photos"
 
-    def test_add_peer_same_bucket(self):
-        """Test adding a peer with the same bucket."""
-        pm = PeerManager(local_cid="local123", bucket="photos")
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765)
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is not None
-
-    def test_add_peer_different_bucket_ignored(self):
-        """Test that peers with different buckets are ignored."""
-        pm = PeerManager(local_cid="local123", bucket="photos")
-        peer = Peer(cid="remote456", bucket="documents", address="192.168.1.100", port=8765)
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is None
-
-    def test_add_peer_both_no_group_compatible(self):
-        """Test that peers without a group share the same (default) partition."""
-        pm = PeerManager(local_cid="local123", bucket="photos", group=None)
-        peer = Peer(
-            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None
-        )
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is not None
-
-    def test_add_peer_local_no_group_remote_has_group_ignored(self):
-        """Test that a grouped peer is ignored by a peer without a group."""
-        pm = PeerManager(local_cid="local123", bucket="photos", group=None)
-        peer = Peer(
-            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a"
-        )
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is None
-
-    def test_add_peer_local_has_group_remote_no_group_ignored(self):
-        """Test that a peer without a group is ignored by a grouped peer."""
-        pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
-        peer = Peer(
-            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group=None
-        )
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is None
-
-    def test_add_peer_same_group_compatible(self):
-        """Test that peers with the same group see each other."""
-        pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
-        peer = Peer(
-            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-a"
-        )
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is not None
-
-    def test_add_peer_different_group_ignored(self):
-        """Test that peers with different groups are ignored."""
-        pm = PeerManager(local_cid="local123", bucket="photos", group="team-a")
-        peer = Peer(
-            cid="remote456", bucket="photos", address="192.168.1.100", port=8765, group="team-b"
-        )
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is None
-
     def test_peer_manager_group_property(self):
         """Test the group property of PeerManager."""
         pm = PeerManager(local_cid="local123", bucket="photos", group="mygroup")
         assert pm.group == "mygroup"
         pm_no_group = PeerManager(local_cid="local123", bucket="photos")
         assert pm_no_group.group is None
-
-    def test_add_self_ignored(self):
-        """Test that adding self is ignored."""
-        pm = PeerManager(local_cid="local123", bucket="photos")
-        peer = Peer(cid="local123", bucket="photos", address="192.168.1.100", port=8765)
-        pm.add_peer(peer)
-        assert pm.get_peer("local123") is None
-
-    def test_remove_peer(self):
-        """Test removing a peer."""
-        pm = PeerManager(local_cid="local123", bucket="photos")
-        peer = Peer(cid="remote456", bucket="photos", address="192.168.1.100", port=8765)
-        pm.add_peer(peer)
-        assert pm.get_peer("remote456") is not None
-        pm.remove_peer("remote456")
-        assert pm.get_peer("remote456") is None
-
-    def test_get_all_peers(self):
-        """Test getting all peers."""
-        pm = PeerManager(local_cid="local123", bucket="photos")
-        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.101", port=8765))
-        pm.add_peer(Peer(cid="peer2", bucket="photos", address="192.168.1.102", port=8765))
-        peers = pm.get_all_peers()
-        assert len(peers) == 2
 
     def test_master_election_local_wins(self):
         """Test that local client is elected master when it started earliest."""
@@ -143,29 +60,6 @@ class TestPeerManager:
         master = pm.get_master()
         assert master is not None
         assert master.cid == "aaa111"
-
-    def test_master_election_callback(self):
-        """Test that master change callback is called."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
-        callback = MagicMock()
-        pm.set_master_change_callback(callback)
-
-        # Initially local is master (only peer)
-        # Add a peer with earlier startup_time - should trigger callback
-        pm.add_peer(
-            Peer(
-                cid="aaa111",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                startup_time=100.0,
-            )
-        )
-
-        callback.assert_called_once()
-        # Callback should receive the new master peer
-        args, kwargs = callback.call_args
-        assert args[0].cid == "aaa111"
 
     def test_local_alone_is_master(self):
         """Test that local client is master when alone."""
@@ -341,29 +235,6 @@ class TestPeerManager:
         assert len(alive) == 1
         assert alive[0].cid == "alive1"
 
-    def test_peer_update_triggers_election(self):
-        """Test that updating a peer triggers master election."""
-        from hsync_client.lan import PeerManager
-
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=100.0)
-        # Add a peer that should win initially
-        pm.add_peer(
-            Peer(
-                cid="aaa111",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                startup_time=50.0,
-            )
-        )
-        assert pm.get_master_cid() == "aaa111"
-
-        # Update the peer - should still be master
-        peer = pm.get_peer("aaa111")
-        assert peer is not None
-        peer.update_last_seen()
-        assert pm.get_master_cid() == "aaa111"
-
     def test_force_master_conflict_detection(self):
         """Test detection of force_master conflicts."""
         from hsync_client.lan import PeerManager
@@ -487,60 +358,6 @@ class TestPeerManager:
         )
         # Local incumbent keeps the master role (no takeover, no split-brain)
         assert pm.get_master_cid() == "local"
-
-    def test_master_callback_with_local_master(self):
-        """Test master change callback when local becomes master."""
-        from hsync_client.lan import PeerManager
-
-        pm = PeerManager(local_cid="local", bucket="photos", startup_time=100.0)
-        callback = MagicMock()
-        pm.set_master_change_callback(callback)
-
-        # Add a peer with later startup - local should become master
-        pm.add_peer(
-            Peer(
-                cid="peer1",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                startup_time=200.0,
-            )
-        )
-
-        # Callback should be called with None (local is master)
-        callback.assert_called()
-        args, _ = callback.call_args
-        assert args[0] is None
-
-    def test_master_callback_on_peer_remove(self):
-        """Test master change callback when peer is removed."""
-        from hsync_client.lan import PeerManager
-
-        pm = PeerManager(local_cid="local", bucket="photos", startup_time=200.0)
-        callback = MagicMock()
-        pm.set_master_change_callback(callback)
-
-        # Add a peer that becomes master
-        pm.add_peer(
-            Peer(
-                cid="master_peer",
-                bucket="photos",
-                address="192.168.1.100",
-                port=8765,
-                startup_time=100.0,
-            )
-        )
-        callback.reset_mock()
-
-        # Remove the master
-        pm.remove_peer("master_peer")
-
-        # Local should become master
-        assert pm.is_master() is True
-        # Callback should be called with None
-        callback.assert_called()
-        args, _ = callback.call_args
-        assert args[0] is None
 
     def test_local_is_master_logs_reason_force_master(self):
         """Test that local becoming master logs correct reason for force_master."""

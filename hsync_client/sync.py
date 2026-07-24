@@ -40,7 +40,7 @@ from requests import RequestException
 
 from hsync_client import sync_state
 from hsync_client.config import CONFIG, is_debug
-from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, HTTP_TIMEOUT_DEFAULT, ActionLabel
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import (
     AuthenticationError,
@@ -297,14 +297,14 @@ async def sync(lan_mode: bool = False) -> None:
         log.error(f"Sync failed: {e}")
         emit_event(UiEventName.error, message=f"Sync failed: {e}")
         if is_debug():
-            exc_type, exc_value, exc_tb = exc_info()
+            exc_tb = exc_info()[2]
             if exc_tb:
                 print_tb(exc_tb)
     except Exception as e:
         log.error(f"Unexpected error during sync: {e}")
         emit_event(UiEventName.error, message=f"Unexpected error during sync: {e}")
         if is_debug():
-            exc_type, exc_value, exc_tb = exc_info()
+            exc_tb = exc_info()[2]
             if exc_tb:
                 print_tb(exc_tb)
 
@@ -608,7 +608,7 @@ def get_files_remote() -> list[dict]:
             headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
             params=params,
             verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
 
         if response.status_code == 401:
@@ -656,7 +656,7 @@ def get_tombstones_remote() -> dict[str, dict]:
             uri,
             headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
             verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
 
         if response.status_code == 401:
@@ -702,7 +702,7 @@ def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
             json=cast(dict, dict(payload)),
             headers=cast(dict, CONFIG["REQUEST_HEADERS"]),
             verify=get_ssl_verify(),
-            timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+            timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
         )
     except RequestException as e:
         log.debug(f"Tombstone push failed (non-fatal): {e}")

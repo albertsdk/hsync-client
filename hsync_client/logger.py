@@ -76,21 +76,6 @@ client_id_var: ContextVar[str | None] = ContextVar("client_id", default=None)
 _global_client_id: str | None = None
 
 
-def get_client_id() -> str | None:
-    """
-    Get the current client ID.
-
-    First tries the ContextVar (for async/thread-local context),
-    then falls back to the global variable (for child threads).
-    """
-    # Try ContextVar first (works in same thread/async context)
-    cid = client_id_var.get()
-    if cid:
-        return cid
-    # Fall back to global (works across all threads)
-    return _global_client_id
-
-
 def set_client_id(client_id: str | None) -> None:
     """
     Set the client ID for the current session.

@@ -438,16 +438,6 @@ def set_debug(debug: bool) -> None:
     DEBUG = debug
 
 
-def get_config() -> HsyncConfig:
-    """
-    Get the current global configuration.
-
-    Returns:
-        The current configuration dictionary.
-    """
-    return CONFIG
-
-
 def is_debug() -> bool:
     """
     Check if debug mode is enabled.

@@ -20,7 +20,6 @@ class TestLANWebSocketServer:
         """Test creating a WebSocket server instance."""
         server = LANWebSocketServer(port=9999)
         assert server.port == 9999
-        assert server.is_running() is False
 
     def test_server_creation_with_https(self):
         """Test creating a WebSocket server with HTTPS."""
@@ -312,12 +311,6 @@ class TestLANWebSocketServer:
         assert server._observer is None
         mock_thread.join.assert_called_once()
         assert server._thread is None
-
-    def test_is_running_true(self):
-        """Test is_running returns True when server is active."""
-        server = LANWebSocketServer(port=9999)
-        server._running = True
-        assert server.is_running() is True
 
     def test_start_creates_missing_watch_path(self, tmp_path):
         """start() recreates the watch_path if it has been removed externally.

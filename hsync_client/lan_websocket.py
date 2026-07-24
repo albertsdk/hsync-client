@@ -109,12 +109,6 @@ def consume_inbound_origin(filepath: str) -> str | None:
     return cid
 
 
-def _clear_inbound_origin() -> None:
-    """Test helper: drop every tracked inbound origin entry."""
-    with _inbound_origin_lock:
-        _inbound_origin.clear()
-
-
 # =============================================================================
 # WebSocket Server
 # =============================================================================
@@ -349,10 +343,6 @@ class LANWebSocketServer:
             self._thread = None
 
         log.info("LAN WebSocket server stopped")
-
-    def is_running(self) -> bool:
-        """Check if server is running."""
-        return self._running
 
 
 # =============================================================================
@@ -1147,8 +1137,3 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
 # Global client event handler for marking files as receiving
 _slave_event_handler: LANSlaveFileEventHandler | None = None
-
-
-def get_slave_event_handler() -> LANSlaveFileEventHandler | None:
-    """Get the global client event handler."""
-    return _slave_event_handler

@@ -224,17 +224,17 @@ class TestCreateFingerprintSslContext:
 
     def test_returns_ssl_context(self):
         """Returns an ssl.SSLContext."""
-        ctx = create_fingerprint_ssl_context("abc123")
+        ctx = create_fingerprint_ssl_context("a" * 64)
         assert isinstance(ctx, ssl.SSLContext)
 
     def test_no_hostname_check(self):
         """Context does not check hostname."""
-        ctx = create_fingerprint_ssl_context("abc123")
+        ctx = create_fingerprint_ssl_context("a" * 64)
         assert ctx.check_hostname is False
 
     def test_no_cert_verification(self):
         """Context uses CERT_NONE for fingerprint-based verification."""
-        ctx = create_fingerprint_ssl_context("abc123")
+        ctx = create_fingerprint_ssl_context("a" * 64)
         assert ctx.verify_mode == ssl.CERT_NONE
 
 

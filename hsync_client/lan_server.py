@@ -1265,7 +1265,3 @@ class LANServer:
 
         self._running = False
         log.info("LAN master server stopped")
-
-    def is_running(self) -> bool:
-        """Check if server is running."""
-        return self._running
