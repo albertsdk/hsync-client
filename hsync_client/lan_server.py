@@ -112,6 +112,9 @@ ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
 ENDPOINT_FILES_SUFFIX = "/files"
 ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
 ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
+ENDPOINT_DELTA_SIGNATURES_SUFFIX = "/files/delta/signatures"
+ENDPOINT_DELTA_APPLY_SUFFIX = "/files/delta/apply"
+ENDPOINT_DELTA_DATA_MARKER = "/files/delta/data/"
 
 # Content Types
 CONTENT_TYPE_JSON = "application/json"
@@ -439,6 +442,22 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._handle_download(query)
             return
 
+        # Delta signatures: /api/v1/buckets/{bucket}/files/delta/signatures
+        if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            from hsync_client.lan_delta import handle_delta_signatures_get
+
+            handle_delta_signatures_get(self, query)
+            return
+
+        # Delta literal payload: /api/v1/buckets/{bucket}/files/delta/data/{token}
+        if ENDPOINT_DELTA_DATA_MARKER in path and ENDPOINT_BUCKETS_PREFIX in path:
+            from hsync_client.lan_delta import handle_delta_data
+
+            bucket = path.split(f"{ENDPOINT_BUCKETS_PREFIX}/", 1)[-1].split("/", 1)[0]
+            token = path.rsplit(ENDPOINT_DELTA_DATA_MARKER, 1)[-1]
+            handle_delta_data(self, bucket, token)
+            return
+
         # Tombstones: /api/v1/buckets/{bucket}/tombstones
         if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_tombstones()
@@ -457,6 +476,18 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # Tombstone gossip (slave -> master): /api/v1/buckets/{bucket}/tombstones
         if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
             self._handle_tombstones_merge()
+            return
+
+        # Delta signatures (download delta): /api/v1/buckets/{bucket}/files/delta/signatures
+        if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            from hsync_client.lan_delta import handle_delta_signatures_post
+
+            handle_delta_signatures_post(self)
+            return
+
+        # Delta apply (upload delta): /api/v1/buckets/{bucket}/files/delta/apply
+        if path.endswith(ENDPOINT_DELTA_APPLY_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
+            self._handle_delta_apply()
             return
 
         # Upload file: /api/v1/buckets/{bucket}/files
@@ -1158,6 +1189,91 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
+    def _handle_delta_apply(self) -> None:
+        """Handle a delta apply request (upload delta, streaming multipart).
+
+        The literal payload is streamed to a temp file (never buffered in
+        RAM); the JSON instructions travel in the ``metadata`` form field and
+        are applied by :func:`hsync_client.lan_delta.handle_delta_apply`.
+        """
+        import re
+
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
+            return
+        match = re.search(r"boundary=([^\s;]+)", content_type)
+        if not match:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
+            return
+        boundary = match.group(1).encode()
+        if boundary.startswith(b'"') and boundary.endswith(b'"'):
+            boundary = boundary[1:-1]
+
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid Content-Length")
+            return
+        if content_length <= 0:
+            self._send_error_response(HTTP_BAD_REQUEST, "No content")
+            return
+
+        from hsync_common.constants import DELTA_MAX_LITERAL_SIZE
+
+        from hsync_client.lan_delta import handle_delta_apply
+
+        parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
+
+        literal_path: str | None = None
+        raw_file: IO[bytes] | None = None
+
+        def _file_open(form_fields, field_name, filename):
+            nonlocal literal_path, raw_file
+            # Park the literal payload in the system temp dir (outside the
+            # bucket so it is never picked up by the sync engine), capped at
+            # the protocol literal limit (decompression-bomb containment).
+            import tempfile
+
+            fd, literal_path = tempfile.mkstemp(prefix="hsync-delta-lit-")
+            raw = os.fdopen(fd, "wb")
+            raw_file = raw
+            capped = _CappedBytesWriter(raw.write, DELTA_MAX_LITERAL_SIZE)
+            return capped.write
+
+        try:
+            form_fields, file_meta = parser.parse(_file_open)
+            if raw_file is not None:
+                try:
+                    raw_file.flush()
+                    os.fsync(raw_file.fileno())
+                except OSError:
+                    pass
+                raw_file.close()
+                raw_file = None
+
+            if file_meta is None or literal_path is None:
+                self._send_error_response(HTTP_BAD_REQUEST, "No literal payload uploaded")
+                return
+
+            handle_delta_apply(self, form_fields, literal_path)
+        except ValueError as e:
+            self._send_error_response_safe(HTTP_BAD_REQUEST, f"Invalid delta apply: {e}")
+        except Exception as e:
+            log.error(f"Error handling delta apply: {e}")
+            self._send_error_response_safe(HTTP_INTERNAL_ERROR, "Delta apply error")
+        finally:
+            if raw_file is not None:
+                try:
+                    raw_file.close()
+                except Exception:
+                    pass
+            if literal_path and Path(literal_path).exists():
+                try:
+                    os.remove(literal_path)
+                except OSError:
+                    pass
+
 
 # =============================================================================
 # LAN Server
@@ -1262,6 +1378,11 @@ class LANServer:
         if self._server:
             self._server.shutdown()
             self._server.server_close()
+
+        # Reap any parked delta literal payloads tied to this server lifetime.
+        from hsync_client.lan_delta import reset_delta_lan_state
+
+        reset_delta_lan_state()
 
         self._running = False
         log.info("LAN master server stopped")

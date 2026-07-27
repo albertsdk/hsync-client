@@ -111,6 +111,8 @@ async def remote_events() -> None:
         client_caps: set[Capability] = set()
         if CONFIG.get("COMPRESSION_ENABLED", False):
             client_caps.add(Capability.compression)
+        if CONFIG.get("DELTA_ENABLED", False):
+            client_caps.add(Capability.delta)
         auth_message = build_ws_auth_request(
             token=CONFIG.get("API_KEY") or get_api_key(),
             app_version=HSYNC_VERSION,
@@ -146,6 +148,7 @@ async def remote_events() -> None:
         server_caps = decode_capabilities(auth_result.get("capabilities"))
         server_compression = Capability.compression in server_caps
         CONFIG["SERVER_COMPRESSION_ENABLED"] = server_compression
+        CONFIG["SERVER_DELTA_ENABLED"] = Capability.delta in server_caps
         compression_status = "enabled" if server_compression else "disabled"
         log.info(
             f"WebSocket authenticated successfully "

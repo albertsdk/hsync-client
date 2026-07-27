@@ -97,6 +97,7 @@ class Peer:
     use_https: bool = False
     cert_fingerprint: str | None = None
     compression_enabled: bool = False
+    delta_enabled: bool = False  # rsync-style delta transfer capability
     server_ready: bool = False  # True when HTTP server is listening
     clock_offset: float = 0.0  # Estimated clock offset vs local (seconds)
     last_seen: float = field(default_factory=time.time)
@@ -261,6 +262,7 @@ class PeerManager:
                 existing.use_https = peer.use_https
                 existing.cert_fingerprint = peer.cert_fingerprint
                 existing.compression_enabled = peer.compression_enabled
+                existing.delta_enabled = peer.delta_enabled
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
@@ -527,6 +529,9 @@ class HsyncServiceListener(ServiceListener):
             compression_enabled = (
                 compression_bytes.decode("utf-8").lower() == "true" if compression_bytes else False
             )
+            # Delta transfer capability is optional
+            delta_bytes = properties.get(b"delta", b"")
+            delta_enabled = delta_bytes.decode("utf-8").lower() == "true" if delta_bytes else False
             # Server ready flag (indicates HTTP server is listening)
             server_ready_bytes = properties.get(b"server_ready", b"")
             server_ready = (
@@ -592,6 +597,7 @@ class HsyncServiceListener(ServiceListener):
                 use_https=use_https,
                 cert_fingerprint=cert_fingerprint,
                 compression_enabled=compression_enabled,
+                delta_enabled=delta_enabled,
                 server_ready=server_ready,
                 force_master=force_master,
                 never_master=never_master,
@@ -852,6 +858,9 @@ class LANSync:
         # Add compression capability
         if CONFIG.get("COMPRESSION_ENABLED", False):
             properties["compression"] = "true"
+        # Add delta transfer capability
+        if CONFIG.get("DELTA_ENABLED", False):
+            properties["delta"] = "true"
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"

@@ -29,6 +29,7 @@ from hsync_client.config import (
     HsyncConfig,
     get_api_key,
     get_compression_enabled,
+    get_delta_enabled,
     get_discovery_timeout,
     get_heartbeat_interval,
     get_ignore_delete,
@@ -727,6 +728,8 @@ def run_sync(
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
+        "DELTA_ENABLED": get_delta_enabled(),
+        "SERVER_DELTA_ENABLED": False,  # Set during WebSocket handshake / master election
         "SYNC_DIRECTION": sync_direction,
         "MAX_BANDWIDTH_UPLOAD": max_bandwidth_upload,
         "MAX_BANDWIDTH_DOWNLOAD": max_bandwidth_download,
