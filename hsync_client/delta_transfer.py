@@ -217,6 +217,24 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
     if (pre_stat.st_mtime, pre_stat.st_size) != (post_stat.st_mtime, post_stat.st_size):
         raise DeltaTransferError("file changed during delta scan")
 
+    # For small files, also do a full re-hash to catch content changes that
+    # mtime+size alone miss (e.g., rapid edits within the same second).
+    from hsync_common.constants import DELTA_TOCTOU_REHASH_THRESHOLD
+
+    if file.size < DELTA_TOCTOU_REHASH_THRESHOLD:
+        post_sha256 = compute_sha256(file.filepath)
+        if post_sha256 != file.sha256sum:
+            raise DeltaTransferError("file content changed during delta scan")
+
+    # For small files, also do a full re-hash to catch content changes that
+    # mtime+size alone miss (e.g., rapid edits within the same second).
+    from hsync_common.constants import DELTA_TOCTOU_REHASH_THRESHOLD
+
+    if file.size < DELTA_TOCTOU_REHASH_THRESHOLD:
+        post_sha256 = compute_sha256(file.filepath)
+        if post_sha256 != file.sha256sum:
+            raise DeltaTransferError("file content changed during delta scan")
+
     if not is_delta_worthwhile(ops, file_size, len(literals), block_size):
         raise DeltaTransferError("delta not worthwhile (too many changed blocks)")
 

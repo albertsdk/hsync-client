@@ -376,6 +376,18 @@
             <input type="checkbox" name="HSYNC_NO_COMPRESSION" id="HSYNC_NO_COMPRESSION">
             <span data-i18n="field.no_compression">Disable zstd compression</span>
         </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_DELTA_ENABLED" id="HSYNC_DELTA_ENABLED" checked>
+            <span data-i18n="field.delta_enabled">Enable delta transfer (rsync-style block sync)</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.delta_min_size">Delta min file size - server (bytes, 0 = default)</span>
+            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE" id="HSYNC_DELTA_MIN_FILE_SIZE" min="0">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.delta_min_size_lan">Delta min file size - LAN (bytes, 0 = default)</span>
+            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE_LAN" id="HSYNC_DELTA_MIN_FILE_SIZE_LAN" min="0">
+        </label>
         <label class="hsync-label">
             <span data-i18n="field.bw_upload">Max upload bandwidth (e.g. 1MB)</span>
             <input type="text" name="HSYNC_MAX_BW_UPLOAD" id="HSYNC_MAX_BW_UPLOAD">

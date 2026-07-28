@@ -78,6 +78,9 @@ fi
 : "${HSYNC_INTERVAL:=0}"
 : "${HSYNC_IGNORE_DELETE:=true}"
 : "${HSYNC_NO_COMPRESSION:=false}"
+: "${HSYNC_DELTA_ENABLED:=true}"
+: "${HSYNC_DELTA_MIN_FILE_SIZE:=}"
+: "${HSYNC_DELTA_MIN_FILE_SIZE_LAN:=}"
 : "${HSYNC_MAX_BW_UPLOAD:=}"
 : "${HSYNC_MAX_BW_DOWNLOAD:=}"
 : "${HSYNC_MIN_FREE_DISK_MB:=}"
@@ -129,6 +132,9 @@ esac
 [ "${HSYNC_INTERVAL}" -gt 0 ] 2>/dev/null && set -- "$@" --interval "${HSYNC_INTERVAL}"
 [ "${HSYNC_IGNORE_DELETE}" = "true" ]  && set -- "$@" --ignore-delete
 [ "${HSYNC_NO_COMPRESSION}" = "true" ] && set -- "$@" --no-compression
+[ "${HSYNC_DELTA_ENABLED}" = "false" ] && set -- "$@" --no-delta
+[ -n "${HSYNC_DELTA_MIN_FILE_SIZE}" ]     && set -- "$@" --delta-min-file-size "${HSYNC_DELTA_MIN_FILE_SIZE}"
+[ -n "${HSYNC_DELTA_MIN_FILE_SIZE_LAN}" ] && set -- "$@" --delta-min-file-size-lan "${HSYNC_DELTA_MIN_FILE_SIZE_LAN}"
 [ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --max-bandwidth-upload "${HSYNC_MAX_BW_UPLOAD}"
 [ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --max-bandwidth-download "${HSYNC_MAX_BW_DOWNLOAD}"
 [ -n "${HSYNC_MIN_FREE_DISK_MB}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK_MB}"

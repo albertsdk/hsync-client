@@ -168,6 +168,23 @@ Maximum download bandwidth (same format as above).
 .B \-\-no\-compression
 Disable zstd compression for file transfers.
 .TP
+.B \-\-no\-delta
+Disable rsync-style delta transfer (block-level sync) for large files with
+small changes. When disabled, all files are transferred in full. Delta transfer
+is enabled by default and automatically reduces bandwidth for files ≥ 256 KB
+(server mode) or ≥ 1 MB (LAN mode) when both peers support it.
+.TP
+.BR \-\-delta\-min\-file\-size =\fIBYTES\fP
+Minimum file size in bytes for delta transfer in server mode (default:
+.BR 262144 ,
+256 KB). Files smaller than this threshold are always transferred in full.
+.TP
+.BR \-\-delta\-min\-file\-size\-lan =\fIBYTES\fP
+Minimum file size in bytes for delta transfer in LAN mode (default:
+.BR 1048576 ,
+1 MB). LAN mode uses a higher threshold because the bandwidth savings are
+less significant on fast local networks.
+.TP
 .BR \-\-min\-free\-disk\-space =\fIMB\fP
 Minimum free disk space in MB before sync is paused
 (default:
@@ -334,6 +351,39 @@ Shared secret for LAN mode peer authentication.
 .B HSYNC_MAX_CONCURRENT_TRANSFERS
 Maximum number of concurrent file transfers (default:
 .BR 5 ).
+.TP
+.B HSYNC_DELTA_ENABLED
+Enable delta transfer (rsync-style block sync) for large files with small changes
+(default:
+.BR true ).
+.TP
+.B HSYNC_DELTA_MIN_FILE_SIZE
+Minimum file size in bytes for delta transfer in server mode (default:
+.BR 262144 ;
+256 KB).
+.TP
+.B HSYNC_DELTA_MIN_FILE_SIZE_LAN
+Minimum file size in bytes for delta transfer in LAN mode (default:
+.BR 1048576 ;
+1 MB).
+.TP
+.B HSYNC_DELTA_ENABLED
+Enable rsync-style delta transfer for large files with small changes (default:
+.BR true ).
+When enabled, only changed blocks are transferred instead of the whole file,
+significantly reducing bandwidth usage. Falls back to full transfer if delta
+transfer fails or is not supported by the peer.
+.TP
+.B HSYNC_DELTA_MIN_FILE_SIZE
+Minimum file size in bytes for delta transfer in server mode (default:
+.BR 262144 ,
+256 KB). Files smaller than this threshold are always transferred in full.
+.TP
+.B HSYNC_DELTA_MIN_FILE_SIZE_LAN
+Minimum file size in bytes for delta transfer in LAN mode (default:
+.BR 1048576 ,
+1 MB). LAN mode uses a higher threshold because bandwidth savings are less
+significant on fast local networks.
 .
 .\" ---------------------------------------------------------------------
 .SH FILES

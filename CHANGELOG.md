@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Delta transfer (rsync-style block sync)**: for large files with small
+  changes, only the changed blocks are transferred instead of the whole file.
+  Delta transfer is attempted automatically when the file is ≥ 256 KB (server
+  mode) or ≥ 1 MB (LAN mode), a base hash exists in `.hsyncstate`, and both
+  peers support the delta capability. Upload delta flow: GET signatures →
+  rolling match → POST apply. Download delta flow: POST signatures → GET data
+  → rebuild. Any failure falls back to full transfer transparently.
+  Configurable via `HSYNC_DELTA_ENABLED` (default `true`),
+  `HSYNC_DELTA_MIN_FILE_SIZE`, and `HSYNC_DELTA_MIN_FILE_SIZE_LAN`.
+  CLI flags: `--no-delta`, `--delta-min-file-size`, `--delta-min-file-size-lan`.
+- **TOCTOU re-hash protection**: for files smaller than 10 MB, the delta upload
+  path now performs a full SHA-256 re-hash after the rolling scan to catch
+  content changes that mtime+size alone miss (e.g., rapid edits within the same
+  second). If the file changed during the scan, the delta is aborted and the
+  caller falls back to a full transfer.
+
 ### Security
 - **Permanent download failure skip-set**: a download that fails
   permanently (e.g. declared size exceeds the configured cap) now raises

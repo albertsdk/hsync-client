@@ -281,6 +281,10 @@ secret (when configured) as a Bearer token: `Authorization: Bearer <key>`.
 | `/api/v1/buckets/{bucket}/files` | POST | Upload a file |
 | `/api/v1/buckets/{bucket}/files` | DELETE | Delete a file/directory |
 | `/api/v1/buckets/{bucket}/files` | PATCH | Rename a file/directory |
+| `/api/v1/buckets/{bucket}/files/delta/signatures` | GET | Get block signatures of a file (upload delta) |
+| `/api/v1/buckets/{bucket}/files/delta/signatures` | POST | Match client signatures, get delta instructions (download delta) |
+| `/api/v1/buckets/{bucket}/files/delta/apply` | POST | Apply a computed delta to update a file |
+| `/api/v1/buckets/{bucket}/files/delta/data/{token}` | GET | Download literal payload for a delta operation |
 
 ### WebSocket API
 
@@ -467,8 +471,12 @@ LAN mode uses mDNS (Multicast DNS) for peer discovery:
 
 - **Service Type**: `_hsync._tcp.local.`
 - **TXT Records**: `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
-  `never_master`, `group`
+  `never_master`, `group`, `delta`
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
+
+The `delta` TXT record is advertised only when delta transfer is enabled
+(`HSYNC_DELTA_ENABLED=true`, the default). Peers parse this flag to determine
+whether delta transfer can be used with that peer.
 
 ### Thread Model
 

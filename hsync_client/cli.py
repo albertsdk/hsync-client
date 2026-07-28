@@ -308,6 +308,32 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = False,
+    no_delta: Annotated[
+        bool,
+        typer.Option(
+            "--no-delta",
+            help="Disable rsync-style delta transfer (block-level sync) for large files.",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
+    delta_min_file_size: Annotated[
+        int | None,
+        typer.Option(
+            "--delta-min-file-size",
+            help="Minimum file size in bytes for delta transfer (server mode). Default: 262144 (256 KB).",
+            metavar="BYTES",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
+    delta_min_file_size_lan: Annotated[
+        int | None,
+        typer.Option(
+            "--delta-min-file-size-lan",
+            help="Minimum file size in bytes for delta transfer (LAN mode). Default: 1048576 (1 MB).",
+            metavar="BYTES",
+            rich_help_panel="Sync",
+        ),
+    ] = None,
     max_concurrent_transfers: Annotated[
         int | None,
         typer.Option(
@@ -724,6 +750,9 @@ def main(
         ignore_delete=ignore_delete,
         sync_direction=sync_direction,
         compression_enabled=not no_compression,
+        delta_enabled=not no_delta,
+        delta_min_file_size=delta_min_file_size,
+        delta_min_file_size_lan=delta_min_file_size_lan,
         max_bandwidth_upload=parsed_bw_upload,
         max_bandwidth_download=parsed_bw_download,
         lan_mode=lan_mode,

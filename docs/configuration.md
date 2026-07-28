@@ -15,6 +15,9 @@ This guide explains how to configure HSYNC for your environment.
 | `HSYNC_RESYNC` | Periodic full-resync interval (seconds) in continuous mode; `0` disables it | `300` |
 | `HSYNC_SYNC_HIDDEN` | Include hidden/system files in sync (disables built-in filters) | `false` |
 | `HSYNC_IGNORE_PATTERNS` | Comma-separated extra gitignore-style patterns | `""` |
+| `HSYNC_DELTA_ENABLED` | Enable rsync-style delta transfer for large files | `true` |
+| `HSYNC_DELTA_MIN_FILE_SIZE` | Minimum file size (bytes) for delta transfer in server mode | `262144` (256 KB) |
+| `HSYNC_DELTA_MIN_FILE_SIZE_LAN` | Minimum file size (bytes) for delta transfer in LAN mode | `1048576` (1 MB) |
 
 > `HSYNC_SERVER` and `HSYNC_API_KEY` are required in **Server Mode** only. In
 > **LAN Mode** (`--lan-mode`) they are ignored; use the optional
@@ -305,6 +308,71 @@ networks or when CPU is constrained:
 
 > For details on compression thresholds and protocol-level negotiation, see the
 > [Developer Guide → Compression Internals](developer.md#compression-internals).
+
+## Delta Transfer
+
+HSYNC supports **rsync-style delta transfer** for large files with small changes.
+Instead of transferring the entire file, only the changed blocks are sent,
+significantly reducing bandwidth usage and transfer time.
+
+### How it works
+
+Delta transfer uses a rolling checksum algorithm (Adler32 + SHA-256) to identify
+which blocks of a file have changed. The client computes block signatures of the
+local base file, sends them to the server/master, which matches them against the
+new version and returns delta instructions (copy/data operations). The client then
+rebuilds the file from these instructions.
+
+### When delta transfer is used
+
+Delta transfer is attempted automatically when **all** of these conditions are met:
+
+1. **File size threshold**: file is ≥ 256 KB (server mode) or ≥ 1 MB (LAN mode)
+2. **Base hash exists**: a previously synced version is recorded in `.hsyncstate`
+3. **Direction check**:
+   - **Upload**: local file changed (`local_sha256 != base_hash`)
+   - **Download**: local file is still the base and remote file changed
+4. **Capability**: both peers support delta transfer
+
+If any condition is not met, the file is transferred in full.
+
+### Configuration
+
+Delta transfer is **enabled by default**. Disable it with:
+
+```bash
+# Environment variable
+export HSYNC_DELTA_ENABLED=false
+```
+
+Adjust the size thresholds:
+
+```bash
+# Lower threshold to 128 KB (server mode)
+export HSYNC_DELTA_MIN_FILE_SIZE=131072
+
+# Lower threshold to 512 KB (LAN mode)
+export HSYNC_DELTA_MIN_FILE_SIZE_LAN=524288
+```
+
+### Fallback behavior
+
+Delta transfer failures are **transparent**: if any step fails (network error,
+hash mismatch, peer doesn't support delta, base changed mid-transfer), the client
+automatically falls back to a full file transfer. The retry policy is unchanged —
+delta failures do not consume retry attempts.
+
+### Performance considerations
+
+- **Bandwidth savings**: delta transfer can reduce transfer size by 90%+ for files
+  with small changes (e.g., a 100 MB video file with a 1 MB edit)
+- **CPU overhead**: rolling checksum computation adds CPU cost, but is typically
+  negligible compared to network I/O
+- **Memory usage**: delta operations require holding block signatures in memory
+  (~16 bytes per block for a 4 KB block size)
+
+> For the technical details of the delta transfer protocol, see
+> [Sync Flow → Delta Transfer](sync-flow.md#delta-transfer-rsync-style-block-sync).
 
 ## Bandwidth Limiting
 

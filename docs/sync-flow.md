@@ -210,6 +210,88 @@ This prevents uploading a half-written file:
 If a file never stabilises within `MAX_WAIT_TIMEOUT` (default 120 s), the
 upload is rescheduled rather than uploading a torn file.
 
+## Delta Transfer (rsync-style block sync)
+
+For large files with small changes, HSYNC can transfer **only the changed blocks**
+instead of the whole file. This rsync-style delta transfer significantly reduces
+bandwidth usage and transfer time.
+
+### When delta transfer triggers
+
+Delta transfer is attempted automatically when **all** of these conditions are met:
+
+1. **File size threshold**: file is ≥ 256 KB (server mode) or ≥ 1 MB (LAN mode)
+2. **Base hash exists**: a previously synced version of the file is recorded in
+   `.hsyncstate` (three-way merge state)
+3. **Direction check**:
+   - **Upload**: local file changed (`local_sha256 != base_hash`)
+   - **Download**: local file is still the base (`local_sha256 == base_hash`) and
+     remote file changed (`remote_sha256 != base_hash`)
+4. **Capability**: both local and remote peers support delta transfer
+
+If any condition is not met, the file is transferred in full — you never have to
+choose manually.
+
+### Upload delta flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server / Master
+
+    Note over C,S: ① Client detects local file changed
+    C->>S: GET /delta/signatures?path=file.bin
+    S-->>C: ② Block signatures of server's base
+    C->>C: ③ Rolling checksum match (Adler32 + SHA-256)
+    C->>C: ④ Compute delta ops (copy/data)
+    C->>S: POST /delta/apply (metadata + literal payload)
+    S->>S: ⑤ Rebuild file from ops
+    S->>S: ⑥ Verify SHA-256
+    S-->>C: ⑦ Success (200) or Conflict (409)
+    Note over C: On failure → fall back to full upload
+```
+
+### Download delta flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server / Master
+
+    Note over C,S: ① Client detects remote file changed
+    C->>C: ② Compute block signatures of local base
+    C->>S: POST /delta/signatures (path + signatures)
+    S->>S: ③ Match against server's new file
+    S-->>C: ④ Delta instructions + data_url (or delta:false)
+    C->>S: GET /delta/data/{token}
+    S-->>C: ⑤ Literal payload
+    C->>C: ⑥ Rebuild file from ops
+    C->>C: ⑦ Verify SHA-256
+    Note over C: On failure → fall back to full download
+```
+
+### Fallback behavior
+
+Delta transfer failures are **transparent**: if any step fails (network error,
+hash mismatch, peer doesn't support delta, base changed mid-transfer), the client
+automatically falls back to a full file transfer. The retry policy is unchanged —
+delta failures do not consume retry attempts.
+
+### Configuration
+
+Delta transfer is **enabled by default**. Disable it with:
+
+```bash
+# Environment variable
+export HSYNC_DELTA_ENABLED=false
+
+# Or in code
+config.delta_enabled = False
+```
+
+> For details on delta transfer thresholds and protocol-level negotiation, see
+> the [Configuration](configuration.md#delta-transfer) section.
+
 ## See also
 
 - [Usage](usage.md) — CLI options reference and log labels.
