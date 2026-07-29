@@ -59,6 +59,49 @@ hsync -b mybucket -p /path/to/dir --lan-mode
 
 See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
 
+### 4. Try it end-to-end (Server Mode, local)
+
+The fastest way to see HSYNC in action is to run the server and a client on the
+same machine. You need the [server](https://github.com/albertobasso/hsync-server)
+running locally (Docker or Poetry) with `HSYNC_API_KEY` set.
+
+```bash
+# 1. Start the server (see the server docs for Docker/Poetry setup)
+#    It listens on https://localhost:8765 with a self-signed cert.
+
+# 2. Create two empty folders to sync
+mkdir -p /tmp/hsync-a /tmp/hsync-b
+
+# 3. Put a file in the first folder
+echo "hello hsync" > /tmp/hsync-a/hello.txt
+
+# 4. Sync folder A → server (one-shot, self-signed cert)
+hsync -s https://localhost:8765 -b demo -p /tmp/hsync-a --insecure
+
+# 5. Sync server → folder B (one-shot, self-signed cert)
+hsync -s https://localhost:8765 -b demo -p /tmp/hsync-b --insecure
+
+# 6. Verify the file arrived
+cat /tmp/hsync-b/hello.txt   # → hello hsync
+```
+
+For continuous, real-time sync, add `-w` to both commands and edit files in
+either folder — changes propagate within seconds.
+
+### 5. What to expect in LAN Mode
+
+The first time you run `--lan-mode` on a non-empty directory, the client prints
+a **deletion-risk warning** and asks for confirmation: files that exist only on
+this peer (and not on the elected master) are deleted during the initial sync.
+This is intentional — it lets deletions made on the master reach offline peers.
+
+- Use `-y` to skip the prompt in scripts/services.
+- Use `--sync-direction upload-only` if you never want local files deleted.
+- Use `--force-master` on the device that holds the canonical copy.
+
+See [LAN Mode → Deletion Risk Warning](lan-mode.md#deletion-risk-warning) for
+the full explanation.
+
 ## Environment Configuration
 
 Set the required variables in your shell or export them in a `.env` file:
