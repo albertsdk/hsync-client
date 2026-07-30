@@ -21,7 +21,7 @@ mutually exclusive and selected per invocation.
 
 ```bash
 # Server Mode — central hub
-hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir
+hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 
 # LAN Mode — peer-to-peer, no server (run on each device)
 hsync -b mybucket -p /path/to/dir --lan-mode
@@ -36,7 +36,7 @@ master election.
 Performs a synchronization and exits.
 
 ```bash
-hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir
+hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir
 ```
 
 ## Watch Mode (`-w`)
@@ -49,7 +49,7 @@ Maintains a persistent connection and watches for changes:
 - Propagates changes in real-time
 
 ```bash
-hsync -s https://server.example.com:8765 -b mybucket -p /path/to/dir -w
+hsync -s https://server.example.com:9753 -b mybucket -p /path/to/dir -w
 ```
 
 ## Sync Direction
@@ -66,10 +66,10 @@ Controls the direction of file synchronization:
 
 ```bash
 # Upload-only: push local files to server
-hsync -s https://server.example.com:8765 -b backup -w --sync-direction upload-only
+hsync -s https://server.example.com:9753 -b backup -w --sync-direction upload-only
 
 # Download-only: mirror remote content locally
-hsync -s https://server.example.com:8765 -b shared -w --sync-direction download-only
+hsync -s https://server.example.com:9753 -b shared -w --sync-direction download-only
 ```
 
 ## LAN Mode (P2P)
@@ -98,7 +98,7 @@ Force full sync at regular intervals:
 
 ```bash
 # Re-sync every 5 minutes
-hsync -s https://server.example.com:8765 -b mybucket -w -i 300
+hsync -s https://server.example.com:9753 -b mybucket -w -i 300
 ```
 
 ## Dry Run
@@ -106,5 +106,5 @@ hsync -s https://server.example.com:8765 -b mybucket -w -i 300
 Preview operations without making changes:
 
 ```bash
-hsync -s https://server.example.com:8765 -b mybucket -n
+hsync -s https://server.example.com:9753 -b mybucket -n
 ```

@@ -150,11 +150,11 @@ import responses
 def test_fetch_remote_files():
     responses.add(
         responses.GET,
-        "https://server:8765/api/v1/buckets/test/files",
+        "https://server:9753/api/v1/buckets/test/files",
         json={"files": [{"name": "hello.txt", "sha256sum": "abc123", "size": 13}]},
         status=200,
     )
-    files = fetch_remote_files("https://server:8765", "test")
+    files = fetch_remote_files("https://server:9753", "test")
     assert len(files) == 1
 ```
 

@@ -16,7 +16,7 @@ peer-to-peer on the LAN:
 
 ```bash
 # Server Mode (needs HSYNC_API_KEY)
-./dist/<platform>/hsync -s https://server:8765 -b mybucket -p /path/to/dir
+./dist/<platform>/hsync -s https://server:9753 -b mybucket -p /path/to/dir
 
 # LAN Mode (peers discover each other via mDNS)
 ./dist/<platform>/hsync -b mybucket -p /path/to/dir --lan-mode

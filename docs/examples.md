@@ -15,7 +15,7 @@ configured on the server. The simplest way to set it is via a `.env`
 file (see [`dev.env`](../dev.env) / [`prod.env`](../prod.env)).
 
 ```bash
-export HSYNC_SERVER="https://hsync.example.com:8765"
+export HSYNC_SERVER="https://hsync.example.com:9753"
 export HSYNC_API_KEY="your-api-key"
 ```
 
@@ -309,7 +309,7 @@ When the server uses a self-signed certificate not in the system trust
 store:
 
 ```bash
-hsync -s https://dev-server:8765 -b mybucket -p ~/Data --insecure
+hsync -s https://dev-server:9753 -b mybucket -p ~/Data --insecure
 ```
 
 ### 3.8 Compose multiple flags
