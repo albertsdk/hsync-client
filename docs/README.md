@@ -7,19 +7,19 @@ binary — no Python runtime is required to run it.
 
 ## Install & quickstart
 
-Download a prebuilt binary, `.deb`, or WD OS5 `.bin` from the
-[Releases page](https://github.com/albertobasso/hsync-client/releases), or build
-it from source — full instructions are in [Installation](installation.md).
+Download the installer script, a prebuilt binary, `.deb`, or WD OS5 `.bin` from
+the [Releases page](https://github.com/albertobasso/hsync-client/releases), or
+build it from source — full instructions are in [Installation](installation.md).
 
 Once you have a working `hsync` binary, run a one-off sync against a server, or
 peer-to-peer on the LAN:
 
 ```bash
 # Server Mode (needs HSYNC_API_KEY)
-./dist/<platform>/hsync -s https://server:9753 -b mybucket -p /path/to/dir
+hsync -s https://server:9753 -b mybucket -p /path/to/dir
 
 # LAN Mode (peers discover each other via mDNS)
-./dist/<platform>/hsync -b mybucket -p /path/to/dir --lan-mode
+hsync -b mybucket -p /path/to/dir --lan-mode
 ```
 
 See [Getting Started](getting-started.md) for the full walkthrough.
@@ -39,7 +39,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 
 | Document | What it covers |
 | -------- | -------------- |
-| [installation.md](installation.md) | Install a prebuilt binary, `.deb`, or `.bin`, or build from source. |
+| [installation.md](installation.md) | Install via the installer script, prebuilt binary, `.deb`, or `.bin`, or build from source. |
 | [debian-package.md](debian-package.md) | Detailed guide for the `.deb` package: service, custom paths, ACLs. |
 | [getting-started.md](getting-started.md) | Build, choose a mode, and run your first sync. |
 | [migration.md](migration.md) | Migrate to HSYNC from rsync, Syncthing, cloud storage, or manual copies. |
