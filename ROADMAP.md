@@ -13,7 +13,6 @@ community feedback and contributor availability.
 
 - **Selective sync** — sync only specific subdirectories within a bucket (`--include` / `--exclude` patterns separate from `.hsyncignore`)
 - **Encrypted buckets** — client-side encryption before upload (server never sees plaintext)
-- **Delta sync** — transfer only changed portions of large files (rsync-style rolling checksums)
 - **File versioning on client** — keep N previous versions locally (`.hsyncversions` directory)
 - **Proxy support** — HTTP/HTTPS/SOCKS5 proxy for corporate environments
 - **One-shot mode improvements** — exit codes for scripting, JSON output mode
@@ -41,4 +40,5 @@ community feedback and contributor availability.
 - [x] Bandwidth limiting
 - [x] Compilable to standalone binary
 - [x] .deb package with systemd service
+- [x] Transfer only changed portions of large files (rsync-style rolling checksums)
 - [x] Comprehensive documentation
