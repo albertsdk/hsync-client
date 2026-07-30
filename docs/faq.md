@@ -39,6 +39,45 @@ automatically. A server is only needed for remote / cross-network sync. See
 Prebuilt binaries, a Debian `.deb`, and a WD OS5 `.bin` are published on the
 releases page; you can also build from source. See [Installation](installation.md).
 
+### What are the basic concepts? (bucket, server, client, master, slave)
+
+A **bucket** is the unit of synchronization: a named set of files that stays
+in sync across devices. You pick the name with `-b/--bucket` and map it to a
+local directory with `-p/--path`. Two devices syncing the same bucket name
+keep their directories mirrored.
+
+HSYNC runs in two topologies, each with its own roles:
+
+- **Server Mode** (`-s/--server`): a central **server** stores the canonical
+  copy; each device runs a **client** that uploads/downloads from it. The
+  server is the hub; clients authenticate with an API key. Best for remote /
+  multi-site sync.
+- **LAN Mode** (`--lan-mode`): no server — peers discover each other via
+  mDNS and elect one peer as the **master** (the source of truth); all other
+  peers are **slaves** that sync with the master. Best for devices on the
+  same network.
+
+See [Sync Modes](sync-modes.md#operating-modes-server-vs-lan) for the full
+comparison and [LAN Mode](lan-mode.md) for the P2P architecture and master
+election.
+
+### Can I run multiple hsync instances on the same machine?
+
+Yes. Each invocation is independent: pick a different bucket name (`-b`) and a
+different local directory (`-p`) for each instance. In LAN Mode, use a distinct
+`--lan-group` per instance so the peers don't pair with each other. Each
+instance gets its own `.hsyncstate` / `.hsynctombstones` side-cars (keyed by
+bucket directory) and its own LAN master certificate when needed.
+
+### How do I update HSYNC to a new version?
+
+Re-run the [installer script](installation.md#installer-script-recommended) for
+the new version — it overwrites the binary in place while preserving the
+install directory. For the `.deb` package, upgrade with
+`sudo dpkg -i hsync-client_<version>_*.deb`. The `.hsyncstate` and
+`.hsynctombstones` side-cars are forward-compatible across versions, so no
+re-sync is needed after an update. See [Installation](installation.md).
+
 ## Security & Safety
 
 ### Is my data encrypted in transit?
@@ -80,6 +119,28 @@ Run with `-w` (watch mode) to maintain a live connection and propagate changes i
 real time; a periodic full resync (`HSYNC_RESYNC`) recovers any missed events.
 See [Watch Mode](sync-modes.md#watch-mode--w).
 
+### Why does HSYNC run a periodic resync, and why might the watcher miss events?
+
+Watch mode uses the OS file-system watcher (inotify on Linux, FSEvents on
+macOS, ReadDirectoryChangesW on Windows) to propagate changes in real time.
+The watcher can miss events for several reasons:
+
+- **Kernel queue overflow** — rapid bursts of changes can exceed the
+  inotify event queue, after which the kernel silently drops events.
+- **Watch limit exhaustion (Linux)** — large directory trees need one
+  inotify watch per sub-directory; when `fs.inotify.max_user_watches` is
+  exceeded, the kernel stops emitting events for the un-watched
+  directories.
+- **Rapid successive edits** — a file modified faster than the stability
+  delay may be coalesced or missed.
+
+The **periodic resync** (`HSYNC_RESYNC`, default `300` s, `0` to disable) is
+the safety net: every interval the client runs a full reconciliation of the
+local and remote file lists and recovers anything the watcher missed. On
+Linux the client also warns at startup when the watched tree approaches the
+inotify limit. See
+[Periodic resync and the inotify watch limit](configuration.md#periodic-resync-and-the-inotify-watch-limit-linux).
+
 ### Can I preview what would happen before syncing?
 
 Yes — use `-n` (dry run) to list the operations without changing anything. See
@@ -90,6 +151,24 @@ Yes — use `-n` (dry run) to list the operations without changing anything. See
 Add patterns to a `.hsyncignore` file (gitignore-style), pass extra patterns via
 the CLI, or set `HSYNC_IGNORE_PATTERNS`. See
 [Ignore Files](configuration.md#ignore-files-hsyncignore).
+
+### Are hidden files and directories synced?
+
+By default, **no**. HSYNC automatically excludes:
+
+- Files and directories whose name starts with a dot (`.git/`, `.DS_Store`,
+  `.env`, …)
+- Editor temporary / swap files (`.swp`, `~`, `.bak`, `.tmp`, …)
+- Lock files (`.~lock.*#`) and numbered temp files (`4913`)
+
+The sentinel file `.hsynckeep` (used to keep empty directories) is always
+included regardless of any rule.
+
+To sync hidden files as well, use `--sync-hidden` (or
+`HSYNC_SYNC_HIDDEN=true`): this disables the built-in hidden-file filters and
+leaves only `.hsyncignore` and `--ignore-patterns` in effect. See
+[Default behaviour](configuration.md#default-behaviour) for the full list of
+built-in exclusions.
 
 ## LAN Mode
 
@@ -135,6 +214,23 @@ Large directory trees can exceed the inotify watch limit. Raise
 `fs.inotify.max_user_watches`; the client warns at startup when the limit is
 approached. See
 [inotify watch limit](configuration.md#periodic-resync-and-the-inotify-watch-limit-linux).
+
+### What are the `.hsyncstate` and `.hsynctombstones` files in my sync directory?
+
+They are internal side-cars the client creates at the bucket root to track sync
+state. You normally never touch them:
+
+- **`.hsyncstate`** — records the last-synced hash (base version) for each
+  file, used by the three-way merge to decide whether a local or remote change
+  is a conflict. See
+  [Architecture → State persistence](architecture.md#state-persistence-side-cars).
+- **`.hsynctombstones`** — records deletion markers so a file deleted on the
+  master while a peer was offline is not resurrected on the next
+  reconciliation. See
+  [Architecture → State persistence](architecture.md#state-persistence-side-cars).
+
+Both are excluded from sync and safe to leave in place; deleting them forces a
+full re-reconciliation on the next cycle.
 
 ## Debian Package
 

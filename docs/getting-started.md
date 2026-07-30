@@ -13,6 +13,19 @@ To **run** HSYNC you only need the compiled binary — no Python runtime is
 required. To **build** it from source, see the prerequisites in
 [Installation → Build from source](installation.md#build-from-source).
 
+## Key terms
+
+A few concepts appear throughout the docs; here is a one-line reference:
+
+| Term | Meaning |
+|------|---------|
+| **Bucket** | The unit of synchronization: a named set of files that stays in sync across devices. Selected with `-b/--bucket`, mapped to a local directory with `-p/--path`. |
+| **Server Mode** | Topology where a central **server** holds the canonical copy; each device runs a **client** that uploads/downloads from it. Enabled with `-s/--server`. |
+| **LAN Mode** | Serverless topology where peers discover each other via mDNS and elect a **master** (source of truth); all other peers are **slaves** that sync with the master. Enabled with `--lan-mode`. |
+| **Master / Slave** | LAN Mode roles: the master serves files over HTTPS/WSS and coordinates sync; slaves connect to the master. The master is elected automatically (see [LAN Mode](lan-mode.md#master-election)). |
+| **Watch mode** | Continuous real-time sync enabled with `-w` (implicit in LAN Mode). A periodic full resync acts as a safety net for missed events. |
+| **Side-cars** | Internal files (`.hsyncstate`, `.hsynctombstones`) the client creates at the bucket root to track sync state. Safe to ignore. |
+
 ## Quick Start
 
 ### 1. Get the Client

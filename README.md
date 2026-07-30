@@ -118,9 +118,17 @@ self-signed certificate):
 hsync -s https://localhost:9753 -b mybucket -p /path/to/dir -w
 ```
 
+Or go peer-to-peer on the LAN — no server, no API key: peers discover each
+other via mDNS (run the same command on each device):
+
+```bash
+hsync -b mybucket -p /path/to/dir --lan-mode
+```
+
 See [Installation](docs/installation.md) for all platforms and formats, and
-[Getting Started](docs/getting-started.md) for the first-run walkthrough. To
-build from source instead, see
+[Getting Started](docs/getting-started.md) for the first-run walkthrough. For
+the peer-to-peer setup (master election, pairing, `HSYNC_LAN_KEY`), see
+[LAN Mode](docs/lan-mode.md). To build from source instead, see
 [Installation → Build from source](docs/installation.md#build-from-source).
 
 ## Quick Overview
