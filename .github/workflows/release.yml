@@ -193,8 +193,8 @@ jobs:
       - name: Prepare installer
         run: |
           sed "s/^readonly DEFAULT_VERSION=.*/readonly DEFAULT_VERSION=\"${{ steps.tag.outputs.tag }}\"/" \
-            hsync-client/install.sh > "assets/install-${{ steps.tag.outputs.tag }}.sh"
-          chmod 755 "assets/install-${{ steps.tag.outputs.tag }}.sh"
+            hsync-client/install.sh > "assets/install.sh"
+          chmod 755 "assets/install.sh"
       - name: Generate checksums
         run: |
           cd assets
