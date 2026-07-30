@@ -123,7 +123,7 @@ The `--sync-direction` option controls which operations are executed. Filtering 
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  Sync Direction Filter                    │
+│                  Sync Direction Filter                  │
 ├─────────────────┬───────────────┬───────────────────────┤
 │  Direction      │  Allowed      │  Blocked              │
 ├─────────────────┼───────────────┼───────────────────────┤
