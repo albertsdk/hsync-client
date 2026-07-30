@@ -57,7 +57,7 @@ git commit -m "type(scope): message"
 poetry run pytest
 
 # Run a specific test file
-poetry run pytest tests/test_sync.py
+poetry run pytest tests/test_sync_local.py
 
 # Run with coverage report
 poetry run pytest --cov=hsync_client --cov-report=term-missing
@@ -71,17 +71,21 @@ If the project configures mypy (see `pyproject.toml`), also run
 
 ### Test structure
 
-| Directory | Purpose |
-|-----------|---------|
-| `tests/` | All test files live at the project root |
-| `tests/conftest.py` | Shared fixtures: temp directories, mock server, env vars |
-| `tests/test_sync.py` | Sync engine logic: file comparison, action generation |
-| `tests/test_transfer.py` | Upload/download operations |
-| `tests/test_websocket.py` | WebSocket handler and event processing |
-| `tests/test_lan.py` | LAN mode: discovery, master election, pairing |
-| `tests/test_config.py` | Configuration loading and CLI arg parsing |
-| `tests/test_compression.py` | Zstandard compression/decompression |
-| `tests/test_ignore.py` | `.hsyncignore` pattern matching |
+All tests live at the project root under `tests/`. The suite is organised by
+area; each file name starts with `test_` and groups related functionality.
+
+| Area | Key files | What they cover |
+|------|-----------|-----------------|
+| **Sync engine** | `test_sync_local.py`, `test_sync_remote.py`, `test_sync_update.py`, `test_sync_workers.py`, `test_sync_permanent_failures.py` | File comparison, action generation, parallel transfers, permanent-failure skip-set |
+| **Transfer** | `test_transfer_download.py`, `test_transfer_upload.py`, `test_transfer_status.py` | Upload/download, resumable transfers, status tracking |
+| **WebSocket / events** | `test_websocket_events.py`, `test_events.py`, `test_event_queue.py`, `test_event_dispatch_*.py` | WS event processing, event queue, inbound dispatch (delete/rename/symlink) |
+| **LAN mode** | `test_lan_peer.py`, `test_lan_peer_manager.py`, `test_lan_handler_advanced.py`, `test_lan_sync.py`, `test_lan_server_*.py`, `test_lan_websocket_*.py`, `test_lan_utils.py` | Discovery, election, master server, slave client, WSS, security, thread cap |
+| **Security** | `test_security_inbound.py`, `test_pinning.py`, `test_ssl_utils.py` | Inbound path validation, TOFU pinning, SSL utils |
+| **Config / CLI** | `test_config.py`, `test_cli.py`, `test_validators.py`, `test_exceptions.py` | Config loading, CLI parsing, validators, exception hierarchy |
+| **Delta transfer** | `test_delta_transfer.py` | rsync-style block sync |
+| **Models** | `test_models_*.py` | Common model wrappers (file, dir, event, sync_action, symlink) |
+| **Other** | `test_compression.py`, `test_edge_cases.py`, `test_stdin_commands.py`, `test_logger.py`, `test_coverage_gaps.py`, `test_file_event_handler_base.py`, `test_main_logic_*.py`, `test_utils.py`, `test_retry.py` | Compression, edge cases, stdin protocol, logging, handler base, orchestrator, utils, retry |
+| **Shared** | `tests/conftest.py` | Shared fixtures: temp directories, mock server, env vars |
 
 ### Writing new tests
 
@@ -101,11 +105,30 @@ cd ../hsync-common && poetry run pytest && cd ../hsync-client && poetry run pyte
 
 ## Release Process
 
+Releases are **tag-driven**: pushing a `vX.Y.Z` tag triggers the
+`release.yml` GitHub Actions workflow, which gates on lint+test, then builds
+native binaries on per-OS matrix runners (`linux-amd64`, `linux-arm64`,
+`darwin-amd64`, `darwin-arm64`, `windows-amd64`) plus the Linux-only
+`deb-all`/`wd-os5-all` packages, and publishes them with `SHA256SUMS` to the
+GitHub Release. macOS binaries are unsigned (documented `xattr` workaround in
+`docs/installation.md`).
+
 ### Version bump
 
-Update the version in `pyproject.toml` and `hsync_client/__init__.py`.
+Use the wrapper script to bump the version across `pyproject.toml` and
+`hsync_client/__init__.py` in one step:
 
-### Build binaries
+```bash
+./bump-version.sh 1.2.3
+```
+
+The script delegates to the centralized Python version bumper in
+`hsync-common/scripts/dev/bump-python-version.sh`.
+
+### Build binaries (local / manual)
+
+The release workflow builds everything automatically. To build locally for
+testing or for a non-release platform:
 
 ```bash
 # Build for the current platform
@@ -116,19 +139,30 @@ Update the version in `pyproject.toml` and `hsync_client/__init__.py`.
 ./compile.sh --target wd-os5-all    # .bin for all WD OS5 models
 ```
 
-### Create GitHub Release
+### Create a release
 
-1. Go to [Releases](https://github.com/albertobasso/hsync-client/releases)
-2. Click "Draft a new release"
-3. Tag: `v1.0.1`
-4. Title: `v1.0.1`
-5. Upload the built artifacts (binaries, `.deb`, `.bin` files)
-6. Click "Generate release notes" for the auto-generated changelog
-7. Publish
+1. Ensure the working tree is clean and on `main`.
+2. Bump the version (see [Version bump](#version-bump)) and commit the change.
+3. Tag the commit and push the tag:
+
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+4. The `release.yml` workflow runs automatically: it builds all assets,
+   generates `SHA256SUMS`, and creates the GitHub Release with
+   auto-generated release notes.
+5. Verify the release on the
+   [Releases page](https://github.com/albertobasso/hsync-client/releases).
+
+> You can also trigger a build-only run (no tag, no Release) via
+> `workflow_dispatch` on the Actions tab — useful for testing build changes
+> without cutting a release.
 
 ### Post-release checklist
 
-- [ ] All platform binaries are uploaded to the release
+- [ ] All platform binaries and `SHA256SUMS` are uploaded to the release
 - [ ] `.deb` packages are tested on a clean Debian/Ubuntu install
 - [ ] Release notes are published on GitHub
 - [ ] `docs/configuration.md` is up to date with any new options
