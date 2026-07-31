@@ -94,12 +94,12 @@ class TestLANFileEventHandler:
             # Should broadcast the symlink event
             ws_server.broadcast_sync.assert_called_once()
 
-    def test_on_created_hidden_directory(self, handler, ws_server, tmp_path):
-        """Test that hidden directories are ignored."""
-        hidden_dir = tmp_path / ".hidden"
-        hidden_dir.mkdir()
+    def test_on_created_os_cache_directory(self, handler, ws_server, tmp_path):
+        """Test that OS cache directories (e.g. .DS_Store) are ignored."""
+        cache_dir = tmp_path / ".DS_Store"
+        cache_dir.mkdir()
 
-        event = DirCreatedEvent(str(hidden_dir))
+        event = DirCreatedEvent(str(cache_dir))
 
         config = {
             "CID": "test-client",
@@ -247,19 +247,19 @@ class TestLANFileEventHandler:
             handler._broadcast_event(event)
             ws_server.broadcast_sync.assert_called_once()
 
-    def test_on_any_event_hidden_dir_skipped(self, handler, tmp_path):
-        """Test on_any_event returns early for hidden directory."""
-        hidden = tmp_path / ".hidden"
-        hidden.mkdir()
-        event = DirCreatedEvent(str(hidden))
+    def test_on_any_event_os_cache_dir_skipped(self, handler, tmp_path):
+        """Test on_any_event returns early for OS cache directory."""
+        cache = tmp_path / ".DS_Store"
+        cache.mkdir()
+        event = DirCreatedEvent(str(cache))
         # Should not raise
         handler.on_any_event(event)
 
-    def test_on_any_event_hidden_file_skipped(self, handler, tmp_path):
-        """Test on_any_event returns early for hidden file."""
-        hidden = tmp_path / ".hidden_file"
-        hidden.write_text("x")
-        event = FileCreatedEvent(str(hidden))
+    def test_on_any_event_os_cache_file_skipped(self, handler, tmp_path):
+        """Test on_any_event returns early for OS cache file."""
+        cache = tmp_path / "Thumbs.db"
+        cache.write_text("x")
+        event = FileCreatedEvent(str(cache))
         handler.on_any_event(event)
 
     def test_on_any_event_visible_logs(self, handler, tmp_path):
@@ -400,9 +400,9 @@ class TestLANFileEventHandler:
         handler.on_closed(event)
         ws_server.broadcast_sync.assert_not_called()
 
-    def test_on_closed_hidden_file_skipped(self, handler, ws_server, tmp_path):
-        """Test on_closed skips hidden files."""
-        event = FileModifiedEvent(str(tmp_path / ".hidden"))
+    def test_on_closed_os_cache_file_skipped(self, handler, ws_server, tmp_path):
+        """Test on_closed skips OS cache files."""
+        event = FileModifiedEvent(str(tmp_path / "Thumbs.db"))
         handler.on_closed(event)
         ws_server.broadcast_sync.assert_not_called()
 
@@ -445,9 +445,9 @@ class TestLANFileEventHandler:
         handler.on_moved(event)
         ws_server.broadcast_sync.assert_not_called()
 
-    def test_on_moved_hidden_to_hidden_dir(self, handler, ws_server, tmp_path):
-        """Test on_moved returns for hidden-to-hidden directory."""
-        event = DirMovedEvent(str(tmp_path / ".a"), str(tmp_path / ".b"))
+    def test_on_moved_os_cache_to_os_cache_dir(self, handler, ws_server, tmp_path):
+        """Test on_moved returns for OS-cache-to-OS-cache directory."""
+        event = DirMovedEvent(str(tmp_path / ".DS_Store"), str(tmp_path / "Thumbs.db"))
         config = {
             "CID": "c",
             "LOCAL_BUCKET": str(tmp_path),
@@ -459,11 +459,11 @@ class TestLANFileEventHandler:
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_not_called()
 
-    def test_on_moved_hidden_to_visible_dir(self, handler, ws_server, tmp_path):
-        """Test on_moved hidden->visible dir triggers on_created."""
+    def test_on_moved_os_cache_to_visible_dir(self, handler, ws_server, tmp_path):
+        """Test on_moved OS-cache->visible dir triggers on_created."""
         visible = tmp_path / "visible"
         visible.mkdir()
-        event = DirMovedEvent(str(tmp_path / ".hidden"), str(visible))
+        event = DirMovedEvent(str(tmp_path / ".DS_Store"), str(visible))
         config = {
             "CID": "c",
             "LOCAL_BUCKET": str(tmp_path),
@@ -478,9 +478,9 @@ class TestLANFileEventHandler:
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_called_once()
 
-    def test_on_moved_visible_to_hidden_dir(self, handler, ws_server, tmp_path):
-        """Test on_moved visible->hidden dir triggers on_deleted."""
-        event = DirMovedEvent(str(tmp_path / "visible"), str(tmp_path / ".hidden"))
+    def test_on_moved_visible_to_os_cache_dir(self, handler, ws_server, tmp_path):
+        """Test on_moved visible->OS-cache dir triggers on_deleted."""
+        event = DirMovedEvent(str(tmp_path / "visible"), str(tmp_path / ".DS_Store"))
         config = {
             "CID": "c",
             "LOCAL_BUCKET": str(tmp_path),
@@ -527,9 +527,9 @@ class TestLANFileEventHandler:
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_called_once()
 
-    def test_on_moved_file_hidden_src(self, handler, ws_server, tmp_path):
-        """Test on_moved returns when file source is hidden."""
-        event = FileMovedEvent(str(tmp_path / ".hidden"), str(tmp_path / "visible"))
+    def test_on_moved_file_os_cache_src(self, handler, ws_server, tmp_path):
+        """Test on_moved returns when file source is OS cache."""
+        event = FileMovedEvent(str(tmp_path / "Thumbs.db"), str(tmp_path / "visible"))
         config = {"CID": "c", "LOCAL_BUCKET": str(tmp_path), "REMOTE_BUCKET": "r"}
         with patch("hsync_client.file_event_handler.CONFIG", config):
             handler.on_moved(event)
@@ -570,9 +570,9 @@ class TestLANFileEventHandler:
             handler.on_moved(event)
             ws_server.broadcast_sync.assert_not_called()
 
-    def test_on_deleted_hidden_directory_skipped(self, handler, ws_server, tmp_path):
-        """Test on_deleted skips hidden directories."""
-        event = DirDeletedEvent(str(tmp_path / ".hidden"))
+    def test_on_deleted_os_cache_directory_skipped(self, handler, ws_server, tmp_path):
+        """Test on_deleted skips OS cache directories."""
+        event = DirDeletedEvent(str(tmp_path / ".DS_Store"))
         config = {
             "CID": "c",
             "LOCAL_BUCKET": str(tmp_path),
@@ -583,9 +583,9 @@ class TestLANFileEventHandler:
             handler.on_deleted(event)
             ws_server.broadcast_sync.assert_not_called()
 
-    def test_on_deleted_hidden_file_skipped(self, handler, ws_server, tmp_path):
-        """Test on_deleted skips hidden files."""
-        event = FileDeletedEvent(str(tmp_path / ".secret"))
+    def test_on_deleted_os_cache_file_skipped(self, handler, ws_server, tmp_path):
+        """Test on_deleted skips OS cache files."""
+        event = FileDeletedEvent(str(tmp_path / "Thumbs.db"))
         config = {
             "CID": "c",
             "LOCAL_BUCKET": str(tmp_path),

@@ -48,7 +48,6 @@ from hsync_client.config import (
     get_resync,
     get_server_url,
     get_stability_delay,
-    get_sync_hidden,
     load_env_file,
     set_config,
     set_debug,
@@ -537,7 +536,6 @@ def run_sync(
     auto_confirm: bool = False,
     min_free_disk_space: int = 500,
     max_download_size: int = MAX_DOWNLOAD_SIZE_MB_DEFAULT,
-    sync_hidden: bool = False,
     ignore_patterns: list[str] | None = None,
     max_concurrent_transfers: int | None = None,
     mass_delete_guard: bool | None = None,
@@ -737,7 +735,6 @@ def run_sync(
         # Absolute cap (bytes) on a single inbound file, applied on top of the
         # peer-declared size (anti decompression-bomb); 0 = disabled.
         "MAX_DOWNLOAD_SIZE": max_download_size * 1024 * 1024,
-        "SYNC_HIDDEN": sync_hidden or get_sync_hidden(),
         "IGNORE_PATTERNS": ignore_patterns
         if ignore_patterns is not None
         else get_ignore_patterns(),
@@ -767,7 +764,6 @@ def run_sync(
     # is_hidden_file / is_hidden_dir automatically benefit from the new filtering.
     _matcher = IgnoreMatcher(
         bucket_root=local_path,
-        include_hidden=config["SYNC_HIDDEN"],
         extra_patterns=config["IGNORE_PATTERNS"],
     )
     set_active_matcher(_matcher)

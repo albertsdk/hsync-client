@@ -259,11 +259,22 @@ class TestEdgeCasesFileOperations:
         assert " " in file_obj.name
 
     def test_hidden_file_detection(self):
-        """Test hidden file detection patterns."""
+        """Test hidden file detection patterns.
+
+        Following the industry standard, dotfiles are NOT excluded by
+        default: only OS cache files and editor/office temporary files
+        are filtered.
+        """
         from hsync_common.models.file import is_hidden_file
 
-        assert is_hidden_file(".hidden") is True
+        # Dotfiles are NOT hidden (industry standard)
+        assert is_hidden_file(".hidden") is False
+        assert is_hidden_file(".env") is False
+        # Regular files are not hidden
         assert is_hidden_file("file.txt") is False
+        # OS cache / temp / backup files ARE hidden
+        assert is_hidden_file(".DS_Store") is True
+        assert is_hidden_file("Thumbs.db") is True
         assert is_hidden_file("backup~") is True
         assert is_hidden_file("file.txt.bak") is True
         assert is_hidden_file("file.txt.tmp") is True
