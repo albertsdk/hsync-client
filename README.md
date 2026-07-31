@@ -27,7 +27,7 @@ It works in two ways:
 - [Why HSYNC?](#why-hsync)
 - [Features](#features)
 - [Quick Start](#quick-start)
-- [Quick Overview](#quick-overview)
+- [Server Mode Overview](#server-mode-overview)
 - [LAN Mode (P2P) Overview](#lan-mode-p2p-overview)
 - [Documentation](#documentation)
 - [Version](#version)
@@ -137,7 +137,7 @@ the peer-to-peer setup (master election, pairing, `HSYNC_LAN_KEY`), see
 [LAN Mode](docs/lan-mode.md). To build from source instead, see
 [Installation → Build from source](docs/installation.md#build-from-source).
 
-## Quick Overview
+## Server Mode Overview
 
 ```mermaid
 flowchart LR
@@ -169,7 +169,7 @@ flowchart LR
     style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
 ```
 
-**Sync Flow (A → B):**
+**Server Mode Flow (A → B):**
 1. **① Detect** — Client A detects file change via watchdog
 2. **② Upload** — Client A uploads file to server
 3. **③ Notify** — Server broadcasts event to Client B via WebSocket
@@ -224,6 +224,7 @@ In LAN mode, the master is the source of truth and slaves sync from it. Both dir
 - [Getting Started](docs/getting-started.md) - Build and run
 - [Configuration](docs/configuration.md) - Environment variables and CLI options (complete reference)
 - [Sync Modes](docs/sync-modes.md) - Single, Watch, LAN modes
+- [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
 - [Architecture](docs/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/adr/README.md) - Why the stable, cross-project decisions were made
