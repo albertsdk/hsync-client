@@ -26,9 +26,9 @@ Syncthing and `git merge-base`.
 
 ```
         ┌─────────────┐
-        │  Common      │
-        │  Ancestor    │  ← "base" (hash recorded after last successful sync)
-        │  hash=A      │
+        │  Common     │
+        │  Ancestor   │  ← "base" (hash recorded after last successful sync)
+        │  hash=A     │
         └──────┬──────┘
                │
        ┌───────┴───────┐
