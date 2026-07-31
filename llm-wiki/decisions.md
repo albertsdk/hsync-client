@@ -17,7 +17,7 @@ implements it, plus client-only operational rules.
 | [0006 master-authoritative-conflict-model](../../hsync-common/docs/internal/adr/0006-master-authoritative-conflict-model.md) | `_compare_files` + base via `sync_state.py`; `_save_conflict_copy` (`sync.py:905`) |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
-in [`LAN_PROTOCOL.md`](../../hsync-common/docs/LAN_PROTOCOL.md) and maps to
+in [`lan-protocol.md`](../../hsync-common/docs/lan-protocol.md) and maps to
 `pinning.py` + `ssl_utils.py` ([lan-mode.md](modules/lan-mode.md)).
 
 ## Client-only operational rules
