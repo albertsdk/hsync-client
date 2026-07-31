@@ -69,7 +69,7 @@ and caveats to watch for.
 | Syncthing | HSYNC |
 |-----------|-------|
 | P2P only (no central server) | Server mode + LAN P2P mode |
-| Custom protocol (BEP) on port 22000 | HTTP/HTTPS on port 80/443 |
+| Custom protocol (BEP) on port 22000 | HTTP/HTTPS on port 9753 or custom port |
 | Global discovery via relays | Central server or mDNS LAN discovery |
 | File versioning built-in | Conflict files (.hsyncconflict-*) |
 | Web GUI for management | CLI + desktop GUI (hsync-desktop) |
