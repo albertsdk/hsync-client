@@ -226,7 +226,7 @@ In LAN mode, the master is the source of truth and slaves sync from it. Both dir
 - [Sync Modes](docs/sync-modes.md) - Single, Watch, LAN modes
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [LAN Mode](docs/lan-mode.md) - P2P synchronization details
-- [Architecture](docs/architecture.md) - Internal design
+- [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
