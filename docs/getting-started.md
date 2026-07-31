@@ -100,7 +100,47 @@ cat /tmp/hsync-b/hello.txt   # → hello hsync
 For continuous, real-time sync, add `-w` to both commands and edit files in
 either folder — changes propagate within seconds.
 
-### 5. What to expect in LAN Mode
+### 5. Try it end-to-end (LAN Mode, local)
+
+The fastest way to see LAN P2P sync in action is to run two clients on the same
+machine (or two devices on the same network). No server, no API key — peers
+discover each other via mDNS.
+
+Open **two terminals** and run:
+
+```bash
+# 1. Create two empty folders to sync
+mkdir -p /tmp/hsync-lan-a /tmp/hsync-lan-b
+
+# 2. Put a file in the first folder
+echo "hello hsync lan" > /tmp/hsync-lan-a/hello.txt
+
+# 3. Terminal 1 — force this peer to be the master (it holds the canonical data,
+#    so no deletion-risk warning is shown) and start LAN Mode
+hsync -b demo-lan -p /tmp/hsync-lan-a --lan-mode --force-master -y
+
+# 4. Terminal 2 — start a second peer; it discovers the master via mDNS and
+#    downloads hello.txt
+hsync -b demo-lan -p /tmp/hsync-lan-b --lan-mode -y
+
+# 5. Verify the file arrived
+cat /tmp/hsync-lan-b/hello.txt   # → hello hsync lan
+```
+
+Watch mode is **implicit** in LAN Mode: edit or create a file in either folder
+and the change propagates to the other peer in real time. Press `Ctrl+C` in
+both terminals to stop.
+
+> **Why `--force-master` here?** The first peer holds the file, so it is the
+> authoritative source. Forcing it to be master avoids the initial
+> deletion-risk warning on a non-empty directory. On a real LAN with multiple
+> devices, omit `--force-master` and let master election happen automatically
+> (see [LAN Mode → Master Election](lan-mode.md#master-election)).
+
+See [LAN Mode](lan-mode.md) for the P2P architecture, master election, the
+deletion-risk warning, and the optional `HSYNC_LAN_KEY` shared secret.
+
+### 6. What to expect in LAN Mode
 
 The first time you run `--lan-mode` on a non-empty directory, the client prints
 a **deletion-risk warning** and asks for confirmation: files that exist only on
