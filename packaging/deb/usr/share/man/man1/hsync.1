@@ -191,9 +191,6 @@ Minimum free disk space in MB before sync is paused
 .BR 500 ;
 range: 0\(en100000, 0 = disabled).
 .TP
-.B \-\-sync\-hidden
-Include hidden/system files in synchronization (disables built-in exclusion filters).
-.TP
 .BR \-\-ignore\-patterns =\fIPATTERNS\fP
 Comma-separated extra gitignore-style patterns.
 Layered on
@@ -222,6 +219,12 @@ set to 0 to disable the percentage threshold).
 Maximum number of concurrent file transfers (default:
 .BR 5 ;
 range: 1\(en20).
+.TP
+.BR \-\-max\-download\-size =\fIMB\fP
+Maximum size in MB of a single inbound file (download or received LAN upload),
+enforced as an absolute cap on top of the peer-declared size (default:
+.BR 10240 ,
+10 GB; 0 = disabled).
 .
 .\" --- LAN Mode ---
 .SS LAN Mode
@@ -242,9 +245,6 @@ Time to wait for initial LAN peer discovery
 Group name for LAN peer filtering. Only peers with the same group
 will discover each other.
 .TP
-.B \-\-no\-lan\-https
-Disable HTTPS for LAN mode (use plain HTTP). Enabled by default.
-.TP
 .B \-\-no\-lan\-persistent
 Exit when no LAN peers are found instead of waiting indefinitely.
 .TP
@@ -253,6 +253,10 @@ Force this client to always act as master in LAN mode.
 .TP
 .B \-\-never\-master
 Never become master in LAN mode (always remain a slave).
+.TP
+.B \-\-require\-pairing
+Strict pairing: refuse a first-seen LAN master certificate until it is
+confirmed out of band (disables Trust-On-First-Use auto-pinning).
 .
 .\" --- Output ---
 .SS Output
@@ -283,11 +287,11 @@ Skip interactive confirmation prompts (warnings are still shown).
 .BR \-\-env\-file =\fIPATH\fP
 Load environment variables from a file (KEY=VALUE, one per line).
 .TP
+.BR \-\-capabilities\-json
+Print the binary's capabilities document as JSON and exit.
+.TP
 .BR \-V ", " \-\-version
 Show version and exit.
-.TP
-.BR \-h ", " \-\-help
-Show the built-in help and exit.
 .
 .\" ---------------------------------------------------------------------
 .SH SYNCHRONISATION DIRECTIONS
@@ -320,9 +324,8 @@ using
 One peer is dynamically elected as
 .BR master .
 The master serves the bucket to other peers and acts as the source
-of truth.  Slaves connect to the master via HTTPS (or plain HTTP if
-.B \-\-no\-lan\-https
-is given).
+of truth.  Slaves connect to the master via HTTPS (LAN communication
+is always encrypted; self-signed certificates are generated per master).
 .
 .P
 A shared secret can be set via the
@@ -351,21 +354,6 @@ Shared secret for LAN mode peer authentication.
 .B HSYNC_MAX_CONCURRENT_TRANSFERS
 Maximum number of concurrent file transfers (default:
 .BR 5 ).
-.TP
-.B HSYNC_DELTA_ENABLED
-Enable delta transfer (rsync-style block sync) for large files with small changes
-(default:
-.BR true ).
-.TP
-.B HSYNC_DELTA_MIN_FILE_SIZE
-Minimum file size in bytes for delta transfer in server mode (default:
-.BR 262144 ;
-256 KB).
-.TP
-.B HSYNC_DELTA_MIN_FILE_SIZE_LAN
-Minimum file size in bytes for delta transfer in LAN mode (default:
-.BR 1048576 ;
-1 MB).
 .TP
 .B HSYNC_DELTA_ENABLED
 Enable rsync-style delta transfer for large files with small changes (default:
