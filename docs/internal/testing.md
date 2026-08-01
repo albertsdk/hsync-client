@@ -20,26 +20,26 @@ tests, how to write new tests, and cross-project testing with `hsync-common`.
 ## Running tests
 
 ```bash
-# Install dev dependencies
-poetry install --with dev
+# Install dev dependencies (already set up via committed virtualenv)
+# If needed: poetry install
 
 # Run the full suite
-poetry run pytest
+.venv/bin/python -m pytest
 
 # Run a specific file
-poetry run pytest tests/test_sync.py
+.venv/bin/python -m pytest tests/test_sync_local.py
 
 # Run with verbose output
-poetry run pytest -v
+.venv/bin/python -m pytest -v
 
 # Run with coverage
-poetry run pytest --cov=hsync_client --cov-report=term-missing
+.venv/bin/python -m pytest --cov=hsync_client --cov-report=term-missing
 
 # Run only tests matching a pattern
-poetry run pytest -k "conflict"
+.venv/bin/python -m pytest -k "conflict"
 
 # Stop on first failure
-poetry run pytest -x
+.venv/bin/python -m pytest -x
 ```
 
 ## Test structure
@@ -47,18 +47,62 @@ poetry run pytest -x
 ```
 tests/
 ├── __init__.py
-├── conftest.py               # Shared fixtures and test configuration
-├── test_sync.py              # Sync engine: file comparison, action generation
-├── test_transfer.py          # Upload/download operations
-├── test_websocket.py         # WebSocket handler and event processing
-├── test_lan.py               # LAN mode: discovery, master election, pairing
-├── test_config.py            # Configuration loading and CLI arg parsing
-├── test_compression.py       # Zstandard compression/decompression
-├── test_ignore.py            # .hsyncignore pattern matching
-├── test_cli.py               # CLI argument parsing
-├── test_main_logic.py        # Core sync orchestration
-├── test_event_queue.py       # Event queuing and retry logic
-└── test_conflict.py          # Three-way merge and conflict resolution
+├── conftest.py                         # Shared fixtures and test configuration
+├── test_sync_local.py                  # Local file comparison and action generation
+├── test_sync_remote.py                 # Remote file comparison
+├── test_sync_update.py                 # File update detection
+├── test_sync_workers.py                # Parallel transfer workers
+├── test_sync_permanent_failures.py     # Permanent-failure skip-set
+├── test_transfer_download.py           # Download operations
+├── test_transfer_upload.py             # Upload operations
+├── test_transfer_status.py             # Transfer status tracking
+├── test_websocket_events.py            # WebSocket event processing
+├── test_events.py                      # Event models and processing
+├── test_event_queue.py                 # Event queuing and retry logic
+├── test_event_dispatch_delete.py       # Inbound delete event dispatch
+├── test_event_dispatch_rename.py       # Inbound rename event dispatch
+├── test_event_dispatch_symlink.py      # Inbound symlink event dispatch
+├── test_lan_peer.py                    # LAN peer model and logic
+├── test_lan_peer_manager.py            # LAN peer manager
+├── test_lan_handler_advanced.py        # Advanced LAN handler scenarios
+├── test_lan_sync.py                    # LAN sync operations
+├── test_lan_server_endpoints.py        # LAN server endpoints
+├── test_lan_server_https.py            # LAN server HTTPS setup
+├── test_lan_server_security.py         # LAN server security
+├── test_lan_server_thread_cap.py       # LAN server thread cap
+├── test_lan_utils.py                   # LAN utility functions
+├── test_lan_websocket_handle.py        # LAN WebSocket handle
+├── test_lan_websocket_handler.py       # LAN WebSocket handler
+├── test_lan_websocket_server.py        # LAN WebSocket server
+├── test_lan_websocket_slave.py         # LAN WebSocket slave client
+├── test_config.py                      # Configuration loading and CLI arg parsing
+├── test_compression.py                 # Zstandard compression/decompression
+├── test_ignore.py                      # .hsyncignore pattern matching
+├── test_cli.py                         # CLI argument parsing
+├── test_validators.py                  # Config validators
+├── test_exceptions.py                  # Exception hierarchy
+├── test_main_logic_deletion_risk.py    # Core sync orchestration: deletion risk
+├── test_main_logic_lan.py              # Core sync orchestration: LAN mode
+├── test_main_logic_preview.py          # Core sync orchestration: preview mode
+├── test_main_logic_sync.py             # Core sync orchestration: sync flow
+├── test_event_dispatch_base.py         # Base event dispatch logic
+├── test_file_event_handler.py          # File event handler
+├── test_logger.py                      # Logging configuration
+├── test_edge_cases.py                  # Edge cases and corner scenarios
+├── test_stdin_commands.py              # Stdin protocol commands
+├── test_coverage_gaps.py               # Coverage gap fillers
+├── test_models_file.py                 # File model wrapper
+├── test_models_dir.py                  # Directory model wrapper
+├── test_models_event.py                # Event model wrapper
+├── test_models_sync_action.py          # SyncAction model wrapper
+├── test_models_symlink.py              # Symlink model wrapper
+├── test_security_inbound.py            # Inbound path validation
+├── test_pinning.py                     # TOFU certificate pinning
+├── test_ssl_utils.py                   # SSL utilities
+├── test_retry.py                       # Retry logic
+├── test_utils.py                       # General utilities
+├── test_delta_transfer.py              # Delta transfer (rsync-style)
+└── test_conflict.py                    # Three-way merge and conflict resolution
 ```
 
 ## Fixtures
@@ -199,10 +243,10 @@ The client depends on `hsync-common` models. When changing models in
 
 ```bash
 # From hsync-common
-cd ../hsync-common && poetry run pytest
+cd ../hsync-common && .venv/bin/python -m pytest
 
 # From hsync-client
-cd ../hsync-client && poetry run pytest
+cd ../hsync-client && .venv/bin/python -m pytest
 ```
 
 Model changes that break the client are caught by sync engine tests and
