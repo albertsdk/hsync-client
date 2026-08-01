@@ -58,6 +58,13 @@ in [`lan-protocol.md`](../../hsync-common/docs/lan-protocol.md) and maps to
   — PyInstaller cannot cross-compile) plus the Linux-only `deb-all`/`wd-os5-all`
   packages, and publishes them with `SHA256SUMS` to the GitHub Release. macOS
   binaries are unsigned (documented `xattr` workaround in `docs/installation.md`).
+- **`install.sh --version latest`**: the installer resolves the latest stable
+  release by following the `github.com/<repo>/releases/latest` redirect with
+  `curl -fsSIL -w %{url_effective}` (no GitHub API, no rate limit; drafts and
+  pre-releases are excluded by GitHub), validates the `vX.Y.Z` tag, then proceeds
+  exactly as for a pinned version (`install.sh`, `resolve_latest_version`).
+  User docs point at `releases/latest/download/install.sh` so the bootstrap
+  needs no version either.
 - **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
   (`.venv/Scripts` vs `.venv/bin`, `compile.sh:92`) and `--strip` is omitted on
   Windows (`STRIP_FLAG`, `compile.sh:99`) since binutils is unavailable there.

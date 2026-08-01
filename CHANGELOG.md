@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`install.sh --version latest`**: the installer now accepts `latest` as the
+  version value, resolving the newest stable GitHub Release automatically
+  (via the `releases/latest` redirect; drafts and pre-releases are excluded),
+  so users no longer need to know a release tag in advance. The installation
+  guide now points at `releases/latest/download/install.sh` for a
+  version-free bootstrap.
 - **Installer script** (`install.sh`): a self-contained installer for Linux and
   macOS that detects the host platform, downloads the correct prebuilt binary
   from GitHub Releases, verifies its SHA-256 checksum, installs it to

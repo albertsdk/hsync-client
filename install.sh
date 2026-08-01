@@ -20,7 +20,8 @@ Install the HSYNC client binary.
 Usage: ./install.sh [options]
 
 Options:
-  --version VERSION       Release version to install (default: ${DEFAULT_VERSION})
+  --version VERSION       Release version to install, or 'latest' to resolve the
+                          latest stable release automatically (default: ${DEFAULT_VERSION})
   --install-dir PATH      Directory where the binary is placed
                           (default: ${DEFAULT_INSTALL_DIR})
   --symlink-dir PATH      Directory for the hsync symlink
@@ -47,7 +48,18 @@ require_command() {
 
 validate_version() {
     [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] ||
-        fail "invalid version '$1'; expected vX.Y.Z"
+        fail "invalid version '$1'; expected vX.Y.Z or 'latest'"
+}
+
+resolve_latest_version() {
+    local url effective tag
+    url="https://github.com/${REPO}/releases/latest"
+    effective="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "${url}")" ||
+        fail "could not resolve the latest release from ${url}"
+    tag="${effective##*/}"
+    [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] ||
+        fail "unexpected latest release tag '${tag}' from ${url}"
+    printf '%s' "${tag}"
 }
 
 parse_args() {
@@ -126,6 +138,10 @@ main() {
         SYMLINK_DIR="$(pwd)/${SYMLINK_DIR}"
     fi
 
+    if [[ "${VERSION}" == "latest" ]]; then
+        require_command curl
+        VERSION="$(resolve_latest_version)"
+    fi
     validate_version "${VERSION}"
 
     local target
