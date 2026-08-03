@@ -44,6 +44,7 @@ flowchart TB
 | **Directional Sync** | Upload-only (backup) or download-only (mirror) via `--sync-direction` |
 | **Periodic Resync** | Configurable interval for full reconciliation as a safety net |
 | **Mass Deletion Guard** | Prevents accidental wipe when the server exposes an empty bucket |
+| **Auto-Tuning** | Environment-adaptive defaults for HTTP timeout, retry, and concurrency |
 
 ## How It Works
 
