@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/hsync-logo-horizontal.svg" alt="HSYNC logo" width="480">
+</p>
+
 # HSYNC Client
 
 **HSYNC Client** is the tool you run on each device to keep a local folder in sync.
