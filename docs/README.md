@@ -72,6 +72,7 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | [internal/lan-internals.md](internal/lan-internals.md) | Deep LAN protocol internals: diagrams, HTTP/WS API, echo suppression. |
 | [internal/developer.md](internal/developer.md) | Internal implementation details: module structure, performance optimizations, error handling. |
 | [internal/testing.md](internal/testing.md) | Test suite guide: structure, fixtures, mocking, cross-project testing. |
+| [internal/autotune-design.md](internal/autotune-design.md) | Design proposal (not yet implemented): environment-adaptive defaults for HTTP timeout, retry delay, and transfer concurrency. |
 
 ## Related projects
 

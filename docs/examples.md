@@ -90,6 +90,18 @@ HSYNC_IGNORE_DELETE=true hsync -s "$HSYNC_SERVER" -b laptop-backup \
       -p ~ -w --sync-direction upload-only
 ```
 
+> **Note on the mass-deletion guard**: do **not** disable it with
+> `--no-mass-delete-guard` for one-way backups to a NAS or server. The guard
+> is good protection against source-disk corruption: if the local disk
+> silently loses files in bulk, the guard blocks the deletion from
+> propagating to the backup copy. That said, for **pure backups** the
+> industry-standard approach is `--ignore-delete` shown above: if a file
+> disappears locally (by accident or malice), its remote safety copy stays
+> intact. The guard only stops deletions *over the threshold*;
+> `--ignore-delete` disables remote deletion entirely — the append-only
+> semantics a backup target should have. See
+> [Mass-Deletion Safety Guard](configuration.md#mass-deletion-safety-guard).
+
 ### 1.4 Read-only mirror from the server
 
 Pull files from a shared bucket without ever uploading local edits.
@@ -198,6 +210,12 @@ hsync -b laptop-backup -p ~ --lan-mode --sync-direction upload-only
 > **Note**: `--force-master` cannot be combined with
 > `--sync-direction upload-only`/`download-only` on the same peer — the
 > master must remain bidirectional. Apply the direction on the slaves.
+
+> **Backup tip**: as in [1.3](#13-push-only-backup-to-a-remote-server), keep
+> the mass-deletion guard **enabled** on the laptop (it protects against
+> source-disk corruption) and prefer `--ignore-delete` for pure backups —
+> a file that disappears locally, by accident or malice, keeps its copy on
+> the NAS intact.
 
 ### 2.4 Keep a peer in sync but never let it become master
 
@@ -328,7 +346,38 @@ runs without prompting — required for cron jobs, systemd services, CI:
 hsync -s "$HSYNC_SERVER" -b mybucket -p ~/Data -w -y
 ```
 
-### 3.7 Skip SSL verification (development only)
+### 3.7 CI/CD pipelines, automation scripts and ephemeral deployments
+
+In CI/CD pipelines, automation scripts and ephemeral/automated deployments
+(build agents, containers, temporary environments) it is perfectly normal to
+wipe entire directories — build folders, `node_modules`, cache directories —
+and recreate them from scratch on every run. If the mass-deletion guard is
+left active, the pipeline will **constantly trip at the first deep-clean
+cycle**: the guard sees thousands of missing files as a suspicious mass
+deletion, pauses the sync and waits for a manual resume that will never
+come in an unattended run, failing the job.
+
+Disable the guard together with the interactive confirmation:
+
+```bash
+hsync -s "$HSYNC_SERVER" -b build-artifacts -p "$WORKSPACE/dist" \
+      --no-mass-delete-guard --yes
+```
+
+Equivalent via environment variables (handy in pipeline definitions):
+
+```bash
+HSYNC_MASS_DELETE_GUARD=false hsync -s "$HSYNC_SERVER" \
+      -b build-artifacts -p "$WORKSPACE/dist" --yes
+```
+
+> **Why this is safe here**: the synced content is regenerated from scratch
+> by the pipeline itself, so a full delete-and-recreate cycle carries no
+> risk of losing real data. Keep the guard enabled for directories holding
+> irreplaceable user data. See
+> [Mass-Deletion Safety Guard](configuration.md#mass-deletion-safety-guard).
+
+### 3.8 Skip SSL verification (development only)
 
 When the server uses a self-signed certificate not in the system trust
 store:
@@ -337,7 +386,7 @@ store:
 hsync -s https://dev-server:9753 -b mybucket -p ~/Data --insecure
 ```
 
-### 3.8 Compose multiple flags
+### 3.9 Compose multiple flags
 
 A realistic always-on backup target combining several options:
 
