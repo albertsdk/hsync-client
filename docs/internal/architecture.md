@@ -3,9 +3,9 @@
 This document describes the architecture of the HSYNC Client.
 
 > The client builds on the shared models, constants, and utilities provided by
-> `hsync-common`. See [HSYNC Common Architecture](https://github.com/albertobasso/hsync-common/blob/main/docs/architecture.md)
+> `hsync-common`. See [HSYNC Common Architecture](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/architecture.md)
 > for the foundation it depends on, and the
-> [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/adr/README.md) for the
+> [Architecture Decision Records](https://github.com/albertobasso/hsync-common/blob/main/docs/internal/adr/README.md) for the
 > *why* behind the ecosystem's stable decisions.
 
 ## System Overview
