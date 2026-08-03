@@ -31,6 +31,14 @@
     "field.max_download_mb": "Max. eingehende Dateigröße (MB, 0 = aus)",
     "field.verbose": "Ausführliches Log",
 
+    "section.autotune": "Auto-Tuning",
+    "note.autotune": "Das Auto-Tuning untersucht beim Start das Netzwerk und den Speicher und leitet adaptive Standardwerte für Timeout, Retry und Parallelität ab. Felder unten leer lassen, um die auto-getunten Werte zu verwenden.",
+    "field.autotune": "Auto-Tuning aktivieren",
+    "field.http_timeout": "HTTP-Timeout (s, 1-300, leer = auto)",
+    "field.reconnect_delay": "Wiederverbindungsverzögerung (s, 1-60, leer = auto)",
+    "field.retry_min_wait": "Min. Retry-Wartezeit (s, leer = auto)",
+    "field.retry_max_wait": "Max. Retry-Wartezeit (s, leer = auto)",
+
     "mode.lan": "LAN (Peer-to-Peer)",
     "mode.server": "Server (zentraler HSYNC-Server)",
     "role.auto":   "Auto (bidirektional, automatische Wahl)",

@@ -157,6 +157,24 @@ class EnvSettings(BaseSettings):
         description="Percentage of local files whose deletion trips the guard (0 = disabled)",
     )
 
+    # Auto-Tuning
+    autotune: bool = Field(
+        default=True,
+        description="Enable auto-tuning of timeout, retry and concurrency based on environment",
+    )
+    http_timeout: int | None = Field(
+        default=None, ge=1, le=300, description="HTTP request timeout in seconds"
+    )
+    reconnect_delay: int | None = Field(
+        default=None, ge=1, le=60, description="Reconnection delay in seconds"
+    )
+    transfer_retry_min_wait: float | None = Field(
+        default=None, ge=0.1, description="Minimum per-file retry wait in seconds"
+    )
+    transfer_retry_max_wait: float | None = Field(
+        default=None, ge=0.1, description="Maximum per-file retry wait in seconds"
+    )
+
 
 @lru_cache
 def get_env_settings() -> EnvSettings:
@@ -300,6 +318,31 @@ def get_max_concurrent_transfers() -> int | None:
     return get_env_settings().max_concurrent_transfers
 
 
+def get_autotune_enabled() -> bool:
+    """Get auto-tuning on/off setting from environment."""
+    return get_env_settings().autotune
+
+
+def get_http_timeout() -> int | None:
+    """Get HTTP timeout from environment (None = use default)."""
+    return get_env_settings().http_timeout
+
+
+def get_reconnect_delay() -> int | None:
+    """Get reconnection delay from environment (None = use default)."""
+    return get_env_settings().reconnect_delay
+
+
+def get_transfer_retry_min_wait() -> float | None:
+    """Get minimum per-file retry wait from environment (None = use default)."""
+    return get_env_settings().transfer_retry_min_wait
+
+
+def get_transfer_retry_max_wait() -> float | None:
+    """Get maximum per-file retry wait from environment (None = use default)."""
+    return get_env_settings().transfer_retry_max_wait
+
+
 # =============================================================================
 # Configuration TypedDict
 # =============================================================================
@@ -429,6 +472,16 @@ class HsyncConfig(TypedDict):
     MASS_DELETE_PERCENT: int
     # Maximum number of concurrent file transfers (downloads/uploads)
     MAX_CONCURRENT_TRANSFERS: int
+    # Per-file transfer retry attempts (default 3, no CLI override in v1)
+    TRANSFER_RETRY_ATTEMPTS: int
+    # Minimum per-file retry wait in seconds (exponential backoff floor)
+    TRANSFER_RETRY_MIN_WAIT: float
+    # Maximum per-file retry wait in seconds (exponential backoff ceiling)
+    TRANSFER_RETRY_MAX_WAIT: float
+    # Auto-tuning enabled flag (set at runtime, not from env/CLI directly)
+    AUTOTUNE_ENABLED: bool
+    # Cached storage type from autotune probes (set at runtime for per-cycle refresh)
+    AUTOTUNE_STORAGE_TYPE: str
 
 
 # =============================================================================

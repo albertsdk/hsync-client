@@ -132,6 +132,7 @@ BANDWIDTH_MAX = 100 * 1024 * 1024  # 100 MB/s maximum
 # Reconnection delay limits (seconds)
 RECONNECT_DELAY_MIN = 1
 RECONNECT_DELAY_MAX = 60
+RECONNECT_DELAY_DEFAULT = 5
 
 # Resync interval limits (seconds)
 RESYNC_MIN = 20

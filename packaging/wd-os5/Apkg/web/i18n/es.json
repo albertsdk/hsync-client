@@ -31,6 +31,14 @@
     "field.max_download_mb": "Tamaño máximo de archivo entrante (MB, 0 = off)",
     "field.verbose": "Log detallado",
 
+    "section.autotune": "Auto-ajuste",
+    "note.autotune": "El auto-ajuste analiza la red y el almacenamiento al inicio y deriva valores predeterminados adaptativos para timeout, reintentos y concurrencia. Deje los campos siguientes vacíos para usar los valores auto-ajustados.",
+    "field.autotune": "Activar auto-ajuste",
+    "field.http_timeout": "Timeout HTTP (s, 1-300, vacío = auto)",
+    "field.reconnect_delay": "Retardo de reconexión (s, 1-60, vacío = auto)",
+    "field.retry_min_wait": "Espera mínima de reintento (s, vacío = auto)",
+    "field.retry_max_wait": "Espera máxima de reintento (s, vacío = auto)",
+
     "mode.lan": "LAN (peer-to-peer)",
     "mode.server": "Servidor (servidor HSYNC central)",
     "role.auto":   "Auto (bidireccional, elección automática)",

@@ -152,14 +152,14 @@ def main(
         ),
     ] = None,
     http_timeout: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--timeout",
-            help="HTTP request timeout in seconds.",
+            help="HTTP request timeout in seconds (default: auto-detected).",
             metavar="SEC",
             rich_help_panel="Connection",
         ),
-    ] = 30,
+    ] = None,
     api_key_fd: Annotated[
         int | None,
         typer.Option(
@@ -224,14 +224,14 @@ def main(
         ),
     ] = None,
     reconnect_delay: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--retry-delay",
-            help="Retry connection after SEC seconds.",
+            help="Retry connection after SEC seconds (default: auto-detected).",
             metavar="SEC",
             rich_help_panel="Sync",
         ),
-    ] = 5,
+    ] = None,
     stability_delay: Annotated[
         int | None,
         typer.Option(
@@ -345,6 +345,14 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = None,
+    no_autotune: Annotated[
+        bool,
+        typer.Option(
+            "--no-autotune",
+            help="Disable auto-tuning of timeout, retry, and concurrency (use static defaults).",
+            rich_help_panel="Sync",
+        ),
+    ] = False,
     min_free_disk_space: Annotated[
         int,
         typer.Option(
@@ -618,13 +626,17 @@ def main(
         Alberto Basso
     """
     # Validate numeric ranges
-    if http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX:
+    if http_timeout is not None and (
+        http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX
+    ):
         raise typer.BadParameter(
             f"HTTP timeout must be between {HTTP_TIMEOUT_MIN} and {HTTP_TIMEOUT_MAX}."
         )
     if resync is not None and (resync < RESYNC_MIN or resync > RESYNC_MAX):
         raise typer.BadParameter(f"Resync interval must be between {RESYNC_MIN} and {RESYNC_MAX}.")
-    if reconnect_delay < RECONNECT_DELAY_MIN or reconnect_delay > RECONNECT_DELAY_MAX:
+    if reconnect_delay is not None and (
+        reconnect_delay < RECONNECT_DELAY_MIN or reconnect_delay > RECONNECT_DELAY_MAX
+    ):
         raise typer.BadParameter(
             f"Retry delay must be between {RECONNECT_DELAY_MIN} and {RECONNECT_DELAY_MAX}."
         )
@@ -772,6 +784,7 @@ def main(
         max_download_size=max_download_size,
         ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
         max_concurrent_transfers=max_concurrent_transfers,
+        no_autotune=no_autotune,
         mass_delete_guard=mass_delete_guard,
         mass_delete_threshold=mass_delete_threshold,
         mass_delete_percent=mass_delete_percent,

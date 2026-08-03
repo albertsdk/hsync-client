@@ -21,6 +21,7 @@
         'HSYNC_LAN_PERSISTENT', 'HSYNC_LAN_REQUIRE_PAIRING',
         'HSYNC_WATCH', 'HSYNC_IGNORE_DELETE',
         'HSYNC_NO_COMPRESSION', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
+        'HSYNC_AUTOTUNE',
     ];
 
     const $  = (sel) => document.querySelector(sel);

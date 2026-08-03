@@ -48,6 +48,8 @@ const KEYS = [
     'HSYNC_DELTA_ENABLED', 'HSYNC_DELTA_MIN_FILE_SIZE', 'HSYNC_DELTA_MIN_FILE_SIZE_LAN',
     'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB',
     'HSYNC_MAX_DOWNLOAD_SIZE_MB', 'HSYNC_VERBOSE',
+    'HSYNC_AUTOTUNE', 'HSYNC_HTTP_TIMEOUT', 'HSYNC_RECONNECT_DELAY',
+    'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
 ];
 
 $lines = ['# HSYNC configuration — written by config_set.php on ' . gmdate('Y-m-d\TH:i:s\Z')];
@@ -72,8 +74,15 @@ foreach (KEYS as $key) {
         case 'HSYNC_MAX_DOWNLOAD_SIZE_MB':
         case 'HSYNC_DELTA_MIN_FILE_SIZE':
         case 'HSYNC_DELTA_MIN_FILE_SIZE_LAN':
+        case 'HSYNC_HTTP_TIMEOUT':
+        case 'HSYNC_RECONNECT_DELAY':
             if (!preg_match('/^[0-9]*$/', $val)) $val = '';
             break;
+        case 'HSYNC_TRANSFER_RETRY_MIN_WAIT':
+        case 'HSYNC_TRANSFER_RETRY_MAX_WAIT':
+            if (!preg_match('/^[0-9]*\.?[0-9]*$/', $val)) $val = '';
+            break;
+        case 'HSYNC_AUTOTUNE':
         case 'HSYNC_LAN_PERSISTENT':
         case 'HSYNC_LAN_REQUIRE_PAIRING':
         case 'HSYNC_WATCH':

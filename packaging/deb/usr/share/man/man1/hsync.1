@@ -225,6 +225,12 @@ Maximum size in MB of a single inbound file (download or received LAN upload),
 enforced as an absolute cap on top of the peer-declared size (default:
 .BR 10240 ,
 10 GB; 0 = disabled).
+.TP
+.B \-\-no\-autotune
+Disable auto-tuning of timeout, retry, and concurrency. When set, the
+client uses static defaults for all auto-tunable parameters instead of
+deriving them from the runtime environment. Equivalent to setting
+.BR HSYNC_AUTOTUNE=false .
 .
 .\" --- LAN Mode ---
 .SS LAN Mode
@@ -354,6 +360,35 @@ Shared secret for LAN mode peer authentication.
 .B HSYNC_MAX_CONCURRENT_TRANSFERS
 Maximum number of concurrent file transfers (default:
 .BR 5 ).
+When auto-tuning is enabled, this value is derived from storage type,
+bandwidth, and transfer-queue profile unless set explicitly.
+.TP
+.B HSYNC_AUTOTUNE
+Enable auto-tuning of timeout, retry, and concurrency based on the
+runtime environment (default:
+.BR true ).
+Set to
+.B false
+to disable auto-tuning and use static defaults.
+.TP
+.B HSYNC_HTTP_TIMEOUT
+HTTP request timeout in seconds (1\(en300). When auto-tuning is enabled
+and this is unset, the timeout is derived from measured network latency
+(30/45/60 s based on RTT).
+.TP
+.B HSYNC_RECONNECT_DELAY
+WebSocket reconnection delay in seconds (1\(en60). When auto-tuning is
+enabled and this is unset, the delay is derived from RTT (5\(en15 s).
+.TP
+.B HSYNC_TRANSFER_RETRY_MIN_WAIT
+Minimum per-file retry wait in seconds (exponential backoff floor).
+When auto-tuning is enabled and this is unset, the value is derived
+from RTT (5\(en15 s).
+.TP
+.B HSYNC_TRANSFER_RETRY_MAX_WAIT
+Maximum per-file retry wait in seconds (exponential backoff ceiling).
+When auto-tuning is enabled and this is unset, the value is derived
+from RTT (10\(en30 s).
 .TP
 .B HSYNC_DELTA_ENABLED
 Enable rsync-style delta transfer for large files with small changes (default:

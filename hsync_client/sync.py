@@ -20,6 +20,7 @@ from pathlib import Path
 from shutil import copy2
 from socket import gethostname
 from sys import exc_info
+from time import monotonic
 from traceback import print_tb
 from typing import cast
 
@@ -39,6 +40,7 @@ from loguru import logger as log
 from requests import RequestException
 
 from hsync_client import sync_state
+from hsync_client.autotune import update_bw_ema
 from hsync_client.config import CONFIG, is_debug
 from hsync_client.constants import HSYNCKEEP_FILENAME, HTTP_TIMEOUT_DEFAULT, ActionLabel
 from hsync_client.events import UiEventName, emit_event
@@ -282,6 +284,8 @@ async def sync(lan_mode: bool = False) -> None:
 
         # Execute transfers in parallel using thread pool
         if downloads or uploads:
+            # Re-derive concurrency from the live transfer queue profile
+            _refresh_concurrency_from_queue(downloads, uploads)
             await _execute_parallel_transfers(downloads, uploads)
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
@@ -307,6 +311,42 @@ async def sync(lan_mode: bool = False) -> None:
             exc_tb = exc_info()[2]
             if exc_tb:
                 print_tb(exc_tb)
+
+
+def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) -> None:
+    """Re-derive concurrency from the live transfer queue profile (per cycle, zero I/O)."""
+    import hsync_client.autotune as autotune_mod
+    from hsync_client.autotune import (
+        StorageType,
+        classify_bandwidth,
+        derive_concurrency,
+        profile_transfer_queue,
+    )
+    from hsync_client.constants import (
+        MAX_CONCURRENT_TRANSFERS_MAX,
+        MAX_CONCURRENT_TRANSFERS_MIN,
+    )
+
+    all_files = downloads + uploads
+    if not all_files:
+        return
+
+    queue_profile = profile_transfer_queue(all_files)
+    storage_type = StorageType(str(CONFIG.get("AUTOTUNE_STORAGE_TYPE", "unknown")))
+    bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
+
+    concurrency = derive_concurrency(
+        storage_type,
+        bw_class,
+        queue_profile,
+        MAX_CONCURRENT_TRANSFERS_MIN,
+        MAX_CONCURRENT_TRANSFERS_MAX,
+    )
+
+    current = CONFIG.get("MAX_CONCURRENT_TRANSFERS")
+    if current != concurrency:
+        log.debug(f"autotune: queue={queue_profile.value} -> concurrency={concurrency}")
+        CONFIG["MAX_CONCURRENT_TRANSFERS"] = concurrency
 
 
 async def _execute_parallel_transfers(
@@ -345,6 +385,7 @@ async def _execute_parallel_transfers(
                 # event can enqueue a file after the full-sync pre-filter ran).
                 if func is download_file and _is_permanently_failed(file):
                     return
+                t0 = monotonic()
                 try:
                     # Run synchronous function in thread pool
                     await loop.run_in_executor(executor, func, file)
@@ -364,6 +405,12 @@ async def _execute_parallel_transfers(
                     )
                 except Exception as e:
                     log.error(f"Transfer error for {file.filepath}: {e}")
+                else:
+                    file_size = file.size or 0
+                    if file_size > 0:
+                        elapsed = monotonic() - t0
+                        if elapsed > 0:
+                            update_bw_ema(file_size, elapsed)
 
         # Create tasks for all transfers
         tasks = []
@@ -477,8 +524,9 @@ def _get_optimal_workers(file_count: int) -> int:
     """
     Calculate optimal number of worker threads for parallel file processing.
 
-    Uses CPU count to determine parallelism, with a configurable maximum
-    and sensible defaults for different workload sizes.
+    Uses the effective CPU quota (cgroup-aware, reflects container limits)
+    to determine parallelism, with a configurable maximum and sensible
+    defaults for different workload sizes.
 
     Args:
         file_count: Number of files to process.
@@ -486,9 +534,14 @@ def _get_optimal_workers(file_count: int) -> int:
     Returns:
         Optimal number of worker threads.
     """
-    # Get available CPU cores (default to 4 if detection fails)
+    # Resolve the effective CPU core count.  Inside a container (Docker,
+    # Podman, Kubernetes) the cgroup quota is authoritative; on bare metal
+    # or when cgroups are unavailable, fall back to ``os.cpu_count()``.
+    # Default to 4 if every probe fails.
     try:
-        cpu_cores = cpu_count() or 4
+        from hsync_common.runtime import get_cpu_quota_cores
+
+        cpu_cores = int(get_cpu_quota_cores() or cpu_count() or 4)
     except Exception:
         cpu_cores = 4
 

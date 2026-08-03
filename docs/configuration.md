@@ -8,7 +8,12 @@ This guide explains how to configure HSYNC for your environment.
 |----------|-------------|---------|
 | `HSYNC_SERVER` | Server URL | (required or use `-s`) |
 | `HSYNC_API_KEY` | API key for authentication | (required) |
-| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | `5` |
+| `HSYNC_AUTOTUNE` | Enable auto-tuning of timeout, retry, and concurrency | `true` |
+| `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300) | auto (`30` or `45` or `60`) |
+| `HSYNC_RECONNECT_DELAY` | WS reconnection delay in seconds (1-60) | auto (`5`) |
+| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | auto (`5`-`20`) |
+| `HSYNC_TRANSFER_RETRY_MIN_WAIT` | Per-file retry min wait in seconds | auto (`1`-`15`) |
+| `HSYNC_TRANSFER_RETRY_MAX_WAIT` | Per-file retry max wait in seconds | auto (`10`-`30`) |
 | `HSYNC_IGNORE_DELETE` | Do not propagate file deletions (backup mode) | `false` |
 | `HSYNC_MAX_FILE_WORKERS` | Max parallel workers for local file scanning | auto (CPU-based) |
 | `HSYNC_STABILITY_DELAY` | Seconds to wait before uploading modified files | `5` |
@@ -22,6 +27,13 @@ This guide explains how to configure HSYNC for your environment.
 > `HSYNC_SERVER` and `HSYNC_API_KEY` are required in **Server Mode** only. In
 > **LAN Mode** (`--lan-mode`) they are ignored; use the optional
 > `HSYNC_LAN_KEY` instead (see [LAN Mode Options](#lan-mode-options)).
+>
+> `HSYNC_HTTP_TIMEOUT`, `HSYNC_RECONNECT_DELAY`, `HSYNC_MAX_CONCURRENT_TRANSFERS`,
+> `HSYNC_TRANSFER_RETRY_MIN_WAIT`, and `HSYNC_TRANSFER_RETRY_MAX_WAIT` are
+> **auto-detected** at startup based on measured network latency, bandwidth, and
+> storage type. Set any of them explicitly to override auto-detection. Use
+> `--no-autotune` or `HSYNC_AUTOTUNE=false` to disable auto-tuning entirely and
+> use the built-in static defaults.
 
 ### Periodic resync and the inotify watch limit (Linux)
 

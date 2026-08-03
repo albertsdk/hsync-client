@@ -410,6 +410,32 @@
         </label>
     </div>
 
+    <!-- Auto-tuning ------------------------------------------------ -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.autotune">Auto-tuning</div>
+        <p class="hsync-note" data-i18n="note.autotune">Auto-tuning probes the network and storage at startup and derives adaptive defaults for timeout, retry, and concurrency. Leave the fields below empty to use the auto-tuned values.</p>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_AUTOTUNE" id="HSYNC_AUTOTUNE" checked>
+            <span data-i18n="field.autotune">Enable auto-tuning</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.http_timeout">HTTP timeout (s, 1-300, empty = auto)</span>
+            <input type="number" name="HSYNC_HTTP_TIMEOUT" id="HSYNC_HTTP_TIMEOUT" min="1" max="300">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.reconnect_delay">Reconnect delay (s, 1-60, empty = auto)</span>
+            <input type="number" name="HSYNC_RECONNECT_DELAY" id="HSYNC_RECONNECT_DELAY" min="1" max="60">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.retry_min_wait">Retry min wait (s, empty = auto)</span>
+            <input type="number" name="HSYNC_TRANSFER_RETRY_MIN_WAIT" id="HSYNC_TRANSFER_RETRY_MIN_WAIT" min="0.1" step="0.1">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.retry_max_wait">Retry max wait (s, empty = auto)</span>
+            <input type="number" name="HSYNC_TRANSFER_RETRY_MAX_WAIT" id="HSYNC_TRANSFER_RETRY_MAX_WAIT" min="0.1" step="0.1">
+        </label>
+    </div>
+
     <!-- Actions ---------------------------------------------------- -->
     <div class="hsync-actions">
         <button type="button" id="hsync-btn-save"    class="hsync-btn hsync-btn-primary" data-i18n="action.save">Save</button>
