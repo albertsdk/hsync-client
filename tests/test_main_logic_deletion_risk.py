@@ -16,6 +16,18 @@ from hsync_client.main_logic import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _interactive_tty():
+    """Pretend an interactive terminal is attached.
+
+    The pre-existing tests in this module exercise the interactive flows
+    (prompt shown, operator present); the non-interactive container paths
+    re-patch ``is_tty_interactive`` to False locally.
+    """
+    with patch("hsync_client.main_logic.is_tty_interactive", return_value=True):
+        yield
+
+
 class TestCheckDeletionRisk:
     """Tests for _check_deletion_risk function."""
 
@@ -343,6 +355,29 @@ class TestCheckDeletionRisk:
         assert "--yes flag set" in warning_texts
         assert "download-only" in warning_texts
 
+    def test_non_interactive_prompt_exits_with_error(self, tmp_path):
+        """Without a TTY (container/cron) the confirmation fails fast with exit 1."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+
+        with (
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("builtins.input", side_effect=AssertionError("should not prompt")),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                lan_mode=True,
+                force_master=False,
+                sync_direction="download-only",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+
+        assert exc_info.value.code == 1
+        error_texts = " ".join(str(c) for c in mock_logger.error.call_args_list)
+        assert "--yes" in error_texts
+
 
 class TestCheckLanWritePolicy:
     """Tests for _check_lan_write_policy (LAN-key requirement)."""
@@ -424,6 +459,26 @@ class TestCheckLanWritePolicy:
                 logger=MagicMock(),
             )
         assert exc_info.value.code == 1
+
+    def test_non_tty_write_without_key_exits(self):
+        """A TTY-less run (container/cron) without --yes counts as unattended."""
+        mock_logger = MagicMock()
+        with (
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("hsync_client.main_logic.emit_event") as mock_emit,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            _check_lan_write_policy(
+                lan_mode=True,
+                lan_key=None,
+                sync_direction="bidirectional",
+                auto_confirm=False,
+                logger=mock_logger,
+            )
+        assert exc_info.value.code == 1
+        error_texts = " ".join(str(c) for c in mock_logger.error.call_args_list)
+        assert "AUTH_REQUIRED" in error_texts
+        mock_emit.assert_called_once()
 
 
 class TestWithStdinCommands:

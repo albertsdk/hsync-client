@@ -23,6 +23,7 @@ from hsync_common.ignore import IgnoreMatcher, set_active_matcher
 from hsync_common.models.file import clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
+from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
 
 from hsync_client.config import (
     CONFIG,
@@ -372,6 +373,16 @@ def _check_deletion_risk(
         logger.warning("--yes flag set – proceeding without confirmation.")
         return
 
+    # No operator can answer the prompt without an interactive terminal
+    # (containers, systemd units, cron, pipes): fail fast with a clear
+    # message instead of blocking on input() or silently declining via EOF.
+    if not is_tty_interactive():
+        logger.error(
+            "Deletion-risk confirmation required but no interactive terminal is "
+            "available. Re-run with --yes to accept the risk and proceed."
+        )
+        raise SystemExit(1)
+
     try:
         response = input("Do you want to continue? [y/N]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -395,8 +406,9 @@ def _check_lan_write_policy(
     identity, so an unattended client that uploads data must authenticate with
     ``HSYNC_LAN_KEY``. The trust policy lives in
     :func:`hsync_common.protocol.pairing.lan_write_requires_key`; here we apply
-    it. ``auto_confirm`` (the ``--yes`` flag) marks a non-interactive run, where
-    no operator can vouch for the peer out of band.
+    it. A run is unattended when ``auto_confirm`` (the ``--yes`` flag) is set or
+    when no interactive terminal is available (container, systemd, cron, pipes):
+    in both cases no operator can vouch for the peer out of band.
 
     Raises SystemExit when the policy is violated.
     """
@@ -405,7 +417,7 @@ def _check_lan_write_policy(
 
     from hsync_common.protocol.pairing import lan_write_requires_key
 
-    interactive = not auto_confirm
+    interactive = not auto_confirm and is_tty_interactive()
     if not lan_write_requires_key(sync_direction, interactive=interactive):
         return
 
@@ -424,6 +436,23 @@ def _check_lan_write_policy(
         message="A shared LAN key (HSYNC_LAN_KEY) is required for non-interactive writes",
     )
     raise SystemExit(1)
+
+
+def _warn_if_lan_in_container(logger: Any) -> None:
+    """Warn that mDNS peer discovery usually fails under container networking.
+
+    LAN discovery relies on multicast, which does not cross the NAT boundary
+    of the default bridge network used by container runtimes; LAN mode inside
+    a container therefore requires host networking to find peers.
+    """
+    info = detect_container()
+    if not info.is_container:
+        return
+    logger.warning(
+        f"LAN mode inside a {info.runtime or 'unknown'} container: mDNS peer "
+        "discovery cannot cross container bridge/NAT networking. Use host "
+        "networking (e.g. 'docker run --network host') or peers will not be found."
+    )
 
 
 def _check_disk_space(local_path: str, min_free_mb: int, logger: Any) -> None:
@@ -541,6 +570,9 @@ def run_sync(
     mass_delete_guard: bool | None = None,
     mass_delete_threshold: int | None = None,
     mass_delete_percent: int | None = None,
+    delta_enabled: bool = True,
+    delta_min_file_size: int | None = None,
+    delta_min_file_size_lan: int | None = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -618,6 +650,7 @@ def run_sync(
         log.debug("Registered netrc stub module (PyInstaller workaround)")
 
     log.info(f"HSYNC Client v{HSYNC_VERSION}")
+    log.info(runtime_summary())
 
     # Validate local directory exists
     if not Path(local_path).exists():
@@ -726,8 +759,11 @@ def run_sync(
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
-        "DELTA_ENABLED": get_delta_enabled(),
+        "DELTA_ENABLED": delta_enabled and get_delta_enabled(),
         "SERVER_DELTA_ENABLED": False,  # Set during WebSocket handshake / master election
+        # CLI overrides for the delta size floor (None = use env settings)
+        "DELTA_MIN_FILE_SIZE": delta_min_file_size,
+        "DELTA_MIN_FILE_SIZE_LAN": delta_min_file_size_lan,
         "SYNC_DIRECTION": sync_direction,
         "MAX_BANDWIDTH_UPLOAD": max_bandwidth_upload,
         "MAX_BANDWIDTH_DOWNLOAD": max_bandwidth_download,
@@ -830,6 +866,7 @@ def run_sync(
 
     # LAN Mode: Peer Discovery and Master Election
     if config["LAN_MODE"]:
+        _warn_if_lan_in_container(log)
         run_lan_mode(config, log)
         return
 

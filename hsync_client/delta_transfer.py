@@ -109,10 +109,16 @@ def _peer_supports_delta() -> bool:
 
 
 def _delta_min_size() -> int:
-    """Size floor for delta, higher on LAN (CPU-bound, bandwidth-rich)."""
+    """Size floor for delta, higher on LAN (CPU-bound, bandwidth-rich).
+
+    CLI flags (--delta-min-file-size / --delta-min-file-size-lan) take
+    precedence over the HSYNC_DELTA_MIN_FILE_SIZE[_LAN] env settings.
+    """
     if CONFIG.get("LAN_MODE", False):
-        return get_delta_min_file_size_lan()
-    return get_delta_min_file_size()
+        override = CONFIG.get("DELTA_MIN_FILE_SIZE_LAN")
+        return override if override is not None else get_delta_min_file_size_lan()
+    override = CONFIG.get("DELTA_MIN_FILE_SIZE")
+    return override if override is not None else get_delta_min_file_size()
 
 
 def prepare_delta_upload(file: File, relpath: str) -> DeltaUploadContext | None:

@@ -320,6 +320,7 @@ RequestHeaders = TypedDict(
         "Authorization": str,
         "X-Client-Name": str,
         "X-Client-Version": str,
+        "X-Protocol-Version": str,
     },
 )
 
@@ -400,6 +401,12 @@ class HsyncConfig(TypedDict):
     DELTA_ENABLED: bool
     # Peer delta capability (set at runtime after handshake / master election)
     SERVER_DELTA_ENABLED: bool
+    # CLI override for the minimum file size for delta transfer, remote mode
+    # (None = use HSYNC_DELTA_MIN_FILE_SIZE / built-in default)
+    DELTA_MIN_FILE_SIZE: int | None
+    # CLI override for the minimum file size for delta transfer, LAN mode
+    # (None = use HSYNC_DELTA_MIN_FILE_SIZE_LAN / built-in default)
+    DELTA_MIN_FILE_SIZE_LAN: int | None
     # Sync direction: "bidirectional", "upload-only", or "download-only"
     SYNC_DIRECTION: str
     # Maximum upload bandwidth in bytes per second (None = unlimited)

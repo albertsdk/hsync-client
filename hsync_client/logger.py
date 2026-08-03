@@ -19,7 +19,7 @@ This module provides a standardized logging setup with enterprise-grade features
 - Action symbol highlighting (↓↑→✕+⚙·)
 - File output support with log rotation
 - Quiet mode
-- Automatic color detection (disabled for non-TTY)
+- Automatic color detection (disabled for non-TTY or when NO_COLOR is set)
 
 Log rotation configuration (via environment variables):
 - HSYNC_LOG_ROTATION: When to rotate (e.g., "10 MB", "1 day", "00:00")
@@ -39,6 +39,7 @@ from hsync_common.logger import (
     build_record_formatter,
     get_rotation_config,
 )
+from hsync_common.runtime import color_output_enabled
 from hsync_common.text import escape_loguru_markup
 from loguru import logger
 
@@ -253,9 +254,9 @@ def setup_logging(
     else:
         # Console handler - with colors (unless disabled)
         # Colors are enabled only when:
-        # 1. --no-color flag is not set
+        # 1. --no-color flag is not set and NO_COLOR env is unset
         # 2. Output is a TTY (terminal)
-        use_colors = not no_color and sys.stdout.isatty()
+        use_colors = color_output_enabled(no_color=no_color)
         format_func = _format_record_colored if use_colors else _format_record_plain
 
         logger.add(

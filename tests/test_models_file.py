@@ -49,11 +49,15 @@ class TestIsHiddenFile:
         assert is_hidden_file("/path/4913") is True
 
     def test_vim_swap(self):
-        """Vim swap files (.swp, .swo) are hidden."""
+        """Vim swap files are hidden, but only as dotfiles (`.file.swp`).
+
+        The `.*.sw?` pattern deliberately ignores non-hidden names so files
+        like `animation.swf` are not excluded by mistake.
+        """
         assert is_hidden_file(".file.swp") is True
         assert is_hidden_file(".file.swo") is True
-        assert is_hidden_file("file.swp") is True
-        assert is_hidden_file("file.swo") is True
+        assert is_hidden_file("file.swp") is False
+        assert is_hidden_file("file.swo") is False
 
     def test_libreoffice_lock(self):
         """LibreOffice lock files are hidden."""
