@@ -576,7 +576,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 mark_inbound_origin(src_path, origin_cid)
                 mark_inbound_origin(dst_path, origin_cid)
 
-            log.info(f"Renaming from client request: {src_path} -> {dst_path}")
+            log.info(f"Renaming from client request (CID: {origin_cid}): {src_path} -> {dst_path}")
             rename(src_path, dst_path)
 
             self._send_json_response(HTTP_OK, {"info": "Renamed successfully"})
@@ -625,10 +625,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         try:
             if is_dir:
-                log.info(f"Deleting directory from client request: {full_path}")
+                log.info(f"Deleting directory from client request (CID: {origin_cid}): {full_path}")
                 rmtree(full_path, ignore_errors=False)
             else:
-                log.info(f"Deleting file from client request: {full_path}")
+                log.info(f"Deleting file from client request (CID: {origin_cid}): {full_path}")
                 os.remove(full_path)
                 parent = str(Path(full_path).parent)
                 if Path(full_path).name == HSYNCKEEP_FILENAME:
