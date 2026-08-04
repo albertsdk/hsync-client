@@ -56,6 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host networking (`docker run --network host`).
 
 ### Changed
+- **Upload 4xx diagnostic + no-retry**: a server 4xx rejection on upload (not
+  401/403/409) now logs the response body (e.g. "Checksum mismatch", "Invalid
+  upload: ...") and raises `PermanentUploadError` instead of calling
+  `raise_for_status()`, which previously discarded the body and made the
+  rejection undiagnosable. `PermanentUploadError` is not a `RequestException`,
+  so the transfer retry decorator no longer retries a deterministic 4xx three
+  times (it now fires exactly once). The `transfer_failed` UI event message
+  includes the server's diagnostic body.
 - **LAN master log label**: the master-side file-ready broadcast log line now
   reads `[LAN MODIFY] "<path>" (closed|modified)` instead of the opaque
   `[LAN FILE] "<path>"`. The new label matches the `modified` event actually
