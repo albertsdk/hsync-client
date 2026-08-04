@@ -516,6 +516,8 @@ and editor/office temporary files is excluded automatically:
 | `*~` | Editor backup | Backup files created by editors (e.g. `file.txt~`) |
 | `4913` | Editor temp | Legacy Vim temporary file |
 | `.~lock.*#` | Editor lock | LibreOffice/OpenOffice lock files (e.g. `.~lock.document.odt#`) |
+| `.goutputstream-*` | Safe-save temp | GNOME/GIO editor temp files (gedit, nautilus) created during atomic safe-save, then renamed over the final file |
+| `*.crdownload` | Download temp | Chromium-based browser (Chrome, Edge, Brave) in-progress download temp files, renamed to the final name only when the download completes |
 | `*.tmp` | Generic temp | Temporary files (e.g. `output.tmp`) |
 | `*.temp` | Generic temp | Temporary files (e.g. `draft.temp`) |
 | `*.bak` | Generic backup | Backup files (e.g. `config.bak`) |

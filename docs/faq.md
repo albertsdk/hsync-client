@@ -212,6 +212,7 @@ automatically:
 - **Windows cache**: `Thumbs.db`, `desktop.ini`
 - **Office lock files**: `~$*`
 - **Editor swap/backup**: `.*.sw?` (dotfiles only), `*~`, `4913`, `.~lock.*#`
+- **Safe-save/download temp**: `.goutputstream-*` (GNOME/GIO editors), `*.crdownload` (Chromium browsers)
 - **Generic temp/backup**: `*.tmp`, `*.temp`, `*.bak`
 
 The sentinel file `.hsynckeep` (used to keep empty directories) is always
