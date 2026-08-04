@@ -82,7 +82,7 @@ Use `--help-symbols` to display this legend in the terminal.
 | `[CLIENT KEEP]` | Client sentinel | Client creates sentinel file (`.hsynckeep`) |
 | `[CLIENT IGN]` | Client ignore | Client ignores deletion (ignore-delete mode) |
 | `[CLIENT NEW]` | Client new | Client creates a new file on master |
-| `[LAN FILE]` | LAN file | LAN master broadcasts a file event |
+| `[LAN MODIFY]` | LAN modify | LAN master broadcasts a file `modified` event (slaves pull the new bytes). The trigger `(closed)`/`(modified)` shows whether it fired from `IN_CLOSE_WRITE` (reliable) or the `on_modified` debounce fallback |
 
 Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
 

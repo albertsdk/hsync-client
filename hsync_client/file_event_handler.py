@@ -27,7 +27,6 @@ from __future__ import annotations
 import sys
 from copy import deepcopy
 from pathlib import Path
-from time import time
 
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import Event, EventName
@@ -45,6 +44,11 @@ SUPPORTS_ON_CLOSED = sys.platform == "linux"
 # Debounce interval for on_modified fallback on platforms without on_closed.
 MODIFIED_DEBOUNCE_INTERVAL = 1.0
 
+# Maximum entries kept in the broadcast dedup dicts (_last_broadcast_stat /
+# _last_broadcast_hash). Mirrors SHA256_CACHE_MAX_SIZE so memory stays bounded
+# (~2 MB at ~200 bytes/entry) even in long-running watch sessions.
+DEDUP_MAX_ENTRIES: int = 10_000
+
 
 class BaseFileEventHandler(FileSystemEventHandler):
     """Common watchdog handler shared by Remote sync and LAN master."""
@@ -53,7 +57,15 @@ class BaseFileEventHandler(FileSystemEventHandler):
     _LOG_PREFIX: str = ""
 
     def __init__(self) -> None:
-        self._last_modified: dict[str, float] = {}
+        # Two-stage content dedup for file-ready events:
+        # 1. stat pre-check (mtime, size): cheap filter that avoids re-hashing
+        #    on no-op closes where the editor opened/closed without saving.
+        # 2. hash compare: precise filter that skips broadcasts when the file
+        #    content matches what was last propagated (catches mtime-touch
+        #    without content change, and the spurious close that precedes an
+        #    editor safe-save rename).
+        self._last_broadcast_stat: dict[str, tuple[int, int]] = {}
+        self._last_broadcast_hash: dict[str, str] = {}
 
     # ----- subclass hooks -----
 
@@ -66,12 +78,20 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """Send event metadata to peers/server."""
         raise NotImplementedError
 
-    def _on_file_ready(self, file: File, src_path: str, from_closed: bool = False) -> None:
+    def _on_file_ready(
+        self,
+        file: File,
+        src_path: str,
+        from_closed: bool = False,
+        *,
+        trigger: str | None = None,
+    ) -> None:
         """Called after a file's bytes are ready to propagate.
 
         ``from_closed`` is True when the originating event was ``on_closed``
         (``IN_CLOSE_WRITE`` on Linux), letting upload paths trust the close and
-        shorten the stability re-check.
+        shorten the stability re-check. ``trigger`` overrides the log trigger
+        label (e.g. ``"safe-save"`` for an atomic editor temp→final rename).
         """
         raise NotImplementedError
 
@@ -83,6 +103,25 @@ class BaseFileEventHandler(FileSystemEventHandler):
         the central server records tombstones itself.
         """
         return None
+
+    def _record_broadcast(self, src_path: str, stat: tuple[int, int], sha256: str) -> None:
+        """Record a broadcast for content dedup, evicting oldest if at capacity.
+
+        Both ``_last_broadcast_stat`` and ``_last_broadcast_hash`` are updated
+        atomically. When the cap (``DEDUP_MAX_ENTRIES``) is reached, the
+        oldest-inserted entry is evicted from both dicts (FIFO; Python 3.7+
+        ``dict`` preserves insertion order). Evicting a path means its next
+        close will re-broadcast — correct, not data loss.
+        """
+        if (
+            src_path not in self._last_broadcast_stat
+            and len(self._last_broadcast_stat) >= DEDUP_MAX_ENTRIES
+        ):
+            oldest = next(iter(self._last_broadcast_stat))
+            self._last_broadcast_stat.pop(oldest, None)
+            self._last_broadcast_hash.pop(oldest, None)
+        self._last_broadcast_stat[src_path] = stat
+        self._last_broadcast_hash[src_path] = sha256
 
     # ----- watchdog event handlers -----
 
@@ -156,11 +195,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
 
-        current_time = time()
-        last_time = self._last_modified.get(src_path, 0)
-        if current_time - last_time >= MODIFIED_DEBOUNCE_INTERVAL:
-            self._last_modified[src_path] = current_time
-            self._process_file_ready(src_path)
+        self._process_file_ready(src_path)
 
     def on_closed(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
@@ -170,18 +205,62 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
         self._process_file_ready(src_path, from_closed=True)
 
-    def _process_file_ready(self, src_path: str, from_closed: bool = False) -> None:
-        """Invalidate the digest cache, build ``File``, delegate to subclass."""
+    def _process_file_ready(
+        self,
+        src_path: str,
+        from_closed: bool = False,
+        *,
+        trigger: str | None = None,
+    ) -> None:
+        """Build ``File`` and delegate to subclass, skipping no-op changes.
+
+        Two-stage content dedup suppresses spurious broadcasts:
+
+        1. **Stat pre-check** — if ``(mtime, size)`` matches the last
+           broadcast for this path, skip without hashing (catches an editor
+           open/close with no write; cost: one ``stat()``).
+        2. **Hash compare** — if the stat changed, compute the SHA-256 (via
+           ``File.get``) and compare with the last broadcast hash. If the
+           content is identical (e.g. mtime touched but bytes unchanged),
+           skip the broadcast. Only a genuine content change propagates.
+
+        This replaces a naive time-based debounce, which was counter-
+        productive in the no-op-close-before-safe-save scenario: it suppressed
+        the real rename event (within the debounce window of the spurious
+        close) while keeping the false positive.
+        """
         try:
             if not Path(src_path).exists():
                 log.warning(
                     f'File "{src_path}" not found. It might have been altered by an external tool.'
                 )
                 return
+
+            # Stage 1: stat pre-check (cheap, avoids re-hash on no-op close).
+            # Uses st_mtime_ns (nanosecond precision) so two writes within the
+            # same second with the same size are NOT falsely skipped.
+            file_stat = Path(src_path).stat()
+            current_stat = (file_stat.st_mtime_ns, file_stat.st_size)
+            if current_stat == self._last_broadcast_stat.get(src_path):
+                log.debug(f'Skip unchanged (stat): "{src_path}"')
+                return
+
+            # Stage 2: hash compare (precise, catches mtime-touch without
+            # content change).
             invalidate_sha256_cache(src_path)
             file_obj = File.get(src_path)
             if file_obj:
-                self._on_file_ready(file_obj, src_path, from_closed)
+                if file_obj.sha256sum == self._last_broadcast_hash.get(src_path):
+                    log.debug(f'Skip unchanged (hash): "{src_path}"')
+                    # Update stat so the next no-op close with this mtime is
+                    # caught by the cheap stage-1 filter. Key already exists
+                    # (hash matched), so no capacity check needed.
+                    self._last_broadcast_stat[src_path] = current_stat
+                    return
+                self._on_file_ready(file_obj, src_path, from_closed, trigger=trigger)
+                # Record what we propagated so subsequent no-op closes are
+                # suppressed by either stage.
+                self._record_broadcast(src_path, current_stat, file_obj.sha256sum)
         except Exception as e:
             log.error(f'Error handling file event for "{src_path}": {e}')
 
@@ -219,6 +298,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 )
         else:
             if is_hidden_file(src_path):
+                # Safe-save: an editor/application wrote to a temp file
+                # (``.goutputstream-*``, ``*.tmp``, …) and atomically renamed
+                # it over the final file. The temp is hidden (ignored) so we
+                # reframe this as a content modification of the *destination*,
+                # not a user-initiated rename. If the destination is also
+                # hidden the event is dropped entirely (temp→temp).
+                if not is_hidden_file(dest_path):
+                    self._process_file_ready(dest_path, trigger="safe-save")
                 return
 
             log.info(f'[{self._LOG_PREFIX}RENAME] "{src_path}" -> "{dest_path}"')

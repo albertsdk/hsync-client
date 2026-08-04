@@ -328,6 +328,243 @@ class TestFileEventHandler:
             self.handler.on_moved(event)
             mock_run.assert_not_called()
 
+    # -- on_moved safe-save (editor temp → final) --
+
+    def test_on_moved_safe_save_reframes_as_modified(self):
+        """on_moved from a hidden temp to a visible dst reframes as modified.
+
+        An editor safe-save renames ``.goutputstream-XXXX`` over the final
+        file. The temp is hidden (ignored) so the rename must NOT broadcast a
+        ``renamed`` event; instead it propagates the destination as a content
+        modification via ``_on_file_ready(trigger="safe-save")``.
+        """
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/.goutputstream-XXXX"
+        event.dest_path = "/bucket/hello.txt"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_file = MagicMock()
+        mock_file.sha256sum = "abc123"
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file") as mock_hidden,
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+        ):
+            # src is hidden (temp), dst is NOT hidden (final file)
+            mock_hidden.side_effect = lambda p: p.endswith(".goutputstream-XXXX")
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            self.handler.on_moved(event)
+
+            # Must NOT broadcast a renamed event
+            mock_run.assert_not_called()
+            # Must call _on_file_ready on the destination with safe-save trigger
+            mock_ready.assert_called_once_with(
+                mock_file,
+                "/bucket/hello.txt",
+                False,
+                trigger="safe-save",
+            )
+
+    def test_on_moved_safe_save_both_hidden_drops_event(self):
+        """on_moved from hidden to hidden is dropped entirely (temp→temp)."""
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/.goutputstream-XXXX"
+        event.dest_path = "/bucket/.goutputstream-YYYY"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=True),
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+        ):
+            self.handler.on_moved(event)
+            mock_run.assert_not_called()
+            mock_ready.assert_not_called()
+
+    def test_on_moved_safe_save_stat_dedup_suppresses_subsequent_close(self):
+        """Stat dedup in _process_file_ready suppresses duplicate after safe-save.
+
+        After a safe-save rename triggers _process_file_ready (trigger=
+        "safe-save"), the (mtime, size) and hash are recorded. A subsequent
+        on_closed on the same path with the same stat is suppressed at
+        stage-1 (no second _on_file_ready call, no re-hash).
+        """
+        event_moved = MagicMock()
+        event_moved.is_directory = False
+        event_moved.src_path = "/bucket/.goutputstream-XXXX"
+        event_moved.dest_path = "/bucket/hello.txt"
+
+        event_closed = MagicMock()
+        event_closed.is_directory = False
+        event_closed.src_path = "/bucket/hello.txt"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_file = MagicMock()
+        mock_file.sha256sum = "abc123"
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file") as mock_hidden,
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+        ):
+            mock_hidden.side_effect = lambda p: p.endswith(".goutputstream-XXXX")
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            self.handler.on_moved(event_moved)
+            self.handler.on_closed(event_closed)
+
+            # Only the safe-save call, not the close (stat dedup)
+            assert mock_ready.call_count == 1
+            mock_run.assert_not_called()
+
+    def test_no_op_close_unchanged_hash_skips_broadcast(self):
+        """A close where content (hash) is unchanged is skipped at stage 2.
+
+        Simulates an editor that opens a file and closes it without saving:
+        the stat (mtime) may change (editor touches mtime on open) but the
+        hash is identical to the last broadcast → stage-2 skip.
+        """
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/hello.txt"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        mock_file = MagicMock()
+        mock_file.sha256sum = "abc123"
+
+        # Stat differs from last broadcast (mtime advanced) but hash is same
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 200
+        mock_stat.st_size = 42
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+        ):
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            # Pre-set: last broadcast had different mtime but same hash
+            self.handler._last_broadcast_stat["/bucket/hello.txt"] = (100, 42)
+            self.handler._last_broadcast_hash["/bucket/hello.txt"] = "abc123"
+
+            self.handler.on_closed(event)
+
+            # Hash matches → skip (no broadcast, no _on_file_ready)
+            mock_ready.assert_not_called()
+            mock_run.assert_not_called()
+
+    def test_same_second_different_ns_not_skipped(self):
+        """Two writes within the same second (same size) are NOT skipped.
+
+        st_mtime_ns gives nanosecond precision: two writes at 10:00:00.500
+        and 10:00:00.800 produce different st_mtime_ns values, so stage-1
+        does not falsely skip the second write even though int(st_mtime)
+        (truncated to seconds) would be identical.
+        """
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/hello.txt"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        mock_file = MagicMock()
+        mock_file.sha256sum = "def456"
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 1000000800000  # 10:00:00.800 in ns
+        mock_stat.st_size = 42
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+        ):
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            # Pre-set: last broadcast at 10:00:00.500 (same second, same size,
+            # different ns). With int(st_mtime) both would be 1000000000 and
+            # stage-1 would wrongly skip. With st_mtime_ns they differ.
+            self.handler._last_broadcast_stat["/bucket/hello.txt"] = (1000000500000, 42)
+            self.handler._last_broadcast_hash["/bucket/hello.txt"] = "abc123"
+
+            self.handler.on_closed(event)
+
+            # stat differs (ns) → hash differs → must broadcast
+            mock_ready.assert_called_once()
+
+    def test_dedup_evicts_oldest_at_capacity(self):
+        """_record_broadcast evicts the oldest entry when at capacity."""
+        from hsync_client.file_event_handler import DEDUP_MAX_ENTRIES
+
+        # Fill to capacity
+        for i in range(DEDUP_MAX_ENTRIES):
+            path = f"/bucket/file_{i}.txt"
+            self.handler._last_broadcast_stat[path] = (i, 100)
+            self.handler._last_broadcast_hash[path] = f"hash_{i}"
+
+        # Add one more → oldest (file_0) should be evicted
+        self.handler._record_broadcast("/bucket/new.txt", (999, 100), "new_hash")
+
+        assert "/bucket/file_0.txt" not in self.handler._last_broadcast_stat
+        assert "/bucket/file_0.txt" not in self.handler._last_broadcast_hash
+        assert "/bucket/new.txt" in self.handler._last_broadcast_stat
+        assert len(self.handler._last_broadcast_stat) == DEDUP_MAX_ENTRIES
+
     # -- on_deleted ignore-delete --
 
     def test_on_deleted_ignore_delete_skips_file(self):
@@ -413,13 +650,19 @@ class TestFileEventHandler:
         event.is_directory = False
         event.src_path = "/bucket/file.txt"
 
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
+
         with (
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
             patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.stat", return_value=mock_stat),
             patch("hsync_client.file_event_handler.File.get") as mock_get,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             mock_file = MagicMock()
+            mock_file.sha256sum = "abc123"
             mock_get.return_value = mock_file
 
             self.handler.on_closed(event)
@@ -528,38 +771,54 @@ class TestFileEventHandler:
 
         config = {"SYNC_DIRECTION": "bidirectional"}
 
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
+
         with (
             patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", False),
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.time", return_value=100.0),
             patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.stat", return_value=mock_stat),
             patch("hsync_client.file_event_handler.File.get") as mock_get,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
             mock_file = MagicMock()
+            mock_file.sha256sum = "abc123"
             mock_get.return_value = mock_file
             self.handler.on_modified(event)
             mock_upload.assert_called_once_with(mock_file, from_closed=False)
 
-    def test_on_modified_non_linux_debounces(self):
-        """on_modified debounces rapid modifications on non-Linux."""
+    def test_on_modified_non_linux_unchanged_stat_skips(self):
+        """on_modified skips upload on non-Linux when stat is unchanged.
+
+        The two-stage stat+hash dedup replaces the old time-based debounce:
+        if (mtime, size) matches the last broadcast, the upload is skipped
+        without even computing the hash.
+        """
         event = MagicMock()
         event.is_directory = False
         event.src_path = "/bucket/file.txt"
 
         config = {"SYNC_DIRECTION": "bidirectional"}
 
-        # Pre-set last modified to current time to trigger debounce
-        self.handler._last_modified["/bucket/file.txt"] = 100.0
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
 
         with (
             patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", False),
             patch("hsync_client.file_event_handler.CONFIG", config),
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
-            patch("hsync_client.file_event_handler.time", return_value=100.5),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
             patch("hsync_client.remote_websocket.upload_file") as mock_upload,
         ):
+            # File exists, stat matches the pre-set broadcast stat
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+            self.handler._last_broadcast_stat["/bucket/file.txt"] = (100, 42)
+
             self.handler.on_modified(event)
             mock_upload.assert_not_called()
 

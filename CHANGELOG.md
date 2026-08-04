@@ -55,6 +55,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   peer discovery cannot cross container bridge/NAT networking and suggests
   host networking (`docker run --network host`).
 
+### Changed
+- **LAN master log label**: the master-side file-ready broadcast log line now
+  reads `[LAN MODIFY] "<path>" (closed|modified)` instead of the opaque
+  `[LAN FILE] "<path>"`. The new label matches the `modified` event actually
+  broadcast (and the `[LAN MODIFY]` label already used for directory modify
+  events), and the `(closed)`/`(modified)` trigger suffix distinguishes the
+  two `IN_CLOSE_WRITE` fires a GNOME/gvfs safe-save produces. Logging-only;
+  no change to what is broadcast to slaves.
+- **Editor safe-save handling**: when an editor safe-saves (writes to a temp
+  file like `.goutputstream-*` then atomically renames it over the final
+  file), the watcher now reframes the rename as a content `modified` of the
+  destination (logged `[LAN MODIFY] "<path>" (safe-save)`) instead of
+  broadcasting a misleading `renamed` event. A two-stage content-aware dedup
+  in `_process_file_ready` suppresses spurious broadcasts: (1) a stat pre-check
+  `(mtime, size)` skips without hashing when the file hasn't changed (e.g.
+  an editor open/close with no write), and (2) a hash compare skips when the
+  content matches the last broadcast even if mtime was touched. This replaces
+  the previous time-based debounce, which was counterproductive in the
+  no-op-close-before-safe-save scenario (it suppressed the real rename while
+  keeping the false-positive close). The hash is already computed by
+  `File.get`, so the comparison adds zero I/O cost. The `.goutputstream-*`
+  pattern is now in the built-in `DEFAULT_IGNORE_PATTERNS` (hsync-common) so
+  GNOME GIO temp files are never synced.
+
 ### Security
 - **Permanent download failure skip-set**: a download that fails
   permanently (e.g. declared size exceeds the configured cap) now raises

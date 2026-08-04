@@ -235,4 +235,4 @@ class ActionLabel(StrEnum):
     CLIENT_KEEP = "[CLIENT KEEP]"
     CLIENT_IGN = "[CLIENT IGN]"
     # LAN master broadcast
-    LAN_FILE = "[LAN FILE]"
+    LAN_MODIFY = "[LAN MODIFY]"
