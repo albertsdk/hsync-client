@@ -76,6 +76,10 @@ class EventDispatchContext:
             to suppress the self-induced watchdog event.
         unmark_receiving: Optional callback invoked after a local write
             to release the suppression.
+        record_inbound_rename: Optional callback invoked after a local
+            rename with the exact ``(src_path, dst_path)`` pair, so a
+            later watchdog echo returning a 404 from the master can be
+            recognised as benign rather than a real divergence.
         create_symlink_locally: If ``True`` a ``symlink`` event recreates
             the link via ``os.symlink``; if ``False`` the entry is
             fetched as a regular file.
@@ -87,6 +91,7 @@ class EventDispatchContext:
     log_prefix: str = ""
     mark_receiving: Callable[[str], None] | None = None
     unmark_receiving: Callable[[str], None] | None = None
+    record_inbound_rename: Callable[[str, str], None] | None = None
     create_symlink_locally: bool = False
     recover_on_missing_rename_src: bool = False
 
@@ -258,6 +263,8 @@ async def _rename_path(
             if parent and not Path(parent).exists():
                 Path(parent).mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(rename, src_path, dst_path)
+            if ctx.record_inbound_rename:
+                ctx.record_inbound_rename(src_path, dst_path)
         elif ctx.recover_on_missing_rename_src:
             log.warning(f'Cannot rename: "{src_path}" -> "{dst_path}"')
             log.warning(f'Not found: "{src_path}"')

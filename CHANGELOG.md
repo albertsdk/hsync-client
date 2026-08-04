@@ -194,6 +194,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disk I/O when syncing many small files.
 
 ### Fixed
+- **LAN slave uploads**: eliminate duplicate `[CLIENT UP]` / `[UPLOAD]` for a
+  single file creation and avoid uploading half-written files. A non-empty
+  regular file observed at `on_created` is no longer uploaded immediately;
+  its upload is deferred for a short window (`STABILITY_DELAY_ON_CLOSED`)
+  so `on_closed` (`IN_CLOSE_WRITE`, the reliable fd-closed trigger) can
+  cancel it and take precedence with the fast stability re-check. The
+  deferred timer is the fallback for files that arrive already complete with
+  no writer fd (atomic rename from outside the watch tree, hard-links,
+  `mv` from a sibling directory). `on_deleted` / `on_moved(src)` / shutdown
+  cancel pending timers so stale uploads never fire.
 - **Build**: Fix CI "Build .deb and WD OS5 packages" failure in the CPython
   source-compile step where compilation aborted with
   `error: 'PY_TIME_T_MIN' undeclared` in `Python/pytime.c`. Under qemu-user

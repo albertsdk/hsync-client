@@ -57,6 +57,31 @@ class TestSlaveFileEventHandler:
         """Test checking if file is not being received."""
         assert not handler.is_receiving("/path/to/file.txt")
 
+    def test_inbound_rename_echo_match(self, handler):
+        """is_inbound_rename_echo matches the exact recorded pair."""
+        handler.record_inbound_rename("/b/old.txt", "/b/new.txt")
+        assert handler.is_inbound_rename_echo("/b/old.txt", "/b/new.txt")
+
+    def test_inbound_rename_echo_wrong_pair(self, handler):
+        """A genuine user rename reusing one path has a different pair and
+        must NOT match the echo cache."""
+        handler.record_inbound_rename("/b/old.txt", "/b/new.txt")
+        # user renames the destination further: (new.txt -> newer.txt)
+        assert not handler.is_inbound_rename_echo("/b/new.txt", "/b/newer.txt")
+        # user renames into the source: (other -> old.txt)
+        assert not handler.is_inbound_rename_echo("/b/other.txt", "/b/old.txt")
+
+    def test_inbound_rename_echo_expired(self, handler):
+        """An expired entry is evicted and no longer matches."""
+        handler.record_inbound_rename("/b/old.txt", "/b/new.txt")
+        # Force expiry by backdating the recorded timestamp
+        with handler._inbound_renames_lock:
+            key = ("/b/old.txt", "/b/new.txt")
+            handler._inbound_renames[key] = handler._inbound_renames[key] - (
+                handler._INBOUND_RENAME_TTL_S + 1
+            )
+        assert not handler.is_inbound_rename_echo("/b/old.txt", "/b/new.txt")
+
     def test_is_temp_file(self, handler):
         """Test detecting temporary files."""
         assert handler._is_temp_file("/path/to/file.part")
@@ -311,6 +336,36 @@ class TestSlaveFileEventHandler:
         ):
             mock_patch.return_value = MagicMock(status_code=500)
             handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
+
+    def test_rename_on_master_404_echo_degraded(self, handler):
+        """A 404 matching a recent inbound rename is a benign echo and must
+        be degrading from WARNING to DEBUG (no warning logged)."""
+        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_patch") as mock_patch,
+        ):
+            mock_patch.return_value = MagicMock(status_code=404)
+            handler.record_inbound_rename("/bucket/old.txt", "/bucket/new.txt")
+            with patch("hsync_client.lan_websocket.log") as mock_log:
+                handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
+            # No warning call for this path
+            assert not mock_log.warning.called
+            assert mock_log.debug.called
+
+    def test_rename_on_master_404_divergence_warned(self, handler):
+        """A 404 with no matching inbound rename is a real divergence and
+        must remain a WARNING."""
+        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_patch") as mock_patch,
+        ):
+            mock_patch.return_value = MagicMock(status_code=404)
+            with patch("hsync_client.lan_websocket.log") as mock_log:
+                handler._rename_on_master("/bucket/old.txt", "/bucket/new.txt")
+            assert mock_log.warning.called
+            assert not mock_log.debug.called
 
     def test_rename_on_master_exception(self, handler):
         """Test _rename_on_master logs error on exception."""
@@ -641,10 +696,11 @@ class TestSlaveFileEventHandler:
         timed_out = handler.wait_pending(timeout=0.1)
         assert timed_out >= 1
 
-    def test_on_created_complete_file_uploads_immediately(self, handler, tmp_path):
-        """A non-empty regular file at on_created (e.g. atomic rename in
-        from outside the watch tree) must trigger an immediate upload
-        because no subsequent on_closed/on_modified is guaranteed."""
+    def test_on_created_defers_non_empty_file_upload(self, handler, tmp_path):
+        """A non-empty regular file at on_created is NOT uploaded immediately;
+        it is deferred via a timer so a later on_closed (the reliable trigger)
+        can cancel it and take precedence. The timer is the fallback for files
+        that arrive already complete with no writer fd (atomic rename)."""
         f = tmp_path / "incoming.txt"
         f.write_text("hello world")
         event = FileCreatedEvent(str(f))
@@ -654,7 +710,91 @@ class TestSlaveFileEventHandler:
             patch.object(handler, "_handle_file_upload") as mock_upload,
         ):
             handler.on_created(event)
-            mock_upload.assert_called_once_with(str(f))
+            # Upload deferred, not immediate:
+            mock_upload.assert_not_called()
+            assert str(f) in handler._pending_create_timers
+        # Clean up the real timer so it does not fire after the test
+        handler.cancel_all_create_timers()
+
+    def test_on_closed_cancels_create_timer_and_uploads_from_closed(self, handler, tmp_path):
+        """on_closed cancels the on_created-deferred timer and uploads with
+        from_closed=True (the reliable, fd-closed path)."""
+        f = tmp_path / "f.txt"
+        f.write_text("x")
+        event_created = FileCreatedEvent(str(f))
+        event_closed = FileCreatedEvent(str(f))
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master"),
+        ):
+            F.get.return_value = MagicMock()
+            handler.on_created(event_created)
+            assert str(f) in handler._pending_create_timers
+            handler.on_closed(event_closed)
+            # Timer cancelled by on_closed:
+            assert str(f) not in handler._pending_create_timers
+            # Upload started via on_closed (from_closed=True path):
+            assert len(handler._pending_ops) >= 1
+
+    def test_create_timer_fires_when_no_on_closed(self, handler, tmp_path):
+        """With no on_closed (atomic rename / hard-link), the deferred timer
+        fires and uploads the already-complete file as a fallback."""
+        f = tmp_path / "incoming.txt"
+        f.write_text("hello")
+        event = FileCreatedEvent(str(f))
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.lan_websocket.CREATE_UPLOAD_DEFER_S", 0.0),
+            patch("hsync_client.lan_websocket.File") as F,
+            patch.object(handler, "_upload_to_master") as mock_up,
+        ):
+            F.get.return_value = MagicMock()
+            handler.on_created(event)
+            # The zero-delay timer fires asynchronously; poll until the
+            # fallback upload runs (bounded so the test cannot hang).
+            for _ in range(500):
+                if mock_up.called:
+                    break
+                time.sleep(0.01)
+            assert mock_up.called
+
+    def test_on_deleted_cancels_create_timer(self, handler, tmp_path):
+        """on_deleted cancels a pending on_created-deferred upload so a stale
+        timer does not try to upload a deleted file."""
+        f = tmp_path / "f.txt"
+        f.write_text("x")
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master"),
+        ):
+            handler.on_created(FileCreatedEvent(str(f)))
+            assert str(f) in handler._pending_create_timers
+            handler.on_deleted(FileDeletedEvent(str(f)))
+            assert str(f) not in handler._pending_create_timers
+
+    def test_on_moved_cancels_create_timer_for_src(self, handler, tmp_path):
+        """on_moved cancels a pending on_created-deferred upload for the source
+        path (the file moved away)."""
+        a = tmp_path / "a.txt"
+        a.write_text("x")
+        b = tmp_path / "b.txt"
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_rename_on_master"),
+        ):
+            handler.on_created(FileCreatedEvent(str(a)))
+            assert str(a) in handler._pending_create_timers
+            handler.on_moved(FileMovedEvent(str(a), str(b)))
+            assert str(a) not in handler._pending_create_timers
 
     def test_on_created_empty_file_no_immediate_upload(self, handler, tmp_path):
         """An empty regular file at on_created is left to on_closed /

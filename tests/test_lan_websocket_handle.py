@@ -459,6 +459,25 @@ class TestHandleLanEvent:
         # Should not crash
 
     @pytest.mark.asyncio
+    async def test_handle_renamed_records_inbound_rename(self, tmp_path):
+        """An inbound `renamed` event must record its exact (src,dst) on the
+        slave handler so a later watchdog echo returning 404 is recognised."""
+        src_file = tmp_path / "old.txt"
+        src_file.write_text("content")
+        event_data = {
+            "name": "renamed",
+            "src": {"filepath": "old.txt", "sha256sum": "x", "size": 7},
+            "dst": {"filepath": "new.txt", "sha256sum": "x", "size": 7},
+        }
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        handler = LANSlaveFileEventHandler("host", 9753, use_https=False)
+        with patch("hsync_client.event_dispatch.CONFIG", config):
+            await _handle_lan_event(event_data, slave_handler=handler)
+        src_abs = str(tmp_path / "old.txt")
+        dst_abs = str(tmp_path / "new.txt")
+        assert handler.is_inbound_rename_echo(src_abs, dst_abs)
+
+    @pytest.mark.asyncio
     async def test_handle_deleted_file_not_exists(self, tmp_path):
         """Test deleted file event when file doesn't exist (no crash)."""
         event_data = {

@@ -72,6 +72,8 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | `LANSlaveFileEventHandler` | `:667` | slave-local FS changes → upload to master |
 | `_lan_periodic_resync` | `:616` | periodic full reconcile (§13) |
 | echo suppression | `:85`/`:98` | `mark_inbound_origin` / `consume_inbound_origin` (TTL `:82`) |
+| inbound-rename echo | `LANSlaveFileEventHandler.record_inbound_rename` / `is_inbound_rename_echo` | exact `(src,dst)` pair cache (TTL `:703`); a 404 from the master on a re-sent rename is degraded to DEBUG when it matches a recent inbound rename, else stays WARNING (real divergence) |
+| create-upload deferral | `LANSlaveFileEventHandler._schedule_create_upload` / `_cancel_create_upload` / `cancel_all_create_timers` | an `on_created` upload for a non-empty regular file is deferred (`CREATE_UPLOAD_DEFER_S` = `STABILITY_DELAY_ON_CLOSED`) so `on_closed` (`IN_CLOSE_WRITE`, the reliable fd-closed trigger) can cancel it and take precedence with the fast stability re-check; the timer is the fallback for files that arrive already complete with no writer fd (atomic rename / hard-link / `mv` in). `on_deleted` / `on_moved(src)` / shutdown cancel pending timers so stale uploads never fire. Eliminates the double `[CLIENT UP]`/`[UPLOAD]` and avoids uploading half-written files. |
 
 ## Security: TOFU pinning + persistent identity
 
