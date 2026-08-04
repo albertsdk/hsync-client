@@ -220,6 +220,10 @@ class _StreamingMultipartParser:
         Raises ValueError if the line grows past the header-line cap.
         """
         while b"\r\n" not in self._buf:
+            # No CRLF in the buffer yet: if the accumulated bytes (which form
+            # a single unterminated line) exceed the cap, reject. Only check
+            # when there is no CRLF, because a buffer WITH a CRLF contains a
+            # complete (possibly short) line plus lookahead for the next read.
             if len(self._buf) > MAX_PART_HEADER_LINE_BYTES:
                 log.warning(
                     f"multipart header line too long ({len(self._buf)} bytes, "
@@ -229,13 +233,6 @@ class _StreamingMultipartParser:
                 raise ValueError("multipart header line too long")
             if not self._read_more():
                 break
-        if len(self._buf) > MAX_PART_HEADER_LINE_BYTES:
-            log.warning(
-                f"multipart header line too long ({len(self._buf)} bytes, "
-                f"cap {MAX_PART_HEADER_LINE_BYTES}): "
-                f"buf_head={self._buf[:256]!r}"
-            )
-            raise ValueError("multipart header line too long")
         if b"\r\n" not in self._buf:
             return None
         line, self._buf = self._buf.split(b"\r\n", 1)

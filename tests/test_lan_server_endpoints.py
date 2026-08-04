@@ -3,6 +3,7 @@ Tests for LAN embedded HTTP server endpoints.
 """
 
 import json
+import os
 import time
 from hashlib import sha256 as _sha256
 from http.client import HTTPConnection
@@ -327,6 +328,63 @@ class TestLANSyncIntegration:
             # Verify file exists on master
             assert (master_bucket / "new_from_client.txt").exists()
             assert (master_bucket / "new_from_client.txt").read_text() == "client content"
+
+    def test_streaming_upload_binary_file(self, master_server, tmp_path):
+        """Streaming multipart upload of a large binary file succeeds.
+
+        Regression for 'multipart header line too long': the parser's
+        _read_line checked the ENTIRE buffer size (which could be 64KB after
+        a single _read_more) against the 8KB header-line cap, even when the
+        buffer contained valid short CRLF-terminated lines. The fix checks
+        the cap only while no CRLF is in the buffer (i.e. a single
+        unterminated line is genuinely too long).
+        """
+        import requests
+        from hsync_common.hashing import compute_sha256
+
+        from hsync_client.transfer import _build_multipart_streaming
+
+        srv, port, master_bucket = master_server
+
+        # 500KB of random binary data (like an mp3/flac)
+        file_data = os.urandom(500_000)
+        test_file = tmp_path / "binary.mp3"
+        test_file.write_bytes(file_data)
+
+        sha = compute_sha256(str(test_file))
+
+        with patch(
+            "hsync_client.lan_server.CONFIG",
+            {"LOCAL_BUCKET": str(master_bucket), "LAN_KEY": None},
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/files"
+            fields = {
+                "cid": "test-client",
+                "path": "",
+                "ctime": str(time.time()),
+                "mtime": str(time.time()),
+                "size": str(len(file_data)),
+                "sha256sum": sha,
+                "permissions": "664",
+                "offset": "0",
+            }
+
+            boundary = "testboundary123456"
+            body, content_type = _build_multipart_streaming(
+                str(test_file), fields, boundary=boundary, filename="binary.mp3"
+            )
+
+            response = requests.post(
+                url,
+                headers={"Content-Type": content_type},
+                data=body,
+                timeout=10,
+            )
+
+            assert response.status_code == 201, response.text
+            uploaded = master_bucket / "binary.mp3"
+            assert uploaded.exists()
+            assert uploaded.read_bytes() == file_data
 
 
 class TestLANRequestHandlerDELETE:

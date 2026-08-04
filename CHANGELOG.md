@@ -55,8 +55,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   peer discovery cannot cross container bridge/NAT networking and suggests
   host networking (`docker run --network host`).
 
-### Changed
-- **Upload 4xx diagnostic + no-retry**: a server 4xx rejection on upload (not
+### Fixed
+- **Streaming upload of binary files**: the LAN master's multipart parser
+  rejected uploads with "multipart header line too long" for any file whose
+  body exceeded 8 KB (mp3, flac, …). The parser's `_read_line` checked the
+  ENTIRE buffer size against the 8 KB header-line cap, but a single
+  `_read_more` reads 64 KB at once — so even valid short CRLF-terminated
+  header lines in a 64 KB buffer triggered the false rejection. The cap is
+  now checked only while no CRLF is in the buffer (i.e. a single
+  unterminated line is genuinely too long), not after a chunk read that
+  happens to contain multiple valid lines plus lookahead.
+- **Upload 4xx loguru crash**: the response body of a server 4xx rejection
+  (e.g. `{"error": "..."}`) contains curly braces that loguru interprets as
+  format placeholders, crashing the log handler with `KeyError`. The body
+  and exception message are now escaped via `escape_loguru_markup` before
+  logging.
   401/403/409) now logs the response body (e.g. "Checksum mismatch", "Invalid
   upload: ...") and raises `PermanentUploadError` instead of calling
   `raise_for_status()`, which previously discarded the body and made the

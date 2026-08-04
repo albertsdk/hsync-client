@@ -25,7 +25,7 @@ from hsync_common.format import format_bytes
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
 from hsync_common.path_validation import resolve_within
-from hsync_common.text import safe_json_for_log
+from hsync_common.text import escape_loguru_markup, safe_json_for_log
 from loguru import logger as log
 from requests import RequestException
 
@@ -849,7 +849,9 @@ def upload_file(
         with path_lock(file.filepath):
             attempt(file)
     except (RequestException, ServerError, PermanentUploadError) as exc:
-        log.error(f'Upload failed after retries for "{file.filepath}": {exc}')
+        log.error(
+            f'Upload failed after retries for "{file.filepath}": {escape_loguru_markup(str(exc))}'
+        )
         _emit_transfer_failed("upload", file.filepath, str(exc))
 
 
@@ -1002,9 +1004,9 @@ def _upload_file_attempt(file: File) -> None:
                 # braces so loguru does not interpret JSON bodies (e.g.
                 # {"error": "..."}) as format placeholders.
                 body = (response.text or "")[:500]
-                body_safe = body.replace("{", "{{").replace("}", "}}")
                 log.error(
-                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body_safe}'
+                    f"Upload rejected (HTTP {response.status_code}) for "
+                    f'"{file.filepath}": {escape_loguru_markup(body)}'
                 )
                 raise PermanentUploadError(
                     f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
@@ -1071,9 +1073,9 @@ def _upload_file_attempt(file: File) -> None:
                 # braces so loguru does not interpret JSON bodies (e.g.
                 # {"error": "..."}) as format placeholders.
                 body = (response.text or "")[:500]
-                body_safe = body.replace("{", "{{").replace("}", "}}")
                 log.error(
-                    f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body_safe}'
+                    f"Upload rejected (HTTP {response.status_code}) for "
+                    f'"{file.filepath}": {escape_loguru_markup(body)}'
                 )
                 raise PermanentUploadError(
                     f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
