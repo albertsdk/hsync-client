@@ -44,47 +44,13 @@ deployments.
 
 ## Log Labels
 
-Use `--help-symbols` to display this legend in the terminal.
+`hsync-client` tags every log line with a bracketed action label
+(e.g. `[DOWNLOAD]`, `[NO MASTER]`) to show what kind of operation it is. Use
+`--help-symbols` (or `--legend`) to print the legend in the terminal.
 
-### Sync Operations
-
-| Label | Meaning | Description |
-|-------|---------|-------------|
-| `[IN SYNC]` | In sync | File already in sync (no action required) |
-| `[SKIP]` | Skip | File skipped |
-| `[DOWNLOAD]` | Download | Downloading from server / master |
-| `[UPLOAD]` | Upload | Uploading to server / master |
-| `[RESUME]` | Resume | Resuming partial upload or download |
-| `[MOVE]` | Move | Renaming / moving file or directory |
-| `[REMOVE]` | Remove | Removing file or directory |
-| `[CREATE]` | Create | Creating directory |
-| `[DELETE]` | Delete | Deleting local file not present on master (LAN mode) |
-| `[PERMISSION]` | Permissions | Setting file / directory permissions |
-| `[SYMLINK]` | Symlink | Creating symbolic link |
-| `[IGNORE DEL]` | Ignore delete | Deletion ignored (backup / ignore-delete mode) |
-| `[CONFLICT]` | Conflict | File conflict detected (three-way merge) |
-| `[GUARD]` | Guard | Mass-deletion guard tripped (deletions paused) |
-| `[TOMBSTONE]` | Tombstone | File deleted remotely while offline; local copy removed |
-| `[SYNCED]` | Synced | File is in sync (preview / dry-run) |
-| `[TO DOWNLOAD]` | To download | File would be downloaded (preview / dry-run) |
-| `[TO UPLOAD]` | To upload | File would be uploaded (preview / dry-run) |
-| `[TO DELETE]` | To delete | File would be deleted (preview / dry-run) |
-| `[TO RENAME]` | To rename | File would be renamed (preview / dry-run) |
-
-### LAN Client Operations
-
-| Label | Meaning | Description |
-|-------|---------|-------------|
-| `[CLIENT UP]` | Client upload | Client uploads file to master |
-| `[CLIENT DEL]` | Client delete | Client deletes file on master |
-| `[CLIENT REN]` | Client rename | Client renames file on master |
-| `[CLIENT DIR]` | Client dir | Client creates directory on master |
-| `[CLIENT KEEP]` | Client sentinel | Client creates sentinel file (`.hsynckeep`) |
-| `[CLIENT IGN]` | Client ignore | Client ignores deletion (ignore-delete mode) |
-| `[CLIENT NEW]` | Client new | Client creates a new file on master |
-| `[LAN MODIFY]` | LAN modify | LAN master broadcasts a file `modified` event (slaves pull the new bytes). The trigger `(closed)`/`(modified)` shows whether it fired from `IN_CLOSE_WRITE` (reliable) or the `on_modified` debounce fallback |
-
-Log levels (ERROR, WARNING, INFO, DEBUG) are shown by the logging system.
+The complete list of labels, their color category, and what each means is in
+the dedicated [Log Labels reference](log-labels.md). Log levels (ERROR,
+WARNING, INFO, DEBUG) are shown by the logging system.
 
 ## Error Handling
 
