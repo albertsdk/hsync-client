@@ -128,7 +128,7 @@ watch as the `_hsync` system user; see the comments in
 
 > ⚠️ The service runs non-interactively (`--yes`) with bidirectional sync, so
 > `HSYNC_LAN_KEY` **must be set** in `/etc/hsync/hsync.conf` before enabling
-> it — otherwise the client aborts with `[AUTH_REQUIRED]`. All peers in the
+> it — otherwise the client aborts with `[AUTH REQUIRED]`. All peers in the
 > same LAN group must share the same key. The default config also sets
 > `HSYNC_LAN_CERT_DIR=/var/lib/hsync/lan_cert` because the `_hsync` system
 > user has no home directory.

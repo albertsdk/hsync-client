@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Log label format normalized to spaces**: multi-word action labels now print
+  with spaces (`[NO MASTER]`, `[TO DOWNLOAD]`, `[FINGERPRINT CHANGED]`, …)
+  instead of underscores, matching the rest of the label set and the shared
+  `hsync_common.labels` SSOT. **Breaking** for log parsers that match the old
+  underscored strings; the Android mirror, tests and docs are updated in lockstep.
+- **Unified log-label colorization via shared SSOT**: the client's local
+  `ActionLabel` enum and `LABEL_STYLES`/`_colorize_labels` helpers have been
+  removed in favor of `hsync_common.labels`. Every bracketed log label
+  (`[DOWNLOAD]`, `[UPLOAD]`, `[SECURITY]`, `[MASTER CONFLICT]`, `[NO MASTER]`,
+  `[AUTH REQUIRED]`, the LAN `[CLIENT *]`/`[LAN *]` tags, …) is now emitted
+  through `ActionLabel` and colorized identically on the client and the server.
+  The watchdog handlers and the inbound event dispatcher now share a single
+  `resolve_label` helper, so `[IGNORE DEL]` (previously emitted as a stray
+  `[IGNORE]`) and the LAN-prefixed ignore/delete tags are colorized correctly.
+  The `--legend` output lists the full label set.
+
 ### Added
 - **Auto-tuning of timeout, retry & concurrency**: the client now
   auto-detects the runtime environment (network latency, bandwidth, storage
@@ -266,7 +283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added the missing `HSYNC_TOMBSTONE_TTL_DAYS` env var and `--no-autotune`
   CLI flag, fixed the auto-tuned defaults for `--timeout`/`--retry-delay`,
   added the missing log labels (`[CONFLICT]`, `[GUARD]`, `[TOMBSTONE]`,
-  `[SYNCED]`, `[TO_DOWNLOAD]`, `[TO_UPLOAD]`, `[TO_DELETE]`, `[TO_RENAME]`,
+  `[SYNCED]`, `[TO DOWNLOAD]`, `[TO UPLOAD]`, `[TO DELETE]`, `[TO RENAME]`,
   `[CLIENT NEW]`, `[LAN FILE]`), corrected the retry parameters in the
   sync-flow diagram (3 attempts, 10 s max), fixed the `HSYNC_RECONNECT_DELAY`
   env var name, corrected the stdin command names (`SET_SYNC_DIRECTION`,

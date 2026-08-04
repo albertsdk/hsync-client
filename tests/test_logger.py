@@ -11,6 +11,8 @@ from datetime import UTC
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+from hsync_common.labels import LABEL_STYLES
+from hsync_common.labels import colorize_labels as _colorize_labels
 from hsync_common.logger import (
     DEFAULT_LOG_COMPRESSION,
     DEFAULT_LOG_RETENTION,
@@ -22,9 +24,7 @@ from hsync_common.logger import (
 )
 
 from hsync_client.logger import (
-    LABEL_STYLES,
     InterceptHandler,
-    _colorize_labels,
     _format_record_colored,
     _format_record_plain,
     _get_json_data,
@@ -96,8 +96,8 @@ class TestLabelStyles:
         assert LABEL_STYLES["[PERMISSION]"] == ("<magenta>", "</magenta>")
 
     def test_symlink_label(self):
-        """Test symlink label uses blue tag."""
-        assert LABEL_STYLES["[SYMLINK]"] == ("<blue>", "</blue>")
+        """Test symlink label uses green tag (additive create operation)."""
+        assert LABEL_STYLES["[SYMLINK]"] == ("<green>", "</green>")
 
     def test_in_sync_label(self):
         """Test in-sync label uses dim tag."""

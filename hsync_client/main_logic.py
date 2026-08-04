@@ -100,9 +100,9 @@ def _run_preview(log) -> None:
 
     Emits structured log messages for each file with prefixes:
     - [SYNCED] - file is in sync (no action needed)
-    - [TO_DOWNLOAD] - file needs to be downloaded
-    - [TO_UPLOAD] - file needs to be uploaded
-    - [TO_DELETE] - file will be deleted
+    - [TO DOWNLOAD] - file needs to be downloaded
+    - [TO UPLOAD] - file needs to be uploaded
+    - [TO DELETE] - file will be deleted
     """
     log.info("--- Preview (dry-run) ---")
     emit_event(UiEventName.preview_start)
@@ -503,7 +503,7 @@ def _check_lan_write_policy(
         return
 
     logger.error(
-        "[AUTH_REQUIRED] Non-interactive LAN write requires authentication. "
+        f"{ActionLabel.AUTH_REQUIRED} Non-interactive LAN write requires authentication. "
         "Set HSYNC_LAN_KEY to upload to the master, or run interactively "
         "(omit --yes), or use --sync-direction download-only."
     )
@@ -995,11 +995,19 @@ def run_sync(
             ActionLabel.SKIP: "File skipped",
             ActionLabel.DOWNLOAD: "Download file from server",
             ActionLabel.UPLOAD: "Upload file to server",
-            ActionLabel.MOVE: "Move/Rename file or directory",
-            ActionLabel.REMOVE: "Remove file or directory",
+            ActionLabel.RESUME: "Resume partial download/upload",
             ActionLabel.CREATE: "Create directory",
+            ActionLabel.MODIFY: "Modify file or directory content",
+            ActionLabel.RENAME: "Rename/move file or directory",
+            ActionLabel.MOVE: "Move/rename detected (debug)",
+            ActionLabel.REMOVE: "Remove file or directory",
+            ActionLabel.DELETE: "Delete file or directory",
             ActionLabel.PERMISSION: "Set file/directory permission",
             ActionLabel.SYMLINK: "Create symbolic link",
+            ActionLabel.GUARD: "Mass-deletion guard tripped",
+            ActionLabel.SECURITY: "Unsafe remote path rejected",
+            ActionLabel.CONFLICT: "Conflict with remote version",
+            ActionLabel.TOMBSTONE: "Deletion recorded while offline",
         }
         for label, description in log_labels.items():
             log.info(f"  {label} {description}")

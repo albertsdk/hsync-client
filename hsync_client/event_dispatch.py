@@ -31,6 +31,7 @@ from os import symlink as os_symlink
 from pathlib import Path
 from shutil import rmtree
 
+from hsync_common.labels import resolve_label
 from hsync_common.models.dir import Dir
 from hsync_common.models.event import EventName
 from hsync_common.models.file import File
@@ -97,8 +98,14 @@ class EventDispatchContext:
 
 
 def _tag(prefix: str, name: str) -> str:
-    """Format a log tag (e.g. ``[RENAME]`` or ``[LAN RENAME]``)."""
-    return f"[{prefix}{name}]"
+    """Format a log tag (e.g. ``[RENAME]`` or ``[LAN RENAME]``).
+
+    Thin wrapper over :func:`hsync_common.labels.resolve_label`, which resolves
+    the label through :class:`ActionLabel` so the colorization system in
+    ``hsync_common.labels`` can match it. Shared with the watchdog handlers
+    via ``BaseFileEventHandler._label`` to keep the two transports in sync.
+    """
+    return resolve_label(prefix, name)
 
 
 def _confined_local(rel: object, event_name: object, ctx: EventDispatchContext) -> str | None:
@@ -277,7 +284,7 @@ async def _rename_path(
 async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
     """Apply a delete event for either a directory or a file."""
     if CONFIG.get("IGNORE_DELETE", False):
-        log.debug(f"{_tag(ctx.log_prefix, 'IGN DEL')} Deletion ignored (ignore-delete mode)")
+        log.debug(f"{_tag(ctx.log_prefix, 'IGNORE DEL')} Deletion ignored (ignore-delete mode)")
         return
 
     if "path" in src:

@@ -261,7 +261,7 @@ class TestPeerManager:
             assert pm.get_master_cid() == "remote"
             # Should have logged a conflict warning
             warning_calls = [
-                call for call in mock_log.warning.call_args_list if "MASTER_CONFLICT" in str(call)
+                call for call in mock_log.warning.call_args_list if "MASTER CONFLICT" in str(call)
             ]
             assert len(warning_calls) > 0
 
@@ -304,7 +304,7 @@ class TestPeerManager:
             assert pm.get_master_cid() == "new_force"
             # Should have logged takeover warning
             warning_calls = [
-                call for call in mock_log.warning.call_args_list if "MASTER_TAKEOVER" in str(call)
+                call for call in mock_log.warning.call_args_list if "MASTER TAKEOVER" in str(call)
             ]
             assert len(warning_calls) > 0
 
@@ -713,7 +713,7 @@ class TestForceMasterConflictWon:
             )
             assert pm.get_master_cid() == "local"
             warning_calls = [
-                c for c in mock_log.warning.call_args_list if "MASTER_CONFLICT" in str(c)
+                c for c in mock_log.warning.call_args_list if "MASTER CONFLICT" in str(c)
             ]
             assert len(warning_calls) > 0
             conflict_events = [

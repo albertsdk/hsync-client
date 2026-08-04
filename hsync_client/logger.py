@@ -34,6 +34,7 @@ import sys
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
+from hsync_common.labels import colorize_labels
 from hsync_common.logger import (
     BaseInterceptHandler,
     build_record_formatter,
@@ -42,8 +43,6 @@ from hsync_common.logger import (
 from hsync_common.runtime import color_output_enabled
 from hsync_common.text import escape_loguru_markup
 from loguru import logger
-
-from hsync_client.constants import ActionLabel as AL
 
 if TYPE_CHECKING:
     from loguru import Logger, Record
@@ -102,53 +101,10 @@ def set_client_id(client_id: str | None) -> None:
 # - Create (+): green - additive action
 # - Permission (⚙): magenta - system/config change
 # - Skip (·): gray - no action taken
+#
+# The label -> color mapping lives in hsync_common.labels (shared with
+# hsync-server) so both projects colorize the same operations identically.
 # =============================================================================
-
-# Action label color mappings using loguru tags. Keyed by the centralized
-# ActionLabel values (hsync_client.constants) so the colorized text always
-# matches what the emit sites produce.
-LABEL_STYLES: dict[str, tuple[str, str]] = {
-    # Sync operations
-    AL.DOWNLOAD: ("<cyan>", "</cyan>"),
-    AL.UPLOAD: ("<green>", "</green>"),
-    AL.RESUME: ("<cyan>", "</cyan>"),
-    AL.MOVE: ("<blue>", "</blue>"),
-    AL.REMOVE: ("<red>", "</red>"),
-    AL.DELETE: ("<red>", "</red>"),
-    AL.CREATE: ("<green>", "</green>"),
-    AL.PERMISSION: ("<magenta>", "</magenta>"),
-    AL.SYMLINK: ("<blue>", "</blue>"),
-    AL.IN_SYNC: ("<dim>", "</dim>"),
-    AL.SKIP: ("<dim>", "</dim>"),
-    AL.IGNORE_DEL: ("<yellow>", "</yellow>"),
-    # LAN client operations
-    AL.CLIENT_UP: ("<green>", "</green>"),
-    AL.CLIENT_DEL: ("<red>", "</red>"),
-    AL.CLIENT_REN: ("<blue>", "</blue>"),
-    AL.CLIENT_DIR: ("<green>", "</green>"),
-    AL.CLIENT_KEEP: ("<dim>", "</dim>"),
-    AL.CLIENT_IGN: ("<yellow>", "</yellow>"),
-}
-
-
-def _colorize_labels(message: str, use_colors: bool = True) -> str:
-    """
-    Add color tags to action labels in message.
-
-    Args:
-        message: The log message to colorize.
-        use_colors: Whether to apply colors (False for plain output).
-
-    Returns:
-        Message with color tags applied to action labels.
-    """
-    if not use_colors:
-        return message
-
-    for label, (start_tag, end_tag) in LABEL_STYLES.items():
-        if label in message:
-            message = message.replace(label, f"{start_tag}{label}{end_tag}")
-    return message
 
 
 def _get_json_data(record: "Record") -> dict | None:
@@ -188,7 +144,7 @@ def _append_json_data(record: "Record", message: str) -> str:
 
 def _transform_colored(record: "Record", message: str) -> str:
     """Colorize action labels then append any json_data payload."""
-    return _append_json_data(record, _colorize_labels(message, use_colors=True))
+    return _append_json_data(record, colorize_labels(message, use_colors=True))
 
 
 def _transform_plain(record: "Record", message: str) -> str:

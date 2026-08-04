@@ -159,7 +159,7 @@ class TestRunLanMode:
 
         # No sync attempted and an insecure-master warning was emitted.
         mock_run.assert_not_called()
-        assert any("INSECURE_MASTER" in str(c) for c in mock_log.warning.call_args_list)
+        assert any("INSECURE MASTER" in str(c) for c in mock_log.warning.call_args_list)
 
     def test_slave_dryrun_shows_preview(self, tmp_path):
         """Client in dryrun mode shows preview and exits."""

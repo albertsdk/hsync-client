@@ -234,7 +234,7 @@ hsync -b signage -p /srv/signage --lan-mode
 
 > **Note**: `--never-master` cannot be combined with `--force-master`
 > (they request opposite behaviour). If **every** peer is `--never-master`,
-> no master is elected and a `[NO_MASTER]` warning is logged after 60 s.
+> no master is elected and a `[NO MASTER]` warning is logged after 60 s.
 
 ### 2.5 One-shot LAN sync (no continuous listening)
 

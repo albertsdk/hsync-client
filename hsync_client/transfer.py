@@ -300,7 +300,7 @@ def download_file(file: File) -> None:
     # local bucket (traversal, absolute paths, symlink hops, engine files).
     dest = _local_dest_path(file)
     if dest is None:
-        log.warning(f'[SECURITY] Rejected unsafe download path "{file.filepath}"')
+        log.warning(f'{ActionLabel.SECURITY} Rejected unsafe download path "{file.filepath}"')
         emit_event(
             UiEventName.security_rejected,
             op="download",

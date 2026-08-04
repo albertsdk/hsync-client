@@ -101,7 +101,7 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
     The keypair lives in an OS state directory (overridable via
     ``$HSYNC_LAN_CERT_DIR``) so the master's fingerprint stays stable across
     restarts: pinned peers keep trusting it (TOFU) instead of seeing a
-    ``[FINGERPRINT_CHANGED]`` mismatch every time the master restarts.
+    ``[FINGERPRINT CHANGED]`` mismatch every time the master restarts.
 
     The private key is written unencrypted and protected by filesystem
     permissions (``0o600`` in a ``0o700`` directory), the standard model for

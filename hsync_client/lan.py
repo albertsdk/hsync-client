@@ -40,6 +40,7 @@ from hsync_client.constants import (
     DISCOVERY_TIMEOUT_DEFAULT,
     HSYNC_VERSION,
     PEER_TIMEOUT,
+    ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
 
@@ -351,7 +352,7 @@ class PeerManager:
                     # We lost: another force_master peer won
                     winner_addr = winner_peer.address if winner_peer else "unknown"
                     log.warning(
-                        f"[MASTER_CONFLICT] force_master conflict: "
+                        f"{ActionLabel.MASTER_CONFLICT} force_master conflict: "
                         f"another master {winner_cid} at {winner_addr} "
                         f"has priority (started earlier). "
                         f"This client will operate as client."
@@ -366,7 +367,7 @@ class PeerManager:
                     # We won: a remote force_master peer lost
                     loser_addr = loser_peer.address if loser_peer else "unknown"
                     log.warning(
-                        f"[MASTER_CONFLICT] force_master conflict: "
+                        f"{ActionLabel.MASTER_CONFLICT} force_master conflict: "
                         f"peer {loser_cid} at {loser_addr} also has "
                         f"force_master enabled. This client wins "
                         f"(started earlier)."
@@ -389,7 +390,7 @@ class PeerManager:
             new_peer = self._peers.get(new_master_cid)
             if new_peer and new_peer.force_master:
                 log.warning(
-                    f"[MASTER_TAKEOVER] peer {new_master_cid} at "
+                    f"{ActionLabel.MASTER_TAKEOVER} peer {new_master_cid} at "
                     f"{new_peer.address} has force_master enabled "
                     f"and is taking over as master. "
                     f"This client will switch to client."

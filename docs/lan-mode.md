@@ -250,7 +250,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 - `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)
 - `--never-master` is **incompatible** with `--force-master` — the client will refuse to start
 - If a non-bidirectional peer is elected as master (no bidirectional peers available), a **WARNING** is logged
-- If **all** discovered peers are `--never-master`, no master is elected; after 60 s a `[NO_MASTER]` warning is logged
+- If **all** discovered peers are `--never-master`, no master is elected; after 60 s a `[NO MASTER]` warning is logged
 - If the master goes offline, a new election occurs among remaining peers
 
 ### Examples
@@ -290,7 +290,7 @@ Peer B: CID=def456, bidirectional, never_master=false, startup=10:01
 Peer A: CID=abc123, never_master=true, startup=10:00
 Peer B: CID=def456, never_master=true, startup=10:01
 → No master elected; candidate pool is empty
-⚠️ WARNING: [NO_MASTER] no master elected after 60s — all peers are never-master
+⚠️ WARNING: [NO MASTER] no master elected after 60s — all peers are never-master
 ```
 
 ## Use Cases & Recipes
