@@ -170,7 +170,7 @@ class TestLANRequestHandlerRenameSecurity:
 
 
 class TestLANUploadAbsoluteCap:
-    """MAX_DOWNLOAD_SIZE caps LAN uploads on top of the peer-declared size."""
+    """MAX_INBOUND_SIZE caps LAN uploads on top of the peer-declared size."""
 
     @pytest.fixture
     def server(self):
@@ -191,7 +191,7 @@ class TestLANUploadAbsoluteCap:
         return requests.post(url, data=data, files={"file": (name, content)}, timeout=5)
 
     def test_upload_beyond_absolute_cap_rejected(self, server, tmp_path):
-        """A peer declaring 1 GB is still capped at MAX_DOWNLOAD_SIZE."""
+        """A peer declaring 1 GB is still capped at MAX_INBOUND_SIZE."""
         import hashlib
 
         srv, port = server
@@ -203,7 +203,7 @@ class TestLANUploadAbsoluteCap:
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
                 "MIN_FREE_DISK_SPACE": 0,
-                "MAX_DOWNLOAD_SIZE": 50,
+                "MAX_INBOUND_SIZE": 50,
             },
         ):
             # A valid sha256sum makes the cap the ONLY possible rejection
@@ -237,7 +237,7 @@ class TestLANUploadAbsoluteCap:
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
                 "MIN_FREE_DISK_SPACE": 0,
-                "MAX_DOWNLOAD_SIZE": 50,
+                "MAX_INBOUND_SIZE": 50,
             },
         ):
             response = self._post_file(
@@ -264,7 +264,7 @@ class TestLANUploadAbsoluteCap:
                 "LOCAL_BUCKET": str(tmp_path),
                 "LAN_KEY": None,
                 "MIN_FREE_DISK_SPACE": 0,
-                "MAX_DOWNLOAD_SIZE": 1024,
+                "MAX_INBOUND_SIZE": 1024,
             },
         ):
             response = self._post_file(

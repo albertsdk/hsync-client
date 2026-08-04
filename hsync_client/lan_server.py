@@ -49,7 +49,7 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_DOWNLOAD_SIZE_MB_DEFAULT
+from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_INBOUND_SIZE_MB_DEFAULT
 from hsync_client.utils import inbound_size_cap, open_partial_no_follow
 
 # =============================================================================
@@ -156,7 +156,7 @@ class _CappedBytesWriter:
 
     Placed between a decompressor and the destination file so a hostile
     upload cannot expand a small compressed payload past the effective cap
-    — min(declared size, ``MAX_DOWNLOAD_SIZE``) — (decompression bomb
+    — min(declared size, ``MAX_INBOUND_SIZE``) — (decompression bomb
     containment on the receiving side).
     """
 
@@ -616,7 +616,14 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
 
         if not Path(full_path).exists():
-            # Already deleted, return success
+            # Already deleted, return success. No mark_inbound_origin is
+            # recorded here, so if another concurrent request's rmtree fires
+            # a `deleted` event for this path it will broadcast with the
+            # master CID (echo not suppressed on the originator).
+            log.debug(
+                f"[DELETE-API] already-deleted branch: path={full_path} is_dir={is_dir} "
+                f"origin_cid={query.get('cid', [None])[0]}"
+            )
             self._send_json_response(HTTP_OK, {"info": "File already deleted"})
             return
 
@@ -625,10 +632,16 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         # only on authenticated requests; an unauthenticated CID is untrusted
         # and ignored.
         origin_cid = query.get("cid", [None])[0]
+        marked = False
         if origin_cid and is_valid_cid(origin_cid) and CONFIG.get("LAN_KEY"):
             from hsync_client.lan_websocket import mark_inbound_origin
 
             mark_inbound_origin(full_path, origin_cid)
+            marked = True
+        log.debug(
+            f"[DELETE-API] delete branch: path={full_path} is_dir={is_dir} "
+            f"origin_cid={origin_cid} marked={marked} lan_key_set={bool(CONFIG.get('LAN_KEY'))}"
+        )
 
         try:
             if is_dir:
@@ -917,20 +930,20 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
                     if use_compression:
                         # Compression requires the full content to compute the
-                        # zstd frame; cap the in-memory size to MAX_DOWNLOAD_SIZE
+                        # zstd frame; cap the in-memory size to MAX_INBOUND_SIZE
                         # so a hostile huge file cannot OOM the master. When the
                         # cap is not configured (0), fall back to the default
                         # max download size so an unbounded f.read() is never
                         # possible on the compressed branch.
-                        max_dl = CONFIG.get("MAX_DOWNLOAD_SIZE", 0) or (
-                            MAX_DOWNLOAD_SIZE_MB_DEFAULT * 1024 * 1024
+                        max_inbound = CONFIG.get("MAX_INBOUND_SIZE", 0) or (
+                            MAX_INBOUND_SIZE_MB_DEFAULT * 1024 * 1024
                         )
-                        if max_dl and file_size > max_dl:
+                        if max_inbound and file_size > max_inbound:
                             self._send_error_response(
                                 HTTP_FORBIDDEN, "File too large for compressed transfer"
                             )
                             return
-                        content = f.read(max_dl)
+                        content = f.read(max_inbound)
                         compressed_content = compress_data(content)
                         log.debug(
                             f"Compressed download: {len(content)} -> "
@@ -1053,7 +1066,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             # safe bound: a hostile peer could declare an arbitrary size and
             # expand a bomb up to it before the SHA-256 check discards the
             # content. The shared inbound_size_cap policy applies
-            # min(declared, MAX_DOWNLOAD_SIZE), with MAX_DOWNLOAD_SIZE as the
+            # min(declared, MAX_INBOUND_SIZE), with MAX_INBOUND_SIZE as the
             # only bound when no size is declared at all.
             try:
                 declared_size = int(form_fields.get("size", ""))
@@ -1061,7 +1074,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 declared_size = -1
             cap = inbound_size_cap(
                 declared_size if declared_size > 0 else None,
-                CONFIG.get("MAX_DOWNLOAD_SIZE", 0),
+                CONFIG.get("MAX_INBOUND_SIZE", 0),
             )
             capped = _CappedBytesWriter(raw.write, cap) if cap is not None else raw
             if is_compressed_local:

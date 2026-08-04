@@ -54,7 +54,7 @@ def client_config(monkeypatch, tmp_path):
         "SERVER_COMPRESSION_ENABLED": False,
         "LAN_MODE": False,
         "HTTP_TIMEOUT": 10,
-        "MAX_DOWNLOAD_SIZE": 0,
+        "MAX_INBOUND_SIZE": 0,
     }
     monkeypatch.setattr(dt, "CONFIG", cfg)
     # Lower the delta size floor so small fixtures are eligible.

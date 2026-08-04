@@ -64,14 +64,14 @@ caller falls back to a full transfer.
 
 Compressed downloads stream through `decompress_stream` with a hard output cap
 (anti decompression-bomb, `transfer.py:448`); the payload is never fully
-buffered in memory. The cap is `min(declared size, MAX_DOWNLOAD_SIZE)`
+buffered in memory. The cap is `min(declared size, MAX_INBOUND_SIZE)`
 (`utils.inbound_size_cap` — the single implementation shared with LAN-master
 received uploads): the declared size alone is not a
 safe bound because a hostile server/master can declare an arbitrary size and
 expand a bomb up to it on disk before the SHA-256 check discards the content.
 The same cap also bounds uncompressed bodies, so an over-cap download (hostile
 or simply larger than the configured maximum) is aborted and the `.part`
-dropped. `MAX_DOWNLOAD_SIZE` defaults to 10 GB (`--max-download-size`,
+dropped. `MAX_INBOUND_SIZE` defaults to 10 GB (`--max-inbound-size`,
 mirroring the server's `max_upload_size`; `0` = declared size only). Wire-supplied permissions go through
 `utils.set_permissions` (`utils.py:492`) which strips setuid/setgid/sticky bits
 (`sanitize_remote_permissions`).
@@ -83,10 +83,21 @@ from `constants.py:99`–`:101`.
 ## event_dispatch.py — apply inbound events
 
 `apply_inbound_event` (`event_dispatch.py:124`) routes a remote event dict to
-`_apply_add_or_modify` (`:158`), `_apply_rename` (`:188`), `_apply_delete` (`:242`,
+`_apply_add_or_modify` (`:158`), `_apply_rename` (`:188`), `_apply_delete` (`:277`,
 locked via `_remove_locked:48`), `_apply_symlink` (`:295`). Echo suppression uses
 the per-event `EventDispatchContext` (`:62`) marking (`_mark:93`/`_unmark:98`).
 Path resolution: `_resolve_local_path` (`:178`).
+
+**Benign-echo degradation** (`_apply_delete`, dir branch `:293` / file branch
+`:312`): when an inbound `deleted` event targets a path already absent locally,
+the delete has nothing to act on (the originator removed it, a peer's delete
+converged after a local deletion, or the path never existed here). This is logged
+at **DEBUG**, not WARNING — mirroring the master's "File already deleted" success
+branch (`lan_server.py:_handle_delete`) and the rename 404-echo degradation
+(`_rename_on_master`). WARNINGs here were noise because echo suppression can miss
+when the master has no `LAN_KEY` set (the `mark_inbound_origin` cid gate is a
+security measure) or when a directory's children are removed by `rmtree` without
+being individually marked.
 
 **Inbound path security gate** (`:139`): every src/dst path is validated with
 `hsync_common.path_validation.validate_remote_relpath` before dispatch —

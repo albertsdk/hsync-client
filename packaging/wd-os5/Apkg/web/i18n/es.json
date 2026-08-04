@@ -28,7 +28,7 @@
     "field.bw_upload": "Ancho de banda máx. de subida (p. ej. 1MB)",
     "field.bw_download": "Ancho de banda máx. de bajada (p. ej. 1MB)",
     "field.min_free_mb": "Espacio libre mínimo (MB, 0 = off)",
-    "field.max_download_mb": "Tamaño máximo de archivo entrante (MB, 0 = off)",
+    "field.max_inbound_mb": "Tamaño máximo de archivo entrante (MB, 0 = off)",
     "field.verbose": "Log detallado",
 
     "section.autotune": "Auto-ajuste",

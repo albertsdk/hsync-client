@@ -60,7 +60,7 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
-    MAX_DOWNLOAD_SIZE_MB_DEFAULT,
+    MAX_INBOUND_SIZE_MB_DEFAULT,
     PEER_TIMEOUT,
     RESYNC_DEFAULT,
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
@@ -640,7 +640,7 @@ def run_sync(
     events_json_fd: int | None = None,
     auto_confirm: bool = False,
     min_free_disk_space: int = 500,
-    max_download_size: int = MAX_DOWNLOAD_SIZE_MB_DEFAULT,
+    max_inbound_size: int = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: list[str] | None = None,
     max_concurrent_transfers: int | None = None,
     no_autotune: bool = False,
@@ -894,7 +894,7 @@ def run_sync(
         "MIN_FREE_DISK_SPACE": min_free_disk_space,
         # Absolute cap (bytes) on a single inbound file, applied on top of the
         # peer-declared size (anti decompression-bomb); 0 = disabled.
-        "MAX_DOWNLOAD_SIZE": max_download_size * 1024 * 1024,
+        "MAX_INBOUND_SIZE": max_inbound_size * 1024 * 1024,
         "IGNORE_PATTERNS": ignore_patterns
         if ignore_patterns is not None
         else get_ignore_patterns(),

@@ -26,9 +26,9 @@ from hsync_client.constants import (
     HTTP_TIMEOUT_MIN,
     MAX_CONCURRENT_TRANSFERS_MAX,
     MAX_CONCURRENT_TRANSFERS_MIN,
-    MAX_DOWNLOAD_SIZE_MB_DEFAULT,
-    MAX_DOWNLOAD_SIZE_MB_MAX,
-    MAX_DOWNLOAD_SIZE_MB_MIN,
+    MAX_INBOUND_SIZE_MB_DEFAULT,
+    MAX_INBOUND_SIZE_MB_MAX,
+    MAX_INBOUND_SIZE_MB_MIN,
     MAX_WAIT_TIMEOUT_MAX,
     MAX_WAIT_TIMEOUT_MIN,
     MIN_FREE_DISK_SPACE_MB_DEFAULT,
@@ -362,10 +362,10 @@ def main(
             rich_help_panel="Sync",
         ),
     ] = MIN_FREE_DISK_SPACE_MB_DEFAULT,
-    max_download_size: Annotated[
+    max_inbound_size: Annotated[
         int,
         typer.Option(
-            "--max-download-size",
+            "--max-inbound-size",
             help=(
                 "Maximum size in MB of a single inbound file (download or "
                 "received LAN upload), enforced as an absolute cap on top of "
@@ -374,7 +374,7 @@ def main(
             metavar="MB",
             rich_help_panel="Sync",
         ),
-    ] = MAX_DOWNLOAD_SIZE_MB_DEFAULT,
+    ] = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: Annotated[
         str | None,
         typer.Option(
@@ -679,10 +679,10 @@ def main(
             f"Minimum free disk space must be between "
             f"{MIN_FREE_DISK_SPACE_MB_MIN} and {MIN_FREE_DISK_SPACE_MB_MAX} MB."
         )
-    if max_download_size < MAX_DOWNLOAD_SIZE_MB_MIN or max_download_size > MAX_DOWNLOAD_SIZE_MB_MAX:
+    if max_inbound_size < MAX_INBOUND_SIZE_MB_MIN or max_inbound_size > MAX_INBOUND_SIZE_MB_MAX:
         raise typer.BadParameter(
             f"Max download size must be between "
-            f"{MAX_DOWNLOAD_SIZE_MB_MIN} and {MAX_DOWNLOAD_SIZE_MB_MAX} MB."
+            f"{MAX_INBOUND_SIZE_MB_MIN} and {MAX_INBOUND_SIZE_MB_MAX} MB."
         )
 
     # Parse and validate bandwidth limits
@@ -781,7 +781,7 @@ def main(
         legend=legend,
         auto_confirm=yes,
         min_free_disk_space=min_free_disk_space,
-        max_download_size=max_download_size,
+        max_inbound_size=max_inbound_size,
         ignore_patterns=[p.strip() for p in (ignore_patterns or "").split(",") if p.strip()],
         max_concurrent_transfers=max_concurrent_transfers,
         no_autotune=no_autotune,

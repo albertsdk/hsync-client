@@ -398,7 +398,7 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
             declared_size = body.get("data_size")
             write_cap = inbound_size_cap(
                 declared_size if isinstance(declared_size, int) else 0,
-                CONFIG.get("MAX_DOWNLOAD_SIZE", 0),
+                CONFIG.get("MAX_INBOUND_SIZE", 0),
             )
             response.raw.decode_content = False
             try:
