@@ -192,6 +192,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sync cycle (in `sync_state.flush()`), avoiding redundant per-file
   rewrites of the entire `.hsyncstate` side-car. This significantly reduces
   disk I/O when syncing many small files.
+- **Docs**: Corrected and completed the user documentation tables in
+  `docs/configuration.md`, `docs/usage.md`, `docs/sync-flow.md`,
+  `docs/faq.md`, `docs/debian-package.md` and `docs/internal/developer.md`:
+  added the missing `HSYNC_TOMBSTONE_TTL_DAYS` env var and `--no-autotune`
+  CLI flag, fixed the auto-tuned defaults for `--timeout`/`--retry-delay`,
+  added the missing log labels (`[CONFLICT]`, `[GUARD]`, `[TOMBSTONE]`,
+  `[SYNCED]`, `[TO_DOWNLOAD]`, `[TO_UPLOAD]`, `[TO_DELETE]`, `[TO_RENAME]`,
+  `[CLIENT NEW]`, `[LAN FILE]`), corrected the retry parameters in the
+  sync-flow diagram (3 attempts, 10 s max), fixed the `HSYNC_RECONNECT_DELAY`
+  env var name, corrected the stdin command names (`SET_SYNC_DIRECTION`,
+  `SYNC`, `PREVIEW`, `SET_BANDWIDTH`), fixed the editor swap pattern
+  (`.*.sw?`), and clarified that `HSYNC_LAN_HTTPS` is always on and not
+  configurable.
 
 ### Fixed
 - **LAN slave uploads**: eliminate duplicate `[CLIENT UP]` / `[UPLOAD]` for a

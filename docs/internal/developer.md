@@ -123,8 +123,8 @@ flowchart TD
     T -->|"③d Permission"| P[Log warning]
 
     N -->|"④"| R{Retry count}
-    R -->|"⑤a < 5"| W[Wait and retry]
-    R -->|"⑤b >= 5"| F[Mark as failed]
+    R -->|"⑤a < 3"| W[Wait and retry]
+    R -->|"⑤b >= 3"| F[Mark as failed]
 
     W -->|"⑥ Retry"| E
 ```
@@ -178,7 +178,7 @@ Reconnecting ──(max retries)──► Exit (fatal error)
 ### Exponential backoff
 
 Each reconnection attempt uses exponential backoff with a configurable base
-delay (`HSYNC_RETRY_DELAY`, default 5 seconds):
+delay (`HSYNC_RECONNECT_DELAY`, default 5 seconds):
 
 | Attempt | Delay | Total wait |
 |---------|-------|------------|
@@ -204,16 +204,17 @@ In watch mode, the client accepts runtime commands via stdin. Each command is a
 single JSON line:
 
 ```json
-{"command": "direction", "value": "upload-only"}
+{"command": "SET_SYNC_DIRECTION", "direction": "upload-only"}
 ```
 
 ### Supported commands
 
 | Command | Payload | Effect |
 |---------|---------|--------|
-| `direction` | `"bidirectional"`, `"upload-only"`, or `"download-only"` | Change sync direction at runtime |
-| `resync` | (none) | Trigger an immediate full resync |
-| `exit` | (none) | Gracefully disconnect and shut down |
+| `SET_SYNC_DIRECTION` | `{"direction": "bidirectional"}` / `{"direction": "upload-only"}` / `{"direction": "download-only"}` | Change sync direction at runtime |
+| `SYNC` | (none) | Trigger an immediate full resync |
+| `PREVIEW` | (none) | Run a dry-run preview of pending sync actions |
+| `SET_BANDWIDTH` | `{"upload": 1048576}` / `{"download": 500000}` | Update upload/download bandwidth limits at runtime |
 
 Commands are processed asynchronously by `stdin_commands.py`. The direction
 change is applied inline without restarting the watchdog observer — events
@@ -236,7 +237,7 @@ sequenceDiagram
     M-->>A: ② 200 OK + TLS certificate
 
     Note over A: ③ Record fingerprint of M's cert
-    Note over A:    in .hsyncstate/known_peers.json
+    Note over A:    in HSYNC_LAN_PIN_FILE (default ~/.local/state/hsync/lan_known_peers.json)
 
     A->>M: ④ Subsequent connections: verify fingerprint
     alt Fingerprint matches
