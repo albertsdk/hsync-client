@@ -46,7 +46,7 @@ peers are ignored.
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`); extracts CID from auth message for logging |
-| `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast |
+| `LANMasterFileEventHandler` | `:363` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
 
 Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`

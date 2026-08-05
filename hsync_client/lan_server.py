@@ -49,7 +49,7 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_INBOUND_SIZE_MB_DEFAULT
+from hsync_client.constants import HSYNCKEEP_FILENAME, MAX_INBOUND_SIZE_MB_DEFAULT, ActionLabel
 from hsync_client.utils import inbound_size_cap, open_partial_no_follow
 
 # =============================================================================
@@ -583,7 +583,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
                 mark_inbound_origin(src_path, origin_cid)
                 mark_inbound_origin(dst_path, origin_cid)
 
-            log.info(f"Renaming from client request (CID: {origin_cid}): {src_path} -> {dst_path}")
             rename(src_path, dst_path)
 
             self._send_json_response(HTTP_OK, {"info": "Renamed successfully"})
@@ -645,10 +644,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         try:
             if is_dir:
-                log.info(f"Deleting directory from client request (CID: {origin_cid}): {full_path}")
                 rmtree(full_path, ignore_errors=False)
             else:
-                log.info(f"Deleting file from client request (CID: {origin_cid}): {full_path}")
                 os.remove(full_path)
                 parent = str(Path(full_path).parent)
                 if Path(full_path).name == HSYNCKEEP_FILENAME:
@@ -852,6 +849,9 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         if not filename:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing filename parameter")
             return
+        origin_cid = query.get("cid", [None])[0]
+        cid_suffix = f" (CID: {origin_cid})" if origin_cid else ""
+        log.info(f'{ActionLabel.LAN_DOWNLOAD} "{filename}"{cid_suffix}')
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         # Peer-supplied path is untrusted: validate and confine to the bucket
@@ -1171,7 +1171,6 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if permissions:
                 set_permissions(dest_path, permissions)
 
-            log.info(f"Received file from {cid}: {dest_path}")
             self._send_json_response(
                 HTTP_CREATED,
                 {"info": "File uploaded successfully", "file": dest_path},

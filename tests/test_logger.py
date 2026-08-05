@@ -135,6 +135,10 @@ class TestLabelStyles:
         """Test client ignore label uses yellow tag."""
         assert LABEL_STYLES["[CLIENT IGN]"] == ("<yellow>", "</yellow>")
 
+    def test_lan_download_label(self):
+        """Test LAN download label uses cyan tag."""
+        assert LABEL_STYLES["[LAN DOWNLOAD]"] == ("<cyan>", "</cyan>")
+
 
 class TestColorizeLabels:
     """Tests for _colorize_labels function."""
@@ -175,6 +179,11 @@ class TestColorizeLabels:
         """Test LAN client label gets colored."""
         result = _colorize_labels('[CLIENT DEL] "/path/to/file"')
         assert "<red>[CLIENT DEL]</red>" in result
+
+    def test_colorize_lan_download_label(self):
+        """Test LAN download label gets colored."""
+        result = _colorize_labels('[LAN DOWNLOAD] "/path/to/file"')
+        assert "<cyan>[LAN DOWNLOAD]</cyan>" in result
 
 
 class TestSetupLogging:

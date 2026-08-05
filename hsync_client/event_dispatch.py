@@ -155,9 +155,10 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
     event_name = event_data.get("name")
     src = event_data.get("src")
     dst = event_data.get("dst")
+    origin_cid = event_data.get("cid")
 
     own_cid = CONFIG.get("CID")
-    if own_cid and event_data.get("cid") == own_cid:
+    if own_cid and origin_cid == own_cid:
         log.debug(f"{_tag(ctx.log_prefix, 'ECHO')} Ignoring own event: {event_name}")
         return
 
@@ -181,16 +182,18 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
             return
 
     if event_name in {EventName.added.value, EventName.modified.value}:
-        await _apply_add_or_modify(src, ctx, str(event_name))
+        await _apply_add_or_modify(src, ctx, event_name, origin_cid)
     elif event_name == EventName.renamed.value:
-        await _apply_rename(src, dst, ctx)
+        await _apply_rename(src, dst, ctx, origin_cid)
     elif event_name == EventName.deleted.value:
-        await _apply_delete(src, ctx)
+        await _apply_delete(src, ctx, origin_cid)
     elif event_name == EventName.symlink.value:
-        await _apply_symlink(src, ctx)
+        await _apply_symlink(src, ctx, origin_cid)
 
 
-async def _apply_add_or_modify(src: dict, ctx: EventDispatchContext, event_name: str) -> None:
+async def _apply_add_or_modify(
+    src: dict, ctx: EventDispatchContext, event_name: object, origin_cid: object = None
+) -> None:
     """Materialise an added/modified directory or file locally."""
     if "path" in src:
         target = _resolve_local_path(src, "path") if ctx.mark_receiving else None
@@ -210,7 +213,10 @@ async def _apply_add_or_modify(src: dict, ctx: EventDispatchContext, event_name:
                 _unmark(ctx, target)
         if result is not None:
             label = "CREATE" if event_name == EventName.added.value else "MODIFY"
-            log.info(f'{_tag(ctx.log_prefix, label)} "{target or src.get("path")}"')
+            log.info(
+                f'{_tag(ctx.log_prefix, label)} "{target or src.get("path")}"'
+                f"{_cid_suffix(origin_cid)}"
+            )
             emit_event(
                 UiEventName.transfer,
                 op="create" if label == "CREATE" else "modify",
@@ -236,7 +242,9 @@ def _resolve_local_path(src: dict, key: str) -> str | None:
     return File.from_dict(src, bucket, False).filepath
 
 
-async def _apply_rename(src: dict, dst: dict | None, ctx: EventDispatchContext) -> None:
+async def _apply_rename(
+    src: dict, dst: dict | None, ctx: EventDispatchContext, origin_cid: object = None
+) -> None:
     """Apply a rename event for either a directory or a file."""
     if not dst:
         log.warning("Rename event missing 'dst' field")
@@ -252,6 +260,7 @@ async def _apply_rename(src: dict, dst: dict | None, ctx: EventDispatchContext) 
             dst_local,
             ctx,
             recover=lambda: update_dir(dst),
+            origin_cid=origin_cid,
         )
     elif "filepath" in src:
         src_local = _confined_local(src.get("filepath"), EventName.renamed.value, ctx)
@@ -264,7 +273,13 @@ async def _apply_rename(src: dict, dst: dict | None, ctx: EventDispatchContext) 
             dst_local,
             ctx,
             recover=lambda: download_file(dst_file),
+            origin_cid=origin_cid,
         )
+
+
+def _cid_suffix(origin_cid: object) -> str:
+    """Return a ``(CID: xxx)`` suffix for log lines, or ``""`` when unknown."""
+    return f" (CID: {origin_cid})" if origin_cid else ""
 
 
 async def _rename_path(
@@ -272,6 +287,7 @@ async def _rename_path(
     dst_path: str | None,
     ctx: EventDispatchContext,
     recover: Callable[[], None],
+    origin_cid: object = None,
 ) -> None:
     """Rename ``src_path`` to ``dst_path``, with optional recovery on missing source."""
     if not (src_path and dst_path):
@@ -280,7 +296,10 @@ async def _rename_path(
     _mark(ctx, dst_path)
     try:
         if Path(src_path).exists():
-            log.info(f'{_tag(ctx.log_prefix, "RENAME")} "{src_path}" -> "{dst_path}"')
+            log.info(
+                f'{_tag(ctx.log_prefix, "RENAME")} "{src_path}" -> "{dst_path}"'
+                f"{_cid_suffix(origin_cid)}"
+            )
             emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             parent = str(Path(dst_path).parent)
             if parent and not Path(parent).exists():
@@ -297,7 +316,7 @@ async def _rename_path(
         _unmark(ctx, dst_path)
 
 
-async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
+async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
     """Apply a delete event for either a directory or a file."""
     if CONFIG.get("IGNORE_DELETE", False):
         log.debug(f"{_tag(ctx.log_prefix, 'IGNORE DEL')} Deletion ignored (ignore-delete mode)")
@@ -310,7 +329,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
         _mark(ctx, local)
         try:
             if Path(local).exists():
-                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"')
+                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"{_cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(rmtree, local, False)
             else:
@@ -334,7 +353,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
         _mark(ctx, local)
         try:
             if Path(local).exists():
-                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"')
+                log.info(f'{_tag(ctx.log_prefix, "DELETE")} "{local}"{_cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(_remove_locked, local)
                 if Path(local).name == HSYNCKEEP_FILENAME:
@@ -357,7 +376,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext) -> None:
             _unmark(ctx, local)
 
 
-async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
+async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
     """Apply a symlink event: either recreate the link locally or fetch as a file."""
     if ctx.create_symlink_locally:
         if src.get("type") != "symlink":
@@ -376,7 +395,10 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext) -> None:
         if not is_safe_symlink_target(local, target, CONFIG["LOCAL_BUCKET"]):
             _reject_unsafe(EventName.symlink.value, target, ctx)
             return
-        log.info(f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{local}" -> "{target}"')
+        log.info(
+            f'{_tag(ctx.log_prefix, "SYMLINK")} Creating symlink: "{local}" -> "{target}"'
+            f"{_cid_suffix(origin_cid)}"
+        )
         parent = str(Path(local).parent)
         if not Path(parent).exists():
             Path(parent).mkdir(parents=True, exist_ok=True)

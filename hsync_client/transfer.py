@@ -419,12 +419,20 @@ def _download_file_attempt(file: File) -> None:
     if resume_offset > 0:
         headers["Range"] = f"bytes={resume_offset}-"
 
+    # Include our CID so the server can attribute the download to us in its
+    # logs. The CID is not a secret (it is already in the WS URL and upload
+    # form data), so sending it as a query param is acceptable.
+    params: dict[str, str] = {"filename": file.filepath}
+    own_cid = CONFIG.get("CID")
+    if own_cid:
+        params["cid"] = own_cid
+
     # A connection-level error here propagates to the retry wrapper. In LAN
     # mode the session pins the master cert fingerprint on this very connection.
     response = get(
         uri,
         headers=headers,
-        params={"filename": file.filepath},
+        params=params,
         stream=True,
         verify=get_ssl_verify(),
         timeout=CONFIG.get("HTTP_TIMEOUT", 30),
