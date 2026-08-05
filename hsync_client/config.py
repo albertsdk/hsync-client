@@ -482,6 +482,9 @@ class HsyncConfig(TypedDict):
     AUTOTUNE_ENABLED: bool
     # Cached storage type from autotune probes (set at runtime for per-cycle refresh)
     AUTOTUNE_STORAGE_TYPE: str
+    # Tuning keys resolved from autotune/default at startup (not CLI/env) —
+    # the LAN post-discovery refresh may re-derive only these
+    AUTOTUNE_MANAGED_KEYS: list[str]
 
 
 # =============================================================================

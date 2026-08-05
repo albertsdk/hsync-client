@@ -61,9 +61,29 @@ snapshots.
 
 ### Startup (`main_logic.run_sync`)
 
-`main_logic.py:779-814` — when autotune is enabled, probes run and
+`main_logic.py:835-874` — when autotune is enabled, probes run and
 `derive_profile()` produces a `TuningProfile`. Each field is passed as the
 `autotune` parameter to the `_get_*_value` resolvers.
+
+**LAN placeholder**: in LAN mode without a configured server URL the startup
+RTT probe is skipped (`rtt_ms=None`, `main_logic.py:858`) — there is no server
+to measure yet, and probing the placeholder URL would always fail with a
+spurious warning. The placeholder URL is also not emitted as a `server` UI
+event (`main_logic.py:793`).
+
+### LAN post-discovery refresh (`lan_handler._refresh_lan_network_tuning`)
+
+`lan_handler.py:107`, called from `_run_as_slave` (`lan_handler.py:493`) after
+the master is pinned and `set_config(config)` has run, **before**
+`_measure_clock_offset`. Measures the real RTT toward the elected master and
+re-derives `HTTP_TIMEOUT`, `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT`
+and `RECONNECT_DELAY` via `derive_timeout`/`derive_retry`. Only keys listed in
+`CONFIG["AUTOTUNE_MANAGED_KEYS"]` are touched — keys set via CLI/env keep
+their values (provenance tagged by the `_get_*_value` resolvers themselves,
+`main_logic.py:295-364`; the managed check short-circuits before any probing).
+Updates are written to both the global `CONFIG` and the local config dict
+(`set_config` copies values, so the two are distinct objects). No-op when
+`AUTOTUNE_ENABLED` is false or the RTT is not measurable.
 
 ### Per sync cycle (`sync._refresh_concurrency_from_queue`)
 
@@ -82,15 +102,17 @@ network changes.
 CLI flag  >  HSYNC_* env var  >  autotuned value  >  static default constant
 ```
 
-Resolvers in `main_logic.py`:
+Resolvers in `main_logic.py` (the four LAN-refreshed ones return
+`(value, provenance)`; provenance ∈ `cli`/`env`/`autotune`/`default` feeds
+`AUTOTUNE_MANAGED_KEYS`):
 
-| Resolver | Location |
-| --- | --- |
-| `_get_http_timeout_value` | `main_logic.py:291` |
-| `_get_reconnect_delay_value` | `main_logic.py:312` |
-| `_get_max_concurrent_transfers_value` | `main_logic.py:271` |
-| `_get_transfer_retry_min_wait_value` | `main_logic.py:334` |
-| `_get_transfer_retry_max_wait_value` | `main_logic.py:346` |
+| Resolver | Location | Returns |
+| --- | --- | --- |
+| `_get_http_timeout_value` | `main_logic.py:295` | `(int, TuningSource)` |
+| `_get_reconnect_delay_value` | `main_logic.py:316` | `(int, TuningSource)` |
+| `_get_max_concurrent_transfers_value` | `main_logic.py:277` | `int` (not LAN-refreshed) |
+| `_get_transfer_retry_min_wait_value` | `main_logic.py:335` | `(float, TuningSource)` |
+| `_get_transfer_retry_max_wait_value` | `main_logic.py:351` | `(float, TuningSource)` |
 
 ## Kill switch
 
@@ -102,3 +124,9 @@ entirely and restores static defaults.
 `tests/test_autotune.py` — policy unit tests, probe tests with fakes,
 precedence tests (CLI > env > autotune > default), integration tests, and
 thread-safety tests.
+
+`tests/test_lan_network_tuning.py` — LAN refresh (`_refresh_lan_network_tuning`
+derivation, managed-keys precedence, dual-write, no-op paths), slave call
+ordering (pin → refresh → clock offset), and `run_sync` LAN-placeholder
+behaviour (probe skipped, no placeholder `server` event, managed-keys
+provenance).

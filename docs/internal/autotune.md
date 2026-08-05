@@ -129,6 +129,24 @@ Clamped to `[1, 20]`.
 4. `CONFIG["AUTOTUNE_STORAGE_TYPE"]` is cached from `tuning.storage_type.value`
    for the per-cycle refresh.
 
+**LAN mode**: without a configured server URL the client runs on a placeholder
+URL until a master is discovered, so the startup RTT probe is skipped
+(`rtt_ms=None` → SAFE values) instead of failing against the placeholder, and
+the placeholder URL is not emitted as a `server` UI event.
+
+### LAN post-discovery refresh (`lan_handler._refresh_lan_network_tuning`)
+
+In LAN mode the real network endpoint is known only after master election.
+Once the master is discovered and pinned, `_run_as_slave` measures the RTT
+toward it and re-derives the timeout/retry/reconnect values **before** the
+clock-offset probe, so every subsequent HTTP call uses the tuned timeout.
+
+Only *autotune-managed* keys are updated: `CONFIG["AUTOTUNE_MANAGED_KEYS"]`
+(computed at startup) lists the tuning keys that were resolved from
+autotune/default — anything set explicitly via CLI flag or `HSYNC_*` env var
+keeps its value, preserving the resolver-chain precedence. The refresh is a
+no-op when auto-tuning is disabled or the RTT is not measurable.
+
 ### Per sync cycle (`sync._refresh_concurrency_from_queue`)
 
 Re-derives concurrency from the live queue profile (zero I/O). Reads
@@ -147,13 +165,18 @@ CLI flag  >  HSYNC_* env var  >  autotuned value  >  static default constant
 
 Resolvers in `main_logic.py`:
 
-| Resolver | Parameter |
-| --- | --- |
-| `_get_http_timeout_value` | `http_timeout` |
-| `_get_reconnect_delay_value` | `reconnect_delay` |
-| `_get_max_concurrent_transfers_value` | `max_concurrent_transfers` |
-| `_get_transfer_retry_min_wait_value` | `transfer_retry_min_wait` |
-| `_get_transfer_retry_max_wait_value` | `transfer_retry_max_wait` |
+| Resolver | Parameter | Returns |
+| --- | --- | --- |
+| `_get_http_timeout_value` | `http_timeout` | `(value, provenance)` |
+| `_get_reconnect_delay_value` | `reconnect_delay` | `(value, provenance)` |
+| `_get_max_concurrent_transfers_value` | `max_concurrent_transfers` | `value` |
+| `_get_transfer_retry_min_wait_value` | `transfer_retry_min_wait` | `(value, provenance)` |
+| `_get_transfer_retry_max_wait_value` | `transfer_retry_max_wait` | `(value, provenance)` |
+
+The provenance tag (`cli` / `env` / `autotune` / `default`) is the single
+encode site for the precedence chain: `AUTOTUNE_MANAGED_KEYS` is built from
+the tags of the four LAN-refreshed keys (only `autotune`/`default`-sourced
+keys are managed), so explicit CLI/env overrides are never re-derived.
 
 `TRANSFER_RETRY_ATTEMPTS` is always `3` (no env/CLI override in v1).
 

@@ -362,7 +362,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_HTTP_TIMEOUT", "45")
         get_env_settings.cache_clear()
-        assert _get_http_timeout_value(cli_value=10, autotune=60) == 10
+        assert _get_http_timeout_value(cli_value=10, autotune=60) == (10, "cli")
 
     def test_http_timeout_env_beats_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -370,7 +370,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_HTTP_TIMEOUT", "45")
         get_env_settings.cache_clear()
-        assert _get_http_timeout_value(cli_value=None, autotune=60) == 45
+        assert _get_http_timeout_value(cli_value=None, autotune=60) == (45, "env")
 
     def test_http_timeout_autotune_beats_default(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -378,7 +378,7 @@ class TestPrecedence:
 
         monkeypatch.delenv("HSYNC_HTTP_TIMEOUT", raising=False)
         get_env_settings.cache_clear()
-        assert _get_http_timeout_value(cli_value=None, autotune=60) == 60
+        assert _get_http_timeout_value(cli_value=None, autotune=60) == (60, "autotune")
 
     def test_http_timeout_default_when_all_none(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -388,7 +388,10 @@ class TestPrecedence:
         get_env_settings.cache_clear()
         from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
 
-        assert _get_http_timeout_value(cli_value=None, autotune=None) == HTTP_TIMEOUT_DEFAULT
+        assert _get_http_timeout_value(cli_value=None, autotune=None) == (
+            HTTP_TIMEOUT_DEFAULT,
+            "default",
+        )
 
     def test_reconnect_delay_cli_beats_env_and_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -396,7 +399,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_RECONNECT_DELAY", "20")
         get_env_settings.cache_clear()
-        assert _get_reconnect_delay_value(cli_value=3, autotune=10) == 3
+        assert _get_reconnect_delay_value(cli_value=3, autotune=10) == (3, "cli")
 
     def test_reconnect_delay_env_beats_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -404,7 +407,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_RECONNECT_DELAY", "20")
         get_env_settings.cache_clear()
-        assert _get_reconnect_delay_value(cli_value=None, autotune=10) == 20
+        assert _get_reconnect_delay_value(cli_value=None, autotune=10) == (20, "env")
 
     def test_reconnect_delay_autotune_beats_default(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -412,7 +415,7 @@ class TestPrecedence:
 
         monkeypatch.delenv("HSYNC_RECONNECT_DELAY", raising=False)
         get_env_settings.cache_clear()
-        assert _get_reconnect_delay_value(cli_value=None, autotune=10) == 10
+        assert _get_reconnect_delay_value(cli_value=None, autotune=10) == (10, "autotune")
 
     def test_max_concurrent_transfers_cli_beats_env_and_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -444,7 +447,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_TRANSFER_RETRY_MIN_WAIT", "7.5")
         get_env_settings.cache_clear()
-        assert _get_transfer_retry_min_wait_value(autotune=5) == 7.5
+        assert _get_transfer_retry_min_wait_value(autotune=5) == (7.5, "env")
 
     def test_transfer_retry_min_wait_autotune_beats_default(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -452,7 +455,7 @@ class TestPrecedence:
 
         monkeypatch.delenv("HSYNC_TRANSFER_RETRY_MIN_WAIT", raising=False)
         get_env_settings.cache_clear()
-        assert _get_transfer_retry_min_wait_value(autotune=5) == 5.0
+        assert _get_transfer_retry_min_wait_value(autotune=5) == (5.0, "autotune")
 
     def test_transfer_retry_min_wait_default_when_all_none(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -462,7 +465,10 @@ class TestPrecedence:
         get_env_settings.cache_clear()
         from hsync_client.constants import TRANSFER_RETRY_MIN_WAIT_DEFAULT
 
-        assert _get_transfer_retry_min_wait_value(autotune=None) == TRANSFER_RETRY_MIN_WAIT_DEFAULT
+        assert _get_transfer_retry_min_wait_value(autotune=None) == (
+            TRANSFER_RETRY_MIN_WAIT_DEFAULT,
+            "default",
+        )
 
     def test_transfer_retry_max_wait_env_beats_autotune(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -470,7 +476,7 @@ class TestPrecedence:
 
         monkeypatch.setenv("HSYNC_TRANSFER_RETRY_MAX_WAIT", "25.0")
         get_env_settings.cache_clear()
-        assert _get_transfer_retry_max_wait_value(autotune=10) == 25.0
+        assert _get_transfer_retry_max_wait_value(autotune=10) == (25.0, "env")
 
     def test_transfer_retry_max_wait_autotune_beats_default(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -478,7 +484,7 @@ class TestPrecedence:
 
         monkeypatch.delenv("HSYNC_TRANSFER_RETRY_MAX_WAIT", raising=False)
         get_env_settings.cache_clear()
-        assert _get_transfer_retry_max_wait_value(autotune=30) == 30.0
+        assert _get_transfer_retry_max_wait_value(autotune=30) == (30.0, "autotune")
 
     def test_transfer_retry_max_wait_default_when_all_none(self, monkeypatch):
         from hsync_client.config import get_env_settings
@@ -488,7 +494,10 @@ class TestPrecedence:
         get_env_settings.cache_clear()
         from hsync_client.constants import TRANSFER_RETRY_MAX_WAIT_DEFAULT
 
-        assert _get_transfer_retry_max_wait_value(autotune=None) == TRANSFER_RETRY_MAX_WAIT_DEFAULT
+        assert _get_transfer_retry_max_wait_value(autotune=None) == (
+            TRANSFER_RETRY_MAX_WAIT_DEFAULT,
+            "default",
+        )
 
 
 # ── Integration tests ─────────────────────────────────────────────────────

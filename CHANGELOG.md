@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Spurious RTT probe warning in LAN mode**: starting the client in LAN mode
+  without a configured server URL probed the placeholder URL
+  (`http://localhost:9753`), logging `autotune: RTT probe failed (Connection
+  refused)` at every startup and emitting the fictitious URL to the UI event
+  channel. The startup RTT probe is now skipped until a master is discovered,
+  and the placeholder URL is no longer emitted as a `server` event.
+
+### Added
+- **LAN post-discovery network tuning**: once a LAN master is discovered and
+  pinned, the slave measures the real RTT toward it and re-derives the
+  autotune-managed tuning keys (`HTTP_TIMEOUT`, `TRANSFER_RETRY_MIN_WAIT`,
+  `TRANSFER_RETRY_MAX_WAIT`, `RECONNECT_DELAY`). Keys set explicitly via CLI
+  flag or `HSYNC_*` env var are tracked in `AUTOTUNE_MANAGED_KEYS` and are
+  never overwritten, preserving the `CLI > env > autotune > default`
+  precedence.
+
 ### Changed
 - **Log label format normalized to spaces**: multi-word action labels now print
   with spaces (`[NO MASTER]`, `[TO DOWNLOAD]`, `[FINGERPRINT CHANGED]`, …)

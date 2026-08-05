@@ -16,7 +16,7 @@ import sys
 from asyncio import run
 from pathlib import Path
 from re import sub
-from typing import Any
+from typing import Any, Literal
 
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
@@ -216,6 +216,12 @@ def _run_preview(log) -> None:
     emit_event(UiEventName.preview_end)
 
 
+# Provenance of a resolved tuning value; feeds AUTOTUNE_MANAGED_KEYS so the LAN
+# post-discovery refresh re-derives only autotune/default-sourced keys and never
+# clobbers explicit CLI/env overrides. Single encode site: the resolvers below.
+TuningSource = Literal["cli", "env", "autotune", "default"]
+
+
 def _get_stability_delay_value(cli_value: int | None) -> int:
     """
     Determine the stability delay value.
@@ -286,28 +292,34 @@ def _get_max_concurrent_transfers_value(cli_value: int | None, autotune: int | N
     return MAX_CONCURRENT_TRANSFERS_DEFAULT
 
 
-def _get_http_timeout_value(cli_value: int | None, autotune: int | None = None) -> int:
+def _get_http_timeout_value(
+    cli_value: int | None, autotune: int | None = None
+) -> tuple[int, TuningSource]:
     """
-    Determine the HTTP timeout value.
+    Determine the HTTP timeout value and its provenance.
 
     Priority: CLI argument > environment variable > autotune > default constant.
+    The provenance tag feeds ``AUTOTUNE_MANAGED_KEYS``: only keys resolved from
+    autotune/default may be re-derived by the LAN post-discovery refresh.
     """
     from hsync_client.config import get_http_timeout
     from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
 
     if cli_value is not None:
-        return cli_value
+        return cli_value, "cli"
     env_value = get_http_timeout()
     if env_value is not None:
-        return env_value
+        return env_value, "env"
     if autotune is not None:
-        return autotune
-    return HTTP_TIMEOUT_DEFAULT
+        return autotune, "autotune"
+    return HTTP_TIMEOUT_DEFAULT, "default"
 
 
-def _get_reconnect_delay_value(cli_value: int | None, autotune: int | None = None) -> int:
+def _get_reconnect_delay_value(
+    cli_value: int | None, autotune: int | None = None
+) -> tuple[int, TuningSource]:
     """
-    Determine the reconnection delay value.
+    Determine the reconnection delay value and its provenance.
 
     Priority: CLI argument > environment variable > autotune > default constant.
     """
@@ -315,45 +327,45 @@ def _get_reconnect_delay_value(cli_value: int | None, autotune: int | None = Non
     from hsync_client.constants import RECONNECT_DELAY_DEFAULT
 
     if cli_value is not None:
-        return cli_value
+        return cli_value, "cli"
     env_value = get_reconnect_delay()
     if env_value is not None:
-        return env_value
+        return env_value, "env"
     if autotune is not None:
-        return autotune
-    return RECONNECT_DELAY_DEFAULT
+        return autotune, "autotune"
+    return RECONNECT_DELAY_DEFAULT, "default"
 
 
-def _get_transfer_retry_min_wait_value(autotune: int | None = None) -> float:
+def _get_transfer_retry_min_wait_value(autotune: int | None = None) -> tuple[float, TuningSource]:
     """
-    Determine the per-file retry minimum wait value.
+    Determine the per-file retry minimum wait value and its provenance.
 
-    Priority: environment variable > autotune > default constant.
+    Priority: environment variable > autotune > default constant (no CLI flag).
     """
     from hsync_client.config import get_transfer_retry_min_wait
 
     env_value = get_transfer_retry_min_wait()
     if env_value is not None:
-        return env_value
+        return env_value, "env"
     if autotune is not None:
-        return float(autotune)
-    return TRANSFER_RETRY_MIN_WAIT_DEFAULT
+        return float(autotune), "autotune"
+    return TRANSFER_RETRY_MIN_WAIT_DEFAULT, "default"
 
 
-def _get_transfer_retry_max_wait_value(autotune: int | None = None) -> float:
+def _get_transfer_retry_max_wait_value(autotune: int | None = None) -> tuple[float, TuningSource]:
     """
-    Determine the per-file retry maximum wait value.
+    Determine the per-file retry maximum wait value and its provenance.
 
-    Priority: environment variable > autotune > default constant.
+    Priority: environment variable > autotune > default constant (no CLI flag).
     """
     from hsync_client.config import get_transfer_retry_max_wait
 
     env_value = get_transfer_retry_max_wait()
     if env_value is not None:
-        return env_value
+        return env_value, "env"
     if autotune is not None:
-        return float(autotune)
-    return TRANSFER_RETRY_MAX_WAIT_DEFAULT
+        return float(autotune), "autotune"
+    return TRANSFER_RETRY_MAX_WAIT_DEFAULT, "default"
 
 
 def _get_mass_delete_guard_value(cli_value: bool | None) -> bool:
@@ -743,6 +755,11 @@ def run_sync(
     # Determine server URL (CLI argument takes precedence over env var)
     effective_server_url = server_url or get_server_url()
 
+    # LAN mode without a configured server URL runs on a placeholder until the
+    # master is discovered: the RTT probe and the UI server event are deferred
+    # (probing the placeholder would always fail with a spurious warning).
+    using_lan_placeholder = lan_mode and not effective_server_url
+
     # Validate server URL is provided (not required in LAN mode)
     if not effective_server_url and not lan_mode:
         log.error("Server URL is required (use -s or set HSYNC_SERVER, or use --lan-mode)")
@@ -755,7 +772,8 @@ def run_sync(
     # At this point, effective_server_url is guaranteed to be set
     # (either from args, env, or LAN mode placeholder)
     assert effective_server_url is not None
-    emit_event(UiEventName.server, url=effective_server_url)
+    if not using_lan_placeholder:
+        emit_event(UiEventName.server, url=effective_server_url)
 
     # Convert HTTP URL to WebSocket URL for events endpoint
     ws_url = sub(r"^http:", "ws:", effective_server_url)
@@ -817,7 +835,9 @@ def run_sync(
             rtt_host = parsed.hostname or "localhost"
             rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-            rtt_ms = measure_rtt(rtt_host, rtt_port)
+            # LAN placeholder: no server to probe yet — defer RTT measurement
+            # to the post-discovery refresh in lan_handler (slave role only).
+            rtt_ms = None if using_lan_placeholder else measure_rtt(rtt_host, rtt_port)
             net_class = classify_network(rtt_ms)
             bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
             storage_type = detect_storage_type(local_path)
@@ -841,6 +861,18 @@ def run_sync(
     _autotune_reconnect = tuning.reconnect_delay if tuning else None
     _autotune_concurrency = tuning.concurrency if tuning else None
 
+    # Resolve tuning values once: each resolver also tags the provenance, which
+    # feeds AUTOTUNE_MANAGED_KEYS below (single encode site for the precedence
+    # chain — no separate re-check of CLI params / env getters).
+    _resolved_http_timeout, _http_timeout_src = _get_http_timeout_value(
+        http_timeout, _autotune_timeout
+    )
+    _resolved_reconnect_delay, _reconnect_src = _get_reconnect_delay_value(
+        reconnect_delay, _autotune_reconnect
+    )
+    _resolved_retry_min, _retry_min_src = _get_transfer_retry_min_wait_value(_autotune_retry_min)
+    _resolved_retry_max, _retry_max_src = _get_transfer_retry_max_wait_value(_autotune_retry_max)
+
     config: HsyncConfig = {
         "API": {
             "buckets": f"{effective_server_url}/api/v1/buckets",
@@ -862,11 +894,11 @@ def run_sync(
             "X-Client-Version": HSYNC_VERSION,
             "X-Protocol-Version": PROTOCOL_VERSION_REST,
         },
-        "RECONNECT_DELAY": _get_reconnect_delay_value(reconnect_delay, _autotune_reconnect),
+        "RECONNECT_DELAY": _resolved_reconnect_delay,
         "RESYNC": _get_resync_value(resync),
         "FILTER_PATH": filter_path,
         "STABILITY_DELAY": _get_stability_delay_value(stability_delay),
-        "HTTP_TIMEOUT": _get_http_timeout_value(http_timeout, _autotune_timeout),
+        "HTTP_TIMEOUT": _resolved_http_timeout,
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
         "LAN_MODE": lan_mode,
         "LAN_PORT": lan_port or get_lan_port() or 0,
@@ -905,11 +937,23 @@ def run_sync(
             max_concurrent_transfers, _autotune_concurrency
         ),
         "TRANSFER_RETRY_ATTEMPTS": TRANSFER_RETRY_ATTEMPTS_DEFAULT,
-        "TRANSFER_RETRY_MIN_WAIT": _get_transfer_retry_min_wait_value(_autotune_retry_min),
-        "TRANSFER_RETRY_MAX_WAIT": _get_transfer_retry_max_wait_value(_autotune_retry_max),
+        "TRANSFER_RETRY_MIN_WAIT": _resolved_retry_min,
+        "TRANSFER_RETRY_MAX_WAIT": _resolved_retry_max,
         # Auto-tuning runtime state (updated below after set_config)
         "AUTOTUNE_ENABLED": autotune_enabled,
         "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
+        # Keys the LAN post-discovery refresh may re-derive: only those
+        # resolved from autotune/default (CLI/env overrides are preserved)
+        "AUTOTUNE_MANAGED_KEYS": [
+            key
+            for key, src in (
+                ("HTTP_TIMEOUT", _http_timeout_src),
+                ("RECONNECT_DELAY", _reconnect_src),
+                ("TRANSFER_RETRY_MIN_WAIT", _retry_min_src),
+                ("TRANSFER_RETRY_MAX_WAIT", _retry_max_src),
+            )
+            if src in ("autotune", "default")
+        ],
     }
 
     set_config(config)

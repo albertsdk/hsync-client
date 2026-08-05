@@ -11,12 +11,13 @@ election rules are SSOT in `hsync-common`.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_lan_mode` | `lan_handler.py:109` | start discovery, elect, branch to role |
-| `_run_as_master` | `:237` | start `LANServer` + `LANWebSocketServer` + watcher |
-| `_run_as_slave` | `:371` | TOFU-pin master, then connect + sync |
-| `_evaluate_master_pin` | `:314` | apply pin decision before slave connect |
-| `_measure_clock_offset` | `:44` | NTP-style skew vs master |
-| `NO_MASTER_WARNING_TIMEOUT` | `:41` | warn when no master appears |
+| `run_lan_mode` | `lan_handler.py:172` | start discovery, elect, branch to role |
+| `_run_as_master` | `:300` | start `LANServer` + `LANWebSocketServer` + watcher |
+| `_run_as_slave` | `:434` | TOFU-pin master, refresh tuning, then connect + sync |
+| `_evaluate_master_pin` | `:377` | apply pin decision before slave connect |
+| `_refresh_lan_network_tuning` | `:107` | re-derive autotune-managed keys from real master RTT (slave, post-discovery) |
+| `_measure_clock_offset` | `:53` | NTP-style skew vs master |
+| `NO_MASTER_WARNING_TIMEOUT` | `:50` | warn when no master appears |
 
 ## Discovery & election (`lan.py`)
 

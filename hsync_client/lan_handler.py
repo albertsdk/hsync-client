@@ -13,7 +13,7 @@ master election, and WebSocket communication.
 
 import time
 from re import sub
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from hsync_common.clock import CLOCK_SKEW_THRESHOLD
 from hsync_common.protocol.pairing import (
@@ -22,10 +22,15 @@ from hsync_common.protocol.pairing import (
     requires_pairing_confirmation,
 )
 
-from hsync_client.config import set_config
+from hsync_client.autotune import classify_network, derive_retry, derive_timeout, measure_rtt
+from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     DISCOVERY_POLL_INTERVAL,
     HTTP_TIMEOUT_DEFAULT,
+    HTTP_TIMEOUT_MAX,
+    HTTP_TIMEOUT_MIN,
+    RECONNECT_DELAY_MAX,
+    RECONNECT_DELAY_MIN,
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
@@ -97,6 +102,60 @@ def _measure_clock_offset(master, config: "HsyncConfig", log) -> None:
         log.debug(f"Clock sync failed: {e}")
     except (ValueError, KeyError) as e:
         log.debug(f"Clock sync: invalid response: {e}")
+
+
+def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
+    """Re-derive autotune-managed network tuning from the real master RTT.
+
+    In LAN mode with the placeholder URL the startup RTT probe is skipped (no
+    server is known yet), so the tuning profile starts at SAFE defaults. Once
+    the master is discovered there is a real endpoint to measure. Only keys in
+    ``AUTOTUNE_MANAGED_KEYS`` (no CLI/env override) are re-derived, preserving
+    the CLI > env > autotune precedence.
+
+    Updates are applied to both the global ``CONFIG`` and the local *config*
+    dict: they are distinct objects (``set_config`` copies values) and
+    ``_measure_clock_offset`` reads the local one. Callers must invoke this
+    after ``set_config(config)`` so the two dicts stay in sync.
+    """
+    if not config.get("AUTOTUNE_ENABLED"):
+        return
+
+    managed = set(config.get("AUTOTUNE_MANAGED_KEYS", []))
+    if not managed:
+        log.debug("autotune (LAN): no autotune-managed keys (all overridden via CLI/env)")
+        return
+
+    rtt_ms = measure_rtt(master.address, master.port)
+    if rtt_ms is None:
+        log.debug("autotune (LAN): RTT to master not measurable; keeping startup tuning")
+        return
+
+    net_class = classify_network(rtt_ms)
+    updates: dict[str, int | float] = {}
+
+    if "HTTP_TIMEOUT" in managed:
+        updates["HTTP_TIMEOUT"] = derive_timeout(
+            rtt_ms, net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX
+        )
+    if managed & {"TRANSFER_RETRY_MIN_WAIT", "TRANSFER_RETRY_MAX_WAIT", "RECONNECT_DELAY"}:
+        min_wait, max_wait, reconnect = derive_retry(
+            rtt_ms, net_class, RECONNECT_DELAY_MIN, RECONNECT_DELAY_MAX
+        )
+        if "TRANSFER_RETRY_MIN_WAIT" in managed:
+            updates["TRANSFER_RETRY_MIN_WAIT"] = float(min_wait)
+        if "TRANSFER_RETRY_MAX_WAIT" in managed:
+            updates["TRANSFER_RETRY_MAX_WAIT"] = float(max_wait)
+        if "RECONNECT_DELAY" in managed:
+            updates["RECONNECT_DELAY"] = reconnect
+
+    if not updates:
+        return
+
+    for key, value in updates.items():
+        cast(dict[str, Any], CONFIG)[key] = value
+        cast(dict[str, Any], config)[key] = value
+    log.info(f"autotune (LAN): rtt={rtt_ms:.1f}ms net={net_class.value} -> {updates}")
 
 
 def _run_preview(log) -> None:
@@ -428,6 +487,10 @@ def _run_as_slave(
         config["SERVER_DELTA_ENABLED"] = master.delta_enabled
 
         set_config(config)
+
+        # Re-derive autotune-managed tuning from the real master RTT (the LAN
+        # startup probe is skipped when only the placeholder URL is known)
+        _refresh_lan_network_tuning(master, config, log)
 
         # Measure clock offset vs master using round-trip HTTP
         _measure_clock_offset(master, config, log)
