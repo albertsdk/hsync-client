@@ -851,7 +851,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             return
         origin_cid = query.get("cid", [None])[0]
         cid_suffix = f" (CID: {origin_cid})" if origin_cid else ""
-        log.info(f'{ActionLabel.LAN_DOWNLOAD} "{filename}"{cid_suffix}')
+        log.info(f'{ActionLabel.REMOTE_DOWNLOAD} "{filename}"{cid_suffix}')
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         # Peer-supplied path is untrusted: validate and confine to the bucket

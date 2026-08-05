@@ -15,29 +15,67 @@ modify/rename=blue, delete=red, permission=infrastructure=magenta,
 in-sync=dim, warning=yellow, security=red). Run `hsync-client --legend`
 (`--help-symbols`) to print the legend in the terminal.
 
-## Sync operations
+## The two-level origin rule
+
+- **Prefixed labels** appear during **continuous watching**: `[LOCAL ...]`
+  marks an event originated by this node's own watcher, `[REMOTE ...]` an
+  event caused by a peer (the master for a slave, a slave for the master, the
+  central server in remote mode).
+- **Unprefixed labels** belong to the **reconciliation / full-scan phase**,
+  transfers, states and previews.
+
+> **Known limitation (LAN master).** Origin attribution relies on the
+> inbound-origin marker TTL (`INBOUND_ORIGIN_TTL`, 10 s): if the watchdog
+> event fires after expiry, the line prints `LOCAL` even though the change
+> was peer-caused. The `(CID: ...)` suffix degrades together with the prefix,
+> so the line stays internally coherent.
+
+## Watching events (prefixed)
+
+Emitted while the client watches its bucket or applies inbound peer events.
+
+| Label | Category | Meaning |
+|-------|----------|---------|
+| `[LOCAL CREATE]` | create | Local watcher: file/directory created. On a slave, a directory create logs a debug line with a `(dir)` suffix; a file arriving already complete logs `(N bytes, deferred to on_closed)` (debug) |
+| `[LOCAL MODIFY]` | modify | Local watcher: file/directory content modified. Trigger `(closed)`/`(modified)` = `IN_CLOSE_WRITE` (reliable) vs `on_modified` debounce fallback; `(dir)` = directory metadata event (stat-deduplicated) |
+| `[LOCAL RENAME]` | rename | Local watcher: file/directory renamed (on a slave, also the rename pushed to the master) |
+| `[LOCAL DELETE]` | delete | Local watcher: file/directory deleted (on a slave, also the delete pushed to the master) |
+| `[LOCAL SYMLINK]` | create | Local watcher: symbolic link created |
+| `[LOCAL IGNORE DEL]` | warning | Local watcher: deletion skipped (ignore-delete / backup mode) |
+| `[LOCAL KEEP]` | in_sync | Local watcher: `.hsynckeep` sentinel created to preserve an empty directory |
+| `[REMOTE CREATE]` | create | Peer-caused: directory created (inbound event applied, or master broadcasting a slave's create) |
+| `[REMOTE MODIFY]` | modify | Peer-caused: file/directory content modified (inbound event applied, or master broadcasting a slave's upload) |
+| `[REMOTE RENAME]` | rename | Peer-caused: file/directory renamed |
+| `[REMOTE DELETE]` | delete | Peer-caused: file/directory deleted |
+| `[REMOTE SYMLINK]` | create | Peer-caused: symbolic link created |
+| `[REMOTE IGNORE DEL]` | warning | Peer-caused: deletion skipped (ignore-delete / backup mode) |
+| `[REMOTE SECURITY]` | security | Peer-caused: unsafe inbound path rejected |
+| `[REMOTE ECHO]` | infrastructure | Peer event echo suppressed (own event discarded, debug) |
+| `[REMOTE DOWNLOAD]` | transfer | Master serving file bytes to a slave |
+
+## Reconciliation, transfers & previews (unprefixed)
+
+Emitted during the full-scan/reconcile phase and by the transfer engine.
 
 | Label | Category | Meaning |
 |-------|----------|---------|
 | `[DOWNLOAD]` | transfer | Downloading a file from server / master |
 | `[UPLOAD]` | upload | Uploading a file to server / master |
 | `[RESUME]` | transfer | Resuming a partial upload or download |
-| `[MOVE]` | rename | Renaming / moving a file or directory (watchdog detection) |
-| `[REMOVE]` | delete | Removing a file or directory |
-| `[DELETE]` | delete | Deleting a local file not present on master (LAN mode) |
-| `[CREATE]` | create | Creating a directory |
-| `[MODIFY]` | modify | File or directory content modified |
-| `[RENAME]` | rename | Rename / move applied |
+| `[MOVE]` | rename | Internal debug trace of a watchdog move (before classification; never the propagated event) |
+| `[DELETE]` | delete | Reconcile-phase deletion (e.g. local file not on master) |
+| `[CREATE]` | create | Reconcile-phase directory creation |
+| `[MODIFY]` | modify | Reconcile-phase modification |
+| `[RENAME]` | rename | Reconcile-phase rename |
 | `[PERMISSION]` | permission | Setting file / directory permissions |
-| `[SYMLINK]` | create | Creating a symbolic link |
+| `[SYMLINK]` | create | Reconcile-phase symbolic link creation |
 | `[IN SYNC]` | in_sync | File already in sync (no action required) |
 | `[SKIP]` | in_sync | File skipped |
-| `[IGNORE DEL]` | warning | Deletion ignored (ignore-delete / backup mode) |
 | `[CONFLICT]` | warning | File conflict detected (three-way merge) |
 | `[GUARD]` | warning | Mass-deletion guard tripped (deletions paused) |
 | `[TOMBSTONE]` | warning | File deleted remotely while offline; local copy removed |
 
-## Preview (dry-run)
+### Preview (dry-run)
 
 Appear only with `--preview` / dry-run. They describe what *would* happen.
 
@@ -48,37 +86,6 @@ Appear only with `--preview` / dry-run. They describe what *would* happen.
 | `[TO UPLOAD]` | upload | File would be uploaded |
 | `[TO DELETE]` | delete | File would be deleted |
 | `[TO RENAME]` | rename | File would be renamed |
-
-## LAN client operations
-
-Emitted by a LAN **client** (slave) when it pushes local changes to the master.
-
-| Label | Category | Meaning |
-|-------|----------|---------|
-| `[CLIENT UP]` | upload | Client uploads a file to the master |
-| `[CLIENT DEL]` | delete | Client deletes a file on the master |
-| `[CLIENT REN]` | rename | Client renames a file on the master |
-| `[CLIENT DIR]` | create | Client creates a directory on the master |
-| `[CLIENT NEW]` | create | Client creates a new file on the master |
-| `[CLIENT KEEP]` | in_sync | Client creates a sentinel file (`.hsynckeep`) |
-| `[CLIENT IGN]` | warning | Client ignores a deletion (ignore-delete mode) |
-
-## LAN master broadcasts
-
-Emitted by the LAN **master** when it broadcasts a filesystem event to slaves.
-
-| Label | Category | Meaning |
-|-------|----------|---------|
-| `[LAN MODIFY]` | modify | Master broadcasts a file modification (slaves pull new bytes). Trigger `(closed)`/`(modified)` shows `IN_CLOSE_WRITE` (reliable) vs `on_modified` debounce fallback; `(dir)` marks a directory metadata event (inotify `IN_ATTRIB` on the parent when a child is created/written/renamed/removed) — directory `MODIFY` lines are stat-deduplicated so only genuine mtime changes propagate |
-| `[LAN CREATE]` | create | Master broadcasts a directory creation |
-| `[LAN RENAME]` | rename | Master broadcasts a rename / move |
-| `[LAN REMOVE]` | delete | Master broadcasts a removal |
-| `[LAN SYMLINK]` | create | Master broadcasts a symbolic link creation |
-| `[LAN DELETE]` | delete | Master broadcasts a deletion |
-| `[LAN DOWNLOAD]` | transfer | Master serves a file download to a slave |
-| `[LAN IGNORE DEL]` | warning | Master ignores a deletion (ignore-delete mode) |
-| `[LAN SECURITY]` | security | Master rejected an unsafe inbound path |
-| `[LAN ECHO]` | infrastructure | Master echoed a slave-originated event to the other slaves |
 
 ## Security & warnings
 

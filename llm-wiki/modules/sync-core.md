@@ -82,13 +82,13 @@ from `constants.py:99`–`:101`.
 
 ## event_dispatch.py — apply inbound events
 
-`apply_inbound_event` (`event_dispatch.py:124`) routes a remote event dict to
-`_apply_add_or_modify` (`:158`, also receives `event_name` to log `[CREATE]` vs
-`[MODIFY]` for the directory branch — the log is gated on `update_dir` returning
-non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:188`), `_apply_delete` (`:277`,
-locked via `_remove_locked:48`), `_apply_symlink` (`:295`). Echo suppression uses
-the per-event `EventDispatchContext` (`:62`) marking (`_mark:93`/`_unmark:98`).
-Path resolution: `_resolve_local_path` (`:178`).
+`apply_inbound_event` (`event_dispatch.py:148`) routes a remote event dict to
+`_apply_add_or_modify` (`:194`, also receives `event_name` to log `[REMOTE CREATE]` vs
+`[REMOTE MODIFY]` for the directory branch — the log is gated on `update_dir` returning
+non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:245`), `_apply_delete` (`:319`,
+locked via `_remove_locked:55`), `_apply_symlink` (`:379`). Echo suppression uses
+the per-event `EventDispatchContext` (`:68`) marking (`_mark:138`/`_unmark:143`).
+Path resolution: `_resolve_local_path` (`:235`).
 
 **Benign-echo degradation** (`_apply_delete`, dir branch `:293` / file branch
 `:312`): when an inbound `deleted` event targets a path already absent locally,
@@ -116,21 +116,32 @@ operation outside it. `_apply_symlink` also validates the link target with
 `is_safe_symlink_target`; `update_dir`/`update_file` (`sync.py`) apply the
 same confinement before mkdir/metadata writes.
 
-**Log labels** (`_tag:99`): every bracketed label in this module is resolved
+**Log labels** (`_tag:107`): every bracketed label in this module is resolved
 through `hsync_common.labels.resolve_label` (the SSOT shared with
 `BaseFileEventHandler._label`), so the watchdog handlers and the inbound
-dispatcher emit identical, colorizable tags (`[RENAME]`, `[LAN RENAME]`,
-`[SECURITY]`, …). There is no project-local label table.
+dispatcher emit identical, colorizable tags. Inbound events are always
+peer-caused, so the prefix is the module constant `INBOUND_PREFIX = "REMOTE "`
+(`:101`) and every dispatch label is `REMOTE_*` (`[REMOTE RENAME]`,
+`[REMOTE DELETE]`, `[REMOTE SECURITY]`, `[REMOTE ECHO]`, …). There is no
+project-local label table, and `EventDispatchContext` carries no `log_prefix`
+field (removed as dead configuration — both inbound contexts would share the
+same value).
 
 ## file_event_handler.py — watchdog adapter
 
-`BaseFileEventHandler` (`file_event_handler.py:49`) maps watchdog callbacks to the
+`BaseFileEventHandler` (`file_event_handler.py:54`) maps watchdog callbacks to the
 transfer pipeline. Linux uses `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other
 platforms fall back to `on_modified`. Subclasses implement `_on_file_ready`
 (remote/LAN-master variants). `_label` (`:60`) resolves bracketed log labels
-through `hsync_common.labels.resolve_label`, honouring `_LOG_PREFIX`
-(`""` → `[CREATE]`, `"LAN "` → `[LAN CREATE]`), so the master's watchdog
-output is colorized identically to the slave's inbound dispatcher.
+through `hsync_common.labels.resolve_label` with an **origin-aware prefix**:
+`"REMOTE "` when `_origin_cid(src, dst)` attributes the event to a peer (the
+master's inbound-origin map), `"LOCAL "` otherwise. The static `_LOG_PREFIX`
+class attribute no longer exists. `RemoteFileEventHandler` never overrides
+`_origin_cid`, so its lines are always `LOCAL_*`; on the LAN master the same
+hook produces `REMOTE_*` for peer-caused events, so the master's watchdog
+output is colorized identically to the slave's inbound dispatcher. The `[MOVE]`
+debug trace (`:324`) is deliberately unprefixed (internal trace, not the
+propagated event).
 
 **Safe-save handling** (`on_moved` file branch, `:244`): when an editor
 safe-saves (writes to a temp like `.goutputstream-*` or `*.tmp` then atomically

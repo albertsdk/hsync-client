@@ -28,7 +28,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
-from hsync_common.labels import resolve_label
+from hsync_common.labels import ActionLabel, resolve_label
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_file
@@ -54,21 +54,24 @@ DEDUP_MAX_ENTRIES: int = 10_000
 class BaseFileEventHandler(FileSystemEventHandler):
     """Common watchdog handler shared by Remote sync and LAN master."""
 
-    # Prepended to log labels, e.g. ``""`` -> "[CREATE]", ``"LAN "`` -> "[LAN CREATE]".
-    _LOG_PREFIX: str = ""
+    def _label(
+        self,
+        name: str,
+        src_path: str | None = None,
+        dst_path: str | None = None,
+    ) -> str:
+        """Return the origin-aware bracketed label for *name*.
 
-    def _label(self, name: str) -> str:
-        """Return the bracketed label for *name*, honouring ``_LOG_PREFIX``.
-
-        Delegates to :func:`hsync_common.labels.resolve_label` so the label is
-        resolved through :class:`ActionLabel` and colorized consistently with
-        the inbound event dispatcher (no duplicated tag-formatting logic).
-
-        Examples:
-            - ``_LOG_PREFIX=""``, name="CREATE" -> ``[CREATE]``
-            - ``_LOG_PREFIX="LAN "``, name="CREATE" -> ``[LAN CREATE]``
+        The prefix encodes where the event originated: ``"REMOTE "`` when
+        :meth:`_origin_cid` attributes it to a peer (the master's
+        inbound-origin map), ``"LOCAL "`` otherwise (this node's own
+        watcher). Delegates to :func:`hsync_common.labels.resolve_label` so
+        the label is resolved through :class:`ActionLabel` and colorized
+        consistently with the inbound event dispatcher (no duplicated
+        tag-formatting logic).
         """
-        return resolve_label(self._LOG_PREFIX, name)
+        prefix = "REMOTE " if self._origin_cid(src_path, dst_path) else "LOCAL "
+        return resolve_label(prefix, name)
 
     def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
         """Return the originator CID for a filesystem event, if known.
@@ -172,7 +175,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def on_created(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
         if event.is_directory and not is_hidden_dir(src_path):
-            log.info(f'{self._label("CREATE")} "{src_path}"{self._cid_suffix(src_path)}')
+            log.info(f'{self._label("CREATE", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
             dir_obj = Dir.get(src_path)
             if dir_obj:
                 self._broadcast_event(
@@ -186,7 +189,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     src_abs_path=src_path,
                 )
         elif not is_hidden_file(src_path) and Path(src_path).is_symlink():
-            log.info(f'{self._label("SYMLINK")} "{src_path}"{self._cid_suffix(src_path)}')
+            log.info(f'{self._label("SYMLINK", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
             symlink = Symlink.get(src_path)
             if symlink:
                 self._broadcast_event(
@@ -223,7 +226,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 ):
                     log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
                     return
-                log.info(f'{self._label("MODIFY")} "{src_path}" (dir){self._cid_suffix(src_path)}')
+                log.info(
+                    f'{self._label("MODIFY", src_path)} "{src_path}" (dir)'
+                    f"{self._cid_suffix(src_path)}"
+                )
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(
@@ -320,7 +326,9 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if not dest_path:
             return
 
-        log.debug(f'{self._label("MOVE")} "{src_path}" -> "{dest_path}"')
+        # Internal debug trace (not the propagated event): deliberately NOT
+        # origin-prefixed — the RENAME line that follows carries the origin.
+        log.debug(f'{ActionLabel.MOVE} "{src_path}" -> "{dest_path}"')
 
         message: Event | None = None
         if event.is_directory:
@@ -334,7 +342,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 return
 
             log.info(
-                f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"'
+                f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
                 f"{self._cid_suffix(src_path, dest_path)}"
             )
             dst = Dir.get(dest_path)
@@ -362,7 +370,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 return
 
             log.info(
-                f'{self._label("RENAME")} "{src_path}" -> "{dest_path}"'
+                f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
                 f"{self._cid_suffix(src_path, dest_path)}"
             )
             invalidate_sha256_cache(src_path)
@@ -398,10 +406,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
 
         if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f'{self._label("IGNORE DEL")} "{src_path}" (ignore-delete mode)')
+            log.debug(f'{self._label("IGNORE DEL", src_path)} "{src_path}" (ignore-delete mode)')
             return
 
-        log.info(f'{self._label("REMOVE")} "{src_path}"{self._cid_suffix(src_path)}')
+        log.info(f'{self._label("DELETE", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
 
         obj = Dir(src_path) if event.is_directory else File(src_path)
         self._broadcast_event(

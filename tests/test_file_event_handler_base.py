@@ -1086,3 +1086,67 @@ class TestFileEventHandler:
         ):
             self.handler.on_closed(event)
             assert mock_log.error.called
+
+
+class TestRemoteModeOriginLabels:
+    """Remote-mode watcher labels are always LOCAL-prefixed (origin-aware _label)."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.websocket = MagicMock()
+        self.loop = new_event_loop()
+        self.event_queue = MagicMock()
+        self.handler = RemoteFileEventHandler(self.websocket, self.loop, self.event_queue)
+
+    def teardown_method(self):
+        """Clean up event loop."""
+        self.loop.close()
+
+    def test_on_created_dir_logs_local_create(self, tmp_path):
+        """Remote-mode watcher: a local directory create logs [LOCAL CREATE]."""
+        from watchdog.events import DirCreatedEvent
+
+        test_dir = tmp_path / "newdir"
+        test_dir.mkdir()
+        event = DirCreatedEvent(str(test_dir))
+
+        config = {
+            "CID": "test-client",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "remote",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.Dir") as mock_dir,
+            patch("hsync_client.file_event_handler.log") as mock_log,
+            patch.object(self.handler, "_broadcast_event"),
+        ):
+            mock_dir.get.return_value = MagicMock()
+            self.handler.on_created(event)
+            msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
+            assert any("[LOCAL CREATE]" in m for m in msgs), msgs
+
+    def test_on_deleted_logs_local_delete(self, tmp_path):
+        """Remote-mode watcher: a local delete logs [LOCAL DELETE]."""
+        from watchdog.events import FileDeletedEvent
+
+        event = FileDeletedEvent(str(tmp_path / "gone.txt"))
+
+        config = {
+            "CID": "test-client",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "remote",
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.log") as mock_log,
+            patch.object(self.handler, "_broadcast_event"),
+        ):
+            self.handler.on_deleted(event)
+            msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
+            assert any("[LOCAL DELETE]" in m for m in msgs), msgs
