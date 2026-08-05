@@ -156,6 +156,21 @@ close (content unchanged) is skipped at stage 2, and the subsequent rename
 (content changed) is broadcast. The hash is already computed by `File.get`,
 so the comparison adds zero I/O cost.
 
+**Delete invalidates the dedup cache** (`on_deleted`, `file_event_handler.py`):
+after broadcasting `deleted`, the handler pops the path from both
+`_last_broadcast_stat` and `_last_broadcast_hash`. Without this, a re-created
+file sharing `mtime_ns` + `size` (and even `sha256`) with its pre-deletion
+version would be silently skipped at stage 1 as "Skip unchanged (stat)",
+dropping the create → delete → **re-create** third event so peers never
+receive the re-creation.
+
+**Rename invalidates the dedup cache for the source path** (`on_moved`,
+file branch, `file_event_handler.py`): a visible→visible file rename pops
+`src_path` from both dedup dicts after building the `renamed` event. Without
+this, a file later re-created at the original source path with identical
+stat+hash would be skipped at stage 1 the same way as the delete case.
+Directories carry no content hash so the invalidation is file-only.
+
 ## event_queue.py — outbound WS event retries
 
 `EventQueue` (`event_queue.py:77`) buffers `QueuedEvent` (`:50`) and retries

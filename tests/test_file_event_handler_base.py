@@ -547,6 +547,126 @@ class TestFileEventHandler:
             # stat differs (ns) → hash differs → must broadcast
             mock_ready.assert_called_once()
 
+    def test_delete_invalidates_dedup_so_recreated_file_broadcasts(self):
+        """Regression: create -> delete -> re-create must broadcast the third event.
+
+        Before the fix, ``on_deleted`` did not invalidate the per-path dedup
+        cache (``_last_broadcast_stat`` / ``_last_broadcast_hash``). A re-created
+        file sharing ``mtime_ns`` + ``size`` (and even ``sha256``) with its
+        pre-deletion version was silently skipped at stage 1 as
+        "Skip unchanged (stat)", so peers never received the re-creation.
+
+        This test seeds the dedup cache as if a first broadcast had happened,
+        fires ``on_deleted`` for the same path, then re-runs
+        ``_process_file_ready`` with the *identical* stat+hash. The re-creation
+        must reach ``_on_file_ready`` (i.e. be broadcast), not be skipped.
+        """
+        path = "/bucket/hello.txt"
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_file = MagicMock()
+        mock_file.sha256sum = "abc123"
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
+
+        delete_event = MagicMock()
+        delete_event.is_directory = False
+        delete_event.src_path = path
+
+        closed_event = MagicMock()
+        closed_event.is_directory = False
+        closed_event.src_path = path
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+            patch.object(self.handler, "_broadcast_event"),
+            patch.object(self.handler, "_on_deleted"),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            # Simulate the first broadcast having recorded this stat+hash.
+            self.handler._last_broadcast_stat[path] = (100, 42)
+            self.handler._last_broadcast_hash[path] = "abc123"
+
+            # 1) Delete the path → cache must be invalidated.
+            self.handler.on_deleted(delete_event)
+            assert path not in self.handler._last_broadcast_stat
+            assert path not in self.handler._last_broadcast_hash
+
+            # 2) Re-create with identical stat+hash → must broadcast, not skip.
+            self.handler.on_closed(closed_event)
+            mock_ready.assert_called_once()
+
+    def test_rename_invalidates_dedup_so_recreated_at_source_broadcasts(self):
+        """Regression: rename A→B then re-create at A must broadcast the re-creation.
+
+        Mirrors ``test_delete_invalidates_dedup_so_recreated_file_broadcasts`` for
+        the visible→visible file rename path: ``on_moved`` must pop the source
+        path from the dedup cache, otherwise a file later re-created at the same
+        source path with identical stat+hash is skipped at stage 1 as
+        "Skip unchanged (stat)" and never broadcast.
+        """
+        src = "/bucket/old.txt"
+        dst = "/bucket/new.txt"
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_file = MagicMock()
+        mock_file.sha256sum = "abc123"
+
+        mock_stat = MagicMock()
+        mock_stat.st_mtime_ns = 100
+        mock_stat.st_size = 42
+
+        moved_event = MagicMock()
+        moved_event.is_directory = False
+        moved_event.src_path = src
+        moved_event.dest_path = dst
+
+        closed_event = MagicMock()
+        closed_event.is_directory = False
+        closed_event.src_path = src
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=mock_file),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch.object(self.handler, "_on_file_ready") as mock_ready,
+            patch.object(self.handler, "_broadcast_event"),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+        ):
+            mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.stat.return_value = mock_stat
+
+            # Simulate a prior broadcast at the source path.
+            self.handler._last_broadcast_stat[src] = (100, 42)
+            self.handler._last_broadcast_hash[src] = "abc123"
+
+            # Rename src -> dst must invalidate the source dedup cache.
+            self.handler.on_moved(moved_event)
+            assert src not in self.handler._last_broadcast_stat
+            assert src not in self.handler._last_broadcast_hash
+
+            # Re-create at src with identical stat+hash → must broadcast.
+            self.handler.on_closed(closed_event)
+            mock_ready.assert_called_once()
+
     def test_dedup_evicts_oldest_at_capacity(self):
         """_record_broadcast evicts the oldest entry when at capacity."""
         from hsync_client.file_event_handler import DEDUP_MAX_ENTRIES
