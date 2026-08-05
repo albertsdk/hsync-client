@@ -189,7 +189,25 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
         if event.is_directory:
             if not is_hidden_dir(src_path) and not is_same_paths(CONFIG["LOCAL_BUCKET"], src_path):
-                log.info(f'{self._label("MODIFY")} "{src_path}"')
+                # Dedup directory modify events the same way as files: inotify
+                # fires IN_ATTRIB on a directory whenever a child is created,
+                # written, renamed or removed, so a single file save can emit
+                # several identical directory MODIFY lines. Directories carry no
+                # content hash, so a stat pre-check (mtime_ns + size) against
+                # the last broadcast is sufficient and cheap (one stat()).
+                # The (dir) annotation disambiguates these directory-level
+                # metadata broadcasts from file content changes.
+                try:
+                    file_stat = Path(src_path).stat()
+                except OSError:
+                    file_stat = None
+                current_stat = (file_stat.st_mtime_ns, file_stat.st_size) if file_stat else None
+                if current_stat is not None and current_stat == self._last_broadcast_stat.get(
+                    src_path
+                ):
+                    log.debug(f'Skip unchanged (stat): "{src_path}" (dir)')
+                    return
+                log.info(f'{self._label("MODIFY")} "{src_path}" (dir)')
                 dir_obj = Dir.get(src_path)
                 if dir_obj:
                     self._broadcast_event(
@@ -202,6 +220,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
                         ),
                         src_abs_path=src_path,
                     )
+                    if current_stat is not None:
+                        self._record_broadcast(src_path, current_stat, "")
             return
 
         if SUPPORTS_ON_CLOSED or is_hidden_file(src_path):

@@ -25,3 +25,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The same invalidation is now applied in `on_moved` for the source path of
   a visible→visible file rename, so a re-creation at the original path with
   identical stat+hash is not skipped either.
+- Fixed missing log line for inbound directory creation/modification. When the
+  master broadcast an `added`/`modified` event for a directory, the slave
+  created the directory via `update_dir` but emitted no `[CREATE]`/`[MODIFY]`
+  log line (the file branch was already covered by `download_file`'s
+  `[DOWNLOAD]` line). `_apply_add_or_modify` now logs the directory event
+  explicitly after `update_dir` succeeds, so the slave's log shows the
+  directory operation and not only the subsequent `.hsynckeep` sentinel
+  upload. The log is gated on `update_dir`'s return value so a
+  security-rejected directory (symlink escape) is not misleadingly logged as
+  created before the `[SECURITY]` rejection line
+  (`hsync_client/event_dispatch.py`).
+- Reduced log noise from duplicate directory `MODIFY` lines. inotify fires
+  `IN_ATTRIB` on a directory whenever a child is created, written, renamed
+  or removed, so a single file save could emit several identical
+  `[LAN MODIFY]` lines for the parent directory. The directory branch of
+  `on_modified` now applies the same stat-based dedup as the file stage-1
+  filter (`(mtime_ns, size)` against `_last_broadcast_stat`) and annotates
+  the surviving lines with `(dir)` to distinguish them from file content
+  changes (`hsync_client/file_event_handler.py`).

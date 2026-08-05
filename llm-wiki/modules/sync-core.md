@@ -83,7 +83,9 @@ from `constants.py:99`–`:101`.
 ## event_dispatch.py — apply inbound events
 
 `apply_inbound_event` (`event_dispatch.py:124`) routes a remote event dict to
-`_apply_add_or_modify` (`:158`), `_apply_rename` (`:188`), `_apply_delete` (`:277`,
+`_apply_add_or_modify` (`:158`, also receives `event_name` to log `[CREATE]` vs
+`[MODIFY]` for the directory branch — the log is gated on `update_dir` returning
+non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`:188`), `_apply_delete` (`:277`,
 locked via `_remove_locked:48`), `_apply_symlink` (`:295`). Echo suppression uses
 the per-event `EventDispatchContext` (`:62`) marking (`_mark:93`/`_unmark:98`).
 Path resolution: `_resolve_local_path` (`:178`).
@@ -170,6 +172,15 @@ file branch, `file_event_handler.py`): a visible→visible file rename pops
 this, a file later re-created at the original source path with identical
 stat+hash would be skipped at stage 1 the same way as the delete case.
 Directories carry no content hash so the invalidation is file-only.
+
+**Directory modify dedup** (`on_modified`, directory branch,
+`file_event_handler.py`): inotify fires `IN_ATTRIB` on a directory whenever a
+child is created, written, renamed or removed, so a single file save can
+emit several identical directory `MODIFY` lines. The directory branch applies
+the same stat pre-check as the file stage-1 filter (`(mtime_ns, size)` against
+`_last_broadcast_stat`) and suppresses the duplicate broadcast + log line.
+The log carries a `(dir)` annotation to distinguish these directory-level
+metadata events from file content changes.
 
 ## event_queue.py — outbound WS event retries
 
