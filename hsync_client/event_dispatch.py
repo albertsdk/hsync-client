@@ -181,7 +181,7 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
             return
 
     if event_name in {EventName.added.value, EventName.modified.value}:
-        await _apply_add_or_modify(src, ctx)
+        await _apply_add_or_modify(src, ctx, str(event_name))
     elif event_name == EventName.renamed.value:
         await _apply_rename(src, dst, ctx)
     elif event_name == EventName.deleted.value:
@@ -190,16 +190,32 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
         await _apply_symlink(src, ctx)
 
 
-async def _apply_add_or_modify(src: dict, ctx: EventDispatchContext) -> None:
+async def _apply_add_or_modify(src: dict, ctx: EventDispatchContext, event_name: str) -> None:
     """Materialise an added/modified directory or file locally."""
     if "path" in src:
         target = _resolve_local_path(src, "path") if ctx.mark_receiving else None
         _mark(ctx, target) if target else None
         try:
-            await asyncio.to_thread(update_dir, src)
+            # Directories carry no content hash, so update_dir only ever
+            # creates the directory or adjusts its permissions; log the
+            # inbound create/modify explicitly so the slave's log shows the
+            # directory event (the file branch is already covered by
+            # download_file's [DOWNLOAD] line). The log is emitted only after
+            # update_dir succeeds: a security-rejected path (symlink escape)
+            # returns None and is logged by update_dir itself as [SECURITY],
+            # so we must not pre-log it here as [CREATE]/[MODIFY] (misleading).
+            result = await asyncio.to_thread(update_dir, src)
         finally:
             if target:
                 _unmark(ctx, target)
+        if result is not None:
+            label = "CREATE" if event_name == EventName.added.value else "MODIFY"
+            log.info(f'{_tag(ctx.log_prefix, label)} "{target or src.get("path")}"')
+            emit_event(
+                UiEventName.transfer,
+                op="create" if label == "CREATE" else "modify",
+                dir=target or "",
+            )
     elif "filepath" in src:
         target = _resolve_local_path(src, "filepath") if ctx.mark_receiving else None
         _mark(ctx, target) if target else None

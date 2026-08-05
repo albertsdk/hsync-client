@@ -111,6 +111,81 @@ class TestInboundEventPathValidation:
             await apply_inbound_event(src_dir_event, REMOTE_DISPATCH_CTX)
         assert (tmp_path / "docs" / "sub").is_dir()
 
+    async def test_added_directory_logs_create_line(self, tmp_path):
+        """Regression: an inbound `added` directory must emit a [CREATE] log line.
+
+        Before the fix, ``_apply_add_or_modify`` delegated to ``update_dir``
+        without logging; directories appeared in the log only via the
+        subsequent `.hsynckeep` sentinel upload, with no line for the
+        directory creation itself.
+        """
+        from loguru import logger
+
+        from hsync_client.logger import _format_record_plain
+
+        src_dir_event = {
+            "name": "added",
+            "src": {"path": "newdir", "permissions": "755"},
+        }
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
+        try:
+            with (
+                patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            ):
+                await apply_inbound_event(src_dir_event, REMOTE_DISPATCH_CTX)
+        finally:
+            logger.remove(handler_id)
+
+        assert (tmp_path / "newdir").is_dir()
+        # The directory create must be logged (label resolves to [CREATE]
+        # because REMOTE_DISPATCH_CTX.log_prefix == "").
+        assert any("[CREATE]" in m and "newdir" in m for m in captured)
+
+    async def test_added_directory_rejected_by_update_dir_not_logged_as_create(self, tmp_path):
+        """A security-rejected directory must not be logged as [CREATE].
+
+        ``update_dir`` performs the symlink-escape check (``resolve_within``)
+        and returns ``None`` with a ``[SECURITY]`` line if a remote path
+        escapes the bucket via an in-bucket symlink. The new log line in
+        ``_apply_add_or_modify`` must be gated on that success so a rejected
+        directory is not misleadingly logged as ``[CREATE]`` first.
+        """
+        from loguru import logger
+
+        from hsync_client.logger import _format_record_plain
+
+        src_dir_event = {
+            "name": "added",
+            "src": {"path": "evil", "permissions": "755"},
+        }
+
+        captured: list[str] = []
+
+        def sink(message):
+            captured.append(str(message))
+
+        handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
+        try:
+            with (
+                patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.event_dispatch.update_dir", return_value=None),
+            ):
+                await apply_inbound_event(src_dir_event, REMOTE_DISPATCH_CTX)
+        finally:
+            logger.remove(handler_id)
+
+        assert not (tmp_path / "evil").exists()
+        # No [CREATE] line must be emitted for a rejected directory.
+        assert not any("[CREATE]" in m for m in captured)
+
 
 class TestSymlinkTargetValidation:
     """_apply_symlink must refuse targets escaping the bucket."""
