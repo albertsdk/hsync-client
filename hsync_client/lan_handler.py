@@ -21,6 +21,7 @@ from hsync_common.protocol.pairing import (
     evaluate_pin,
     requires_pairing_confirmation,
 )
+from hsync_common.text import safe_json_for_log
 
 from hsync_client.autotune import classify_network, derive_retry, derive_timeout, measure_rtt
 from hsync_client.config import CONFIG, set_config
@@ -155,7 +156,9 @@ def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
     for key, value in updates.items():
         cast(dict[str, Any], CONFIG)[key] = value
         cast(dict[str, Any], config)[key] = value
-    log.info(f"autotune (LAN): rtt={rtt_ms:.1f}ms net={net_class.value} -> {updates}")
+    log.info(
+        f"autotune (LAN): rtt={rtt_ms:.1f}ms net={net_class.value} -> {safe_json_for_log(updates)}"
+    )
 
 
 def _run_preview(log) -> None:
