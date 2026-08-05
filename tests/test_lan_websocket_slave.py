@@ -9,6 +9,7 @@ import pytest
 from watchdog.events import (
     DirCreatedEvent,
     DirDeletedEvent,
+    DirMovedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
     FileModifiedEvent,
@@ -106,6 +107,32 @@ class TestSlaveFileEventHandler:
         assert not handler.is_inbound_rename_echo("/b/ABC-keeper", "/b/ABC-123-keeper")
         assert not handler.is_inbound_rename_echo("/b/ABC", "/b/ABC-124")
         assert not handler.is_inbound_rename_echo("/b/other", "/b/ABC-123/x")
+
+    def test_outbound_dir_descendant_match(self, handler):
+        """A child of an outbound directory rename is recognised as redundant.
+
+        When the slave renames a directory (``ABC-123 -> ABC-123-X``), the
+        local watcher also emits an ``on_moved`` for each child (e.g. the
+        ``.hsynckeep`` sentinel). The single PATCH of the directory already
+        renames the whole tree on the master, so those child PATCHes must be
+        skipped instead of 404-ing.
+        """
+        handler._record_outbound_dir_rename("/b/ABC-123", "/b/ABC-123-X")
+        assert handler.is_outbound_dir_descendant(
+            "/b/ABC-123/.hsynckeep", "/b/ABC-123-X/.hsynckeep"
+        )
+        assert handler.is_outbound_dir_descendant("/b/ABC-123/sub/x.txt", "/b/ABC-123-X/sub/x.txt")
+
+    def test_outbound_dir_descendant_prefix_collision_not_matched(self, handler):
+        """A child sharing a path prefix without a separator must NOT match.
+
+        ``ABC-123-keeper -> ABC-123-X-keeper`` is a real rename, not a child
+        of ``ABC-123 -> ABC-123-X``: the trailing suffix does not start with
+        ``/``, so it must not be suppressed.
+        """
+        handler._record_outbound_dir_rename("/b/ABC-123", "/b/ABC-123-X")
+        assert not handler.is_outbound_dir_descendant("/b/ABC-123-keeper", "/b/ABC-123-X-keeper")
+        assert not handler.is_outbound_dir_descendant("/b/other", "/b/ABC-123-X/sub")
 
     def test_is_temp_file(self, handler):
         """Test detecting temporary files."""
@@ -742,6 +769,54 @@ class TestSlaveFileEventHandler:
             handler.on_moved(event2)
         assert len(handler._pending_ops) == 0
         mock_ren2.assert_not_called()
+
+    def test_on_moved_dir_rename_skips_child_patches(self, handler, tmp_path):
+        """on_moved must NOT send a PATCH for each child of an outbound
+        directory rename (e.g. the ``.hsynckeep`` sentinel): the single PATCH
+        of the directory already renamed the whole tree on the master, so the
+        child PATCH would 404 and produce a spurious WARNING."""
+        base = tmp_path / "ABC-123"
+        dst = tmp_path / "ABC-123-X"
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+
+        sentinel_src = str(tmp_path / "ABC-123" / ".hsynckeep")
+        sentinel_dst = str(tmp_path / "ABC-123-X" / ".hsynckeep")
+
+        # Simulate the watchdog sequence: directory rename first (records the
+        # outbound dir pair and sends one PATCH), then the child events.
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_rename_on_master"),
+        ):
+            handler.on_moved(DirMovedEvent(str(base), str(dst)))
+            # Directory PATCH was scheduled; its pair is now recorded.
+            assert len(handler._pending_ops) == 1
+
+        # Child events are redundant: no new PATCH should be scheduled.
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_rename_on_master") as mock_ren_child,
+        ):
+            handler.on_moved(FileMovedEvent(sentinel_src, sentinel_dst))
+        assert len(handler._pending_ops) == 1
+        mock_ren_child.assert_not_called()
+
+    def test_rename_on_master_404_outbound_child_degraded(self, handler):
+        """A 404 matching a child of an outbound directory rename is benign
+        and must be degraded from WARNING to DEBUG (no warning logged)."""
+        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
+        handler._record_outbound_dir_rename("/bucket/ABC-123", "/bucket/ABC-123-X")
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_patch") as mock_patch,
+        ):
+            mock_patch.return_value = MagicMock(status_code=404)
+            with patch("hsync_client.lan_websocket.log") as mock_log:
+                handler._rename_on_master(
+                    "/bucket/ABC-123/.hsynckeep", "/bucket/ABC-123-X/.hsynckeep"
+                )
+            assert not mock_log.warning.called
+            assert mock_log.debug.called
 
     def test_wait_pending_timeout(self, handler):
         """Test wait_pending returns count of timed-out operations."""
