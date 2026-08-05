@@ -90,6 +90,20 @@ locked via `_remove_locked:55`), `_apply_symlink` (`:379`). Echo suppression use
 the per-event `EventDispatchContext` (`:68`) marking (`_mark:138`/`_unmark:143`).
 Path resolution: `_resolve_local_path` (`:235`).
 
+**Inbound directory dedup** (`_apply_add_or_modify` + `_DirDedup`): the master
+broadcasts a burst of near-identical `added`/`modified` directory events per
+`mkdir` (its watcher fires several `IN_ATTRIB` ~1ms apart). Because `update_dir`
+returns the `Dir` even for a no-op (existing dir, unchanged permissions), each
+duplicate would be re-logged as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`.
+A per-connection `_DirDedup` cache (`dir path -> permissions`, threaded through
+`EventDispatchContext.dir_dedup`, default per-context) suppresses the repeat:
+it is keyed on the **absolute** local path (matching the delete/rename
+invalidation), records before acting so a concurrently-dispatched sibling is
+caught, and is invalidated on `deleted` (`_apply_delete`) and `renamed`
+(`_rename_path`) so a re-created directory with the same permissions is applied
+fresh. A genuine change carries different permissions and is never skipped; a
+security-rejected path (`update_dir` → `None`) is never recorded.
+
 **Benign-echo degradation** (`_apply_delete`, dir branch `:293` / file branch
 `:312`): when an inbound `deleted` event targets a path already absent locally,
 the delete has nothing to act on (the originator removed it, a peer's delete
@@ -190,8 +204,13 @@ child is created, written, renamed or removed, so a single file save can
 emit several identical directory `MODIFY` lines. The directory branch applies
 the same stat pre-check as the file stage-1 filter (`(mtime_ns, size)` against
 `_last_broadcast_stat`) and suppresses the duplicate broadcast + log line.
-The log carries a `(dir)` annotation to distinguish these directory-level
-metadata events from file content changes.
+The stat is recorded **before** the broadcast (not after): `mkdir` emits a
+burst of `IN_ATTRIB` ~1ms apart and the second can be dispatched while
+`Dir.get` + broadcast of the first is still in flight, so recording up front
+lets the pre-check catch the sibling immediately. A later genuine content
+change updates the directory mtime and is never skipped. The log carries a
+`(dir)` annotation to distinguish these directory-level metadata events from
+file content changes.
 
 ## event_queue.py — outbound WS event retries
 

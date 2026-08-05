@@ -43,8 +43,8 @@ Emitted while the client watches its bucket or applies inbound peer events.
 | `[LOCAL SYMLINK]` | create | Local watcher: symbolic link created |
 | `[LOCAL IGNORE DEL]` | warning | Local watcher: deletion skipped (ignore-delete / backup mode) |
 | `[LOCAL KEEP]` | in_sync | Local watcher: `.hsynckeep` sentinel created to preserve an empty directory |
-| `[REMOTE CREATE]` | create | Peer-caused: directory created (inbound event applied, or master broadcasting a slave's create) |
-| `[REMOTE MODIFY]` | modify | Peer-caused: file/directory content modified (inbound event applied, or master broadcasting a slave's upload) |
+| `[REMOTE CREATE]` | create | Peer-caused: directory created (inbound event applied, or master broadcasting a slave's create). Duplicate directory events for the same path are deduplicated (a single `mkdir` triggers a burst of `IN_ATTRIB` on the master) |
+| `[REMOTE MODIFY]` | modify | Peer-caused: file/directory content modified (inbound event applied, or master broadcasting a slave's upload). Duplicate no-op directory events (same path, unchanged permissions) are deduplicated |
 | `[REMOTE RENAME]` | rename | Peer-caused: file/directory renamed |
 | `[REMOTE DELETE]` | delete | Peer-caused: file/directory deleted |
 | `[REMOTE SYMLINK]` | create | Peer-caused: symbolic link created |

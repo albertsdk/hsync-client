@@ -622,6 +622,29 @@ class TestSlaveFileEventHandler:
             handler._handle_file_upload(str(f))
         assert len(handler._pending_ops) >= 1
 
+    def test_handle_file_upload_skips_hsynckeep_sentinel(self, handler, tmp_path):
+        """Regression: the .hsynckeep sentinel is never uploaded to the master.
+
+        The sentinel is a per-peer local artifact: the periodic reconcile
+        already excludes it from sync actions in both directions, so the
+        event-driven upload path must too. Uploading it only produced a
+        0-byte [UPLOAD] line and a broadcast round-trip. Each peer maintains
+        its own sentinels; the directory itself is propagated by the
+        directory event.
+        """
+        d = tmp_path / "newdir"
+        d.mkdir()
+        sentinel = d / ".hsynckeep"
+        sentinel.write_text("")
+        config = {"SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_upload_to_master") as mock_upload,
+        ):
+            handler._handle_file_upload(str(sentinel))
+        assert mock_upload.call_count == 0
+        assert len(handler._pending_ops) == 0
+
     def test_on_deleted_visible_file(self, handler, tmp_path):
         """Test on_deleted starts delete operation for visible file."""
         event = FileDeletedEvent(str(tmp_path / "file.txt"))
