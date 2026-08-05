@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed spurious `WARNING: Rename request failed: 404` on the LAN slave when
+  the master renamed a directory that the slave recently applied as an
+  inbound event. The slave's own watcher would re-send the rename (and the
+  renames of its children, e.g. `.hsynckeep`) back to the master, which
+  already performed them. `is_inbound_rename_echo` now also recognises
+  **descendant** echoes of a recorded directory rename (same trailing suffix
+  starting with `/`), `on_moved` skips the redundant PATCH proactively, and a
+  404 matching an echo is degraded to DEBUG
+  (`hsync_client/lan_websocket.py`).
 - Fixed `KeyError: "'HTTP_TIMEOUT'"` raised by loguru while formatting the
   LAN autotune summary message. The autotune updates dict was interpolated
   into an f-string, leaving `{'HTTP_TIMEOUT': ...}` in the message, which

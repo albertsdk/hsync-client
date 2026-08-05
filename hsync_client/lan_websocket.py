@@ -833,15 +833,37 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                 del self._inbound_renames[key]
 
     def is_inbound_rename_echo(self, src: str, dst: str) -> bool:
-        """Return True if ``(src, dst)`` matches a recent inbound rename."""
+        """Return True if ``(src, dst)`` matches a recent inbound rename.
+
+        Matches either the exact ``(src, dst)`` pair cached when the rename
+        was applied on behalf of an inbound master event, or a *descendant*
+        echo of a cached directory rename: if the master renamed
+        ``r_src -> r_dst``, the slave's own watcher may also emit echo events
+        for children under the old path (e.g. ``r_src/.hsynckeep ->
+        r_dst/.hsynckeep``). A descendant is recognised only when the trailing
+        suffix (empty, or starting with ``/``) is byte-identical on both
+        sides, so a genuine rename that merely shares a path prefix
+        (``ABC-keeper -> ABC-123-keeper``) is never suppressed.
+        """
         with self._inbound_renames_lock:
+            now = time()
+            # Exact match first (fast path).
             ts = self._inbound_renames.get((src, dst))
-            if ts is None:
-                return False
-            if time() - ts > self._INBOUND_RENAME_TTL_S:
+            if ts is not None:
+                if now - ts <= self._INBOUND_RENAME_TTL_S:
+                    return True
                 del self._inbound_renames[(src, dst)]
-                return False
-            return True
+
+            # Descendant match: iterate over cached directory renames.
+            for (r_src, r_dst), ts in list(self._inbound_renames.items()):
+                if now - ts > self._INBOUND_RENAME_TTL_S:
+                    del self._inbound_renames[(r_src, r_dst)]
+                    continue
+                if dst.startswith(r_dst):
+                    suffix = dst[len(r_dst) :]
+                    if (not suffix or suffix.startswith("/")) and src == r_src + suffix:
+                        return True
+            return False
 
     def _start_operation(
         self,
@@ -1348,7 +1370,21 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
                 )
             return
 
-        # Normal rename - use PATCH endpoint
+        # Normal rename - use PATCH endpoint, unless this rename is the echo
+        # of an inbound `renamed` event we just applied locally (the master
+        # already performed the rename itself, so re-sending it would fail
+        # with 404 and produce a spurious WARNING).  ``is_inbound_rename_echo``
+        # covers both the exact (src, dst) pair and descendant echoes of a
+        # directory rename (e.g. ``ABC/.hsynckeep -> ABC-123/.hsynckeep``).
+        if self.is_inbound_rename_echo(src_path, dest_path):
+            own_cid = CONFIG.get("CID")
+            cid_suffix = f" (CID: {own_cid})" if own_cid else ""
+            log.debug(
+                f'{ActionLabel.CLIENT_REN} "{src_path}" -> "{dest_path}"'
+                f"{cid_suffix} (inbound echo, skipped)"
+            )
+            return
+
         self._start_operation(
             target=self._rename_on_master,
             args=(src_path, dest_path),
