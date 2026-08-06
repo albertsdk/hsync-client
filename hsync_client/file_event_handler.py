@@ -37,6 +37,7 @@ from loguru import logger as log
 from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHandler
 
 from hsync_client.config import CONFIG
+from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.utils import ensure_str_path, is_same_paths
 
 # on_closed is delivered by watchdog only on Linux (inotify).
@@ -296,6 +297,17 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 log.warning(
                     f'File "{src_path}" not found. It might have been altered by an external tool.'
                 )
+                return
+
+            # .hsynckeep is a per-peer local sentinel: the periodic reconcile
+            # already excludes it from sync actions in both directions, so the
+            # event-driven broadcast path must too. Each peer maintains its own
+            # sentinels (ensure_hsynckeep_files / _ensure_sentinel*), and the
+            # directory itself is propagated by the directory event — broadcasting
+            # the sentinel only produces a spurious `modified` event and a
+            # broadcast round-trip.
+            if Path(src_path).name == HSYNCKEEP_FILENAME:
+                log.debug(f'Skip sentinel event: "{src_path}"')
                 return
 
             # Stage 1: stat pre-check (cheap, avoids re-hash on no-op close).

@@ -42,7 +42,7 @@ peers are ignored.
 | ------ | ---- | ---- |
 | `LANServer` | `lan_server.py:1048` | HTTPS file server (REST mirror of hsync-server) |
 | `BoundedThreadingHTTPServer` | `:66` | `ThreadingHTTPServer` subclass with a `BoundedSemaphore` cap on concurrent request threads (H5, default `LAN_SERVER_MAX_THREADS=32`) |
-| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`) |
+| `LANRequestHandler` | `:289` | per-request handler; endpoints `API_PREFIX` (`:55`); `POST /dirs` creates directories from slaves (`_handle_create_dir`) |
 | `_StreamingMultipartParser` | `:125` | streaming upload parsing |
 | `_CappedBytesWriter` | `:97` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `LANWebSocketServer` | `lan_websocket.py:123` | WSS event hub; LAN-key auth (`hmac.compare_digest`); extracts CID from auth message for logging |
