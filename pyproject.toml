@@ -40,15 +40,21 @@ pytest-cov = "^7.0.0"
 ruff = "^0.15.0"
 mypy = "^2.1.0"
 pre-commit = "^4.0.1"
+# Black-box behavioural tests run the real hsync-server in-process (loopback
+# uvicorn) so the client can be driven end-to-end through its public CLI.
+hsync-server = {path = "../hsync-server", develop = true}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-pythonpath = ["../hsync-common"]
+pythonpath = ["../hsync-common", "../hsync-server"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+filterwarnings = [
+    "ignore::urllib3.exceptions.InsecureRequestWarning",
+]
 
 [tool.ruff]
 line-length = 100
