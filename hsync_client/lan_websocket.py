@@ -1424,6 +1424,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if self._is_temp_file(src_path):
             return
 
+        # Skip if we're receiving this deletion from master (echo suppression).
+        if self.is_receiving(src_path):
+            return
+
         # Skip in download-only mode (don't propagate local deletions)
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
