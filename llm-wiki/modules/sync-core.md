@@ -35,6 +35,10 @@ only changed blocks. Integrated transparently into `transfer.py` upload/download
 | `download_delta` | `delta_transfer.py:120` | POST signatures → GET data → rebuild; fallback to full download on failure |
 | `should_use_delta` | `delta_transfer.py:25` | gate: size threshold, base hash exists, capability check, direction logic |
 
+**Delta duration logging**: the `[DELTA ↑]`/`[DELTA ↓]` success logs include
+the wall-clock duration via `format_duration(..., subsecond=True)` — e.g.
+`[DELTA ↑] "/path" 512 KB literal (saved 1.0 MB) in 120ms`.
+
 Delta transfer is **enabled by default** (`HSYNC_DELTA_ENABLED=true`). Size thresholds:
 ≥ 256 KB server mode, ≥ 1 MB LAN mode (configurable via `HSYNC_DELTA_MIN_FILE_SIZE`
 and `HSYNC_DELTA_MIN_FILE_SIZE_LAN`). Falls back to full transfer on any failure
@@ -61,6 +65,14 @@ caller falls back to a full transfer.
 | `_emit_transfer_failed` | `transfer.py:75` | emit `transfer_failed` UI event on exhaustion |
 | `_local_dest_path` | `transfer.py:242` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
 | `_open_partial_no_follow` | `transfer.py:257` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
+
+**Transfer duration logging**: every `[DOWNLOAD]`/`[UPLOAD]` success log
+includes the per-attempt wall-clock duration via
+`format_duration(monotonic() - t0, subsecond=True)` — e.g.
+`[DOWNLOAD] "/path" 1.5 MB in 320ms`. The `t0` is captured at the start of
+`_download_file_attempt` / `_upload_file_attempt` (covers the delta-fallback
+path too: a failed delta attempt's time is included in the full-transfer
+duration).
 
 Compressed downloads stream through `decompress_stream` with a hard output cap
 (anti decompression-bomb, `transfer.py:448`); the payload is never fully

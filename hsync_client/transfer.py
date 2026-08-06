@@ -17,11 +17,12 @@ from collections.abc import Iterator
 from os import fsync, remove, replace, utime
 from pathlib import Path
 from shutil import disk_usage
+from time import monotonic
 from time import sleep as time_sleep
 from typing import cast
 
 import zstandard as zstd
-from hsync_common.format import format_bytes
+from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
 from hsync_common.path_validation import resolve_within
@@ -343,6 +344,8 @@ def _download_file_attempt(file: File) -> None:
         RequestException: On a connection-level error (retryable).
         ServerError: On a server-side 5xx response (retryable).
     """
+    t0 = monotonic()
+
     # Prepare destination directory and partial file path
     full_save_path = _local_dest_path(file)
     if full_save_path is None:
@@ -365,7 +368,10 @@ def _download_file_attempt(file: File) -> None:
     if delta_ctx := prepare_delta_download(file, full_save_path):
         try:
             download_file_delta(file, delta_ctx)
-            log.info(f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)}')
+            log.info(
+                f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
+                f"in {format_duration(monotonic() - t0, subsecond=True)}"
+            )
             emit_event(
                 UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0
             )
@@ -577,7 +583,10 @@ def _download_file_attempt(file: File) -> None:
         # rename) so a partially written file is never visible at the target path
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
-        log.info(f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)}')
+        log.info(
+            f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
+            f"in {format_duration(monotonic() - t0, subsecond=True)}"
+        )
         emit_event(UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0)
 
         # Restore the modification time from the remote file. POSIX ctime is
@@ -879,6 +888,7 @@ def _upload_file_attempt(file: File) -> None:
         RequestException: On a connection-level error (retryable).
         ServerError: On a server-side 5xx response (retryable).
     """
+    t0 = monotonic()
     try:
         # Prepare upload request
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
@@ -892,7 +902,10 @@ def _upload_file_attempt(file: File) -> None:
         if delta_ctx := prepare_delta_upload(file, filename):
             try:
                 upload_file_delta(file, delta_ctx)
-                log.info(f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)}')
+                log.info(
+                    f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
+                    f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                )
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
@@ -985,7 +998,10 @@ def _upload_file_attempt(file: File) -> None:
                 timeout=_upload_timeout(),
             )
             if response.status_code == 201:
-                log.info(f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)}')
+                log.info(
+                    f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
+                    f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                )
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
@@ -1046,7 +1062,10 @@ def _upload_file_attempt(file: File) -> None:
                 timeout=_upload_timeout(),
             )
             if response.status_code == 201:
-                log.info(f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)}')
+                log.info(
+                    f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
+                    f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                )
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
