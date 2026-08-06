@@ -32,7 +32,7 @@ class TestEvent:
         """Test event creation with File source."""
         file = File(filepath="/local/bucket/file.txt", size=1024)
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.added,
@@ -40,7 +40,7 @@ class TestEvent:
             strip_localpath=True,
         )
 
-        assert event.cid == "client-123"
+        assert event.cid == "Client123"
         assert event.bucket == "mybucket"
         assert event.name == "added"
         assert isinstance(event.src, File)
@@ -51,7 +51,7 @@ class TestEvent:
         """Test event creation with Dir source."""
         d = Dir(path="/local/bucket/subdir", permissions="755")
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.added,
@@ -66,7 +66,7 @@ class TestEvent:
         """Test event creation without stripping localpath."""
         file = File(filepath="file.txt", size=1024)
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.added,
@@ -83,7 +83,7 @@ class TestEvent:
         dst_file = File(filepath="/local/bucket/new.txt", size=1024)
 
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.renamed,
@@ -101,7 +101,7 @@ class TestEvent:
         """Test serialization to dictionary."""
         file = File(filepath="/local/bucket/file.txt", size=1024)
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.modified,
@@ -110,7 +110,7 @@ class TestEvent:
         )
 
         d = event.to_dict()
-        assert d["cid"] == "client-123"
+        assert d["cid"] == "Client123"
         assert d["name"] == "modified"
         assert d["bucket"] == "mybucket"
         assert d["src"]["filepath"] == "file.txt"
@@ -122,7 +122,7 @@ class TestEvent:
         dst = Dir(path="/local/bucket/new_dir", permissions="755")
 
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.renamed,
@@ -139,7 +139,7 @@ class TestEvent:
         """Test symlink event type."""
         symlink = Symlink(filepath="/local/bucket/link", target="../target")
         event = Event(
-            cid="client-123",
+            cid="Client123",
             localpath="/local/bucket",
             bucket="mybucket",
             name=EventName.symlink,
