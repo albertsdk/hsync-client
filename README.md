@@ -28,10 +28,6 @@ It works in two ways:
 
 ---
 
-<!-- GitHub auto-generates the table of contents from the section headings above. -->
-
----
-
 ## Why HSYNC?
 
 HSYNC is designed to synchronize files **in real-time** using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
