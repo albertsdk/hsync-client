@@ -371,7 +371,7 @@ def _download_file_attempt(file: File) -> None:
             download_file_delta(file, delta_ctx)
             log.info(
                 f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
-                f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                f"{format_duration(monotonic() - t0, subsecond=True)}"
             )
             emit_event(
                 UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0
@@ -586,7 +586,7 @@ def _download_file_attempt(file: File) -> None:
         cleanup_partial = False
         log.info(
             f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
-            f"in {format_duration(monotonic() - t0, subsecond=True)}"
+            f"{format_duration(monotonic() - t0, subsecond=True)}"
         )
         emit_event(UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0)
 
@@ -941,7 +941,7 @@ def _upload_file_attempt(file: File) -> None:
                 upload_file_delta(file, delta_ctx)
                 log.info(
                     f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
-                    f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                    f"{format_duration(monotonic() - t0, subsecond=True)}"
                 )
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
@@ -1037,7 +1037,7 @@ def _upload_file_attempt(file: File) -> None:
             if response.status_code == 201:
                 log.info(
                     f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
-                    f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                    f"{format_duration(monotonic() - t0, subsecond=True)}"
                 )
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
@@ -1101,7 +1101,7 @@ def _upload_file_attempt(file: File) -> None:
             if response.status_code == 201:
                 log.info(
                     f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
-                    f"in {format_duration(monotonic() - t0, subsecond=True)}"
+                    f"{format_duration(monotonic() - t0, subsecond=True)}"
                 )
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0

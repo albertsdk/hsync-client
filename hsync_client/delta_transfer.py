@@ -294,7 +294,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
     log.info(
         f'[DELTA ↑] "{file.filepath}" {format_bytes(len(literals))} literal '
         f"(saved {format_bytes(file.size - len(literals))}) "
-        f"in {format_duration(monotonic() - t0, subsecond=True)}"
+        f"{format_duration(monotonic() - t0, subsecond=True)}"
     )
 
 
@@ -439,7 +439,7 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
         log.info(
             f'[DELTA ↓] "{file.filepath}" {format_bytes(Path(payload_path).stat().st_size)} literal '
             f"(saved {format_bytes(max(new_size - Path(payload_path).stat().st_size, 0))}) "
-            f"in {format_duration(monotonic() - t0, subsecond=True)}"
+            f"{format_duration(monotonic() - t0, subsecond=True)}"
         )
     finally:
         for leftover in (part_path, payload_path):
