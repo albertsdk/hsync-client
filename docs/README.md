@@ -1,9 +1,10 @@
 # HSYNC Client — Documentation
 
-HSYNC is a file-synchronization client. It keeps a local directory in sync either
-with a central **HSYNC server** (Server Mode) or directly with other devices on
-the same network (peer-to-peer **LAN Mode**). It ships as a single self-contained
-binary — no Python runtime is required to run it.
+HSYNC is a file-synchronization client. It keeps a local directory in sync in
+real-time either with a central **HSYNC server** (Server Mode) or directly with
+other devices on the same network (peer-to-peer **LAN Mode**). It ships as a
+single self-contained binary —
+no Python runtime is required to run it.
 
 ## Install & quickstart
 
