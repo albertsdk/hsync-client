@@ -1019,3 +1019,455 @@ class TestLanGroupFiltering:
                 _terminate(slave)
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# Advanced sync operations
+# =============================================================================
+
+
+class TestLanFileModification:
+    def test_file_modification_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Modifying a file on the master updates it on the slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Pre-create a file before slave connects
+            (Path(lan_master_dir) / "modify_me.txt").write_bytes(b"v1\n")
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                slave_file = Path(lan_slave_dir) / "modify_me.txt"
+                assert _wait_for_file(str(slave_file), timeout=30), (
+                    "Initial file did not appear on slave"
+                )
+                assert slave_file.read_bytes() == b"v1\n"
+
+                # Modify the file on master
+                time.sleep(0.5)  # let mtime settle
+                (Path(lan_master_dir) / "modify_me.txt").write_bytes(b"v2-updated\n")
+
+                # Wait for the update to propagate
+                deadline = time.time() + 30
+                updated = False
+                while time.time() < deadline:
+                    if slave_file.read_bytes() == b"v2-updated\n":
+                        updated = True
+                        break
+                    time.sleep(0.3)
+                assert updated, "Modified content did not reach slave"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+class TestLanFileRename:
+    def test_file_rename_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Renaming a file on the master propagates to the slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Pre-create file
+            (Path(lan_master_dir) / "old_name.txt").write_bytes(b"rename-me\n")
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                old_slave = Path(lan_slave_dir) / "old_name.txt"
+                assert _wait_for_file(str(old_slave), timeout=30), (
+                    "File did not appear on slave before rename"
+                )
+
+                # Rename on master
+                (Path(lan_master_dir) / "old_name.txt").rename(
+                    Path(lan_master_dir) / "new_name.txt"
+                )
+
+                # Old path should vanish, new path should appear on slave
+                new_slave = Path(lan_slave_dir) / "new_name.txt"
+                assert _wait_for_file(str(new_slave), timeout=30), (
+                    "Renamed file did not appear on slave"
+                )
+                assert _wait_for_file_gone(str(old_slave), timeout=10), (
+                    "Old file name still present on slave after rename"
+                )
+                assert new_slave.read_bytes() == b"rename-me\n"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+class TestLanBulkSync:
+    def test_multiple_files_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """10+ files created on master → all appear on slave with correct content."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Create 10 files on master before slave connects
+            files: dict[str, bytes] = {}
+            for i in range(10):
+                name = f"bulk_{i:02d}.txt"
+                content = f"file-{i:02d}\n".encode()
+                (Path(lan_master_dir) / name).write_bytes(content)
+                files[name] = content
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                for name, expected in files.items():
+                    slave_path = Path(lan_slave_dir) / name
+                    assert _wait_for_file(str(slave_path), timeout=30), (
+                        f"File {name} did not appear on slave"
+                    )
+                    assert slave_path.read_bytes() == expected, f"Wrong content for {name}"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_empty_directory_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Empty directory (with .hsynckeep) appears on slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Create an empty directory on master
+                empty_dir = Path(lan_master_dir) / "emptydir"
+                empty_dir.mkdir()
+
+                # The directory should appear on slave (with .hsynckeep sentinel)
+                slave_empty = Path(lan_slave_dir) / "emptydir"
+                assert _wait_for_file(str(slave_empty), timeout=30), (
+                    "Empty directory did not appear on slave"
+                )
+                assert slave_empty.is_dir(), "Expected a directory"
+                # Sentinel should be present
+                sentinel = slave_empty / ".hsynckeep"
+                assert sentinel.exists(), "Missing .hsynckeep sentinel in empty dir"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Feature flags
+# =============================================================================
+
+
+class TestLanFeatureFlags:
+    def test_compression_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--no-compression on both peers still allows sync."""
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+                "--no-compression",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--no-compression",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                (Path(lan_master_dir) / "nocomp.txt").write_bytes(b"no compression\n")
+                assert _wait_for_file(str(Path(lan_slave_dir) / "nocomp.txt"), timeout=30), (
+                    "File did not sync with --no-compression"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_delta_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--no-delta on both peers still allows sync."""
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+                "--no-delta",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--no-delta",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                (Path(lan_master_dir) / "nodelta.txt").write_bytes(b"no delta\n")
+                assert _wait_for_file(str(Path(lan_slave_dir) / "nodelta.txt"), timeout=30), (
+                    "File did not sync with --no-delta"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_periodic_resync_fires(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--interval 5 triggers a periodic resync logged in stderr."""
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+                "--interval",
+                "5",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # The master with --interval should log "Force sync" within ~10s
+            resync_fired = _wait_for_text_in_stderr(master, "Force sync", timeout=15)
+            assert resync_fired, "Periodic resync did not fire (expected 'Force sync' in stderr)"
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Edge cases & robustness
+# =============================================================================
+
+
+class TestLanEdgeCases:
+    def test_hidden_file_not_synced(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Hidden files (e.g. .hidden) are not synced to the slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Create a hidden file on master
+                (Path(lan_master_dir) / ".secret").write_bytes(b"hidden\n")
+
+                # Wait a few seconds — it should NOT appear on slave
+                time.sleep(5)
+                assert not (Path(lan_slave_dir) / ".secret").exists(), (
+                    "Hidden file was synced to slave"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_lan_without_key_still_works(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """LAN mode without HSYNC_LAN_KEY still syncs (no auth)."""
+        # Neither master nor slave set HSYNC_LAN_KEY
+        env_no_key = {**os.environ}
+        env_no_key.pop("HSYNC_LAN_KEY", None)
+
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--discovery-timeout",
+                "30",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--http-timeout",
+                "10",
+            ],
+            env=env_no_key,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                ],
+                env=env_no_key,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                (Path(lan_master_dir) / "nokey.txt").write_bytes(b"no auth key\n")
+                assert _wait_for_file(str(Path(lan_slave_dir) / "nokey.txt"), timeout=30), (
+                    "File did not sync without LAN key"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
