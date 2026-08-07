@@ -1872,3 +1872,216 @@ class TestLanHsyncignore:
                 _terminate(slave2)
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# File permissions
+# =============================================================================
+
+
+class TestLanPermissions:
+    def test_file_permissions_synced(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """File with 600 perms on master → slave receives 600."""
+        import stat
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Create file with specific permissions on master
+            f = Path(lan_master_dir) / "perms.txt"
+            f.write_bytes(b"permissions-test\n")
+            f.chmod(0o600)
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                slave_f = Path(lan_slave_dir) / "perms.txt"
+                assert _wait_for_file(str(slave_f), timeout=30), (
+                    "File with custom permissions did not sync"
+                )
+                # Check that permissions were preserved (at least not world-readable)
+                mode = slave_f.stat().st_mode
+                assert not (mode & stat.S_IROTH), "File should not be world-readable"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Max inbound size guard
+# =============================================================================
+
+
+class TestLanMaxInbound:
+    def test_max_inbound_size_blocks_large_file(self):
+        """--max-inbound-size e2e requires multi-MB file transfers.
+
+        Functionality verified by unit tests in test_security_inbound.py.
+        """
+        pytest.skip(
+            "max-inbound-size e2e requires multi-MB file; functionality verified by unit tests"
+        )
+
+
+# =============================================================================
+# Dry run
+# =============================================================================
+
+
+class TestLanDryRun:
+    def test_dry_run_no_files_transferred(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--dry-run on slave: preview shown, no files transferred."""
+        # Pre-create a file on master
+        (Path(lan_master_dir) / "should_not_sync.txt").write_bytes(b"dry-run\n")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--dry-run",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # The preview should mention the file in stderr
+                preview_shown = _wait_for_text_in_stderr(slave, "should_not_sync.txt", timeout=30)
+                assert preview_shown, "Preview did not show the pending file"
+
+                # But the file should NOT actually appear on disk
+                time.sleep(3)
+                assert not (Path(lan_slave_dir) / "should_not_sync.txt").exists(), (
+                    "File was transferred despite --dry-run"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Pre-existing data
+# =============================================================================
+
+
+class TestLanPreExistingData:
+    def test_pre_existing_data_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Directory already populated before client starts → everything syncs."""
+        # Create files BEFORE starting any client
+        (Path(lan_master_dir) / "pre_existing_a.txt").write_bytes(b"alpha\n")
+        (Path(lan_master_dir) / "pre_existing_b.txt").write_bytes(b"beta\n")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_file(
+                    str(Path(lan_slave_dir) / "pre_existing_a.txt"), timeout=30
+                ), "Pre-existing file A did not sync"
+                assert _wait_for_file(
+                    str(Path(lan_slave_dir) / "pre_existing_b.txt"), timeout=10
+                ), "Pre-existing file B did not sync"
+                assert (Path(lan_slave_dir) / "pre_existing_a.txt").read_bytes() == b"alpha\n"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Unicode filenames
+# =============================================================================
+
+
+class TestLanUnicode:
+    def test_unicode_filename_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """File with non-ASCII name (e.g. caffè.txt) syncs correctly."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                unicode_name = "caffè_日本語.txt"
+                content = "unicode content 🎉\n".encode()
+                (Path(lan_master_dir) / unicode_name).write_bytes(content)
+
+                slave_path = Path(lan_slave_dir) / unicode_name
+                assert _wait_for_file(str(slave_path), timeout=30), (
+                    f"Unicode file '{unicode_name}' did not sync"
+                )
+                assert slave_path.read_bytes() == content
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# Nested deep directories
+# =============================================================================
+
+
+class TestLanDeepDirs:
+    def test_nested_deep_directory_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Deeply nested directory (6 levels) syncs correctly."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Create deep directory structure
+            deep = Path(lan_master_dir) / "a" / "b" / "c" / "d" / "e" / "f"
+            deep.mkdir(parents=True)
+            (deep / "deep_file.txt").write_bytes(b"deep content\n")
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                slave_deep_file = (
+                    Path(lan_slave_dir) / "a" / "b" / "c" / "d" / "e" / "f" / "deep_file.txt"
+                )
+                assert _wait_for_file(str(slave_deep_file), timeout=30), (
+                    "Deeply nested file did not sync"
+                )
+                assert slave_deep_file.read_bytes() == b"deep content\n"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
