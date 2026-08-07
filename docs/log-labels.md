@@ -6,7 +6,7 @@ lists every label that can appear in the client's logs.
 
 > The complete, cross-project catalog (descriptions, color categories, and which
 > project emits each label) lives in
-> [`hsync-common/docs/log-labels.md`](../../hsync-common/docs/log-labels.md).
+> [`hsync-common/docs/log-labels.md`](https://github.com/albertobasso/hsync-common/blob/main/docs/log-labels.md).
 > This page is the client-specific view: only the labels this client emits,
 > grouped by where they come from.
 
@@ -110,4 +110,4 @@ The client does not emit `[WS]` (that is server/infrastructure-only).
 
 - [Usage](usage.md) — CLI commands and modes
 - [LAN Mode](lan-mode.md) — master election, pairing, trust model
-- [Canonical label catalog](../../hsync-common/docs/log-labels.md)
+- [Canonical label catalog](https://github.com/albertobasso/hsync-common/blob/main/docs/log-labels.md)

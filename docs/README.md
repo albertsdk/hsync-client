@@ -43,7 +43,9 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | -------- | -------------- |
 | [installation.md](installation.md) | Install via the installer script, prebuilt binary, `.deb`, or `.bin`, or build from source. |
 | [debian-package.md](debian-package.md) | Detailed guide for the `.deb` package: service, custom paths, ACLs. |
-| [getting-started.md](getting-started.md) | Build, choose a mode, and run your first sync. |
+| [getting-started.md](getting-started.md) | Build, choose a mode, and pick your path (Server or LAN P2P). |
+| [getting-started-server.md](getting-started-server.md) | Server Mode quickstart: connect to a central server. |
+| [getting-started-lan.md](getting-started-lan.md) | LAN P2P quickstart: sync directly with peers on your network. |
 | [migration.md](migration.md) | Migrate to HSYNC from rsync, Syncthing, cloud storage, or manual copies. |
 
 ### Usage & Configuration
@@ -51,19 +53,30 @@ See [Getting Started](getting-started.md) for the full walkthrough.
 | Document | What it covers |
 | -------- | -------------- |
 | [usage.md](usage.md) | Complete command-line reference and common workflows. |
-| [configuration.md](configuration.md) | Single reference for every CLI option and environment variable. |
-| [sync-modes.md](sync-modes.md) | Server vs LAN modes, sync directions, and conflict handling. |
+| [configuration.md](configuration.md) | Shared options: sync, compression, delta, logging, auto-tuning. |
+| [configuration-server.md](configuration-server.md) | Server-mode options: server URL, API key, SSL/TLS, environment variables. |
+| [configuration-lan.md](configuration-lan.md) | LAN P2P options: discovery, master election, LAN_KEY, file stability. |
+| [sync-modes.md](sync-modes.md) | Index: Server vs LAN modes (split into separate guides). |
+| [sync-modes-server.md](sync-modes-server.md) | Server Mode: sync directions, watch mode, single sync, dry run, conflict handling. |
+| [sync-modes-lan.md](sync-modes-lan.md) | LAN P2P: master election, sync directions, watch mode, conflict handling. |
 | [server-mode.md](server-mode.md) | Server mode guide: how it works, quick start, security, and troubleshooting. |
 | [lan-mode.md](lan-mode.md) | Peer-to-peer LAN guide: how it works, master election, and pairing. |
-| [examples.md](examples.md) | Practical, copy-paste usage recipes. |
+| [examples.md](examples.md) | Index: practical usage recipes (split by mode). |
+| [examples-server.md](examples-server.md) | Server Mode examples: sync, backup, multi-device, bandwidth-limited. |
+| [examples-lan.md](examples-lan.md) | LAN P2P examples: Wi-Fi sync, NAS backup, groups, fixed ports. |
 | [log-labels.md](log-labels.md) | Every action label that can appear in the logs and what it means. |
 
 ### How It Works
 
 | Document | What it covers |
 | -------- | -------------- |
-| [sync-flow.md](sync-flow.md) | Client-side sync flow: initial sync, watch mode, event queue, retry. |
-| [faq.md](faq.md) | Frequently asked questions and why to choose HSYNC. |
+| [authentication.md](authentication.md) | Authentication flows: Server Mode (API key), LAN P2P with/without LAN_KEY, hello handshake. |
+| [sync-flow.md](sync-flow.md) | Index: client-side sync flow (split into separate guides). |
+| [sync-flow-server.md](sync-flow-server.md) | Server Mode sync flow: connection, watch mode, event loop, conflict handling. |
+| [sync-flow-lan.md](sync-flow-lan.md) | LAN P2P sync flow: master election, WebSocket hub, echo suppression, slave upload. |
+| [faq.md](faq.md) | Index: frequently asked questions (split by mode). |
+| [faq-server.md](faq-server.md) | Server Mode FAQ: security, sync behavior, files, performance, Debian package. |
+| [faq-lan.md](faq-lan.md) | LAN P2P FAQ: master election, groups, ports, hello handshake, authentication. |
 
 ### Internal / For Contributors
 

@@ -67,4 +67,4 @@ Flags map to env keys; capabilities JSON is built from
 
 > **Domain-critical**: any change to `HSYNC_*` flags / defaults requires the
 > synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
-> Human guides: `../docs/configuration.md`, `../docs/usage.md`.
+> Human guides: `../../docs/configuration.md`, `../../docs/configuration-server.md`, `../../docs/configuration-lan.md`, `../../docs/usage.md`.

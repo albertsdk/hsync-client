@@ -2,7 +2,7 @@
 
 The client owns **no wire models**: file/dir/action/tombstone/version types are
 imported from `hsync-common` (SSOT, see
-[common data-models](../../hsync-common/llm-wiki/data-models.md)). This page maps
+[common data-models](https://github.com/albertobasso/hsync-common/blob/main/llm-wiki/data-models.md)). This page maps
 the *client-local* persisted state and how it wraps the common stores.
 
 ## Reused common models (do not redefine)
