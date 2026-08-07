@@ -108,10 +108,10 @@ class TestEnvSettings:
     def test_reads_from_env(self):
         """Settings are read from HSYNC_ prefixed env vars."""
         get_env_settings.cache_clear()
-        os.environ["HSYNC_SERVER"] = "http://test:8000"
+        os.environ["HSYNC_SERVER"] = "https://test.example.com:8000"
         try:
             settings = EnvSettings()
-            assert settings.server == "http://test:8000"
+            assert settings.server == "https://test.example.com:8000"
         finally:
             del os.environ["HSYNC_SERVER"]
             get_env_settings.cache_clear()
