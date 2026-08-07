@@ -289,3 +289,240 @@ class TestLanHttpsOnly:
         # stub that advertises via mDNS without a fingerprint, which is
         # not possible with the real client (it always generates one).
         pytest.skip("HTTPS-only enforcement verified by unit tests in test_lan_handler_advanced.py")
+
+
+# =============================================================================
+# Additional e2e scenarios (HSYNC_BB_LAN=1 required)
+# =============================================================================
+
+
+def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:
+    """Poll until *path* no longer exists, or return False on timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not Path(path).exists():
+            return True
+        time.sleep(0.3)
+    return False
+
+
+class TestLanAutomaticElection:
+    def test_automatic_election_and_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Two neutral peers: one becomes master, the other slave, sync works."""
+        # Start both simultaneously — election happens via mDNS
+        peer1 = _lan_start(lan_master_dir, lan_bucket)
+        peer2 = _lan_start(lan_slave_dir, lan_bucket)
+        try:
+            # At least one of them logs "MASTER" (the winner)
+            master_ready = _wait_for_text_in_stderr(
+                peer1, "MASTER", timeout=30
+            ) or _wait_for_text_in_stderr(peer2, "MASTER", timeout=5)
+            assert master_ready, "Neither peer became master"
+
+            # File written on the first peer should appear on the second
+            content = b"auto-election\n"
+            (Path(lan_master_dir) / "auto.txt").write_bytes(content)
+            assert _wait_for_file(str(Path(lan_slave_dir) / "auto.txt"), timeout=30), (
+                "File did not sync after automatic election"
+            )
+        finally:
+            _terminate(peer1)
+            _terminate(peer2)
+
+
+class TestLanFileDeletion:
+    def test_file_deletion_propagates(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """A file deleted on the master is removed from the slave."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Create a file on master
+                file_path = Path(lan_master_dir) / "to_delete.txt"
+                file_path.write_bytes(b"delete-me\n")
+
+                # Wait for sync to slave
+                slave_file = Path(lan_slave_dir) / "to_delete.txt"
+                assert _wait_for_file(str(slave_file), timeout=30), "File did not appear on slave"
+
+                # Delete on master
+                file_path.unlink()
+
+                # Slave should delete it too
+                assert _wait_for_file_gone(str(slave_file), timeout=30), (
+                    "Deleted file still present on slave"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+    def test_ignore_delete_flag_preserves_file(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Slave with --ignore-delete keeps files deleted by the master."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Start slave with --ignore-delete
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--ignore-delete",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Create a file on master
+                file_path = Path(lan_master_dir) / "keep_me.txt"
+                file_path.write_bytes(b"keep-this\n")
+
+                # Wait for sync to slave
+                slave_file = Path(lan_slave_dir) / "keep_me.txt"
+                assert _wait_for_file(str(slave_file), timeout=30), "File did not appear on slave"
+
+                # Delete on master
+                file_path.unlink()
+
+                # Wait a bit and verify slave still has it
+                time.sleep(5)
+                assert slave_file.exists(), "File was deleted on slave despite --ignore-delete"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+class TestLanResilience:
+    def test_slave_reconnects_after_disconnect(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Slave reconnects and catches up after being restarted."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # First slave session
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
+            _terminate(slave1)
+
+            # Master creates a new file while slave is gone
+            content = b"catch-up\n"
+            (Path(lan_master_dir) / "catch_up.txt").write_bytes(content)
+
+            # Restart slave
+            slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                assert _wait_for_file(str(Path(lan_slave_dir) / "catch_up.txt"), timeout=30), (
+                    "Slave did not catch up after reconnect"
+                )
+                assert (Path(lan_slave_dir) / "catch_up.txt").read_bytes() == content
+            finally:
+                _terminate(slave2)
+        finally:
+            _terminate(master)
+
+
+class TestLanNeverMaster:
+    def test_never_master_peers_no_election(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Two never-master peers: no election, [NO MASTER] warning appears."""
+        p1 = _lan_start(lan_master_dir, lan_bucket, never_master=True)
+        p2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+        try:
+            # Neither should become master; after ~60s the [NO MASTER] warning fires
+            no_master = _wait_for_text_in_stderr(
+                p1, "NO MASTER", timeout=90
+            ) or _wait_for_text_in_stderr(p2, "NO MASTER", timeout=5)
+            assert no_master, "Expected [NO MASTER] warning did not appear"
+
+            # Neither process should log "MASTER" (they're both never-master)
+            stderr1 = _stderr_text(p1)
+            stderr2 = _stderr_text(p2)
+            assert "This client is the MASTER" not in stderr1, "Peer 1 became master"
+            assert "This client is the MASTER" not in stderr2, "Peer 2 became master"
+        finally:
+            _terminate(p1)
+            _terminate(p2)
+
+
+class TestLanStrictPairing:
+    def test_require_pairing_rejects_unpinned_master(
+        self, lan_master_dir, lan_slave_dir, lan_bucket
+    ):
+        """--require-pairing without a pre-existing pin rejects the master."""
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Start slave with --require-pairing (no prior pin exists)
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--require-pairing",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Should see pairing_needed / unpinned certificate rejection
+                refused = _wait_for_text_in_stderr(slave, "pairing", timeout=30)
+                assert refused, (
+                    "Slave should have refused the unpinned master with --require-pairing"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
