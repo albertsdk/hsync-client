@@ -209,7 +209,6 @@ async def remote_events() -> None:
 # missing rename source is recovered by fetching the destination from
 # the server.
 REMOTE_DISPATCH_CTX = EventDispatchContext(
-    create_symlink_locally=True,
     recover_on_missing_rename_src=True,
 )
 

@@ -111,6 +111,21 @@ flowchart TD
     V -->|"⑤b Mismatch"| RE[Retry download]
 ```
 
+The local inventory is built by `get_files_local`, which only ever reads inside `LOCAL_BUCKET`.
+File-symlinks whose target escapes the bucket are detected with `is_safe_symlink_target`
+and skipped (logged as `[SECURITY]`) rather than followed — an out-of-bucket target such
+as `secret -> /etc/passwd` is therefore never hashed, uploaded or otherwise exfiltrated.
+The same guard is applied on the **realtime upload path** (`transfer.upload_file`, used by
+watch mode and the LAN slave): a symlink inside the bucket whose target escapes it is
+refused before any hashing/read, so even a file created by an atomic rename (which bypasses
+the periodic scan) cannot leak the target. The shared watchdog handler also refuses to
+**broadcast** a `symlink` event whose target escapes the bucket, so an escaping link never
+propagates to peers. Symlinks whose target stays inside the bucket keep their current
+semantic (synced as the link entry, i.e. the link itself, not its target). The LAN master
+applies the identical rule when serving the `/files` listing and `/files/download` to slaves.
+Remote-supplied paths are likewise confined with `resolve_within` / `validate_remote_relpath`
+before any local write (see `event_dispatch.py`).
+
 ## Conflict resolution
 
 The client uses "last write wins" based on modification time (mtime):

@@ -476,6 +476,45 @@ class TestSlaveFileEventHandler:
             # _handle_file_upload should have been called (starts operation)
             assert len(handler._pending_ops) >= 0  # at least exercised the branch
 
+    def test_on_created_escaping_symlink_not_uploaded(self, handler, tmp_path):
+        """A symlink whose target escapes the bucket must not be uploaded.
+
+        Regression: the LAN slave's ``on_created`` forwarded the symlink to
+        ``_handle_file_upload`` which dereferenced the out-of-bucket target
+        (exfiltrating ``/etc/passwd``-style content to the master).
+        """
+        outside = tmp_path.parent / f"hsync_lnsecret_{tmp_path.name}.txt"
+        outside.write_text("top-secret")
+        try:
+            link = tmp_path / "secret"
+            link.symlink_to(outside)
+            event = FileCreatedEvent(str(link))
+            config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+            with (
+                patch("hsync_client.lan_websocket.CONFIG", config),
+                patch.object(handler, "_handle_file_upload") as mock_upload,
+            ):
+                handler.on_created(event)
+                mock_upload.assert_not_called()
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_on_created_in_bucket_symlink_uploaded(self, handler, tmp_path):
+        """A symlink whose target stays inside the bucket is still uploaded."""
+        target = tmp_path / "real.txt"
+        target.write_text("inside")
+        link = tmp_path / "alias"
+        link.symlink_to(target)
+        event = FileCreatedEvent(str(link))
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_handle_file_upload") as mock_upload,
+        ):
+            handler.on_created(event)
+            mock_upload.assert_called_once_with(str(link))
+
     def test_on_modified_temp_file_ignored(self, handler, tmp_path):
         """Test on_modified ignores temp files."""
         event = FileModifiedEvent(str(tmp_path / "file.part"))

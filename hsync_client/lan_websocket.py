@@ -760,7 +760,6 @@ async def _handle_lan_event(
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
         unmark_receiving=slave_handler.unmark_receiving if slave_handler else None,
         record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
-        create_symlink_locally=False,
         recover_on_missing_rename_src=False,
     )
     await apply_inbound_event(event_data, ctx)
@@ -1217,6 +1216,26 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         elif not event.is_directory and not is_hidden_file(src_path):
             # Check if it's a symlink
             if Path(src_path).is_symlink():
+                # Symlink - skip if its target escapes the bucket (a
+                # file-symlink to /etc/passwd must never be dereferenced and
+                # exfiltrated); in-bucket symlinks keep their current semantic
+                # (uploaded as the link itself via File.get). The symlink is
+                # created in one atomic syscall, so no stability wait is needed.
+                from hsync_common.models.symlink import Symlink
+                from hsync_common.path_validation import is_safe_symlink_target
+
+                try:
+                    link = Symlink.get(src_path)
+                except OSError:
+                    link = None
+                if link is not None and not is_safe_symlink_target(
+                    src_path, link.target, CONFIG["LOCAL_BUCKET"]
+                ):
+                    log.warning(
+                        f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
+                        f'not uploading: "{src_path}" -> "{link.target}"'
+                    )
+                    return
                 # Symlink - upload immediately
                 self._handle_file_upload(src_path)
             else:
@@ -1261,7 +1280,10 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         if is_hidden_file(src_path):
             return
 
-        # Debounce rapid modifications
+        # A file-symlink created via a deferred path (e.g. atomic rename of a
+        # symlink, or a symlink modified in place) is uploaded by
+        # ``_handle_file_upload`` → ``upload_file``, which refuses targets
+        # escaping the bucket. No extra guard needed here.
         now = time()
         last_time = self._last_modified.get(src_path, 0)
         if now - last_time < MODIFIED_DEBOUNCE_INTERVAL:

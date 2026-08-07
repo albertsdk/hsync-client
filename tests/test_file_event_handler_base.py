@@ -367,6 +367,7 @@ class TestFileEventHandler:
             # src is hidden (temp), dst is NOT hidden (final file)
             mock_hidden.side_effect = lambda p: p.endswith(".goutputstream-XXXX")
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
 
             self.handler.on_moved(event)
@@ -444,6 +445,7 @@ class TestFileEventHandler:
         ):
             mock_hidden.side_effect = lambda p: p.endswith(".goutputstream-XXXX")
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
 
             self.handler.on_moved(event_moved)
@@ -488,6 +490,7 @@ class TestFileEventHandler:
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
         ):
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
 
             # Pre-set: last broadcast had different mtime but same hash
@@ -534,6 +537,7 @@ class TestFileEventHandler:
             patch.object(self.handler, "_on_file_ready") as mock_ready,
         ):
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
 
             # Pre-set: last broadcast at 10:00:00.500 (same second, same size,
@@ -594,6 +598,7 @@ class TestFileEventHandler:
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
 
             # Simulate the first broadcast having recorded this stat+hash.
@@ -652,6 +657,7 @@ class TestFileEventHandler:
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
         ):
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
 
             # Simulate a prior broadcast at the source path.
@@ -838,6 +844,64 @@ class TestFileEventHandler:
         ):
             self.handler.on_created(event)
             mock_run.assert_not_called()
+
+    def test_on_created_skips_escaping_symlink(self):
+        """A symlink whose target escapes the bucket is never broadcast.
+
+        Regression: the shared watcher broadcast the ``symlink`` event for any
+        visible symlink, so an escaping target such as ``secret -> /etc/passwd``
+        propagated to peers that would re-create the out-of-bucket link (or, on
+        the LAN slave, materialise the target's content).
+        """
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/secret"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_symlink = MagicMock()
+        mock_symlink.target = "/etc/passwd"
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("pathlib.Path.is_symlink", return_value=True),
+            patch("hsync_client.file_event_handler.Symlink.get", return_value=mock_symlink),
+            patch("hsync_client.file_event_handler.is_safe_symlink_target", return_value=False),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+        ):
+            self.handler.on_created(event)
+            mock_run.assert_not_called()
+
+    def test_on_created_broadcasts_in_bucket_symlink(self):
+        """A symlink whose target stays inside the bucket is broadcast."""
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/alias"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        mock_symlink = MagicMock()
+        mock_symlink.target = "real.txt"
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("pathlib.Path.is_symlink", return_value=True),
+            patch("hsync_client.file_event_handler.Symlink.get", return_value=mock_symlink),
+            patch("hsync_client.file_event_handler.is_safe_symlink_target", return_value=True),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+        ):
+            self.handler.on_created(event)
+            mock_run.assert_called_once()
 
     # -- on_modified --
 
@@ -1069,6 +1133,7 @@ class TestFileEventHandler:
         ):
             # File exists, stat matches the pre-set broadcast stat
             mock_path_cls.return_value.exists.return_value = True
+            mock_path_cls.return_value.is_symlink.return_value = False
             mock_path_cls.return_value.stat.return_value = mock_stat
             self.handler._last_broadcast_stat["/bucket/file.txt"] = (100, 42)
 

@@ -33,6 +33,7 @@ from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_file
 from hsync_common.models.symlink import Symlink
+from hsync_common.path_validation import is_safe_symlink_target
 from loguru import logger as log
 from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHandler
 
@@ -173,8 +174,39 @@ class BaseFileEventHandler(FileSystemEventHandler):
             ):
                 log.debug(f"Skip hidden {kind} {hidden_prefix}: {path}")
 
+    def _broadcast_symlink(self, src_path: str) -> None:
+        """Broadcast a ``symlink`` event, with escaping-target guard."""
+        link = Symlink.get(src_path)
+        if link is not None and not is_safe_symlink_target(
+            src_path, link.target, CONFIG["LOCAL_BUCKET"]
+        ):
+            log.warning(
+                f"{self._label('SECURITY', src_path)} Symlink target escapes bucket, "
+                f'not broadcasting: "{src_path}" -> "{link.target}"'
+            )
+            return
+        log.info(f'{self._label("SYMLINK", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
+        if link is not None:
+            self._broadcast_event(
+                Event(
+                    CONFIG["CID"],
+                    CONFIG["LOCAL_BUCKET"],
+                    CONFIG["REMOTE_BUCKET"],
+                    EventName.symlink,
+                    link,
+                ),
+                src_abs_path=src_path,
+            )
+
     def on_created(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
+
+        # Symlink check BEFORE directory check: a dir-symlink is a symlink,
+        # not a directory (invariant: never dereference).
+        if not is_hidden_file(src_path) and Path(src_path).is_symlink():
+            self._broadcast_symlink(src_path)
+            return
+
         if event.is_directory and not is_hidden_dir(src_path):
             log.info(f'{self._label("CREATE", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
             dir_obj = Dir.get(src_path)
@@ -186,20 +218,6 @@ class BaseFileEventHandler(FileSystemEventHandler):
                         CONFIG["REMOTE_BUCKET"],
                         EventName.added,
                         dir_obj,
-                    ),
-                    src_abs_path=src_path,
-                )
-        elif not is_hidden_file(src_path) and Path(src_path).is_symlink():
-            log.info(f'{self._label("SYMLINK", src_path)} "{src_path}"{self._cid_suffix(src_path)}')
-            symlink = Symlink.get(src_path)
-            if symlink:
-                self._broadcast_event(
-                    Event(
-                        CONFIG["CID"],
-                        CONFIG["LOCAL_BUCKET"],
-                        CONFIG["REMOTE_BUCKET"],
-                        EventName.symlink,
-                        symlink,
                     ),
                     src_abs_path=src_path,
                 )
@@ -293,12 +311,6 @@ class BaseFileEventHandler(FileSystemEventHandler):
         close) while keeping the false positive.
         """
         try:
-            if not Path(src_path).exists():
-                log.warning(
-                    f'File "{src_path}" not found. It might have been altered by an external tool.'
-                )
-                return
-
             # .hsynckeep is a per-peer local sentinel: the periodic reconcile
             # already excludes it from sync actions in both directions, so the
             # event-driven broadcast path must too. Each peer maintains its own
@@ -308,6 +320,20 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # broadcast round-trip.
             if Path(src_path).name == HSYNCKEEP_FILENAME:
                 log.debug(f'Skip sentinel event: "{src_path}"')
+                return
+
+            # Symlink branch: a symlink modify/close (retarget) is a symlink
+            # event, never a file event. Handle immediately and return.
+            # Covers dangling links too (is_symlink() is True even when the
+            # target is missing — `exists()` would reject them).
+            if Path(src_path).is_symlink():
+                self._broadcast_symlink(src_path)
+                return
+
+            if not Path(src_path).exists():
+                log.warning(
+                    f'File "{src_path}" not found. It might have been altered by an external tool.'
+                )
                 return
 
             # Stage 1: stat pre-check (cheap, avoids re-hash on no-op close).

@@ -246,16 +246,16 @@ class TestHandleLanEvent:
 
     @pytest.mark.asyncio
     async def test_handle_symlink_event(self, tmp_path):
-        """Test handling symlink event."""
+        """Test handling symlink event creates the symlink on disk."""
+        target = tmp_path / "target.txt"
+        target.write_text("data")
+
         event_data = {
             "name": "symlink",
             "src": {
+                "type": "symlink",
                 "filepath": "link.txt",
-                "sha256sum": "abc123",
-                "mtime": 1000,
-                "ctime": 1000,
-                "size": 10,
-                "permissions": "777",
+                "target": "target.txt",
             },
         }
 
@@ -264,13 +264,12 @@ class TestHandleLanEvent:
             "SYNC_DIRECTION": "bidirectional",
         }
 
-        with (
-            patch("hsync_client.event_dispatch.CONFIG", config),
-            patch("hsync_client.event_dispatch.update_file") as mock_update,
-        ):
+        with patch("hsync_client.event_dispatch.CONFIG", config):
             await _handle_lan_event(event_data)
 
-            mock_update.assert_called_once()
+        link = tmp_path / "link.txt"
+        assert link.is_symlink()
+        assert link.readlink().name == "target.txt"
 
     @pytest.mark.asyncio
     async def test_handle_renamed_dir_event(self, tmp_path):

@@ -263,6 +263,106 @@ class TestUploadRetry:
             assert failed[0].kwargs["op"] == "upload"
 
 
+class TestUploadFileSymlinkSafety:
+    """upload_file must never dereference a symlink whose target escapes the bucket.
+
+    This is the defence-in-depth guard for the realtime (watch/LAN slave) upload
+    path, which builds the ``File`` directly from the watchdog event without the
+    ``get_files_local`` scan guard.
+    """
+
+    def _config(self, tmp_path):
+        return {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "test",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "CID": "test-client",
+            "TRANSFER_RETRY_ATTEMPTS": 1,
+        }
+
+    def test_escaping_symlink_not_uploaded(self, tmp_path):
+        """A symlink whose target escapes the bucket is refused, not dereferenced."""
+        outside = tmp_path.parent / f"hsync_ulsecret_{tmp_path.name}.txt"
+        outside.write_text("top-secret-exfil")
+        try:
+            link = tmp_path / "secret"
+            link.symlink_to(outside)
+            file = File(filepath=str(link))
+
+            with (
+                patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+                patch("hsync_client.transfer.post") as mock_post,
+            ):
+                upload_file(file, check_size=False)
+                mock_post.assert_not_called()
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_escaping_relative_symlink_not_uploaded(self, tmp_path):
+        """A relative symlink that resolves outside the bucket is refused too."""
+        outside = tmp_path.parent / f"hsync_ulrel_{tmp_path.name}.txt"
+        outside.write_text("top-secret-rel")
+        try:
+            sub = tmp_path / "sub"
+            sub.mkdir()
+            link = sub / "escape"
+            link.symlink_to("../../" + outside.name)
+            file = File(filepath=str(link))
+
+            with (
+                patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+                patch("hsync_client.transfer.post") as mock_post,
+            ):
+                upload_file(file, check_size=False)
+                mock_post.assert_not_called()
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_escaping_symlink_emits_security_rejected(self, tmp_path):
+        """The refusal surfaces a security_rejected UI event."""
+        outside = tmp_path.parent / f"hsync_ulemit_{tmp_path.name}.txt"
+        outside.write_text("top-secret")
+        try:
+            link = tmp_path / "secret"
+            link.symlink_to(outside)
+            file = File(filepath=str(link))
+
+            with (
+                patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+                patch("hsync_client.transfer.emit_event") as mock_emit,
+            ):
+                upload_file(file, check_size=False)
+            from hsync_client.events import UiEventName
+
+            names = [c.args[0] for c in mock_emit.call_args_list]
+            assert UiEventName.security_rejected in names
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_in_bucket_symlink_still_uploaded(self, tmp_path):
+        """A symlink whose target stays inside the bucket is uploaded as usual."""
+        real = tmp_path / "real.txt"
+        real.write_text("inside")
+        link = tmp_path / "alias"
+        link.symlink_to(real)
+        file = File(filepath=str(link))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer._get_upload_status", return_value=("new", 0)),
+            patch("hsync_client.transfer.post", return_value=mock_response) as mock_post,
+        ):
+            upload_file(file, check_size=False)
+            mock_post.assert_called_once()
+
+
 class TestUploadFileMaxWaitTimeout:
     """Tests for max wait timeout in upload_file function."""
 

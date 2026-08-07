@@ -95,6 +95,62 @@ class TestGetFilesLocal:
             assert len(result) == 1
             assert "deep_file.txt" in result[0]["filepath"]
 
+    def test_excludes_symlink_targeting_outside_bucket(self, tmp_path):
+        """A file-symlink whose target escapes the bucket is not followed/exfiltrated."""
+        # Real file living OUTSIDE the bucket.
+        outside = tmp_path.parent / f"hsync_secret_{tmp_path.name}.txt"
+        outside.write_text("top-secret-exfil")
+        try:
+            (tmp_path / "visible.txt").write_text("ok")
+            (tmp_path / "secret").symlink_to(outside)
+
+            with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+                result = get_files_local()
+
+            filepaths = [f["filepath"] for f in result]
+            assert any("visible.txt" in fp for fp in filepaths)
+            # The escaping symlink must NOT appear in the local listing ...
+            assert not any("secret" in fp for fp in filepaths)
+            # ... and must certainly not carry the out-of-bucket content hash.
+            assert not any(
+                f.get("sha256sum") == hashlib.sha256(b"top-secret-exfil").hexdigest()
+                for f in result
+            )
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_excludes_relative_symlink_escaping_bucket(self, tmp_path):
+        """A relative symlink that resolves outside the bucket is excluded too."""
+        outside = tmp_path.parent / f"hsync_relsecret_{tmp_path.name}.txt"
+        outside.write_text("top-secret-rel")
+        try:
+            (tmp_path / "sub").mkdir()
+            # Climbs two levels up from sub/ -> out of the bucket root.
+            (tmp_path / "sub" / "escape").symlink_to("../../" + outside.name)
+
+            with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+                result = get_files_local()
+
+            filepaths = [f["filepath"] for f in result]
+            assert not any("escape" in fp for fp in filepaths)
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_keeps_symlink_targeting_inside_bucket(self, tmp_path):
+        """A symlink whose target stays inside the bucket is still scanned."""
+        real = tmp_path / "real.txt"
+        real.write_text("inside")
+        (tmp_path / "alias").symlink_to(real)
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_files_local()
+
+        filepaths = [f["filepath"] for f in result]
+        # The symlink itself is enumerated as a file (target inside the bucket).
+        assert any("alias" in fp for fp in filepaths)
+
 
 class TestGetSyncActions:
     """Tests for get_sync_actions function."""
