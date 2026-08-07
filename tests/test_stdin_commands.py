@@ -80,10 +80,17 @@ class TestStop:
 
 
 def _make_reader(*lines: bytes) -> AsyncMock:
-    """Return a mock StreamReader that yields *lines* then EOF (b"")."""
-    items = list(lines) + [b""]
+    """Return a mock StreamReader whose ``read(1)`` yields individual bytes.
+
+    ``_readline_bounded`` reads byte-by-byte via ``reader.read(1)``,
+    so the mock must return single-byte ``bytes`` objects, not lines.
+    """
+    byte_list: list[bytes] = []
+    for line in lines:
+        byte_list.extend(line[i : i + 1] for i in range(len(line)))
+    byte_list.append(b"")  # EOF
     reader = AsyncMock()
-    reader.readline = AsyncMock(side_effect=items)
+    reader.read = AsyncMock(side_effect=byte_list)
     return reader
 
 
@@ -288,7 +295,7 @@ class TestRunDispatch:
         handler = StdinCommandHandler(log)
 
         reader = AsyncMock()
-        reader.readline = AsyncMock(side_effect=asyncio.CancelledError)
+        reader.read = AsyncMock(side_effect=asyncio.CancelledError)
         p = _patch_pipe_setup(reader)
         with p[0], p[1], p[2], p[3], p[4]:
             await handler.run()
@@ -355,7 +362,7 @@ class TestRunDispatch:
         handler = StdinCommandHandler(log)
 
         reader = AsyncMock()
-        reader.readline = AsyncMock(side_effect=RuntimeError("unexpected"))
+        reader.read = AsyncMock(side_effect=RuntimeError("unexpected"))
         p = _patch_pipe_setup(reader)
         with p[0], p[1], p[2], p[3], p[4]:
             await handler.run()
