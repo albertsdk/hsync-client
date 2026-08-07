@@ -11,14 +11,14 @@ It works in two ways:
 - In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no central server required (NO server required).
 
 
-> [!WARNING]
-> **HSYNC manipulates files and directories** — it creates, overwrites, moves, and deletes data.
-> Misconfiguration, software defects, or other unforeseen conditions may lead to **data loss or
-> corruption**. **Use at your own risk and always keep verified, independent backups.**
-> The software is provided "as is", without warranty of any kind — see the full
-> [Disclaimer](#disclaimer) and [License](#license) below.
+> [!NOTE]
+>  👉 **Remember:**  keep verified backups of your data when trying new synchronization tools. 😉
 
 ---
+
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_WD_My_Cloud-lightgrey.svg)]()
 
 **Quick navigation:**
 - **New to HSync?** Start with [Why HSYNC?](#why-hsync) and [Getting Started](docs/getting-started.md)
@@ -26,17 +26,9 @@ It works in two ways:
 - **Want to contribute?** See [Contributing](CONTRIBUTING.md)
 - **Looking for detailed documentation?** Navigate to [docs/README.md](docs/README.md)
 
-## Table of Contents
+---
 
-- [Why HSYNC?](#why-hsync)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Server Mode Overview](#server-mode-overview)
-- [LAN Mode (P2P) Overview](#lan-mode-p2p-overview)
-- [Documentation](#documentation)
-- [Version](#version)
-- [License](#license)
-- [Disclaimer](#disclaimer)
+<!-- GitHub auto-generates the table of contents from the section headings above. -->
 
 ---
 
@@ -147,7 +139,13 @@ and the change propagates to the other peer in real time.
 > forcing it as master avoids the deletion-risk warning on a non-empty
 > directory. On a real LAN with multiple devices, omit `--force-master` and
 > let the election happen automatically.
->
+
+> [!CAUTION]
+> **First run logic:** The node started with `--force-master` becomes the
+> absolute Source of Truth. Any conflicting files on the second node will be
+> **overwritten or deleted**. Always start the master on the machine holding
+> your canonical data.
+
 > For the full P2P setup (master election, pairing, `HSYNC_LAN_KEY`, group
 > filtering with `--lan-group`), see [LAN Mode](docs/lan-mode.md).
 
@@ -155,7 +153,13 @@ and the change propagates to the other peer in real time.
 
 > [!IMPORTANT]
 > You need a running [HSYNC Server](https://github.com/albertobasso/hsync-server)
-> to use Server Mode. If you don't have one, go back to
+> to use Server Mode. Deploy one in seconds with Docker:
+>
+> ```bash
+> docker run -p 9753:9753 -e HSYNC_API_KEY=your-secret-key ghcr.io/albertobasso/hsync-server
+> ```
+>
+> If you prefer to go serverless, jump back to
 > [Step 2](#step-2--your-first-sync-lan-mode-no-server-needed) — LAN Mode works
 > immediately without any infrastructure.
 
@@ -278,6 +282,11 @@ In LAN mode, the master is the source of truth and slaves sync from it. Both dir
 > are still under active development and are not yet ready for production use.
 
 ## Disclaimer
+
+> [!WARNING]
+> **HSYNC manipulates files and directories** — it creates, overwrites, moves, and deletes data.
+> Misconfiguration, software defects, or other unforeseen conditions may lead to **data loss or
+> corruption**. **Use at your own risk and always keep verified, independent backups.**
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. Although the author has implemented reasonable safety measures, IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY — including, without limitation, any direct, indirect, incidental, special, exemplary, or consequential damages, loss of data, or business interruption — WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
