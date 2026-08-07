@@ -1758,3 +1758,117 @@ class TestLanFilterPath:
                 _terminate(slave)
         finally:
             _terminate(master)
+
+
+# =============================================================================
+# Bandwidth throttle
+# =============================================================================
+
+
+class TestLanBandwidthThrottle:
+    def test_bandwidth_throttle_allows_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--max-bandwidth-download with a generous limit still allows sync."""
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # Start slave with bandwidth limit (10 MB/s — generous enough)
+            slave = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hsync_client",
+                    "--lan-mode",
+                    "--never-master",
+                    "-b",
+                    lan_bucket,
+                    "-p",
+                    lan_slave_dir,
+                    "--yes",
+                    "--min-free-disk-space",
+                    "0",
+                    "--no-autotune",
+                    "--discovery-timeout",
+                    "30",
+                    "--retry-delay",
+                    "1",
+                    "--stability-delay",
+                    "1",
+                    "--http-timeout",
+                    "10",
+                    "--max-bandwidth-download",
+                    "10MB",
+                    "--max-bandwidth-upload",
+                    "10MB",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                # Create a moderately sized file on master
+                content = b"x" * 50000  # 50 KB
+                (Path(lan_master_dir) / "throttled.txt").write_bytes(content)
+
+                slave_file = Path(lan_slave_dir) / "throttled.txt"
+                assert _wait_for_file(str(slave_file), timeout=30), (
+                    "File did not sync with bandwidth throttle"
+                )
+                assert slave_file.read_bytes() == content
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+# =============================================================================
+# hsyncignore hot-reload
+# =============================================================================
+
+
+class TestLanHsyncignore:
+    def test_hsyncignore_reload_respected(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """Creating .hsyncignore while sync is running excludes new patterns."""
+        # Pre-create a file that will later be excluded
+        (Path(lan_master_dir) / "include_me.txt").write_bytes(b"visible\n")
+        (Path(lan_master_dir) / "exclude_me.log").write_bytes(b"hidden\n")
+
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        try:
+            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                "Master did not become ready"
+            )
+
+            # First slave session: both files sync (no .hsyncignore yet)
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            assert _wait_for_file(str(Path(lan_slave_dir) / "include_me.txt"), timeout=30), (
+                "include_me.txt did not sync"
+            )
+            assert _wait_for_file(str(Path(lan_slave_dir) / "exclude_me.log"), timeout=30), (
+                "exclude_me.log did not sync"
+            )
+            _terminate(slave1)
+
+            # Now create .hsyncignore on master excluding *.log
+            (Path(lan_master_dir) / ".hsyncignore").write_text("*.log\n")
+
+            # Slave reconnects — the excluded file should NOT re-sync
+            # (it should be deleted because it no longer matches the sync set)
+            slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            try:
+                # Include file should still be there
+                assert _wait_for_file(str(Path(lan_slave_dir) / "include_me.txt"), timeout=30), (
+                    "include_me.txt disappeared"
+                )
+
+                # Excluded file should be removed by the reconcile (ignore rule)
+                assert _wait_for_file_gone(
+                    str(Path(lan_slave_dir) / "exclude_me.log"), timeout=30
+                ), "exclude_me.log was not removed after .hsyncignore added"
+            finally:
+                _terminate(slave2)
+        finally:
+            _terminate(master)
