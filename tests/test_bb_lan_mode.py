@@ -115,7 +115,7 @@ def _stderr_text(proc: subprocess.Popen) -> str:
         _os.set_blocking(fd, False)
         data = proc.stderr.read()
         return data.decode("utf-8", errors="replace") if data else ""
-    except Exception:
+    except (OSError, ValueError, AttributeError):
         return ""
 
 
@@ -271,8 +271,9 @@ class TestLanTofuPinning:
                     _terminate(slave2)
             finally:
                 _terminate(master2)
-        except Exception:
+        except BaseException:
             _terminate(master)
+            raise
 
 
 class TestLanHttpsOnly:
@@ -886,8 +887,9 @@ class TestLanMasterRestart:
             finally:
                 _terminate(master2)
                 _terminate(slave)
-        except Exception:
+        except BaseException:
             _terminate(master1)
+            raise
 
 
 # =============================================================================
