@@ -104,43 +104,71 @@ Since HSYNC uses standard HTTP/HTTPS, it works seamlessly through corporate prox
 
 ## Quick Start
 
+### Step 1 — Install
+
 Install the client in one command (Linux and macOS, latest stable release):
 
 ```bash
 curl -fsSL https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh | bash
 ```
 
-Or, if you prefer to verify the download before running it:
+> Prefer to verify checksums before running, or need a different format
+> (`.deb`, `.bin`, build from source)? See the
+> [full installation guide](docs/installation.md).
+
+### Step 2 — Your First Sync (LAN Mode, no server needed)
+
+Go peer-to-peer on the LAN — no server, no API key, no configuration. Peers
+discover each other via mDNS and a master is elected automatically. You can
+test it locally with two terminals on the same machine:
 
 ```bash
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/install.sh"
-curl -fLO "https://github.com/albertobasso/hsync-client/releases/latest/download/SHA256SUMS"
-sha256sum -c SHA256SUMS --ignore-missing
-chmod 700 install.sh
-./install.sh
-hsync --help
+# 1. Create two folders and a test file
+mkdir -p /tmp/hsync-a /tmp/hsync-b
+echo "hello hsync" > /tmp/hsync-a/hello.txt
+
+# 2. Terminal 1 — start the first peer (force it as master since it holds
+#    the canonical data, avoiding the deletion-risk warning)
+hsync -b mybucket -p /tmp/hsync-a --lan-mode --force-master
+
+# 3. Terminal 2 — start a second peer; it discovers the master via mDNS
+#    and downloads hello.txt automatically
+hsync -b mybucket -p /tmp/hsync-b --lan-mode
+
+# 4. Verify the file arrived
+cat /tmp/hsync-b/hello.txt   # → hello hsync
 ```
 
-Connect to an HSYNC server (the client refuses to send the API key over plain
+Watch mode is implicit in LAN Mode: edit or create a file in either folder
+and the change propagates to the other peer in real time.
+
+> [!TIP]
+> **Why `--force-master`?** The first peer already holds the test file, so
+> forcing it as master avoids the deletion-risk warning on a non-empty
+> directory. On a real LAN with multiple devices, omit `--force-master` and
+> let the election happen automatically.
+>
+> For the full P2P setup (master election, pairing, `HSYNC_LAN_KEY`, group
+> filtering with `--lan-group`), see [LAN Mode](docs/lan-mode.md).
+
+### Step 3 — Connect to a Server (optional)
+
+> [!IMPORTANT]
+> You need a running [HSYNC Server](https://github.com/albertobasso/hsync-server)
+> to use Server Mode. If you don't have one, go back to
+> [Step 2](#step-2--your-first-sync-lan-mode-no-server-needed) — LAN Mode works
+> immediately without any infrastructure.
+
+Connect to your HSYNC server (the client refuses to send the API key over plain
 HTTP — use `https://`; add `--insecure` only for local development with a
 self-signed certificate):
 
 ```bash
-hsync -s https://localhost:9753 -b mybucket -p /path/to/dir -w
+hsync -s https://your-server:9753 -b mybucket -p /path/to/dir -w
 ```
 
-Or go peer-to-peer on the LAN — no server, no API key: peers discover each
-other via mDNS (run the same command on each device):
-
-```bash
-hsync -b mybucket -p /path/to/dir --lan-mode
-```
-
-See [Installation](docs/installation.md) for all platforms and formats, and
-[Getting Started](docs/getting-started.md) for the first-run walkthrough. For
-the peer-to-peer setup (master election, pairing, `HSYNC_LAN_KEY`), see
-[LAN Mode](docs/lan-mode.md). To build from source instead, see
-[Installation → Build from source](docs/installation.md#build-from-source).
+> For the complete Server Mode walkthrough, see [Server Mode](docs/server-mode.md)
+> and [Getting Started](docs/getting-started.md).
 
 ## Server Mode Overview
 
