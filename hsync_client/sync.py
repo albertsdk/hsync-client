@@ -211,17 +211,40 @@ async def sync(lan_mode: bool = False) -> None:
         # are not resurrected during the full reconciliation below.
         tombstones = get_tombstones_remote()
 
-        # In LAN mode the master is elected and can change, so each peer keeps
-        # its own persistent store and gossips it: merge the master's markers
-        # into our store, decide using the accumulated union, then push our
-        # union back so a freshly elected master converges to all deletions.
-        if lan_mode:
-            from hsync_client.tombstones import get_payload, merge_payload
+        # Merge the remote markers into our persistent local store and push the
+        # accumulated union back so the server / master converges to every known
+        # deletion.  In LAN mode the master can change (elected), making gossip
+        # mandatory; in remote mode the server is the single authority, but
+        # pushing our local tombstones is necessary when this peer deleted files
+        # while offline and is now reconnecting — otherwise those files would be
+        # resurrected from the server.
+        from hsync_client.tombstones import get_payload, merge_payload
 
-            merge_payload(tombstones)
-            union = get_payload()
-            push_tombstones_remote(union)
-            tombstones = cast("dict[str, dict]", union)
+        merge_payload(tombstones)
+        union = get_payload()
+        push_tombstones_remote(union)
+        tombstones = cast("dict[str, dict]", union)
+
+        # Record tombstones for files tracked by the merge base that are no
+        # longer present locally: they were deleted while the peer was offline
+        # (the watcher is the only writer of record_deletion() in the live
+        # path, and it is inactive during a one-shot sync).  Each such file
+        # gets a tombstone keyed by its last-known content hash so the server
+        # can distinguish a true deletion from a path that was merely renamed
+        # or moved.
+        local_paths = {str(f.get("filepath", "")) for f in local_files}
+        for path, base_hash in list(sync_state.iter_merge_bases()):
+            if path and path not in local_paths:
+                from hsync_client.tombstones import record_deletion
+
+                record_deletion(
+                    str(Path(CONFIG["LOCAL_BUCKET"]) / path),
+                    sha256sum=base_hash or None,
+                )
+                # Re-fetch the union now that we just added a marker.
+                union = get_payload()
+                push_tombstones_remote(union)
+                tombstones = cast("dict[str, dict]", union)
 
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(
