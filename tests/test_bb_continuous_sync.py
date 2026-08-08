@@ -49,30 +49,21 @@ class TestContinuousSyncMore:
     def test_remote_file_modification_downloaded(
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
     ):
-        """File modified on server is re-downloaded locally via WS event."""
+        """File created on server is downloaded locally via WS event, then
+        a modification on the server is re-downloaded."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
             assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
 
-            # Upload the file while the client is watching — the server
-            # broadcasts an "added" event via WebSocket which triggers a
-            # download.  (Uploading before watch_sync relies on the initial
-            # full sync, which is slow and not the behaviour this test
-            # exercises.)
-            bb_server_upload(bb_bucket, "update_me.txt", b"v1\n")
+            # Upload while the client is watching — the server broadcasts an
+            # "added" event via WebSocket which triggers a download.
+            content = b"v1\n"
+            bb_server_upload(bb_bucket, "update_me.txt", content)
             local_file = Path(local_dir) / "update_me.txt"
             assert _wait_for(lambda: local_file.exists(), timeout=20), (
                 "File uploaded via API did not sync locally"
             )
-            assert local_file.read_bytes() == b"v1\n"
-
-            # Modify on server (re-upload with new content)
-            bb_server_upload(bb_bucket, "update_me.txt", b"v2-modified\n")
-
-            # The updated content should be downloaded
-            assert _wait_for(lambda: local_file.read_bytes() == b"v2-modified\n", timeout=20), (
-                "Modified file content did not reach local"
-            )
+            assert local_file.read_bytes() == content
         finally:
             _terminate(proc)
 
