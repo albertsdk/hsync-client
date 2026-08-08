@@ -305,7 +305,7 @@ def bb_server_files(live_server):
             verify=False,
         )
         assert r.status_code == 200, r.text
-        return {f["name"] for f in r.json()}
+        return {f["filepath"] for f in r.json()}
 
     return _list
 
