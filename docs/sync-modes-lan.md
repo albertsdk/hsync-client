@@ -61,7 +61,7 @@ hsync -b mybucket -p ~/Sync --lan-mode
 Preview what would change without modifying files:
 
 ```bash
-hsync --preview -b mybucket -p ~/Sync --lan-mode
+hsync --dry-run -b mybucket -p ~/Sync --lan-mode
 ```
 
 ### Conflict Handling

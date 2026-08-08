@@ -15,7 +15,7 @@ These patterns apply to **both** Server Mode and LAN P2P Mode.
 ### 3.1 Dry run (preview changes)
 
 ```bash
-hsync --preview -b mybucket -p ~/Sync
+hsync --dry-run -b mybucket -p ~/Sync
 ```
 
 Shows what would change without modifying any files. Add `-s` for server mode.
