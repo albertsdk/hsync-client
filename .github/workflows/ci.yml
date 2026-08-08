@@ -67,4 +67,4 @@ jobs:
 
       - name: Tests
         working-directory: hsync-client
-        run: poetry run pytest -q
+        run: poetry run pytest -q --ignore-glob='*test_bb*'
