@@ -213,6 +213,11 @@ class TestContinuousSync:
 
             sub = Path(local_dir) / "newdir"
             sub.mkdir()
+            # Let the observer register the inotify watch on the new directory
+            # before creating files inside it — the kernel may deliver the
+            # DirCreated event to watchdog asynchronously, and until the handler
+            # calls observer.schedule() the subdirectory is unmonitored.
+            time.sleep(0.5)
             (sub / "f.txt").write_bytes(b"inside\n")
 
             # The file inside the directory should appear on server

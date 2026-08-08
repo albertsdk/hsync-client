@@ -168,6 +168,26 @@ class BaseFileEventHandler(FileSystemEventHandler):
 
     # ----- watchdog event handlers -----
 
+    def _scan_existing_files(self, dir_path: str) -> None:
+        """Scan *dir_path* for already-present visible files and process them.
+
+        Called right after an ``observer.schedule()`` so that files created
+        between ``mkdir()`` and the moment the inotify watch becomes active
+        are picked up immediately.  Subdirectories are NOT recursed into —
+        each of them will receive its own ``DirCreatedEvent`` and trigger
+        another scan.
+        """
+        from os import listdir
+
+        try:
+            for name in listdir(dir_path):
+                full = str(Path(dir_path) / name)
+                if is_hidden_file(full) or Path(full).is_dir():
+                    continue
+                self._process_file_ready(full)
+        except OSError:
+            pass
+
     def on_any_event(self, event) -> None:
         """Debug-log skipped hidden paths (both ``src_path`` and ``dest_path``)."""
         hidden_prefix = "dir" if event.is_directory else "file"
@@ -234,6 +254,12 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # next periodic resync to discover them.
             if self._observer is not None:
                 self._observer.schedule(self, src_path, recursive=True)
+                # Scan for files already present inside the directory.  The
+                # inotify watch registered above only captures events that
+                # happen *after* the watch is active; files created between
+                # mkdir() and schedule() are invisible to inotify.  Iterating
+                # the directory contents once guarantees they are picked up.
+                self._scan_existing_files(src_path)
 
     def on_modified(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
