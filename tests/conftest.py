@@ -41,6 +41,7 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
 # =============================================================================
 
 BB_API_KEY = "test-bb-api-key-0123456789abcdef"
+BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
 
 
 def _free_port() -> int:
@@ -272,7 +273,7 @@ def bb_server_upload(live_server):
         r = requests.post(
             f"{base}/api/v1/buckets/{bucket}/files",
             data={
-                "cid": "TestClientX1234567890",
+                "cid": BB_CLIENT_CID,
                 "path": "",
                 "sha256sum": hashlib.sha256(content).hexdigest(),
                 "permissions": "644",
