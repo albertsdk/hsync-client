@@ -1,4 +1,4 @@
-# hsync-client — Data models & state
+# HSYNC Client — Data models & state
 
 The client owns **no wire models**: file/dir/action/tombstone/version types are
 imported from `hsync-common` (SSOT, see

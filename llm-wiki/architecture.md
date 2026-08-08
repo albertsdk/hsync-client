@@ -1,4 +1,4 @@
-# hsync-client — Architecture (agent view)
+# HSYNC Client — Architecture (agent view)
 
 One process, two run modes over a shared watcher + transfer core. No daemon
 framework; asyncio event loop + watchdog observer + a thread pool for transfers.

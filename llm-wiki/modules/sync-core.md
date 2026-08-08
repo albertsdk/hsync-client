@@ -1,4 +1,4 @@
-# hsync-client — Sync core
+# HSYNC Client — Sync core
 
 Mode-agnostic engine: list/diff/transfer + the watcher pipeline. Shared by remote
 and LAN modes.
