@@ -10,8 +10,6 @@ It works in two ways:
 - In **Server Mode**, clients connect to a centralized server ([HSYNC Server](https://github.com/albertobasso/hsync-server/blob/main/README.md) required).
 - In **LAN Mode** (P2P), clients discover each other via mDNS and one automatically becomes the master—no central server required (NO server required).
 
-
-> [!NOTE]
 >  👉 **Remember:** keep verified backups of your data before trying new
 > synchronization tools. 😉
 
