@@ -101,6 +101,18 @@ def retain(abs_paths: list[str]) -> int:
         return get_sync_state_store().retain(relpaths)
 
 
+def iter_merge_bases():
+    """Yield ``(relpath, base_hash)`` for every recorded merge-base entry.
+
+    Used by the sync engine to detect files that were deleted locally between
+    one-shot sync cycles (the entry exists in the store but the file is no
+    longer listed by get_files_local).
+    """
+    with _lock:
+        for key, version in get_sync_state_store().iter_entries():
+            yield key, version["base_hash"]
+
+
 def flush() -> None:
     """Persist the local bucket's sync-state to its side-car file."""
     with _lock:

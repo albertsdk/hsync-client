@@ -406,7 +406,7 @@ Each event broadcast by the master includes the originating peer's `cid`:
 {
   "event": "modified",
   "filepath": "vacation/photo2.jpg",
-  "cid": "client123"
+  "cid": "TestClientX1234567890"
 }
 ```
 

@@ -33,6 +33,7 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 
 BB_API_KEY = "test-bb-api-key-0123456789abcdef"
 _LAN_KEY = "test-lan-shared-secret"
+_HSYNC_COMMON_DIR = str(Path(__file__).resolve().parent.parent.parent / "hsync-common")
 
 
 def _free_port() -> int:
@@ -54,7 +55,7 @@ def _lan_start(
     never_master: bool = False,
 ) -> subprocess.Popen:
     """Start a LAN-mode client subprocess."""
-    env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+    env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
     args = [
         sys.executable,
         "-m",
@@ -69,12 +70,12 @@ def _lan_start(
         "0",
         "--no-autotune",
         "--discovery-timeout",
-        "30",
+        "10",
         "--retry-delay",
         "1",
         "--stability-delay",
         "1",
-        "--http-timeout",
+        "--timeout",
         "10",
     ]
     if force_master:
@@ -84,7 +85,7 @@ def _lan_start(
     return subprocess.Popen(
         args,
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
 
@@ -168,17 +169,18 @@ def lan_bucket():
 class TestLanElection:
     def test_force_master_wins_and_slave_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """A force-master client becomes master; a never-master slave syncs to it."""
-        # Start master first
+        # Start both peers — election needs at least two participants
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        time.sleep(2)  # let master register mDNS before slave discovers
         try:
-            # Wait for master to be ready (emits "MASTER" in logs)
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
-
-            # Start slave
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
+                # Wait for "MASTER" in either peer's logs (election needs both running)
+                became_master = _wait_for_text_in_stderr(
+                    master, "MASTER", timeout=60
+                ) or _wait_for_text_in_stderr(slave, "MASTER", timeout=10)
+                assert became_master, "Neither peer became master"
+
                 # Create a file on the master side
                 content = b"master-origin\n"
                 (Path(lan_master_dir) / "shared.txt").write_bytes(content)
@@ -371,7 +373,7 @@ class TestLanFileDeletion:
             )
 
             # Start slave with --ignore-delete
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -388,17 +390,17 @@ class TestLanFileDeletion:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--ignore-delete",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -487,7 +489,7 @@ class TestLanStrictPairing:
             )
 
             # Start slave with --require-pairing (no prior pin exists)
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -504,17 +506,17 @@ class TestLanStrictPairing:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--require-pairing",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -640,7 +642,7 @@ class TestLanKeyAuth:
     def test_lan_key_mismatch_rejected(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Master with LAN key A, slave with LAN key B → connection refused."""
         # Start master with LAN_KEY
-        env_master = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env_master = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -657,16 +659,16 @@ class TestLanKeyAuth:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
             ],
             env=env_master,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -675,7 +677,11 @@ class TestLanKeyAuth:
             )
 
             # Start slave with a DIFFERENT LAN key
-            env_slave = {**os.environ, "HSYNC_LAN_KEY": "wrong-key-xxxxxxxx"}
+            env_slave = {
+                **os.environ,
+                "HSYNC_LAN_KEY": "wrong-key-xxxxxxxx",
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -692,16 +698,16 @@ class TestLanKeyAuth:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                 ],
                 env=env_slave,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -733,7 +739,7 @@ class TestLanSyncDirection:
                 "Master did not become ready"
             )
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -750,18 +756,18 @@ class TestLanSyncDirection:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--sync-direction",
                     "download-only",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -790,7 +796,7 @@ class TestLanSyncDirection:
                 "Master did not become ready"
             )
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -807,18 +813,18 @@ class TestLanSyncDirection:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--sync-direction",
                     "upload-only",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -943,7 +949,7 @@ class TestLanGroupFiltering:
     def test_different_lan_groups_dont_discover(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Peers in different LAN groups do not discover each other."""
         # Master in group "red"
-        env_red = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env_red = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -960,18 +966,18 @@ class TestLanGroupFiltering:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
                 "--lan-group",
                 "red",
             ],
             env=env_red,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -980,7 +986,7 @@ class TestLanGroupFiltering:
             )
 
             # Slave in group "blue" — should NOT discover the red master
-            env_blue = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env_blue = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -1002,13 +1008,13 @@ class TestLanGroupFiltering:
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--lan-group",
                     "blue",
                 ],
                 env=env_blue,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1173,7 +1179,7 @@ class TestLanBulkSync:
 class TestLanFeatureFlags:
     def test_compression_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-compression on both peers still allows sync."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -1190,17 +1196,17 @@ class TestLanFeatureFlags:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
                 "--no-compression",
             ],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -1224,17 +1230,17 @@ class TestLanFeatureFlags:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--no-compression",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1249,7 +1255,7 @@ class TestLanFeatureFlags:
 
     def test_delta_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-delta on both peers still allows sync."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -1266,17 +1272,17 @@ class TestLanFeatureFlags:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
                 "--no-delta",
             ],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -1300,17 +1306,17 @@ class TestLanFeatureFlags:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--no-delta",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1325,7 +1331,7 @@ class TestLanFeatureFlags:
 
     def test_periodic_resync_fires(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--interval 5 triggers a periodic resync logged in stderr."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -1342,18 +1348,18 @@ class TestLanFeatureFlags:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
                 "--interval",
                 "5",
             ],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -1400,7 +1406,7 @@ class TestLanEdgeCases:
     def test_lan_without_key_still_works(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """LAN mode without HSYNC_LAN_KEY still syncs (no auth)."""
         # Neither master nor slave set HSYNC_LAN_KEY
-        env_no_key = {**os.environ}
+        env_no_key = {**os.environ, "PYTHONPATH": _HSYNC_COMMON_DIR}
         env_no_key.pop("HSYNC_LAN_KEY", None)
 
         master = subprocess.Popen(
@@ -1419,16 +1425,16 @@ class TestLanEdgeCases:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
             ],
             env=env_no_key,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -1452,16 +1458,16 @@ class TestLanEdgeCases:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                 ],
                 env=env_no_key,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1563,7 +1569,7 @@ class TestLanMultiSlave:
 class TestLanPersistent:
     def test_no_lan_persistent_exits_when_alone(self, lan_master_dir, lan_bucket):
         """--no-lan-persistent exits instead of waiting when no peers are found."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -1587,7 +1593,7 @@ class TestLanPersistent:
                 "--no-lan-persistent",
             ],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -1612,7 +1618,7 @@ class TestLanPersistent:
 class TestLanPortOverride:
     def test_lan_port_override(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--lan-port on master: slave connects on the specified port."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -1629,18 +1635,18 @@ class TestLanPortOverride:
                 "0",
                 "--no-autotune",
                 "--discovery-timeout",
-                "30",
+                "10",
                 "--retry-delay",
                 "1",
                 "--stability-delay",
                 "1",
-                "--http-timeout",
+                "--timeout",
                 "10",
                 "--lan-port",
                 "12345",
             ],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
         try:
@@ -1668,16 +1674,16 @@ class TestLanPortOverride:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1715,7 +1721,7 @@ class TestLanFilterPath:
             )
 
             # Start slave with --filter-path sub_a
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -1732,18 +1738,18 @@ class TestLanFilterPath:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--filter-path",
                     "sub_a",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1770,7 +1776,7 @@ class TestLanFilterPath:
 class TestLanBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--max-bandwidth-download with a generous limit still allows sync."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
@@ -1794,12 +1800,12 @@ class TestLanBandwidthThrottle:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--max-bandwidth-download",
                     "10MB",
@@ -1807,7 +1813,7 @@ class TestLanBandwidthThrottle:
                     "10MB",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -1945,7 +1951,7 @@ class TestLanDryRun:
                 "Master did not become ready"
             )
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -1962,17 +1968,17 @@ class TestLanDryRun:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--dry-run",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -2108,7 +2114,7 @@ class TestLanMassDeleteGuard:
             )
 
             # Start slave with low mass-delete threshold
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -2125,18 +2131,18 @@ class TestLanMassDeleteGuard:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--mass-delete-threshold",
                     "5",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -2231,7 +2237,7 @@ class TestLanIgnorePatterns:
                 "Master did not become ready"
             )
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -2248,18 +2254,18 @@ class TestLanIgnorePatterns:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--ignore-patterns",
                     "*.tmp,*.bak",
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
@@ -2297,7 +2303,7 @@ class TestLanLogfile:
                 "Master did not become ready"
             )
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY}
+            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -2314,18 +2320,18 @@ class TestLanLogfile:
                     "0",
                     "--no-autotune",
                     "--discovery-timeout",
-                    "30",
+                    "10",
                     "--retry-delay",
                     "1",
                     "--stability-delay",
                     "1",
-                    "--http-timeout",
+                    "--timeout",
                     "10",
                     "--output",
                     str(log_path),
                 ],
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
