@@ -51,18 +51,27 @@ tests/
 ├── conftest.py                         # Shared fixtures and test configuration
 │                                          (autouse fixtures, Black‑Box harness,
 │                                           live_server, ClientGlobalsGuard, …)
+├── lan_helpers.py                      # Shared LAN test helpers
+├── test_autotune.py                    # Autotune concurrency heuristics
 ├── test_bb_remote_sync.py              # Black‑Box: client‑server sync
 ├── test_bb_continuous_sync.py          # Black‑Box: continuous (watch) sync
 ├── test_bb_safety_guards.py            # Black‑Box: mass‑delete guard, disk‑space
 ├── test_bb_cli_surface.py              # Black‑Box: CLI help / error messages
-├── test_bb_lan_mode.py                 # Black‑Box: LAN P2P sync (opt‑in)
+├── test_bb_lan_advanced.py             # Black‑Box: LAN advanced scenarios
+├── test_bb_lan_auth_direction.py       # Black‑Box: LAN auth and sync direction
+├── test_bb_lan_core.py                 # Black‑Box: LAN core sync cycle
+├── test_bb_lan_features.py             # Black‑Box: LAN feature flags
+├── test_bb_lan_files.py                # Black‑Box: LAN file operations
+├── test_bb_lan_security.py             # Black‑Box: LAN security (TOFU, certs)
 ├── test_sync_local.py                  # Local file comparison and action generation
 ├── test_sync_remote.py                 # Remote file comparison
 ├── test_sync_update.py                 # File update detection
 ├── test_sync_workers.py                # Parallel transfer workers
 ├── test_sync_permanent_failures.py     # Permanent-failure skip-set
 ├── test_transfer_download.py           # Download operations
-├── test_transfer_upload.py             # Upload operations
+├── test_transfer_upload_advanced.py    # Upload operations: advanced scenarios
+├── test_transfer_upload_base.py        # Upload operations: basic flow
+├── test_transfer_upload_lifecycle.py   # Upload operations: lifecycle/resume
 ├── test_transfer_status.py             # Transfer status tracking
 ├── test_websocket_events.py            # WebSocket event processing
 ├── test_events.py                      # Event models and processing
@@ -70,14 +79,20 @@ tests/
 ├── test_event_dispatch_delete.py       # Inbound delete event dispatch
 ├── test_event_dispatch_rename.py       # Inbound rename event dispatch
 ├── test_event_dispatch_symlink.py      # Inbound symlink event dispatch
+├── test_file_event_handler_base.py     # Base file event handler logic
 ├── test_lan_peer.py                    # LAN peer model and logic
 ├── test_lan_peer_manager.py            # LAN peer manager
 ├── test_lan_handler_advanced.py        # Advanced LAN handler scenarios
+├── test_lan_delta.py                   # LAN delta transfer
+├── test_lan_network_tuning.py          # LAN network tuning parameters
 ├── test_lan_sync.py                    # LAN sync operations
-├── test_lan_server_endpoints.py        # LAN server endpoints
+├── test_lan_server_endpoints_advanced.py  # LAN server: advanced endpoints
+├── test_lan_server_endpoints_base.py      # LAN server: base endpoints
+├── test_lan_server_endpoints_mutations.py # LAN server: mutation endpoints
 ├── test_lan_server_https.py            # LAN server HTTPS setup
 ├── test_lan_server_security.py         # LAN server security
 ├── test_lan_server_thread_cap.py       # LAN server thread cap
+├── test_lan_service_listener.py        # LAN service discovery listener
 ├── test_lan_utils.py                   # LAN utility functions
 ├── test_lan_websocket_handle.py        # LAN WebSocket handle
 ├── test_lan_websocket_handler.py       # LAN WebSocket handler
@@ -85,7 +100,6 @@ tests/
 ├── test_lan_websocket_slave.py         # LAN WebSocket slave client
 ├── test_config.py                      # Configuration loading and CLI arg parsing
 ├── test_compression.py                 # Zstandard compression/decompression
-├── test_ignore.py                      # .hsyncignore pattern matching
 ├── test_cli.py                         # CLI argument parsing
 ├── test_validators.py                  # Config validators
 ├── test_exceptions.py                  # Exception hierarchy
@@ -93,12 +107,11 @@ tests/
 ├── test_main_logic_lan.py              # Core sync orchestration: LAN mode
 ├── test_main_logic_preview.py          # Core sync orchestration: preview mode
 ├── test_main_logic_sync.py             # Core sync orchestration: sync flow
-├── test_event_dispatch_base.py         # Base event dispatch logic
-├── test_file_event_handler.py          # File event handler
 ├── test_logger.py                      # Logging configuration
 ├── test_edge_cases.py                  # Edge cases and corner scenarios
 ├── test_stdin_commands.py              # Stdin protocol commands
 ├── test_coverage_gaps.py               # Coverage gap fillers
+├── test_install_script.py              # install.sh script tests
 ├── test_models_file.py                 # File model wrapper
 ├── test_models_dir.py                  # Directory model wrapper
 ├── test_models_event.py                # Event model wrapper
@@ -109,8 +122,7 @@ tests/
 ├── test_ssl_utils.py                   # SSL utilities
 ├── test_retry.py                       # Retry logic
 ├── test_utils.py                       # General utilities
-├── test_delta_transfer.py              # Delta transfer (rsync-style)
-└── test_conflict.py                    # Three-way merge and conflict resolution
+└── test_delta_transfer.py              # Delta transfer (rsync-style)
 ```
 
 ## Fixtures
@@ -297,11 +309,21 @@ These tests use the `live_server` session fixture (real `hsync-server`
 via uvicorn on loopback HTTPS). They require **no external services**
 and run in every CI / local environment.
 
-### LAN‑mode Black‑Box tests (`test_bb_lan_mode.py`)
+### LAN‑mode Black‑Box tests
 
 Tests the LAN peer‑to‑peer sync use case: two real client instances that
 discover each other via mDNS/zeroconf, elect a master, and sync over
-HTTPS/WSS with TOFU certificate pinning.
+HTTPS/WSS with TOFU certificate pinning. The suite is split across six
+files:
+
+| File | What it covers |
+|------|---------------|
+| `test_bb_lan_core.py` | Core LAN sync cycle: discovery, election, full sync. |
+| `test_bb_lan_advanced.py` | Advanced LAN scenarios (edge cases, complex file trees). |
+| `test_bb_lan_auth_direction.py` | LAN authentication and sync‑direction enforcement. |
+| `test_bb_lan_features.py` | LAN feature flags (compression, delta, autotune). |
+| `test_bb_lan_files.py` | LAN file operations (create, modify, delete, rename). |
+| `test_bb_lan_security.py` | LAN security (TOFU pinning, certificate validation). |
 
 **These tests are disabled by default** because they are inherently
 environment‑sensitive (multicast on loopback, self‑signed certificate
@@ -309,7 +331,7 @@ generation, election timing, multi‑process coordination).
 
 To opt in:
 ```bash
-HSYNC_BB_LAN=1 .venv/bin/python -m pytest tests/test_bb_lan_mode.py
+HSYNC_BB_LAN=1 .venv/bin/python -m pytest tests/test_bb_lan_core.py tests/test_bb_lan_advanced.py tests/test_bb_lan_auth_direction.py tests/test_bb_lan_features.py tests/test_bb_lan_files.py tests/test_bb_lan_security.py
 ```
 
 The LAN tests start two subprocesses with `--lan-mode` (and
