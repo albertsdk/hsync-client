@@ -49,9 +49,10 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
 # Black-box harness (test_bb_*.py)
 #
 # Behavioural, use-case-driven tests drive the *real* client through its public
-# Typer CLI against a *real* in-process hsync-server (loopback uvicorn). No
-# internal logic is mocked: only the filesystem (temp dirs) and the API key are
-# test fixtures. The client venv has hsync-server as a dev dependency.
+# Typer CLI against a *real* hsync-server running as a separate subprocess
+# (loopback HTTPS). No internal logic is mocked: only the filesystem (temp
+# dirs) and the API key are test fixtures. The client venv has hsync-server as
+# a dev dependency.
 # =============================================================================
 
 BB_API_KEY = "test-bb-api-key-0123456789abcdef"
@@ -115,8 +116,16 @@ class _ClientGlobalsGuard:
         return False
 
 
+BB_SSL_KEY_PASSWORD = "test-bb-ssl-key-password"
+
+
 def _self_signed_cert(cert_dir):
-    """Generate a self-signed cert + unencrypted key for loopback HTTPS."""
+    """Generate a self-signed cert + password-encrypted key for loopback HTTPS.
+
+    The server requires the SSL private key to be stored encrypted on disk, so
+    the key is encrypted with ``BB_SSL_KEY_PASSWORD`` (passed to the server
+    subprocess via ``HSYNC_SSL_KEYFILE_PASSWORD``).
+    """
     import datetime
 
     from cryptography import x509
@@ -143,7 +152,7 @@ def _self_signed_cert(cert_dir):
         key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
+            serialization.BestAvailableEncryption(BB_SSL_KEY_PASSWORD.encode()),
         )
     )
     return str(cert_path), str(key_path)
@@ -151,25 +160,36 @@ def _self_signed_cert(cert_dir):
 
 @pytest.fixture(scope="session")
 def live_server(tmp_path_factory):
-    """Start the real hsync-server in-process over loopback HTTPS.
+    """Start the real hsync-server as a *separate subprocess* over loopback HTTPS.
+
+    A subprocess (not an in-process uvicorn thread) is essential for these
+    tests to be meaningful:
+
+    * **Isolation of hsync_common globals** — an in-process server shares the
+      process-wide ``IgnoreMatcher`` installed by the client's ``run_sync``
+      (``set_active_matcher``), so the client's ignore rules would contaminate
+      server-side file listing and server-side filtering bugs could never be
+      detected.
+    * **No settings-cache race** — an in-process server relies on the settings
+      cache being populated while the env overrides are set; if any earlier
+      test already imported ``hsync_server.main``, the server would silently
+      start with the user's real environment.
+    * **Clean teardown** — an in-process uvicorn thread routinely failed to
+      stop within the join timeout (lingering keep-alive connections).
 
     The client hard-refuses to send the API key over plain HTTP, so the server
     runs with a self-signed cert and the client is driven with ``--insecure``.
-    Server env is set only around the first import of ``hsync_server.main`` so
-    the server's settings cache captures a temp buckets dir + known API key; the
-    previous env is restored immediately afterwards (the server reads all config
-    through its cached settings, and the client has its own separate settings
-    cache, so client tests are unaffected). Yields (base_url, api_key).
+    Yields (base_url, api_key).
     """
     import os
     import shutil
+    import subprocess
+    import sys
     import tempfile
-    import threading
     import time
     import warnings
 
     import requests
-    import uvicorn
     from urllib3.exceptions import InsecureRequestWarning
 
     warnings.simplefilter("ignore", InsecureRequestWarning)
@@ -177,49 +197,47 @@ def live_server(tmp_path_factory):
     buckets_dir = tempfile.mkdtemp(prefix="hsync_bb_buckets_")
     cert_dir = tmp_path_factory.mktemp("bbssl")
     cert_file, key_file = _self_signed_cert(cert_dir)
-    overrides = {
-        "HSYNC_API_KEY": BB_API_KEY,
-        "HSYNC_BUCKETS": buckets_dir,
-        "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
-        "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
-        "HSYNC_RATE_LIMIT_DOWNLOAD": "1000000/minute",
-        "HSYNC_RATE_LIMIT_DELTA": "1000000/minute",
-        "HSYNC_RATE_LIMIT_WEBSOCKET": "1000000/minute",
-        "HSYNC_RATE_LIMIT_WS_MESSAGES": "1000000/second",
-        "HSYNC_WS_AUTH_TIMEOUT": "5",
-        "HSYNC_WS_HEARTBEAT_INTERVAL": "5",
-        "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
-        "HSYNC_MIN_FREE_DISK_SPACE": "0",
-        "HSYNC_ENABLE_DOCS": "false",
-    }
-    saved = {k: os.environ.get(k) for k in overrides}
-    os.environ.update(overrides)
-
-    from hsync_server.config import get_settings
-
-    get_settings.cache_clear()
-    from hsync_server.main import app  # populates the settings cache with the env above
-
-    # Restore env: the server keeps its cached settings; the client is unaffected.
-    for k, v in saved.items():
-        if v is None:
-            os.environ.pop(k, None)
-        else:
-            os.environ[k] = v
-
     port = _free_port()
-    config = uvicorn.Config(
-        app,
-        host="127.0.0.1",
-        port=port,
-        log_level="warning",
-        lifespan="on",
-        ssl_certfile=cert_file,
-        ssl_keyfile=key_file,
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HSYNC_API_KEY": BB_API_KEY,
+            "HSYNC_BUCKETS": buckets_dir,
+            "HSYNC_RATE_LIMIT_DEFAULT": "1000000/minute",
+            "HSYNC_RATE_LIMIT_UPLOAD": "1000000/minute",
+            "HSYNC_RATE_LIMIT_DOWNLOAD": "1000000/minute",
+            "HSYNC_RATE_LIMIT_DELTA": "1000000/minute",
+            "HSYNC_RATE_LIMIT_WEBSOCKET": "1000000/minute",
+            "HSYNC_RATE_LIMIT_WS_MESSAGES": "1000000/second",
+            "HSYNC_WS_AUTH_TIMEOUT": "5",
+            "HSYNC_WS_HEARTBEAT_INTERVAL": "5",
+            "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
+            "HSYNC_MIN_FREE_DISK_SPACE": "0",
+            "HSYNC_ENABLE_DOCS": "false",
+            "HSYNC_SSL_KEYFILE_PASSWORD": BB_SSL_KEY_PASSWORD,
+        }
     )
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "hsync_server",
+            "--port",
+            str(port),
+            "--ssl",
+            "--ssl-cert",
+            cert_file,
+            "--ssl-key",
+            key_file,
+            "--log-level",
+            "warning",
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
     base_url = f"https://127.0.0.1:{port}"
 
@@ -227,6 +245,10 @@ def live_server(tmp_path_factory):
         deadline = time.time() + 30
         last_exc = None
         while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"hsync-server subprocess exited early with code {proc.returncode}"
+                )
             try:
                 if requests.get(f"{base_url}/health", timeout=1.0, verify=False).status_code == 200:
                     break
@@ -243,14 +265,12 @@ def live_server(tmp_path_factory):
 
         yield base_url, BB_API_KEY
     finally:
-        server.should_exit = True
-        thread.join(timeout=10)
-        if thread.is_alive():
-            # Uvicorn didn't stop gracefully; the thread is a daemon so it
-            # won't block process exit, but we log it for diagnostics.
-            import warnings
-
-            warnings.warn("hsync-server thread did not stop within 10s", stacklevel=2)
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
         shutil.rmtree(buckets_dir, ignore_errors=True)
 
 
@@ -406,7 +426,12 @@ def run_sync_once(live_server):
                 *extra,
             ]
             with _ClientGlobalsGuard():
-                return runner.invoke(__import__("hsync_client.cli", fromlist=["app"]).app, args)
+                result = runner.invoke(__import__("hsync_client.cli", fromlist=["app"]).app, args)
+            # CliRunner captures all client output; echo it so pytest includes
+            # the client log in the failure report instead of hiding it.
+            if result.output:
+                print(f"--- hsync-client output ---\n{result.output}")
+            return result
         finally:
             if old is None:
                 os.environ.pop("HSYNC_API_KEY", None)
@@ -440,7 +465,12 @@ def run_cli(live_server):
         try:
             args = ["-b", bucket, "-s", base_url, "-p", local_path, "--insecure", *extra]
             with _ClientGlobalsGuard():
-                return runner.invoke(__import__("hsync_client.cli", fromlist=["app"]).app, args)
+                result = runner.invoke(__import__("hsync_client.cli", fromlist=["app"]).app, args)
+            # CliRunner captures all client output; echo it so pytest includes
+            # the client log in the failure report instead of hiding it.
+            if result.output:
+                print(f"--- hsync-client output ---\n{result.output}")
+            return result
         finally:
             if old is None:
                 os.environ.pop("HSYNC_API_KEY", None)

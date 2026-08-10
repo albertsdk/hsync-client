@@ -801,6 +801,49 @@ def _reschedule_upload(file: File, reschedules_left: int | None = None) -> None:
     timer.start()
 
 
+def delete_file_remote(file: File) -> None:
+    """Delete *file* on the server via the REST ``DELETE …/files`` endpoint.
+
+    Invoked for ``SyncActionName.delete_remote`` actions: the file was deleted
+    locally while this peer was offline and the (tombstone-verified) copy left
+    on the server is stale, so it must be removed instead of being downloaded
+    back. ``file.filepath`` is the bucket-relative path from the remote listing
+    (it must not resolve to a local file).
+
+    Raises:
+        NetworkError: On a connection-level error.
+        ServerError: On a server-side error response (except 404: the file is
+            already gone, which is the desired end state).
+    """
+    from hsync_client.utils import get_ssl_verify, http_delete
+
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
+    # file.filepath here is the remote bucket-relative path (the File was built
+    # from the remote listing against LOCAL_BUCKET, so strip the local prefix).
+    prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
+    filename = str(file.filepath).removeprefix(prefix).lstrip("/")
+
+    response = http_delete(
+        uri,
+        data={"cid": CONFIG["CID"], "filename": filename},
+        headers=dict(CONFIG["REQUEST_HEADERS"]),
+        verify=get_ssl_verify(),
+        timeout=CONFIG.get("HTTP_TIMEOUT", 30),
+    )
+    if response.status_code == 404:
+        log.debug(f'"{filename}" already absent on server')
+        return
+    if response.status_code not in (200, 204):
+        from hsync_client.exceptions import ServerError
+
+        raise ServerError(
+            message=f"Remote delete failed for {filename}: status {response.status_code}",
+            details={"status_code": response.status_code, "response": response.text},
+        )
+    log.info(f'{ActionLabel.DELETE} "{filename}" (on server)')
+    emit_event(UiEventName.transfer, op="delete_remote", file=filename)
+
+
 def upload_file(
     file: File,
     check_size: bool = True,

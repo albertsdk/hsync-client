@@ -38,7 +38,7 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | Option | Description | Default |
 |---|---|---|
 | `--filter-path` | Sync only files under this subdirectory | — (sync everything) |
-| `--http-timeout` | HTTP request timeout in seconds | `30` |
+| `--timeout` | HTTP request timeout in seconds | `30` |
 | `--min-free-disk-space` | Minimum free disk space (MB) before syncing stops | `0` (disabled) |
 
 ## Environment Variables — LAN Mode

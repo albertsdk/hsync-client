@@ -326,7 +326,7 @@ class TestRunSyncLanPlaceholder:
         assert set(config_arg["AUTOTUNE_MANAGED_KEYS"]) == set(_ALL_TUNING_KEYS)
 
     def test_cli_override_excluded_from_managed_keys(self, tmp_path):
-        """--http-timeout 30 must survive the LAN refresh: not autotune-managed."""
+        """--timeout 30 must survive the LAN refresh: not autotune-managed."""
         with patch("hsync_client.main_logic.get_server_url", return_value=None):
             mock_lan, _, _ = self._run_lan(
                 tmp_path,

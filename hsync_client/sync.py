@@ -228,19 +228,18 @@ async def sync(lan_mode: bool = False) -> None:
         # Record tombstones for files tracked by the merge base that are no
         # longer present locally: they were deleted while the peer was offline
         # (the watcher is the only writer of record_deletion() in the live
-        # path, and it is inactive during a one-shot sync).  Each such file
-        # gets a tombstone keyed by its last-known content hash so the server
-        # can distinguish a true deletion from a path that was merely renamed
-        # or moved.
-        local_paths = {str(f.get("filepath", "")) for f in local_files}
-        for path, base_hash in list(sync_state.iter_merge_bases()):
-            if path and path not in local_paths:
-                from hsync_client.tombstones import record_deletion
+        # path, and it is inactive during a one-shot sync). The tombstone is
+        # keyed by the last-known content hash so the server can distinguish a
+        # true deletion from a path that was merely renamed or moved.
+        # Merge-base keys are hashed (tombstone_key), so compare them against
+        # the hashed local paths — a raw relpath would never match and every
+        # tracked file would be mistaken for deleted.
+        local_keys = {tombstone_key(str(f.get("filepath", ""))) for f in local_files}
+        for key, base_hash in list(sync_state.iter_merge_bases()):
+            if key and key not in local_keys:
+                from hsync_client.tombstones import record_deletion_by_key
 
-                record_deletion(
-                    str(Path(CONFIG["LOCAL_BUCKET"]) / path),
-                    sha256sum=base_hash or None,
-                )
+                record_deletion_by_key(key, sha256sum=base_hash or None)
                 # Re-fetch the union now that we just added a marker.
                 union = get_payload()
                 push_tombstones_remote(union)
@@ -260,7 +259,17 @@ async def sync(lan_mode: bool = False) -> None:
 
         # Drop merge-base records for files that no longer exist locally so the
         # sync-state side-car stays bounded (downloads re-record after transfer).
-        sync_state.retain([str(f.get("filepath", "")) for f in local_files])
+        # ``local_files`` entries carry bucket-relative paths, so resolve them
+        # against LOCAL_BUCKET: ``retain`` expects absolute paths and a bare
+        # relative path would never match a recorded entry, silently dropping
+        # every merge base at the end of each cycle.
+        sync_state.retain(
+            [
+                str(Path(CONFIG["LOCAL_BUCKET"]) / str(f.get("filepath", "")))
+                for f in local_files
+                if f.get("filepath")
+            ]
+        )
 
         # Separate actions by type
         downloads = [a.file for a in sync_actions if a.name == SyncActionName.download]
@@ -304,6 +313,20 @@ async def sync(lan_mode: bool = False) -> None:
                 except OSError as e:
                     log.error(f'Error deleting "{file.filepath}": {e}')
 
+        # Handle remote deletions: files that exist only on the server but carry
+        # a matching local tombstone (deleted here while offline). The stale
+        # server copy must be removed, not downloaded back.
+        from hsync_client.transfer import delete_file_remote
+
+        for action in sync_actions:
+            if action.name == SyncActionName.delete_remote:
+                try:
+                    delete_file_remote(action.file)
+                except Exception as e:
+                    # Best-effort: the tombstone stays in the local store, so
+                    # the next cycle will retry the remote deletion.
+                    log.error(f'Error deleting "{action.file.filepath}" on server: {e}')
+
         # Preserve locally-modified files before a conflicting download
         # overwrites them (same mtime, different content - no automatic winner).
         for action in sync_actions:
@@ -332,6 +355,9 @@ async def sync(lan_mode: bool = False) -> None:
             exc_tb = exc_info()[2]
             if exc_tb:
                 print_tb(exc_tb)
+        # Propagate so the CLI exits non-zero: a failed sync must never be
+        # reported to the caller (or to a shell script) as success.
+        raise
     except Exception as e:
         log.error(f"Unexpected error during sync: {e}")
         emit_event(UiEventName.error, message=f"Unexpected error during sync: {e}")
@@ -339,6 +365,7 @@ async def sync(lan_mode: bool = False) -> None:
             exc_tb = exc_info()[2]
             if exc_tb:
                 print_tb(exc_tb)
+        raise
 
 
 def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) -> None:
@@ -360,7 +387,9 @@ def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) 
         return
 
     queue_profile = profile_transfer_queue(all_files)
-    storage_type = StorageType(str(CONFIG.get("AUTOTUNE_STORAGE_TYPE", "unknown")))
+    # AUTOTUNE_STORAGE_TYPE is "" when autotune is disabled (main_logic),
+    # which is not a valid StorageType — map it to UNKNOWN.
+    storage_type = StorageType(str(CONFIG.get("AUTOTUNE_STORAGE_TYPE") or "unknown"))
     bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
 
     concurrency = derive_concurrency(
@@ -969,8 +998,30 @@ def get_sync_actions(
                 )
             )
         else:
-            # File exists only on remote - download it
-            sync_actions.append(SyncAction(remote_file, SyncActionName.download))
+            # File exists only on remote. Before downloading it, check the
+            # deletion markers: if it matches a tombstone whose content hash
+            # equals the remote file's hash, the file was deleted *here* while
+            # offline and the server copy is the stale one — deleting it on the
+            # server is the correct reconciliation (downloading it back would
+            # resurrect a deleted file).
+            rel = str(remote_file_info.get("filepath", "")).lstrip("/")
+            entry = tombstones.get(tombstone_key(rel))
+            remote_sha = remote_file.sha256sum or ""
+            if (
+                entry
+                and entry.get("sha256")
+                and remote_sha
+                and entry["sha256"] == remote_sha
+                and CONFIG.get("SYNC_DIRECTION", "bidirectional") != "download-only"
+            ):
+                log.info(
+                    f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
+                    "deleting stale copy on server"
+                )
+                sync_actions.append(SyncAction(remote_file, SyncActionName.delete_remote))
+            else:
+                # File exists only on remote - download it
+                sync_actions.append(SyncAction(remote_file, SyncActionName.download))
 
     # Find local files not present on remote
     for local_file_dict in local_files:
@@ -1003,15 +1054,20 @@ def get_sync_actions(
     # ── Filter actions based on sync direction ──────────────────────
     direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
     if direction == "upload-only":
-        # Remove downloads and remote-triggered deletes; keep uploads and nothing
+        # Remove downloads and both delete flavours; keep uploads and nothing
         sync_actions = [
             a
             for a in sync_actions
-            if a.name not in (SyncActionName.download, SyncActionName.delete)
+            if a.name
+            not in (SyncActionName.download, SyncActionName.delete, SyncActionName.delete_remote)
         ]
     elif direction == "download-only":
-        # Remove uploads; keep downloads, deletes and nothing
-        sync_actions = [a for a in sync_actions if a.name != SyncActionName.upload]
+        # Remove uploads and remote deletions; keep downloads, deletes and nothing
+        sync_actions = [
+            a
+            for a in sync_actions
+            if a.name not in (SyncActionName.upload, SyncActionName.delete_remote)
+        ]
 
     return sync_actions
 

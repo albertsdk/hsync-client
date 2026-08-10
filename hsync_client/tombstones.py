@@ -68,6 +68,25 @@ def record_deletion(
     store.save()
 
 
+def record_deletion_by_key(
+    key: str,
+    sha256sum: str | None = None,
+    timestamp: int | float | None = None,
+) -> None:
+    """Record a deletion marker for an already-hashed path key and persist.
+
+    Used by the sync engine when the only available identity is the merge-base
+    key (the store is keyed by ``tombstone_key`` and the raw path is not
+    recoverable from it).
+    """
+    if not key:
+        return
+    store = get_tombstone_store()
+    store.record_by_key(key, sha256sum=sha256sum, timestamp=timestamp)
+    store.prune()
+    store.save()
+
+
 def clear_deletion(abs_path: str) -> None:
     """Drop the deletion marker for a re-created path and persist the store."""
     bucket_dir = _bucket_dir()

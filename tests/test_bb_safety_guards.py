@@ -65,7 +65,22 @@ class TestMassDeleteGuard:
         )
         get_env_settings.cache_clear()
 
-        # Now delete all files locally and re-sync with low threshold
+        # Now delete all files locally and re-sync with low threshold.
+        # The local tombstone store must be cleared first: in server
+        # (non-watch) mode local deletions would otherwise be recorded as
+        # tombstones and reconciled as remote deletions, bypassing the guard
+        # the test is about.
+        # Both client-side stores must be cleared: the tombstones (otherwise
+        # the deletions become remote deletions, bypassing the guard) and the
+        # merge-base (otherwise the guard sees 0 local files and treats the
+        # empty master as the suspect state, not the deletions).
+        (Path(local_dir) / ".hsynctombstones").unlink(missing_ok=True)
+        (Path(local_dir) / ".hsyncstate").unlink(missing_ok=True)
+        from hsync_client import sync_state as _ss
+        from hsync_client import tombstones as _ts
+
+        _ts._stores.clear()
+        _ss._stores.clear()
         for i in range(5):
             (Path(local_dir) / f"g_{i:02d}.txt").unlink()
 
@@ -139,7 +154,21 @@ class TestMassDeletePercentGuard:
         )
         get_env_settings.cache_clear()
 
-        # Delete 5 files (50%) — threshold is 10%, so guard should trip
+        # Delete 5 files (50%) — threshold is 10%, so guard should trip.
+        # Clear the local tombstone store first: otherwise the deletions are
+        # recorded as tombstones and reconciled as remote deletions, bypassing
+        # the guard the test is about.
+        # Both client-side stores must be cleared: the tombstones (otherwise
+        # the deletions become remote deletions, bypassing the guard) and the
+        # merge-base (otherwise the guard sees 0 local files and treats the
+        # empty master as the suspect state, not the deletions).
+        (Path(local_dir) / ".hsynctombstones").unlink(missing_ok=True)
+        (Path(local_dir) / ".hsyncstate").unlink(missing_ok=True)
+        from hsync_client import sync_state as _ss
+        from hsync_client import tombstones as _ts
+
+        _ts._stores.clear()
+        _ss._stores.clear()
         for i in range(5):
             (Path(local_dir) / f"h_{i:02d}.txt").unlink()
 

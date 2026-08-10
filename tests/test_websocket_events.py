@@ -13,6 +13,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+class _StopLoop(Exception):
+    """Sentinel exception used to break out of event loops under test.
+
+    Tests suppress only this exact type so that any *unexpected* exception
+    raised by the code under test still fails the test instead of being
+    silently swallowed by a broad ``contextlib.suppress(Exception)``.
+    """
+
+
 class _CancelledTask:
     """Small awaitable task double for create_task cleanup tests."""
 
@@ -51,7 +60,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -60,7 +69,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
@@ -86,7 +95,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -95,7 +104,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
@@ -114,7 +123,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -123,7 +132,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
@@ -142,7 +151,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -151,7 +160,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
@@ -170,7 +179,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -179,7 +188,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
@@ -199,7 +208,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -208,7 +217,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch._apply_rename", new=AsyncMock()) as mock_rename,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_rename.assert_called_once()
             args = mock_rename.call_args.args
@@ -230,7 +239,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -239,7 +248,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch._apply_delete", new=AsyncMock()) as mock_delete,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_delete.assert_called_once()
             assert mock_delete.call_args.args[0] == message["src"]
@@ -259,7 +268,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -268,7 +277,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
@@ -294,7 +303,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -303,7 +312,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_called_once_with(message["src"])
 
@@ -324,7 +333,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client"}
 
@@ -333,7 +342,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch._apply_symlink", new=AsyncMock()) as mock_symlink,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_symlink.assert_not_called()
 
@@ -352,7 +361,7 @@ class TestProcessWebsocketEvents:
         }
 
         websocket = AsyncMock()
-        websocket.recv = AsyncMock(side_effect=[dumps(message), Exception("Stop")])
+        websocket.recv = AsyncMock(side_effect=[dumps(message), _StopLoop("Stop")])
 
         config = {"CID": "my_client", "SYNC_DIRECTION": "upload-only"}
 
@@ -361,7 +370,7 @@ class TestProcessWebsocketEvents:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
             mock_update.assert_not_called()
 
@@ -382,14 +391,14 @@ class TestResync:
             nonlocal call_count
             call_count += 1
             if call_count >= 2:
-                raise Exception("Stop after 2 calls")
+                raise _StopLoop("Stop after 2 calls")
 
         with (
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.sync", mock_sync),
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await resync()
             assert call_count >= 2
 
@@ -415,7 +424,7 @@ class TestRemoteConnect:
                 raise KeyboardInterrupt("Stop loop")
 
         async def mock_remote_events():
-            raise Exception("Stop after first iteration")
+            raise _StopLoop("Stop after first iteration")
 
         with (
             patch("hsync_client.remote_websocket.CONFIG", config),
@@ -423,7 +432,7 @@ class TestRemoteConnect:
             patch("hsync_client.remote_websocket.sync", mock_sync),
             patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
         ):
-            with contextlib.suppress(TimeoutError, KeyboardInterrupt, Exception):
+            with contextlib.suppress(TimeoutError, KeyboardInterrupt, _StopLoop):
                 await asyncio.wait_for(remote_connect(), timeout=1.0)
             assert sync_called
 
@@ -448,7 +457,7 @@ class TestRemoteConnect:
             nonlocal task_created
             # Check if task was created before raising
             task_created = ws_module._resync_task is not None
-            raise Exception("Stop")
+            raise _StopLoop("Stop")
 
         async def mock_resync():
             await asyncio.sleep(10)  # Long sleep to keep task alive
@@ -462,7 +471,7 @@ class TestRemoteConnect:
         ):
             # Reset global task
             ws_module._resync_task = None
-            with contextlib.suppress(TimeoutError, KeyboardInterrupt, Exception):
+            with contextlib.suppress(TimeoutError, KeyboardInterrupt, _StopLoop):
                 await asyncio.wait_for(remote_connect(), timeout=1.0)
             # Task should have been created
             assert task_created
@@ -494,7 +503,7 @@ class TestRemoteConnect:
             patch("hsync_client.remote_websocket.sync", mock_sync),
             patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
         ):
-            with contextlib.suppress(TimeoutError, KeyboardInterrupt, Exception):
+            with contextlib.suppress(TimeoutError, KeyboardInterrupt, _StopLoop):
                 await asyncio.wait_for(remote_connect(), timeout=2.0)
             assert call_count >= 2  # Should have reconnected
 
@@ -538,7 +547,7 @@ class TestRemoteConnect:
         ):
             ws_module._resync_task = None
             with contextlib.suppress(
-                TimeoutError, KeyboardInterrupt, asyncio.CancelledError, Exception
+                TimeoutError, KeyboardInterrupt, asyncio.CancelledError, _StopLoop
             ):
                 await asyncio.wait_for(remote_connect(), timeout=2.0)
             # First task should have been cancelled
@@ -593,7 +602,7 @@ class TestRemoteEvents:
             side_effect=[
                 dumps(auth_response),
                 dumps(event_message),
-                Exception("Stop loop"),
+                _StopLoop("Stop loop"),
             ]
         )
 
@@ -612,9 +621,11 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
         ):
             MockEventQueue.return_value = MagicMock()
-            mock_process.side_effect = Exception("Stop loop")
+            MockEventQueue.return_value.process = AsyncMock()
+            MockEventQueue.return_value.stop = MagicMock()
+            mock_process.side_effect = _StopLoop("Stop loop")
 
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await asyncio.wait_for(remote_events(), timeout=1.0)
 
             # Verify authentication message was sent
@@ -728,6 +739,8 @@ class TestRemoteEvents:
             "REMOTE_BUCKET": "testbucket",
             "NO_VERIFY_SSL": True,
             "CA_CERT": None,
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
             "SERVER_COMPRESSION_ENABLED": False,
             "API": {"events": "wss://api.example.com/events"},
         }
@@ -740,7 +753,7 @@ class TestRemoteEvents:
             side_effect=[
                 dumps(auth_response),
                 dumps(event_message),
-                Exception("Stop loop"),
+                _StopLoop("Stop loop"),
             ]
         )
 
@@ -761,9 +774,11 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket._process_remote_events") as mock_process,
         ):
             MockEventQueue.return_value = MagicMock()
-            mock_process.side_effect = Exception("Stop loop")
+            MockEventQueue.return_value.process = AsyncMock()
+            MockEventQueue.return_value.stop = MagicMock()
+            mock_process.side_effect = _StopLoop("Stop loop")
 
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await asyncio.wait_for(remote_events(), timeout=1.0)
 
             # SSL context should be configured with no verification
@@ -886,11 +901,11 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.Observer", return_value=mock_observer),
             patch(
                 "hsync_client.remote_websocket._process_remote_events",
-                side_effect=Exception("Stop"),
+                side_effect=_StopLoop("Stop"),
             ),
             patch("hsync_client.remote_websocket.create_task", side_effect=mock_create_task),
         ):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await remote_events()
 
             # Queue task should be cancelled
@@ -937,7 +952,7 @@ class TestRemoteEventsAuthToken:
         mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
         mock_websocket.__aexit__ = AsyncMock(return_value=None)
         mock_websocket.send = AsyncMock()
-        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), Exception("Stop loop")])
+        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), _StopLoop("Stop loop")])
 
         mock_observer = MagicMock()
 
@@ -952,9 +967,11 @@ class TestRemoteEventsAuthToken:
             patch("hsync_client.remote_websocket.get_api_key", return_value="env-fallback"),
         ):
             MockEventQueue.return_value = MagicMock()
-            mock_process.side_effect = Exception("Stop loop")
+            MockEventQueue.return_value.process = AsyncMock()
+            MockEventQueue.return_value.stop = MagicMock()
+            mock_process.side_effect = _StopLoop("Stop loop")
 
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await asyncio.wait_for(remote_events(), timeout=1.0)
 
             sent = mock_websocket.send.call_args.args[0]
@@ -994,7 +1011,7 @@ class TestRemoteEventsAuthToken:
         mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
         mock_websocket.__aexit__ = AsyncMock(return_value=None)
         mock_websocket.send = AsyncMock()
-        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), Exception("Stop loop")])
+        mock_websocket.recv = AsyncMock(side_effect=[dumps(auth_response), _StopLoop("Stop loop")])
 
         mock_observer = MagicMock()
 
@@ -1012,9 +1029,11 @@ class TestRemoteEventsAuthToken:
             ),
         ):
             MockEventQueue.return_value = MagicMock()
-            mock_process.side_effect = Exception("Stop loop")
+            MockEventQueue.return_value.process = AsyncMock()
+            MockEventQueue.return_value.stop = MagicMock()
+            mock_process.side_effect = _StopLoop("Stop loop")
 
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_StopLoop):
                 await asyncio.wait_for(remote_events(), timeout=1.0)
 
             sent = mock_websocket.send.call_args.args[0]

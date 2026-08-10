@@ -222,6 +222,7 @@ class TestSync:
             patch("hsync_client.sync.get_tombstones_remote", return_value={}),
             patch("hsync_client.sync.push_tombstones_remote"),
             patch("hsync_client.sync.ensure_hsynckeep_files"),
+            patch("hsync_client.sync.sync_state.flush"),
             patch("hsync_client.transfer.download_file") as mock_download,
             patch("hsync_client.transfer.upload_file") as mock_upload,
         ):
@@ -247,6 +248,7 @@ class TestSync:
             patch("hsync_client.sync.get_files_remote", return_value=[]),
             patch("hsync_client.sync.get_tombstones_remote", return_value={}),
             patch("hsync_client.sync.push_tombstones_remote"),
+            patch("hsync_client.sync.sync_state.flush"),
             patch("hsync_client.transfer.download_file") as mock_download,
             patch("hsync_client.transfer.upload_file") as mock_upload,
         ):
@@ -256,7 +258,7 @@ class TestSync:
 
     @pytest.mark.asyncio
     async def test_sync_handles_auth_error(self, tmp_path):
-        """sync handles authentication errors gracefully."""
+        """sync logs authentication errors and re-raises so the CLI exits non-zero."""
         from hsync_client.exceptions import AuthenticationError
         from hsync_client.sync import sync
 
@@ -272,12 +274,14 @@ class TestSync:
             ),
             patch("hsync_client.sync.is_debug", return_value=False),
         ):
-            # Should not raise exception
-            await sync()
+            # The error is logged and then re-raised so the caller (CLI)
+            # can exit non-zero instead of reporting success.
+            with pytest.raises(AuthenticationError, match="Invalid API key"):
+                await sync()
 
     @pytest.mark.asyncio
     async def test_sync_handles_network_error(self, tmp_path):
-        """sync handles network errors gracefully."""
+        """sync logs network errors and re-raises so the CLI exits non-zero."""
         from hsync_client.exceptions import NetworkError
         from hsync_client.sync import sync
 
@@ -292,22 +296,29 @@ class TestSync:
             ),
             patch("hsync_client.sync.is_debug", return_value=False),
         ):
-            # Should not raise exception
-            await sync()
+            # The error is logged and then re-raised so the caller (CLI)
+            # can exit non-zero instead of reporting success.
+            with pytest.raises(NetworkError, match="Connection failed"):
+                await sync()
 
     @pytest.mark.asyncio
     async def test_sync_handles_unexpected_error(self, tmp_path):
-        """sync handles unexpected errors gracefully."""
+        """sync logs unexpected errors and re-raises so the CLI exits non-zero."""
         from hsync_client.sync import sync
 
         config = {
             "LOCAL_BUCKET": str(tmp_path),
         }
 
+        class _Boom(Exception):
+            """Sentinel for an unexpected failure inside sync."""
+
         with (
             patch("hsync_client.sync.CONFIG", config),
-            patch("hsync_client.sync.get_files_remote", side_effect=Exception("Unexpected")),
+            patch("hsync_client.sync.get_files_remote", side_effect=_Boom("Unexpected")),
             patch("hsync_client.sync.is_debug", return_value=False),
         ):
-            # Should not raise exception
-            await sync()
+            # The error is logged and then re-raised so the caller (CLI)
+            # can exit non-zero instead of reporting success.
+            with pytest.raises(_Boom, match="Unexpected"):
+                await sync()

@@ -107,6 +107,11 @@ def iter_merge_bases():
     Used by the sync engine to detect files that were deleted locally between
     one-shot sync cycles (the entry exists in the store but the file is no
     longer listed by get_files_local).
+
+    Note: the store keys are hashed (``tombstone_key``), so the raw relative
+    path is not recoverable from the key alone. The store is scanned against
+    the current local listing by the caller; here we yield the *key* and the
+    caller compares keys, not paths.
     """
     with _lock:
         for key, version in get_sync_state_store().iter_entries():
