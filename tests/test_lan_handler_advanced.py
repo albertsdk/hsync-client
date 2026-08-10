@@ -877,7 +877,7 @@ class TestStdinCommands:
         return handler, registered
 
     def test_with_stdin_commands_registers_and_dispatches(self, tmp_path):
-        """_with_stdin_commands registers PREVIEW/SYNC/SET_SYNC_DIRECTION and runs them."""
+        """_with_stdin_commands registers PREVIEW/SYNC/SET_SYNC_DIRECTION/SET_BANDWIDTH and runs them."""
         from hsync_client.lan_handler import _with_stdin_commands
 
         handler, registered = self._capture_handler()
@@ -887,14 +887,14 @@ class TestStdinCommands:
             return None
 
         with (
-            patch("hsync_client.stdin_commands.StdinCommandHandler", return_value=handler),
-            patch("hsync_client.config.CONFIG", fake_config),
-            patch("hsync_client.lan_handler.sync", new=AsyncMock()) as mock_sync,
-            patch("hsync_client.lan_handler._run_preview") as mock_preview,
+            patch("hsync_client.preview.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.preview.CONFIG", fake_config),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview._run_preview") as mock_preview,
         ):
             asyncio.run(_with_stdin_commands(MagicMock(), _coro()))
 
-            assert set(registered) == {"PREVIEW", "SYNC", "SET_SYNC_DIRECTION"}
+            assert set(registered) == {"PREVIEW", "SYNC", "SET_SYNC_DIRECTION", "SET_BANDWIDTH"}
 
             # PREVIEW delegates to _run_preview.
             registered["PREVIEW"]()
@@ -918,10 +918,10 @@ class TestStdinCommands:
         fake_config = {"LAN_MODE": False, "DRYRUN": True}
 
         with (
-            patch("hsync_client.stdin_commands.StdinCommandHandler", return_value=handler),
-            patch("hsync_client.config.CONFIG", fake_config),
-            patch("hsync_client.lan_handler.sync", new=AsyncMock()) as mock_sync,
-            patch("hsync_client.lan_handler._run_preview"),
+            patch("hsync_client.preview.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.preview.CONFIG", fake_config),
+            patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview._run_preview"),
         ):
             asyncio.run(_run_stdin_wait(MagicMock()))
 
