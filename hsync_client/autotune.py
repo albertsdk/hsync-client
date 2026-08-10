@@ -176,13 +176,18 @@ def measure_bandwidth_active(server_url: str, size_bytes: int = 256 * 1024) -> f
     """GET a small payload from the server, return Mbps. ``None`` on failure."""
     try:
         from requests import get as http_get
+        from requests.exceptions import RequestException
+    except ImportError:
+        log.warning("autotune: requests not available, skipping active bandwidth probe")
+        return None
 
+    try:
         t0 = monotonic()
         resp = http_get(f"{server_url}/api/v1/health", timeout=10)
         elapsed = monotonic() - t0
         if resp.ok and elapsed > 0:
             return (len(resp.content) * 8 / elapsed) / 1_000_000
-    except Exception as e:
+    except (RequestException, OSError) as e:
         log.warning(f"autotune: active bandwidth probe failed ({e})")
     return None
 
