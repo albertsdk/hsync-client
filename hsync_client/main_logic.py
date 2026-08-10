@@ -168,12 +168,18 @@ def _run_preview(log) -> None:
             deletes = [a for a in deletes if id(a) not in matched_delete_ids]
 
         # Emit structured messages for each file status (text log + event channel)
-        for action in synced:
-            size = action.file.size or 0
-            log.info(f'{ActionLabel.SYNCED} "{action.file.filepath}" ({format_bytes(size)})')
-            emit_event(
-                UiEventName.file_status, state="synced", file=action.file.filepath, size=size
-            )
+        for actions, label, state in [
+            (synced, ActionLabel.SYNCED, "synced"),
+            (downloads, ActionLabel.TO_DOWNLOAD, "to_download"),
+            (uploads, ActionLabel.TO_UPLOAD, "to_upload"),
+            (deletes, ActionLabel.TO_DELETE, "to_delete"),
+        ]:
+            for action in actions:
+                size = action.file.size or 0
+                log.info(f'{label} "{action.file.filepath}" ({format_bytes(size)})')
+                emit_event(
+                    UiEventName.file_status, state=state, file=action.file.filepath, size=size
+                )
         for del_action, dl_action in renames:
             size = dl_action.file.size or 0
             log.info(
@@ -184,24 +190,6 @@ def _run_preview(log) -> None:
                 src=del_action.file.filepath,
                 dst=dl_action.file.filepath,
                 size=size,
-            )
-        for action in downloads:
-            size = action.file.size or 0
-            log.info(f'{ActionLabel.TO_DOWNLOAD} "{action.file.filepath}" ({format_bytes(size)})')
-            emit_event(
-                UiEventName.file_status, state="to_download", file=action.file.filepath, size=size
-            )
-        for action in uploads:
-            size = action.file.size or 0
-            log.info(f'{ActionLabel.TO_UPLOAD} "{action.file.filepath}" ({format_bytes(size)})')
-            emit_event(
-                UiEventName.file_status, state="to_upload", file=action.file.filepath, size=size
-            )
-        for action in deletes:
-            size = action.file.size or 0
-            log.info(f'{ActionLabel.TO_DELETE} "{action.file.filepath}" ({format_bytes(size)})')
-            emit_event(
-                UiEventName.file_status, state="to_delete", file=action.file.filepath, size=size
             )
 
         log.info(
@@ -214,6 +202,20 @@ def _run_preview(log) -> None:
         emit_event(UiEventName.error, message=f"Preview failed: {e}")
     log.info("--- End Preview ---")
     emit_event(UiEventName.preview_end)
+
+
+def _read_secret_from_fd(fd: int | None) -> str | None:
+    """Read a secret string from a file descriptor, or None if unavailable."""
+    if fd is None:
+        return None
+    import os
+
+    try:
+        with os.fdopen(fd, "r") as f:
+            value = f.read().strip()
+            return value or None
+    except Exception:
+        return None
 
 
 # Provenance of a resolved tuning value; feeds AUTOTUNE_MANAGED_KEYS so the LAN
@@ -672,31 +674,9 @@ def run_sync(
     - Validating configuration
     - Running sync (single or continuous)
     """
-    # Read API key from file descriptor if provided (secure passing from parent)
-    api_key_from_fd: str | None = None
-    if api_key_fd is not None:
-        import os
-
-        try:
-            with os.fdopen(api_key_fd, "r") as f:
-                api_key_from_fd = f.read().strip()
-            if not api_key_from_fd:
-                api_key_from_fd = None
-        except Exception:
-            pass  # Fall back to environment variable
-
-    # Read LAN key from file descriptor if provided (secure passing from parent)
-    lan_key_from_fd: str | None = None
-    if lan_key_fd is not None:
-        import os
-
-        try:
-            with os.fdopen(lan_key_fd, "r") as f:
-                lan_key_from_fd = f.read().strip()
-            if not lan_key_from_fd:
-                lan_key_from_fd = None
-        except Exception:
-            pass  # Fall back to environment variable
+    # Read secrets from file descriptors if provided (secure passing from parent)
+    api_key_from_fd = _read_secret_from_fd(api_key_fd)
+    lan_key_from_fd = _read_secret_from_fd(lan_key_fd)
 
     # Install the structured event emitter (P0-B). No-op when the parent did
     # not pass --events-json-fd, so a plain CLI run is unaffected.
