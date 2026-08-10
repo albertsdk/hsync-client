@@ -11,7 +11,6 @@ HSYNC Client - Main synchronization logic.
 This module contains the core synchronization logic extracted from main.py.
 """
 
-import contextlib
 import sys
 from asyncio import run
 from pathlib import Path
@@ -20,8 +19,6 @@ from typing import Any, Literal
 
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
-from hsync_common.models.file import clear_sha256_cache
-from hsync_common.models.sync_action import SyncActionName
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
 
@@ -71,15 +68,10 @@ from hsync_client.constants import (
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.lan_handler import run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
+from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.remote_websocket import remote_connect
 from hsync_client.retry import retry_on_connection_error
-from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
-    ensure_hsynckeep_files,
-    get_files_local,
-    get_files_remote,
-    get_sync_actions,
-    get_tombstones_remote,
     sync,
 )
 from hsync_client.utils import (
@@ -89,119 +81,6 @@ from hsync_client.utils import (
     is_valid_logfile,
     reset_bandwidth_throttle,
 )
-
-
-def _run_preview(log) -> None:
-    """
-    Run a preview (dry-run) showing pending sync actions.
-
-    This is triggered by a ``PREVIEW`` command on stdin and shows what
-    would be synced without actually performing any transfers.
-
-    Emits structured log messages for each file with prefixes:
-    - [SYNCED] - file is in sync (no action needed)
-    - [TO DOWNLOAD] - file needs to be downloaded
-    - [TO UPLOAD] - file needs to be uploaded
-    - [TO DELETE] - file will be deleted
-    """
-    log.info("--- Preview (dry-run) ---")
-    emit_event(UiEventName.preview_start)
-    try:
-        # Clear SHA-256 cache so every file is re-hashed with fresh content
-        clear_sha256_cache()
-
-        # Ensure empty directories have sentinel files
-        ensure_hsynckeep_files()
-
-        local_files = get_files_local()
-        remote_files = get_files_remote()
-        tombstones = get_tombstones_remote()
-        lan_mode = CONFIG.get("LAN_MODE", False)
-        sync_actions = get_sync_actions(
-            remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
-        )
-
-        def _is_sentinel(action) -> bool:
-            """Return True if the action concerns a .hsynckeep sentinel."""
-            fp = action.file.filepath or ""
-            return fp.endswith(HSYNCKEEP_FILENAME)
-
-        downloads = [
-            a for a in sync_actions if a.name == SyncActionName.download and not _is_sentinel(a)
-        ]
-        uploads = [
-            a for a in sync_actions if a.name == SyncActionName.upload and not _is_sentinel(a)
-        ]
-        deletes = [
-            a for a in sync_actions if a.name == SyncActionName.delete and not _is_sentinel(a)
-        ]
-        synced = [
-            a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)
-        ]
-
-        # Detect renames: DELETE + DOWNLOAD pairs with same sha256sum and size.
-        # When a file is renamed on the master, the client sees a delete of
-        # the old path and a download of the new path.  If both share the
-        # same sha256 checksum and size the operation is really just a rename.
-        renames: list[tuple] = []  # (delete_action, download_action)
-        if deletes and downloads:
-            delete_by_hash: dict[tuple, list] = {}
-            for action in deletes:
-                key = (action.file.sha256sum, action.file.size or 0)
-                if key[0]:  # sha256sum must be available
-                    delete_by_hash.setdefault(key, []).append(action)
-
-            matched_download_idx: set[int] = set()
-            matched_delete_ids: set[int] = set()
-            for i, dl_action in enumerate(downloads):
-                key = (dl_action.file.sha256sum, dl_action.file.size or 0)
-                if key[0] and key in delete_by_hash:
-                    for del_action in delete_by_hash[key]:
-                        if id(del_action) not in matched_delete_ids:
-                            renames.append((del_action, dl_action))
-                            matched_download_idx.add(i)
-                            matched_delete_ids.add(id(del_action))
-                            break
-
-            # Remove matched items so they are not emitted as separate events
-            downloads = [a for i, a in enumerate(downloads) if i not in matched_download_idx]
-            deletes = [a for a in deletes if id(a) not in matched_delete_ids]
-
-        # Emit structured messages for each file status (text log + event channel)
-        for actions, label, state in [
-            (synced, ActionLabel.SYNCED, "synced"),
-            (downloads, ActionLabel.TO_DOWNLOAD, "to_download"),
-            (uploads, ActionLabel.TO_UPLOAD, "to_upload"),
-            (deletes, ActionLabel.TO_DELETE, "to_delete"),
-        ]:
-            for action in actions:
-                size = action.file.size or 0
-                log.info(f'{label} "{action.file.filepath}" ({format_bytes(size)})')
-                emit_event(
-                    UiEventName.file_status, state=state, file=action.file.filepath, size=size
-                )
-        for del_action, dl_action in renames:
-            size = dl_action.file.size or 0
-            log.info(
-                f'{ActionLabel.TO_RENAME} "{del_action.file.filepath}" -> "{dl_action.file.filepath}" ({format_bytes(size)})'
-            )
-            emit_event(
-                UiEventName.rename_status,
-                src=del_action.file.filepath,
-                dst=dl_action.file.filepath,
-                size=size,
-            )
-
-        log.info(
-            f"Preview: {len(synced)} synced, {len(downloads)} downloads, "
-            f"{len(uploads)} uploads, {len(deletes)} deletes, "
-            f"{len(renames)} renames"
-        )
-    except Exception as e:
-        log.error(f"Preview failed: {e}")
-        emit_event(UiEventName.error, message=f"Preview failed: {e}")
-    log.info("--- End Preview ---")
-    emit_event(UiEventName.preview_end)
 
 
 def _read_secret_from_fd(fd: int | None) -> str | None:
@@ -1109,128 +988,9 @@ def run_sync(
         run(sync())
 
 
-async def _with_stdin_commands(log, coro) -> None:
-    """Run *coro* with a background stdin command reader.
-
-    The reader listens for JSON commands on stdin (one per line) and
-    dispatches them to the appropriate handler.  ``PREVIEW`` triggers
-    a dry-run preview and ``SYNC`` runs a full synchronisation.
-
-    When *coro* finishes (or raises), the reader is cancelled.
-    """
-    import asyncio
-
-    handler = StdinCommandHandler(log)
-    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
-
-    async def _handle_sync(**_kw: object) -> None:
-        lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
-
-    handler.register("SYNC", _handle_sync)
-
-    async def _handle_set_sync_direction(**kw: object) -> None:
-        direction = str(kw.get("direction", "bidirectional"))
-        valid = ("bidirectional", "upload-only", "download-only")
-        if direction not in valid:
-            log.warning(f"Invalid sync direction: {direction!r}. Must be one of {valid}.")
-            return
-        old = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-        if direction == old:
-            log.debug(f"Sync direction already set to {direction!r}, no change.")
-            return
-        CONFIG["SYNC_DIRECTION"] = direction
-        log.info(f"Sync direction changed: {old!r} → {direction!r}")
-        # Trigger an immediate resync with the new direction
-        lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
-
-    handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
-
-    async def _handle_set_bandwidth(**kw: object) -> None:
-        upload = kw.get("upload")
-        download = kw.get("download")
-
-        if upload is not None:
-            if upload == 0 or upload == "0":
-                CONFIG["MAX_BANDWIDTH_UPLOAD"] = None
-            elif isinstance(upload, int):
-                CONFIG["MAX_BANDWIDTH_UPLOAD"] = upload
-            elif isinstance(upload, str):
-                try:
-                    CONFIG["MAX_BANDWIDTH_UPLOAD"] = int(upload)
-                except (ValueError, TypeError):
-                    log.warning(f"Invalid upload bandwidth value: {upload!r}")
-                    return
-            else:
-                log.warning(f"Invalid upload bandwidth value: {upload!r}")
-                return
-
-        if download is not None:
-            if download == 0 or download == "0":
-                CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = None
-            elif isinstance(download, int):
-                CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = download
-            elif isinstance(download, str):
-                try:
-                    CONFIG["MAX_BANDWIDTH_DOWNLOAD"] = int(download)
-                except (ValueError, TypeError):
-                    log.warning(f"Invalid download bandwidth value: {download!r}")
-                    return
-            else:
-                log.warning(f"Invalid download bandwidth value: {download!r}")
-                return
-
-        upload_str = (
-            format_bytes(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"
-            if CONFIG["MAX_BANDWIDTH_UPLOAD"]
-            else "unlimited"
-        )
-        download_str = (
-            format_bytes(CONFIG["MAX_BANDWIDTH_DOWNLOAD"]) + "/s"
-            if CONFIG["MAX_BANDWIDTH_DOWNLOAD"]
-            else "unlimited"
-        )
-        log.info(f"Bandwidth limits updated: upload={upload_str}, download={download_str}")
-        # Reset throttle state to apply new limits
-        reset_bandwidth_throttle()
-
-    handler.register("SET_BANDWIDTH", _handle_set_bandwidth)
-
-    stdin_task = asyncio.create_task(handler.run())
-
-    try:
-        await coro
-    finally:
-        stdin_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await stdin_task
-
-
 async def _run_with_stdin_commands(log) -> None:
     """Run remote_connect with a background stdin command reader."""
     await _with_stdin_commands(log, remote_connect())
-
-
-async def _run_stdin_wait(log) -> None:
-    """Block reading stdin commands until EOF or SYNC.
-
-    Used in persistent dry-run mode (LAN or server) where there is no
-    WebSocket connection yet.  When a ``SYNC`` command arrives the
-    handler performs the full sync, then stops the reader so the caller
-    can proceed to the next phase (e.g. WebSocket connection).
-    """
-    handler = StdinCommandHandler(log)
-    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
-
-    async def _handle_sync(**_kw: object) -> None:
-        CONFIG["DRYRUN"] = False
-        lan = CONFIG.get("LAN_MODE", False)
-        await sync(lan_mode=lan)
-        handler.stop()
-
-    handler.register("SYNC", _handle_sync)
-    await handler.run()
 
 
 def _check_server_connectivity(
