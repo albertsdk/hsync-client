@@ -92,7 +92,7 @@ def _terminate_child_hsync_processes() -> None:
     import time
 
     pid = os.getpid()
-    for pattern in ("hsync_client", "hsync_server"):
+    for pattern in ("hsync_client",):
         try:
             out = subprocess.run(
                 ["pgrep", "-P", str(pid), "-f", pattern],
@@ -109,7 +109,7 @@ def _terminate_child_hsync_processes() -> None:
                 pass
     time.sleep(0.3)
     # SIGKILL survivors
-    for pattern in ("hsync_client", "hsync_server"):
+    for pattern in ("hsync_client",):
         try:
             out = subprocess.run(
                 ["pgrep", "-P", str(pid), "-f", pattern],
@@ -251,7 +251,7 @@ def _self_signed_cert(cert_dir):
     return str(cert_path), str(key_path)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def live_server(tmp_path_factory):
     """Start the real hsync-server as a *separate subprocess* over loopback HTTPS.
 
