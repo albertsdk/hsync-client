@@ -8,9 +8,30 @@
 Shared pytest fixtures for the hsync-client test suite.
 """
 
+import os
+from collections.abc import Generator
+
 import pytest
 
 from .lan_helpers import lan_bucket, lan_master_dir, lan_slave_dir  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _prevent_os_environ_leakage(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Snapshot ``os.environ`` before each test and remove any keys added
+    by the test afterwards.
+
+    Tests that manipulate ``os.environ`` directly (without ``monkeypatch``)
+    can leak variables into later tests.  This fixture acts as a safety net:
+    it records the full set of keys before the test and deletes any new keys
+    that appear when the test finishes.
+    """
+    before = set(os.environ.keys())
+    yield
+    after = set(os.environ.keys())
+    added = after - before
+    for key in sorted(added):
+        monkeypatch.delenv(key, raising=False)
 
 
 @pytest.fixture(autouse=True)

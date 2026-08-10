@@ -115,6 +115,18 @@ Every bug fix must include a regression test that fails against the faulty behav
 * If the internal implementation were completely rewritten while keeping the same contract, would the test still pass?
 * Does the test verify a behavior that the end user or a remote client can actually observe?
 
+### 4-bis. Test Environment Isolation
+
+* **Clean start**: every test or fixture must verify that the starting
+  environment is clean (no leftover temp files, no stray environment
+  variables, no orphaned processes, no global state polluted by a previous
+  test).
+* **Clean exit**: every test must restore the initial state when it finishes,
+  even on error or interruption (use ``try/finally``, ``autouse`` fixtures,
+  ``TemporaryFolder``, ``@Before``/``@After``).
+* **No cross-test contamination**: a test's outcome must never depend on
+  execution order or on whether a previous test failed.
+
 ### 5. Bounded Correction Cycle
 
 Fix issues found during verification and repeat the relevant checks, for at most two review-and-correction cycles unless the user requests more. Do not finalize with known failures. If blocked by dependencies, credentials, external services, platform tooling, or pre-existing failures, report the blocker precisely. Never claim a check passed unless it completed successfully.
