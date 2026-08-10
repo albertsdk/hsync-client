@@ -240,6 +240,14 @@ either the absolute threshold (`--mass-delete-threshold`, default 50) or the
 percentage of local files (`--mass-delete-percent`, default 50%). An empty
 remote bucket is **always blocked**, regardless of thresholds.
 
+> **Tombstone exemption**: a deletion backed by a matching tombstone marker
+> (the file was deleted elsewhere while this peer was offline) is
+> **never blocked** by the guard. A tombstone is positive proof the removal is
+> intentional, so an empty master bucket is the expected outcome of a
+> legitimate single-file deletion, not a suspect transient state. Only
+> *unconfirmed* deletions (no tombstone) are subject to the empty-bucket and
+> threshold rules.
+
 ```bash
 # Disable the guard (when confident the server is authoritative)
 hsync -s https://server:9753 -b mybucket --no-mass-delete-guard

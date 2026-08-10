@@ -706,6 +706,34 @@ class TestGetSyncActionsTombstones:
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
+    def test_tombstone_delete_is_confirmed(self, tmp_path):
+        """A tombstone-driven delete carries ``tombstone_confirmed=True``.
+
+        Regression test: the mass-deletion guard exempts tombstone-confirmed
+        deletions from its empty-bucket block, so a solo-local file deleted
+        elsewhere while this peer was offline is actually removed instead of
+        being stranded by a false "suspect empty master" guard trip. The flag
+        is the contract between ``get_sync_actions`` and the guard.
+        """
+        local_file = tmp_path / "gone.txt"
+        local_file.write_text("content")
+
+        file = File.get(str(local_file))
+        assert file is not None
+        local_files = [file.to_dict()]
+        tombstones = {
+            tombstone_key("gone.txt"): {
+                "ts": (file.mtime or 0) + 100,
+                "sha256": file.sha256sum,
+            }
+        }
+
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            result = get_sync_actions([], local_files, tombstones=tombstones)
+            assert len(result) == 1
+            assert result[0].name == SyncActionName.delete
+            assert result[0].tombstone_confirmed is True
+
 
 class TestClientTombstonesModule:
     """Tests for the per-peer tombstone store (hsync_client.tombstones)."""
