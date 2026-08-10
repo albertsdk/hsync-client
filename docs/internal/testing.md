@@ -43,6 +43,10 @@ tests, how to write new tests, and cross-project testing with `hsync-common`.
 .venv/bin/python -m pytest -x
 ```
 
+> For LAN black-box tests, prefer `--maxfail=N` over `-x`: a single mDNS
+> election timeout is expected intermittently and should not abort the other
+> independent LAN files. See [LAN‑mode Black‑Box tests](#lanmode-blackbox-tests).
+
 ## Test structure
 
 ```
@@ -331,8 +335,16 @@ generation, election timing, multi‑process coordination).
 
 To opt in:
 ```bash
-HSYNC_BB_LAN=1 .venv/bin/python -m pytest tests/test_bb_lan_core.py tests/test_bb_lan_advanced.py tests/test_bb_lan_auth_direction.py tests/test_bb_lan_features.py tests/test_bb_lan_files.py tests/test_bb_lan_security.py
+HSYNC_BB_LAN=1 .venv/bin/python -m pytest --maxfail=3 \
+  tests/test_bb_lan_core.py tests/test_bb_lan_advanced.py \
+  tests/test_bb_lan_auth_direction.py tests/test_bb_lan_features.py \
+  tests/test_bb_lan_files.py tests/test_bb_lan_security.py
 ```
+
+Run the LAN group **isolated** from the remote/server black-box suite: do not
+combine the two in the same `pytest` invocation with `-x`, or a single LAN
+timeout will abort the stable remote suite. `--maxfail` keeps one flaky LAN
+file from masking the others.
 
 The LAN tests start two subprocesses with `--lan-mode` (and
 `--force-master` / `--never-master`). They use the `_HSYNC_COMMON_DIR`
@@ -346,6 +358,13 @@ constant to inject the `hsync-common` source directory into
 - stdout is piped to `subprocess.DEVNULL` to avoid deadlock; stderr is
   polled for log markers (`MASTER`, `Pinned LAN master certificate`,
   etc.).
+- Do **not** combine LAN and remote/server black-box tests in the same
+  `pytest` invocation with `-x`: a LAN timeout will abort the stable
+  remote suite. Run the two groups separately, or use `--maxfail`.
+- The `tests/conftest.py` autouse fixture `_kill_orphan_hsync_processes`
+  terminates orphaned `hsync_client`/`hsync_server` subprocesses
+  (direct children of the pytest PID, via `pgrep -P`) after each test,
+  preventing stale mDNS peers from cascading into subsequent tests.
 
 ### Shared Black‑Box constants
 

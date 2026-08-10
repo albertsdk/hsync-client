@@ -47,6 +47,76 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", False, raising=False)
 
 
+def _terminate_child_hsync_processes() -> None:
+    """Terminate orphaned hsync_client/hsync_server subprocesses of this pytest.
+
+    The LAN black-box tests spawn ``hsync_client`` subprocesses via
+    ``_lan_start`` (``lan_helpers.py``). When an assertion fires before the
+    test's ``finally: _terminate(...)`` runs — or the kill doesn't reach the
+    children in time — stale mDNS peers linger (``PEER_TIMEOUT = 15s``) and
+    cascade into later tests (split-brain elections, port conflicts, stale
+    discovery). ``_terminate`` only handles the ``Popen`` it is given; this
+    helper is the safety net for the cases it cannot reach.
+
+    ``pgrep -P <pytest_pid> -f <pattern>`` filters to *direct* children of this
+    pytest process only, so unrelated ``hsync_client`` processes running on the
+    host (e.g. active development) are never touched. Linux-only by design:
+    the LAN BB suite already requires Linux inotify / ``on_closed`` behaviour
+    (``file_event_handler.py`` ``SUPPORTS_ON_CLOSED``), so ``pgrep`` is
+    guaranteed available. Falls back to a silent skip if ``pgrep`` is missing.
+    """
+    import os
+    import signal
+    import subprocess
+    import time
+
+    pid = os.getpid()
+    for pattern in ("hsync_client", "hsync_server"):
+        try:
+            out = subprocess.run(
+                ["pgrep", "-P", str(pid), "-f", pattern],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return  # pgrep missing: skip (tests manage their own Popen)
+        for line in out.stdout.split():
+            try:
+                os.kill(int(line), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+    time.sleep(0.3)
+    # SIGKILL survivors
+    for pattern in ("hsync_client", "hsync_server"):
+        try:
+            out = subprocess.run(
+                ["pgrep", "-P", str(pid), "-f", pattern],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return
+        for line in out.stdout.split():
+            try:
+                os.kill(int(line), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
+@pytest.fixture(autouse=True)
+def _kill_orphan_hsync_processes() -> None:
+    """Reap orphaned LAN subprocesses after each test (see helper above).
+
+    Function-scoped because the mDNS cascade happens *between* tests: a peer
+    orphaned by test N interferes with the election of test N+1. Overhead is
+    two ``pgrep`` calls per test (~ms).
+    """
+    yield
+    _terminate_child_hsync_processes()
+
+
 # =============================================================================
 # Black-box harness (test_bb_*.py)
 #

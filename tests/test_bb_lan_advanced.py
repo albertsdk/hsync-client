@@ -74,7 +74,7 @@ class TestLanTombstone:
                 # Delete the file on master — the watcher detects it and
                 # records a tombstone
                 (Path(lan_master_dir) / "pre_delete.txt").unlink()
-                assert _wait_for_text_in_stderr(master, "LOCAL_DELETE", timeout=15), (
+                assert _wait_for_text_in_stderr(master, "[LOCAL DELETE]", timeout=15), (
                     "Master did not detect the deletion and record a tombstone"
                 )
             finally:
