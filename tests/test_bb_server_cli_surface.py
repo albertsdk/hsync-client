@@ -8,11 +8,21 @@
 
 Drives the public Typer entry point only (help/version/argument parsing).
 No internal modules are imported or mocked.
+
+Requires HSYNC_BB_SERVER=1 to run.
 """
 
+import os
+
+import pytest
 from typer.testing import CliRunner
 
 from hsync_client.cli import app
+
+_BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
+_BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
+
+pytestmark = pytest.mark.skipif(not _BB_SERVER_ENABLED, reason=_BB_SERVER_REASON)
 
 runner = CliRunner()
 

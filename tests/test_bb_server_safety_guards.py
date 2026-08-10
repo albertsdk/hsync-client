@@ -9,9 +9,19 @@
 Drives the public CLI against the real server. Verifies the observable
 abort/proceed behaviour of the disk-space and deletion-risk guards without
 touching internals.
+
+Requires HSYNC_BB_SERVER=1 to run.
 """
 
+import os
 from pathlib import Path
+
+import pytest
+
+_BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
+_BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
+
+pytestmark = pytest.mark.skipif(not _BB_SERVER_ENABLED, reason=_BB_SERVER_REASON)
 
 
 class TestDiskSpaceGuard:
