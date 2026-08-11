@@ -587,7 +587,7 @@ class TestConflictResolution:
         # Pattern: <stem>_conflicted_copy_<YYYY-MM-DDTHHMMSSZ>_<cid>.<ext>
         name = Path(conflict_path).name
         assert re.match(
-            r"tz_test_conflicted_copy_\d{4}-\d{2}-\d{2}T\d{6}Z_[a-zA-Z0-9\-_.]+\.bin",
+            r"tz_test_conflicted_copy_\d{8}T\d{6}Z_[a-zA-Z0-9\-_.]+\.bin",
             name,
         ), f"Filename {name!r} does not match the UTC ISO-8601 pattern"
 
