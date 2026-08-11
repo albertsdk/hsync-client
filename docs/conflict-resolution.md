@@ -69,11 +69,11 @@ Each recorded version entry contains four fields:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `base_hash` | `str` | SHA-256 of the file content at the last successful sync |
-| `change_id` | `str` | Opaque, random 128-bit id identifying this version lineage |
+| `version_id` | `str` | Opaque, random 128-bit id identifying this version lineage |
 | `origin_cid` | `str \| None` | Client ID that authored the version (`None` if remote/unknown) |
 | `ts` | `int` | Wall-clock timestamp when the base was recorded (unix seconds) |
 
-The `change_id` is **not** content-derived — it is a freshly minted random token
+The `version_id` is **not** content-derived — it is a freshly minted random token
 (`secrets.token_hex(16)`) that serves as a lineage marker. It lets a peer
 detect when a file was replaced with a completely different file that happens to
 have the same hash (hash collision is astronomically unlikely, but the lineage
