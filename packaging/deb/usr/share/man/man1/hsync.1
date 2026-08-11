@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2025-06-20" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-08-11" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -94,9 +94,9 @@ Skip SSL/TLS certificate verification (not recommended).
 Path to a custom CA certificate file for self-signed server certificates.
 .TP
 .BR \-\-timeout =\fISEC\fP
-HTTP request timeout in seconds (default:
-.BR 30 ;
-range: 1\(en300).
+HTTP request timeout in seconds. When auto-tuning is enabled (default), the
+timeout is derived from measured network latency if not set explicitly.
+Range: 1\(en300.
 .TP
 .BR \-\-api\-key\-fd =\fIFD\fP
 Read the API key from the given file descriptor. This is a hidden option
@@ -128,9 +128,9 @@ range: 20\(en3600).
 .BR \-\-retry\-delay =\fISEC\fP
 Wait
 .I SEC
-seconds before retrying a failed connection (default:
-.BR 5 ;
-range: 1\(en60).
+seconds before retrying a failed connection. When auto-tuning is enabled
+(default), the delay is derived from RTT if not set explicitly.
+Range: 1\(en60.
 .TP
 .BR \-\-stability\-delay =\fISEC\fP
 Seconds to wait after a file stops changing before uploading it
@@ -171,8 +171,8 @@ Disable zstd compression for file transfers.
 .B \-\-no\-delta
 Disable rsync-style delta transfer (block-level sync) for large files with
 small changes. When disabled, all files are transferred in full. Delta transfer
-is enabled by default and automatically reduces bandwidth for files ≥ 256 KB
-(server mode) or ≥ 1 MB (LAN mode) when both peers support it.
+is enabled by default and automatically reduces bandwidth for files \(>= 256 KB
+(server mode) or \(>= 1 MB (LAN mode) when both peers support it.
 .TP
 .BR \-\-delta\-min\-file\-size =\fIBYTES\fP
 Minimum file size in bytes for delta transfer in server mode (default:
@@ -220,7 +220,7 @@ Maximum number of concurrent file transfers (default:
 .BR 5 ;
 range: 1\(en20).
 .TP
-.BR \-\-max\-download\-size =\fIMB\fP
+.BR \-\-max\-inbound\-size =\fIMB\fP
 Maximum size in MB of a single inbound file (download or received LAN upload),
 enforced as an absolute cap on top of the peer-declared size (default:
 .BR 10240 ,
@@ -251,8 +251,11 @@ Time to wait for initial LAN peer discovery
 Group name for LAN peer filtering. Only peers with the same group
 will discover each other.
 .TP
-.B \-\-no\-lan\-persistent
-Exit when no LAN peers are found instead of waiting indefinitely.
+.BR \-\-lan\-persistent " / " \-\-no\-lan\-persistent
+Stay active waiting for peers (default:
+.BR on )
+or exit when no LAN peers are found
+.RB ( \-\-no\-lan\-persistent ).
 .TP
 .B \-\-force\-master
 Force this client to always act as master in LAN mode.
@@ -359,7 +362,8 @@ Shared secret for LAN mode peer authentication.
 .TP
 .B HSYNC_MAX_CONCURRENT_TRANSFERS
 Maximum number of concurrent file transfers (default:
-.BR 5 ).
+.BR 5 ;
+range: 1\(en20).
 When auto-tuning is enabled, this value is derived from storage type,
 bandwidth, and transfer-queue profile unless set explicitly.
 .TP
@@ -373,22 +377,62 @@ to disable auto-tuning and use static defaults.
 .TP
 .B HSYNC_HTTP_TIMEOUT
 HTTP request timeout in seconds (1\(en300). When auto-tuning is enabled
-and this is unset, the timeout is derived from measured network latency
-(30/45/60 s based on RTT).
+and this is unset, the timeout is derived from measured network latency.
 .TP
 .B HSYNC_RECONNECT_DELAY
 WebSocket reconnection delay in seconds (1\(en60). When auto-tuning is
-enabled and this is unset, the delay is derived from RTT (5\(en15 s).
+enabled and this is unset, the delay is derived from RTT.
 .TP
 .B HSYNC_TRANSFER_RETRY_MIN_WAIT
 Minimum per-file retry wait in seconds (exponential backoff floor).
 When auto-tuning is enabled and this is unset, the value is derived
-from RTT (5\(en15 s).
+from RTT.
 .TP
 .B HSYNC_TRANSFER_RETRY_MAX_WAIT
 Maximum per-file retry wait in seconds (exponential backoff ceiling).
 When auto-tuning is enabled and this is unset, the value is derived
-from RTT (10\(en30 s).
+from RTT.
+.TP
+.B HSYNC_STABILITY_DELAY
+Seconds to wait after a file stops changing before uploading it
+(default: 5; range: 1\(en60).
+.TP
+.B HSYNC_RESYNC
+Periodic resync interval in seconds (default:
+.BR 300 ;
+0 = disabled).
+.TP
+.B HSYNC_LAN_PORT
+Port to use when acting as LAN master (default: 0 = auto).
+.TP
+.B HSYNC_LAN_GROUP
+Group name for LAN peer filtering (default: empty = no filter).
+.TP
+.B HSYNC_DISCOVERY_TIMEOUT
+Seconds to wait for the first LAN peer (default:
+.BR 10 ;
+0 = wait indefinitely).
+.TP
+.B HSYNC_LAN_PERSISTENT
+Stay active indefinitely waiting for peers (default:
+.BR true ).
+.TP
+.B HSYNC_NEVER_MASTER
+Never become master in LAN mode (default:
+.BR false ).
+.TP
+.B HSYNC_LAN_REQUIRE_PAIRING
+Strict pairing: require out-of-band confirmation for first-seen master
+certificates (default:
+.BR false ).
+.TP
+.B HSYNC_IGNORE_DELETE
+Do not propagate file deletions (default:
+.BR false ).
+.TP
+.B HSYNC_COMPRESSION_ENABLED
+Enable zstd compression for file transfers (default:
+.BR true ).
 .TP
 .B HSYNC_DELTA_ENABLED
 Enable rsync-style delta transfer for large files with small changes (default:
@@ -407,6 +451,47 @@ Minimum file size in bytes for delta transfer in LAN mode (default:
 .BR 1048576 ,
 1 MB). LAN mode uses a higher threshold because bandwidth savings are less
 significant on fast local networks.
+.TP
+.B HSYNC_HEARTBEAT_INTERVAL
+Heartbeat interval in seconds for LAN mode (default:
+.BR 5 ).
+.TP
+.B HSYNC_PEER_TIMEOUT
+Peer timeout in seconds for LAN mode (default:
+.BR 15 ).
+.TP
+.B HSYNC_IGNORE_PATTERNS
+Comma-separated extra gitignore-style patterns (layered on
+.BR .hsyncignore ).
+.TP
+.B HSYNC_MASS_DELETE_GUARD
+Enable/disable the mass-deletion safety guard (default:
+.BR true ).
+.TP
+.B HSYNC_MASS_DELETE_THRESHOLD
+Absolute number of deletions per cycle that trips the guard (default:
+.BR 50 ;
+0 = disabled).
+.TP
+.B HSYNC_MASS_DELETE_PERCENT
+Percentage of local files whose deletion trips the guard (default:
+.BR 50 ;
+0 = disabled).
+.TP
+.B HSYNC_TOMBSTONE_TTL_DAYS
+Days to retain deletion markers before garbage collection (default:
+.BR 30 ;
+0 = forever).
+.TP
+.B HSYNC_LAN_CERT_DIR
+Directory holding the persistent LAN master keypair (default:
+.I ~/.local/state/hsync/lan_cert
+).
+.TP
+.B HSYNC_LAN_PIN_FILE
+File storing the pinned fingerprints of known LAN peers (default:
+.I ~/.local/state/hsync/lan_known_peers.json
+).
 .
 .\" ---------------------------------------------------------------------
 .SH FILES
