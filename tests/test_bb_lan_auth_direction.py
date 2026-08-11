@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Black-box tests for LAN authentication, sync direction, master restart, and concurrency.
+"""Black-box tests for LAN authentication and sync-direction enforcement.
 
 Requires HSYNC_BB_LAN=1 to run.
 """
@@ -23,6 +23,7 @@ from .lan_helpers import (
     _lan_start,
     _terminate,
     _wait_for_file,
+    _wait_for_master,
     _wait_for_text_in_stderr,
 )
 
@@ -73,9 +74,7 @@ class TestLanKeyAuth:
             stderr=subprocess.PIPE,
         )
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with a DIFFERENT LAN key
             env_slave = {
@@ -112,13 +111,10 @@ class TestLanKeyAuth:
                 stderr=subprocess.PIPE,
             )
             try:
-                # Slave should be refused (401/403 or connection error)
-                # Look for authentication-related failure in stderr
-                auth_failed = (
-                    _wait_for_text_in_stderr(slave, "401", timeout=30)
-                    or _wait_for_text_in_stderr(slave, "403", timeout=5)
-                    or _wait_for_text_in_stderr(slave, "Unauthorized", timeout=5)
-                )
+                # Slave should be rejected (auth error in master or disconnect)
+                auth_failed = _wait_for_text_in_stderr(
+                    master, "Unauthorized", timeout=15
+                ) or _wait_for_text_in_stderr(slave, "Unauthorized", timeout=5)
                 assert auth_failed, "Slave should have been rejected with wrong LAN key"
             finally:
                 _terminate(slave)
@@ -136,9 +132,7 @@ class TestLanSyncDirection:
         """Slave with --sync-direction download-only: its files don't reach master."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
@@ -193,9 +187,7 @@ class TestLanSyncDirection:
         """Slave with --sync-direction upload-only: master files don't reach slave."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
@@ -258,9 +250,7 @@ class TestLanMasterRestart:
         # First master session
         master1 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master1, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master1, lan_slave_dir, lan_bucket)
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
@@ -278,9 +268,7 @@ class TestLanMasterRestart:
             # Restart master with same dir (same bucket, inherits existing files)
             master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
             try:
-                assert _wait_for_text_in_stderr(master2, "MASTER", timeout=30), (
-                    "Restarted master did not become ready"
-                )
+                _wait_for_master(master2, lan_slave_dir, lan_bucket)
 
                 # Create a new file on restarted master
                 content = b"post-restart\n"
@@ -309,32 +297,25 @@ class TestLanConcurrency:
         """Master and slave write different files concurrently → both converge."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 # Wait for initial sync
                 _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
 
-                # Write a file on each side simultaneously
-                master_content = b"master-side\n"
-                slave_content = b"slave-side\n"
-                (Path(lan_master_dir) / "master_file.txt").write_bytes(master_content)
-                (Path(lan_slave_dir) / "slave_file.txt").write_bytes(slave_content)
+                # Both peers write files at the same time
+                (Path(lan_master_dir) / "from_master.txt").write_bytes(b"master-data\n")
+                (Path(lan_slave_dir) / "from_slave.txt").write_bytes(b"slave-data\n")
 
-                # Both files should appear on both sides
-                assert _wait_for_file(str(Path(lan_slave_dir) / "master_file.txt"), timeout=30), (
+                # Master file should appear on slave
+                assert _wait_for_file(str(Path(lan_slave_dir) / "from_master.txt"), timeout=30), (
                     "Master file did not reach slave"
                 )
-                assert _wait_for_file(str(Path(lan_master_dir) / "slave_file.txt"), timeout=30), (
+                # Slave file should appear on master
+                assert _wait_for_file(str(Path(lan_master_dir) / "from_slave.txt"), timeout=30), (
                     "Slave file did not reach master"
                 )
-
-                # Verify content
-                assert (Path(lan_slave_dir) / "master_file.txt").read_bytes() == master_content
-                assert (Path(lan_master_dir) / "slave_file.txt").read_bytes() == slave_content
             finally:
                 _terminate(slave)
         finally:

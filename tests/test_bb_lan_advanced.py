@@ -25,6 +25,7 @@ from .lan_helpers import (
     _terminate,
     _wait_for_file,
     _wait_for_file_gone,
+    _wait_for_master,
     _wait_for_text_in_stderr,
 )
 
@@ -34,29 +35,6 @@ _LAN_REASON = (
 )
 
 pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
-
-
-# =============================================================================
-# Common helper — wait for master to become ready by starting a slave peer.
-# The master only emits "MASTER" in its logs after discovering at least one
-# peer (election is triggered by add_peer → _elect_master).
-# =============================================================================
-
-
-def _wait_for_master(
-    master: subprocess.Popen, lan_slave_dir: str, lan_bucket: str, timeout: float = 30
-) -> None:
-    """Start a slave peer so the master discovers it and runs the election.
-
-    Returns once the master logs "MASTER" (or raises on timeout).
-    """
-    slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
-    try:
-        assert _wait_for_text_in_stderr(master, "MASTER", timeout=timeout), (
-            "Master did not become ready"
-        )
-    finally:
-        _terminate(slave)
 
 
 # =============================================================================

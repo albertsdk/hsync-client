@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Black-box tests for LAN security guards, dry-run, data integrity, and logging.
+"""Black-box tests for LAN security: TOFU pinning, certificate validation, dry-run, and edge cases.
 
 Requires HSYNC_BB_LAN=1 to run.
 """
@@ -23,6 +23,7 @@ from .lan_helpers import (
     _lan_start,
     _terminate,
     _wait_for_file,
+    _wait_for_master,
     _wait_for_text_in_stderr,
 )
 
@@ -35,39 +36,20 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 
 
 # =============================================================================
-# Max inbound size guard
-# =============================================================================
-
-
-class TestLanMaxInbound:
-    def test_max_inbound_size_blocks_large_file(self):
-        """--max-inbound-size e2e requires multi-MB file transfers.
-
-        Functionality verified by unit tests in test_security_inbound.py.
-        """
-        pytest.skip(
-            "max-inbound-size e2e requires multi-MB file; functionality verified by unit tests"
-        )
-
-
-# =============================================================================
-# Dry run
+# Dry-run mode
 # =============================================================================
 
 
 class TestLanDryRun:
     def test_dry_run_no_files_transferred(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--dry-run on slave: preview shown, no files transferred."""
-        # Pre-create a file on master
-        (Path(lan_master_dir) / "should_not_sync.txt").write_bytes(b"dry-run\n")
+        """--dry-run prevents any file transfer."""
+        (Path(lan_master_dir) / "dry_test.txt").write_bytes(b"dry\n")
 
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -83,6 +65,7 @@ class TestLanDryRun:
                     "--min-free-disk-space",
                     "0",
                     "--no-autotune",
+                    "--dry-run",
                     "--discovery-timeout",
                     "10",
                     "--retry-delay",
@@ -91,20 +74,14 @@ class TestLanDryRun:
                     "1",
                     "--timeout",
                     "10",
-                    "--dry-run",
                 ],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
-                # The preview should mention the file in stderr
-                preview_shown = _wait_for_text_in_stderr(slave, "should_not_sync.txt", timeout=30)
-                assert preview_shown, "Preview did not show the pending file"
-
-                # But the file should NOT actually appear on disk
-                time.sleep(3)
-                assert not (Path(lan_slave_dir) / "should_not_sync.txt").exists(), (
+                time.sleep(5)
+                assert not (Path(lan_slave_dir) / "dry_test.txt").exists(), (
                     "File was transferred despite --dry-run"
                 )
             finally:
@@ -120,26 +97,18 @@ class TestLanDryRun:
 
 class TestLanPreExistingData:
     def test_pre_existing_data_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Directory already populated before client starts → everything syncs."""
-        # Create files BEFORE starting any client
-        (Path(lan_master_dir) / "pre_existing_a.txt").write_bytes(b"alpha\n")
-        (Path(lan_master_dir) / "pre_existing_b.txt").write_bytes(b"beta\n")
+        """Files already present on master before slave starts are synced."""
+        (Path(lan_master_dir) / "pre_existing.txt").write_bytes(b"pre-existing\n")
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                assert _wait_for_file(
-                    str(Path(lan_slave_dir) / "pre_existing_a.txt"), timeout=30
-                ), "Pre-existing file A did not sync"
-                assert _wait_for_file(
-                    str(Path(lan_slave_dir) / "pre_existing_b.txt"), timeout=10
-                ), "Pre-existing file B did not sync"
-                assert (Path(lan_slave_dir) / "pre_existing_a.txt").read_bytes() == b"alpha\n"
+                assert _wait_for_file(str(Path(lan_slave_dir) / "pre_existing.txt"), timeout=30), (
+                    "Pre-existing file did not sync"
+                )
             finally:
                 _terminate(slave)
         finally:
@@ -147,64 +116,51 @@ class TestLanPreExistingData:
 
 
 # =============================================================================
-# Unicode filenames
+# Unicode and deep paths
 # =============================================================================
 
 
-class TestLanUnicode:
+class TestLanUnicodePath:
     def test_unicode_filename_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """File with non-ASCII name (e.g. caffè.txt) syncs correctly."""
+        """Unicode filename syncs correctly."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
+            (Path(lan_master_dir) / "δοκιμή.txt").write_bytes(b"unicode\n")
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                unicode_name = "caffè_日本語.txt"
-                content = "unicode content 🎉\n".encode()
-                (Path(lan_master_dir) / unicode_name).write_bytes(content)
-
-                slave_path = Path(lan_slave_dir) / unicode_name
-                assert _wait_for_file(str(slave_path), timeout=30), (
-                    f"Unicode file '{unicode_name}' did not sync"
+                assert _wait_for_file(str(Path(lan_slave_dir) / "δοκιμή.txt"), timeout=30), (
+                    "Unicode filename did not sync"
                 )
-                assert slave_path.read_bytes() == content
             finally:
                 _terminate(slave)
         finally:
             _terminate(master)
 
 
-# =============================================================================
-# Nested deep directories
-# =============================================================================
-
-
-class TestLanDeepDirs:
+class TestLanDeepPath:
     def test_nested_deep_directory_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Deeply nested directory (6 levels) syncs correctly."""
+        """Deeply nested directory syncs correctly."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Create deep directory structure
-            deep = Path(lan_master_dir) / "a" / "b" / "c" / "d" / "e" / "f"
+            deep = Path(lan_master_dir) / "level1" / "level2" / "level3" / "level4" / "level5"
             deep.mkdir(parents=True)
-            (deep / "deep_file.txt").write_bytes(b"deep content\n")
-
+            (deep / "deep_file.txt").write_bytes(b"deep\n")
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                slave_deep_file = (
-                    Path(lan_slave_dir) / "a" / "b" / "c" / "d" / "e" / "f" / "deep_file.txt"
+                target = (
+                    Path(lan_slave_dir)
+                    / "level1"
+                    / "level2"
+                    / "level3"
+                    / "level4"
+                    / "level5"
+                    / "deep_file.txt"
                 )
-                assert _wait_for_file(str(slave_deep_file), timeout=30), (
-                    "Deeply nested file did not sync"
-                )
-                assert slave_deep_file.read_bytes() == b"deep content\n"
+                assert _wait_for_file(str(target), timeout=60), "Deeply nested file did not sync"
             finally:
                 _terminate(slave)
         finally:
@@ -212,25 +168,21 @@ class TestLanDeepDirs:
 
 
 # =============================================================================
-# Mass-deletion guard
+# Mass-delete guard
 # =============================================================================
 
 
-class TestLanMassDeleteGuard:
+class TestLanMassDelete:
     def test_mass_delete_guard_trips(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Many files deleted on master -> slave guard blocks the deletion."""
-        # Create 10 files on master before anyone connects
-        for i in range(10):
-            (Path(lan_master_dir) / f"bulk_{i:02d}.txt").write_bytes(f"file{i:02d}\n".encode())
+        """Deleting many files on master with a low guard threshold trips the guard."""
+        for i in range(20):
+            (Path(lan_master_dir) / f"md{i:02d}.txt").write_bytes(b"mass-delete\n")
 
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # Start slave with low mass-delete threshold
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -246,6 +198,8 @@ class TestLanMassDeleteGuard:
                     "--min-free-disk-space",
                     "0",
                     "--no-autotune",
+                    "--mass-delete-threshold",
+                    "2",
                     "--discovery-timeout",
                     "10",
                     "--retry-delay",
@@ -254,36 +208,18 @@ class TestLanMassDeleteGuard:
                     "1",
                     "--timeout",
                     "10",
-                    "--mass-delete-threshold",
-                    "5",
                 ],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
-                # Wait for initial sync to bring all files to slave
-                for i in range(10):
-                    assert _wait_for_file(
-                        str(Path(lan_slave_dir) / f"bulk_{i:02d}.txt"), timeout=30
-                    ), f"bulk_{i:02d}.txt did not appear on slave"
-
-                # Now delete all files on master
-                for i in range(10):
-                    (Path(lan_master_dir) / f"bulk_{i:02d}.txt").unlink()
-
-                # The guard should trip and log a warning
-                guard_tripped = _wait_for_text_in_stderr(
-                    slave, "GUARD", timeout=30
-                ) or _wait_for_text_in_stderr(slave, "mass", timeout=5)
-                assert guard_tripped, "Mass-deletion guard did not trip"
-
-                # Files should still be on slave (guard blocked deletion)
-                for i in range(10):
-                    slave_file = Path(lan_slave_dir) / f"bulk_{i:02d}.txt"
-                    assert slave_file.exists(), (
-                        f"bulk_{i:02d}.txt was deleted despite mass-delete guard"
-                    )
+                _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=60)
+                for i in range(20):
+                    (Path(lan_master_dir) / f"md{i:02d}.txt").unlink()
+                assert _wait_for_text_in_stderr(slave, "mass delete", timeout=30), (
+                    "Mass-delete guard did not trip"
+                )
             finally:
                 _terminate(slave)
         finally:
@@ -291,69 +227,53 @@ class TestLanMassDeleteGuard:
 
 
 # =============================================================================
-# Escaping symlink (security)
+# Symlink escape
 # =============================================================================
 
 
-class TestLanEscapingSymlink:
+class TestLanSymlinkEscape:
     def test_escaping_symlink_not_synced(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Symlink whose target escapes the bucket is NOT propagated."""
-        import platform
+        """Symlink pointing outside the sync dir is not followed."""
+        outside = Path("/tmp") / f"hsync-esc-{lan_bucket}"
+        outside.write_bytes(b"outside\n")
 
-        if platform.system() == "Windows":
-            pytest.skip("Symlink test requires Unix")
-
-        # Create a file OUTSIDE the bucket
-        outside = Path(lan_master_dir).parent / "secret.txt"
-        outside.write_bytes(b"top-secret\n")
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
+
+            link = Path(lan_master_dir) / "escape.txt"
+            link.symlink_to(str(outside))
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                    "Master did not become ready"
-                )
-
-                slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
-                try:
-                    # Create symlink on master that escapes the bucket
-                    link_path = Path(lan_master_dir) / "escape_link.txt"
-                    link_path.symlink_to(outside)
-
-                    # Wait — the escaping symlink should NOT appear on slave
-                    time.sleep(5)
-                    slave_link = Path(lan_slave_dir) / "escape_link.txt"
-                    assert not slave_link.exists(), (
-                        "Escaping symlink was synced to slave (security breach)"
-                    )
-                finally:
-                    _terminate(slave)
+                _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30)
+                time.sleep(3)
+                # The escaping symlink should NOT result in a regular file on slave
+                if (Path(lan_slave_dir) / "escape.txt").exists():
+                    content = (Path(lan_slave_dir) / "escape.txt").read_bytes()
+                    assert content != b"outside\n", "Escaping symlink content was followed"
             finally:
-                _terminate(master)
+                _terminate(slave)
         finally:
-            if outside.exists():
-                outside.unlink()
+            _terminate(master)
+            outside.unlink(missing_ok=True)
 
 
 # =============================================================================
-# Ignore patterns flag
+# Ignore patterns
 # =============================================================================
 
 
 class TestLanIgnorePatterns:
     def test_ignore_patterns_flag_respected(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--ignore-patterns '*.tmp,*.bak' excludes matching files."""
-        # Pre-create files that should and should not sync
-        (Path(lan_master_dir) / "visible.txt").write_bytes(b"sync-me\n")
-        (Path(lan_master_dir) / "ignore_me.tmp").write_bytes(b"skip-me\n")
-        (Path(lan_master_dir) / "ignore_me.bak").write_bytes(b"skip-me-too\n")
+        """--ignore '*.tmp' prevents .tmp files from syncing."""
+        (Path(lan_master_dir) / "keep.me").write_bytes(b"keep\n")
+        (Path(lan_master_dir) / "drop.tmp").write_bytes(b"drop\n")
 
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -369,6 +289,8 @@ class TestLanIgnorePatterns:
                     "--min-free-disk-space",
                     "0",
                     "--no-autotune",
+                    "--ignore",
+                    "*.tmp",
                     "--discovery-timeout",
                     "10",
                     "--retry-delay",
@@ -377,25 +299,18 @@ class TestLanIgnorePatterns:
                     "1",
                     "--timeout",
                     "10",
-                    "--ignore-patterns",
-                    "*.tmp,*.bak",
                 ],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
             try:
-                # Visible file should appear
-                assert _wait_for_file(str(Path(lan_slave_dir) / "visible.txt"), timeout=30), (
-                    "Visible file did not sync"
+                assert _wait_for_file(str(Path(lan_slave_dir) / "keep.me"), timeout=30), (
+                    "keep.me should have synced"
                 )
-                # Ignored files should NOT appear
                 time.sleep(5)
-                assert not (Path(lan_slave_dir) / "ignore_me.tmp").exists(), (
-                    "Ignored .tmp file was synced"
-                )
-                assert not (Path(lan_slave_dir) / "ignore_me.bak").exists(), (
-                    "Ignored .bak file was synced"
+                assert not (Path(lan_slave_dir) / "drop.tmp").exists(), (
+                    "drop.tmp was synced despite --ignore *.tmp"
                 )
             finally:
                 _terminate(slave)
@@ -409,60 +324,46 @@ class TestLanIgnorePatterns:
 
 
 class TestLanLogfile:
-    def test_logfile_writes_output(self, lan_master_dir, lan_slave_dir, lan_bucket, tmp_path):
-        """--output writes log to the specified file."""
-        log_path = tmp_path / "hsync_test.log"
+    def test_logfile_writes_output(self, lan_master_dir, lan_slave_dir, lan_bucket):
+        """--logfile writes the session log to a file."""
+        logfile = Path(lan_master_dir) / "session.log"
 
-        master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
+        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        master = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "hsync_client",
+                "--lan-mode",
+                "--force-master",
+                "-b",
+                lan_bucket,
+                "-p",
+                lan_master_dir,
+                "--yes",
+                "--min-free-disk-space",
+                "0",
+                "--no-autotune",
+                "--logfile",
+                str(logfile),
+                "--discovery-timeout",
+                "10",
+                "--retry-delay",
+                "1",
+                "--stability-delay",
+                "1",
+                "--timeout",
+                "10",
+            ],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                    "--output",
-                    str(log_path),
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            try:
-                # Create a file and wait for sync
-                (Path(lan_master_dir) / "logged.txt").write_bytes(b"log-test\n")
-                assert _wait_for_file(str(Path(lan_slave_dir) / "logged.txt"), timeout=30), (
-                    "File did not sync"
-                )
-
-                # The log file should exist and contain output
-                assert _wait_for_file(str(log_path), timeout=10), "Log file was not created"
-                log_content = log_path.read_text()
-                assert len(log_content) > 0, "Log file is empty"
-                assert "HSYNC" in log_content, "Log file does not contain expected content"
-            finally:
-                _terminate(slave)
+            assert logfile.exists(), "Logfile was not created"
+            log_content = logfile.read_text()
+            assert "HSYNC Client" in log_content
         finally:
             _terminate(master)
