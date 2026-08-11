@@ -11,6 +11,7 @@ import os
 import time
 from unittest.mock import patch
 
+import pytest
 from hsync_common.models.file import File, clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
 from hsync_common.models.tombstone import tombstone_key
@@ -523,7 +524,7 @@ class TestConflictResolution:
             assert result[0].conflict is False
 
     def test_save_conflict_copy_preserves_local_content(self, tmp_path):
-        """_save_conflict_copy copies the local file to a .conflict-* sibling."""
+        """_save_conflict_copy copies the local file to a _conflicted_copy_* sibling."""
         local_file = tmp_path / "data.txt"
         local_file.write_text("precious local data")
 
@@ -532,7 +533,7 @@ class TestConflictResolution:
 
         conflict_path = _save_conflict_copy(file_obj)
         assert conflict_path is not None
-        assert ".conflict-" in conflict_path
+        assert "conflicted_copy" in conflict_path
         # Original is untouched and the conflict copy holds the same content
         assert local_file.read_text() == "precious local data"
         from pathlib import Path
@@ -547,6 +548,119 @@ class TestConflictResolution:
             False,
         )
         assert _save_conflict_copy(file_obj) is None
+
+    def test_save_conflict_copy_emits_ui_event(self, tmp_path):
+        """_save_conflict_copy emits a conflict_resolved UI event with file and conflict_copy paths."""
+        from unittest.mock import patch
+
+        from hsync_common.protocol.events import UiEventName
+
+        local_file = tmp_path / "conflict_target.txt"
+        local_file.write_text("local version")
+
+        file_obj = File.get(str(local_file))
+        assert file_obj is not None
+
+        with patch("hsync_client.sync.emit_event") as mock_emit:
+            conflict_path = _save_conflict_copy(file_obj)
+            assert conflict_path is not None
+            mock_emit.assert_called_once_with(
+                UiEventName.conflict_resolved,
+                file=str(local_file),
+                conflict_copy=conflict_path,
+                winner="remote",
+            )
+
+    def test_save_conflict_copy_uses_utc_timestamp(self, tmp_path):
+        """The conflicted copy filename uses ISO-8601 UTC, not local time."""
+        import re
+        from pathlib import Path
+
+        local_file = tmp_path / "tz_test.bin"
+        local_file.write_bytes(b"data")
+
+        file_obj = File.get(str(local_file))
+        assert file_obj is not None
+
+        conflict_path = _save_conflict_copy(file_obj)
+        assert conflict_path is not None
+        # Pattern: <stem>_conflicted_copy_<YYYY-MM-DDTHHMMSSZ>_<cid>.<ext>
+        name = Path(conflict_path).name
+        assert re.match(
+            r"tz_test_conflicted_copy_\d{4}-\d{2}-\d{2}T\d{6}Z_[a-zA-Z0-9\-_.]+\.bin",
+            name,
+        ), f"Filename {name!r} does not match the UTC ISO-8601 pattern"
+
+
+class TestSyncCycleFlag:
+    """Unit tests for the sync-cycle coordination flag."""
+
+    def test_flag_clear_when_idle(self):
+        """The flag must be clear when no sync is running."""
+        from hsync_client.sync import _sync_cycle_active, is_sync_cycle_active
+
+        _sync_cycle_active.clear()
+        assert is_sync_cycle_active() is False
+
+    def test_flag_set_during_sync(self, tmp_path):
+        """The flag is set while sync() is running and cleared on exit."""
+        import asyncio
+        from unittest.mock import patch
+
+        from hsync_client.sync import _sync_cycle_active, is_sync_cycle_active, sync
+
+        async def _check_flag_mid_sync():
+            """Run sync() with a mocked scan that checks the flag while running."""
+            captured = []
+
+            def capturing_get_files_remote():
+                captured.append(is_sync_cycle_active())
+                return []
+
+            with (
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.sync.get_files_local", return_value=[]),
+                patch("hsync_client.sync.get_files_remote", side_effect=capturing_get_files_remote),
+                patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                patch("hsync_client.sync.push_tombstones_remote"),
+                patch("hsync_client.sync.clear_sha256_cache"),
+                patch("hsync_client.sync._cleanup_partial_files"),
+                patch("hsync_client.sync.ensure_hsynckeep_files"),
+                patch("hsync_client.sync.sync_state"),
+            ):
+                await sync()
+
+            # The flag was True while sync was running
+            assert any(captured), f"Flag was never set during sync: {captured}"
+            # The flag is cleared after sync completes
+            assert is_sync_cycle_active() is False
+
+        _sync_cycle_active.clear()
+        asyncio.run(_check_flag_mid_sync())
+
+    def test_flag_cleared_on_sync_error(self):
+        """The flag is cleared even if sync() raises an exception."""
+        import asyncio
+        from unittest.mock import patch
+
+        from hsync_client.sync import _sync_cycle_active, is_sync_cycle_active, sync
+
+        async def _check_flag_after_error():
+            with (
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": "/tmp"}),
+                patch("hsync_client.sync.get_files_local", return_value=[]),
+                patch("hsync_client.sync.get_files_remote", side_effect=RuntimeError("boom")),
+                patch("hsync_client.sync.clear_sha256_cache"),
+                patch("hsync_client.sync._cleanup_partial_files"),
+                patch("hsync_client.sync.ensure_hsynckeep_files"),
+            ):
+                with pytest.raises(RuntimeError, match="boom"):
+                    await sync()
+            # Flag must be cleared despite the error
+            assert is_sync_cycle_active() is False
+
+        _sync_cycle_active.clear()
+        asyncio.run(_check_flag_after_error())
 
 
 class TestTombstoneDecision:
@@ -755,7 +869,7 @@ class TestClientTombstonesModule:
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
             # Drop the in-memory cache so the next access loads from disk.
-
+            ts_mod._stores.clear()
             assert tombstone_key("gone.txt") in ts_mod.get_payload()
 
     def test_clear_removes_marker(self, tmp_path):
@@ -974,7 +1088,7 @@ class TestClientSyncStateModule:
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             ss_mod.flush()
             # Drop the in-memory cache so the next access loads from the side-car.
-
+            ss_mod._stores.clear()
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
 
 

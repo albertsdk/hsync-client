@@ -772,11 +772,17 @@ async def _lan_periodic_resync() -> None:
     full sync at the configured ``RESYNC`` interval to recover any
     file-system events dropped by the watcher (e.g. inotify overflow).
     """
-    from hsync_client.sync import sync
+    from hsync_client.sync import is_sync_cycle_active, sync
 
     try:
         while True:
             await asyncio.sleep(CONFIG["RESYNC"] or 60)
+            # Skip if a sync cycle is already in progress (reconnect,
+            # watcher-induced resync, etc.). Prevents two concurrent sync()
+            # cycles from racing on the same stores.
+            if is_sync_cycle_active():
+                log.debug("LAN force resync skipped: sync already in progress")
+                continue
             log.info(f"LAN force resync ({CONFIG['RESYNC']} sec.)")
             await sync(lan_mode=True)
     except asyncio.CancelledError:

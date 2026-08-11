@@ -274,6 +274,16 @@ async def resync() -> None:
     try:
         while True:
             await sleep(CONFIG["RESYNC"] or 60)
+            # Skip this cycle if a sync is already in progress (e.g. triggered
+            # by a reconnect or a watcher-induced resync). This prevents two
+            # concurrent sync() cycles from racing on the same merge-base /
+            # tombstone stores. The flag is advisory and non-blocking: a
+            # missed cycle just means the next interval picks up the changes.
+            from hsync_client.sync import is_sync_cycle_active
+
+            if is_sync_cycle_active():
+                log.debug("Force sync skipped: a sync cycle is already in progress")
+                continue
             log.info(f"Force sync ({CONFIG['RESYNC']} sec.)")
             await sync()
     except Exception as e:
