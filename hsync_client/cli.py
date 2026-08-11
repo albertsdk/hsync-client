@@ -453,14 +453,17 @@ def main(
         ),
     ] = None,
     lan_persistent: Annotated[
-        bool,
+        bool | None,
         typer.Option(
-            "--no-lan-persistent/",
-            help="Disable persistent mode (exit when no peers found).",
+            "--lan-persistent/--no-lan-persistent",
+            help=(
+                "Stay active waiting for peers (default) or exit when no peers "
+                "are found (--no-lan-persistent)."
+            ),
             show_default=False,
             rich_help_panel="LAN Mode",
         ),
-    ] = True,
+    ] = None,
     force_master: Annotated[
         bool,
         typer.Option(

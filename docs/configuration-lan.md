@@ -17,7 +17,7 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
 | `--discovery-timeout` | Seconds to wait for LAN peer discovery | `30` |
-| `--lan-persistent` | Keep LAN connection alive continuously | `false` |
+| `--lan-persistent` / `--no-lan-persistent` | Keep waiting for peers (persistent) or exit after a single attempt when none are found | `true` (persistent) |
 
 ## Master Election Controls
 
@@ -52,7 +52,7 @@ LAN P2P configuration for peer-to-peer synchronization without a central server.
 | `HSYNC_LAN_FORCE_MASTER` | Force master role | `false` |
 | `HSYNC_LAN_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_LAN_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
-| `HSYNC_LAN_PERSISTENT` | Keep LAN connection alive | `false` |
+| `HSYNC_LAN_PERSISTENT` | Keep waiting for peers instead of exiting when none are found (`--no-lan-persistent`) | `true` |
 | `HSYNC_DISCOVERY_TIMEOUT` | LAN peer discovery timeout (seconds) | `30` |
 | `HSYNC_STABILITY_DELAY` | File stability wait (seconds) | `5` |
 | `HSYNC_MAX_WAIT_TIMEOUT` | Max file stability wait (seconds) | `300` |

@@ -140,7 +140,7 @@ option to configure.
 | Strict pairing      | `--require-pairing`                            | off                              |
 | Group               | `--lan-group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `10` (`0` = wait indefinitely)   |
-| Persistent LAN      | `--no-lan-persistent/`                         | enabled                          |
+| Persistent LAN      | `--lan-persistent/--no-lan-persistent`         | enabled                          |
 | Server URL          | `-s / --server`                                | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
 | Watch mode          | `-w / --watch`                                 | on (service mode)                |

@@ -195,68 +195,11 @@ class TestLanPersistent:
 class TestLanPortOverride:
     def test_lan_port_override(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--lan-port on master: slave connects on the specified port."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
-        master = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hsync_client",
-                "--lan-mode",
-                "--force-master",
-                "-b",
-                lan_bucket,
-                "-p",
-                lan_master_dir,
-                "--yes",
-                "--min-free-disk-space",
-                "0",
-                "--no-autotune",
-                "--discovery-timeout",
-                "10",
-                "--retry-delay",
-                "1",
-                "--stability-delay",
-                "1",
-                "--timeout",
-                "10",
-                "--lan-port",
-                "12345",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        master = _lan_start(lan_master_dir, lan_bucket, force_master=True, lan_port=12345)
         try:
             # Start a slave so the master discovers it and runs the election
             # (master only emits "MASTER" after add_peer triggers _elect_master).
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
                 assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
                     "Master did not become ready"
@@ -415,8 +358,17 @@ class TestLanBandwidthThrottle:
 
 class TestLanHsyncignore:
     def test_hsyncignore_reload_respected(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """Creating .hsyncignore while sync is running excludes new patterns."""
-        # Pre-create a file that will later be excluded
+        """Adding .hsyncignore stops syncing matching files but keeps existing copies.
+
+        This encodes the industry-standard "exclude protects, it does not
+        delete" contract (rsync ``--exclude`` without ``--delete-excluded``,
+        Syncthing ``.stignore``): a newly added ignore pattern must stop
+        propagating matching files going forward, but must NOT retroactively
+        remove copies already present on a peer. ``.hsyncignore`` is
+        engine-owned and never itself synced, so the master applies the rule
+        per-node and drops matching files from its listing after the hot-reload.
+        """
+        # Pre-create one visible file and one that will later be excluded.
         (Path(lan_master_dir) / "include_me.txt").write_bytes(b"visible\n")
         (Path(lan_master_dir) / "exclude_me.log").write_bytes(b"hidden\n")
 
@@ -425,7 +377,7 @@ class TestLanHsyncignore:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
-            # First slave session: both files sync (no .hsyncignore yet)
+            # First slave session: both files sync (no .hsyncignore yet).
             slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             assert _wait_for_file(str(Path(lan_slave_dir) / "include_me.txt"), timeout=30), (
                 "include_me.txt did not sync"
@@ -435,22 +387,38 @@ class TestLanHsyncignore:
             )
             _terminate(slave1)
 
-            # Now create .hsyncignore on master excluding *.log
+            # Add .hsyncignore on the master excluding *.log, then create fresh
+            # files: one matching the pattern, one not. The master hot-reloads
+            # the matcher and must exclude the new *.log from its listing.
             (Path(lan_master_dir) / ".hsyncignore").write_text("*.log\n")
+            (Path(lan_master_dir) / "new_exclude.log").write_bytes(b"nope\n")
+            (Path(lan_master_dir) / "new_include.txt").write_bytes(b"yes\n")
 
-            # Slave reconnects — the excluded file should NOT re-sync
-            # (it should be deleted because it no longer matches the sync set)
+            # Slave reconnects.
             slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
-                # Include file should still be there
-                assert _wait_for_file(str(Path(lan_slave_dir) / "include_me.txt"), timeout=30), (
-                    "include_me.txt disappeared"
+                # A new non-matching file syncs normally: proves the reconcile
+                # ran and sync is healthy after the .hsyncignore hot-reload.
+                assert _wait_for_file(str(Path(lan_slave_dir) / "new_include.txt"), timeout=30), (
+                    "new_include.txt did not sync after .hsyncignore reload"
                 )
 
-                # Excluded file should be removed by the reconcile (ignore rule)
-                assert _wait_for_file_gone(
-                    str(Path(lan_slave_dir) / "exclude_me.log"), timeout=30
-                ), "exclude_me.log was not removed after .hsyncignore added"
+                # The newly excluded file is NOT propagated: the master drops it
+                # from its listing after the hot-reload (reload respected).
+                assert not _wait_for_file(
+                    str(Path(lan_slave_dir) / "new_exclude.log"), timeout=5
+                ), "new_exclude.log was synced despite the .hsyncignore *.log rule"
+
+                # Existing copies are preserved, never retroactively deleted:
+                # adding an ignore pattern protects matching files, it does not
+                # remove copies already present on the peer.
+                assert (Path(lan_slave_dir) / "exclude_me.log").exists(), (
+                    "exclude_me.log was deleted; an ignore rule must not remove "
+                    "already-synced copies on a peer"
+                )
+                assert (Path(lan_slave_dir) / "include_me.txt").exists(), (
+                    "include_me.txt disappeared"
+                )
             finally:
                 _terminate(slave2)
         finally:

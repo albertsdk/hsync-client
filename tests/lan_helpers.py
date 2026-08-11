@@ -44,8 +44,14 @@ def _lan_start(
     *,
     force_master: bool = False,
     never_master: bool = False,
+    lan_port: int = 0,
 ) -> subprocess.Popen:
-    """Start a LAN-mode client subprocess."""
+    """Start a LAN-mode client subprocess.
+
+    Output is captured with stderr merged into stdout (loguru logs to stdout),
+    so :func:`_stderr_text` and :func:`_wait_for_text_in_stderr` can observe the
+    process log lines. Pass ``lan_port`` to force the LAN master listening port.
+    """
     env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
     args = [
         sys.executable,
@@ -73,6 +79,8 @@ def _lan_start(
         args.append("--force-master")
     if never_master:
         args.append("--never-master")
+    if lan_port:
+        args += ["--lan-port", str(lan_port)]
     return subprocess.Popen(
         args,
         env=env,
@@ -96,21 +104,30 @@ def _terminate(proc: subprocess.Popen) -> None:
 
 
 def _stderr_text(proc: subprocess.Popen) -> str:
-    """Return captured output text (non-blocking, best-effort).
+    """Return all output captured so far (non-blocking, non-destructive).
 
     Reads from stdout since stderr is merged into it (loguru logs to stdout).
+    Bytes are drained incrementally from the pipe and accumulated on the
+    process object, so repeated calls always return the full text seen so far
+    rather than only the bytes buffered at read time. This keeps substring
+    polling reliable: a log line consumed while waiting for one marker is still
+    visible when a later assertion checks for another.
     """
-    if proc.stdout is None:
-        return ""
-    try:
-        import os as _os
+    buf: bytes = getattr(proc, "_hsync_out_buf", b"")
+    if proc.stdout is not None:
+        try:
+            import os as _os
 
-        fd = proc.stdout.fileno()
-        _os.set_blocking(fd, False)
-        data = proc.stdout.read()
-        return data.decode("utf-8", errors="replace") if data else ""
-    except (OSError, ValueError, AttributeError):
-        return ""
+            _os.set_blocking(proc.stdout.fileno(), False)
+            while True:
+                chunk = proc.stdout.read()
+                if not chunk:
+                    break
+                buf += chunk
+        except (OSError, ValueError, AttributeError):
+            pass
+    proc._hsync_out_buf = buf  # type: ignore[attr-defined]
+    return buf.decode("utf-8", errors="replace")
 
 
 def _wait_for_file(path: str, timeout: float = 30.0) -> bool:
