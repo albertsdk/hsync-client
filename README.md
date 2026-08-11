@@ -38,9 +38,13 @@ Most traditional file synchronization tools rely on protocols that are often blo
 | **HSYNC** | HTTP / HTTPS | ✅ | ✅ | Client-Server + P2P |
 | rsync | SSH or rsync daemon | ❌ | ❌ | Client-Server |
 | Syncthing | BEP (custom) | ❌ | ✅ | P2P |
+| Nextcloud | HTTP / HTTPS (WebDAV) | ✅ | ⚠️\* | Client-Server |
+| Seafile | HTTP / HTTPS | ✅ | ⚠️\* | Client-Server |
 | scp / sftp | SSH | ❌ | ❌ | Client-Server |
 | Unison | SSH or direct socket | ❌ | ❌ | P2P |
 | Rclone | S3, SFTP, etc. | ⚠️ Partial | ❌ | Client-Server |
+
+> \* Local filesystem monitoring via desktop client; no native push notifications (WebSocket) like HSYNC.
 
 **When to choose HSYNC:**
 
