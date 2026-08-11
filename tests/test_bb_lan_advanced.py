@@ -37,6 +37,29 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 
 
 # =============================================================================
+# Common helper — wait for master to become ready by starting a slave peer.
+# The master only emits "MASTER" in its logs after discovering at least one
+# peer (election is triggered by add_peer → _elect_master).
+# =============================================================================
+
+
+def _wait_for_master(
+    master: subprocess.Popen, lan_slave_dir: str, lan_bucket: str, timeout: float = 30
+) -> None:
+    """Start a slave peer so the master discovers it and runs the election.
+
+    Returns once the master logs "MASTER" (or raises on timeout).
+    """
+    slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+    try:
+        assert _wait_for_text_in_stderr(master, "MASTER", timeout=timeout), (
+            "Master did not become ready"
+        )
+    finally:
+        _terminate(slave)
+
+
+# =============================================================================
 # Tombstone propagation (offline deletion catch-up)
 # =============================================================================
 
@@ -106,12 +129,13 @@ class TestLanMultiSlave:
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
+            # Start both slaves first so the election runs (master only emits
+            # "MASTER" after discovering a peer via mDNS).
+            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            slave2 = _lan_start(slave2_dir, lan_bucket, never_master=True)
             assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
                 "Master did not become ready"
             )
-
-            slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
-            slave2 = _lan_start(slave2_dir, lan_bucket, never_master=True)
             try:
                 # Wait for both to complete initial sync
                 _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
@@ -225,14 +249,8 @@ class TestLanPortOverride:
             stderr=subprocess.PIPE,
         )
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
-            # The master log should mention port 12345
-            stderr = _stderr_text(master)
-            assert "12345" in stderr, "Master did not use the specified port"
-
-            # Slave should still be able to sync
+            # Start a slave so the master discovers it and runs the election
+            # (master only emits "MASTER" after add_peer triggers _elect_master).
             slave = subprocess.Popen(
                 [
                     sys.executable,
@@ -262,6 +280,13 @@ class TestLanPortOverride:
                 stderr=subprocess.PIPE,
             )
             try:
+                assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
+                    "Master did not become ready"
+                )
+                # The master log should mention port 12345
+                stderr = _stderr_text(master)
+                assert "12345" in stderr, "Master did not use the specified port"
+
                 (Path(lan_master_dir) / "port_test.txt").write_bytes(b"custom port\n")
                 assert _wait_for_file(str(Path(lan_slave_dir) / "port_test.txt"), timeout=30), (
                     "File did not sync with custom master port"
@@ -291,9 +316,8 @@ class TestLanFilterPath:
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            # Start a slave so the master discovers it and runs the election.
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with --filter-path sub_a
             env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
@@ -354,9 +378,8 @@ class TestLanBandwidthThrottle:
         env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            # Start a slave so the master discovers it and runs the election.
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with bandwidth limit (10 MB/s — generous enough)
             slave = subprocess.Popen(
@@ -421,9 +444,8 @@ class TestLanHsyncignore:
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            # Start a slave so the master discovers it and runs the election.
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # First slave session: both files sync (no .hsyncignore yet)
             slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
@@ -469,9 +491,8 @@ class TestLanPermissions:
 
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            # Start a slave so the master discovers it and runs the election.
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Create file with specific permissions on master
             f = Path(lan_master_dir) / "perms.txt"
