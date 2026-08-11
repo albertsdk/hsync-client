@@ -14,7 +14,13 @@ only on the current master: each peer records the deletions it observes, merges
 the master's markers on every sync (gossip), and serves the accumulated union if
 it later becomes master. This way a deletion is never lost across a mastership
 change and an offline peer does not resurrect a file on its next reconciliation.
+
+Writes are serialized with a re-entrant lock because the sync engine records
+deletions from the parallel transfer thread pool; persistence is decoupled from
+mutation so a full sync flushes once instead of per file.
 """
+
+import threading
 
 from hsync_common.constants import HSYNCTOMBSTONES_FILENAME
 from hsync_common.models.tombstone import (
@@ -29,6 +35,9 @@ from hsync_client.config import CONFIG, get_tombstone_ttl_days
 # (not a singleton) keeps tests that switch LOCAL_BUCKET isolated.
 _stores: dict[str, TombstoneStore] = {}
 
+# Re-entrant: the public helpers call get_tombstone_store() while holding it.
+_lock = threading.RLock()
+
 
 def _bucket_dir() -> str:
     """Return the configured local bucket directory."""
@@ -42,14 +51,15 @@ def _store_path(bucket_dir: str) -> str:
 
 def get_tombstone_store() -> TombstoneStore:
     """Return the cached store for the local bucket, loading/pruning on first use."""
-    bucket_dir = _bucket_dir()
-    store = _stores.get(bucket_dir)
-    if store is None:
-        store = TombstoneStore(path=_store_path(bucket_dir), ttl_days=get_tombstone_ttl_days())
-        store.load()
-        store.prune()
-        _stores[bucket_dir] = store
-    return store
+    with _lock:
+        bucket_dir = _bucket_dir()
+        store = _stores.get(bucket_dir)
+        if store is None:
+            store = TombstoneStore(path=_store_path(bucket_dir), ttl_days=get_tombstone_ttl_days())
+            store.load()
+            store.prune()
+            _stores[bucket_dir] = store
+        return store
 
 
 def record_deletion(
@@ -62,10 +72,11 @@ def record_deletion(
     relpath = relpath_in_bucket(abs_path, bucket_dir)
     if not relpath:
         return
-    store = get_tombstone_store()
-    store.record(relpath, sha256sum=sha256sum, timestamp=timestamp)
-    store.prune()
-    store.save()
+    with _lock:
+        store = get_tombstone_store()
+        store.record(relpath, sha256sum=sha256sum, timestamp=timestamp)
+        store.prune()
+        store.save()
 
 
 def record_deletion_by_key(
@@ -81,10 +92,11 @@ def record_deletion_by_key(
     """
     if not key:
         return
-    store = get_tombstone_store()
-    store.record_by_key(key, sha256sum=sha256sum, timestamp=timestamp)
-    store.prune()
-    store.save()
+    with _lock:
+        store = get_tombstone_store()
+        store.record_by_key(key, sha256sum=sha256sum, timestamp=timestamp)
+        store.prune()
+        store.save()
 
 
 def clear_deletion(abs_path: str) -> None:
@@ -93,21 +105,24 @@ def clear_deletion(abs_path: str) -> None:
     relpath = relpath_in_bucket(abs_path, bucket_dir)
     if not relpath:
         return
-    store = get_tombstone_store()
-    if store.clear(relpath):
-        store.save()
+    with _lock:
+        store = get_tombstone_store()
+        if store.clear(relpath):
+            store.save()
 
 
 def merge_payload(payload: dict[str, TombstoneEntry] | None) -> int:
     """Merge a remote (master) payload using LWW; persist and return change count."""
-    store = get_tombstone_store()
-    changed = store.merge(payload)
-    if changed:
-        store.prune()
-        store.save()
-    return changed
+    with _lock:
+        store = get_tombstone_store()
+        changed = store.merge(payload)
+        if changed:
+            store.prune()
+            store.save()
+        return changed
 
 
 def get_payload() -> dict[str, TombstoneEntry]:
     """Return the JSON-serializable tombstone payload for serving/pushing."""
-    return get_tombstone_store().to_payload()
+    with _lock:
+        return get_tombstone_store().to_payload()
