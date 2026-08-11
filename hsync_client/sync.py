@@ -346,6 +346,15 @@ async def sync(lan_mode: bool = False) -> None:
         # Merge the surviving deletions back for execution
         deletes = tombstone_deletes + guarded_deletes
 
+        # --ignore-delete skips ALL local deletions (including tombstone
+        # confirmed ones), mirroring the filter in get_sync_actions.
+        if CONFIG.get("IGNORE_DELETE", False):
+            log.info(
+                f"{ActionLabel.GUARD} Ignoring {len(deletes)} local deletion(s) "
+                "(ignore-delete mode)"
+            )
+            deletes = []
+
         # Handle deletions (files that exist only locally in LAN mode)
         for file in deletes:
             if file.filepath and Path(file.filepath).exists():
