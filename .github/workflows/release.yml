@@ -42,7 +42,7 @@ jobs:
           ref: main
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with: { python-version: "3.13" }
       - run: pipx install poetry
       - name: Lint and test
@@ -78,7 +78,7 @@ jobs:
           ref: main
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with: { python-version: "3.13" }
       - run: pipx install poetry
       - name: Determine version
