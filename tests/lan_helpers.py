@@ -27,6 +27,16 @@ _LAN_KEY = "test-lan-shared-secret"
 _HSYNC_COMMON_DIR = str(Path(__file__).resolve().parent.parent.parent / "hsync-common")
 
 
+def _lan_ready_path(local_path: str) -> str:
+    """Ready file for a LAN subprocess.
+
+    Written inside *local_path* as ``.hsync_ready`` (hidden, skipped by sync).
+    The test harness verifies liveness via ``os.kill(pid, 0)`` so a stale file
+    from a killed predecessor is never trusted.
+    """
+    return str(Path(local_path) / ".hsync_ready")
+
+
 def _free_port() -> int:
     import socket
 
@@ -52,7 +62,12 @@ def _lan_start(
     so :func:`_stderr_text` and :func:`_wait_for_text_in_stderr` can observe the
     process log lines. Pass ``lan_port`` to force the LAN master listening port.
     """
-    env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+    env = {
+        **os.environ,
+        "HSYNC_LAN_KEY": _LAN_KEY,
+        "PYTHONPATH": _HSYNC_COMMON_DIR,
+        "HSYNC_READY_FILE": _lan_ready_path(local_path),
+    }
     args = [
         sys.executable,
         "-m",
@@ -159,6 +174,76 @@ def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:
         if not Path(path).exists():
             return True
         time.sleep(0.3)
+    return False
+
+
+def _wait_for_lan_server_ready(master: subprocess.Popen, port: int, timeout: float = 30.0) -> bool:
+    """Poll the LAN master's health endpoint until it responds 200.
+
+    Uses the real HTTP health endpoint (``/api/v1/health``) instead of
+    parsing log output. Returns ``True`` when the server is reachable
+    and responding, ``False`` on timeout or if the process exits.
+    """
+    import requests
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if master.poll() is not None:
+            return False
+        try:
+            r = requests.get(
+                f"https://127.0.0.1:{port}/api/v1/health",
+                timeout=1.0,
+                verify=False,
+            )
+            if r.status_code == 200:
+                return True
+        except (
+            ConnectionError,
+            ConnectionRefusedError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ):
+            pass
+        time.sleep(0.2)
+    return False
+
+
+def _wait_for_client_ready(
+    proc: subprocess.Popen,
+    ready_file: str,
+    timeout: float = 30.0,
+) -> bool:
+    """Wait for the client subprocess to signal readiness via a PID file.
+
+    The client writes its PID into *ready_file* when the initial sync
+    completes (only when ``HSYNC_READY_FILE`` is set in the environment).
+    This function polls for the file and verifies that the PID it contains
+    refers to a live process. A stale file from a killed predecessor is
+    cleaned up automatically.
+
+    Returns ``True`` when the client is confirmed ready, ``False`` on
+    timeout or if the subprocess exits prematurely.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return False
+        if Path(ready_file).exists():
+            try:
+                pid = int(Path(ready_file).read_text().strip())
+                os.kill(pid, 0)  # signal 0: check existence, no kill
+                return True
+            except (ValueError, OSError, ProcessLookupError):
+                # Stale file (PID dead) — remove and keep waiting.
+                try:
+                    Path(ready_file).unlink()
+                except OSError:
+                    pass
+        time.sleep(0.2)
     return False
 
 

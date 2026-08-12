@@ -400,6 +400,9 @@ async def sync(lan_mode: bool = False) -> None:
 
         log.info("Sync completed successfully")
         emit_event(UiEventName.sync_complete)
+        from hsync_client.utils import _write_ready_file as _signal_ready
+
+        _signal_ready()
 
     except (AuthenticationError, NetworkError, ServerError) as e:
         log.error(f"Sync failed: {e}")

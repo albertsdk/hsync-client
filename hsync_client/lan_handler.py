@@ -355,6 +355,9 @@ def _run_as_master(
 
         # Update mDNS service to indicate server is ready
         lan_sync.update_server_ready()
+        from hsync_client.utils import _write_ready_file as _signal_ready
+
+        _signal_ready()
 
     if first_activation:
         log.info("Press Ctrl+C to stop...")

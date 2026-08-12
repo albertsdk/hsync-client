@@ -447,7 +447,7 @@ def local_dir(tmp_path):
 
 
 @pytest.fixture
-def watch_sync(live_server):
+def watch_sync(live_server, tmp_path):
     """Return a callable that starts the client in watch mode as a subprocess.
 
     The caller receives the :class:`subprocess.Popen` handle and must terminate
@@ -460,7 +460,15 @@ def watch_sync(live_server):
     base_url, api_key = live_server
 
     def _start(bucket: str, local_path: str, *extra: str) -> subprocess.Popen:
-        env = {**os.environ, "HSYNC_API_KEY": api_key}
+        # Ready file goes into tmp_path (NOT local_path) so it never
+        # contaminates the synced directory. pytest destroys tmp_path
+        # after the test, and atexit cleans it up on normal shutdown.
+        ready_file = str(tmp_path / "client.ready")
+        env = {
+            **os.environ,
+            "HSYNC_API_KEY": api_key,
+            "HSYNC_READY_FILE": ready_file,
+        }
         args = [
             sys.executable,
             "-m",

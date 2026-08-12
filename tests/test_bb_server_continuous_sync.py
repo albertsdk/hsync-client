@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import BB_CLIENT_CID
+from tests.lan_helpers import _wait_for_client_ready
 
 _BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
 _BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
@@ -37,16 +38,6 @@ def _wait_for(predicate, timeout=20.0, interval=0.3):
     return False
 
 
-def _wait_for_subprocess_ready(proc: subprocess.Popen, timeout=10.0) -> bool:
-    """Wait for the watch-mode client to connect to the server."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            return False
-        time.sleep(0.5)
-    return proc.poll() is None
-
-
 def _terminate(proc: subprocess.Popen) -> None:
     """Terminate and reap a watch subprocess, killing if needed."""
     proc.terminate()
@@ -57,6 +48,11 @@ def _terminate(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
+def _ready_path(local_dir: str) -> str:
+    """Compute the ready-file path from the local dir (same tmp_path root)."""
+    return str(Path(local_dir).parent / "client.ready")
+
+
 class TestContinuousSyncMore:
     def test_remote_file_modification_downloaded(
         self, live_server, bb_bucket, local_dir, watch_sync, bb_server_upload
@@ -65,7 +61,9 @@ class TestContinuousSyncMore:
         a modification on the server is re-downloaded."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while the client is watching — the server broadcasts an
             # "added" event via WebSocket which triggers a download.
@@ -87,7 +85,9 @@ class TestContinuousSync:
         # Given a client running in watch mode against an empty bucket
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # When a new file is created locally
             content = b"watched change\n"
@@ -107,7 +107,9 @@ class TestContinuousSync:
         """File uploaded to server via API is downloaded locally via WS event."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while the client is watching — the server broadcasts an
             # "added" event via WebSocket which triggers a download.
@@ -126,7 +128,9 @@ class TestContinuousSync:
         """File renamed on server propagates to local via WS event."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while the client is watching so the initial download is
             # triggered by the WebSocket "added" event.
@@ -167,7 +171,9 @@ class TestContinuousSync:
         # Given a client running in watch mode against an empty bucket
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # When a file is created on the server (broadcasts an "added" event)
             content = b"from server via ws\n"
@@ -185,7 +191,9 @@ class TestContinuousSync:
         """File modified locally is re-uploaded to the server."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while watching so the file reaches the client via
             # WebSocket "added" event (not via initial full sync).
@@ -208,7 +216,9 @@ class TestContinuousSync:
         """File deleted locally is removed from the server."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while watching so the file reaches the client via
             # WebSocket "added" event (not via initial full sync).
@@ -229,7 +239,9 @@ class TestContinuousSync:
         """Directory created locally appears on the server."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             sub = Path(local_dir) / "newdir"
             sub.mkdir()
@@ -251,7 +263,9 @@ class TestContinuousSync:
         """File deleted on server (via API) is removed locally."""
         proc = watch_sync(bb_bucket, local_dir)
         try:
-            assert _wait_for_subprocess_ready(proc), "watch mode did not become ready"
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while watching so the file reaches the client via
             # WebSocket "added" event (not via initial full sync).
@@ -285,7 +299,11 @@ class TestContinuousSync:
         import sys
 
         base_url, api_key = live_server
-        env = {**os.environ, "HSYNC_API_KEY": api_key}
+        env = {
+            **os.environ,
+            "HSYNC_API_KEY": api_key,
+            "HSYNC_READY_FILE": _ready_path(local_dir),
+        }
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -309,7 +327,9 @@ class TestContinuousSync:
             stderr=subprocess.DEVNULL,
         )
         try:
-            assert _wait_for_subprocess_ready(proc)
+            assert _wait_for_client_ready(proc, _ready_path(local_dir)), (
+                "watch mode did not become ready"
+            )
 
             # Upload while watching so the file reaches the client via
             # WebSocket "added" event (not via initial full sync).

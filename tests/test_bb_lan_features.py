@@ -20,6 +20,7 @@ import pytest
 from .lan_helpers import (
     _HSYNC_COMMON_DIR,
     _LAN_KEY,
+    _lan_ready_path,
     _lan_start,
     _terminate,
     _wait_for_file,
@@ -43,7 +44,12 @@ pytestmark = pytest.mark.skipif(not _LAN_ENABLED, reason=_LAN_REASON)
 class TestLanGroupFiltering:
     def test_different_lan_groups_dont_discover(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """Peers in different LAN groups should not discover each other."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -128,7 +134,12 @@ class TestLanGroupFiltering:
 class TestLanCompression:
     def test_compression_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-compression master: sync still works, compression just disabled."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -205,7 +216,12 @@ class TestLanCompression:
 class TestLanDelta:
     def test_delta_disabled_still_syncs(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """--no-delta master: sync still works, delta just disabled."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -282,7 +298,12 @@ class TestLanDelta:
 class TestLanPeriodicResync:
     def test_periodic_resync_fires(self, lan_master_dir, lan_bucket):
         """Master with --resync-interval triggers periodic full sync."""
-        env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "HSYNC_LAN_KEY": _LAN_KEY,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         master = subprocess.Popen(
             [
                 sys.executable,
@@ -353,7 +374,11 @@ class TestLanHiddenFiles:
 class TestLanKeyless:
     def test_lan_without_key_still_works(self, lan_master_dir, lan_slave_dir, lan_bucket):
         """LAN sync without HSYNC_LAN_KEY still works (trust LAN mode)."""
-        env = {**os.environ, "PYTHONPATH": _HSYNC_COMMON_DIR}
+        env = {
+            **os.environ,
+            "PYTHONPATH": _HSYNC_COMMON_DIR,
+            "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+        }
         env.pop("HSYNC_LAN_KEY", None)
         master = subprocess.Popen(
             [

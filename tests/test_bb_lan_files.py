@@ -20,6 +20,7 @@ import pytest
 from .lan_helpers import (
     _HSYNC_COMMON_DIR,
     _LAN_KEY,
+    _lan_ready_path,
     _lan_start,
     _terminate,
     _wait_for_file,
@@ -71,7 +72,12 @@ class TestLanIgnoreDelete:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             (Path(lan_master_dir) / "keep_me.txt").write_bytes(b"keep\n")
-            env = {**os.environ, "HSYNC_LAN_KEY": _LAN_KEY, "PYTHONPATH": _HSYNC_COMMON_DIR}
+            env = {
+                **os.environ,
+                "HSYNC_LAN_KEY": _LAN_KEY,
+                "PYTHONPATH": _HSYNC_COMMON_DIR,
+                "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
+            }
             slave = subprocess.Popen(
                 [
                     sys.executable,
