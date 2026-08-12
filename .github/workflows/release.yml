@@ -34,9 +34,9 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { path: hsync-client }
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: albertobasso/hsync-common
           ref: main
@@ -70,9 +70,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { path: hsync-client }
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: albertobasso/hsync-common
           ref: main
@@ -121,9 +121,9 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { path: hsync-client }
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: albertobasso/hsync-common
           ref: main
@@ -162,7 +162,7 @@ jobs:
     needs: [build-binaries, build-packages]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { path: hsync-client }
       - name: Determine release tag
         id: tag
