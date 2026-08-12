@@ -10,17 +10,12 @@ Requires HSYNC_BB_LAN=1 to run.
 """
 
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from .lan_helpers import (
-    _HSYNC_COMMON_DIR,
-    _LAN_KEY,
-    _lan_ready_path,
     _lan_start,
     _terminate,
     _wait_for_file,
@@ -66,46 +61,17 @@ class TestLanFileDeletion:
 
 class TestLanIgnoreDelete:
     def test_ignore_delete_flag_preserves_file(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """--server-side-deletion-protection keeps file on slave when deleted on master."""
+        """--ignore-delete keeps the file on the slave when deleted on the master."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
             _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             (Path(lan_master_dir) / "keep_me.txt").write_bytes(b"keep\n")
-            env = {
-                **os.environ,
-                "HSYNC_LAN_KEY": _LAN_KEY,
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_master_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--server-side-deletion-protection",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--ignore-delete",),
             )
             try:
                 assert _wait_for_file(str(Path(lan_slave_dir) / "keep_me.txt"), timeout=30)

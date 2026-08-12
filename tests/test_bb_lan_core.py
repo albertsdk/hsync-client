@@ -10,20 +10,17 @@ Requires HSYNC_BB_LAN=1 to run.
 """
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from .lan_helpers import (
-    _HSYNC_COMMON_DIR,
-    _LAN_KEY,
-    _lan_ready_path,
+    _lan_device_dir,
     _lan_start,
     _stderr_text,
     _terminate,
     _wait_for_file,
+    _wait_for_master,
     _wait_for_text_in_stderr,
 )
 
@@ -88,9 +85,7 @@ class TestLanTofuPinning:
         """On first sight the slave TOFU-pins the master cert and syncs."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
             try:
@@ -111,34 +106,37 @@ class TestLanTofuPinning:
             _terminate(master)
 
     def test_changed_fingerprint_is_refused(self, lan_master_dir, lan_slave_dir, lan_bucket):
-        """When the master's fingerprint changes, the slave refuses to connect."""
+        """When the master's certificate rotates (same device ID), the slave refuses.
+
+        The device identity lives in the device dir (sibling of the synced dir,
+        see ``_lan_device_dir``): deleting only the ``*.pem`` files rotates the
+        keypair while the device ID — and thus the slave's ``(device_id, bucket)``
+        TOFU pin — survives. The slave must detect the fingerprint change and
+        refuse the connection.
+        """
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # First slave: trust the certificate (TOFU)
             slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
-            _wait_for_text_in_stderr(slave1, "Pinned LAN master certificate", timeout=30)
+            assert _wait_for_text_in_stderr(slave1, "Pinned LAN master certificate", timeout=30), (
+                "First slave did not TOFU-pin the master"
+            )
             _terminate(slave1)
 
-            # Stop master, recreate with a new cert
+            # Stop the master and rotate ONLY its keypair: the device ID (and
+            # therefore the slave's pin) survives, the fingerprint changes.
             _terminate(master)
-
-            # Remove the master dir and start fresh master (new cert generated)
-            import shutil
-
-            shutil.rmtree(lan_master_dir, ignore_errors=True)
-            Path(lan_master_dir).mkdir()
+            device_dir = Path(_lan_device_dir(lan_master_dir))
+            for pem in device_dir.glob("*.pem"):
+                pem.unlink()
 
             master2 = _lan_start(lan_master_dir, lan_bucket, force_master=True)
             try:
-                assert _wait_for_text_in_stderr(master2, "MASTER", timeout=30), (
-                    "Second master did not become ready"
-                )
+                _wait_for_master(master2, lan_slave_dir, lan_bucket)
 
-                # Second slave: should refuse the changed fingerprint
+                # Second slave: must refuse the changed fingerprint
                 slave2 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
                 try:
                     refused = _wait_for_text_in_stderr(slave2, "FINGERPRINT CHANGED", timeout=30)
@@ -202,9 +200,7 @@ class TestLanResilience:
         """Slave reconnects and catches up after being restarted."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # First slave session
             slave1 = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
@@ -257,45 +253,14 @@ class TestLanStrictPairing:
         """--require-pairing without a pre-existing pin rejects the master."""
         master = _lan_start(lan_master_dir, lan_bucket, force_master=True)
         try:
-            assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
-                "Master did not become ready"
-            )
+            _wait_for_master(master, lan_slave_dir, lan_bucket)
 
             # Start slave with --require-pairing (no prior pin exists)
-            env = {
-                **os.environ,
-                "HSYNC_LAN_KEY": _LAN_KEY,
-                "PYTHONPATH": _HSYNC_COMMON_DIR,
-                "HSYNC_READY_FILE": _lan_ready_path(lan_slave_dir),
-            }
-            slave = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "hsync_client",
-                    "--lan-mode",
-                    "--never-master",
-                    "-b",
-                    lan_bucket,
-                    "-p",
-                    lan_slave_dir,
-                    "--yes",
-                    "--min-free-disk-space",
-                    "0",
-                    "--no-autotune",
-                    "--discovery-timeout",
-                    "10",
-                    "--retry-delay",
-                    "1",
-                    "--stability-delay",
-                    "1",
-                    "--timeout",
-                    "10",
-                    "--require-pairing",
-                ],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--require-pairing",),
             )
             try:
                 # Should see pairing_needed / unpinned certificate rejection

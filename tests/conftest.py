@@ -10,6 +10,7 @@ Shared pytest fixtures for the hsync-client test suite.
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,27 @@ def _prevent_os_environ_leakage(monkeypatch: pytest.MonkeyPatch) -> Generator[No
     added = after - before
     for key in sorted(added):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_device_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Keep every test away from the developer's real device identity and locks.
+
+    The persistent device identity (``hsync_client.identity``) and the
+    per-directory instance lock default to OS state/runtime directories;
+    without isolation, in-process runs (CliRunner) would read/write the real
+    ``~/.local/state/hsync`` and ``$XDG_RUNTIME_DIR/hsync``. Point both at a
+    per-test tmp dir, reset the identity cache around each test, and release
+    any lock an in-process run forgot to release.
+    """
+    monkeypatch.setenv("HSYNC_DEVICE_DIR", str(tmp_path / "hsync_device"))
+    monkeypatch.setenv("HSYNC_LOCKS_DIR", str(tmp_path / "hsync_locks"))
+    from hsync_client.identity import InstanceLock, reset_device_identity_cache
+
+    reset_device_identity_cache()
+    yield
+    reset_device_identity_cache()
+    InstanceLock.release_all()
 
 
 @pytest.fixture(autouse=True)
@@ -368,8 +390,9 @@ def live_server(tmp_path_factory):
 
 
 @pytest.fixture
-def bb_bucket(live_server) -> str:
-    """Create a uniquely-named bucket on the live server for one test."""
+def bb_bucket(live_server) -> Generator[str]:
+    """Create a uniquely-named bucket on the live server for one test; delete it
+    afterwards so the module-scoped server never accumulates stale buckets."""
     import uuid
 
     import requests
@@ -384,7 +407,13 @@ def bb_bucket(live_server) -> str:
         verify=False,
     )
     assert r.status_code == 201, r.text
-    return name
+    yield name
+    requests.delete(
+        f"{base}/api/v1/buckets/{name}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=15.0,
+        verify=False,
+    )
 
 
 @pytest.fixture
@@ -463,12 +492,19 @@ def watch_sync(live_server, tmp_path):
         # Ready file goes into tmp_path (NOT local_path) so it never
         # contaminates the synced directory. pytest destroys tmp_path
         # after the test, and atexit cleans it up on normal shutdown.
+        # The env is scrubbed of every pre-existing HSYNC_* variable so the
+        # developer's own configuration can never leak into the run; the
+        # instance-lock dir is per-test so lock files never land in the real
+        # $XDG_RUNTIME_DIR.
         ready_file = str(tmp_path / "client.ready")
-        env = {
-            **os.environ,
-            "HSYNC_API_KEY": api_key,
-            "HSYNC_READY_FILE": ready_file,
-        }
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+        env.update(
+            {
+                "HSYNC_API_KEY": api_key,
+                "HSYNC_READY_FILE": ready_file,
+                "HSYNC_LOCKS_DIR": str(tmp_path / "locks"),
+            }
+        )
         args = [
             sys.executable,
             "-m",
