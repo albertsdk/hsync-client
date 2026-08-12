@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 from hsync_client.config import HsyncConfig
+from hsync_client.identity import DeviceIdentity
 from hsync_client.main_logic import run_lan_mode
 
 
@@ -236,8 +237,10 @@ class TestRunLanMode:
         with (
             patch("hsync_client.lan_handler.LANSync", return_value=mock_lan_sync),
             patch(
-                "hsync_client.ssl_utils.load_or_create_master_cert",
-                return_value=mock_cert_info,
+                "hsync_client.identity.load_or_create_device_identity",
+                return_value=DeviceIdentity(
+                    device_id="TestDevice1234567890ab", cert_info=mock_cert_info
+                ),
             ) as mock_load,
         ):
             run_lan_mode(config, mock_log)

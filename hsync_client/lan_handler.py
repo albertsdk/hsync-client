@@ -184,9 +184,11 @@ def run_lan_mode(config: "HsyncConfig", log) -> None:  # noqa: C901
     if wait_indefinitely_for_peer and not persistent:
         log.info("Discovery timeout disabled - waiting indefinitely for the first LAN peer/master")
 
-    from hsync_client.ssl_utils import load_or_create_master_cert
+    from hsync_client.identity import load_or_create_device_identity
 
-    cert_info = load_or_create_master_cert()
+    # Reuses the device identity resolved at startup (cached): the keypair
+    # presented to peers always belongs to this installation's device.
+    cert_info = load_or_create_device_identity().cert_info
     log.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
 
     lan_sync = LANSync(

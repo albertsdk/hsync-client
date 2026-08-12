@@ -28,7 +28,7 @@ if ! id "${HSYNC_USER}" >/dev/null 2>&1; then
 fi
 
 # ── Directories ──────────────────────────────────────────────────────────
-mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}" "${DATA_DIR}/lan_cert"
+mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}" "${DATA_DIR}/device"
 chown root:root "${CONFIG_DIR}" 2>/dev/null || true
 chmod 0750 "${CONFIG_DIR}"
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${LOG_DIR}" 2>/dev/null || true
@@ -37,10 +37,10 @@ chmod 0750 "${LOG_DIR}"
 # service's ReadWritePaths, so it must exist and be writable by _hsync.
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}" 2>/dev/null || true
 chmod 0750 "${DATA_DIR}"
-# LAN master keypair directory (HSYNC_LAN_CERT_DIR). The _hsync user has no
+# Device identity directory (HSYNC_DEVICE_DIR). The _hsync user has no
 # home directory, so the cert must live here under the data dir.
-chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/lan_cert" 2>/dev/null || true
-chmod 0700 "${DATA_DIR}/lan_cert"
+chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/device" 2>/dev/null || true
+chmod 0700 "${DATA_DIR}/device"
 
 # ── Config file permissions (conffile) ────────────────────────────────────
 # dpkg marks /etc/hsync/hsync.conf as a conffile, so its contents are

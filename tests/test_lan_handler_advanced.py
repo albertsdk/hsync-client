@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from hsync_client.config import HsyncConfig
 from hsync_client.constants import DISCOVERY_POLL_INTERVAL
+from hsync_client.identity import DeviceIdentity
 
 
 def _make_lan_config(tmp_path, **overrides: Any) -> HsyncConfig:
@@ -964,7 +965,10 @@ class TestMasterElection:
             patch("hsync_client.lan_handler.LANServer", return_value=mock_lan_server),
             patch("hsync_client.lan_handler.LANWebSocketServer", return_value=mock_ws_server),
             patch(
-                "hsync_client.ssl_utils.load_or_create_master_cert", return_value=_make_cert_info()
+                "hsync_client.identity.load_or_create_device_identity",
+                return_value=DeviceIdentity(
+                    device_id="TestDevice1234567890ab", cert_info=_make_cert_info()
+                ),
             ),
             patch("hsync_client.lan_handler.set_config"),
             patch("hsync_client.lan_handler._measure_clock_offset"),

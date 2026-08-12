@@ -20,7 +20,7 @@ Flags map to env keys; capabilities JSON is built from
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_sync` | `main_logic.py:529` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup |
+| `run_sync` | `main_logic.py:529` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: LAN mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
 | `_check_deletion_risk` | `:304` | warn/prompt on risky delete settings (`--yes` bypass; fails fast with exit 1 when no interactive TTY) |
 | `_check_lan_write_policy` | `:396` | enforce LAN key for unattended writes (`--yes` **or** no interactive TTY, via `is_tty_interactive()`) |
 | `_warn_if_lan_in_container` | `:441` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |

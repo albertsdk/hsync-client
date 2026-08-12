@@ -483,9 +483,10 @@ Days to retain deletion markers before garbage collection (default:
 .BR 30 ;
 0 = forever).
 .TP
-.B HSYNC_LAN_CERT_DIR
-Directory holding the persistent LAN master keypair (default:
-.I ~/.local/state/hsync/lan_cert
+.B HSYNC_DEVICE_DIR
+Directory holding the persistent device identity: the stable device ID and
+the LAN keypair (default:
+.IR ~/.local/state/hsync/device
 ).
 .TP
 .B HSYNC_LAN_PIN_FILE

@@ -211,10 +211,11 @@ user-facing summary is in [LAN Mode → Security & Pairing](../lan-mode.md#secur
 
 ### How it works
 
-1. **Persistent identity** — on first use the master generates a self-signed
-   certificate and stores the keypair in an OS state directory
-   (`~/.local/state/hsync/lan_cert`, overridable via `HSYNC_LAN_CERT_DIR`). It is
-   reused on every restart, so the fingerprint peers pinned stays stable.
+1. **Persistent identity** — every installation owns a device identity: a
+   stable device ID (`device_id` file) plus a self-signed keypair, stored in
+   the device directory (`~/.local/state/hsync/device`, overridable via
+   `HSYNC_DEVICE_DIR`). Both are reused on every restart, so the device ID
+   peers pinned and the fingerprint stay stable.
 2. **Fingerprint sharing** — the certificate fingerprint (SHA-256) is shared via
    mDNS TXT records (`cert_fp`).
 3. **Connection-level pinning** — clients pin the fingerprint on the very TLS
@@ -255,7 +256,7 @@ user-facing summary is in [LAN Mode → Security & Pairing](../lan-mode.md#secur
 
 | Aspect | Description |
 |--------|-------------|
-| **Identity** | Persistent keypair under `~/.local/state/hsync/lan_cert` (`HSYNC_LAN_CERT_DIR`) |
+| **Identity** | Device ID + persistent keypair under `~/.local/state/hsync/device` (`HSYNC_DEVICE_DIR`) |
 | **Certificate Validity** | ~10 years (trust comes from the pin, not the date) |
 | **Private Key** | Unencrypted PKCS#8, protected by filesystem permissions (`0o600`) |
 | **Key Size** | RSA 2048-bit |
