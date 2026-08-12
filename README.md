@@ -25,26 +25,27 @@ It works in two ways:
 - **Want to contribute?** See [Contributing](CONTRIBUTING.md)
 - **Looking for detailed documentation?** Navigate to [docs/README.md](docs/README.md)
 
----
-
 ## Why HSYNC?
 
 HSYNC is designed to synchronize files **in real-time** using **only the HTTP/HTTPS protocol**. This makes it the ideal choice in environments where HTTP is the only protocol allowed through firewalls, proxies, or network policies — a common constraint in corporate networks, cloud environments, and restricted infrastructures.
 
 Most traditional file synchronization tools rely on protocols that are often blocked or unavailable in these scenarios:
 
-| Tool | Protocol | HTTP | Real-Time | Architecture |
-|------|----------|:---:|:---:|------|
-| **HSYNC** | HTTP / HTTPS | ✅ | ✅ | Client-Server + P2P |
-| rsync | SSH or rsync daemon | ❌ | ❌ | Client-Server |
-| Syncthing | BEP (custom) | ❌ | ✅ | P2P |
-| Nextcloud | HTTP / HTTPS (WebDAV) | ✅ | ⚠️\* | Client-Server |
-| Seafile | HTTP / HTTPS | ✅ | ⚠️\* | Client-Server |
-| scp / sftp | SSH | ❌ | ❌ | Client-Server |
-| Unison | SSH or direct socket | ❌ | ❌ | P2P |
-| Rclone | S3, SFTP, etc. | ⚠️ Partial | ❌ | Client-Server |
+| Tool | Protocol | HTTP | Real-Time | Original Files | Architecture |
+|------|----------|:---:|:---:|:---:|------|
+| **HSYNC** | HTTP / HTTPS | ✅ | ✅ | ✅ | Client-Server + P2P |
+| rsync | SSH or rsync daemon | ❌ | ❌ | ✅ | Client-Server |
+| Syncthing | BEP (custom) | ❌ | ✅ | ✅ | P2P |
+| Nextcloud | HTTP / HTTPS (WebDAV) | ✅ | ⚠️\* | ✅ | Client-Server |
+| Seafile | HTTP / HTTPS | ✅ | ⚠️\* | ❌ ¹ | Client-Server |
+| scp / sftp | SSH | ❌ | ❌ | ✅ | Client-Server |
+| Unison | SSH or direct socket | ❌ | ❌ | ✅ | P2P |
+| Rclone | S3, SFTP, etc. | ⚠️ Partial | ❌ | ⚠️ ² | Client-Server |
 
 > \* Local filesystem monitoring via desktop client; no native push notifications (WebSocket) like HSYNC.
+>
+> ¹ Seafile uses a proprietary block-based internal storage format; files are not directly accessible from the filesystem without the Seafile server.
+> ² Rclone with the `crypt` backend stores files in an opaque encrypted format; with other backends (e.g., SFTP, local) files remain in their original format.
 
 **When to choose HSYNC:**
 
@@ -272,6 +273,15 @@ In LAN mode, the master is the source of truth and slaves sync from it. Both dir
 
 > **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
 > are still under active development and are not yet ready for production use.
+
+## Security
+
+To report a vulnerability, please use GitHub's **Private Vulnerability Reporting**:
+
+👉 **[Report a vulnerability](https://github.com/albertobasso/hsync-client/security/advisories/new)**
+
+See our [Security Policy](SECURITY.md) for supported versions and hardening
+recommendations.
 
 ## Disclaimer
 
