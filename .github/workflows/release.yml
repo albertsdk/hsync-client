@@ -140,7 +140,7 @@ jobs:
       # (AC_CHECK_FUNCS acosh/asinh/... -lm) fail with "requires C99 compatible
       # libm" during ./configure.
       - name: Set up QEMU (pinned, known-good)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           image: tonistiigi/binfmt:qemu-v10.1.3
           platforms: arm,arm64
