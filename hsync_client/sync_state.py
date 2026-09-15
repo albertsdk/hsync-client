@@ -169,38 +169,69 @@ def local_version_for_compare(abs_path: str, current_hash: str | None):
     reconcile would record. Used by dry-run preview so it never mutates the
     store but still computes accurate decisions (ADR-0022 §3.4.7).
     """
+    return _local_compare(abs_path, current_hash)[0]
+
+
+def local_version_and_base(
+    abs_path: str,
+    current_hash: str | None,
+) -> tuple[dict | None, str | None]:
+    """Return ``(effective_version, stored_base_hash)`` in one store read.
+
+    The reconcile core used to call :func:`local_version_for_compare` and then
+    :func:`get_base_hash` per file — two relpath resolutions, two lock
+    acquisitions and two reads of the same store entry. The single read returns
+    both: the *stored* ``base_hash`` is the common ancestor the causal matrix
+    needs (the effective dict's own ``base_hash`` is the would-be content hash,
+    not the ancestor, so it cannot stand in once the content differs).
+    """
+    return _local_compare(abs_path, current_hash)
+
+
+def _local_compare(
+    abs_path: str,
+    current_hash: str | None,
+) -> tuple[dict | None, str | None]:
     relpath = relpath_in_bucket(abs_path, _bucket_dir())
     if not relpath:
-        return None
+        return None, None
     with _lock:
-        entry = get_sync_state_store().get(relpath)
+        store = get_sync_state_store()
+        entry = store.get(relpath)
+        stored_base = entry["base_hash"] if entry else None
         if entry is None:
             # No recorded history: a never-synced file with content gets a
             # fresh tick so its provenance is honest.
             if current_hash:
                 cid = _local_cid()
                 if cid:
-                    return {
-                        "base_hash": current_hash,
-                        "version_id": "",
-                        "origin_cid": cid,
-                        "ts": 0,
-                        "vclock": tick_vclock(None, cid),
-                        "corrected_mtime": _corrected_mtime_of(abs_path),
-                    }
-            return None
+                    return (
+                        {
+                            "base_hash": current_hash,
+                            "version_id": "",
+                            "origin_cid": cid,
+                            "ts": 0,
+                            "vclock": tick_vclock(None, cid),
+                            "corrected_mtime": _corrected_mtime_of(abs_path),
+                        },
+                        stored_base,
+                    )
+            return None, stored_base
         if current_hash and entry["base_hash"] != current_hash:
             cid = _local_cid()
             if cid:
-                return {
-                    "base_hash": current_hash,
-                    "version_id": entry["version_id"],
-                    "origin_cid": cid,
-                    "ts": entry["ts"],
-                    "vclock": tick_vclock(entry["vclock"], cid),
-                    "corrected_mtime": _corrected_mtime_of(abs_path),
-                }
-        return entry
+                return (
+                    {
+                        "base_hash": current_hash,
+                        "version_id": entry["version_id"],
+                        "origin_cid": cid,
+                        "ts": entry["ts"],
+                        "vclock": tick_vclock(entry["vclock"], cid),
+                        "corrected_mtime": _corrected_mtime_of(abs_path),
+                    },
+                    stored_base,
+                )
+        return entry, stored_base
 
 
 def note_local_edit(abs_path: str, current_hash: str) -> None:

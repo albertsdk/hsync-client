@@ -1272,6 +1272,23 @@ class TestClientTombstonesModule:
             ts_mod._stores.clear()
             assert tombstone_key("gone.txt") in ts_mod.get_payload()
 
+    def test_record_by_key_batched_flush_persists(self, tmp_path):
+        """``persist=False`` + one ``flush`` persists the markers exactly once."""
+        key = tombstone_key("gone.txt")
+        with patch(
+            "hsync_client.tombstones.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": _peer_cid("L")},
+        ):
+            ts_mod.record_deletion_by_key(key, origin_cid=_peer_cid("L"), persist=False)
+            # Deferred: a fresh store (cache cleared) must not see it yet.
+            ts_mod._stores.clear()
+            assert key not in ts_mod.get_payload()
+            # Record + flush again, then the marker is durable across reload.
+            ts_mod.record_deletion_by_key(key, origin_cid=_peer_cid("L"), persist=False)
+            ts_mod.flush()
+            ts_mod._stores.clear()
+            assert key in ts_mod.get_payload()
+
     def test_clear_removes_marker(self, tmp_path):
         """clear_deletion drops a previously recorded marker."""
         with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):

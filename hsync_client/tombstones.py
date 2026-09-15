@@ -106,14 +106,21 @@ def record_deletion_by_key(
     origin_cid: str | None = None,
     prev_vclock: dict[str, int] | None = None,
     timestamp: int | float | None = None,
+    *,
+    persist: bool = True,
 ) -> None:
-    """Record a causal deletion marker for an already-hashed path key and persist.
+    """Record a causal deletion marker for an already-hashed path key.
 
     Used by the sync engine when the only available identity is the merge-base
     key (the store is keyed by ``tombstone_key`` and the raw path is not
     recoverable from it). ``origin_cid``/``prev_vclock`` follow
     :func:`record_deletion`; when only the key is known the clock is ticked by
     the local cid so the marker still carries fresh causal provenance.
+
+    ``persist`` defaults to ``True`` (record and flush immediately). The
+    offline-deletion mint loop sets ``persist=False`` and calls :func:`flush`
+    once after the loop, so a bulk mint pays a single SQLite write instead of
+    one per marker.
     """
     if not key:
         return
@@ -126,7 +133,20 @@ def record_deletion_by_key(
             prev_vclock=prev_vclock,
             timestamp=timestamp,
         )
-        _persist(store)
+        if persist:
+            _persist(store)
+
+
+def flush() -> None:
+    """Persist the local bucket's tombstone store (one SQLite transaction).
+
+    Realtime deletions still persist immediately via :func:`record_deletion`;
+    this is the once-per-cycle flush used by the offline-deletion mint loop
+    (each minted marker recorded with ``persist=False``), mirroring
+    :func:`hsync_client.sync_state.flush`.
+    """
+    with _lock:
+        _persist(get_tombstone_store())
 
 
 def clear_deletion(abs_path: str) -> None:

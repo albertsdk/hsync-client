@@ -107,5 +107,14 @@ main_logic (orchestration) ← cli ← main
 | TOFU pins | `pinning.py:56` | pin store (0o600) | LAN master fingerprint trust |
 | LAN master identity | `ssl_utils.py:98` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
+`resolve_bucket_folder` (`state_backend.py:39`) memoizes the
+`(folder_id, db_path)` resolution keyed by the raw `bucket_dir` string:
+`sync_state`/`tombstones` call it on every per-file operation, so the steady
+state pays a bare dict lookup, not a `.hsyncfolder` read + two SQLite statements
++ the `Path.resolve()`/env-read key computation (L1
+`get_sync_state_store(cached)`: ~0.055 → ~0.0003 ms). Re-anchor semantics
+(move/copy/delete-marker) are unchanged; `reset_bucket_folder_cache()` is wired
+into the test `reset_sync_state_stores` autouse fixture.
+
 > Human diagrams (modes, event processing, stability, bandwidth): `../docs/internal/architecture.md`.
 > Decision rationale: [decisions.md](decisions.md) → `https://github.com/albertsdk/hsync-common/blob/main/docs/adr/`.

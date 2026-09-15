@@ -143,9 +143,11 @@ def reset_sync_state_stores() -> None:
     from hsync_common.models.sqlstore import reset_state_db_cache
 
     from hsync_client import sync_state, tombstones
+    from hsync_client.state_backend import reset_bucket_folder_cache
 
     sync_state._stores.clear()
     tombstones._stores.clear()
+    reset_bucket_folder_cache()
     reset_state_db_cache()
 
 

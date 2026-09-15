@@ -401,13 +401,18 @@ async def sync(
                     sha256sum=base_hash or None,
                     origin_cid=_local_cid_or_none(),
                     prev_vclock=vclock,
+                    persist=False,
                 )
                 minted = True
-        # Push the union once after all offline-deletion markers are minted:
-        # the intermediate per-marker pushes were redundant (the master only
-        # ever consumes the final union, and the push is best-effort by
-        # contract), and each push is a full HTTP round-trip.
+        # Persist the minted markers once (one SQLite transaction) and push the
+        # union once after all offline-deletion markers are recorded: the
+        # intermediate per-marker persists/pushes were redundant (the master
+        # only ever consumes the final union, and each push is a full HTTP
+        # round-trip / each persist a SQLite write).
         if minted:
+            from hsync_client.tombstones import flush as flush_tombstones
+
+            flush_tombstones()
             union = get_payload()
             push_tombstones_remote(union)
             tombstones = cast("dict[str, dict]", union)
@@ -1563,10 +1568,9 @@ def get_sync_actions(
             # differs from the stored base, so the advertised version is
             # causally honest without destroying the recorded common ancestor.
             # Persistence happens only after a successful sync (merge_and_record).
-            eff = sync_state.local_version_for_compare(abs_local, local_file.sha256sum)
+            eff, base_hash = sync_state.local_version_and_base(abs_local, local_file.sha256sum)
             local_vclock = eff["vclock"] if eff else None
             local_corrected = eff.get("corrected_mtime", 0) if eff else 0
-            base_hash = sync_state.get_base_hash(abs_local)
             # Extract the remote advertised version (absent ⇒ empty clock).
             remote_vclock, remote_corrected = _parse_advertised_version(
                 remote_file_info.get("version")
@@ -1935,10 +1939,9 @@ def update_file(
             local_corrected = 0
             base_hash = None
             if file.filepath:
-                eff = sync_state.local_version_for_compare(file.filepath, file.sha256sum)
+                eff, base_hash = sync_state.local_version_and_base(file.filepath, file.sha256sum)
                 local_vclock = eff["vclock"] if eff else None
                 local_corrected = eff.get("corrected_mtime", 0) if eff else 0
-                base_hash = sync_state.get_base_hash(file.filepath)
             decision = resolve_three_way(
                 file.sha256sum or None,
                 local_vclock,
