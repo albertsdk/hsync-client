@@ -78,7 +78,7 @@ in [`lan-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   master whose record is already stale, so a local-link blip never splits the
   group. The deterministic election alone decides the role.
 - **Packaging lock-step**: any `HSYNC_*` flag/default change requires the
-  synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
+  synchronized `packaging/wd-os5` update (see `AGENTS.md`).
 - **Containerized mksapkg**: `mksapkg-OS5` runs inside the
   `hsync-wdos5-mksapkg` image (`packaging/wd-os5/Dockerfile.mksapkg`) via
   `_wdos5_run_mksapkg` (`compile.sh:947`), not on the host — the prebuilt tool

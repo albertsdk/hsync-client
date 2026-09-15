@@ -55,4 +55,4 @@ backtick / `"` expansion, no `<`/`>` redirection from the placeholder).
 
 > Human doc: `../../packaging/wd-os5/README.md` → "Connect another device".
 > Domain rule: any CLI flag / `HSYNC_*` / i18n change requires the synchronized
-> `packaging/wd-os5` update (see `../../CLAUDE.md`).
+> `packaging/wd-os5` update (see `../../AGENTS.md`).

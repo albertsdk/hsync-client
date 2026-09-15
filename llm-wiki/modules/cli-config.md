@@ -109,7 +109,7 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 `get_emitter` (`:93`), `emit_event` (`:98`). Consumed by `hsync-desktop`.
 
 > **Domain-critical**: any change to `HSYNC_*` flags / defaults requires the
-> synchronized `packaging/wd-os5` update (see `CLAUDE.md`).
+> synchronized `packaging/wd-os5` update (see `AGENTS.md`).
 > WD `packaging/wd-os5/Apkg/start.sh` maps the web UI autotune fields to the
 > binary: `--no-autotune` / `--http-timeout` / `--retry-delay`, and exports
 > `HSYNC_TRANSFER_RETRY_MIN_WAIT` / `HSYNC_TRANSFER_RETRY_MAX_WAIT` (no CLI).
