@@ -16,6 +16,13 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | `_build_server_url` | `:142` | bare-hostname form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when `--port` is omitted, IPv6 auto-bracketing; rejects URL-like and `host:port` inputs, refuses `--port` without a hostname); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
 | `_validate_shared_options` | `:185` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
 
+Startup note: `build_capabilities` (`hsync_common.protocol.capabilities`) and
+`legend_lines` (`hsync_client.log_labels`) are imported **inside** their eager
+callbacks (`capabilities_json_callback` / `legend_callback`), not at module
+level, so the fast paths `--version` / `--help` / `--help-symbols` do not pay the
+`hashing`→`asyncio` and `models` import chain that only `--capabilities-json`
+needs. Pinned by `tests/test_startup_imports.py`.
+
 Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
 `--api-key-fd` (server subcommand) / `--lan-key-fd` (lan subcommand) for a
 parent process. `--env-file` is the only dotenv path (`main_logic.py` →

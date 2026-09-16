@@ -32,6 +32,7 @@ concrete anomaly needs a cost breakdown / CPU saturation sweep.
 | `bench/bench_tombstones.py` | `hsync_client/tombstones.py` wrapper scenarios |
 | `bench/bench_arbitration.py` | `hsync_client/arbitration.py` upload-gate scenarios |
 | `bench/bench_reconcile.py` | `hsync_client/sync.py` reconcile-core scenarios (decision leaves + bulk `get_sync_actions`) |
+| `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
 | `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline) |
 
 ## Scenario → code anchors
@@ -155,6 +156,10 @@ cd hsync-client
 .venv/bin/python bench/run_all.py --count 2000            # -> bench_result.txt
 .venv/bin/python bench/bench_autotune.py --count 2000 [--json-out FILE]
 # ... (one script per module; see bench/README.md)
+
+# startup benchmark (standalone: spawns processes, depends on binary paths)
+.venv/bin/python bench/bench_startup.py --count 30 --no-binary [--json-out FILE]
+.venv/bin/python bench/bench_startup.py --count 30 --binary dist/linux-amd64/hsync [--json-out FILE]
 ```
 
 Lint: `cd hsync-client && .venv/bin/python -m ruff check bench` — the directory

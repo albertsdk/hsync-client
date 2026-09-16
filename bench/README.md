@@ -7,6 +7,7 @@ delta, models, path validation, stores) are already covered by
 
 | Tier | Status here | Why |
 |---|---|---|
+| Startup — process spawn cost | **implemented** (`bench_startup.py`) | Wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus the import-only cases, from source and from the packaged PyInstaller binary |
 | L1 — in-process micro-benchmark | **implemented** (this directory) | Measures the client wrappers the sync engine calls per path/per event |
 | L2/L3 — transport load + soak | deferred | Spawning a LAN master/slave pair over loopback (wire-only) is a follow-on; decided after this L1 baseline |
 | L4 — profiling diagnostic | n/a (yet) | Added only when a specific anomaly needs a cost breakdown |
@@ -20,6 +21,7 @@ asserts only that the measured operation really took the intended branch.
 
 | Script | Measures |
 |---|---|
+| `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
 | `bench_autotune.py` | `classify_network`, `classify_bandwidth`, `derive_timeout`, `derive_retry`, `derive_concurrency`, `derive_profile`, `profile_transfer_queue` (pure policy, no I/O) |
 | `bench_utils.py` | `http_to_ws`, `redact_headers`, `request_headers`, `inbound_size_cap`, `http_connect_timeout`, `upload_timeout`, `is_same_paths`, `ensure_str_path`, `normalize_bucket_relpath` (pure per-request/path helpers) |
 | `bench_event_queue.py` | `QueuedEvent.get_backoff_delay`, `EventQueue.enqueue`, `EventQueue._send_event(success)` (async, in-memory socket stub) |
@@ -48,6 +50,11 @@ cd hsync-client
 .venv/bin/python bench/bench_sync_state.py --count 2000
 .venv/bin/python bench/bench_tombstones.py --count 2000
 .venv/bin/python bench/bench_arbitration.py --count 2000
+
+# startup benchmark (standalone: spawns processes, depends on binary paths)
+.venv/bin/python bench/bench_startup.py --count 30 --no-binary
+.venv/bin/python bench/bench_startup.py --count 30 --binary dist/linux-amd64/hsync
+.venv/bin/python bench/bench_startup.py --count 30 --binary-dir /usr/lib/hsync --json-out /tmp/onedir.json
 
 # machine-readable results (one JSON array per run)
 .venv/bin/python bench/bench_autotune.py --count 2000 --json-out /tmp/autotune.json

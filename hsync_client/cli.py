@@ -21,7 +21,6 @@ from typing import Annotated
 
 import typer
 import typer.main
-from hsync_common.protocol.capabilities import build_capabilities
 
 from hsync_client.constants import (
     BANDWIDTH_MAX,
@@ -50,7 +49,6 @@ from hsync_client.constants import (
     STABILITY_DELAY_MIN,
     SYNC_DIRECTIONS,
 )
-from hsync_client.log_labels import legend_lines
 
 # =============================================================================
 # Typer Application
@@ -83,6 +81,8 @@ def version_callback(value: bool) -> None:
 def legend_callback(value: bool) -> None:
     """Print the output-symbols legend and exit."""
     if value:
+        from hsync_client.log_labels import legend_lines
+
         for line in legend_lines():
             typer.echo(line)
         raise typer.Exit()
@@ -112,6 +112,8 @@ def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
     """Print the binary's capabilities document as JSON and exit."""
     if not value:
         return
+    from hsync_common.protocol.capabilities import build_capabilities
+
     # The parent context's command carries only the parent-level options: the
     # advertised surface is the per-subcommand one, so introspect each
     # registered subcommand's click command instead of ctx.command.params.
