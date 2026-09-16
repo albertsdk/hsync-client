@@ -97,11 +97,11 @@ def _start_slave_seeder(
         )
         return None, None
     try:
-        lan_sync.update_seed_ready(True)
+        lan_sync.update_endpoint_ready(True)
     except Exception as exc:
         server.stop()
         try:
-            lan_sync.update_seed_ready(False)
+            lan_sync.update_endpoint_ready(False)
         except Exception as cleanup_exc:
             log.warning(f"Peer seeder readiness cleanup failed: {cleanup_exc}")
         log.warning(f"Peer seeder readiness could not be published ({exc}); disabling seeding")
@@ -122,7 +122,7 @@ def _stop_slave_seeder(
         except Exception as exc:
             module_log.warning(f"Could not stop peer seeder: {exc}")
         try:
-            lan_sync.update_seed_ready(False)
+            lan_sync.update_endpoint_ready(False)
         except Exception as exc:
             module_log.warning(f"Could not withdraw peer seeder readiness: {exc}")
     if publisher is not None:

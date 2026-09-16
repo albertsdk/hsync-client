@@ -1142,7 +1142,7 @@ class TestStdinCommands:
 class TestSlaveSeederLifecycle:
     """The read-only seeder is owned strictly by a continuous slave role."""
 
-    def test_continuous_slave_starts_seeder_then_publishes_seed_ready(self, tmp_path):
+    def test_continuous_slave_starts_seeder_then_publishes_endpoint_ready(self, tmp_path):
         from hsync_client.lan_handler import _start_slave_seeder
         from hsync_client.lan_server import LANServerMode
 
@@ -1176,7 +1176,7 @@ class TestSlaveSeederLifecycle:
             peer_read_cap=3,
         )
         server.start.assert_called_once_with()
-        lan_sync.update_seed_ready.assert_called_once_with(True)
+        lan_sync.update_endpoint_ready.assert_called_once_with(True)
         publisher_cls.assert_called_once_with(str(tmp_path))
         set_active.assert_called_once_with(publisher)
 
@@ -1210,15 +1210,15 @@ class TestSlaveSeederLifecycle:
             ) == (None, None)
 
         server.stop.assert_called_once_with()
-        lan_sync.update_seed_ready.assert_not_called()
+        lan_sync.update_endpoint_ready.assert_not_called()
 
-    def test_readiness_failure_stops_and_clears_seed_txt(self, tmp_path):
-        """A partial seed=true publication is explicitly withdrawn before fallback."""
+    def test_readiness_failure_stops_and_clears_endpoint_material(self, tmp_path):
+        """A partial publication is explicitly withdrawn before fallback."""
         from hsync_client.lan_handler import _start_slave_seeder
 
         config = _make_lan_config(tmp_path, ONE_SHOT=False)
         lan_sync = MagicMock(port=9443)
-        lan_sync.update_seed_ready.side_effect = [RuntimeError("mdns failed"), None]
+        lan_sync.update_endpoint_ready.side_effect = [RuntimeError("mdns failed"), None]
         server = MagicMock()
         with patch("hsync_client.lan_handler.LANServer", return_value=server):
             assert _start_slave_seeder(
@@ -1229,7 +1229,10 @@ class TestSlaveSeederLifecycle:
             ) == (None, None)
 
         server.stop.assert_called_once_with()
-        assert [call.args[0] for call in lan_sync.update_seed_ready.call_args_list] == [True, False]
+        assert [call.args[0] for call in lan_sync.update_endpoint_ready.call_args_list] == [
+            True,
+            False,
+        ]
 
     def test_stop_withdraws_txt_and_stops_even_if_withdraw_fails(self):
         from hsync_client.lan_handler import _stop_slave_seeder
@@ -1244,12 +1247,12 @@ class TestSlaveSeederLifecycle:
             order.append("withdraw")
             raise RuntimeError("mdns unavailable")
 
-        lan_sync.update_seed_ready.side_effect = fail_withdraw
+        lan_sync.update_endpoint_ready.side_effect = fail_withdraw
 
         with patch("hsync_client.lan_handler.set_active_inventory_publisher") as set_active:
             _stop_slave_seeder(server, lan_sync, publisher)
 
-        lan_sync.update_seed_ready.assert_called_once_with(False)
+        lan_sync.update_endpoint_ready.assert_called_once_with(False)
         server.stop.assert_called_once_with()
         set_active.assert_called_once_with(None)
         assert order == ["stop", "withdraw"]

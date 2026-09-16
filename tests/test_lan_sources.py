@@ -106,7 +106,7 @@ def _commit_holder(store: LanInventoryStore, cid: str, address: str) -> None:
     assert store.apply_frame(cid, token, frame)["status"] == "ok"
 
 
-def _snapshot(cid: str, address: str, *, seed: bool = True) -> PeerSnapshot:
+def _snapshot(cid: str, address: str) -> PeerSnapshot:
     return PeerSnapshot(
         cid=cid,
         address=address,
@@ -115,7 +115,6 @@ def _snapshot(cid: str, address: str, *, seed: bool = True) -> PeerSnapshot:
         cert_fingerprint=CERT,
         compression_enabled=True,
         peer_download_enabled=True,
-        seed_enabled=seed,
     )
 
 
@@ -128,7 +127,6 @@ def test_peer_manager_returns_immutable_detached_snapshots() -> None:
             address="192.168.1.10",
             port=8443,
             peer_download_enabled=True,
-            seed_enabled=True,
         )
     )
     snapshot = manager.get_alive_peer_snapshots()[0]
@@ -166,7 +164,7 @@ def test_source_ranking_prefers_same_subnet_and_requires_exact_live_holder(
         _snapshot(PEER_C, "198.51.100.20"),
         _snapshot(PEER_D, "192.168.1.30"),
         _snapshot(PEER_E, "192.168.1.50"),
-        _snapshot("N" * 21, "192.168.1.40", seed=False),
+        _snapshot("N" * 21, "192.168.1.40"),
     )
     service = LanSourceService(
         bucket="bucket",

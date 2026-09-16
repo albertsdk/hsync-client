@@ -81,9 +81,6 @@ class PeerSourceSnapshot(Protocol):
     @property
     def peer_download_enabled(self) -> bool: ...
 
-    @property
-    def seed_enabled(self) -> bool: ...
-
 
 class ShuffleRng(Protocol):
     def shuffle(self, values: list[PeerSourceSnapshot]) -> None: ...
@@ -179,7 +176,6 @@ class LanSourceService:
             and is_valid_cid(peer.cid)
             and peer.use_https
             and peer.peer_download_enabled
-            and peer.seed_enabled
             and isinstance(peer.cert_fingerprint, str)
             and is_sha256_hex(peer.cert_fingerprint)
             and peer.cert_fingerprint == peer.cert_fingerprint.lower()

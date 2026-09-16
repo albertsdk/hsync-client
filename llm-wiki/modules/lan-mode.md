@@ -34,9 +34,11 @@ SSOT in `hsync-common`.
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.lan.elect_master`
 (bidirectional peers preferred; `--force-master`/`--never-master` honored). TXT
-records advertise `protocol`, `cert_fp`, `sync_direction`, `peer_download`, and
-`seed`. `peer_download` means the node implements the contract; `seed=true`
-means its HTTPS seeder is reachable now. Protocol-mismatched peers are ignored.
+records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
+`peer_download` means the node implements the contract; whether its HTTPS seeder
+is reachable *now* is not a discovery fact at all — it is carried by the
+authenticated WSS session and its capacity advertisement (ADR-0030).
+Protocol-mismatched peers are ignored.
 
 `LANSync.wait_for_discovery` is the single owner of the display-ready presence
 pair (`hsync_client/presence.py`): `total = 1 + alive mDNS peers`, `connected =

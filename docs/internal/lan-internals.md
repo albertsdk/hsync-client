@@ -141,13 +141,15 @@ The master remains authoritative for listing metadata and the expected
 lowercase SHA-256. A slave first attempts master delta transfer. If a full body
 is still required and the file meets the configured threshold, the slave sends
 one bounded `(path, sha256)` wantlist to the master's read-only `/files/sources`
-endpoint. The master joins its per-session inventory with live mDNS peers whose
-`seed=true`, excluding the requester and itself.
+endpoint. The master joins its per-session inventory with live mDNS peers that
+advertise the peer-download capability and hold a live capacity advertisement,
+excluding the requester and itself (ADR-0030).
 
-Each returned source carries its HTTPS URL, CID, certificate fingerprint, and
-compression flag. The requester TOFU-pins `(source CID, bucket)` before opening
-an explicit per-fingerprint HTTP session. It ranks candidates using process
-telemetry, then falls back to the canonical master. Interrupted exact bodies
+Each returned source carries its HTTPS URL, CID, certificate fingerprint,
+compression flag and the seeder's advertised capacity. The requester TOFU-pins
+`(source CID, bucket)` before opening an explicit per-fingerprint HTTP session.
+It ranks candidates using process telemetry, then falls back to the canonical
+master. Interrupted exact bodies
 retain a `.part` prefix across sources; malformed ranges/totals/source hashes
 and completed hash failures discard it. Only final master transient failures
 enter the existing retry policy. A peer-originated successful transfer event
@@ -529,16 +531,19 @@ LAN mode uses mDNS (Multicast DNS) for peer discovery:
 
 - **Service Type**: `_hsync._tcp.local.`
 - **TXT Records**: `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
-  `never_master`, `group`, `delta`, `peer_download`, `seed`
+  `never_master`, `group`, `delta`, `peer_download`
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
 
 The `delta` TXT record is advertised only when delta transfer is enabled
 (`HSYNC_DELTA_ENABLED=true`, the default). Peers parse this flag to determine
 whether delta transfer can be used with that peer.
 
-`peer_download=true` advertises protocol implementation. `seed=true` is a
-runtime readiness assertion published only after a continuous slave's HTTPS
-seeder has bound successfully; it is withdrawn before the role is cleaned up.
+`peer_download=true` advertises protocol implementation. The runtime fact that a
+continuous slave's read-only HTTPS seeder is bound is deliberately **not** on the
+TXT record: it travels on the authenticated WSS session and its `serve_slots`
+capacity advertisement (ADR-0030), so a stale discovery record can never exclude a
+seeder that is in fact serving. A serving slave still advertises the endpoint
+material (`https`/`cert_fp`) while its listener is bound.
 
 ### Thread Model
 

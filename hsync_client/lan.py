@@ -124,7 +124,6 @@ class Peer:
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
     peer_download_enabled: bool = False
-    seed_enabled: bool = False
     server_ready: bool = False  # True when HTTP server is listening
     connected: int = 0  # slaves currently connected to the master's WebSocket
     last_seen: float = field(default_factory=time.time)
@@ -164,7 +163,6 @@ class PeerSnapshot:
     cert_fingerprint: str | None
     compression_enabled: bool
     peer_download_enabled: bool
-    seed_enabled: bool
 
 
 # =============================================================================
@@ -368,7 +366,6 @@ class PeerManager:
                     or existing.compression_enabled != peer.compression_enabled
                     or existing.delta_enabled != peer.delta_enabled
                     or existing.peer_download_enabled != peer.peer_download_enabled
-                    or existing.seed_enabled != peer.seed_enabled
                 )
                 # Update all properties from the new peer object
                 existing.address = peer.address
@@ -380,7 +377,6 @@ class PeerManager:
                 existing.compression_enabled = peer.compression_enabled
                 existing.delta_enabled = peer.delta_enabled
                 existing.peer_download_enabled = peer.peer_download_enabled
-                existing.seed_enabled = peer.seed_enabled
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
@@ -536,7 +532,6 @@ class PeerManager:
                     cert_fingerprint=peer.cert_fingerprint,
                     compression_enabled=peer.compression_enabled,
                     peer_download_enabled=peer.peer_download_enabled,
-                    seed_enabled=peer.seed_enabled,
                 )
                 for peer in self._peers.values()
                 if self._is_peer_alive(peer)
@@ -845,7 +840,6 @@ class HsyncServiceListener(ServiceListener):
             compression_enabled = _tx_bool(properties, b"compression")
             delta_enabled = _tx_bool(properties, b"delta")
             peer_download_enabled = _tx_bool(properties, b"peer_download")
-            seed_enabled = _tx_bool(properties, b"seed")
             # Server ready flag (indicates HTTP server is listening)
             server_ready = _tx_bool(properties, b"server_ready")
             # Force master flag (for master election)
@@ -908,7 +902,6 @@ class HsyncServiceListener(ServiceListener):
                 compression_enabled=compression_enabled,
                 delta_enabled=delta_enabled,
                 peer_download_enabled=peer_download_enabled,
-                seed_enabled=seed_enabled,
                 server_ready=server_ready,
                 connected=connected,
                 force_master=force_master,
@@ -1058,7 +1051,7 @@ class LANSync:
         # record exactly as it currently is.
         self._heartbeat_counter = 0
         self._server_ready = False
-        self._seed_ready = False
+        self._endpoint_ready = False
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
 
@@ -1170,7 +1163,7 @@ class LANSync:
         Call this after starting the HTTP server when becoming master.
         This re-registers the service with server_ready=true.
         """
-        self._refresh_service(server_ready=True, seed_ready=False)
+        self._refresh_service(server_ready=True, endpoint_ready=False)
         log.info("Updated mDNS service: server_ready=true")
 
     def update_server_not_ready(self) -> None:
@@ -1183,15 +1176,20 @@ class LANSync:
         left ``server_ready=true`` would be a *zombie incumbent* — still ranked
         top of the election while no longer serving — prolonging a split-brain.
         """
-        self._refresh_service(server_ready=False, seed_ready=False)
+        self._refresh_service(server_ready=False, endpoint_ready=False)
         log.info("Updated mDNS service: server_ready=false")
 
-    def update_seed_ready(self, ready: bool) -> None:
-        """Advertise or withdraw this slave's reachable read-only seeder."""
-        self._refresh_service(server_ready=False, seed_ready=ready)
-        log.info(f"Updated mDNS service: seed={'true' if ready else 'false'}")
+    def update_endpoint_ready(self, ready: bool) -> None:
+        """Advertise or withdraw this slave's reachable read-only seeder endpoint.
 
-    def _refresh_service(self, server_ready: bool, seed_ready: bool | None = None) -> None:
+        Drives the endpoint-material TXT keys (``https``/``cert_fp``) only: whether
+        this node can actually serve a peer download is advertised over the
+        authenticated WSS handshake, never on the discovery record (ADR-0030).
+        """
+        self._refresh_service(server_ready=False, endpoint_ready=ready)
+        log.info(f"Updated mDNS service: seeder endpoint={'ready' if ready else 'down'}")
+
+    def _refresh_service(self, server_ready: bool, endpoint_ready: bool | None = None) -> None:
         """Update the mDNS service's TXT record in place (no goodbye).
 
         Shared by :meth:`update_server_ready` (server just started),
@@ -1214,13 +1212,13 @@ class LANSync:
                 log.warning("Cannot update service: not registered")
                 return
 
-            if seed_ready is None:
-                seed_ready = self._seed_ready
+            if endpoint_ready is None:
+                endpoint_ready = self._endpoint_ready
             if server_ready:
-                seed_ready = False
+                endpoint_ready = False
             new_info = self._build_service_info(
                 server_ready=server_ready,
-                seed_ready=seed_ready,
+                endpoint_ready=endpoint_ready,
             )
             # ``register_service`` sets the server hostname implicitly; an in-place
             # ``update_service`` requires it explicitly so the registry key matches.
@@ -1228,7 +1226,7 @@ class LANSync:
             self._zeroconf.update_service(new_info)
             self._service_info = new_info
             self._server_ready = server_ready
-            self._seed_ready = seed_ready
+            self._endpoint_ready = endpoint_ready
         # Notify outside the record lock: the peer manager takes its own locks
         # and no code path ever acquires them in the opposite order, but holding
         # two locks would needlessly widen the critical section.
@@ -1271,7 +1269,7 @@ class LANSync:
             self._refresh_timer = None
             if self._service_info is None:
                 return
-        self._refresh_service(server_ready=self._server_ready, seed_ready=self._seed_ready)
+        self._refresh_service(server_ready=self._server_ready, endpoint_ready=self._endpoint_ready)
 
     def _heartbeat(self) -> None:
         """Re-announce the mDNS record with an incremented liveness counter.
@@ -1288,7 +1286,7 @@ class LANSync:
             self._heartbeat_counter += 1
             new_info = self._build_service_info(
                 server_ready=self._server_ready,
-                seed_ready=self._seed_ready,
+                endpoint_ready=self._endpoint_ready,
             )
             new_info.set_server_if_missing()
             self._zeroconf.update_service(new_info)
@@ -1384,7 +1382,7 @@ class LANSync:
     def _build_service_info(
         self,
         server_ready: bool = False,
-        seed_ready: bool = False,
+        endpoint_ready: bool = False,
     ) -> ServiceInfo:
         """Build the :class:`ServiceInfo` for this client's current TXT state.
 
@@ -1410,9 +1408,10 @@ class LANSync:
         if self._group:
             properties["group"] = self._group
         # Endpoint material is advertised only while a listener is actually
-        # bound. A discovery-only node must never claim a reachable TLS endpoint.
-        endpoint_ready = server_ready or seed_ready
-        if endpoint_ready and self._use_https:
+        # bound: the master's HTTP server or a slave's read-only seeder. A
+        # discovery-only node must never claim a reachable TLS endpoint.
+        advertise_endpoint = server_ready or endpoint_ready
+        if advertise_endpoint and self._use_https:
             properties["https"] = "true"
             if self._cert_fingerprint:
                 properties["cert_fp"] = self._cert_fingerprint
@@ -1424,8 +1423,6 @@ class LANSync:
             properties["delta"] = "true"
         if CONFIG.get("LAN_PEER_DOWNLOAD", True):
             properties["peer_download"] = "true"
-        if seed_ready:
-            properties["seed"] = "true"
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"
