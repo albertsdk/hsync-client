@@ -18,7 +18,7 @@ from requests import RequestException
 from hsync_client.events import UiEventName
 from hsync_client.exceptions import PermanentDownloadError
 from hsync_client.lan_sources import LanPeerSource, PeerFailureKind
-from hsync_client.transfer import download_file
+from hsync_client.transfer import _parse_retry_after, download_file
 
 
 class TestDownloadFile:
@@ -859,6 +859,34 @@ class TestPeerDownloadFallback:
             source, PeerFailureKind.not_found, retry_after_s=None
         )
 
+    def test_peer_503_defers_the_source_for_the_interval_it_asked(self, tmp_path):
+        """A saturated seeder is rescheduled with its own delay, then the master serves."""
+        import hashlib
+
+        content = b"master payload"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="busy.txt", sha256sum=digest, size=len(content))
+        source = self._source("s" * 21)
+        resolver = self._resolver((source,))
+        busy = MagicMock()
+        busy.status_code = 503
+        busy.headers = {"Retry-After": "1.25"}
+        master = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", side_effect=[busy, master]) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "busy.txt").read_bytes() == content
+        assert mock_get.call_count == 2
+        resolver.record_failure.assert_called_once_with(
+            source, PeerFailureKind.busy, retry_after_s=1.25
+        )
+
     def test_peer_disconnect_resumes_same_partial_from_master(self, tmp_path):
         """An interrupted exact body preserves its prefix for the next source."""
         import hashlib
@@ -1141,3 +1169,28 @@ class TestDownloadPathLocking:
             File(filepath="dir/b.txt", sha256sum="abc", size=10),
         ]
         assert self._run_concurrent(files, tmp_path) == 2
+
+
+class TestRetryAfterParsing:
+    """``Retry-After`` is honoured only as a usable non-negative delay in seconds.
+
+    The LAN seeder sends delay-seconds; HTTP-date and malformed values must never
+    stall a requester, and a negative value must not shorten a deferral.
+    """
+
+    @pytest.mark.parametrize(
+        ("header", "expected"),
+        [
+            ("0.25", 0.25),
+            (" 1 ", 1.0),
+            ("0", 0.0),
+            ("2", 2.0),
+            (None, None),
+            ("", None),
+            ("abc", None),
+            ("-3", None),
+            ("Wed, 21 Oct 2015 07:28:00 GMT", None),
+        ],
+    )
+    def test_only_a_non_negative_delay_seconds_is_accepted(self, header, expected):
+        assert _parse_retry_after(header) == expected

@@ -39,7 +39,7 @@ flowchart TB
 | **Real-Time Sync** | WebSocket-based instant event propagation (implicit; continuous mode is the default) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
 | **Directional Sync** | Slaves can use `upload-only` or `download-only` via `--sync-direction` |
-| **Peer-Assisted Downloads** | Large files can be fetched from exact-hash continuous slaves before master fallback |
+| **Peer-Assisted Downloads** | Listed files can be fetched from exact-hash continuous slaves, within their announced capacity, before master fallback |
 | **Optional Authentication** | Shared key authenticates all traffic; no-key operation is read-only by default |
 | **Random Port Allocation** | Avoids port conflicts |
 | **Auto-Tuning** | Environment-adaptive defaults for HTTP timeout, retry, and concurrency |

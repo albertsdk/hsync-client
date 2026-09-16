@@ -139,17 +139,19 @@ This ensures consistent state across all peers, even after network interruptions
 
 The master remains authoritative for listing metadata and the expected
 lowercase SHA-256. A slave first attempts master delta transfer. If a full body
-is still required and the file meets the configured threshold, the slave sends
-one bounded `(path, sha256)` wantlist to the master's read-only `/files/sources`
-endpoint. The master joins its per-session inventory with live mDNS peers that
-advertise the peer-download capability and hold a live capacity advertisement,
-excluding the requester and itself (ADR-0030).
+is still required, the slave sends one bounded `(path, sha256)` wantlist to the
+master's read-only `/files/sources` endpoint — eligibility is a live seeder
+holding that exact content, never a file-size gate (ADR-0030). The master joins
+its per-session inventory with live mDNS peers that advertise the peer-download
+capability and hold a live capacity advertisement, excluding the requester and
+itself.
 
 Each returned source carries its HTTPS URL, CID, certificate fingerprint,
 compression flag and the seeder's advertised capacity. The requester TOFU-pins
 `(source CID, bucket)` before opening an explicit per-fingerprint HTTP session.
-It ranks candidates using process telemetry, then falls back to the canonical
-master. Interrupted exact bodies
+It ranks candidates by predicted transfer cost (`setup + size/bandwidth`) from
+process telemetry, keeps its concurrent reads within each candidate's announced
+capacity, and falls back to the canonical master. Interrupted exact bodies
 retain a `.part` prefix across sources; malformed ranges/totals/source hashes
 and completed hash failures discard it. Only final master transient failures
 enter the existing retry policy. A peer-originated successful transfer event

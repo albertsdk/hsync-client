@@ -11,7 +11,7 @@ import pytest
 import requests
 from hsync_common.constants import HEADER_CHECKSUM_SHA256
 
-from hsync_client.lan_server import LANServer, LANServerMode
+from hsync_client.lan_server import SEEDER_RETRY_AFTER_S, LANServer, LANServerMode
 
 
 def _free_port() -> int:
@@ -151,6 +151,10 @@ def test_read_cap_returns_503_before_file_open(seeder):
     finally:
         server._peer_read_slots.release()
     assert response.status_code == 503
+    # The refusal carries the delay the requester must respect, so a saturated
+    # seeder is rescheduled instead of being priced as a broken one (ADR-0030).
+    assert float(response.headers["Retry-After"]) == SEEDER_RETRY_AFTER_S
+    assert SEEDER_RETRY_AFTER_S > 0
 
 
 def test_unsupported_routes_and_methods_are_405(seeder):

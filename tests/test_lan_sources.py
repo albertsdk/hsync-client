@@ -24,6 +24,7 @@ from hsync_client.lan import Peer, PeerManager, PeerSnapshot
 from hsync_client.lan_inventory import LanInventoryStore
 from hsync_client.lan_server import LANServer
 from hsync_client.lan_sources import (
+    BUSY_DEFAULT_BACKOFF_S,
     LanPeerSource,
     LanSourceResolver,
     LanSourceService,
@@ -640,3 +641,117 @@ def test_telemetry_ranking_cooldown_and_ttl_are_deterministic() -> None:
     telemetry.record_failure(PEER_B, PeerFailureKind.not_found)
     now[0] = 602.0
     assert telemetry.rank(sources) == sources
+
+
+def test_busy_deferral_is_scheduling_not_a_health_failure() -> None:
+    """A ``503`` defers its source for the asked interval, never punishing it.
+
+    Regression for the exponential exclusion a saturated seeder used to
+    accumulate: with a narrow read cap and a wide worker pool, every later file of
+    the cycle went to the master for up to a minute (ADR-0030).
+    """
+    now = [0.0]
+    telemetry = LanSourceTelemetry(clock=lambda: now[0])
+    fast = LanPeerSource(
+        cid=PEER_B,
+        download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="b" * 64,
+        compression=False,
+        serve_slots=1,
+    )
+    slow = LanPeerSource(
+        cid=PEER_C,
+        download_url="https://10.0.0.3:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="c" * 64,
+        compression=False,
+        serve_slots=1,
+    )
+    telemetry.record_success(PEER_B, rtt_seconds=0.01, bytes_transferred=1000, body_seconds=1.0)
+    telemetry.record_success(PEER_C, rtt_seconds=0.50, bytes_transferred=1000, body_seconds=1.0)
+    sources = (fast, slow)
+    assert [source.cid for source in telemetry.rank(sources)] == [PEER_B, PEER_C]
+
+    telemetry.record_failure(PEER_B, PeerFailureKind.busy, retry_after_s=0.25)
+    assert [source.cid for source in telemetry.rank(sources)] == [PEER_C]
+
+    # Back as the first choice right after the interval the seeder asked for: no
+    # exponential cooldown, because being full is not being broken.
+    now[0] = 0.26
+    assert [source.cid for source in telemetry.rank(sources)] == [PEER_B, PEER_C]
+
+    # A real failure is priced differently: it earns the exponential exclusion and
+    # also demotes the source behind the healthy one, unlike a busy deferral.
+    telemetry.record_failure(PEER_B, PeerFailureKind.transport)
+    assert [source.cid for source in telemetry.rank(sources)] == [PEER_C]
+    now[0] = 1.27
+    assert [source.cid for source in telemetry.rank(sources)] == [PEER_C, PEER_B]
+
+
+def test_busy_without_a_retry_after_uses_the_short_default() -> None:
+    """A ``503`` with no usable delay still only defers, and briefly."""
+    now = [0.0]
+    telemetry = LanSourceTelemetry(clock=lambda: now[0])
+    source = LanPeerSource(
+        cid=PEER_D,
+        download_url="https://10.0.0.4:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="d" * 64,
+        compression=False,
+        serve_slots=1,
+    )
+    telemetry.record_success(PEER_D, rtt_seconds=0.01, bytes_transferred=1000, body_seconds=1.0)
+    telemetry.record_failure(PEER_D, PeerFailureKind.busy)
+
+    assert telemetry.rank((source,)) == ()
+    now[0] = BUSY_DEFAULT_BACKOFF_S + 0.01
+    assert telemetry.rank((source,)) == (source,)
+
+
+def test_admission_never_exceeds_the_advertised_capacity(tmp_path: Path) -> None:
+    """Concurrent reads stay within a seeder's advertised slots, per CID.
+
+    Regression for the probing behaviour ADR-0030 removed: the requester used to
+    fire one attempt per worker and discover the cap by provoking ``503``s, which
+    saturated the seeder's failure accounting.
+    """
+    resolver = _source_resolver(tmp_path)
+    narrow = LanPeerSource(
+        cid=PEER_B,
+        download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="b" * 64,
+        compression=False,
+        serve_slots=1,
+    )
+    wide = LanPeerSource(
+        cid=PEER_C,
+        download_url="https://10.0.0.3:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="c" * 64,
+        compression=False,
+        serve_slots=2,
+    )
+
+    assert resolver.acquire_slot(narrow, timeout_s=0.05) is True
+    assert resolver.acquire_slot(narrow, timeout_s=0.05) is False
+    # A second seeder is unaffected by the first one's saturation.
+    assert resolver.acquire_slot(wide, timeout_s=0.05) is True
+    assert resolver.acquire_slot(wide, timeout_s=0.05) is True
+    assert resolver.acquire_slot(wide, timeout_s=0.05) is False
+    # Releasing a slot makes it available again (no leak on the fallback path).
+    resolver.release_slot(narrow)
+    assert resolver.acquire_slot(narrow, timeout_s=0.05) is True
+    resolver.release_slot(narrow)
+    resolver.release_slot(wide)
+
+
+def test_admission_is_closed_when_peer_download_is_disabled(tmp_path: Path) -> None:
+    """A requester that opted out never claims a slot and takes the master."""
+    resolver = _source_resolver(tmp_path, enabled=False)
+    source = LanPeerSource(
+        cid=PEER_B,
+        download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="b" * 64,
+        compression=False,
+        serve_slots=2,
+    )
+
+    assert resolver.acquire_slot(source, timeout_s=0.05) is False
+    assert resolver.release_slot(source) is None
