@@ -142,7 +142,6 @@ option to configure.
 | Strict pairing      | `--require-pairing`                            | off                              |
 | Peer-assisted LAN downloads | `--no-peer-download` (when disabled)    | enabled                          |
 | Unauthenticated LAN writes | `--allow-unauthenticated-writes`          | disabled                         |
-| Peer minimum size   | `HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE`             | `1048576` (1 MiB)                |
 | Seeder read cap     | `HSYNC_LAN_PEER_READ_CAP`                      | `2`                              |
 | Peer attempts       | `HSYNC_LAN_PEER_SOURCES_MAX`                    | `3`                              |
 | Group               | `--group`                                  | _empty_                          |

@@ -72,8 +72,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `load_env_file` | `:33` | dotenv loader |
 | typed getters | `:154`–`:265` | `get_server_url`, `get_api_key`, LAN getters, guard getters, delta getters (`get_delta_enabled`, `get_delta_min_file_size`, `get_delta_min_file_size_lan`), etc. |
 
-Peer-download settings are `HSYNC_LAN_PEER_DOWNLOAD=true`,
-`HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE=1048576`, and
+Peer-download settings are `HSYNC_LAN_PEER_DOWNLOAD=true` and
 `HSYNC_LAN_PEER_READ_CAP=2`. `--no-peer-download` is applied as
 `CLI-enabled AND environment-enabled`, so the CLI opt-out is final. The no-key
 write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.

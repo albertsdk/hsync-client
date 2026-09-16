@@ -113,7 +113,10 @@ For usage details, see [Configuration > Bandwidth Limiting](../configuration.md#
 
 Transfers are optimized end-to-end; the effects are measurable with
 `scripts/benchmark_lan_transfers.py` (HTTP-level micro-benchmark against
-the LAN master — sequential requests run ~3× faster with keep-alive):
+the LAN master — sequential requests run ~3× faster with keep-alive), and the
+peer-download half (exact-hash peer fetch vs master fallback, source lookup,
+seeder read cap) with `bench/bench_lan_peer_transfer.py` /
+`bench/bench_lan_sources.py` — see `bench/README.md`:
 
 - **HTTP/1.1 keep-alive on the LAN master** (`lan_server.py`): connections
   are reused across requests, so no TCP+TLS handshake is paid per file;

@@ -719,7 +719,6 @@ def _run_as_slave(
             lan_key=config["LAN_KEY"],
             local_bucket=config["LOCAL_BUCKET"],
             enabled=config.get("LAN_PEER_DOWNLOAD", True),
-            min_size=config.get("LAN_PEER_DOWNLOAD_MIN_SIZE", 1024 * 1024),
             master_capable=bool(master.peer_download_enabled),
             timeout=float(config.get("HTTP_TIMEOUT", 30)),
         )

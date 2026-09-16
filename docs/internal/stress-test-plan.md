@@ -24,8 +24,12 @@
 > it measures the LAN master's per-request overhead (keep-alive vs
 > connection-per-request, TCP_NODELAY effect), the per-file upload-status
 > round trip and compressed/uncompressed download throughput, against an
-> in-process master on loopback. This full e2e stress harness remains the
-> tool for convergence/throughput under real two-peer topologies.
+> in-process master on loopback. `bench/bench_lan_peer_transfer.py` and
+> `bench/bench_lan_sources.py` (see `bench/README.md`) cover the ADR-0028
+> peer-assisted download path the same way — cold/warm peer fetch vs master
+> fallback, source lookup and seeder read-cap saturation. This full e2e stress
+> harness remains the tool for convergence/throughput under real two-peer
+> topologies.
 
 ## 1. Goal & acceptance criteria
 

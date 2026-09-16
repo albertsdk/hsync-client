@@ -95,7 +95,7 @@ def _post(
 
 
 def _commit_holder(store: LanInventoryStore, cid: str, address: str) -> None:
-    token = store.begin_session(cid, remote_address=address)
+    token = store.begin_session(cid, serve_slots=2, remote_address=address)
     frame = build_lan_inventory_frame(
         gen=1,
         seq=0,
@@ -267,7 +267,6 @@ def _source_resolver(tmp_path: Path, **overrides) -> LanSourceResolver:
         "lan_key": "shared-key",
         "local_bucket": str(tmp_path),
         "enabled": True,
-        "min_size": 0,
         "pin_store": PinStore(tmp_path / "pins.json"),
     }
     values.update(overrides)
@@ -320,6 +319,23 @@ def test_requester_batches_once_per_500_and_pins_master_session(tmp_path: Path) 
         assert call.kwargs["cert_fingerprint"] == "f" * 64
         assert call.kwargs["headers"]["Authorization"] == "Bearer shared-key"
         assert call.kwargs["stream"] is True
+
+
+def test_eligibility_does_not_depend_on_file_size(tmp_path: Path) -> None:
+    """An empty file is as eligible as a large one: capacity decides, not size.
+
+    Regression for the retired ``HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE`` gate, which
+    routed every file below 1 MiB straight to the master and turned a burst of
+    small files into a master-only workload (ADR-0030).
+    """
+    resolver = _source_resolver(tmp_path)
+    empty = File(filepath="data/a.bin", sha256sum="c" * 64, size=0)
+    tiny = File(filepath="data/a.bin", sha256sum="c" * 64, size=1)
+    huge = File(filepath="data/a.bin", sha256sum="c" * 64, size=8 * 1024 * 1024)
+
+    assert resolver._identity(tiny) == ("data/a.bin", "c" * 64)
+    assert resolver._identity(empty) == resolver._identity(tiny)
+    assert resolver._identity(huge) == resolver._identity(tiny)
 
 
 def test_maximum_paths_bound_request_and_guaranteed_empty_response(tmp_path: Path) -> None:
@@ -418,6 +434,7 @@ def test_resolved_candidate_map_expires_after_ten_minutes(tmp_path: Path) -> Non
                         ),
                         "cert_fp": "b" * 64,
                         "compression": False,
+                        "serve_slots": 2,
                     }
                 ],
             }
@@ -454,6 +471,7 @@ def test_wrong_bucket_source_is_rejected_before_tofu(tmp_path: Path) -> None:
                         ),
                         "cert_fp": "b" * 64,
                         "compression": False,
+                        "serve_slots": 2,
                     }
                 ],
             }
@@ -479,6 +497,7 @@ def test_requester_tofu_pins_each_source_and_refuses_rotation(tmp_path: Path) ->
         download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
         cert_fingerprint="b" * 64,
         compression=True,
+        serve_slots=2,
     )
 
     assert resolver.authorize(source) is True
@@ -489,6 +508,7 @@ def test_requester_tofu_pins_each_source_and_refuses_rotation(tmp_path: Path) ->
         download_url=source.download_url,
         cert_fingerprint="d" * 64,
         compression=True,
+        serve_slots=2,
     )
     assert resolver.authorize(rotated) is False
     file = File(filepath="docs/file.bin", sha256sum=DIGEST, size=1)
@@ -503,6 +523,7 @@ def test_source_request_headers_never_leak_master_session_state(tmp_path: Path) 
         download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
         cert_fingerprint="b" * 64,
         compression=True,
+        serve_slots=2,
     )
 
     assert resolver.request_headers(
@@ -525,10 +546,63 @@ def test_permanent_source_failure_lasts_for_role_session(tmp_path: Path) -> None
         download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
         cert_fingerprint="b" * 64,
         compression=False,
+        serve_slots=2,
     )
     candidates = {("docs/file.bin", DIGEST): (source,)}
     resolver.record_failure(source, PeerFailureKind.unauthorized)
     assert resolver.candidates_for(file, candidates) == ()
+
+
+def test_ranking_uses_predicted_cost_so_size_does_not_bias_the_order() -> None:
+    """A nearby peer wins small files; a fatter pipe wins large ones.
+
+    Regression for the raw-throughput ordering: ``bytes/body_seconds`` alone made
+    whichever peer had served a large file outrank a lower-latency one, because it
+    hides the fixed setup cost inside a rate. The ranking now compares the
+    predicted time to fetch the file at hand.
+    """
+    telemetry = LanSourceTelemetry(clock=lambda: 0.0)
+    far_fast = LanPeerSource(
+        cid=PEER_B,
+        download_url="https://10.0.0.2:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="b" * 64,
+        compression=False,
+        serve_slots=2,
+    )
+    near_slow = LanPeerSource(
+        cid=PEER_C,
+        download_url="https://10.0.0.3:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="c" * 64,
+        compression=False,
+        serve_slots=2,
+    )
+    telemetry.record_success(
+        PEER_B, rtt_seconds=0.20, bytes_transferred=100_000_000, body_seconds=1.0
+    )
+    telemetry.record_success(
+        PEER_C, rtt_seconds=0.01, bytes_transferred=1_000_000, body_seconds=1.0
+    )
+    sources = (far_fast, near_slow)
+
+    small = 4 * 1024
+    assert [source.cid for source in telemetry.rank(sources, size=small)] == [PEER_C, PEER_B]
+
+    large = 64 * 1024 * 1024
+    assert [source.cid for source in telemetry.rank(sources, size=large)] == [PEER_B, PEER_C]
+
+    # Without a size the setup term decides, and an unmeasured source sorts last.
+    unmeasured = LanPeerSource(
+        cid=PEER_D,
+        download_url="https://10.0.0.4:8443/api/v1/buckets/bucket/files/download",
+        cert_fingerprint="d" * 64,
+        compression=False,
+        serve_slots=2,
+    )
+    assert [source.cid for source in telemetry.rank((*sources, unmeasured))] == [
+        PEER_C,
+        PEER_B,
+        PEER_D,
+    ]
 
 
 def test_telemetry_ranking_cooldown_and_ttl_are_deterministic() -> None:
@@ -541,6 +615,7 @@ def test_telemetry_ranking_cooldown_and_ttl_are_deterministic() -> None:
             download_url=f"https://10.0.0.{index}:8443/api/v1/buckets/bucket/files/download",
             cert_fingerprint=f"{index:064x}",
             compression=False,
+            serve_slots=2,
         )
         for index, cid in enumerate((PEER_B, PEER_C, PEER_D), start=2)
     )

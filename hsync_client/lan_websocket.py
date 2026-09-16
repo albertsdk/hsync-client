@@ -36,7 +36,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from functools import partial
 from pathlib import Path
 from time import time
-from typing import Any
+from typing import Any, cast
 
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.event import Event, EventName, is_valid_cid
@@ -61,6 +61,7 @@ from hsync_common.protocol.peer_download import (
     LAN_WIRE_INT_MAX,
     LanInventoryAckFrame,
     build_lan_inventory_ack,
+    is_valid_serve_slots,
 )
 from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
@@ -70,6 +71,7 @@ from hsync_client.capabilities import adopt_remote_capabilities, local_capabilit
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
+    LAN_PEER_READ_CAP_DEFAULT,
     STABILITY_DELAY_ON_CLOSED,
     WS_MAX_MESSAGE_BYTES,
     ActionLabel,
@@ -479,6 +481,29 @@ class LANWebSocketServer:
         """Extract the peer IP from a websocket remote address."""
         return client_addr[0] if isinstance(client_addr, tuple) else str(client_addr)
 
+    @staticmethod
+    def _resolve_serve_slots(
+        value: object, capabilities: set[Capability]
+    ) -> tuple[int | None, str | None]:
+        """Validate a slave's capacity advertisement against its capability claim.
+
+        Returns ``(serve_slots, rejection_reason)``. A node that serves peer
+        downloads advertises a bounded capacity **and** the ``peer_download``
+        capability (it is a source candidate); a node that does not serve
+        advertises nothing and gets no publisher session at all.
+        """
+        if value is None:
+            return None, None
+        if not is_valid_serve_slots(value):
+            return None, "invalid_serve_slots"
+        if Capability.peer_download not in capabilities:
+            return None, "serve_slots_without_peer_download"
+        # The guard above is the proof: ``is_valid_serve_slots`` accepts only a
+        # bounded int (bool included in its rejection set). ``cast`` states that
+        # for the type checker, which does not propagate the TypeGuard from the
+        # imported hsync-common module.
+        return cast(int, value), None
+
     async def _admit_slave(
         self,
         client_cid: str,
@@ -486,7 +511,7 @@ class LANWebSocketServer:
         websocket,
         *,
         authenticated: bool,
-        inventory_capable: bool,
+        serve_slots: int | None,
     ) -> tuple[bool, str | None, str | None]:
         """Reserve the slave's CID and admit the connection, or reject it.
 
@@ -496,6 +521,10 @@ class LANWebSocketServer:
         closed. A same-address reconnect replaces the superseded binding and
         the stale connection is closed, mirroring the central server's
         ``_register_client`` eviction.
+
+        ``serve_slots`` is the capacity the slave advertised: a publisher session
+        exists exactly when it is present, so a source candidate can never be
+        built from a session with no live capacity advertisement (ADR-0030).
 
         Returns the admission result, inventory owner token, and any reason
         inventory publication is unavailable. On success the CID is already
@@ -514,12 +543,13 @@ class LANWebSocketServer:
 
         inventory_token: str | None = None
         inventory_rejection: str | None = None
-        if inventory_capable and self._inventory_store is not None:
+        if serve_slots is not None and self._inventory_store is not None:
             try:
                 # Install the replacement owner before closing a superseded
                 # same-address WSS. Its later teardown is then an old-owner no-op.
                 inventory_token = self._inventory_store.begin_session(
                     client_cid,
+                    serve_slots=serve_slots,
                     remote_address=peer_ip,
                 )
             except InventorySessionLimitError:
@@ -620,12 +650,23 @@ class LANWebSocketServer:
                 # duplicated device identity (the master's own CID, or a CID
                 # bound to a different host) must never reach the causal model.
                 slave_caps = decode_capabilities(auth_data.get("capabilities"))
+                serve_slots, slot_rejection = self._resolve_serve_slots(
+                    auth_data.get("serve_slots"), slave_caps
+                )
+                if slot_rejection is not None:
+                    log.warning(
+                        f"WebSocket auth rejected – invalid capacity advertisement from "
+                        f"{client_addr} (CID: {client_cid}): {slot_rejection}"
+                    )
+                    await websocket.send(json.dumps(build_lan_auth_failed(reason=slot_rejection)))
+                    await websocket.close()
+                    return
                 admitted, inventory_token, inventory_rejection = await self._admit_slave(
                     client_cid,
                     client_addr,
                     websocket,
                     authenticated=True,
-                    inventory_capable=Capability.peer_download in slave_caps,
+                    serve_slots=serve_slots,
                 )
                 if not admitted:
                     return
@@ -670,12 +711,19 @@ class LANWebSocketServer:
                     # (no failed frame exists on the unauthenticated hello
                     # path; the slave observes the close).
                     slave_caps = decode_capabilities(hello_data.get("capabilities"))
+                    serve_slots, slot_rejection = self._resolve_serve_slots(
+                        hello_data.get("serve_slots"), slave_caps
+                    )
+                    if slot_rejection is not None:
+                        log.warning(f"WebSocket hello invalid from {client_addr}: {slot_rejection}")
+                        await websocket.close()
+                        return
                     admitted, inventory_token, inventory_rejection = await self._admit_slave(
                         client_cid,
                         client_addr,
                         websocket,
                         authenticated=False,
-                        inventory_capable=Capability.peer_download in slave_caps,
+                        serve_slots=serve_slots,
                     )
                     if not admitted:
                         return
@@ -1169,6 +1217,16 @@ async def lan_websocket_client(
     protocol = "wss" if use_https else "ws"
     uri = f"{protocol}://{host}:{port}"
 
+    # A node that serves peer downloads announces its capacity on the handshake:
+    # the master records it with the publisher session and echoes it to
+    # requesters, which use it as their per-seeder admission limit (ADR-0030).
+    # No publisher means no seeder bound, so nothing is advertised at all.
+    serving_slots = (
+        int(CONFIG.get("LAN_PEER_READ_CAP", LAN_PEER_READ_CAP_DEFAULT))
+        if inventory_publisher is not None
+        else None
+    )
+
     log.info(f"Connecting to master WebSocket: {uri}")
 
     # Start local file watcher for bidirectional sync
@@ -1265,7 +1323,10 @@ async def lan_websocket_client(
                     return
                 auth_msg = json.dumps(
                     build_lan_auth(
-                        token=lan_key, cid=CONFIG["CID"], capabilities=local_capabilities()
+                        token=lan_key,
+                        cid=CONFIG["CID"],
+                        capabilities=local_capabilities(),
+                        serve_slots=serving_slots,
                     )
                 )
                 await websocket.send(auth_msg)
@@ -1313,7 +1374,11 @@ async def lan_websocket_client(
                 # exchanged for coherence, not trusted (no shared secret).
                 await websocket.send(
                     json.dumps(
-                        build_lan_hello(capabilities=local_capabilities(), cid=CONFIG["CID"])
+                        build_lan_hello(
+                            capabilities=local_capabilities(),
+                            cid=CONFIG["CID"],
+                            serve_slots=serving_slots,
+                        )
                     )
                 )
                 log.info("WebSocket hello sent to master (no auth)")

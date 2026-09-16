@@ -327,11 +327,12 @@ class TestRunSyncLanPlaceholder:
         assert set(config_arg["AUTOTUNE_MANAGED_KEYS"]) == set(_ALL_TUNING_KEYS)
 
     def test_config_carries_peer_download_environment_policy(self, tmp_path):
-        """Peer threshold, read cap, and dangerous opt-in come from HSYNC_ settings."""
+        """Read cap and dangerous opt-in come from HSYNC_ settings; the peer path
+        itself has no size threshold, so eligibility is a runtime, capacity-driven
+        decision (ADR-0030)."""
         with (
             patch("hsync_client.main_logic.get_server_url", return_value=None),
             patch("hsync_client.main_logic.get_lan_peer_download", return_value=True),
-            patch("hsync_client.main_logic.get_lan_peer_download_min_size", return_value=4096),
             patch("hsync_client.main_logic.get_lan_peer_read_cap", return_value=7),
             patch(
                 "hsync_client.main_logic.get_lan_allow_unauthenticated_writes",
@@ -347,7 +348,6 @@ class TestRunSyncLanPlaceholder:
 
         config_arg = mock_lan.call_args.args[0]
         assert config_arg["LAN_PEER_DOWNLOAD"] is True
-        assert config_arg["LAN_PEER_DOWNLOAD_MIN_SIZE"] == 4096
         assert config_arg["LAN_PEER_READ_CAP"] == 7
         assert config_arg["LAN_ALLOW_UNAUTHENTICATED_WRITES"] is True
 

@@ -108,7 +108,6 @@ HSYNC_LAN_REQUIRE_PAIRING="false"
 # Peer-assisted reads are enabled by default. Writes without the LAN key remain
 # blocked unless the dangerous explicit opt-in is enabled.
 HSYNC_LAN_PEER_DOWNLOAD="true"
-HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE="1048576"
 HSYNC_LAN_PEER_READ_CAP="2"
 HSYNC_LAN_PEER_SOURCES_MAX="3"
 HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES="false"

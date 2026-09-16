@@ -62,8 +62,7 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_LAN_GROUP` | LAN group name (alternative to `--group`) | — |
 | `HSYNC_LAN_KEY` | Shared secret for peer authentication | — (reads only unless explicitly opted into unauthenticated writes) |
 | `HSYNC_LAN_PEER_DOWNLOAD` | Ask the master for exact-hash sources and try eligible peers before master full-download fallback | `true` |
-| `HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE` | Minimum listed file size eligible for peer-assisted download (`0` permits all sizes) | `1048576` (1 MB) |
-| `HSYNC_LAN_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder | `2` |
+| `HSYNC_LAN_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder (announced on the handshake so requesters stay within it) | `2` |
 | `HSYNC_LAN_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |
 | `HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow LAN filesystem mutations with no shared key | `false` |
 | `HSYNC_LAN_PORT` | LAN master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |

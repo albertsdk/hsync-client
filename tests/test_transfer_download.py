@@ -734,6 +734,7 @@ class TestPeerDownloadFallback:
             download_url="https://10.0.0.2:8443/api/v1/buckets/test/files/download",
             cert_fingerprint="a" * 64,
             compression=compression,
+            serve_slots=2,
         )
 
     @staticmethod
@@ -823,7 +824,9 @@ class TestPeerDownloadFallback:
             (False, source, False),
             (False, None, False),
         ]
-        resolver.record_failure.assert_called_once_with(source, PeerFailureKind.conflict)
+        resolver.record_failure.assert_called_once_with(
+            source, PeerFailureKind.conflict, retry_after_s=None
+        )
 
     def test_peer_404_advances_to_master_without_retrying_peer(self, tmp_path):
         """A peer-local 404 advances immediately and master fallback stays unpinned to it."""
@@ -852,7 +855,9 @@ class TestPeerDownloadFallback:
         assert mock_get.call_count == 2
         assert "cert_fingerprint" in mock_get.call_args_list[0].kwargs
         assert "cert_fingerprint" not in mock_get.call_args_list[1].kwargs
-        resolver.record_failure.assert_called_once_with(source, PeerFailureKind.not_found)
+        resolver.record_failure.assert_called_once_with(
+            source, PeerFailureKind.not_found, retry_after_s=None
+        )
 
     def test_peer_disconnect_resumes_same_partial_from_master(self, tmp_path):
         """An interrupted exact body preserves its prefix for the next source."""
@@ -892,7 +897,9 @@ class TestPeerDownloadFallback:
         master_headers = mock_get.call_args_list[1].kwargs["headers"]
         assert master_headers["Range"] == f"bytes={len(prefix)}-"
         assert master_headers["Accept-Encoding"] == "identity"
-        resolver.record_failure.assert_called_once_with(source, PeerFailureKind.transport)
+        resolver.record_failure.assert_called_once_with(
+            source, PeerFailureKind.transport, retry_after_s=None
+        )
 
     def test_bad_peer_hash_is_deleted_before_next_peer(self, tmp_path):
         """A complete wrong body cannot become a resume prefix for another source."""
@@ -920,7 +927,9 @@ class TestPeerDownloadFallback:
 
         assert (tmp_path / "hash.txt").read_bytes() == content
         assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
-        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.hash_mismatch)
+        resolver.record_failure.assert_called_once_with(
+            first, PeerFailureKind.hash_mismatch, retry_after_s=None
+        )
         assert resolver.record_success.call_args.args[0] == second
 
     def test_complete_short_peer_body_is_deleted_before_next_peer(self, tmp_path):
@@ -949,7 +958,9 @@ class TestPeerDownloadFallback:
 
         assert (tmp_path / "short.txt").read_bytes() == content
         assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
-        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.malformed)
+        resolver.record_failure.assert_called_once_with(
+            first, PeerFailureKind.malformed, retry_after_s=None
+        )
 
     def test_zero_byte_listing_rejects_peer_body_before_fallback(self, tmp_path):
         """An exact empty file cannot consume the generic inbound-size allowance."""
@@ -972,7 +983,9 @@ class TestPeerDownloadFallback:
             download_file(file, source_resolver=resolver)
 
         assert (tmp_path / "empty.txt").read_bytes() == b""
-        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.malformed)
+        resolver.record_failure.assert_called_once_with(
+            first, PeerFailureKind.malformed, retry_after_s=None
+        )
 
     def test_resumed_master_hash_failure_retries_once_from_zero(self, tmp_path):
         """A poisoned prefix is discarded before one clean canonical-master retry."""
@@ -1070,7 +1083,9 @@ class TestPeerDownloadFallback:
 
         assert (tmp_path / "malformed.txt").read_bytes() == content
         assert "Range" not in mock_get.call_args_list[1].kwargs["headers"]
-        resolver.record_failure.assert_called_once_with(first, PeerFailureKind.malformed)
+        resolver.record_failure.assert_called_once_with(
+            first, PeerFailureKind.malformed, retry_after_s=None
+        )
 
 
 class TestDownloadPathLocking:

@@ -1,0 +1,638 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Copyright (C) 2025 Alberto Basso
+
+"""L2 — LAN peer-assisted download wire benchmark (loopback, real servers).
+
+Measures the two full-download paths of ``lan/1`` end to end with real
+``LANServer`` instances, real TLS (self-signed certificate + fingerprint
+pinning) and the real production entry point (``hsync_client.transfer.download_file``):
+
+* **peer path** — exact-hash ``GET`` against a read-only seeder, cold (fresh
+  thread session, so a full TCP+TLS handshake is inside the sample) and warm
+  (keep-alive session reused);
+* **master path** — the canonical fallback, always warm: a LAN slave already
+  holds its master session for the whole role lifetime;
+* **seeder read cap** — concurrent exact-hash GETs against
+  ``HSYNC_LAN_PEER_READ_CAP`` (2), which exposes the ``503`` saturation rate the
+  peer path converts into a master fallback;
+* **production fallback** — concurrent ``download_file`` calls under that cap;
+* **cycle** — a whole cycle of small files on a fixed worker count, peer path vs
+  master-only baseline, reporting per cycle how many files the peer served, how
+  many attempts it refused for saturation, and how many full downloads fell back
+  to the master. This is the scenario peer-admission changes are judged on.
+
+The per-size p50 of the peer and master paths yields the crossing size at which
+the peer path stops repaying its fixed setup cost; the derived block printed at
+the end reports it together with the effective throughput, which shows how much
+a peer's ``throughput_ema`` is depressed by fixed cost on small files. That
+crossing is an observation about the transport, not a routing policy: no size
+threshold decides eligibility (ADR-0030).
+
+Out of the samples on purpose: the TOFU first-use cost (``measure_with_setup``
+warms up before timing, so the peer is already pinned — exactly as in production,
+where a peer is pinned before it serves; ``bench_pinning.py`` measures first use
+itself) and the full-body SHA-256 verification, which is re-checked once per
+scenario outside the timed region because hashing 8 MiB would dwarf the
+differences under test.
+
+Usage:
+    cd hsync-client && .venv/bin/python bench/bench_lan_peer_transfer.py [--count N] [--json-out FILE]
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from pathlib import Path
+from unittest.mock import patch
+
+# Allow ``from common import ...`` when run from the bench/ directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import (  # noqa: E402  (import after sys.path tweak)
+    BenchResult,
+    add_json_out,
+    make_cid,
+    maybe_write_json,
+    print_table,
+)
+from hsync_common.models.file import File  # noqa: E402
+from lan_peer_common import (  # noqa: E402
+    DownloadOutcomeRecorder,
+    LanRequesterEnv,
+    LanServerHarness,
+    build_file,
+    concurrent_peer_gets,
+    install_failure_recorder,
+    install_outcome_recorder,
+    measure_with_setup,
+    write_payload,
+)
+
+from hsync_client.lan_server import LANServerMode  # noqa: E402
+from hsync_client.lan_sources import LanPeerSource, LanSourceResolver  # noqa: E402
+from hsync_client.transfer import download_file  # noqa: E402
+
+MASTER_CID = make_cid(101)
+SEEDER_CID = make_cid(102)
+REQUESTER_CID = make_cid(103)
+
+# Sizes spanning three orders of magnitude below the master-sized payloads, so
+# the peer/master crossing (fixed setup cost vs bandwidth) is visible inside the
+# measured range.
+SIZES: tuple[tuple[str, int], ...] = (
+    ("4KiB", 4 * 1024),
+    ("64KiB", 64 * 1024),
+    ("256KiB", 256 * 1024),
+    ("1MiB", 1024 * 1024),
+    ("8MiB", 8 * 1024 * 1024),
+)
+REFERENCE_LABEL = "4KiB"
+PEER_READ_CAP = 2
+CONCURRENCY_SWEEP = (1, 2, 4, 8)
+PAYLOAD_REL = "payload.bin"
+CAP_REL = "cap/probe.bin"
+CAP_SIZE = 4 * 1024
+FALLBACK_FILES = tuple(f"cap/batch-{index}.bin" for index in range(4))
+FALLBACK_SIZE = 4 * 1024
+
+# The cycle scenario: one sync cycle's worth of small files pulled by a fixed
+# worker count, the shape production has when a slave receives many small files.
+# Both axes are swept because the seeder's read cap only bites when enough
+# requests overlap: tiny files with few workers rarely collide, larger bodies
+# with a wide pool do.
+CYCLE_FILES = 24
+CYCLE_SIZES: tuple[tuple[str, int], ...] = (
+    ("1KiB", 1024),
+    ("4KiB", 4 * 1024),
+    ("256KiB", 256 * 1024),
+)
+CYCLE_WORKERS = (4, 8)
+
+PEER_PREFIX = "peer"
+COLD_INFIX = "cold"
+WARM_INFIX = "warm"
+MASTER_PREFIX = "master"
+
+
+def _scenario_name(path: str, stage: str, label: str) -> str:
+    """Stable scenario name, e.g. ``peer_cold_4KiB`` / ``master_warm_8MiB``."""
+    return f"{path}_{stage}_{label}"
+
+
+def _sha256_file(path: Path) -> str:
+    """Streaming SHA-256 of a downloaded file (used once per scenario)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _assert_downloaded(requester: LanRequesterEnv, file: File) -> None:
+    """Per-sample branch assertion: whole body landed, no partial left behind."""
+    target = requester.bucket_dir / str(file.filepath)
+    assert target.is_file(), target
+    assert target.stat().st_size == file.size, target
+    assert not Path(f"{target}.part").exists(), target
+
+
+def _verify_payload(requester: LanRequesterEnv, file: File, digest: str) -> None:
+    """Verify the digest of the last downloaded body, outside the timed region."""
+    assert _sha256_file(requester.bucket_dir / str(file.filepath)) == digest
+
+
+def _peer_sample(
+    requester: LanRequesterEnv,
+    file: File,
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]],
+    resolver: LanSourceResolver,
+) -> None:
+    """One production peer download through the real resolver and candidate map."""
+    download_file(file, candidates=candidates, source_resolver=resolver)
+    _assert_downloaded(requester, file)
+
+
+def _master_sample(requester: LanRequesterEnv, file: File) -> None:
+    """One production master download (``source_resolver=None`` = canonical path)."""
+    download_file(file)
+    _assert_downloaded(requester, file)
+
+
+def _download_one(
+    requester: LanRequesterEnv,
+    file: File,
+    *,
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]],
+    resolver: LanSourceResolver,
+) -> None:
+    """One production peer download inside its own worker thread."""
+    download_file(file, candidates=candidates, source_resolver=resolver)
+    _assert_downloaded(requester, file)
+
+
+def _drain_files(
+    requester: LanRequesterEnv,
+    files: list[File],
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]],
+    resolver: LanSourceResolver,
+    *,
+    workers: int,
+    use_peer: bool,
+) -> None:
+    """Drain *files* through the production download path on *workers* threads.
+
+    Peer mode hands the candidate map to the resolver (the real peer path with
+    its admission/failure handling); master mode calls the canonical path with no
+    source at all. Both assert the body landed, so a silent fallback cannot be
+    reported as a fast peer transfer.
+    """
+    worker = (
+        partial(_download_one, requester, candidates=candidates, resolver=resolver)
+        if use_peer
+        else partial(_master_sample, requester)
+    )
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bench_cycle") as pool:
+        list(pool.map(worker, files))
+
+
+def _run_size_matrix(
+    count: int,
+    *,
+    master: LanServerHarness,
+    seeder: LanServerHarness,
+    requester: LanRequesterEnv,
+) -> list[BenchResult]:
+    """Cold peer / warm peer / warm master per size, plus one bookkeeping probe."""
+    results: list[BenchResult] = []
+    for label, size in SIZES:
+        content, digest = write_payload(seeder.bucket_dir, PAYLOAD_REL, size)
+        write_payload(master.bucket_dir, PAYLOAD_REL, size)
+        file = build_file(PAYLOAD_REL, content, digest)
+        resolver = requester.resolver()
+        # ``_identity`` is the production eligibility filter. Every size passes it
+        # now that size no longer gates the peer path, so the bench is keyed
+        # exactly like the engine instead of re-deriving the wire identity.
+        key = resolver._identity(file)
+        assert key == (PAYLOAD_REL, digest), key
+        candidates = {key: (seeder.peer_source(),)}
+
+        results.append(
+            measure_with_setup(
+                _scenario_name(PEER_PREFIX, COLD_INFIX, label),
+                partial(requester.remove_destination, PAYLOAD_REL, drop_sessions=True),
+                partial(_peer_sample, requester, file, candidates, resolver),
+                count=count,
+            )
+        )
+        _verify_payload(requester, file, digest)
+
+        results.append(
+            measure_with_setup(
+                _scenario_name(PEER_PREFIX, WARM_INFIX, label),
+                partial(requester.remove_destination, PAYLOAD_REL),
+                partial(_peer_sample, requester, file, candidates, resolver),
+                count=count,
+            )
+        )
+        _verify_payload(requester, file, digest)
+
+        results.append(
+            measure_with_setup(
+                _scenario_name(MASTER_PREFIX, WARM_INFIX, label),
+                partial(requester.remove_destination, PAYLOAD_REL),
+                partial(_master_sample, requester, file),
+                count=count,
+            )
+        )
+        _verify_payload(requester, file, digest)
+
+        if label == REFERENCE_LABEL:
+            # Isolates the per-file sync-state write the peer and master paths
+            # both pay, so the comparison can also be read net of bookkeeping.
+            with patch("hsync_client.transfer._record_synced_base"):
+                results.append(
+                    measure_with_setup(
+                        f"{_scenario_name(PEER_PREFIX, WARM_INFIX, label)}_no_bookkeeping",
+                        partial(requester.remove_destination, PAYLOAD_REL),
+                        partial(_peer_sample, requester, file, candidates, resolver),
+                        count=count,
+                    )
+                )
+            _verify_payload(requester, file, digest)
+    return results
+
+
+def _run_read_cap_sweep(
+    count: int,
+    *,
+    seeder: LanServerHarness,
+    requester: LanRequesterEnv,
+) -> tuple[list[BenchResult], list[tuple[int, int, int]]]:
+    """One seeder serving ``count`` small files to ``workers`` warm requester threads.
+
+    Threads are created once per worker count and reused for every request, so
+    after the first request each thread holds a keep-alive session — the shape a
+    production transfer pool has when a slave pulls many small files.
+
+    Returns:
+        ``(results, summary)`` where each summary row is
+        ``(workers, http_200_count, http_503_count)``.
+    """
+    _content, digest = write_payload(seeder.bucket_dir, CAP_REL, CAP_SIZE)
+    params = {"filename": CAP_REL, "sha256": digest, "cid": requester.cid}
+    results: list[BenchResult] = []
+    summary: list[tuple[int, int, int]] = []
+    for workers in CONCURRENCY_SWEEP:
+        outcomes = concurrent_peer_gets(
+            [(seeder.download_url, params)] * count,
+            cert_fingerprint=seeder.cert_fingerprint,
+            workers=workers,
+        )
+        latencies: list[float] = []
+        statuses: list[int] = []
+        for latency, status, received in outcomes:
+            latencies.append(latency)
+            statuses.append(status)
+            assert status in (200, 503), status
+            assert received == CAP_SIZE or status == 503, (status, received)
+        assert statuses.count(200) > 0, statuses
+        results.append(BenchResult(f"seeder_readcap_batch({workers})", latencies, len(latencies)))
+        summary.append((workers, statuses.count(200), statuses.count(503)))
+    return results, summary
+
+
+def _run_production_fallback(
+    count: int,
+    *,
+    master: LanServerHarness,
+    seeder: LanServerHarness,
+    requester: LanRequesterEnv,
+) -> list[BenchResult]:
+    """Concurrent production downloads of small files under the same read cap."""
+    resolver = requester.resolver()
+    files: list[File] = []
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]] = {}
+    for relpath in FALLBACK_FILES:
+        content, digest = write_payload(seeder.bucket_dir, relpath, FALLBACK_SIZE)
+        write_payload(master.bucket_dir, relpath, FALLBACK_SIZE)
+        file = build_file(relpath, content, digest)
+        key = resolver._identity(file)
+        assert key is not None, relpath
+        files.append(file)
+        candidates[key] = (seeder.peer_source(),)
+
+    drain = partial(
+        _drain_files,
+        requester,
+        files,
+        candidates,
+        resolver,
+        workers=len(files),
+        use_peer=True,
+    )
+    results = [
+        measure_with_setup(
+            f"peer_cap{PEER_READ_CAP}_fallback({len(files)} files)",
+            partial(requester.remove_destinations, FALLBACK_FILES),
+            drain,
+            count=max(1, count // len(files)),
+        )
+    ]
+    for file in files:
+        target = requester.bucket_dir / str(file.filepath)
+        assert target.is_file() and target.stat().st_size == file.size, target
+    return results
+
+
+def _run_cycle_scenarios(
+    count: int,
+    *,
+    master: LanServerHarness,
+    seeder: LanServerHarness,
+    requester: LanRequesterEnv,
+) -> tuple[list[BenchResult], list[tuple[str, int, float, int, int]]]:
+    """Cycle sweep (file size x worker count), peer path vs master-only baseline.
+
+    This is the scenario the peer-admission change is judged on: it reports, per
+    configuration, how many files the peer served per cycle, the worst per-cycle
+    count of saturation refusals, and how many full downloads ended up on the
+    master. Each configuration runs with and without the peer path on the same
+    file set and worker count, so the wall time comparison is apples to apples.
+
+    Returns:
+        ``(results, outcomes)`` where each outcome row is ``(label, workers,
+        size_bytes, avg_peer_ok_per_cycle, worst_cycle_busy, total_master_full)``.
+    """
+    resolver = requester.resolver()
+    recorder = DownloadOutcomeRecorder()
+    outcome_patcher = install_outcome_recorder(recorder)
+    failure_patcher = install_failure_recorder(recorder)
+    results: list[BenchResult] = []
+    outcomes: list[tuple[str, int, float, int, int]] = []
+    try:
+        for size_label, size in CYCLE_SIZES:
+            files, candidates, relpaths = _build_cycle_fixture(
+                master, seeder, resolver, size_label, size
+            )
+            for workers in CYCLE_WORKERS:
+                for use_peer in (True, False):
+                    label = "peer" if use_peer else "master"
+                    per_cycle: list[tuple[int, int, int, int]] = []
+                    results.append(
+                        measure_with_setup(
+                            f"cycle_{label}_{size_label}({CYCLE_FILES}f,{workers}w)",
+                            partial(requester.remove_destinations, relpaths),
+                            partial(
+                                _drain_cycle,
+                                requester,
+                                files,
+                                candidates,
+                                resolver,
+                                relpaths,
+                                size=size,
+                                workers=workers,
+                                use_peer=use_peer,
+                                recorder=recorder,
+                                per_cycle=per_cycle,
+                            ),
+                            count=count,
+                        )
+                    )
+                    cycles = max(1, len(per_cycle))
+                    outcomes.append(
+                        (
+                            f"{label}_{size_label}({workers}w)",
+                            size,
+                            round(sum(row[0] for row in per_cycle) / cycles, 1),
+                            max(row[1] for row in per_cycle),
+                            sum(row[3] for row in per_cycle),
+                        )
+                    )
+    finally:
+        failure_patcher.stop()
+        outcome_patcher.stop()
+    return results, outcomes
+
+
+def _build_cycle_fixture(
+    master: LanServerHarness,
+    seeder: LanServerHarness,
+    resolver: LanSourceResolver,
+    size_label: str,
+    size: int,
+) -> tuple[list[File], dict[tuple[str, str], tuple[LanPeerSource, ...]], list[str]]:
+    """Materialize one cycle's files on both nodes plus their candidate map."""
+    files: list[File] = []
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]] = {}
+    relpaths: list[str] = []
+    for index in range(CYCLE_FILES):
+        relpath = f"cycle/{size_label}/f-{index:02d}.bin"
+        content, digest = write_payload(seeder.bucket_dir, relpath, size)
+        write_payload(master.bucket_dir, relpath, size)
+        file = build_file(relpath, content, digest)
+        key = resolver._identity(file)
+        assert key is not None, relpath
+        files.append(file)
+        relpaths.append(relpath)
+        candidates[key] = (seeder.peer_source(),)
+    return files, candidates, relpaths
+
+
+def _drain_cycle(
+    requester: LanRequesterEnv,
+    files: list[File],
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]],
+    resolver: LanSourceResolver,
+    relpaths: list[str],
+    *,
+    size: int,
+    workers: int,
+    use_peer: bool,
+    recorder: DownloadOutcomeRecorder,
+    per_cycle: list[tuple[int, int, int, int]],
+) -> None:
+    """One timed cycle sample: drain the files and record where they came from."""
+    recorder.reset()
+    _drain_files(
+        requester,
+        files,
+        candidates,
+        resolver,
+        workers=workers,
+        use_peer=use_peer,
+    )
+    per_cycle.append(
+        (
+            recorder.peer_ok,
+            recorder.peer_busy,
+            recorder.peer_other_failures,
+            recorder.master_full,
+        )
+    )
+    for relpath in relpaths:
+        target = requester.bucket_dir / relpath
+        assert target.is_file() and target.stat().st_size == size, target
+
+
+def _mib_per_s(size: int, p50_ms: float) -> float:
+    """Effective MiB/s from a body size and a p50 latency in ms (0 if unmeasurable)."""
+    if p50_ms <= 0:
+        return 0.0
+    return size / (p50_ms / 1000.0) / (1024 * 1024)
+
+
+def _bracket_crossover(
+    rows: list[tuple[str, int, float, float, float]],
+    peer_index: int,
+) -> tuple[int, str, str] | None:
+    """First size where the peer p50 drops below the master p50, interpolated.
+
+    ``rows`` entries are ``(label, size, peer_cold_p50, peer_warm_p50,
+    master_warm_p50)``; ``peer_index`` selects cold (2) or warm (3).
+    """
+    for low, high in zip(rows, rows[1:], strict=False):
+        low_delta = low[peer_index] - low[4]
+        high_delta = high[peer_index] - high[4]
+        if low_delta <= 0:
+            return low[1], low[0], low[0]
+        if high_delta < 0:
+            span = low_delta - high_delta
+            fraction = low_delta / span if span > 0 else 0.0
+            size = int(low[1] + fraction * (high[1] - low[1]))
+            return size, low[0], high[0]
+    return None
+
+
+def _print_derived(results_by_name: dict[str, BenchResult]) -> None:
+    """Print per-size throughput and the peer/master crossing size.
+
+    The crossing is where the peer line meets the master line: it quantifies the
+    fixed setup cost the peer path pays (and therefore what the peer admission
+    gate has to amortize), not an eligibility threshold.
+    """
+    rows = [
+        (
+            label,
+            size,
+            results_by_name[_scenario_name(PEER_PREFIX, COLD_INFIX, label)].p50,
+            results_by_name[_scenario_name(PEER_PREFIX, WARM_INFIX, label)].p50,
+            results_by_name[_scenario_name(MASTER_PREFIX, WARM_INFIX, label)].p50,
+        )
+        for label, size in SIZES
+    ]
+    print("derived: p50 per path and effective body throughput (size / p50)")
+    header = (
+        f"{'size':<8}{'peer_cold_ms':>14}{'peer_warm_ms':>14}{'master_warm_ms':>15}"
+        f"{'peer_MiB/s':>12}{'master_MiB/s':>13}"
+    )
+    print(header)
+    print("-" * len(header))
+    for label, size, cold, warm, master in rows:
+        print(
+            f"{label:<8}{cold:>14.3f}{warm:>14.3f}{master:>15.3f}"
+            f"{_mib_per_s(size, warm):>12.1f}{_mib_per_s(size, master):>13.1f}"
+        )
+    print()
+    candidates = (
+        (f"{PEER_PREFIX}_{WARM_INFIX}", 3),
+        (f"{PEER_PREFIX}_{COLD_INFIX}", 2),
+    )
+    for path_label, peer_index in candidates:
+        crossing = _bracket_crossover(rows, peer_index)
+        if crossing is None:
+            print(
+                f"derived: {path_label} never beats {MASTER_PREFIX}_{WARM_INFIX} "
+                f"within {SIZES[0][0]}-{SIZES[-1][0]}"
+            )
+            continue
+        size, low_label, high_label = crossing
+        if low_label == high_label:
+            print(
+                f"derived: {path_label} is already at least as fast as "
+                f"{MASTER_PREFIX}_{WARM_INFIX} at {low_label} — no crossover inside "
+                "the measured range"
+            )
+            continue
+        print(
+            f"derived: {path_label} break-even vs {MASTER_PREFIX}_{WARM_INFIX}: "
+            f"~{size} bytes (bracket {low_label}-{high_label})"
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=40,
+        help="timed samples per scenario (wire scenarios are far slower than L1)",
+    )
+    add_json_out(parser)
+    args = parser.parse_args()
+    count = args.count
+    if count < 1:
+        parser.error("--count must be >= 1")
+
+    # Both servers log one INFO line per served file plus DEBUG request lines;
+    # hundreds of samples would bury the results table.
+    from loguru import logger
+
+    logger.remove()
+
+    with tempfile.TemporaryDirectory(prefix="hsync_bench_peer_") as tmp:
+        root = Path(tmp)
+        with (
+            LanServerHarness(LANServerMode.master, root, name="master", cid=MASTER_CID) as master,
+            LanServerHarness(
+                LANServerMode.seeder,
+                root,
+                name="seeder",
+                cid=SEEDER_CID,
+                peer_read_cap=PEER_READ_CAP,
+            ) as seeder,
+            LanRequesterEnv(root, master=master, cid=REQUESTER_CID) as requester,
+        ):
+            results = _run_size_matrix(count, master=master, seeder=seeder, requester=requester)
+            cap_results, cap_summary = _run_read_cap_sweep(
+                count, seeder=seeder, requester=requester
+            )
+            results.extend(cap_results)
+            results.extend(
+                _run_production_fallback(count, master=master, seeder=seeder, requester=requester)
+            )
+            cycle_results, cycle_outcomes = _run_cycle_scenarios(
+                count, master=master, seeder=seeder, requester=requester
+            )
+            results.extend(cycle_results)
+
+    print(f"LAN peer transfer wire benchmark (count={count}, loopback, real TLS)")
+    print_table(results)
+    _print_derived({result.name: result for result in results})
+    print()
+    print(f"seeder read cap (HSYNC_LAN_PEER_READ_CAP={PEER_READ_CAP}) saturation sweep:")
+    for workers, served, busy in cap_summary:
+        total = served + busy
+        print(f"  {workers:>2} concurrent: {served}/{total} served, {busy}/{total} 503 (busy)")
+    print()
+    print(
+        f"cycle outcomes with {CYCLE_FILES} files per cycle (cap={PEER_READ_CAP}, "
+        "warmup cycles included):"
+    )
+    for label, size, avg_peer_ok, worst_busy, total_master in cycle_outcomes:
+        print(
+            f"  {label:>22} size={size:>7} worst_cycle_503={worst_busy:<4} "
+            f"peer_ok/cycle={avg_peer_ok:<7} master_full={total_master}"
+        )
+    maybe_write_json(args.json_out, results)
+
+
+if __name__ == "__main__":
+    main()

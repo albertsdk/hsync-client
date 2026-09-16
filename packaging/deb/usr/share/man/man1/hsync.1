@@ -485,14 +485,10 @@ certificates (default:
 Enable exact-hash peer-assisted LAN full downloads (default:
 .BR true ).
 .TP
-.B HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE
-Minimum file size in bytes eligible for peer-assisted download (default:
-.BR 1048576 ,
-1 MiB; 0 permits every size).
-.TP
 .B HSYNC_LAN_PEER_READ_CAP
 Maximum concurrent peer-download response bodies served by a continuous slave
-(default:
+(advertised on the LAN handshake so requesters stay within it; saturation
+answers 503 with a suggested retry delay) (default:
 .BR 2 ;
 range: 1\(en32).
 .TP

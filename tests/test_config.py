@@ -89,7 +89,6 @@ class TestEnvSettings:
         assert settings.ignore_delete is False
         assert settings.compression_enabled is True
         assert settings.lan_peer_download is True
-        assert settings.lan_peer_download_min_size == 1024 * 1024
         assert settings.lan_peer_read_cap == 2
         assert settings.lan_allow_unauthenticated_writes is False
 
@@ -140,14 +139,12 @@ class TestEnvSettings:
     def test_peer_download_and_unauthenticated_write_env_settings(self, monkeypatch):
         """Peer download policy knobs use the HSYNC_ environment contract."""
         monkeypatch.setenv("HSYNC_LAN_PEER_DOWNLOAD", "false")
-        monkeypatch.setenv("HSYNC_LAN_PEER_DOWNLOAD_MIN_SIZE", "4096")
         monkeypatch.setenv("HSYNC_LAN_PEER_READ_CAP", "7")
         monkeypatch.setenv("HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES", "true")
         get_env_settings.cache_clear()
         try:
             settings = EnvSettings()
             assert settings.lan_peer_download is False
-            assert settings.lan_peer_download_min_size == 4096
             assert settings.lan_peer_read_cap == 7
             assert settings.lan_allow_unauthenticated_writes is True
         finally:

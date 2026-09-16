@@ -70,7 +70,7 @@ def test_legacy_volatile_schema_is_recreated(tmp_path: Path) -> None:
     connection.close()
 
     store = LanInventoryStore(database, "bucket")
-    token = store.begin_session(CID_A)
+    token = store.begin_session(CID_A, serve_slots=2)
     snapshot = build_lan_inventory_frame(
         gen=1,
         seq=0,
@@ -85,7 +85,7 @@ def test_legacy_volatile_schema_is_recreated(tmp_path: Path) -> None:
 def test_store_commits_snapshot_atomically_and_applies_idempotent_delta(tmp_path: Path) -> None:
     store = LanInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
     store.activate()
-    token = store.begin_session(CID_A)
+    token = store.begin_session(CID_A, serve_slots=2)
 
     first = build_lan_inventory_frame(
         gen=1,
@@ -140,7 +140,7 @@ def test_store_commits_snapshot_atomically_and_applies_idempotent_delta(tmp_path
 def test_duplicate_terminal_snapshot_requires_identical_payload(tmp_path: Path) -> None:
     store = LanInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
     store.activate()
-    token = store.begin_session(CID_A)
+    token = store.begin_session(CID_A, serve_slots=2)
     terminal = build_lan_inventory_frame(
         gen=1,
         seq=0,
@@ -173,7 +173,7 @@ def test_store_quota_counts_only_net_delta_rows_and_rejection_preserves_commit(
         global_quota=1,
     )
     store.activate()
-    token = store.begin_session(CID_A)
+    token = store.begin_session(CID_A, serve_slots=2)
     snapshot = build_lan_inventory_frame(
         gen=1,
         seq=0,
@@ -212,7 +212,7 @@ def test_store_quota_counts_only_net_delta_rows_and_rejection_preserves_commit(
 def test_old_owner_disconnect_cannot_purge_reconnected_session(tmp_path: Path) -> None:
     store = LanInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
     store.activate()
-    old_token = store.begin_session(CID_A, token="old-owner")
+    old_token = store.begin_session(CID_A, serve_slots=2, token="old-owner")
     snapshot = build_lan_inventory_frame(
         gen=1,
         seq=0,
@@ -222,7 +222,7 @@ def test_old_owner_disconnect_cannot_purge_reconnected_session(tmp_path: Path) -
     )
     assert store.apply_frame(CID_A, old_token, snapshot)["status"] == "ok"
 
-    new_token = store.begin_session(CID_A, token="new-owner")
+    new_token = store.begin_session(CID_A, serve_slots=2, token="new-owner")
     assert store.end_session(CID_A, old_token) is False
     assert store.has_session(CID_A)
     assert store.holders_for(_query("one.txt", DIGEST_A))[("one.txt", DIGEST_A)]
@@ -300,6 +300,7 @@ async def test_master_wss_routes_inventory_to_store_and_returns_ack(tmp_path: Pa
             "cid": CID_A,
             "protocol_version": PROTOCOL_VERSION_LAN,
             "capabilities": ["peer_download"],
+            "serve_slots": 2,
         }
     )
     frame = build_lan_inventory_frame(
@@ -340,7 +341,7 @@ async def test_wss_reconnect_installs_new_inventory_owner_before_closing_old(
         address,
         old_websocket,
         authenticated=True,
-        inventory_capable=True,
+        serve_slots=2,
     )
     assert admitted and old_token is not None
     frame = build_lan_inventory_frame(
@@ -357,7 +358,7 @@ async def test_wss_reconnect_installs_new_inventory_owner_before_closing_old(
         address,
         new_websocket,
         authenticated=True,
-        inventory_capable=True,
+        serve_slots=2,
     )
     assert admitted and new_token is not None and new_token != old_token
     old_websocket.close.assert_awaited_once()

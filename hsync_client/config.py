@@ -27,7 +27,6 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL_MIN,
     HOSTNAME_PATTERN,
     LAN_PEER_DOWNLOAD_DEFAULT,
-    LAN_PEER_DOWNLOAD_MIN_SIZE_DEFAULT,
     LAN_PEER_READ_CAP_DEFAULT,
     LAN_PEER_READ_CAP_MAX,
     LAN_PEER_READ_CAP_MIN,
@@ -138,12 +137,6 @@ class EnvSettings(BaseSettings):
     lan_peer_download: bool = Field(
         default=LAN_PEER_DOWNLOAD_DEFAULT,
         description="Enable peer-assisted downloads in LAN mode",
-    )
-    lan_peer_download_min_size: int = Field(
-        default=LAN_PEER_DOWNLOAD_MIN_SIZE_DEFAULT,
-        ge=0,
-        le=2**63 - 1,
-        description="Minimum file size in bytes eligible for peer-assisted download",
     )
     lan_peer_read_cap: int = Field(
         default=LAN_PEER_READ_CAP_DEFAULT,
@@ -362,11 +355,6 @@ def get_lan_peer_download() -> bool:
     return get_env_settings().lan_peer_download
 
 
-def get_lan_peer_download_min_size() -> int:
-    """Get the minimum peer-assisted download size in bytes."""
-    return get_env_settings().lan_peer_download_min_size
-
-
 def get_lan_peer_read_cap() -> int:
     """Get the peer seeder's concurrent read cap."""
     return get_env_settings().lan_peer_read_cap
@@ -568,7 +556,6 @@ class HsyncConfig(TypedDict):
     LAN_REQUIRE_PAIRING: bool
     # Peer-assisted download requester/seeder controls
     LAN_PEER_DOWNLOAD: bool
-    LAN_PEER_DOWNLOAD_MIN_SIZE: int
     LAN_PEER_READ_CAP: int
     LAN_PEER_SOURCES_MAX: int
     # Dangerous explicit opt-in: permit keyless mutation requests

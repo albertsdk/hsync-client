@@ -45,6 +45,7 @@ from hsync_common.protocol.peer_download import (
     LanSourceFile,
     build_lan_inventory_ack,
     build_lan_inventory_frame,
+    is_valid_serve_slots,
     validate_lan_inventory_ack,
     validate_lan_inventory_frame,
 )
@@ -57,7 +58,7 @@ LAN_INVENTORY_GLOBAL_QUOTA = 20_000_000
 LAN_INVENTORY_MAX_SESSIONS = 64
 LAN_INVENTORY_STAGING_TTL_S = 5 * 60.0
 LAN_INVENTORY_ACK_TIMEOUT_S = 15.0
-LAN_INVENTORY_SCHEMA_VERSION = 1
+LAN_INVENTORY_SCHEMA_VERSION = 2
 
 
 def _canonical_snapshot_digest(frame: LanInventoryFrame) -> str:
@@ -241,6 +242,7 @@ class LanInventoryStore:
             CREATE TABLE IF NOT EXISTS inventory_sessions (
                 cid TEXT PRIMARY KEY,
                 token TEXT NOT NULL UNIQUE,
+                serve_slots INTEGER NOT NULL,
                 phase_gen INTEGER,
                 expected_seq INTEGER NOT NULL DEFAULT 0,
                 last_applied INTEGER NOT NULL DEFAULT -1,
@@ -321,12 +323,21 @@ class LanInventoryStore:
         self,
         cid: str,
         *,
+        serve_slots: int,
         token: str | None = None,
         remote_address: str | None = None,
     ) -> str:
-        """Replace *cid*'s publisher owner and return its opaque session token."""
+        """Replace *cid*'s publisher owner and return its opaque session token.
+
+        ``serve_slots`` is the capacity the publisher advertised on the
+        authenticated handshake. It is stored with the session because the
+        master echoes it to requesters in a source candidate (ADR-0030), so a
+        candidate can never exist without a live capacity advertisement.
+        """
         if not is_valid_cid(cid):
             raise ValueError("invalid publisher CID")
+        if not is_valid_serve_slots(serve_slots):
+            raise ValueError("invalid serve_slots")
         owner_token = token or secrets.token_urlsafe(32)
         if not owner_token:
             raise ValueError("session token is required")
@@ -346,10 +357,10 @@ class LanInventoryStore:
                     )
                 self._conn.execute(
                     """
-                    INSERT INTO inventory_sessions(cid, token, connected_at)
-                    VALUES (?, ?, ?)
+                    INSERT INTO inventory_sessions(cid, token, serve_slots, connected_at)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (cid, owner_token, self._clock()),
+                    (cid, owner_token, serve_slots, self._clock()),
                 )
             else:
                 old_token = str(current["token"])
@@ -357,14 +368,14 @@ class LanInventoryStore:
                 self._conn.execute(
                     """
                     UPDATE inventory_sessions
-                    SET token = ?, phase_gen = NULL, expected_seq = 0,
+                    SET token = ?, serve_slots = ?, phase_gen = NULL, expected_seq = 0,
                         last_applied = -1, snapshot_ready = 0,
                         committed_gen = NULL, committed_seq = NULL,
                         committed_digest = NULL, staging_started = NULL,
                         disabled = 0, connected_at = ?
                     WHERE cid = ?
                     """,
-                    (owner_token, self._clock(), cid),
+                    (owner_token, serve_slots, self._clock(), cid),
                 )
             if remote_address is not None:
                 self._session_addresses[cid] = (owner_token, remote_address)
@@ -392,6 +403,20 @@ class LanInventoryStore:
         with self._lock:
             owner = self._session_addresses.get(cid)
             return owner[1] if owner is not None else None
+
+    def session_serve_slots(self, cid: str) -> int | None:
+        """Return the capacity the current WSS owner advertised, or ``None``.
+
+        ``None`` means the CID has no live publisher session, so it cannot be
+        returned as a source candidate (ADR-0030).
+        """
+        with self._lock:
+            self._ensure_open()
+            row = self._conn.execute(
+                "SELECT serve_slots FROM inventory_sessions WHERE cid = ? AND disabled = 0",
+                (cid,),
+            ).fetchone()
+        return int(row["serve_slots"]) if row is not None else None
 
     def has_session(self, cid: str) -> bool:
         """Return whether *cid* owns an admitted, non-rejected publisher session."""

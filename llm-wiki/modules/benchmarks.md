@@ -1,22 +1,35 @@
-# HSYNC Client — Benchmarks (L1)
+# HSYNC Client — Benchmarks (L1 + L2 peer path)
 
 Internal micro-benchmark suite for the client-specific hot paths. Developer
 tooling: plain scripts under `bench/`, never collected by pytest, never run in
 CI, no user-facing behaviour.
 
-## Why one tier (today)
+## Why two tiers (today)
 
 `hsync-client` is a sync daemon with a transport (LAN P2P master/slave +
-server REST), but this directory ships only the **L1 in-process
-micro-benchmarks**: the shared library primitives are already covered by
-`hsync-common/bench`, so here we measure only what the client adds on top of
-`hsync_common` (the wrappers in `sync_state`, `tombstones`, `arbitration`,
-`pinning`, `event_queue`, `autotune`, `utils`).
+server REST). This directory ships:
 
-L2/L3 (spawn the `hsync` binary over a loopback LAN master/slave pair,
-wire-only) is deferred until this baseline is reviewed — mirroring the bootnode
-tier split, but gated on the L1 numbers first. L4/L5 are added only when a
-concrete anomaly needs a cost breakdown / CPU saturation sweep.
+* **L1 in-process micro-benchmarks** — the shared library primitives are already
+  covered by `hsync-common/bench`, so here we measure only what the client adds
+  on top of `hsync_common` (the wrappers in `sync_state`, `tombstones`,
+  `arbitration`, `pinning`, `event_queue`, `autotune`, `utils`);
+* **L2 loopback wire benchmark of the LAN peer-download path** (ADR-0028/0030) —
+  a real `LANServer` seeder and master on loopback with real self-signed TLS,
+  driven through the production `download_file` entry point. Added to size the
+  peer path's fixed cost: the question it answers cannot be answered by mocks,
+  because the cost under test is TLS handshake, keep-alive reuse, TOFU pin reads
+  and the seeder read cap. Its cycle scenario is what admitted or rejected the
+  admission designs and retired the size-threshold heuristic.
+
+The full-fleet load + soak tier (spawn the `hsync` binary as a multi-node fleet,
+wire-only) is still deferred, as are L4/L5. L4/L5 are added only when a concrete
+anomaly needs a cost breakdown / CPU saturation sweep.
+
+Out of scope by design: `scripts/benchmark_lan_transfers.py` (not in this
+directory) measures the master's *raw* HTTP overhead with `http.client`
+(keep-alive, TCP_NODELAY, compression throughput) — it never enters the client
+transfer path. The L2 scripts here measure the opposite end: the production
+requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
 
 ## Files
 
@@ -32,7 +45,10 @@ concrete anomaly needs a cost breakdown / CPU saturation sweep.
 | `bench/bench_tombstones.py` | `hsync_client/tombstones.py` wrapper scenarios |
 | `bench/bench_arbitration.py` | `hsync_client/arbitration.py` upload-gate scenarios |
 | `bench/bench_reconcile.py` | `hsync_client/sync.py` reconcile-core scenarios (decision leaves + bulk `get_sync_actions`) |
+| `bench/bench_lan_peer_transfer.py` | **L2** LAN peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback |
+| `bench/bench_lan_sources.py` | **L2** source-lookup scenarios: eligibility filter, batch splitting, wire `POST /files/sources`, telemetry rank/record |
 | `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
+| `bench/lan_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`LANServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup` |
 | `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline, **L1 scripts only**); `--json-out-dir` also dumps one `<script>.json` per scenario |
 | `bench/compare.py` | A/B comparator over two `--json-out` runs (file or dir); flags median regressions above a noise floor, `exit 1` on regression |
 
@@ -76,6 +92,14 @@ concrete anomaly needs a cost breakdown / CPU saturation sweep.
 | `tombstone_deletes_local(delete\|keep)` | `sync._tombstone_deletes_local` (`:1345`) |
 | `parse_advertised_version(valid\|absent\|malformed)` | `sync._parse_advertised_version` (`:1358`) — wire `version` decode |
 | `get_sync_actions(100 in_sync)` | `sync.get_sync_actions` (`:1466`, `persist_state=False`) — full steady-state diff (divisibile per 100 per il costo per-file) |
+| `identity(eligible_1KiB\|eligible_4KiB\|rejected_bad_hash)` | `lan_sources.LanSourceResolver._identity` (`hsync_client/lan_sources.py:573`) — the lookup gate; size is deliberately not part of it (ADR-0030), so a 1 KiB and a 4 KiB file take the same branch |
+| `batch_split(10\|100\|500\|1000)` | `lan_sources.LanSourceResolver._source_batches` (`:474`) — identity, byte-budget and 500-per-request splitting |
+| `source_lookup(100\|500)` | `lan_sources.LanSourceResolver.resolve` (`:522`) against a live master (`lan_server._handle_sources`, `hsync_client/lan_server.py:649`) |
+| `telemetry_rank(4)` / `telemetry_record_success` | `lan_sources.LanSourceTelemetry.rank` (`:330`), `record_success` (`:358`) |
+| `peer_cold_*` / `peer_warm_*` / `master_warm_*` | `transfer.download_file` (`hsync_client/transfer.py:471`) with a real seeder (`transfer._download_file_attempt`, `:1104`) vs the master fallback |
+| `peer_warm_4KiB_no_bookkeeping` | same, with `transfer._record_synced_base` patched out, to size the per-file sync-state write |
+| `seeder_readcap_batch(1\|2\|4\|8)` | `lan_server` seeder route + read-cap semaphore (`LANServer(peer_read_cap=…)`, `hsync_client/lan_server.py:518-527`) |
+| `peer_cap2_fallback(4 files)` | production `download_file` under the same cap: peer `503` → failure record → master fallback |
 
 ## Methodology
 
@@ -86,6 +110,16 @@ CIDs). State-dependent scenarios set a `HSYNC_STATE_DIR` override + a seeded
 `CONFIG` and clear the module store caches. Every result reports
 `mean`/`p50`/`p99` plus `stdev`/`min`/`max`. Results are comparative (this
 machine, warm page cache), never production SLAs.
+
+L2 additions: `bench/lan_peer_common.py::measure_with_setup` runs per-sample setup
+(dropping the destination, evicting this thread's HTTP session) outside the timed
+region; the harness patches the server-role `CONFIG` of `hsync_client.lan_server`
+so one process hosts both a seeder and a master with separate buckets, exactly as
+two processes would; `HSYNC_DEVICE_DIR` / `HSYNC_STATE_DIR` / `HSYNC_LAN_PIN_FILE`
+are pointed at the temp fixture so no real device identity, sync-state DB or pin
+file is touched, and every patch/env override is restored on exit. A wire sample
+costs 1–30 ms, so wire scenarios are capped (`--count` default 40; lookups capped
+at 50) and the L2 scripts stay out of `run_all.py` / `bench_result.txt`.
 
 `compare.py` flags an operation only when its median grew beyond `--threshold`
 (default 1.10) **and** its before-run mean sat at or above `--min-mean-ms`
@@ -169,6 +203,60 @@ producing false positives. A scenario present in `before` but missing from
   (`local_version_for_compare` ~0.0035 + `get_base_hash` ~0.0020 = ~0.0055 ms),
   and `get_sync_actions(100 in_sync)` dropped ~24.6 → ~22.7 µs/file.
 
+## LAN peer download (`bench_lan_peer_transfer.py`, `bench_lan_sources.py`) — what the L2 coverage found
+
+Run: `bench_lan_peer_transfer.py --count 40` and `bench_lan_sources.py --count 2000`,
+loopback, real `LANServer` seeder (cap 2) + master, self-signed TLS, one Python
+3.14 process (both roles share the CPU — a loopback figure is a comparative
+lower bound, not a Wi-Fi/LAN prediction).
+
+* **The peer path's cost is a fixed connection cost, not a per-byte cost.** With a
+  cold session the peer takes ~13–27 ms against 1.4–4.9 ms warm across the sizes:
+  the TCP+TLS handshake + pin read dominate, so `peer_cold` never beats the warm
+  master up to 8 MiB. `peer_warm` and `master_warm` stay within ~1.2 ms of each
+  other at every size (4 KiB ~1.7 vs ~1.5 ms, 64 KiB ~1.9 vs ~1.6, 256 KiB ~2.3 vs
+  ~2.1, 1 MiB ~3.7–4.9 vs ~3.7, 8 MiB ~19.0 vs ~19.4) and the sign flips between
+  runs: on loopback the two paths are latency-equivalent once the session is warm.
+  The interpolated "break-even" the script prints reflects that — it moved between
+  ~4 KB and ~6.7 MB across runs, i.e. the crossover is noise-dominated, so the
+  conclusion rests on the per-size p50 comparison, not on a single threshold value.
+  The retired 1 MiB eligibility default was therefore **not** justified by the
+  warm path's cost (its real effect was load distribution, which loopback cannot
+  measure); ADR-0030 removed it in favour of advertised seeder capacity.
+* **The per-file eligibility filter itself is free** (`_identity` ~2.8 µs on every
+  branch) and so is telemetry (`rank(4)` ~1.8 µs, `record_success` ~0.5 µs): the
+  gate's cost is entirely the transfer-side connection behaviour behind it, not
+  the bookkeeping it skips. `bench_lan_sources.py` now measures the eligible
+  1 KiB and 4 KiB branches plus the malformed one, so the scenario states the
+  current size-independent policy instead of a threshold that no longer exists.
+* **The 4 KiB bookkeeping share is real but small**: patching out
+  `_record_synced_base` moves `peer_warm_4KiB` from ~1.7–1.9 ms to ~1.27 ms
+  (per-file sync-state write ≈ 0.5–0.6 ms); both paths pay it, so it does not
+  change the ranking.
+* **Source lookup is amortized by batching** (32-40 µs per identity: 100
+  identities ≈ 4.0 ms, 500 ≈ 16.0 ms per request) and needs no per-file request
+  at all — 5,000 small files ≈ 10 requests ≈ 160 ms total. Lookup cost can never
+  justify a size threshold.
+* **The real hazard for small files is the seeder read cap.** With
+  `HSYNC_LAN_PEER_READ_CAP=2`, 1 and 2 concurrent requester workers get 40/40
+  served and **0** 503s, but 4 workers produce ~20/40 and 8 workers ~24–26/40
+  `503 busy` (p99 latency inflates by 1–2 orders of magnitude, ~0.1–1 s). Each 503
+  used to cost `record_failure` → exponential cooldown (up to 60 s) → master
+  fallback; ADR-0030 turned it into a `Retry-After`-bounded deferral and had
+  seeders advertise their capacity, so the cap now bounds polite sharing instead
+  of punishing a healthy seeder.
+* **The cycle scenario is the acceptance test for admission** (24 files per cycle,
+  cap 2, peer path against a master-only baseline): after ADR-0030 every
+  configuration — 1 KiB / 4 KiB / 256 KiB at 4 and 8 workers — reports
+  `worst_cycle_503=0`, `master_full=0` and **24.0 of 24 files served by the peer**,
+  against up to 4 refusals and 23 of 168 master-served downloads before it.
+* **Waiting for a slot beats declining it** (the rejected alternative, same
+  scenario): non-blocking admission served 6.7 of 24 files from the peer and
+  diverted 121 of 168 full downloads to the master, recreating the
+  small-file-burst symptom the peer path exists to remove. Loopback wall time
+  cannot separate the two variants (both roles share one CPU), so the decision
+  rested on the distribution counters, not on elapsed time.
+
 ## Running
 
 ```bash
@@ -176,6 +264,10 @@ cd hsync-client
 .venv/bin/python bench/run_all.py --count 2000            # -> bench_result.txt
 .venv/bin/python bench/bench_autotune.py --count 2000 [--json-out FILE]
 # ... (one script per module; see bench/README.md)
+
+# L2 wire benchmark (standalone: not in run_all.py, baseline untouched)
+.venv/bin/python bench/bench_lan_peer_transfer.py --count 40 [--json-out FILE]
+.venv/bin/python bench/bench_lan_sources.py --count 2000 [--json-out FILE]
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary [--json-out FILE]

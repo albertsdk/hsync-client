@@ -381,8 +381,31 @@ def _local_dest_path(file: File) -> str | None:
 _CONTENT_RANGE_RE = re.compile(r"bytes ([0-9]+)-([0-9]+)/([0-9]+)\Z")
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a ``Retry-After`` delay in seconds, or ``None`` when unusable.
+
+    Only the delay-seconds form is honoured (HTTP-date is not used by the LAN
+    seeder); unparseable or negative values fall back to the local default so a
+    malformed header can never stall the requester.
+    """
+    if not value:
+        return None
+    try:
+        seconds = float(value.strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return seconds
+
+
 class _PeerSourceFailure(Exception):
-    """A source-local failure that must advance to the next candidate."""
+    """A source-local failure that must advance to the next candidate.
+
+    ``retry_after_s`` carries the delay a saturated seeder asked for
+    (``Retry-After``): the source is deferred for that interval instead of being
+    counted as a health failure (ADR-0030).
+    """
 
     def __init__(
         self,
@@ -390,10 +413,12 @@ class _PeerSourceFailure(Exception):
         message: str,
         *,
         discard_partial: bool = False,
+        retry_after_s: float | None = None,
     ) -> None:
         super().__init__(message)
         self.kind = kind
         self.discard_partial = discard_partial
+        self.retry_after_s = retry_after_s
 
 
 class _RestartMasterDownload(Exception):
@@ -741,6 +766,7 @@ def _download_from_source_attempt(
 
     if source is not None and response.status_code not in (200, 206):
         status = response.status_code
+        retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
         response.close()
         if status in (400, 401, 403):
             kind = PeerFailureKind.unauthorized
@@ -758,6 +784,7 @@ def _download_from_source_attempt(
             kind,
             f"Seeder returned HTTP {status}",
             discard_partial=status == 416,
+            retry_after_s=retry_after_s,
         )
 
     if response.status_code in (401, 403):
@@ -1127,6 +1154,12 @@ def _download_file_attempt(
         for source in peer_sources[:source_limit]:
             if not source_resolver.authorize(source):
                 continue
+            # Admission control: never exceed the capacity the seeder advertised.
+            # Waiting for a slot (bounded) keeps the peer path in use for a wide
+            # worker pool; expiring it selects the master without ever producing
+            # a refused attempt that would be counted against the seeder.
+            if not source_resolver.acquire_slot(source):
+                continue
             try:
                 handled = _download_from_source_attempt(
                     file,
@@ -1140,9 +1173,11 @@ def _download_file_attempt(
                     dest = _local_dest_path(file)
                     if dest is None or not _discard_partial(f"{dest}{PARTIAL_DOWNLOAD_SUFFIX}"):
                         return
-                source_resolver.record_failure(source, exc.kind)
+                source_resolver.record_failure(source, exc.kind, retry_after_s=exc.retry_after_s)
                 log.debug(f'Peer source {source.cid} failed for "{file.filepath}": {exc}')
                 continue
+            finally:
+                source_resolver.release_slot(source)
             if handled:
                 return
 

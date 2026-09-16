@@ -25,7 +25,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |
 | [modules/wd-os5-web.md](modules/wd-os5-web.md) | WD My Cloud OS5 web UI (`packaging/wd-os5/Apkg/web`) + connect-command generator |
 | [modules/autotune.md](modules/autotune.md) | `autotune.py` — adaptive tuning of timeout, retry & concurrency |
-| [modules/benchmarks.md](modules/benchmarks.md) | L1 micro-benchmark suite (`bench/`): tiers, scenario→code anchors, methodology, findings |
+| [modules/benchmarks.md](modules/benchmarks.md) | L1 micro-benchmark suite + L2 loopback LAN peer-download bench (`bench/`): tiers, scenario→code anchors, methodology, findings |
 | [data-models.md](data-models.md) | reused common models + client-local state stores (sync_state, tombstones, pins) |
 | [decisions.md](decisions.md) | pointer to ecosystem ADRs + client-local choices |
 

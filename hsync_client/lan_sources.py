@@ -45,6 +45,17 @@ from hsync_client.utils import http_post, normalize_bucket_relpath
 
 LAN_SOURCE_CACHE_TTL_S = 10 * 60.0
 
+# A seeder that answers ``503`` is saturated, not broken: the requester defers
+# that source for the interval the seeder asked for, or this default when the
+# response carries no usable ``Retry-After``.
+BUSY_DEFAULT_BACKOFF_S = 0.25
+
+# How long a download worker waits for one of a seeder's advertised read slots
+# before taking the master (the guaranteed source). Bounded and internal: the
+# wait exists so a two-slot seeder still serves a wide worker pool without the
+# requester flooding it with ``503``-generating attempts.
+LAN_PEER_SLOT_WAIT_S = 2.0
+
 
 class PeerSourceSnapshot(Protocol):
     """Structural view consumed from immutable ``PeerSnapshot`` values."""
@@ -231,12 +242,18 @@ class LanSourceService:
                         continue
                 except ValueError:
                     continue
+                # A candidate exists only with a live capacity advertisement:
+                # without it the requester could not respect the seeder's cap.
+                serve_slots = self._store.session_serve_slots(peer.cid)
+                if serve_slots is None:
+                    continue
                 candidates.append(
                     LanSourceCandidate(
                         cid=peer.cid,
                         download_url=build_peer_download_url(self.bucket, peer.address, peer.port),
                         cert_fp=str(peer.cert_fingerprint),
                         compression=peer.compression_enabled,
+                        serve_slots=serve_slots,
                     )
                 )
                 if len(candidates) >= LAN_SOURCES_MAX_CANDIDATES:
@@ -268,12 +285,19 @@ class LanSourceService:
 
 @dataclass(frozen=True, slots=True)
 class LanPeerSource:
-    """Immutable exact-content endpoint selected by the LAN master."""
+    """Immutable exact-content endpoint selected by the LAN master.
+
+    ``serve_slots`` is the capacity the seeder advertised on the authenticated
+    handshake and the master echoed back: the requester admits at most that many
+    concurrent reads per CID, so it never has to discover the limit by provoking
+    ``503`` responses (ADR-0030).
+    """
 
     cid: str
     download_url: str
     cert_fingerprint: str
     compression: bool
+    serve_slots: int
 
 
 type LanSourceKey = tuple[str, str]
@@ -300,7 +324,26 @@ class _SourceMetrics:
     throughput_ema: float | None = None
     failures: int = 0
     cooldown_until: float = 0.0
+    busy_until: float = 0.0
     last_seen: float = 0.0
+
+    def predicted_cost_s(self, size_bytes: int | None) -> float | None:
+        """Predicted seconds to fetch *size_bytes* from this source.
+
+        The linear cost model the measurements support: a fixed setup term (the
+        request RTT, which includes the handshake a cold session pays) plus the
+        payload divided by the observed body rate. ``None`` means this source has
+        no usable measurement yet, so unknown sources keep sorting after measured
+        ones. With ``size_bytes=None`` the setup term alone decides, which is the
+        right proxy when the caller has no file at hand.
+        """
+        if self.rtt_ema is None:
+            return None
+        if size_bytes is None:
+            return self.rtt_ema
+        if self.throughput_ema is None or self.throughput_ema <= 0:
+            return None
+        return self.rtt_ema + max(size_bytes, 0) / self.throughput_ema
 
 
 class LanSourceTelemetry:
@@ -327,8 +370,22 @@ class LanSourceTelemetry:
         for cid in stale:
             self._metrics.pop(cid, None)
 
-    def rank(self, sources: Iterable[LanPeerSource]) -> tuple[LanPeerSource, ...]:
-        """Apply the frozen deterministic ranking tuple to master-ranked sources."""
+    def rank(
+        self,
+        sources: Iterable[LanPeerSource],
+        *,
+        size: int | None = None,
+    ) -> tuple[LanPeerSource, ...]:
+        """Rank candidates by measured health then predicted transfer cost.
+
+        The key is the frozen tuple below: fewest failures first, then sources
+        that have a usable measurement, then the predicted time to fetch *size*
+        bytes (``setup + size/bandwidth``). Ranking on a predicted cost instead
+        of a raw throughput removes the size bias — a peer that happened to serve
+        a large file no longer outranks a lower-latency one for a small file, and
+        vice versa. Callers that know the file pass its size; without it the setup
+        term alone decides.
+        """
         values = tuple(sources)
         now = self._clock()
         with self._lock:
@@ -337,12 +394,11 @@ class LanSourceTelemetry:
             def rank_key(indexed: tuple[int, LanPeerSource]) -> tuple:
                 index, source = indexed
                 metrics = self._metrics.get(source.cid)
+                cost = metrics.predicted_cost_s(size) if metrics is not None else None
                 return (
                     metrics.failures if metrics is not None else 0,
-                    1 if metrics is None or metrics.rtt_ema is None else 0,
-                    metrics.rtt_ema if metrics is not None and metrics.rtt_ema is not None else 0.0,
-                    1 if metrics is None or metrics.throughput_ema is None else 0,
-                    -(metrics.throughput_ema or 0.0) if metrics is not None else 0.0,
+                    1 if cost is None else 0,
+                    cost if cost is not None else 0.0,
                     index,
                     source.cid,
                 )
@@ -351,7 +407,7 @@ class LanSourceTelemetry:
                 (index, source)
                 for index, source in enumerate(values)
                 if (metrics := self._metrics.get(source.cid)) is None
-                or metrics.cooldown_until <= now
+                or (metrics.cooldown_until <= now and metrics.busy_until <= now)
             )
             return tuple(source for _, source in sorted(available, key=rank_key))
 
@@ -380,16 +436,37 @@ class LanSourceTelemetry:
             )
             metrics.failures = 0
             metrics.cooldown_until = 0.0
+            metrics.busy_until = 0.0
             metrics.last_seen = now
 
-    def record_failure(self, cid: str, _kind: PeerFailureKind) -> None:
+    def record_failure(
+        self,
+        cid: str,
+        kind: PeerFailureKind,
+        *,
+        retry_after_s: float | None = None,
+    ) -> None:
+        """Record a failed peer read.
+
+        ``busy`` is a *scheduling* signal, not a health failure: a saturated
+        seeder is working correctly and must not accumulate the failure count
+        that drives the exponential exclusion. It only defers the source for the
+        interval it asked for (``Retry-After``, else a short default), so the
+        peer path resumes immediately after the congestion clears instead of
+        being written off for the rest of the sync cycle.
+        """
         now = self._clock()
         with self._lock:
             metrics = self._metrics.setdefault(cid, _SourceMetrics())
+            metrics.last_seen = now
+            if kind is PeerFailureKind.busy:
+                metrics.busy_until = now + (
+                    retry_after_s if retry_after_s is not None else BUSY_DEFAULT_BACKOFF_S
+                )
+                return
             metrics.failures += 1
             cooldown = min(60.0, float(2 ** min(metrics.failures - 1, 6)))
             metrics.cooldown_until = now + cooldown
-            metrics.last_seen = now
 
 
 _PROCESS_TELEMETRY = LanSourceTelemetry()
@@ -408,7 +485,6 @@ class LanSourceResolver:
         lan_key: str | None,
         local_bucket: str,
         enabled: bool,
-        min_size: int,
         master_capable: bool = True,
         timeout: float = 30.0,
         pin_store: PinStore | None = None,
@@ -425,7 +501,6 @@ class LanSourceResolver:
         # TXT is the discovery-time hint. An authenticated WSS handshake may
         # later override it in either direction without overriding local opt-out.
         self._master_capable = master_capable
-        self._min_size = min_size
         self._timeout = timeout
         self._pin_store = pin_store or default_pin_store()
         self._telemetry = telemetry or _PROCESS_TELEMETRY
@@ -434,6 +509,53 @@ class LanSourceResolver:
         self._candidate_expiry: dict[LanSourceKey, float] = {}
         self._permanently_invalid_cids: set[str] = set()
         self._lock = threading.Lock()
+        # In-flight peer reads per seeder CID, bounded by each seeder's advertised
+        # capacity. The condition doubles as the admission gate: a worker waits
+        # (bounded) for a slot instead of firing an attempt the seeder would refuse,
+        # so a saturated seeder is neither punished nor bypassed by its own fleet.
+        self._inflight: dict[str, int] = {}
+        self._slot_condition = threading.Condition(self._lock)
+
+    def acquire_slot(
+        self,
+        source: LanPeerSource,
+        *,
+        timeout_s: float = LAN_PEER_SLOT_WAIT_S,
+    ) -> bool:
+        """Claim one of *source*'s advertised read slots, waiting up to *timeout_s*.
+
+        Returns ``False`` when the wait expires (or the peer path is disabled),
+        which the caller turns into the master fallback — never into a failed
+        attempt, so a saturated seeder is never punished as if it were broken.
+
+        Waiting is what keeps a healthy seeder in use for a pool wider than its
+        capacity: returning immediately instead would send every worker past its
+        limit straight to the master, which is the behaviour peer download exists
+        to avoid (measured: 6.7 of 24 files from the peer vs 24 of 24 while
+        waiting).
+        """
+        deadline = self._clock() + timeout_s
+        with self._slot_condition:
+            while True:
+                if not self.enabled:
+                    return False
+                if self._inflight.get(source.cid, 0) < source.serve_slots:
+                    self._inflight[source.cid] = self._inflight.get(source.cid, 0) + 1
+                    return True
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    return False
+                self._slot_condition.wait(timeout=remaining)
+
+    def release_slot(self, source: LanPeerSource) -> None:
+        """Release one read slot for *source* and wake a waiting worker."""
+        with self._slot_condition:
+            current = self._inflight.get(source.cid, 0)
+            if current <= 1:
+                self._inflight.pop(source.cid, None)
+            else:
+                self._inflight[source.cid] = current - 1
+            self._slot_condition.notify_all()
 
     @property
     def enabled(self) -> bool:
@@ -448,14 +570,15 @@ class LanSourceResolver:
                 self._candidate_expiry.clear()
 
     def _identity(self, file: File) -> LanSourceKey | None:
+        """Return the ``(path, sha256)`` an exact-hash lookup can be made for.
+
+        Size is deliberately not part of this gate: eligibility is decided by
+        live seeder capacity and the predicted cost of the transfer, not by a
+        size threshold (ADR-0030).
+        """
         path = normalize_bucket_relpath(file.filepath or "", self._local_bucket)
         digest = file.sha256sum or ""
-        if (
-            path is None
-            or not is_sha256_hex(digest)
-            or digest != digest.lower()
-            or (file.size or 0) < self._min_size
-        ):
+        if path is None or not is_sha256_hex(digest) or digest != digest.lower():
             return None
         return path, digest
 
@@ -603,6 +726,7 @@ class LanSourceResolver:
                             download_url=source["download_url"],
                             cert_fingerprint=source["cert_fp"],
                             compression=source["compression"],
+                            serve_slots=source["serve_slots"],
                         )
                     )
                 resolved[key] = tuple(sources)
@@ -644,7 +768,10 @@ class LanSourceResolver:
                 if expiry is not None and expiry <= now:
                     return ()
                 invalid = set(self._permanently_invalid_cids)
-        return self._telemetry.rank(source for source in values if source.cid not in invalid)
+        return self._telemetry.rank(
+            (source for source in values if source.cid not in invalid),
+            size=int(file.size or 0),
+        )
 
     def request_headers(
         self,
@@ -703,11 +830,17 @@ class LanSourceResolver:
             body_seconds=body_seconds,
         )
 
-    def record_failure(self, source: LanPeerSource, kind: PeerFailureKind) -> None:
+    def record_failure(
+        self,
+        source: LanPeerSource,
+        kind: PeerFailureKind,
+        *,
+        retry_after_s: float | None = None,
+    ) -> None:
         if kind in (
             PeerFailureKind.unauthorized,
             PeerFailureKind.pin_changed,
         ):
             self.invalidate(source.cid)
             return
-        self._telemetry.record_failure(source.cid, kind)
+        self._telemetry.record_failure(source.cid, kind, retry_after_s=retry_after_s)

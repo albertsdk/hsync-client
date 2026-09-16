@@ -31,7 +31,7 @@ import stat as stat_module
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -95,6 +95,11 @@ if TYPE_CHECKING:
 # accommodate the transfer workers of all peers plus headroom, not just
 # in-flight requests.
 LAN_SERVER_MAX_THREADS = 64
+
+# Delay a saturated seeder asks a requester to wait (``Retry-After`` on the 503).
+# It only has to cover the read that occupies a slot; the requester honours it as
+# a scheduling deferral instead of a health failure (ADR-0030).
+SEEDER_RETRY_AFTER_S = 0.25
 
 # Seconds of socket-read silence after which an idle keep-alive connection is
 # reaped. With ``protocol_version = "HTTP/1.1"`` a connection holds one thread
@@ -401,18 +406,32 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             separators=(",", ":"),
         ).encode("utf-8")
 
-    def _send_json_response(self, status: int, data: dict | list) -> None:
+    def _send_json_response(
+        self,
+        status: int,
+        data: dict | list,
+        *,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> None:
         """Send an exactly framed compact JSON response."""
         body = self._encode_json_response(data)
         self.send_response(status)
         self.send_header("Content-Type", CONTENT_TYPE_JSON)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_error_response(self, status: int, message: str) -> None:
+    def _send_error_response(
+        self,
+        status: int,
+        message: str,
+        *,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> None:
         """Send an error response."""
-        self._send_json_response(status, {"error": message})
+        self._send_json_response(status, {"error": message}, extra_headers=extra_headers)
 
     def _send_error_response_safe(self, status: int, message: str) -> None:
         """Send an error response, silently swallowing socket/SSL failures.
@@ -519,7 +538,13 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             if slots is None:
                 raise RuntimeError("seeder server is missing its read-cap semaphore")
             if not slots.acquire(blocking=False):
-                self._send_error_response(HTTP_SERVICE_UNAVAILABLE, "Seeder read cap reached")
+                # Saturated, not broken: tell the requester how long to wait so it
+                # defers this seeder instead of pricing the refusal as a failure.
+                self._send_error_response(
+                    HTTP_SERVICE_UNAVAILABLE,
+                    "Seeder read cap reached",
+                    extra_headers={"Retry-After": str(SEEDER_RETRY_AFTER_S)},
+                )
                 return
             try:
                 self._handle_download(query, expected_sha256=expected_sha)

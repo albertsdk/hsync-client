@@ -101,20 +101,28 @@ Pass `--once` to disable this behavior and exit after a single sync attempt.
 
 ### Peer-Assisted Downloads
 
-Peer assistance is enabled by default for files of at least 1 MiB. A continuous,
-non-dry-run slave publishes an inventory and exposes a read-only HTTPS seeder on
-its advertised LAN port. The master returns candidate endpoints only for the
-exact `(path, SHA-256)` from its listing. The requester verifies the final body
-against that listing hash before replacing the destination, regardless of which
-source sent the bytes.
+Peer assistance is enabled by default and has no minimum-file-size gate: any
+listed file whose exact `(path, SHA-256)` is held by a live seeder is eligible,
+and the requester keeps its concurrent reads within that seeder's advertised
+capacity. A continuous, non-dry-run slave publishes an inventory and exposes a
+read-only HTTPS seeder on its advertised LAN port. The master returns candidate
+endpoints only for the exact `(path, SHA-256)` from its listing. The requester
+verifies the final body against that listing hash before replacing the
+destination, regardless of which source sent the bytes.
 
 The transfer order is deterministic: master delta first when applicable, then
 ranked peer full-download candidates, then canonical master full-download. An
 interrupted exact body may resume from another source; malformed ranges, wrong
 sizes, or completed hash failures discard the partial body. One-shot slaves can
 request from peers but never seed. Use `--no-peer-download` to disable this path.
-Threshold and concurrency settings are listed in
+Concurrency settings are listed in
 [Configuration — LAN P2P Mode](configuration-lan.md).
+
+Each seeder announces how many concurrent downloads it accepts, so a requester
+never exceeds that capacity: it briefly waits for a free slot and then takes the
+master instead of hammering the peer. If a seeder is momentarily full anyway, it
+answers "try again shortly" and the requester simply defers that peer for the
+suggested moment — a busy peer is never treated as a broken one.
 
 ### Behavior
 
