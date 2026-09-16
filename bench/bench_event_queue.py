@@ -14,7 +14,11 @@ hot steps of that path without a real WebSocket:
   fails and the event is held (head-of-line blocking);
 * ``enqueue`` — the async append of a queued event;
 * ``_send_event(success)`` — JSON serialization plus the awaited ``send`` on a
-  counting stub, i.e. the per-event cost the queue pays on the success path.
+  counting stub, i.e. the per-event cost the queue pays on the success path;
+* ``_send_event(failure)`` — the transient-failure path: serialization succeeds
+  but ``send`` raises, so the event is held for retry (returns ``False``);
+* ``_send_event(unserializable)`` — a payload ``json.dumps`` can never encode:
+  dropped permanently (returns ``True``) without touching the WebSocket.
 
 The async measurements run on one loop (``asyncio.run``) so the loop setup cost
 is outside the samples; the stub ``send`` asserts the payload type so a broken
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -57,24 +62,43 @@ class _StubWS:
         self.sent += 1
 
 
+class _FailingWS:
+    """WebSocket stand-in whose ``send`` always fails (the retry/backoff path)."""
+
+    async def send(self, message: str) -> None:
+        raise ConnectionError("simulated send failure")
+
+
 async def _async_main(count: int) -> list[BenchResult]:
     ws = _StubWS()
     queue = EventQueue(ws)
+    failing = EventQueue(_FailingWS())
     payload = {"name": "modified", "src": "dir/file.txt", "dst": "dir/file.txt"}
 
     async def op_enqueue() -> None:
         await queue.enqueue(payload)
 
     event = QueuedEvent(data=payload)
+    bad_event = QueuedEvent(data={"name": "modified", "src": "dir/file.txt", "bad": object()})
 
     async def op_send_event() -> None:
         before = ws.sent
         assert await queue._send_event(event) is True
         assert ws.sent == before + 1
 
+    async def op_send_failure() -> None:
+        assert await failing._send_event(event) is False
+
+    async def op_send_unserializable() -> None:
+        before = ws.sent
+        assert await queue._send_event(bad_event) is True
+        assert ws.sent == before
+
     return [
         await measure_async("enqueue", op_enqueue, count=count),
         await measure_async("send_event(success)", op_send_event, count=count),
+        await measure_async("send_event(failure)", op_send_failure, count=count),
+        await measure_async("send_event(unserializable)", op_send_unserializable, count=count),
     ]
 
 
@@ -84,6 +108,11 @@ def main() -> None:
     add_json_out(parser)
     args = parser.parse_args()
     count = args.count
+
+    # The failure path logs one `warning` per held event. Silence stdlib logging
+    # (but keep the call itself, mirroring the reconcile bench's sink removal) so
+    # `--count` iterations don't flood the output.
+    logging.getLogger("hsync").setLevel(logging.CRITICAL)
 
     # Sync backoff computation (pure): cycle retry counts 0..6.
     retries = [0, 1, 2, 3, 4, 5, 6]

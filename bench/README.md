@@ -24,13 +24,14 @@ asserts only that the measured operation really took the intended branch.
 | `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
 | `bench_autotune.py` | `classify_network`, `classify_bandwidth`, `derive_timeout`, `derive_retry`, `derive_concurrency`, `derive_profile`, `profile_transfer_queue` (pure policy, no I/O) |
 | `bench_utils.py` | `http_to_ws`, `redact_headers`, `request_headers`, `inbound_size_cap`, `http_connect_timeout`, `upload_timeout`, `is_same_paths`, `ensure_str_path`, `normalize_bucket_relpath` (pure per-request/path helpers) |
-| `bench_event_queue.py` | `QueuedEvent.get_backoff_delay`, `EventQueue.enqueue`, `EventQueue._send_event(success)` (async, in-memory socket stub) |
-| `bench_pinning.py` | `PinStore.get` / `check_and_record` / `set` (durable TOFU, temp pin file) |
+| `bench_event_queue.py` | `QueuedEvent.get_backoff_delay`, `EventQueue.enqueue`, `EventQueue._send_event(success/failure/unserializable)` (async, in-memory socket stub) |
+| `bench_pinning.py` | `PinStore.get(hit/miss)` / `check_and_record(match/changed/first-use)` / `set` (durable TOFU, temp pin file) |
 | `bench_sync_state.py` | `get_sync_state_store`, `get_base_hash`, `record_base`, `upload_version_fields` (same/ticked), `merge_and_record`, `flush` (temp bucket + state dir) |
 | `bench_tombstones.py` | `get_tombstone_store`, `get_payload`, `record_deletion` (persist), `merge_payload` (dominant), `mint_50(memory)` / `mint_50_then_flush` (batched offline mint) |
 | `bench_arbitration.py` | `arbitrate_upload` on the first / dominant / superseded / conflict branches, `conflicted_copy_name` |
 | `bench_reconcile.py` | reconcile core: `_compare_files` (5 branches), `_tombstone_clock_dominates`/`_tombstone_deletes_local`, `_parse_advertised_version`, and the full `get_sync_actions` bulk diff over an in-sync listing |
-| `run_all.py` | Chained runner: runs every script above and writes `bench_result.txt` at the repo root (committed baseline, diff-friendly) |
+| `run_all.py` | Chained runner: runs every **L1** script above and writes `bench_result.txt` at the repo root (committed baseline, diff-friendly); `--json-out-dir DIR` also dumps one `<script>.json` per scenario for A/B comparison |
+| `compare.py` | A/B comparator of two `--json-out` runs (single file or directory): flags median regressions over a noise floor, `exit 1` on any regression |
 | `bench_result.txt` | **Committed baseline** (default `--count 2000`, this machine): compare revisions with `git diff bench_result.txt` |
 
 ## Running
@@ -50,6 +51,7 @@ cd hsync-client
 .venv/bin/python bench/bench_sync_state.py --count 2000
 .venv/bin/python bench/bench_tombstones.py --count 2000
 .venv/bin/python bench/bench_arbitration.py --count 2000
+.venv/bin/python bench/bench_reconcile.py --count 2000
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary
@@ -58,6 +60,11 @@ cd hsync-client
 
 # machine-readable results (one JSON array per run)
 .venv/bin/python bench/bench_autotune.py --count 2000 --json-out /tmp/autotune.json
+
+# A/B comparison: run the whole suite into two directories, then diff them
+.venv/bin/python bench/run_all.py --count 2000 --json-out-dir /tmp/before
+.venv/bin/python bench/run_all.py --count 2000 --json-out-dir /tmp/after
+.venv/bin/python bench/compare.py /tmp/before /tmp/after --threshold 1.10
 ```
 
 `--count` is the number of timed samples for the cheap operations. Heavier
@@ -80,6 +87,9 @@ count.
   caches, so no scenario is faster because a previous one warmed shared state.
 * **Deterministic CIDs**: counter-based `make_cid` (spec `^[A-Za-z0-9]{21}$`),
   no `random` seed juggling.
+* **Full latency stats, not only central tendency**: every result reports
+  `mean`/`p50`/`p99` plus `stdev`/`min`/`max`, so a later comparison can tell a
+  genuine slowdown from a noisy tail.
 * **Comparisons are relative**: numbers are valid for this machine and a warm
   OS page cache; they compare implementations, not production SLAs.
 
@@ -91,3 +101,6 @@ harness must stay usable if the client internals are rewritten.
 * measurement core — `BenchResult`, `measure`, `measure_async`, `percentile`,
   `scaled_warmup`, `print_table`, `add_json_out`, `maybe_write_json`;
 * deterministic CIDs — `make_cid`, `make_cids`, `ALPHABET`.
+
+`bench/compare.py` is equally stdlib-only and never imports `hsync_client`; its
+pure `compare()` decision function is pinned by `tests/test_bench_compare.py`.

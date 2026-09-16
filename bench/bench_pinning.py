@@ -10,9 +10,14 @@ Measures the per-connection trust checks in
 :class:`~hsync_client.pinning.PinStore`, the durable Trust-On-First-Use store the
 LAN slave consults before every master connection:
 
-* ``get`` — read + advisory flock + JSON load (the hit path of every decision);
+* ``get`` (hit) / (miss) — read + advisory flock + JSON load, on a present and
+  an absent ``(cid, bucket)`` pin;
 * ``check_and_record`` (matched) — the steady-state trust classification: the
   stored pin matches the observed fingerprint, so no write happens;
+* ``check_and_record`` (changed) — a mismatch (possible MITM): compared and
+  refused with no write;
+* ``check_and_record`` (first use) — a never-seen ``(cid, bucket)``: the
+  durable TOFU persist plus verification read-back;
 * ``set`` — the atomic owner-only (0o600) repin: temp write + fsync + replace,
   the durable cost paid on first use / rotate.
 
@@ -54,15 +59,38 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="hsync_pin_") as tmp:
         store = PinStore(Path(tmp) / "pins.json")
+        # The durable first-use path grows its own file: mixing its 200 fresh pins
+        # into ``store`` would inflate every later read/write (larger JSON), so the
+        # two scenarios stay isolated per file (one scenario, one fixture).
+        first_use_store = PinStore(Path(tmp) / "first_use.json")
         store.set("cid-1", "bucket", "aa:bb:cc")
+        store.set("cid-2", "bucket", "11:22:33")
         assert store.get("cid-1", "bucket") == "aabbcc"
         assert store.check_and_record("cid-1", "bucket", "AABBCC") is PinDecision.matched
+        assert store.check_and_record("cid-2", "bucket", "aa:bb:cc") is PinDecision.changed
+        assert store.get("never-seen", "bucket") is None
 
         def op_get() -> None:
             assert store.get("cid-1", "bucket") == "aabbcc"
 
+        def op_get_miss() -> None:
+            assert store.get("never-seen", "bucket") is None
+
         def op_check_and_record() -> None:
             assert store.check_and_record("cid-1", "bucket", "aabbcc") is PinDecision.matched
+
+        def op_check_changed() -> None:
+            assert store.check_and_record("cid-2", "bucket", "aa:bb:cc") is PinDecision.changed
+
+        first_use_state = {"i": 0}
+
+        def op_check_first_use() -> None:
+            i = first_use_state["i"]
+            first_use_state["i"] += 1
+            assert (
+                first_use_store.check_and_record(f"first-{i}", "bucket", "aa:bb:cc")
+                is PinDecision.trusted
+            )
 
         def op_set() -> None:
             store.set("cid-1", "bucket", "aa:bb:cc")
@@ -70,7 +98,10 @@ def main() -> None:
 
         results: list[BenchResult] = [
             measure("PinStore.get(hit)", op_get, count=count),
+            measure("PinStore.get(miss)", op_get_miss, count=count),
             measure("PinStore.check_and_record(match)", op_check_and_record, count=count),
+            measure("PinStore.check_and_record(changed)", op_check_changed, count=count),
+            measure("PinStore.check_and_record(first_use)", op_check_first_use, count=200),
             measure("PinStore.set(repin)", op_set, count=count),
         ]
 

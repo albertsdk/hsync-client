@@ -1,108 +1,113 @@
 hsync-client L1 benchmark suite — count=2000
 python 3.14.4 — linux
-generated 2026-09-15 20:45:08 by bench/run_all.py
+generated 2026-09-16 10:07:23 by bench/run_all.py
 comparative figures (this machine, warm page cache), not SLAs
 
 === bench_autotune (exit=0, 0.1s) ===
 autotune policy micro-benchmark (ops=2000, pure CPU, no I/O)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-classify_network(mixed)        2482744.6    0.0004    0.0004    0.0006    2000
-classify_bandwidth(mixed)      2368985.5    0.0004    0.0004    0.0006    2000
-derive_timeout(lan)            2012554.2    0.0005    0.0004    0.0012    2000
-derive_timeout(unknown)        8336689.9    0.0001    0.0001    0.0002    2000
-derive_retry(lan)              1584368.2    0.0006    0.0006    0.0012    2000
-derive_concurrency(ssd,mid)    1857238.0    0.0005    0.0005    0.0011    2000
-derive_profile                  350540.3    0.0029    0.0024    0.0056    2000
-profile_queue(many_small)       249187.8    0.0040    0.0040    0.0041    2000
-profile_queue(few_large)       1989133.2    0.0005    0.0005    0.0005    2000
-profile_queue(mixed)            486111.8    0.0021    0.0020    0.0021    2000
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+classify_network(mixed)        4858366.7    0.0002    0.0002    0.0004    0.0001    0.0002    0.0017    2000
+classify_bandwidth(mixed)      4652320.3    0.0002    0.0002    0.0003    0.0001    0.0002    0.0016    2000
+derive_timeout(lan)            4238365.8    0.0002    0.0002    0.0003    0.0000    0.0002    0.0004    2000
+derive_timeout(unknown)        9348198.0    0.0001    0.0001    0.0001    0.0000    0.0001    0.0002    2000
+derive_retry(lan)              1480337.8    0.0007    0.0006    0.0016    0.0002    0.0006    0.0056    2000
+derive_concurrency(ssd,mid)    2102872.6    0.0005    0.0005    0.0005    0.0001    0.0004    0.0036    2000
+derive_profile                  413479.5    0.0024    0.0023    0.0057    0.0006    0.0022    0.0093    2000
+profile_queue(many_small)       247228.5    0.0040    0.0040    0.0059    0.0004    0.0038    0.0112    2000
+profile_queue(few_large)       1949741.6    0.0005    0.0005    0.0009    0.0002    0.0004    0.0051    2000
+profile_queue(mixed)            486095.5    0.0021    0.0020    0.0022    0.0003    0.0020    0.0065    2000
 
 === bench_utils (exit=0, 0.2s) ===
 utils micro-benchmark (ops=2000, pure CPU, no I/O)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-http_to_ws(http)                895158.6    0.0011    0.0011    0.0018    2000
-http_to_ws(https)               902818.1    0.0011    0.0011    0.0013    2000
-redact_headers(auth)           5707154.1    0.0002    0.0002    0.0002    2000
-redact_headers(plain)          5504893.3    0.0002    0.0002    0.0002    2000
-request_headers                2895590.5    0.0003    0.0003    0.0004    2000
-inbound_size_cap(declared)    11624687.0    0.0001    0.0001    0.0001    2000
-inbound_size_cap(capped)       9600412.8    0.0001    0.0001    0.0001    2000
-inbound_size_cap(unknown)     11632577.8    0.0001    0.0001    0.0001    2000
-http_connect_timeout           8601200.0    0.0001    0.0001    0.0001    2000
-upload_timeout                 6347090.9    0.0002    0.0002    0.0002    2000
-is_same_paths                  2382291.4    0.0004    0.0004    0.0005    2000
-ensure_str_path                8274517.2    0.0001    0.0001    0.0001    2000
-normalize_bucket_relpath(in)    311966.7    0.0032    0.0031    0.0066    2000
-normalize_bucket_relpath(out)    815013.9    0.0012    0.0012    0.0014    2000
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+http_to_ws(http)                914204.2    0.0011    0.0011    0.0015    0.0002    0.0010    0.0058    2000
+http_to_ws(https)               923729.9    0.0011    0.0011    0.0012    0.0001    0.0010    0.0042    2000
+redact_headers(auth)           5675063.1    0.0002    0.0002    0.0002    0.0000    0.0002    0.0015    2000
+redact_headers(plain)          5482230.9    0.0002    0.0002    0.0002    0.0000    0.0002    0.0003    2000
+request_headers                2886461.0    0.0003    0.0003    0.0004    0.0001    0.0003    0.0036    2000
+inbound_size_cap(declared)    11614133.1    0.0001    0.0001    0.0001    0.0000    0.0001    0.0002    2000
+inbound_size_cap(capped)       9622694.6    0.0001    0.0001    0.0001    0.0001    0.0001    0.0024    2000
+inbound_size_cap(unknown)     12059888.8    0.0001    0.0001    0.0001    0.0000    0.0001    0.0014    2000
+http_connect_timeout           8646218.4    0.0001    0.0001    0.0002    0.0000    0.0001    0.0002    2000
+upload_timeout                 6268669.0    0.0002    0.0002    0.0002    0.0000    0.0001    0.0003    2000
+is_same_paths                  2375652.4    0.0004    0.0004    0.0005    0.0001    0.0004    0.0029    2000
+ensure_str_path                7960864.2    0.0001    0.0001    0.0002    0.0001    0.0001    0.0026    2000
+normalize_bucket_relpath(in)    320571.6    0.0031    0.0031    0.0035    0.0002    0.0029    0.0062    2000
+normalize_bucket_relpath(out)    829771.9    0.0012    0.0012    0.0013    0.0001    0.0011    0.0037    2000
 
 === bench_event_queue (exit=0, 0.1s) ===
 event-queue micro-benchmark (ops=2000, in-memory socket stub)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-get_backoff_delay(mixed)       2173314.4    0.0005    0.0004    0.0007    2000
-enqueue                        1387803.5    0.0007    0.0007    0.0018    2000
-send_event(success)             581241.7    0.0017    0.0017    0.0019    2000
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+get_backoff_delay(mixed)       2167746.7    0.0005    0.0004    0.0007    0.0002    0.0004    0.0067    2000
+enqueue                        1400255.2    0.0007    0.0007    0.0018    0.0002    0.0006    0.0042    2000
+send_event(success)             584466.0    0.0017    0.0017    0.0019    0.0002    0.0016    0.0058    2000
+send_event(failure)             520831.2    0.0019    0.0019    0.0021    0.0002    0.0018    0.0064    2000
+send_event(unserializable)      432396.0    0.0023    0.0023    0.0027    0.0002    0.0021    0.0062    2000
 
-=== bench_pinning (exit=0, 0.3s) ===
+=== bench_pinning (exit=0, 0.4s) ===
 pinning micro-benchmark (ops=2000, temp pin file)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-PinStore.get(hit)                62808.0    0.0159    0.0156    0.0233    2000
-PinStore.check_and_record(match)     61835.1    0.0162    0.0159    0.0234    2000
-PinStore.set(repin)              13254.0    0.0754    0.0729    0.1227    2000
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+PinStore.get(hit)                64931.9    0.0154    0.0153    0.0186    0.0006    0.0144    0.0223    2000
+PinStore.get(miss)               65396.4    0.0153    0.0152    0.0183    0.0005    0.0144    0.0196    2000
+PinStore.check_and_record(match)     63427.5    0.0158    0.0157    0.0187    0.0006    0.0146    0.0246    2000
+PinStore.check_and_record(changed)     61414.9    0.0163    0.0161    0.0206    0.0013    0.0150    0.0555    2000
+PinStore.check_and_record(first_use)      8162.4    0.1225    0.1231    0.1650    0.0255    0.0780    0.2082     200
+PinStore.set(repin)              13399.2    0.0746    0.0739    0.0996    0.0048    0.0689    0.1406    2000
 
 === bench_sync_state (exit=0, 0.2s) ===
 sync-state wrapper micro-benchmark (ops=2000, temp bucket + state dir)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-get_sync_state_store(cached)   3237764.4    0.0003    0.0003    0.0005    2000
-get_base_hash(hit)              500459.9    0.0020    0.0020    0.0023    2000
-local_version_and_base(same)    460358.1    0.0022    0.0022    0.0024    2000
-local_version_and_base(ticked)    232977.2    0.0043    0.0042    0.0048    2000
-upload_version_fields(same)     284270.2    0.0035    0.0035    0.0040    2000
-upload_version_fields(ticked)    172221.6    0.0058    0.0058    0.0069    2000
-record_base                     338625.5    0.0030    0.0029    0.0034    2000
-merge_and_record                270399.6    0.0037    0.0037    0.0042    2000
-flush                          2357815.5    0.0004    0.0004    0.0007      50
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+get_sync_state_store(cached)   3112089.7    0.0003    0.0003    0.0006    0.0002    0.0003    0.0050    2000
+get_base_hash(hit)              496632.0    0.0020    0.0020    0.0023    0.0002    0.0019    0.0054    2000
+local_version_and_base(same)    463036.3    0.0022    0.0021    0.0025    0.0003    0.0020    0.0096    2000
+local_version_and_base(ticked)    221384.6    0.0045    0.0045    0.0052    0.0003    0.0041    0.0090    2000
+upload_version_fields(same)     282170.9    0.0035    0.0035    0.0040    0.0002    0.0033    0.0079    2000
+upload_version_fields(ticked)    169919.6    0.0059    0.0059    0.0067    0.0004    0.0054    0.0130    2000
+record_base                     331602.5    0.0030    0.0030    0.0035    0.0002    0.0027    0.0059    2000
+merge_and_record                267521.4    0.0037    0.0037    0.0044    0.0006    0.0034    0.0257    2000
+flush                          1648913.5    0.0006    0.0004    0.0090    0.0012    0.0004    0.0090      50
 
 === bench_tombstones (exit=0, 0.2s) ===
 tombstone wrapper micro-benchmark (ops=2000, temp bucket + state dir)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-get_tombstone_store(cached)    3311837.2    0.0003    0.0003    0.0006    2000
-get_payload                    1152746.0    0.0009    0.0009    0.0010    2000
-record_deletion(persist)          9493.3    0.1053    0.1036    0.1408     200
-merge_payload(dominant)          10189.6    0.0981    0.0923    0.1812     200
-mint_50(memory)                  13609.3    0.0735    0.0733    0.0781      50
-mint_50_then_flush                2353.8    0.4248    0.4165    0.5603      50
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+get_tombstone_store(cached)    3288154.1    0.0003    0.0003    0.0004    0.0002    0.0003    0.0050    2000
+get_payload                    1128180.5    0.0009    0.0009    0.0010    0.0001    0.0008    0.0055    2000
+record_deletion(persist)          9665.8    0.1035    0.1022    0.1190    0.0041    0.0978    0.1222     200
+merge_payload(dominant)          10757.0    0.0930    0.0919    0.1048    0.0034    0.0883    0.1062     200
+mint_50(memory)                  13262.3    0.0754    0.0750    0.0810    0.0017    0.0729    0.0810      50
+mint_50_then_flush                2409.9    0.4150    0.4130    0.4927    0.0134    0.3975    0.4927      50
 
 === bench_arbitration (exit=0, 0.2s) ===
 arbitration micro-benchmark (ops=2000, temp bucket + state dir)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-arbitrate_upload(first)         171430.7    0.0058    0.0058    0.0074    2000
-arbitrate_upload(dominant)      164797.7    0.0061    0.0059    0.0100    2000
-arbitrate_upload(superseded)    174408.4    0.0057    0.0056    0.0092    2000
-arbitrate_upload(conflict)      157868.2    0.0063    0.0063    0.0079    2000
-conflicted_copy_name            188923.4    0.0053    0.0052    0.0089    2000
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+arbitrate_upload(first)         168103.0    0.0059    0.0059    0.0073    0.0004    0.0052    0.0130    2000
+arbitrate_upload(dominant)      165853.8    0.0060    0.0060    0.0071    0.0004    0.0054    0.0106    2000
+arbitrate_upload(superseded)    177089.3    0.0056    0.0056    0.0065    0.0004    0.0050    0.0092    2000
+arbitrate_upload(conflict)      155983.2    0.0064    0.0063    0.0095    0.0006    0.0056    0.0119    2000
+conflicted_copy_name            189291.8    0.0053    0.0052    0.0060    0.0003    0.0049    0.0090    2000
 
 === bench_reconcile (exit=0, 0.3s) ===
 reconcile micro-benchmark (ops=2000, decision leaves + bulk diff)
-operation                          ops/s   mean_ms    p50_ms    p99_ms       n
-------------------------------------------------------------------------------
-compare_files(in_sync)         4436523.4    0.0002    0.0002    0.0004    2000
-compare_files(download)        4174191.5    0.0002    0.0002    0.0003    2000
-compare_files(upload)          3940220.2    0.0003    0.0002    0.0003    2000
-compare_files(conflict_upload)    878334.3    0.0011    0.0011    0.0014    2000
-compare_files(conflict_download)    751923.8    0.0013    0.0013    0.0016    2000
-tombstone_clock_dominates(dom)   1292285.4    0.0008    0.0008    0.0009    2000
-tombstone_clock_dominates(sub)   1292704.7    0.0008    0.0008    0.0009    2000
-tombstone_clock_dominates(invalid)   4904458.8    0.0002    0.0002    0.0003    2000
-tombstone_deletes_local(delete)   1282974.8    0.0008    0.0008    0.0009    2000
-tombstone_deletes_local(keep)   1251367.2    0.0008    0.0008    0.0009    2000
-parse_advertised_version(valid)    563517.9    0.0018    0.0018    0.0020    2000
-parse_advertised_version(absent)  10336385.8    0.0001    0.0001    0.0001    2000
-parse_advertised_version(malformed)   9954713.3    0.0001    0.0001    0.0001    2000
-get_sync_actions(100 in_sync)       440.2    2.2719    2.2695    2.3037      20
+operation                          ops/s   mean_ms    p50_ms    p99_ms  stdev_ms    min_ms    max_ms       n
+------------------------------------------------------------------------------------------------------------
+compare_files(in_sync)         4440132.5    0.0002    0.0002    0.0004    0.0002    0.0002    0.0060    2000
+compare_files(download)        4294121.6    0.0002    0.0002    0.0003    0.0000    0.0002    0.0016    2000
+compare_files(upload)          3816910.6    0.0003    0.0002    0.0004    0.0001    0.0002    0.0024    2000
+compare_files(conflict_upload)    851950.6    0.0012    0.0012    0.0015    0.0001    0.0010    0.0039    2000
+compare_files(conflict_download)    677654.6    0.0015    0.0015    0.0019    0.0001    0.0013    0.0052    2000
+tombstone_clock_dominates(dom)   1263995.6    0.0008    0.0008    0.0010    0.0001    0.0007    0.0033    2000
+tombstone_clock_dominates(sub)   1262273.2    0.0008    0.0008    0.0009    0.0001    0.0007    0.0034    2000
+tombstone_clock_dominates(invalid)   5419026.3    0.0002    0.0002    0.0002    0.0000    0.0002    0.0003    2000
+tombstone_deletes_local(delete)   1227691.3    0.0008    0.0008    0.0012    0.0003    0.0007    0.0118    2000
+tombstone_deletes_local(keep)   1264072.3    0.0008    0.0008    0.0009    0.0001    0.0007    0.0039    2000
+parse_advertised_version(valid)    553189.8    0.0018    0.0018    0.0021    0.0001    0.0016    0.0049    2000
+parse_advertised_version(absent)  10502328.0    0.0001    0.0001    0.0001    0.0000    0.0001    0.0003    2000
+parse_advertised_version(malformed)  10288065.1    0.0001    0.0001    0.0001    0.0000    0.0001    0.0003    2000
+get_sync_actions(100 in_sync)       456.3    2.1915    2.1926    2.2082    0.0131    2.1637    2.2082      20

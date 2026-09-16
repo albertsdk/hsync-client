@@ -75,6 +75,9 @@ class BenchResult:
         self.p50 = statistics.median(lat_ms) if lat_ms else 0.0
         self.p99 = percentile(lat_ms, 99.0)
         self.mean = statistics.fmean(lat_ms) if lat_ms else 0.0
+        self.min = min(lat_ms) if lat_ms else 0.0
+        self.max = max(lat_ms) if lat_ms else 0.0
+        self.stdev = statistics.pstdev(lat_ms) if lat_ms else 0.0
 
     def as_dict(self) -> dict:
         return {
@@ -85,6 +88,9 @@ class BenchResult:
             "mean_ms": round(self.mean, 4),
             "p50_ms": round(self.p50, 4),
             "p99_ms": round(self.p99, 4),
+            "min_ms": round(self.min, 4),
+            "max_ms": round(self.max, 4),
+            "stdev_ms": round(self.stdev, 4),
         }
 
 
@@ -148,13 +154,17 @@ async def measure_async(
 
 def print_table(results: Sequence[BenchResult]) -> None:
     """Print one aligned row per measured operation."""
-    header = f"{'operation':<28}{'ops/s':>12}{'mean_ms':>10}{'p50_ms':>10}{'p99_ms':>10}{'n':>8}"
+    header = (
+        f"{'operation':<28}{'ops/s':>12}{'mean_ms':>10}{'p50_ms':>10}{'p99_ms':>10}"
+        f"{'stdev_ms':>10}{'min_ms':>10}{'max_ms':>10}{'n':>8}"
+    )
     print(header)
     print("-" * len(header))
     for result in results:
         print(
             f"{result.name:<28}{result.ops:>12.1f}{result.mean:>10.4f}"
-            f"{result.p50:>10.4f}{result.p99:>10.4f}{result.count:>8}"
+            f"{result.p50:>10.4f}{result.p99:>10.4f}{result.stdev:>10.4f}"
+            f"{result.min:>10.4f}{result.max:>10.4f}{result.count:>8}"
         )
 
 

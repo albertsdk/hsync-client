@@ -23,7 +23,7 @@ concrete anomaly needs a cost breakdown / CPU saturation sweep.
 | Path | Role |
 | --- | --- |
 | `bench/README.md` | Tier table, per-script scope, run commands, methodology |
-| `bench/common.py` | Stdlib-only measurement core + deterministic CIDs; never imports `hsync_client` |
+| `bench/common.py` | Stdlib-only measurement core (mean/p50/p99/stdev/min/max) + deterministic CIDs; never imports `hsync_client` |
 | `bench/bench_autotune.py` | `hsync_client/autotune.py` policy scenarios |
 | `bench/bench_utils.py` | `hsync_client/utils.py` per-request/path helper scenarios |
 | `bench/bench_event_queue.py` | `hsync_client/event_queue.py` outbound-event scenarios |
@@ -33,7 +33,8 @@ concrete anomaly needs a cost breakdown / CPU saturation sweep.
 | `bench/bench_arbitration.py` | `hsync_client/arbitration.py` upload-gate scenarios |
 | `bench/bench_reconcile.py` | `hsync_client/sync.py` reconcile-core scenarios (decision leaves + bulk `get_sync_actions`) |
 | `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
-| `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline) |
+| `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline, **L1 scripts only**); `--json-out-dir` also dumps one `<script>.json` per scenario |
+| `bench/compare.py` | A/B comparator over two `--json-out` runs (file or dir); flags median regressions above a noise floor, `exit 1` on regression |
 
 ## Scenario → code anchors
 
@@ -54,8 +55,8 @@ concrete anomaly needs a cost breakdown / CPU saturation sweep.
 | `normalize_bucket_relpath(in\|out)` | `utils.normalize_bucket_relpath` (`:418`) — wire-path gate before upload |
 | `get_backoff_delay(mixed)` | `event_queue.QueuedEvent.get_backoff_delay` (`hsync_client/event_queue.py:103`) |
 | `enqueue` | `event_queue.EventQueue.enqueue` (`:149`) |
-| `send_event(success)` | `event_queue.EventQueue._send_event` (`:160`) — `json.dumps` + awaited send |
-| `PinStore.get(hit)` / `check_and_record(match)` / `set(repin)` | `pinning.PinStore` (`hsync_client/pinning.py:185`,`:200`,`:190`) |
+| `send_event(success\|failure\|unserializable)` | `event_queue.EventQueue._send_event` (`:160`) — `json.dumps` + awaited send; transient raise → held for retry (`False`); permanent drop → `True` without touching the socket |
+| `PinStore.get(hit\|miss)` / `check_and_record(match\|changed\|first_use)` / `set(repin)` | `pinning.PinStore` (`hsync_client/pinning.py:185`,`:200`,`:190`) |
 | `get_sync_state_store(cached)` | `sync_state.get_sync_state_store` (`hsync_client/sync_state.py:50`) |
 | `get_base_hash(hit)` | `sync_state.get_base_hash` (`:69`) |
 | `record_base` | `sync_state.record_base` (`:78`) — includes `os.stat` corrected-mtime fallback |
@@ -82,8 +83,16 @@ Same as `hsync-common/bench` (warmup outside samples, setup outside the timed
 region, per-branch assertions inside the measured op, one
 `TemporaryDirectory`-isolated fixture per scenario, deterministic counter-based
 CIDs). State-dependent scenarios set a `HSYNC_STATE_DIR` override + a seeded
-`CONFIG` and clear the module store caches. Results are comparative (this
+`CONFIG` and clear the module store caches. Every result reports
+`mean`/`p50`/`p99` plus `stdev`/`min`/`max`. Results are comparative (this
 machine, warm page cache), never production SLAs.
+
+`compare.py` flags an operation only when its median grew beyond `--threshold`
+(default 1.10) **and** its before-run mean sat at or above `--min-mean-ms`
+(default 0.001 ms): the floor keeps the sub-microsecond ops (where
+`perf_counter` resolution alone moves the numbers by tens of percent) from
+producing false positives. A scenario present in `before` but missing from
+`after` is always flagged.
 
 ## Initial findings (baseline `bench_result.txt`, count=2000, python 3.14.4)
 
@@ -108,8 +117,19 @@ machine, warm page cache), never production SLAs.
   `tests/test_state_backend.py`; the cache is invalidated by
   `reset_bucket_folder_cache()` (wired into the `reset_sync_state_stores`
   autouse fixture).
-* **TOFU pinning is flock+fsync dominated** — `get`/`check_and_record` ~0.0156
-  ms, the durable `set` ~0.0733 ms (atomic 0o600 temp-write + replace + fsync).
+* **TOFU pinning is flock+fsync dominated** — `get(hit/miss)` and
+  `check_and_record(match/changed)` all sit ~0.016 ms (advisory flock + JSON
+  load; the trust decision itself adds nothing measurable). The durable paths
+  are an order of magnitude up: `set(repin)` ~0.075 ms and
+  `check_and_record(first_use)` ~0.12 ms — both pay the atomic 0o600
+  temp-write + fsync + replace, the latter also the verification read-back.
+  The first-use scenario grows a **separate** pin file so its 200 fresh pins
+  never inflate the JSON that `set`/`get`/`check_and_record` re-read.
+* **Event send: failure is marginally costlier, still µs-scale** —
+  `send_event(success)` ~0.0017 ms vs `send_event(failure)` ~0.0020 ms (the
+  transient raise caught → held for retry) and `send_event(unserializable)`
+  ~0.0023 ms (`json.dumps` raises `TypeError` → permanent drop); serialization
+  is not the event path's hot spot — the backoff hold it triggers is.
 * **Batched offline-deletion mint (candidate B, fixed)** — the sync-engine mint
   loop used `record_deletion_by_key` (persist per marker) for every file deleted
   while offline. `record_deletion_by_key` now takes `persist=False`
@@ -160,6 +180,11 @@ cd hsync-client
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary [--json-out FILE]
 .venv/bin/python bench/bench_startup.py --count 30 --binary dist/linux-amd64/hsync [--json-out FILE]
+
+# A/B regression check between two full-suite JSON dirs
+.venv/bin/python bench/run_all.py --count 2000 --json-out-dir /tmp/before
+.venv/bin/python bench/run_all.py --count 2000 --json-out-dir /tmp/after
+.venv/bin/python bench/compare.py /tmp/before /tmp/after --threshold 1.10
 ```
 
 Lint: `cd hsync-client && .venv/bin/python -m ruff check bench` — the directory
