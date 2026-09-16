@@ -60,6 +60,7 @@ opaque internal formats.
 - 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
 - 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
 - ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets. After the system closes the file, the upload starts in a fraction of a second — not after a 5–10s quiet window (the default in tools like Syncthing). Already-idle files (full resync, atomic moves) skip the wait.
+- 🕸️ **Your own private sync network** — no vendor account and no third-party service in the data path: on a single network, devices sync directly peer-to-peer (`hsync lan`), optionally isolated with `--group` and authenticated with `HSYNC_LAN_KEY`; across networks you host the HSYNC Server yourself.
 
 ## Technical Capabilities
 
@@ -87,6 +88,8 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
 * **Network Isolation:** Supports `HSYNC_LAN_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
+
+> **Roadmap — Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) will extend the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). The client-side `hsync p2p` mode that consumes it is **in development** and not available yet: today, peer-to-peer sync requires all devices to share a network segment.
 
 ## Quick Start
 
