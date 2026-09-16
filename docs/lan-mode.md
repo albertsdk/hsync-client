@@ -128,7 +128,7 @@ Threshold and concurrency settings are listed in
 ### Example Flow
 
 ```
-$ hsync lan -b photos -p ~/Pictures
+$ HSYNC_LAN_KEY="shared-secret" hsync lan -b photos -p ~/Pictures
 
 [INFO] LAN P2P mode enabled
 [INFO] Continuous mode enabled - will wait indefinitely for peers
@@ -155,7 +155,9 @@ in the single reference:
 > - `--force-master` and `--never-master` are mutually exclusive.
 >
 > The LAN authentication key is only ever supplied via the `HSYNC_LAN_KEY`
-> environment variable, never as a CLI flag.
+> environment variable, never as a CLI flag. That key is what authorizes writes:
+> a keyless LAN is read-only, and a write-capable run without a key is refused
+> with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key.
 
 ## Security & Pairing
 
@@ -233,7 +235,8 @@ Consequences:
   identity:
 
   ```bash
-  HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync lan -b photos -p ~/Other
+  HSYNC_LAN_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
+    hsync lan -b photos -p ~/Other
   ```
 
 ### One process per directory
@@ -269,6 +272,9 @@ peer without a group matches **only** other peers that also run without a group.
 ### Usage Examples
 
 ```bash
+# The shared key authorizes writes; every peer in the group needs the same one
+export HSYNC_LAN_KEY="shared-secret"
+
 # Team A - only sees other Team A peers
 hsync lan -b project -p ~/Projects --group "team-a"
 
@@ -363,6 +369,9 @@ one-shot sync, read-only slaves, isolated groups and fixed ports — live in
 When running in LAN mode **without `--force-master`** and the shared directory is non-empty, the client warns that local files could be deleted — because the elected master serves the file listing the slave converges on, and files not present on the master will be removed during initial sync. The master is a transport coordinator, not an authority (ADR-0022): concurrent edits are resolved causally by every node.
 
 ```bash
+# The shared key authorizes writes (a keyless LAN is read-only)
+export HSYNC_LAN_KEY="shared-secret"
+
 # The client will show a warning and ask for confirmation
 hsync lan -b photos -p ~/Pictures
 

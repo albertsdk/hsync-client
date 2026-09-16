@@ -88,7 +88,7 @@ slaves serve only exact-hash `GET` downloads; all mutating routes are disabled.
 The client does **not** load `./.env` by itself. Example:
 
 ```bash
-export HSYNC_LAN_KEY="shared-secret"    # optional, recommended
+export HSYNC_LAN_KEY="shared-secret"    # required for writes (a keyless LAN is read-only)
 hsync lan --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 

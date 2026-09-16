@@ -80,7 +80,9 @@ and caveats to watch for.
    - **Server Mode** (recommended for internet sync): set up an HSYNC Server
      and connect all devices to it.
    - **LAN Mode** (equivalent to Syncthing's P2P): run `hsync lan` on
-     each device on the same network.
+     each device on the same network, with the same `HSYNC_LAN_KEY` on every
+     device — the shared key authorizes writes (a keyless LAN is read-only, and
+     a keyless bidirectional run is refused).
 
 2. **Export your Syncthing ignore patterns**. Syncthing's `.stignore` uses a
    similar syntax to `.gitignore`. Convert your patterns to `.hsyncignore`:

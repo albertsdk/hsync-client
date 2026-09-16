@@ -11,7 +11,8 @@ a central server. One device is elected **master** and serves files to all
 other devices (**slaves**).
 
 ```bash
-hsync lan -b mybucket -p ~/Sync
+# The shared key authorizes writes; without it the group is read-only
+HSYNC_LAN_KEY="shared-secret" hsync lan -b mybucket -p ~/Sync
 ```
 
 ### How it works
@@ -55,7 +56,7 @@ and reacts to changes (continuous mode is implicit). To run a **single
 sync cycle and exit**, pass `--once` (the universal one-shot selector):
 
 ```bash
-hsync lan -b mybucket -p ~/Sync --once
+HSYNC_LAN_KEY="shared-secret" hsync lan -b mybucket -p ~/Sync --once
 ```
 
 This compares local and remote files, syncs changes, and shuts down — useful
@@ -63,7 +64,8 @@ for cron jobs or manual "sync now" operations on a LAN.
 
 ### Dry Run
 
-Preview what would change without modifying files:
+Preview what would change without modifying files (a dry run never writes, so
+no key is required):
 
 ```bash
 hsync lan --dry-run -b mybucket -p ~/Sync

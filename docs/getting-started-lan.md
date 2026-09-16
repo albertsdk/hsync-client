@@ -7,8 +7,9 @@ Sync files directly between devices on your local network — no server needed.
 ## Basic Usage
 
 ```bash
-# Peers discover each other via mDNS; continuous mode is implicit
-hsync lan -b mybucket -p /path/to/dir
+# Peers discover each other via mDNS; continuous mode is implicit.
+# Write-capable runs need a shared key (see Authentication below).
+HSYNC_LAN_KEY="shared-secret" hsync lan -b mybucket -p /path/to/dir
 ```
 
 See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
@@ -16,8 +17,9 @@ See [LAN Mode](lan-mode.md) for the P2P architecture and master election.
 ## Try it end-to-end (local)
 
 The fastest way to see LAN P2P sync in action is to run two clients on the same
-machine (or two devices on the same network). No server, no API key — peers
-discover each other via mDNS.
+machine (or two devices on the same network). No server and no API key — peers
+discover each other via mDNS and authorize writes with a shared LAN key (a
+keyless LAN is read-only by default).
 
 Open **two terminals** and run:
 
@@ -32,12 +34,14 @@ echo "hello hsync lan" > /tmp/hsync-lan-a/hello.txt
 #    so no deletion-risk warning is shown) and start LAN Mode. Give it its own
 #    device identity: the two peers run on the same machine but must be two
 #    distinct devices, or discovery would ignore them as "self".
-HSYNC_DEVICE_DIR=/tmp/hsync-lan-a-device \
+#    Both terminals share the same LAN key: it authorizes writes, and a
+#    write-capable run without a key is refused with [AUTH REQUIRED].
+HSYNC_LAN_KEY="demo-lan-secret" HSYNC_DEVICE_DIR=/tmp/hsync-lan-a-device \
   hsync lan -b demo-lan -p /tmp/hsync-lan-a --force-master
 
 # 4. Terminal 2 — start a second peer with its own device identity; it
 #    discovers the master via mDNS and downloads hello.txt
-HSYNC_DEVICE_DIR=/tmp/hsync-lan-b-device \
+HSYNC_LAN_KEY="demo-lan-secret" HSYNC_DEVICE_DIR=/tmp/hsync-lan-b-device \
   hsync lan -b demo-lan -p /tmp/hsync-lan-b
 
 # 5. Verify the file arrived
@@ -78,29 +82,35 @@ This is intentional — it lets deletions made on the master reach offline peers
 See [LAN Mode → Deletion Risk Warning](lan-mode.md#deletion-risk-warning) for
 the full explanation.
 
-## Authentication (optional)
+## Authentication (shared key)
 
-For added security, set a shared `LAN_KEY` on all devices:
+The shared key is what authorizes **writes**: set the same `HSYNC_LAN_KEY` on
+every device that may modify the shared folder.
 
 ```bash
 export HSYNC_LAN_KEY="your-shared-secret"
 ```
 
 With a `LAN_KEY`:
-- The master authenticates every slave connection
+- The master authenticates every slave connection and accepts mutations
 - The CID is cryptographically verified — used for echo suppression and log attribution
-- Without `LAN_KEY`, a lightweight **hello handshake** lets the master log each
-  slave's CID with an `(unauthenticated)` qualifier
+
+Without a `LAN_KEY` the group is **read-only**: discovery, listings, downloads
+and read-only deltas keep working (a lightweight **hello handshake** lets the
+master log each slave's CID with an `(unauthenticated)` qualifier), but any
+write-capable sync is refused with `[AUTH REQUIRED]`. The only exceptions are
+`--sync-direction download-only` and the deliberate, dangerous
+`--allow-unauthenticated-writes` opt-in.
 
 See [Authentication — Client-Side](authentication.md) for diagrams of both flows.
 
 ## Environment Configuration
 
-Set the shared secret in the shell (optional) and enable LAN on the CLI.
-`HSYNC_LAN_MODE` is not read.
+Set the shared secret in the shell (required for writes) and enable LAN on the
+CLI. `HSYNC_LAN_MODE` is not read.
 
 ```bash
-export HSYNC_LAN_KEY="shared-secret"   # optional, recommended
+export HSYNC_LAN_KEY="shared-secret"   # required for writes (read-only without it)
 export HSYNC_LAN_GROUP="mygroup"       # optional, isolates peer groups
 hsync lan -b documents -p ~/Documents
 ```

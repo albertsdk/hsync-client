@@ -11,7 +11,8 @@ other devices (**slaves**).
 
 **Q: Is the server required for HSYNC to work?**
 No. LAN P2P Mode works without a server. The server is only needed if you
-want to sync devices across different networks.
+want to sync devices across different networks. Writes are authorized by a
+shared `HSYNC_LAN_KEY` — see [Security & Safety](#security--safety).
 
 **Q: Can I use both Server Mode and LAN Mode at the same time?**
 No. Each HSYNC instance operates in one mode at a time.
@@ -178,7 +179,7 @@ second instance with the same bucket is ignored as "self" during discovery
 device directory:
 
 ```bash
-HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
+HSYNC_LAN_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
   hsync lan -b photos -p ~/Other
 ```
 
@@ -195,16 +196,18 @@ copied device directory (hsync regenerates it on the next run) or point the
 machine at a fresh location:
 
 ```bash
-HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-machine \
+HSYNC_LAN_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-machine \
   hsync lan -b photos -p ~/Photos
 ```
 
 > **Trust-LAN note (no `HSYNC_LAN_KEY`):** on an unauthenticated LAN the device
 > ID a peer declares is not verified, so a malicious peer could squat another
 > peer's ID and get it refused while it holds the connection. This is a marginal
-> availability risk in a mode where any peer can already read and write the
-> share; the far more common case the check protects against is the *accidental*
-> clone (a copied configuration on a home LAN).
+> availability risk in a mode where reads are open but writes are refused by
+> default (a no-key LAN is read-only unless the dangerous
+> `--allow-unauthenticated-writes` opt-in is enabled on both sides); the far more
+> common case the check protects against is the *accidental* clone (a copied
+> configuration on a home LAN).
 
 ## Files & Performance
 
@@ -269,6 +272,6 @@ client default). Edit
 HSYNC_BUCKET="mybucket"
 HSYNC_PATH="/path/to/sync"
 HSYNC_LAN_GROUP="mygroup"        # optional
-HSYNC_LAN_KEY="shared-secret"    # optional, recommended
+HSYNC_LAN_KEY="shared-secret"    # required for writes (a keyless LAN is read-only)
 ```
 `HSYNC_LAN_MODE` is ignored; do not add it. Then `systemctl restart hsync`.

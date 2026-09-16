@@ -27,10 +27,15 @@ HSYNC has two orthogonal axes of operation: **topology** (where files live) and
 | Topology | One-shot example | Continuous example |
 |----------|-----------------|---------------|
 | Server Mode | `hsync server server.example.com -b mybucket -p ~/Sync --once` | `hsync server server.example.com -b mybucket -p ~/Sync` |
-| LAN P2P Mode | `hsync lan -b mybucket -p ~/Sync --once` | `hsync lan -b mybucket -p ~/Sync` |
+| LAN P2P Mode | `HSYNC_LAN_KEY=secret hsync lan -b mybucket -p ~/Sync --once` | `HSYNC_LAN_KEY=secret hsync lan -b mybucket -p ~/Sync` |
 
 For LAN P2P Mode, the client runs continuously by default. Use `--once` to
 run a single sync cycle and exit in either mode.
+
+> In LAN P2P Mode the shared `HSYNC_LAN_KEY` authorizes writes: a keyless LAN is
+> read-only, and a write-capable run without a key is refused
+> (`[AUTH REQUIRED]`). Only `--sync-direction download-only` needs no key. See
+> [LAN Mode → Security & Pairing](lan-mode.md#security--pairing).
 
 To schedule one-shot runs with cron or systemd timers (and to learn the
 documented exit-code contract), see [Scheduling & Automation](scheduling.md).

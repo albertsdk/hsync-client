@@ -114,7 +114,7 @@ curl -fsSL https://github.com/albertsdk/hsync-client/releases/latest/download/in
 
 HSYNC supports two sync topologies — pick the one that fits your environment:
 
-- **Option A — LAN Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network. Fastest to try: zero infrastructure, works with two terminals on the same machine.
+- **Option A — LAN Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network. Fastest to try: zero infrastructure, works with two terminals on the same machine. Writes are authorized by a shared LAN key — a keyless LAN is read-only.
 - **Option B — Server Mode**: Centralized hub. Requires a running [HSYNC Server](https://github.com/albertsdk/hsync-server). Best for multi-site sync over firewalled networks (HTTP/HTTPS only).
 
 Both options produce the same result: bidirectional file sync in real time. Choose one and follow the steps below.
@@ -123,7 +123,7 @@ If you prefer the centralized approach, jump to [Option B](#option-b--server-mod
 
 #### Option A — LAN P2P Mode (no server needed)
 
-Initialize direct peer-to-peer synchronization without central infrastructure or pre-shared keys. Peers discover each other via mDNS. You can
+Initialize direct peer-to-peer synchronization without central infrastructure. Peers discover each other via mDNS and authorize writes with a shared LAN key, so the two terminals below use the same demo key (a keyless LAN is read-only). You can
 test it locally with two terminals on the same machine:
 
 ```mermaid
@@ -164,13 +164,16 @@ mkdir -p /tmp/hsync-a /tmp/hsync-b
 echo "hello hsync" > /tmp/hsync-a/hello.txt
 
 # 2. Terminal 1 — Initialize Node A (Authoritative Data Source)
-#    Utilizing --force-master prevents initial data reconciliation conflicts
-HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
+#    Utilizing --force-master prevents initial data reconciliation conflicts.
+#    HSYNC_LAN_KEY authorizes writes: a keyless LAN is read-only, and a
+#    write-capable run without a key is refused with [AUTH REQUIRED].
+HSYNC_LAN_KEY="demo-lan-secret" HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
   hsync lan -b mybucket -p /tmp/hsync-a --force-master
 
 # 3. Terminal 2 — Initialize Node B (Receiver)
-# Automatically discovers Node A via mDNS and downloads hello.txt automatically
-HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
+# Automatically discovers Node A via mDNS and downloads hello.txt automatically.
+# Same key as Node A — every peer in the group must share it.
+HSYNC_LAN_KEY="demo-lan-secret" HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
   hsync lan -b mybucket -p /tmp/hsync-b
 
 # 4. Verify the file arrived
@@ -183,7 +186,7 @@ Watch above animation to see what happens.
 
 **Architectural Note (Conflict Resolution):** The `--force-master` flag establishes the initial file ledger. The master acts merely as a transport hub; logical conflicts are resolved deterministically across all nodes using vector clocks. Always assign the initial master role to the endpoint housing the authoritative data.
 
-> **Note:** For the full P2P setup (master election, pairing, pre-shared secret key `HSYNC_LAN_KEY`, group filtering with `--group`), see [LAN Mode](docs/lan-mode.md).
+> **Note:** `HSYNC_LAN_KEY` is required by every write-capable LAN run — a keyless LAN is read-only, and a keyless bidirectional run is refused with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key. For the full P2P setup (master election, pairing, group filtering with `--group`) see [LAN Mode](docs/lan-mode.md) and [LAN Mode → Security & Pairing](docs/lan-mode.md#security--pairing).
 
 #### Option B — Server Mode (centralized)
 

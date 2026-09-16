@@ -20,10 +20,11 @@ Without `--once` the client keeps running and retries an unreachable server
 forever, so schedulers must always pass `--once`.
 
 In **LAN P2P Mode** the same `--once` flag runs one slave sync cycle and
-exits:
+exits. Schedulers run non-interactively, so a write-capable LAN run must carry
+the shared key (a keyless LAN is read-only):
 
 ```bash
-hsync lan -b docs -p ~/Sync --once
+HSYNC_LAN_KEY="shared-secret" hsync lan -b docs -p ~/Sync --once
 ```
 
 > **Note:** the LAN master role is inherently continuous (it must stay

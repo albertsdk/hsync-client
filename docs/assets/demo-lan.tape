@@ -1,7 +1,7 @@
 # HSYNC — LAN P2P demo for the README (docs/assets/demo-lan.gif)
 #
 # Regenerate from the hsync-client repository root:
-#   vhs demo-lan.tape
+#   vhs docs/assets/demo-lan.tape
 #
 # The tape simulates two devices on one machine (stacked tmux panes):
 #   top pane    = Device A (master, --force-master)
@@ -15,10 +15,14 @@
 # Everything that is not real tool usage (tmux setup, control send-keys,
 # teardown) is wrapped in Hide/Show blocks and never appears in the GIF.
 # The tmux status bar is disabled.
-# Temporary state lives under /tmp and throwaway HSYNC_DEVICE_DIRs, so the
-# host's real device identity is never touched.
+# Temporary state lives under /tmp: demo-lan.sh sets HSYNC_STATE_DIR and uses
+# throwaway HSYNC_DEVICE_DIRs, so nothing under the host's real
+# ~/.local/state/hsync is ever read, written or deleted.
+#
+# Both panes export the same throwaway HSYNC_LAN_KEY (set by demo-lan.sh):
+# a keyless LAN is read-only, and the shared key is what authorizes writes.
 
-Output demo-lan.gif
+Output docs/assets/demo-lan.gif
 
 Set Shell bash
 Set FontSize 11

@@ -125,6 +125,11 @@ CID for log attribution. A lightweight **hello handshake** lets the slave declar
 its CID. The CID is **not cryptographically authenticated** — the log carries an
 explicit `(unauthenticated)` qualifier.
 
+A keyless LAN is **read-only for writes**: discovery, listings and downloads
+keep working, but a write-capable sync is refused with `[AUTH REQUIRED]` unless
+it runs `--sync-direction download-only` or the dangerous
+`--allow-unauthenticated-writes` opt-in is explicit on both sides.
+
 ### Diagram
 
 ```
@@ -185,7 +190,7 @@ Slave                                Master
 | Variable | Mode | Purpose |
 |---|---|---|
 | `HSYNC_API_KEY` | Server | Account token (`hs_<id>_<secret>`) for central server authentication |
-| `HSYNC_LAN_KEY` | LAN P2P | Shared secret for LAN peer authentication (optional) |
+| `HSYNC_LAN_KEY` | LAN P2P | Shared secret for LAN peer authentication — required by any write-capable run (a keyless LAN is read-only) |
 
 The `cid` carried in the LAN auth frames is derived from the local **device
 identity** — it is not configurable via environment.

@@ -24,8 +24,11 @@ if [[ -f "$WATCHER_PIDFILE" ]]; then
   rm -f "$WATCHER_PIDFILE"
 fi
 
-# Create directories for demo
-rm -rf /tmp/hsync-a /tmp/hsync-b "$HOME/.local/state/hsync"
+# Create directories for demo. Every path is under /tmp: HSYNC_STATE_DIR and the
+# throwaway HSYNC_DEVICE_DIRs keep the host's real installation state
+# (~/.local/state/hsync: syncstate.db, device identity, pinned peers) out of the
+# demo, so it is never read, written or deleted.
+rm -rf /tmp/hsync-a /tmp/hsync-b /tmp/hsync-demo-state
 rm -rf /tmp/hsync-a-device /tmp/hsync-b-device
 rm -f "$READY_A" "$READY_B"
 mkdir -p /tmp/hsync-a /tmp/hsync-b /tmp/demo-bin
@@ -39,13 +42,19 @@ ln -sf "$REPO_ROOT/.venv/bin/hsync" /tmp/demo-bin/hsync
 # Top pane: Device A (master) - starts hsync automatically.
 # HSYNC_READY_FILE makes the master write its PID to $READY_A once its HTTP+WSS
 # servers and filesystem watcher are up (see hsync_client/lan_handler.py).
+# HSYNC_LAN_KEY is exported in BOTH panes: a shared LAN key authorizes writes
+# (a keyless LAN is read-only since ADR-0029), so the recording mirrors the
+# documented quickstart without typing the key on screen. HSYNC_STATE_DIR and
+# HSYNC_LAN_PIN_FILE are exported too: the causal-state DB and the pinned peer
+# fingerprints stay under /tmp, never in the host's ~/.local/state/hsync (the
+# pin store does not follow HSYNC_STATE_DIR — see hsync_client/pinning.py).
 tmux -S "$SOCKET" new-session -d -s "$SESSION" -x 200 -y 50 \
-  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; HSYNC_DEVICE_DIR=/tmp/hsync-a-device hsync lan -b mybucket -p /tmp/hsync-a --force-master"
+  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; export HSYNC_LAN_KEY=demo-lan-key; export HSYNC_STATE_DIR=/tmp/hsync-demo-state; export HSYNC_LAN_PIN_FILE=/tmp/hsync-demo-state/lan_known_peers.json; HSYNC_DEVICE_DIR=/tmp/hsync-a-device hsync lan -b mybucket -p /tmp/hsync-a --force-master"
 
 # Bottom pane: Device B (client) - shows clean prompt, hsync started manually later.
 # HSYNC_READY_FILE=$READY_B is exported by the tape when Device B is launched.
 tmux -S "$SOCKET" split-window -v -t "$SESSION" \
-  "export PS1='user@host-b $ '; export PATH=/tmp/demo-bin:\$PATH; bash --norc"
+  "export PS1='user@host-b $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_LAN_KEY=demo-lan-key; export HSYNC_STATE_DIR=/tmp/hsync-demo-state; export HSYNC_LAN_PIN_FILE=/tmp/hsync-demo-state/lan_known_peers.json; bash --norc"
 
 # Disable status bar
 tmux -S "$SOCKET" set-option -t "$SESSION" status off
@@ -71,5 +80,7 @@ WATCHER_PID=$!
 disown 2>/dev/null || true
 echo "$WATCHER_PID" > "$WATCHER_PIDFILE"
 
-# Generate GIF
-vhs "$SCRIPT_PATH/demo-lan.tape"
+# Nothing else to do here: the recording is driven by the tape, which invokes
+# this helper and then attaches to the tmux session created above. Regenerate
+# the GIF from the repository root with:
+#   vhs docs/assets/demo-lan.tape

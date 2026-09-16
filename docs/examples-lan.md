@@ -7,8 +7,21 @@ Real-world usage examples for the `hsync` binary in **LAN peer-to-peer** deploym
 ## Conventions
 
 All examples assume the binary has been built (`./compile.sh`) and the
-`hsync` executable is on your `$PATH`. No server or API key is needed — peers
-discover each other automatically via mDNS on the local network.
+`hsync` executable is on your `$PATH`. No server and no API key is needed —
+peers discover each other automatically via mDNS on the local network.
+
+> **Write policy:** a keyless LAN is **read-only**. Every write-capable run
+> (the default bidirectional mode, and `upload-only`) must authorize writes with
+> a shared key, so the examples below assume:
+>
+> ```bash
+> export HSYNC_LAN_KEY="shared-secret"   # same value on every device
+> ```
+>
+> `--sync-direction download-only` needs no key; the deliberate, dangerous
+> `--allow-unauthenticated-writes` opt-in exists for a fully trusted LAN and is
+> not used in these examples. See
+> [LAN Mode → Security & Pairing](lan-mode.md#security--pairing).
 
 > **Note — same-machine experiments:** the examples below assume *distinct
 > devices* on the LAN, each with its own installation (and therefore its own
@@ -17,7 +30,7 @@ discover each other automatically via mDNS on the local network.
 > directory, e.g.:
 >
 > ```bash
-> HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync lan -b shared -p ~/Other
+> HSYNC_LAN_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync lan -b shared -p ~/Other
 > ```
 >
 > Otherwise the two instances share one device ID and ignore each other during
@@ -27,12 +40,12 @@ discover each other automatically via mDNS on the local network.
 
 On device A (the master):
 ```bash
-hsync lan -b shared -p ~/Shared
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared
 ```
 
 On device B (the slave):
 ```bash
-hsync lan -b shared -p ~/Shared
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared
 ```
 
 Continuous mode is implicit in LAN Mode: changes appear in real time.
@@ -40,7 +53,7 @@ Continuous mode is implicit in LAN Mode: changes appear in real time.
 ## 2.2 Sync photo library across devices without internet
 
 ```bash
-hsync lan -b photos -p ~/Pictures
+HSYNC_LAN_KEY="shared-secret" hsync lan -b photos -p ~/Pictures
 ```
 
 All devices on the same LAN with the same bucket name will sync photos directly.
@@ -49,12 +62,12 @@ All devices on the same LAN with the same bucket name will sync photos directly.
 
 On the NAS (force it to be master):
 ```bash
-hsync lan -b backup -p /mnt/data/backup --force-master
+HSYNC_LAN_KEY="shared-secret" hsync lan -b backup -p /mnt/data/backup --force-master
 ```
 
 On the laptop (slave):
 ```bash
-hsync lan -b backup -p ~/Backup --sync-direction upload-only
+HSYNC_LAN_KEY="shared-secret" hsync lan -b backup -p ~/Backup --sync-direction upload-only
 ```
 
 Upload-only ensures files are never deleted from the laptop.
@@ -62,7 +75,7 @@ Upload-only ensures files are never deleted from the laptop.
 ## 2.4 Keep a peer in sync but never let it become master
 
 ```bash
-hsync lan -b shared -p ~/Shared --never-master
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared --never-master
 ```
 
 Useful for devices that are intermittently connected or have low resources.
@@ -70,10 +83,11 @@ Useful for devices that are intermittently connected or have low resources.
 ## 2.5 One-shot LAN sync (no continuous listening)
 
 ```bash
-hsync lan -b shared -p ~/Shared
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared --once
 ```
 
-With `--once` the client syncs once and exits.
+`--once` runs a single slave sync cycle and exits; the master role is
+inherently continuous.
 
 ## 2.6 Read-only LAN slave (download-only)
 
@@ -82,17 +96,18 @@ hsync lan -b shared -p ~/Shared --sync-direction download-only
 ```
 
 This peer receives changes but never uploads. Useful for read-only mirrors.
+Because it never writes, it needs no `HSYNC_LAN_KEY`.
 
 ## 2.7 Multiple isolated groups on the same LAN
 
 Group A:
 ```bash
-hsync lan -b shared -p ~/Shared --group team-a
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared --group team-a
 ```
 
 Group B:
 ```bash
-hsync lan -b shared -p ~/Shared --group team-b
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared --group team-b
 ```
 
 Devices in different groups are invisible to each other, even on the same Wi-Fi.
@@ -100,25 +115,29 @@ Devices in different groups are invisible to each other, even on the same Wi-Fi.
 ## 2.8 LAN with a fixed port (firewalled environments)
 
 ```bash
-hsync lan -b shared -p ~/Shared --listen-port 8080
+HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared --listen-port 8080
 ```
 
 The client uses port 8080 for HTTPS and 8081 for WSS. Set firewall rules
 accordingly.
 
-## Authentication (optional)
+## Authentication (shared key)
 
-Add a shared `LAN_KEY` for authenticated sync:
+The key assumed in [Conventions](#conventions) is what authorizes writes:
 
 ```bash
 HSYNC_LAN_KEY="shared-secret" hsync lan -b shared -p ~/Shared
 ```
 
-With `LAN_KEY`, the master validates every slave's identity. Without it, the
-lightweight **hello handshake** lets you see which device made each change
-(with an `(unauthenticated)` qualifier in logs).
+With a `LAN_KEY`, the master validates every slave's identity and accepts
+mutations. Without it the group is read-only: the lightweight **hello
+handshake** still tells you which device made each listed change (with an
+`(unauthenticated)` qualifier in logs), but write-capable runs are refused with
+`[AUTH REQUIRED]` unless they are `download-only` or opt in with
+`--allow-unauthenticated-writes`.
 
-See [Authentication — Client-Side](authentication.md) for details.
+See [Authentication — Client-Side](authentication.md) and
+[LAN Mode → Security & Pairing](lan-mode.md#security--pairing) for details.
 
 ## See also
 

@@ -19,8 +19,9 @@ HSYNC runs in one of two mutually exclusive operating modes:
 # Server Mode — connect to a central HSYNC server
 hsync server <hostname> [--port <port>] -b <bucket_name> [options]
 
-# LAN Mode — peer-to-peer, no server (mDNS discovery, implicit continuous mode)
-hsync lan -b <bucket_name> [options]
+# LAN Mode — peer-to-peer, no server (mDNS discovery, implicit continuous mode).
+# Write-capable runs need a shared key: a keyless LAN is read-only.
+HSYNC_LAN_KEY=<shared-secret> hsync lan -b <bucket_name> [options]
 ```
 
 See [Sync Modes](sync-modes.md) for when to use each.
@@ -32,7 +33,9 @@ Options are grouped into **Connection**, **Sync**, **LAN**, **Output** and
 
 > For the **complete option reference** (descriptions, defaults and accepted
 > values) see [Configuration](configuration.md). `HSYNC_LAN_KEY` is set via
-> environment variable only.
+> environment variable only, and it is what authorizes writes: a keyless LAN is
+> read-only, and a write-capable run without a key is refused with
+> `[AUTH REQUIRED]`.
 
 ## Usage Scenarios
 
