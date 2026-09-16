@@ -27,8 +27,10 @@ under the system temp dir — inside LOCAL_BUCKET they would be synced.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -109,15 +111,46 @@ _tokens: dict[str, _LanToken] = {}
 _tokens_lock = threading.Lock()
 
 # Process-wide temp dir for parked payloads (outside LOCAL_BUCKET on purpose).
+# It is created on demand and removed at interpreter exit by
+# ``_discard_payload_dir`` (registered with :mod:`atexit`): any other
+# process-scoped temporary directory added here MUST register the same way, or
+# every run leaves an empty directory behind in the system temp dir.
 _payload_dir: str | None = None
 
 
 def _get_payload_dir() -> str:
-    """Return (creating once) the temp dir holding literal payloads."""
+    """Return (creating on demand) the temp dir holding literal payloads.
+
+    The directory is process-wide because a payload must survive across the
+    requests of one delta round trip. It is created on first use and dropped by
+    :func:`_discard_payload_dir`, which also resets this module global, so the
+    next request after a teardown gets a fresh directory. A directory removed
+    behind the module's back makes the payload write fail, which
+    :func:`_issue_token` already degrades into a skipped delta (never a crash).
+    """
     global _payload_dir
     if _payload_dir is None:
         _payload_dir = tempfile.mkdtemp(prefix="hsync-delta-lan-")
     return _payload_dir
+
+
+def _discard_payload_dir() -> None:
+    """Remove the parked-payload directory and anything left inside it.
+
+    Payload files are reachable only through in-process tokens (TTL
+    ``_TOKEN_TTL``, single use), so at interpreter exit whatever remains is
+    garbage by construction and the whole tree can go. Registered with
+    :mod:`atexit` so no process that ever issued a delta token leaves an empty
+    ``hsync-delta-lan-*`` directory behind; failures are swallowed because a
+    cleanup error must never abort shutdown.
+    """
+    global _payload_dir
+    path, _payload_dir = _payload_dir, None
+    if path:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+atexit.register(_discard_payload_dir)
 
 
 def _cleanup_tokens(now: float | None = None) -> None:
@@ -159,7 +192,12 @@ def _issue_token(*, bucket: str, relpath: str, payload: bytes, compressed: bool)
 
 
 def reset_delta_lan_state() -> None:
-    """Drop every token and payload (tests + LANServer lifecycle hook)."""
+    """Drop every token and payload (tests + LANServer lifecycle hook).
+
+    The payload *directory* is deliberately left in place: it is process-scoped
+    and removed at interpreter exit (:func:`_discard_payload_dir`), so clearing
+    ``_payload_dir`` here would orphan it for that handler.
+    """
     with _tokens_lock:
         entries = list(_tokens.values())
         _tokens.clear()

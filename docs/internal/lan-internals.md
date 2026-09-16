@@ -159,8 +159,9 @@ adds `source_cid`; master and delta successes omit it.
 
 Continuous non-dry-run slaves run the read-only seeder and publish inventory
 over their master WSS connection. One-shot slaves are requester-only. On role
-change the slave stops accepting seeder requests, withdraws `seed`, stops the
-publisher, and only then starts master services.
+change the slave stops accepting seeder requests, withdraws its endpoint
+advertisement (the `https`/`cert_fp` material and the capacity it announced),
+stops the publisher, and only then starts master services.
 
 
 ## Real-Time Bidirectional Sync

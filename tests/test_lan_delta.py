@@ -10,6 +10,11 @@ Covers the paths left out by ``test_delta_transfer.py``: input validation and
 security gating on every endpoint, error status codes (400/403/404/409/410/
 422), zstd compression of literal payloads, and the full token lifecycle
 (issue, lazy reaper, single-use consumption, reset).
+
+``lan_delta`` owns one process-scoped temp directory for parked payloads, removed
+at interpreter exit. A test that swaps ``_payload_dir`` MUST remove whatever it
+creates (see ``test_payload_dir_is_a_singleton``) or the suite leaks one empty
+``hsync-delta-lan-*`` directory per session.
 """
 
 from __future__ import annotations
@@ -17,6 +22,8 @@ from __future__ import annotations
 import io
 import json
 import random
+import subprocess
+import sys
 import time
 from hashlib import sha256
 from pathlib import Path
@@ -624,8 +631,75 @@ class TestTokenStore:
         assert not p1.exists()
 
     def test_payload_dir_is_a_singleton(self, lan_config, monkeypatch):
+        # The directory is process-scoped, so this test must not orphan the one it
+        # creates: it drops it explicitly before ``monkeypatch`` restores the
+        # previous ``_payload_dir``.
+        existing = ld._get_payload_dir()
+        assert ld._get_payload_dir() == existing
+
         monkeypatch.setattr(ld, "_payload_dir", None)
-        d1 = ld._get_payload_dir()
-        d2 = ld._get_payload_dir()
-        assert d1 == d2
-        assert Path(d1).is_dir()
+        created = ld._get_payload_dir()
+
+        assert created != existing
+        assert Path(created).is_dir()
+        assert ld._get_payload_dir() == created
+
+        ld._discard_payload_dir()
+
+    def test_shutdown_cleanup_removes_the_payload_dir(self, lan_config):
+        """The registered shutdown hook drops the directory and its leftovers."""
+        directory = ld._get_payload_dir()
+        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        assert token is not None
+        assert Path(directory).is_dir()
+
+        ld._discard_payload_dir()
+
+        assert not Path(directory).exists()
+        assert ld._payload_dir is None
+        # The hook resets the module state, so a later request in the same
+        # process (a restarted seeder) gets a fresh directory instead of a
+        # dangling one.
+        assert Path(ld._get_payload_dir()).is_dir()
+
+    def test_process_exit_leaves_no_payload_dir_behind(self):
+        """Regression: parking a payload must not leak a temp dir per process.
+
+        The directory was created once and never removed, so every client run
+        left an empty ``hsync-delta-lan-*`` in the system temp dir. The check runs
+        in a child process because only a real interpreter exit exercises the
+        registered ``atexit`` handler.
+        """
+        script = (
+            "import hsync_client.lan_delta as ld\n"
+            "token = ld._issue_token(bucket='b', relpath='r', payload=b'x', compressed=False)\n"
+            "assert token is not None\n"
+            "print(ld._get_payload_dir())\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
+
+        directory = Path(result.stdout.strip().splitlines()[-1])
+        assert directory.name.startswith("hsync-delta-lan-")
+        assert not directory.exists(), f"{directory} survived the child process exit"
+
+    def test_process_scoped_temp_dirs_register_their_cleanup(self):
+        """Convention guard: a production ``mkdtemp`` must carry a cleanup path.
+
+        A process-scoped directory with no removal leaks one directory per run —
+        the defect this module shipped with. Every module that creates one must
+        either register an ``atexit`` hook or delete the tree itself, and this
+        guard fails as soon as a new one appears without either.
+        """
+        package = Path(ld.__file__).parent
+        offenders = [
+            source.relative_to(package).as_posix()
+            for source in sorted(package.rglob("*.py"))
+            if "tempfile.mkdtemp(" in (text := source.read_text(encoding="utf-8"))
+            and "atexit.register(" not in text
+            and "rmtree(" not in text
+        ]
+
+        assert offenders == [], f"process-scoped temp dirs without cleanup: {offenders}"
