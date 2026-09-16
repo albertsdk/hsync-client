@@ -41,7 +41,7 @@ standalone (see below) and compare with `--json-out` + `compare.py`.
 | `bench_reconcile.py` | reconcile core: `_compare_files` (5 branches), `_tombstone_clock_dominates`/`_tombstone_deletes_local`, `_parse_advertised_version`, and the full `get_sync_actions` bulk diff over an in-sync listing |
 | `bench_lan_peer_transfer.py` | **L2** — cold/warm peer download vs warm master download per size (4 KiB…8 MiB) through the production `download_file`, seeder read-cap saturation sweep, concurrent production fallback |
 | `bench_lan_sources.py` | **L2** — `LanSourceResolver._identity` eligibility branches, `_source_batches` splitting, real `POST /files/sources` round trips, `LanSourceTelemetry` rank/record cost |
-| `lan_peer_common.py` | Shared L2 fixtures (loopback seeder/master harness, temp cert + bucket + pin file + state dir, `measure_with_setup`); imports `hsync_client`, so it stays out of `common.py`, which is stdlib-only |
+| `lan_peer_common.py` | Shared L2 fixtures (loopback seeder/master harness, temp cert + bucket + pin file + state dir, `measure_with_setup`); also `LatencyRelay`, the unprivileged RTT injector that counts TLS handshakes (`tc netem` needs root). Imports `hsync_client`, so it stays out of `common.py`, which is stdlib-only |
 | `run_all.py` | Chained runner: runs every **L1** script above and writes `bench_result.txt` at the repo root (committed baseline, diff-friendly); `--json-out-dir DIR` also dumps one `<script>.json` per scenario for A/B comparison |
 | `compare.py` | A/B comparator of two `--json-out` runs (single file or directory): flags median regressions over a noise floor, `exit 1` on any regression |
 | `bench_result.txt` | **Committed baseline** (default `--count 2000`, this machine): compare revisions with `git diff bench_result.txt` |
@@ -67,6 +67,7 @@ cd hsync-client
 
 # L2 wire benchmark (standalone: not part of run_all.py / bench_result.txt)
 .venv/bin/python bench/bench_lan_peer_transfer.py --count 40 --json-out /tmp/peer.json
+.venv/bin/python bench/bench_lan_peer_transfer.py --count 6 --latency   # handshake/RTT scenario
 .venv/bin/python bench/bench_lan_sources.py --count 2000 --json-out /tmp/sources.json
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
@@ -121,6 +122,14 @@ telemetry) and the peer seeder, which the raw script never touches.
   genuine slowdown from a noisy tail.
 * **Comparisons are relative**: numbers are valid for this machine and a warm
   OS page cache; they compare implementations, not production SLAs.
+* **Realistic RTT without privileges**: `--latency` puts a `LatencyRelay` in
+  front of the seeder instead of asking for `tc netem` (root-only here). The relay
+  copies bytes and delays every chunk, so TLS stays end to end and the requester
+  still pins the seeder's real fingerprint, while the connections it accepts count
+  exactly the TLS handshakes a cycle paid. That scenario also drives the
+  production path through **one long-lived `ThreadPoolExecutor`**, because
+  production reuses its transfer pool for the whole run and a per-cycle pool would
+  pay handshakes that production never pays.
 
 ## Shared helpers
 

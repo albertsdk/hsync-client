@@ -45,10 +45,10 @@ requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
 | `bench/bench_tombstones.py` | `hsync_client/tombstones.py` wrapper scenarios |
 | `bench/bench_arbitration.py` | `hsync_client/arbitration.py` upload-gate scenarios |
 | `bench/bench_reconcile.py` | `hsync_client/sync.py` reconcile-core scenarios (decision leaves + bulk `get_sync_actions`) |
-| `bench/bench_lan_peer_transfer.py` | **L2** LAN peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback |
+| `bench/bench_lan_peer_transfer.py` | **L2** LAN peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback, cycle acceptance, and (`--latency`) the per-cycle TLS-handshake question behind an injected RTT |
 | `bench/bench_lan_sources.py` | **L2** source-lookup scenarios: eligibility filter, batch splitting, wire `POST /files/sources`, telemetry rank/record |
 | `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
-| `bench/lan_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`LANServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup` |
+| `bench/lan_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`LANServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup`, `LatencyRelay` (unprivileged RTT injection that counts TLS handshakes) |
 | `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline, **L1 scripts only**); `--json-out-dir` also dumps one `<script>.json` per scenario |
 | `bench/compare.py` | A/B comparator over two `--json-out` runs (file or dir); flags median regressions above a noise floor, `exit 1` on regression |
 
@@ -100,6 +100,7 @@ requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
 | `peer_warm_4KiB_no_bookkeeping` | same, with `transfer._record_synced_base` patched out, to size the per-file sync-state write |
 | `seeder_readcap_batch(1\|2\|4\|8)` | `lan_server` seeder route + read-cap semaphore (`LANServer(peer_read_cap=…)`, `hsync_client/lan_server.py:518-527`) |
 | `peer_cap2_fallback(4 files)` | production `download_file` under the same cap: peer `503` → failure record → master fallback |
+| `latency_{0\|40}ms(24f,2\|8w)` | the same production path driven through ONE long-lived `ThreadPoolExecutor`, behind `lan_peer_common.LatencyRelay` (counts accepted connections = TLS handshakes): the worker-to-seeder affinity question, `--latency` only |
 
 ## Methodology
 
@@ -257,6 +258,44 @@ lower bound, not a Wi-Fi/LAN prediction).
   cannot separate the two variants (both roles share one CPU), so the decision
   rested on the distribution counters, not on elapsed time.
 
+### Worker-to-seeder affinity: measured and rejected (`--latency`)
+
+24 × 4 KiB per cycle, cap 2, the production download path driven through **one
+long-lived pool** (`hsync_client.sync` reuses its executor for the whole run), a
+transparent relay in front of the seeder counting every accepted connection, i.e.
+every TLS handshake. 40 ms is the one-way delay per forwarded chunk, so a
+request/response pair costs one realistic Wi-Fi RTT.
+
+| Configuration | p50 per cycle | handshakes per cycle | peer_ok | master_full |
+| --- | --- | --- | --- | --- |
+| 0 ms RTT, 2 workers | 621.4 ms | `[2,0,0,0,0,0,0]` | 168 | 0 |
+| 0 ms RTT, 8 workers | 325.4 ms | `[8,0,0,0,0,0,0]` | 168 | 0 |
+| 40 ms RTT, 2 workers | 1066.6 ms | `[2,0,0,0,0,0,0]` | 168 | 0 |
+| 40 ms RTT, 8 workers | 815.6 ms | `[8,0,0,0,0,0,0]` | 168 | 0 |
+
+Warmup cycles included; the first value is the coldest cycle. Seven cycles each
+(1 warmup + 6 timed) × 24 files = 168 peer downloads per configuration.
+
+* **A cycle pays handshakes only at first contact, then zero.** The number of
+  workers sets the one-time cost (2 vs 8, one connection per worker thread) and
+  after that every cycle reuses the existing connections: `utils._http_session_cache`
+  is per-thread (`threading.local()`), so each worker owns a warm keep-alive
+  session and the process keeps it for the whole role lifetime.
+* **Grouping downloads per seeder would lose more than it saves.** Forcing a
+  cycle down to the advertised slot count (2 workers) is exactly what affinity
+  would do, and under a 40 ms RTT it costs 1066.6 ms per cycle against 815.6 ms
+  with 8 workers: affinity buys 6 fewer *one-time* handshakes and surrenders
+  ~250 ms of parallelism per cycle, forever. The admission already bounds what
+  matters (in-flight reads per seeder), so over-subscribing workers is strictly
+  better than matching them to slots.
+* **The RTT cost that does exist is the per-file request round trip**, not the
+  handshake: 325–621 ms per 24-file cycle at 0 ms RTT against 815–1066 ms at
+  40 ms. No download-scheduling change in `sync.py` can remove it; it would need
+  request batching, which is a different feature (and would not help the file
+  sizes the peer path is for).
+* This is why the worker-to-seeder affinity phase of the ADR-0030 rollout was
+  closed **on measurement**, with no scheduling change to `sync.py`.
+
 ## Running
 
 ```bash
@@ -267,6 +306,7 @@ cd hsync-client
 
 # L2 wire benchmark (standalone: not in run_all.py, baseline untouched)
 .venv/bin/python bench/bench_lan_peer_transfer.py --count 40 [--json-out FILE]
+.venv/bin/python bench/bench_lan_peer_transfer.py --count 6 --latency   # + handshake/RTT scenario
 .venv/bin/python bench/bench_lan_sources.py --count 2000 [--json-out FILE]
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)

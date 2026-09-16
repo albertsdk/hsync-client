@@ -39,7 +39,7 @@ scenario outside the timed region because hashing 8 MiB would dwarf the
 differences under test.
 
 Usage:
-    cd hsync-client && .venv/bin/python bench/bench_lan_peer_transfer.py [--count N] [--json-out FILE]
+    cd hsync-client && .venv/bin/python bench/bench_lan_peer_transfer.py [--count N] [--json-out FILE] [--latency]
 """
 
 from __future__ import annotations
@@ -68,6 +68,7 @@ from lan_peer_common import (  # noqa: E402
     DownloadOutcomeRecorder,
     LanRequesterEnv,
     LanServerHarness,
+    LatencyRelay,
     build_file,
     concurrent_peer_gets,
     install_failure_recorder,
@@ -115,6 +116,16 @@ CYCLE_SIZES: tuple[tuple[str, int], ...] = (
     ("256KiB", 256 * 1024),
 )
 CYCLE_WORKERS = (4, 8)
+
+# The latency-cycles scenario: an injected RTT in front of the seeder, a
+# production-shaped long-lived transfer pool, and the TLS handshakes a cycle pays.
+# It answers the question a worker-to-seeder affinity scheme would have to win.
+LATENCY_LABEL = "lat4KiB"
+LATENCY_SIZE = 4 * 1024
+LATENCY_FILES = 24
+LATENCY_WORKERS = (2, 8)
+# One-way delay per forwarded chunk, so a request/response pair costs one RTT.
+LATENCY_DELAYS_S = (0.0, 0.02)
 
 PEER_PREFIX = "peer"
 COLD_INFIX = "cold"
@@ -482,6 +493,118 @@ def _drain_cycle(
         assert target.is_file() and target.stat().st_size == size, target
 
 
+def _drain_cycle_on_pool(
+    requester: LanRequesterEnv,
+    files: list[File],
+    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]],
+    resolver: LanSourceResolver,
+    *,
+    pool: ThreadPoolExecutor,
+    relay: LatencyRelay,
+    recorder: DownloadOutcomeRecorder,
+    handshakes: list[int],
+    outcomes: list[tuple[int, int]],
+) -> None:
+    """One cycle on a long-lived pool, recording the handshakes it paid.
+
+    The pool is reused across samples exactly as production reuses its transfer
+    executor, so the count is a steady-state number: the relay's
+    accepted-connection delta around the cycle is the TLS handshakes it needed.
+    """
+    recorder.reset()
+    before = relay.connections
+    list(
+        pool.map(
+            partial(_download_one, requester, candidates=candidates, resolver=resolver),
+            files,
+        )
+    )
+    handshakes.append(relay.connections - before)
+    outcomes.append((recorder.peer_ok, recorder.master_full))
+
+
+def _run_latency_cycles(
+    count: int,
+    *,
+    master: LanServerHarness,
+    seeder: LanServerHarness,
+    requester: LanRequesterEnv,
+) -> tuple[list[BenchResult], list[tuple[str, int, int, str, float, int, int]]]:
+    """Handshake cost per cycle with an injected RTT, on a production-shaped pool.
+
+    The size matrix prices one transfer; this prices what worker-to-seeder
+    affinity would have to save. Production keeps ONE transfer pool for the whole
+    sync run (`hsync_client.sync`), so its per-thread HTTP sessions stay warm and
+    a cycle pays a handshake only at first contact with a seeder. ``_drain_files``
+    builds a fresh pool per cycle, which hides exactly that, so this scenario runs
+    the production path on one persistent pool behind a latency relay that counts
+    every accepted connection.
+
+    Returns:
+        ``(results, rows)`` where each row is ``(label, delay_ms, workers,
+        handshakes_per_cycle, p50_ms, peer_ok, master_full)``. The handshake list
+        includes the warmup cycles: its first entry is the coldest one.
+    """
+    resolver = requester.resolver()
+    recorder = DownloadOutcomeRecorder()
+    outcome_patcher = install_outcome_recorder(recorder)
+    failure_patcher = install_failure_recorder(recorder)
+    results: list[BenchResult] = []
+    rows: list[tuple[str, int, int, str, float, int, int]] = []
+    try:
+        files, fixture_candidates, relpaths = _build_cycle_fixture(
+            master, seeder, resolver, LATENCY_LABEL, LATENCY_SIZE
+        )
+        for delay_s in LATENCY_DELAYS_S:
+            delay_ms = round(delay_s * 2000.0)
+            with LatencyRelay("127.0.0.1", seeder.port, delay_s=delay_s) as relay:
+                candidates = {
+                    key: (seeder.relayed_peer_source(relay.port),) for key in fixture_candidates
+                }
+                for workers in LATENCY_WORKERS:
+                    handshakes: list[int] = []
+                    outcomes: list[tuple[int, int]] = []
+                    with ThreadPoolExecutor(
+                        max_workers=workers, thread_name_prefix="bench_latency"
+                    ) as pool:
+                        result = measure_with_setup(
+                            f"latency_{delay_ms}ms({LATENCY_FILES}f,{workers}w)",
+                            partial(requester.remove_destinations, relpaths),
+                            partial(
+                                _drain_cycle_on_pool,
+                                requester,
+                                files,
+                                candidates,
+                                resolver,
+                                pool=pool,
+                                relay=relay,
+                                recorder=recorder,
+                                handshakes=handshakes,
+                                outcomes=outcomes,
+                            ),
+                            count=count,
+                        )
+                    results.append(result)
+                    for relpath in relpaths:
+                        target = requester.bucket_dir / relpath
+                        assert target.is_file() and target.stat().st_size == LATENCY_SIZE, target
+                    rows.append(
+                        (
+                            f"{delay_ms}ms({workers}w)",
+                            delay_ms,
+                            workers,
+                            ",".join(str(value) for value in handshakes),
+                            result.p50,
+                            sum(row[0] for row in outcomes),
+                            sum(row[1] for row in outcomes),
+                        )
+                    )
+    finally:
+        failure_patcher.stop()
+        outcome_patcher.stop()
+    return results, rows
+
+
 def _mib_per_s(size: int, p50_ms: float) -> float:
     """Effective MiB/s from a body size and a p50 latency in ms (0 if unmeasurable)."""
     if p50_ms <= 0:
@@ -575,6 +698,12 @@ def main() -> None:
         default=40,
         help="timed samples per scenario (wire scenarios are far slower than L1)",
     )
+    parser.add_argument(
+        "--latency",
+        action="store_true",
+        help="also price the per-cycle TLS handshakes behind an injected RTT "
+        "(worker-to-seeder affinity question)",
+    )
     add_json_out(parser)
     args = parser.parse_args()
     count = args.count
@@ -612,6 +741,12 @@ def main() -> None:
                 count, master=master, seeder=seeder, requester=requester
             )
             results.extend(cycle_results)
+            latency_rows: list[tuple[str, int, int, str, float, int, int]] = []
+            if args.latency:
+                latency_results, latency_rows = _run_latency_cycles(
+                    count, master=master, seeder=seeder, requester=requester
+                )
+                results.extend(latency_results)
 
     print(f"LAN peer transfer wire benchmark (count={count}, loopback, real TLS)")
     print_table(results)
@@ -631,6 +766,18 @@ def main() -> None:
             f"  {label:>22} size={size:>7} worst_cycle_503={worst_busy:<4} "
             f"peer_ok/cycle={avg_peer_ok:<7} master_full={total_master}"
         )
+    if latency_rows:
+        print()
+        print(
+            "per-cycle TLS handshakes behind an injected RTT "
+            "(long-lived pool, warmup cycles included, first value = coldest):"
+        )
+        for label, delay_ms, workers, per_cycle, p50_ms, peer_ok, master_full in latency_rows:
+            print(
+                f"  {label:>14} rtt={delay_ms:>2}ms workers={workers} "
+                f"p50={p50_ms:>7.1f}ms handshakes/cycle=[{per_cycle}] "
+                f"peer_ok={peer_ok} master_full={master_full}"
+            )
     maybe_write_json(args.json_out, results)
 
 

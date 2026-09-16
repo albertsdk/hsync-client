@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 from unittest.mock import patch
 
@@ -75,6 +75,106 @@ def free_port() -> int:
     with socket.socket() as sock:
         sock.bind((_LOOPBACK, 0))
         return int(sock.getsockname()[1])
+
+
+class LatencyRelay:
+    """Transparent loopback TCP relay that delays bytes and counts connections.
+
+    Models a Wi-Fi-like RTT on loopback without privileges (``tc netem`` needs
+    root): TLS stays end to end because the relay only copies bytes, so the
+    requester still pins the seeder's real certificate fingerprint. Each accepted
+    socket is one TCP connection, i.e. exactly one TLS handshake — the quantity a
+    worker-to-seeder affinity scheme would reduce, so it is counted here instead
+    of inferred.
+    """
+
+    def __init__(self, host: str, port: int, *, delay_s: float = 0.0) -> None:
+        self._target = (host, port)
+        self._delay = delay_s
+        self._connections = 0
+        self._connections_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._accept_thread: threading.Thread | None = None
+        self._socket = socket.socket()
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.bind((_LOOPBACK, 0))
+        self._socket.listen(128)
+        self._socket.settimeout(0.2)
+        self._port = int(self._socket.getsockname()[1])
+
+    @property
+    def port(self) -> int:
+        """Loopback port the requester connects to."""
+        return self._port
+
+    @property
+    def connections(self) -> int:
+        """TCP connections accepted so far (= TLS handshakes observed)."""
+        with self._connections_lock:
+            return self._connections
+
+    def start(self) -> LatencyRelay:
+        """Start accepting and forwarding in background daemon threads."""
+        thread = threading.Thread(target=self._accept_loop, name="bench_relay", daemon=True)
+        thread.start()
+        self._accept_thread = thread
+        return self
+
+    def close(self) -> None:
+        """Stop accepting; in-flight pumps end when their sockets close."""
+        self._stop.set()
+        with contextlib.suppress(OSError):
+            self._socket.close()
+        thread = self._accept_thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+    def __enter__(self) -> LatencyRelay:
+        return self.start()
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
+    def _accept_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                client, _ = self._socket.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            with self._connections_lock:
+                self._connections += 1
+            try:
+                upstream = socket.create_connection(self._target, timeout=5.0)
+            except OSError:
+                client.close()
+                continue
+            client.settimeout(None)
+            upstream.settimeout(None)
+            for source, sink in ((client, upstream), (upstream, client)):
+                threading.Thread(
+                    target=self._pump,
+                    args=(source, sink),
+                    name="bench_relay_pump",
+                    daemon=True,
+                ).start()
+
+    def _pump(self, source: socket.socket, sink: socket.socket) -> None:
+        """Copy one direction, delaying every chunk by the configured latency."""
+        try:
+            while True:
+                data = source.recv(65536)
+                if not data:
+                    break
+                if self._delay:
+                    sleep(self._delay)
+                sink.sendall(data)
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                sink.shutdown(socket.SHUT_WR)
 
 
 @contextlib.contextmanager
@@ -228,18 +328,27 @@ class LanServerHarness:
         """Complete exact-hash download endpoint for this node's bucket."""
         return build_peer_download_url(self.bucket, _LOOPBACK, self._port)
 
-    def peer_source(self) -> LanPeerSource:
+    def peer_source(self, *, download_url: str | None = None) -> LanPeerSource:
         """Build the immutable source a master would return for this node.
 
         ``serve_slots`` is this node's real read cap (the seeder binds with it),
         so the requester-side admission under test matches production.
+        ``download_url`` overrides the endpoint — used to route through a
+        :class:`LatencyRelay` — while the certificate fingerprint stays this
+        node's, because the relay forwards bytes and TLS remains end to end.
         """
         return LanPeerSource(
             cid=self._cid,
-            download_url=self.download_url,
+            download_url=download_url or self.download_url,
             cert_fingerprint=self._fingerprint,
             compression=False,
             serve_slots=self._peer_read_cap,
+        )
+
+    def relayed_peer_source(self, relay_port: int) -> LanPeerSource:
+        """Build this node's source as reached through a relay on *relay_port*."""
+        return self.peer_source(
+            download_url=build_peer_download_url(self.bucket, _LOOPBACK, relay_port)
         )
 
     def start(self) -> LanServerHarness:
