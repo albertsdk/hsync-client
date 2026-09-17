@@ -36,6 +36,7 @@ from hsync_common.protocol.peer_download import (
     build_lan_sources_response,
     validate_lan_sources_response,
 )
+from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 from requests import RequestException, Response
 
@@ -84,16 +85,6 @@ class PeerSourceSnapshot(Protocol):
 
 class ShuffleRng(Protocol):
     def shuffle(self, values: list[PeerSourceSnapshot]) -> None: ...
-
-
-def _compact_json_bytes(value: object) -> bytes:
-    """Serialize one wire payload exactly as the LAN server does."""
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
 
 
 _FILES_DOWNLOAD_ROUTE = "/api/v1/buckets/{bucket}/files/download"
@@ -202,7 +193,7 @@ class LanSourceService:
 
     @staticmethod
     def _compact_size(value: object) -> int:
-        return len(_compact_json_bytes(value))
+        return len(compact_json_bytes(value))
 
     def resolve(
         self,
@@ -594,8 +585,8 @@ class LanSourceResolver:
         self, identities: Iterable[LanSourceKey]
     ) -> tuple[tuple[LanSourceKey, ...], ...]:
         """Split identities by count, request bytes, and empty-response bytes."""
-        request_base = len(_compact_json_bytes({"cid": self._requester_cid, "files": []}))
-        response_base = len(_compact_json_bytes({"files": []}))
+        request_base = len(compact_json_bytes({"cid": self._requester_cid, "files": []}))
+        response_base = len(compact_json_bytes({"files": []}))
         request_size = request_base
         response_size = response_base
         current: list[LanSourceKey] = []
@@ -609,8 +600,8 @@ class LanSourceResolver:
                 sha256=digest,
                 sources=[],
             )
-            request_added = len(_compact_json_bytes(request_item)) + bool(current)
-            response_added = len(_compact_json_bytes(response_item)) + bool(current)
+            request_added = len(compact_json_bytes(request_item)) + bool(current)
+            response_added = len(compact_json_bytes(response_item)) + bool(current)
             full = len(current) >= LAN_SOURCES_MAX_FILES
             too_large = (
                 request_size + request_added > LAN_SOURCES_MAX_BODY_BYTES
@@ -621,8 +612,8 @@ class LanSourceResolver:
                 current = []
                 request_size = request_base
                 response_size = response_base
-                request_added = len(_compact_json_bytes(request_item))
-                response_added = len(_compact_json_bytes(response_item))
+                request_added = len(compact_json_bytes(request_item))
+                response_added = len(compact_json_bytes(response_item))
 
             if (
                 request_size + request_added > LAN_SOURCES_MAX_BODY_BYTES
@@ -664,7 +655,7 @@ class LanSourceResolver:
                     cid=self._requester_cid,
                     files=[LanSourceFile(path=path, sha256=digest) for path, digest in batch],
                 )
-                request_body = _compact_json_bytes(payload)
+                request_body = compact_json_bytes(payload)
                 empty_response = build_lan_sources_response(
                     files=[
                         LanSourcesResponseFile(path=path, sha256=digest, sources=[])
@@ -673,7 +664,7 @@ class LanSourceResolver:
                 )
                 if (
                     len(request_body) > LAN_SOURCES_MAX_BODY_BYTES
-                    or len(_compact_json_bytes(empty_response)) > LAN_SOURCES_MAX_BODY_BYTES
+                    or len(compact_json_bytes(empty_response)) > LAN_SOURCES_MAX_BODY_BYTES
                 ):
                     raise ValueError("LAN source batch exceeds wire limit")
                 response = http_post(

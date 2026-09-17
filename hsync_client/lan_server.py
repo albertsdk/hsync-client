@@ -62,6 +62,7 @@ from hsync_common.protocol.peer_download import (
     build_lan_sources_response,
     validate_lan_sources_request,
 )
+from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
 from hsync_client.arbitration import conflicted_copy_name
@@ -70,7 +71,7 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, MTIME_MAX_FUTURE_SKEW_SECONDS, ActionLabel
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
     _CappedBytesWriter,
@@ -356,11 +357,6 @@ HTTP_INSUFFICIENT_STORAGE = 507
 # waste memory.
 MAX_TOMBSTONE_PAYLOAD_BYTES = TOMBSTONE_MAX_ENTRIES * 192
 
-# Wire-supplied mtimes/ctimes may not exceed now + this skew: a peer
-# asserting far-future timestamps would win every mtime-based conflict
-# resolution on every other peer (conflict engineering).
-MTIME_MAX_FUTURE_SKEW_SECONDS = 300
-
 
 # Request Handler
 # =============================================================================
@@ -399,12 +395,7 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _encode_json_response(data: dict | list) -> bytes:
-        return json.dumps(
-            data,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        return compact_json_bytes(data)
 
     def _send_json_response(
         self,
@@ -447,6 +438,18 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(status, message)
         except (ssl.SSLError, OSError, BrokenPipeError, ConnectionError) as e:
             log.debug(f"Suppressed error response on closed socket: {e}")
+
+    def _require_bucket(self) -> str | None:
+        """Return the configured local bucket, or send 404 and return None.
+
+        Every bucket-scoped endpoint repeats the same "is a local bucket
+        configured?" gate; this helper is its single definition.
+        """
+        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        if not local_bucket:
+            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
+            return None
+        return local_bucket
 
     def _check_auth(self) -> bool:
         """Check authentication if LAN_KEY is configured."""
@@ -877,9 +880,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
             return
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
         full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
@@ -933,9 +935,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'src' or 'dst' parameter")
             return
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
         # Peer-supplied paths are untrusted: validate the relative form and
@@ -998,9 +999,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
             return
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
         # Peer-supplied path is untrusted: validate and confine to the bucket
@@ -1112,9 +1112,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
             return
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
         # Peer-supplied path is untrusted: validate and confine to the bucket
@@ -1206,9 +1205,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' or 'target' parameter")
             return
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
         # Peer-supplied link path is untrusted: validate and confine to the
@@ -1502,11 +1500,10 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         origin_cid = query.get("cid", [None])[0]
         log.info(f'{ActionLabel.REMOTE_DOWNLOAD} "{filename}"{cid_suffix(origin_cid)}')
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
-        normalized = validate_remote_relpath(filename)
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
+        normalized = validate_remote_relpath(filename)
         if normalized is None:
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
@@ -1667,9 +1664,8 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             size = 0
 
-        local_bucket = CONFIG.get("LOCAL_BUCKET", "")
+        local_bucket = self._require_bucket()
         if not local_bucket:
-            self._send_error_response(HTTP_NOT_FOUND, "Bucket not configured")
             return
 
         file_path = resolve_within(local_bucket, filename)

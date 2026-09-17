@@ -39,24 +39,38 @@ from hsync_client.utils import reset_bandwidth_throttle
 _BANDWIDTH_KEY = Literal["MAX_BANDWIDTH_UPLOAD", "MAX_BANDWIDTH_DOWNLOAD"]
 
 
-def _lan_write_allowed(direction: str, log) -> bool:
-    """Enforce the no-key write policy for runtime-triggered LAN syncs."""
-    if not CONFIG.get("LAN_MODE", False) or CONFIG.get("LAN_KEY"):
-        return True
+def _lan_write_blocked(direction: str, allow_unauthenticated_writes: bool, log, hint: str) -> bool:
+    """Return True (and report) when a LAN write requires auth that is missing.
+
+    The policy predicate lives in ``hsync_common.protocol.pairing.lan_write_requires_key``;
+    this helper only applies the user-facing consequence (log + ``auth_required``
+    event). Shared by :func:`_lan_write_allowed` (runtime-triggered) and
+    ``main_logic._check_lan_write_policy`` (CLI-triggered), which differ only in
+    the remediation wording (env vars vs CLI flags).
+    """
     if not lan_write_requires_key(
         direction,
-        allow_unauthenticated_writes=CONFIG.get("LAN_ALLOW_UNAUTHENTICATED_WRITES", False),
+        allow_unauthenticated_writes=allow_unauthenticated_writes,
     ):
-        return True
-    log.error(
-        f"{ActionLabel.AUTH_REQUIRED} LAN writes require authentication. "
-        "Set HSYNC_LAN_KEY, use download-only, or explicitly allow unauthenticated writes."
-    )
+        return False
+    log.error(f"{ActionLabel.AUTH_REQUIRED} LAN writes require authentication. {hint}")
     emit_event(
         UiEventName.auth_required,
         message="A shared LAN key or explicit unauthenticated-write opt-in is required",
     )
-    return False
+    return True
+
+
+def _lan_write_allowed(direction: str, log) -> bool:
+    """Enforce the no-key write policy for runtime-triggered LAN syncs."""
+    if not CONFIG.get("LAN_MODE", False) or CONFIG.get("LAN_KEY"):
+        return True
+    return not _lan_write_blocked(
+        direction,
+        allow_unauthenticated_writes=CONFIG.get("LAN_ALLOW_UNAUTHENTICATED_WRITES", False),
+        log=log,
+        hint="Set HSYNC_LAN_KEY, use download-only, or explicitly allow unauthenticated writes.",
+    )
 
 
 def _apply_bandwidth(value: object, key: _BANDWIDTH_KEY, name: str, log) -> bool:

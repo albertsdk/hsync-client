@@ -71,6 +71,7 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
+from hsync_client.constants import MTIME_MAX_FUTURE_SKEW_SECONDS
 
 # HTTP status codes used here (kept local to avoid a lan_server import cycle).
 _HTTP_OK = 200
@@ -353,13 +354,8 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     """
     if _delta_disabled(handler):
         return
-    relpath = form_fields.get("path", "")
-    filepath = resolve_within(CONFIG.get("LOCAL_BUCKET", ""), relpath)
-    if filepath is None or should_skip(filepath):
-        handler._send_error_response(_HTTP_FORBIDDEN, "Access denied")
-        return
-    if not Path(filepath).is_file():
-        handler._send_error_response(_HTTP_NOT_FOUND, "File not found")
+    filepath = _resolve_servable(handler, form_fields.get("path", ""))
+    if filepath is None:
         return
 
     try:
@@ -480,7 +476,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         mtime = meta.get("mtime")
         if mtime:
             try:
-                mtime_val = min(float(mtime), time.time() + 300)
+                mtime_val = min(float(mtime), time.time() + MTIME_MAX_FUTURE_SKEW_SECONDS)
                 os.utime(filepath, (mtime_val, mtime_val))
             except (ValueError, OSError):
                 pass

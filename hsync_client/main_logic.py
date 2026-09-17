@@ -75,7 +75,6 @@ from hsync_client.constants import (
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
-    ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
@@ -349,29 +348,21 @@ def _check_lan_write_policy(
     if not lan_mode:
         return
 
-    from hsync_common.protocol.pairing import lan_write_requires_key
-
-    if not lan_write_requires_key(
-        sync_direction,
-        allow_unauthenticated_writes=allow_unauthenticated_writes,
-    ):
-        return
-
-    # The shared key authenticates writes; over the HTTPS-only LAN transport a
-    # present key always satisfies the policy.
     if lan_key:
         return
 
-    logger.error(
-        f"{ActionLabel.AUTH_REQUIRED} LAN writes require authentication. "
-        "Set HSYNC_LAN_KEY, use --sync-direction download-only, or explicitly accept "
-        "the risk with --allow-unauthenticated-writes."
-    )
-    emit_event(
-        UiEventName.auth_required,
-        message="A shared LAN key or explicit unauthenticated-write opt-in is required",
-    )
-    raise SystemExit(1)
+    from hsync_client.preview import _lan_write_blocked
+
+    if _lan_write_blocked(
+        sync_direction,
+        allow_unauthenticated_writes=allow_unauthenticated_writes,
+        log=logger,
+        hint=(
+            "Set HSYNC_LAN_KEY, use --sync-direction download-only, or explicitly accept "
+            "the risk with --allow-unauthenticated-writes."
+        ),
+    ):
+        raise SystemExit(1)
 
 
 def _warn_if_lan_in_container(logger: Any) -> None:

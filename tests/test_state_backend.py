@@ -25,10 +25,10 @@ class TestBucketContainsOnlyMarker:
         bucket = tmp_path / "bucket"
         bucket.mkdir()
         (bucket / "note.txt").write_text("hi")
-        with patch("hsync_client.sync_state.CONFIG", _cfg(bucket)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(bucket)):
             sync_state.record_base(str(bucket / "note.txt"), "ab" * 32)
             sync_state.flush()
-        with patch("hsync_client.tombstones.CONFIG", _cfg(bucket)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(bucket)):
             tombstones.record_deletion(str(bucket / "gone.txt"), sha256sum="cd" * 32)
         names = {p.name for p in bucket.iterdir()}
         assert HSYNCFOLDER_FILENAME in names
@@ -43,14 +43,14 @@ class TestFolderMovePreservesState:
         src.mkdir()
         target = src / "keep.txt"
         target.write_text("same")
-        with patch("hsync_client.sync_state.CONFIG", _cfg(src)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(src)):
             sync_state.record_base(str(target), "ab" * 32)
             sync_state.flush()
             folder_id = read_folder_marker(src)
             sync_state._stores.clear()
         dest = tmp_path / "dest"
         shutil.move(str(src), str(dest))
-        with patch("hsync_client.sync_state.CONFIG", _cfg(dest)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(dest)):
             assert read_folder_marker(dest) == folder_id
             assert sync_state.get_base_hash(str(dest / "keep.txt")) == "ab" * 32
 
@@ -60,7 +60,7 @@ class TestFolderCopyGetsNewId:
         src = tmp_path / "orig"
         src.mkdir()
         (src / "keep.txt").write_text("same")
-        with patch("hsync_client.sync_state.CONFIG", _cfg(src)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(src)):
             sync_state.record_base(str(src / "keep.txt"), "ab" * 32)
             sync_state.flush()
             orig_id = read_folder_marker(src)
@@ -68,7 +68,7 @@ class TestFolderCopyGetsNewId:
             sync_state._stores.clear()
         copy = tmp_path / "copy"
         shutil.copytree(src, copy)
-        with patch("hsync_client.sync_state.CONFIG", _cfg(copy)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(copy)):
             resolved = resolve_bucket_folder(str(copy))
             assert resolved is not None
             new_id, _ = resolved
@@ -82,7 +82,7 @@ class TestRetainChunking:
         bucket = tmp_path / "big"
         bucket.mkdir()
         keep = []
-        with patch("hsync_client.sync_state.CONFIG", _cfg(bucket)):
+        with patch("hsync_client.state_backend.CONFIG", _cfg(bucket)):
             for i in range(1200):
                 path = bucket / f"keep-{i}.txt"
                 path.write_text("x")

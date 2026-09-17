@@ -31,8 +31,7 @@ from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.models.version import SyncStateStore, merge_vclocks, new_version_id, tick_vclock
 from loguru import logger as log
 
-from hsync_client.config import CONFIG
-from hsync_client.state_backend import resolve_bucket_folder
+from hsync_client.state_backend import bucket_dir, local_cid, resolve_bucket_folder
 
 # Cache of per-folder stores, keyed by folder UUID. Tests that switch
 # LOCAL_BUCKET stay isolated because a new directory gets a new marker.
@@ -42,15 +41,10 @@ _stores: dict[str, SyncStateStore] = {}
 _lock = threading.RLock()
 
 
-def _bucket_dir() -> str:
-    """Return the configured local bucket directory."""
-    return str(CONFIG.get("LOCAL_BUCKET", "") or "")
-
-
 def get_sync_state_store() -> SyncStateStore:
     """Return the cached store for the local bucket, loading on first use."""
     with _lock:
-        resolved = resolve_bucket_folder(_bucket_dir())
+        resolved = resolve_bucket_folder(bucket_dir())
         if resolved is None:
             return SyncStateStore()
         folder_id, db_path = resolved
@@ -59,7 +53,7 @@ def get_sync_state_store() -> SyncStateStore:
             store = SyncStateStore(
                 db_path=db_path,
                 folder_id=folder_id,
-                canonical_path=_bucket_dir(),
+                canonical_path=bucket_dir(),
             )
             store.load()
             _stores[folder_id] = store
@@ -68,7 +62,7 @@ def get_sync_state_store() -> SyncStateStore:
 
 def get_base_hash(abs_path: str) -> str | None:
     """Return the recorded common-ancestor hash for an absolute path, if any."""
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath:
         return None
     with _lock:
@@ -90,7 +84,7 @@ def record_base(
     ``corrected_mtime`` is ``None``/``0`` it falls back to the corrected mtime
     of the file currently on disk.
     """
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath or not base_hash:
         return
     resolved_corrected = corrected_mtime
@@ -109,7 +103,7 @@ def record_base(
 
 def clear_base(abs_path: str) -> None:
     """Drop the recorded version for an absolute path (e.g. on deletion)."""
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath:
         return
     with _lock:
@@ -118,8 +112,8 @@ def clear_base(abs_path: str) -> None:
 
 def retain(abs_paths: list[str]) -> int:
     """Drop entries for paths not present in ``abs_paths``; return drop count."""
-    bucket_dir = _bucket_dir()
-    relpaths = [rp for rp in (relpath_in_bucket(p, bucket_dir) for p in abs_paths) if rp]
+    local_bucket = bucket_dir()
+    relpaths = [rp for rp in (relpath_in_bucket(p, local_bucket) for p in abs_paths) if rp]
     with _lock:
         return get_sync_state_store().retain(relpaths)
 
@@ -146,11 +140,6 @@ def flush() -> None:
     """Persist the local bucket's sync-state (one SQLite transaction)."""
     with _lock:
         get_sync_state_store().save()
-
-
-def _local_cid() -> str:
-    """Return this node's cid (the author for self-recorded edits)."""
-    return str(CONFIG.get("CID", "") or "")
 
 
 def _corrected_mtime_of(abs_path: str) -> int:
@@ -192,7 +181,7 @@ def _local_compare(
     abs_path: str,
     current_hash: str | None,
 ) -> tuple[dict | None, str | None]:
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath:
         return None, None
     with _lock:
@@ -203,7 +192,7 @@ def _local_compare(
             # No recorded history: a never-synced file with content gets a
             # fresh tick so its provenance is honest.
             if current_hash:
-                cid = _local_cid()
+                cid = local_cid()
                 if cid:
                     return (
                         {
@@ -218,7 +207,7 @@ def _local_compare(
                     )
             return None, stored_base
         if current_hash and entry["base_hash"] != current_hash:
-            cid = _local_cid()
+            cid = local_cid()
             if cid:
                 return (
                     {
@@ -242,10 +231,10 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
     set to self. Idempotent between the watcher and reconcile (a second call
     with the same hash is a no-op since base_hash now matches).
     """
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath or not current_hash:
         return
-    cid = _local_cid()
+    cid = local_cid()
     if not cid:
         return
     with _lock:
@@ -265,7 +254,7 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
 
 def get_vclock(abs_path: str) -> dict[str, int] | None:
     """Return the stored vclock for a path, or None if unrecorded."""
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath:
         return None
     with _lock:
@@ -277,7 +266,7 @@ def abs_in_bucket(filepath: str) -> str:
     """Resolve *filepath* against ``LOCAL_BUCKET`` when it is relative."""
     if Path(filepath).is_absolute():
         return filepath
-    return str(Path(_bucket_dir()) / filepath)
+    return str(Path(bucket_dir()) / filepath)
 
 
 def upload_version_fields(abs_path: str, current_hash: str | None) -> tuple[str, str, int]:
@@ -328,7 +317,7 @@ def merge_and_record(
     ``remote_corrected_mtime`` is unknown (0) the agreed version falls back to
     the corrected mtime of the file now on disk.
     """
-    relpath = relpath_in_bucket(abs_path, _bucket_dir())
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath or not base_hash:
         return
     with _lock:

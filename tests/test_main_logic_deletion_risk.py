@@ -438,7 +438,7 @@ class TestCheckLanWritePolicy:
         """Write without a key is refused with an AUTH_REQUIRED event."""
         mock_logger = MagicMock()
         with (
-            patch("hsync_client.main_logic.emit_event") as mock_emit,
+            patch("hsync_client.preview.emit_event") as mock_emit,
             pytest.raises(SystemExit) as exc_info,
         ):
             _check_lan_write_policy(
@@ -455,7 +455,7 @@ class TestCheckLanWritePolicy:
     def test_upload_only_without_key_exits(self):
         """upload-only writes to the master and is refused without a key."""
         with (
-            patch("hsync_client.main_logic.emit_event"),
+            patch("hsync_client.preview.emit_event"),
             pytest.raises(SystemExit) as exc_info,
         ):
             _check_lan_write_policy(

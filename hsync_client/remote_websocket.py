@@ -408,6 +408,18 @@ def _reconnect_delay(base: float, attempts: int) -> float:
     return uniform(0, max(cap, base))
 
 
+async def _reconnect_backoff(attempts: int, *, log_msg: str) -> int:
+    """Compute, log and sleep the next reconnect delay; return the new attempts.
+
+    ``log_msg`` must contain a ``{delay:.1f}`` placeholder for the chosen delay.
+    """
+    delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], attempts)
+    attempts += 1
+    log.info(log_msg.format(delay=delay))
+    await sleep(delay)
+    return attempts
+
+
 async def remote_connect() -> None:
     """
     Manage WebSocket connection with automatic reconnection.
@@ -457,26 +469,21 @@ async def remote_connect() -> None:
             # logged at the watcher start site; the exponential backoff below is
             # the dedicated retry policy — a kernel limit cannot clear by
             # reconnecting at the normal cadence.
-            delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], _attempts)
-            _attempts += 1
-            log.info(f"Watcher start failed; reconnecting in {delay:.1f}s…")
-            await sleep(delay)
+            _attempts = await _reconnect_backoff(
+                _attempts, log_msg="Watcher start failed; reconnecting in {delay:.1f}s…"
+            )
 
         except ConnectionClosed:
             # WebSocket disconnected - wait before reconnecting
-            delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], _attempts)
-            _attempts += 1
-            log.info(f"WebSocket disconnected; reconnecting in {delay:.1f}s…")
-            await sleep(delay)
+            _attempts = await _reconnect_backoff(
+                _attempts, log_msg="WebSocket disconnected; reconnecting in {delay:.1f}s…"
+            )
 
         except Exception as e:
             # Unexpected error - log and retry (transient failures never end
             # the daemon; permanent errors such as auth are already excluded)
             log.error(f"An unexpected error occurred: {e}.")
-            delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], _attempts)
-            _attempts += 1
-            log.info(f"Reconnecting in {delay:.1f}s…")
-            await sleep(delay)
+            _attempts = await _reconnect_backoff(_attempts, log_msg="Reconnecting in {delay:.1f}s…")
 
 
 # =============================================================================

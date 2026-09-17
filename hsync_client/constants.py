@@ -255,6 +255,12 @@ LAN_PEER_SOURCES_MAX_DEFAULT = 3
 LAN_PEER_SOURCES_MAX_MIN = 1
 LAN_PEER_SOURCES_MAX_MAX = 8
 
+# Wire-supplied mtimes/ctimes may not exceed now + this skew: a peer asserting
+# far-future timestamps would win every mtime-based conflict resolution on
+# every other peer (conflict engineering). Consumers: hsync_client.lan_server,
+# hsync_client.lan_delta.
+MTIME_MAX_FUTURE_SKEW_SECONDS = 300
+
 # Per-worker memory budget for the parallel local-file scan/hash pool
 # (``sync._get_optimal_workers`` → ``get_files_local``). Each worker runs
 # ``_get_single_file_metadata`` → ``File.get`` → ``compute_sha256``

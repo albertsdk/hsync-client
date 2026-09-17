@@ -72,7 +72,7 @@ def test_listing_self_record_persists_and_clock_progresses(tmp_path):
     cfg = {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None, "CID": _cid()}
     with (
         patch("hsync_client.lan_server.CONFIG", cfg),
-        patch("hsync_client.sync_state.CONFIG", cfg),
+        patch("hsync_client.state_backend.CONFIG", cfg),
     ):
         srv, port = _server_fixture()
         try:
@@ -104,7 +104,7 @@ def test_listing_idempotent_when_content_unchanged(tmp_path):
     cfg = {"LOCAL_BUCKET": str(tmp_path), "LAN_KEY": None, "CID": _cid()}
     with (
         patch("hsync_client.lan_server.CONFIG", cfg),
-        patch("hsync_client.sync_state.CONFIG", cfg),
+        patch("hsync_client.state_backend.CONFIG", cfg),
     ):
         srv, port = _server_fixture()
         try:
@@ -142,7 +142,7 @@ def test_watcher_self_records_local_edit_but_not_inbound(tmp_path):
         "CID": _cid(),
     }
     with (
-        patch("hsync_client.sync_state.CONFIG", cfg),
+        patch("hsync_client.state_backend.CONFIG", cfg),
         patch("hsync_client.lan_websocket.CONFIG", cfg),
     ):
         # Local edit: no inbound origin → self-record happens.

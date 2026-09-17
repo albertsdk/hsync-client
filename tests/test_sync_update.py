@@ -105,7 +105,7 @@ class TestUpdateFile:
         from hsync_client import sync_state
 
         with patch(
-            "hsync_client.sync_state.CONFIG",
+            "hsync_client.state_backend.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
         ):
             sync_state.record_base(str(local_file), local_sha)
@@ -130,7 +130,7 @@ class TestUpdateFile:
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
             ),
             patch(
-                "hsync_client.sync_state.CONFIG",
+                "hsync_client.state_backend.CONFIG",
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
             ),
             patch("hsync_client.transfer.download_file", mock_download),
@@ -160,7 +160,7 @@ class TestUpdateFile:
         from hsync_client import sync_state
 
         with patch(
-            "hsync_client.sync_state.CONFIG",
+            "hsync_client.state_backend.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
         ):
             sync_state.record_base(str(local_file), base_sha)
@@ -196,7 +196,7 @@ class TestUpdateFile:
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
             ),
             patch(
-                "hsync_client.sync_state.CONFIG",
+                "hsync_client.state_backend.CONFIG",
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"},
             ),
             patch("hsync_client.transfer.download_file", mock_download),

@@ -319,7 +319,7 @@ class TestEdgeCasesFileOperations:
         CONFIG["CID"] = "EdgeClient1234567890"
 
         try:
-            with patch("hsync_client.sync_state.CONFIG", CONFIG):
+            with patch("hsync_client.state_backend.CONFIG", CONFIG):
                 sync_state.record_base(str(local_file), "0" * 64)
                 sync_state.flush()
                 sync_state._stores.clear()

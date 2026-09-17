@@ -453,7 +453,7 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
-            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             conn = HTTPConnection("localhost", port, timeout=5)
             conn.request("GET", "/api/v1/buckets/test/tombstones")
@@ -470,7 +470,7 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
-            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
 
@@ -501,7 +501,7 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
-            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
             payload = {
@@ -532,7 +532,7 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
-            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
             response = requests.post(url, data=b"", timeout=5)
@@ -548,7 +548,7 @@ class TestLANRequestHandlerTombstones:
 
         with (
             patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
-            patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
             response = requests.post(url, data=b"not-json", timeout=5)

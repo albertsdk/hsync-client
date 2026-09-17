@@ -25,7 +25,14 @@ from hsync_common.models.folder import (
 )
 from hsync_common.models.sqlstore import get_state_db
 
-__all__ = ["reset_bucket_folder_cache", "resolve_bucket_folder"]
+from hsync_client.config import CONFIG
+
+__all__ = [
+    "bucket_dir",
+    "local_cid",
+    "reset_bucket_folder_cache",
+    "resolve_bucket_folder",
+]
 
 # Cache of ``(folder_id, db_path)`` resolutions, keyed by the raw ``bucket_dir``
 # string. The folder id is deterministic for a given bucket path + installation
@@ -105,3 +112,23 @@ def resolve_bucket_folder(bucket_dir: str) -> tuple[str, str] | None:
     result = (folder_id, db_path)
     _folder_cache[bucket_dir] = result
     return result
+
+
+def bucket_dir() -> str:
+    """Return the configured local bucket directory (empty when unset).
+
+    Shared by :mod:`hsync_client.sync_state`, :mod:`hsync_client.tombstones`
+    and :mod:`hsync_client.arbitration` so the bucket resolution has a single
+    definition.
+    """
+    return str(CONFIG.get("LOCAL_BUCKET", "") or "")
+
+
+def local_cid() -> str:
+    """Return this node's cid (empty string when unconfigured).
+
+    Shared by :mod:`hsync_client.sync_state`, :mod:`hsync_client.arbitration`
+    and :mod:`hsync_client.sync` as the author identity for self-recorded edits
+    and minted deletion markers.
+    """
+    return str(CONFIG.get("CID", "") or "")

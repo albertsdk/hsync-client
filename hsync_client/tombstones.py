@@ -29,19 +29,14 @@ from hsync_common.models.tombstone import (
     relpath_in_bucket,
 )
 
-from hsync_client.config import CONFIG, get_tombstone_ttl_days
-from hsync_client.state_backend import resolve_bucket_folder
+from hsync_client.config import get_tombstone_ttl_days
+from hsync_client.state_backend import bucket_dir, resolve_bucket_folder
 
 # Cache of per-folder stores, keyed by folder UUID.
 _stores: dict[str, TombstoneStore] = {}
 
 # Re-entrant: the public helpers call get_tombstone_store() while holding it.
 _lock = threading.RLock()
-
-
-def _bucket_dir() -> str:
-    """Return the configured local bucket directory."""
-    return str(CONFIG.get("LOCAL_BUCKET", "") or "")
 
 
 def _persist(store: TombstoneStore) -> None:
@@ -53,7 +48,7 @@ def _persist(store: TombstoneStore) -> None:
 def get_tombstone_store() -> TombstoneStore:
     """Return the cached store for the local bucket, loading/pruning on first use."""
     with _lock:
-        resolved = resolve_bucket_folder(_bucket_dir())
+        resolved = resolve_bucket_folder(bucket_dir())
         if resolved is None:
             return TombstoneStore(ttl_days=get_tombstone_ttl_days())
         folder_id, db_path = resolved
@@ -63,7 +58,7 @@ def get_tombstone_store() -> TombstoneStore:
                 db_path=db_path,
                 folder_id=folder_id,
                 ttl_days=get_tombstone_ttl_days(),
-                canonical_path=_bucket_dir(),
+                canonical_path=bucket_dir(),
             )
             store.load()
             store.prune()
@@ -84,8 +79,8 @@ def record_deletion(
     and is ticked by ``origin_cid``, so delete-vs-recreate and delete-vs-delete
     resolve causally (ADR-0003) — the deletion timestamp is informational only.
     """
-    bucket_dir = _bucket_dir()
-    relpath = relpath_in_bucket(abs_path, bucket_dir)
+    local_bucket = bucket_dir()
+    relpath = relpath_in_bucket(abs_path, local_bucket)
     if not relpath:
         return
     with _lock:
@@ -151,8 +146,8 @@ def flush() -> None:
 
 def clear_deletion(abs_path: str) -> None:
     """Drop the deletion marker for a re-created path and persist the store."""
-    bucket_dir = _bucket_dir()
-    relpath = relpath_in_bucket(abs_path, bucket_dir)
+    local_bucket = bucket_dir()
+    relpath = relpath_in_bucket(abs_path, local_bucket)
     if not relpath:
         return
     with _lock:

@@ -80,6 +80,7 @@ from hsync_client.exceptions import (
 from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
 from hsync_client.lan_sources import LanCandidateMap, LanSourceResolver
 from hsync_client.retry import retry_on_network_error
+from hsync_client.state_backend import local_cid
 from hsync_client.utils import (
     get_ssl_verify,
     set_permissions,
@@ -1293,8 +1294,7 @@ def _local_cid_or_none() -> str | None:
     Used as the author of deletion markers minted by the sync engine when the
     only known identity for a path is its merge-base key (ADR-0003).
     """
-    cid = str(CONFIG.get("CID", "") or "")
-    return cid or None
+    return local_cid() or None
 
 
 def _existing_file_paths(bucket_dir: str) -> list[str]:
@@ -1818,12 +1818,10 @@ def _save_conflict_copy(file: File) -> str | None:
         return None
     from hsync_common.time_utils import conflict_timestamp
 
+    from hsync_client.arbitration import conflicted_copy_name
+
     ts = conflict_timestamp()
-    cid = CONFIG.get("CID", "") or "unknown"
-    safe_cid = "".join(c for c in cid if c.isalnum() or c in "-_.")[:32]
-    conflict_path = (
-        f"{src_path.parent}/{src_path.stem}_conflicted_copy_{ts}_{safe_cid}{src_path.suffix}"
-    )
+    conflict_path = conflicted_copy_name(str(src_path), CONFIG.get("CID", ""), ts)
     try:
         copy2(str(src_path), conflict_path)
         log.warning(

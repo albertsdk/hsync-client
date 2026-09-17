@@ -689,7 +689,7 @@ class TestConflictResolution:
 
         # Record a base so the file is "in sync" — the path that previously
         # mutated the store via merge_and_record.
-        with patch("hsync_client.sync_state.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             ss_mod.record_base(str(local_file), file_obj.sha256sum)
             ss_mod.flush()
             before = dict(ss_mod.get_sync_state_store()._data)
@@ -710,7 +710,7 @@ class TestConflictResolution:
 
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions(remote_files, [file_obj.to_dict()], persist_state=False)
             assert all(a.name == SyncActionName.nothing for a in result)
@@ -906,7 +906,7 @@ class TestHsyncignoreDoesNotDelete:
         f = tmp_path / "keep.txt"
         f.write_text("content")
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"}
-        with patch("hsync_client.sync_state.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             file_obj = File.get(str(f))
             assert file_obj is not None
             ss_mod.record_base(str(f), file_obj.sha256sum)
@@ -922,8 +922,8 @@ class TestHsyncignoreDoesNotDelete:
             async def _run():
                 with (
                     patch("hsync_client.sync.CONFIG", cfg),
-                    patch("hsync_client.sync_state.CONFIG", cfg),
-                    patch("hsync_client.tombstones.CONFIG", cfg),
+                    patch("hsync_client.state_backend.CONFIG", cfg),
+                    patch("hsync_client.state_backend.CONFIG", cfg),
                     patch("hsync_client.sync.get_files_remote", return_value=[]),
                     patch("hsync_client.sync.get_tombstones_remote", return_value={}),
                     patch("hsync_client.sync.push_tombstones_remote") as mock_push,
@@ -945,13 +945,13 @@ class TestHsyncignoreDoesNotDelete:
             )
 
             # The deletion store for this peer also never saw the marker.
-            with patch("hsync_client.tombstones.CONFIG", cfg):
+            with patch("hsync_client.state_backend.CONFIG", cfg):
                 ts_mod._stores.clear()
                 assert tombstone_key("keep.txt") not in ts_mod.get_payload()
 
             # The merge base survives retain: re-including the file later
             # reconciles with full causal history instead of a false conflict.
-            with patch("hsync_client.sync_state.CONFIG", cfg):
+            with patch("hsync_client.state_backend.CONFIG", cfg):
                 from hsync_client.sync_state import get_sync_state_store
 
                 ss_mod._stores.clear()
@@ -989,7 +989,7 @@ class TestGetSyncActionsTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
@@ -1012,7 +1012,7 @@ class TestGetSyncActionsTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
@@ -1030,7 +1030,7 @@ class TestGetSyncActionsTombstones:
         cid_local = _peer_cid("L")
         # Record a base so the local effective clock advances past the tombstone.
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
-        with patch("hsync_client.sync_state.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             ss_mod.record_base(str(local_file), file.sha256sum or "", vclock={cid_local: 1})
             ss_mod.flush()
             ss_mod._stores.clear()
@@ -1038,7 +1038,7 @@ class TestGetSyncActionsTombstones:
 
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
@@ -1079,7 +1079,7 @@ class TestGetSyncActionsTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions([], local_files, tombstones=tombstones)
             assert len(result) == 1
@@ -1148,7 +1148,7 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions(remote_files, [], tombstones=tombstones)
 
@@ -1167,7 +1167,7 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions(remote_files, [], tombstones=tombstones)
 
@@ -1189,7 +1189,7 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions(remote_files, [], tombstones=tombstones)
 
@@ -1208,7 +1208,7 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid_local, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions(remote_files, [], tombstones=tombstones)
 
@@ -1227,7 +1227,7 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         }
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             result = get_sync_actions(remote_files, [], tombstones={})
 
@@ -1243,7 +1243,7 @@ class TestClientTombstonesModule:
         ts = int(time.time())
         cid = _peer_cid("L")
         with patch(
-            "hsync_client.tombstones.CONFIG",
+            "hsync_client.state_backend.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "CID": cid},
         ):
             ts_mod.record_deletion(
@@ -1266,7 +1266,7 @@ class TestClientTombstonesModule:
     def test_record_persists_and_reloads(self, tmp_path):
         """The marker survives a cache reset by being read back from the side-car."""
         ts = int(time.time())
-        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="a" * 64, timestamp=ts)
             # Drop the in-memory cache so the next access loads from disk.
             ts_mod._stores.clear()
@@ -1276,7 +1276,7 @@ class TestClientTombstonesModule:
         """``persist=False`` + one ``flush`` persists the markers exactly once."""
         key = tombstone_key("gone.txt")
         with patch(
-            "hsync_client.tombstones.CONFIG",
+            "hsync_client.state_backend.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "CID": _peer_cid("L")},
         ):
             ts_mod.record_deletion_by_key(key, origin_cid=_peer_cid("L"), persist=False)
@@ -1291,7 +1291,7 @@ class TestClientTombstonesModule:
 
     def test_clear_removes_marker(self, tmp_path):
         """clear_deletion drops a previously recorded marker."""
-        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ts_mod.record_deletion(str(tmp_path / "gone.txt"), sha256sum="abc", timestamp=1000)
             ts_mod.clear_deletion(str(tmp_path / "gone.txt"))
 
@@ -1303,7 +1303,7 @@ class TestClientTombstonesModule:
         cid_a = _peer_cid("A")
         cid_b = _peer_cid("B")
         with patch(
-            "hsync_client.tombstones.CONFIG",
+            "hsync_client.state_backend.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "CID": cid_a},
         ):
             ts_mod.record_deletion(
@@ -1351,7 +1351,7 @@ class TestClientTombstonesModule:
 
     def test_record_outside_bucket_is_noop(self, tmp_path):
         """A path that does not resolve inside the bucket records nothing."""
-        with patch("hsync_client.tombstones.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             # The bucket root itself has an empty relative path.
             ts_mod.record_deletion(str(tmp_path), sha256sum="abc", timestamp=1000)
 
@@ -1470,7 +1470,7 @@ class TestThreeWayMerge:
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
             ),
             patch(
-                "hsync_client.sync_state.CONFIG",
+                "hsync_client.state_backend.CONFIG",
                 {"LOCAL_BUCKET": str(tmp_path), "CID": "TestClientA1234567890"},
             ),
         ]
@@ -1541,7 +1541,7 @@ class TestThreeWayMerge:
         remote = self._remote("f.txt", lf.sha256sum or "", lf.mtime or 0)
         with (
             patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
-            patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
         ):
             result = get_sync_actions([remote], [lf.to_dict()], tombstones={})
             base_after = ss_mod.get_base_hash(str(local_file))
@@ -1632,28 +1632,28 @@ class TestClientSyncStateModule:
     """Tests for the per-peer sync-state store (hsync_client.sync_state)."""
 
     def test_record_then_get_base_hash(self, tmp_path):
-        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
 
     def test_record_empty_hash_is_noop(self, tmp_path):
-        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ss_mod.record_base(str(tmp_path / "a.txt"), "")
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) is None
 
     def test_record_outside_bucket_is_noop(self, tmp_path):
-        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ss_mod.record_base(str(tmp_path), "hh")  # bucket root -> empty relpath
             assert ss_mod.get_base_hash(str(tmp_path)) is None
 
     def test_clear_base_removes_entry(self, tmp_path):
-        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             ss_mod.clear_base(str(tmp_path / "a.txt"))
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) is None
 
     def test_retain_drops_absent_paths(self, tmp_path):
-        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ss_mod.record_base(str(tmp_path / "keep.txt"), "h1")
             ss_mod.record_base(str(tmp_path / "drop.txt"), "h2")
             dropped = ss_mod.retain([str(tmp_path / "keep.txt")])
@@ -1662,7 +1662,7 @@ class TestClientSyncStateModule:
             assert ss_mod.get_base_hash(str(tmp_path / "drop.txt")) is None
 
     def test_flush_persists_and_reloads(self, tmp_path):
-        with patch("hsync_client.sync_state.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
             ss_mod.record_base(str(tmp_path / "a.txt"), "hh")
             ss_mod.flush()
             # Drop the in-memory cache so the next access loads from the side-car.
@@ -1774,7 +1774,7 @@ class TestThreeWayMergeEndToEnd:
             cfg["CID"] = cid
         with (
             patch("hsync_client.sync.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
             # _save_conflict_copy resolves relative paths via transfer._local_dest_path,
             # which reads its own CONFIG.
             patch("hsync_client.transfer.CONFIG", cfg),

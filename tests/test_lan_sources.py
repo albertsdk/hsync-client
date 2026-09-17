@@ -385,7 +385,7 @@ def test_authenticated_capability_overrides_stale_txt_hint(tmp_path: Path) -> No
     "failure_target",
     (
         "hsync_client.lan_sources.build_lan_sources_request",
-        "hsync_client.lan_sources._compact_json_bytes",
+        "hsync_client.lan_sources.compact_json_bytes",
     ),
 )
 def test_source_builder_and_serialization_faults_are_master_only(

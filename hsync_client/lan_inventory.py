@@ -49,6 +49,7 @@ from hsync_common.protocol.peer_download import (
     validate_lan_inventory_ack,
     validate_lan_inventory_frame,
 )
+from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
 from hsync_client.utils import normalize_bucket_relpath
@@ -1064,17 +1065,7 @@ class LanInventoryPublisher:
         encoded_size = 0
         limit = LAN_INVENTORY_MAX_FRAME_BYTES - _FRAME_SIZE_MARGIN
         for entry in entries:
-            item_size = (
-                len(
-                    json.dumps(
-                        entry,
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                )
-                + 1
-            )
+            item_size = len(compact_json_bytes(entry)) + 1
             if current and (
                 len(current) >= LAN_INVENTORY_MAX_ENTRIES or encoded_size + item_size > limit
             ):
@@ -1089,7 +1080,7 @@ class LanInventoryPublisher:
 
     @staticmethod
     def _serialize(frame: LanInventoryFrame) -> str:
-        return json.dumps(frame, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        return compact_json_bytes(frame).decode("utf-8")
 
     async def _await_ack(self, frame: LanInventoryFrame) -> LanInventoryAckFrame | None:
         queue = self._ack_queue

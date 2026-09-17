@@ -746,7 +746,7 @@ class TestSlaveRecordsLocalDeletionMarker:
         }
 
         # A tracked file: the marker must inherit the recorded hash + clock.
-        with patch("hsync_client.sync_state.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             ss_mod.record_base(str(target), base_hash or "")
             ss_mod.flush()
             ss_mod._stores.clear()
@@ -764,13 +764,13 @@ class TestSlaveRecordsLocalDeletionMarker:
             # irrelevant to the tombstone guarantee under test.
             patch.object(handler, "_start_operation"),
             patch("hsync_client.lan_websocket.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
-            patch("hsync_client.tombstones.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
         ):
             handler.on_deleted(event)
             handler._flush_pending_deletes()
 
-        with patch("hsync_client.tombstones.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             payload = ts_mod.get_payload()
             key = tombstone_key("gone.txt")
             assert key in payload, "slave did not record a local deletion marker"
@@ -778,7 +778,7 @@ class TestSlaveRecordsLocalDeletionMarker:
             # The inherited clock is ticked by the local cid (causal provenance).
             assert payload[key]["vclock"] == {cid: 1}
 
-        with patch("hsync_client.sync_state.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             # The merge base is dropped: a re-created path starts fresh.
             assert ss_mod.get_base_hash(str(target)) is None
 
@@ -806,7 +806,7 @@ class TestSlaveRecordsLocalDeletionMarker:
             "IGNORE_DELETE": False,
         }
 
-        with patch("hsync_client.sync_state.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             ss_mod.record_base(str(target), base_hash or "")
             ss_mod.flush()
             ss_mod._stores.clear()
@@ -825,13 +825,13 @@ class TestSlaveRecordsLocalDeletionMarker:
         with (
             patch.object(handler, "_start_operation"),
             patch("hsync_client.lan_websocket.CONFIG", cfg),
-            patch("hsync_client.sync_state.CONFIG", cfg),
-            patch("hsync_client.tombstones.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
             patch("hsync_client.lan_websocket.is_hidden_file", side_effect=_fake_hidden),
         ):
             handler.on_moved(event)
 
-        with patch("hsync_client.tombstones.CONFIG", cfg):
+        with patch("hsync_client.state_backend.CONFIG", cfg):
             key = tombstone_key("data.txt")
             assert key in ts_mod.get_payload(), (
                 "visible→hidden move did not record a local deletion marker"

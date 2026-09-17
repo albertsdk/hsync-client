@@ -129,6 +129,21 @@ def _stop_slave_seeder(
         set_active_inventory_publisher(None)
 
 
+def _stop_lan_serving(ws_server: LANWebSocketServer | None, http_server: LANServer | None) -> None:
+    """Stop the LAN serving stack in the canonical order (ADR-0027).
+
+    The WebSocket server is stopped first so no new connection is accepted, then
+    the HTTP server is stopped and its inventory closed. The surrounding
+    provider/publisher resets are left to the callers because they differ
+    between the mastership-loss, role-transition and shutdown paths.
+    """
+    if ws_server is not None:
+        ws_server.stop()
+    if http_server is not None:
+        http_server.stop()
+        http_server.close_inventory()
+
+
 def _refresh_lan_network_tuning(master, config: "HsyncConfig", log) -> None:
     """Re-derive autotune-managed network tuning from the real master RTT.
 
@@ -325,13 +340,9 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     # longer rank us as an incumbent — a yielded node that left
                     # server_ready=true would be a "zombie incumbent" and could
                     # prolong a split-brain (ADR-0027 leadership lease).
-                    if lan_ws_server:
-                        lan_ws_server.stop()
-                        lan_ws_server = None
-                    if lan_server:
-                        lan_server.stop()
-                        lan_server.close_inventory()
-                        lan_server = None
+                    _stop_lan_serving(lan_ws_server, lan_server)
+                    lan_ws_server = None
+                    lan_server = None
                     inventory_publisher = None
                     lan_sync.set_connected_clients_provider(None)
                     lan_sync.update_server_not_ready()
@@ -348,12 +359,10 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
             else:
                 # A role transition must release the shared HTTP port before a
                 # slave can bind its read-only seeder.
-                if lan_ws_server:
-                    lan_ws_server.stop()
-                    lan_ws_server = None
-                if lan_server:
-                    lan_server.stop()
-                    lan_server.close_inventory()
+                had_lan_server = lan_server is not None
+                _stop_lan_serving(lan_ws_server, lan_server)
+                lan_ws_server = None
+                if had_lan_server:
                     lan_server = None
                     lan_sync.set_connected_clients_provider(None)
                     lan_sync.update_server_not_ready()
@@ -404,11 +413,7 @@ def run_lan_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     except KeyboardInterrupt:
         log.info("Shutting down LAN mode...")
     finally:
-        if lan_ws_server:
-            lan_ws_server.stop()
-        if lan_server:
-            lan_server.stop()
-            lan_server.close_inventory()
+        _stop_lan_serving(lan_ws_server, lan_server)
         _stop_slave_seeder(seeder_server, lan_sync, inventory_publisher)
         lan_sync.stop()
 

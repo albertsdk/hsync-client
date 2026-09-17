@@ -30,7 +30,6 @@ from hsync_common.models.version import (
     tick_vclock,
 )
 
-from hsync_client.config import CONFIG
 from hsync_client.sync_state import get_sync_state_store
 
 
@@ -62,10 +61,6 @@ class ArbitrationResult:
     loser_cid: str | None = None
 
 
-def _local_cid() -> str:
-    return str(CONFIG.get("CID", "") or "")
-
-
 def arbitrate_upload(
     abs_path: str,
     incoming_hash: str,
@@ -93,15 +88,16 @@ def arbitrate_upload(
     """
     from hsync_common.models.tombstone import relpath_in_bucket
 
-    bucket_dir = str(CONFIG.get("LOCAL_BUCKET", "") or "")
-    relpath = relpath_in_bucket(abs_path, bucket_dir)
+    from hsync_client.state_backend import bucket_dir, local_cid
+
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
     store = get_sync_state_store()
     stored = store.get(relpath) if relpath else None
 
     # Self-record out-of-band edits: if the disk content differs from the
     # stored base, the master's view is stale — advance it with the master cid
     # before comparing (anti-aliasing invariant, ADR-0022 §3.4.7).
-    master_cid = _local_cid()
+    master_cid = local_cid()
     if stored is not None and disk_hash is not None and stored["base_hash"] != disk_hash:
         if master_cid:
             advanced_clock = tick_vclock(stored["vclock"], master_cid)
