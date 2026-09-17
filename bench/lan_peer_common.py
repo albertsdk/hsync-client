@@ -482,6 +482,16 @@ class LanRequesterEnv:
         reset_bucket_folder_cache()
         clear_http_sessions()
 
+    def retarget_api(self, base_url: str) -> None:
+        """Point the requester's API at *base_url* (routes it through a relay).
+
+        ``set_config`` updates the shared ``CONFIG`` in place, so every module that
+        imported it — the transfer path included — follows the change.
+        """
+        config = dict(GLOBAL_CONFIG)
+        config["API"] = {"buckets": f"{base_url}/api/v1/buckets"}
+        set_config(HsyncConfig(**config))
+
     def resolver(self, *, enabled: bool = True) -> LanSourceResolver:
         """Build the real requester resolver the production path consumes."""
         return LanSourceResolver(

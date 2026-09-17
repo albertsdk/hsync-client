@@ -48,6 +48,7 @@ import argparse
 import hashlib
 import sys
 import tempfile
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -124,6 +125,9 @@ LATENCY_LABEL = "lat4KiB"
 LATENCY_SIZE = 4 * 1024
 LATENCY_FILES = 24
 LATENCY_WORKERS = (2, 8)
+# Bulk parallelism sweep for the master path: one worker is the sequential loop
+# the mobile sync used, four is the bound it now applies.
+LATENCY_MASTER_WORKERS = (1, 4)
 # One-way delay per forwarded chunk, so a request/response pair costs one RTT.
 LATENCY_DELAYS_S = (0.0, 0.02)
 
@@ -494,10 +498,8 @@ def _drain_cycle(
 
 
 def _drain_cycle_on_pool(
-    requester: LanRequesterEnv,
     files: list[File],
-    candidates: dict[tuple[str, str], tuple[LanPeerSource, ...]],
-    resolver: LanSourceResolver,
+    worker: Callable[[File], None],
     *,
     pool: ThreadPoolExecutor,
     relay: LatencyRelay,
@@ -513,14 +515,62 @@ def _drain_cycle_on_pool(
     """
     recorder.reset()
     before = relay.connections
-    list(
-        pool.map(
-            partial(_download_one, requester, candidates=candidates, resolver=resolver),
-            files,
-        )
-    )
+    list(pool.map(worker, files))
     handshakes.append(relay.connections - before)
     outcomes.append((recorder.peer_ok, recorder.master_full))
+
+
+def _measure_latency_configuration(
+    *,
+    label: str,
+    delay_ms: int,
+    workers: int,
+    count: int,
+    requester: LanRequesterEnv,
+    files: list[File],
+    relpaths: list[str],
+    size: int,
+    worker: Callable[[File], None],
+    relay: LatencyRelay,
+    recorder: DownloadOutcomeRecorder,
+) -> tuple[BenchResult, tuple[str, int, int, str, float, int, int]]:
+    """Measure one configuration (label, injected RTT, worker count) end to end.
+
+    Peer and master phases share this sequence — fresh pool per configuration (kept
+    across the samples, exactly as production keeps its transfer executor), timed
+    cycles, content assertion — instead of duplicating it per phase.
+    """
+    handshakes: list[int] = []
+    outcomes: list[tuple[int, int]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bench_latency") as pool:
+        result = measure_with_setup(
+            f"{label}_{delay_ms}ms({len(files)}f,{workers}w)",
+            partial(requester.remove_destinations, relpaths),
+            partial(
+                _drain_cycle_on_pool,
+                files,
+                worker,
+                pool=pool,
+                relay=relay,
+                recorder=recorder,
+                handshakes=handshakes,
+                outcomes=outcomes,
+            ),
+            count=count,
+        )
+    for relpath in relpaths:
+        target = requester.bucket_dir / relpath
+        assert target.is_file() and target.stat().st_size == size, target
+    summary = (
+        f"{label} {delay_ms}ms({workers}w)",
+        delay_ms,
+        workers,
+        ",".join(str(value) for value in handshakes),
+        result.p50,
+        sum(row[0] for row in outcomes),
+        sum(row[1] for row in outcomes),
+    )
+    return result, summary
 
 
 def _run_latency_cycles(
@@ -530,15 +580,14 @@ def _run_latency_cycles(
     seeder: LanServerHarness,
     requester: LanRequesterEnv,
 ) -> tuple[list[BenchResult], list[tuple[str, int, int, str, float, int, int]]]:
-    """Handshake cost per cycle with an injected RTT, on a production-shaped pool.
+    """Handshake cost and bulk parallelism with an injected RTT, on a real pool.
 
-    The size matrix prices one transfer; this prices what worker-to-seeder
-    affinity would have to save. Production keeps ONE transfer pool for the whole
-    sync run (`hsync_client.sync`), so its per-thread HTTP sessions stay warm and
-    a cycle pays a handshake only at first contact with a seeder. ``_drain_files``
-    builds a fresh pool per cycle, which hides exactly that, so this scenario runs
-    the production path on one persistent pool behind a latency relay that counts
-    every accepted connection.
+    The size matrix prices one transfer; this prices two decisions. For the peer
+    path it answers what worker-to-seeder affinity would have to save (production
+    keeps ONE transfer pool, so per-thread sessions stay warm and a cycle pays a
+    handshake only at first contact). For the master path it prices bounded *bulk*
+    parallelism, which a sequential download loop wastes: small files are
+    latency-bound, one request round trip each.
 
     Returns:
         ``(results, rows)`` where each row is ``(label, delay_ms, workers,
@@ -562,43 +611,44 @@ def _run_latency_cycles(
                     key: (seeder.relayed_peer_source(relay.port),) for key in fixture_candidates
                 }
                 for workers in LATENCY_WORKERS:
-                    handshakes: list[int] = []
-                    outcomes: list[tuple[int, int]] = []
-                    with ThreadPoolExecutor(
-                        max_workers=workers, thread_name_prefix="bench_latency"
-                    ) as pool:
-                        result = measure_with_setup(
-                            f"latency_{delay_ms}ms({LATENCY_FILES}f,{workers}w)",
-                            partial(requester.remove_destinations, relpaths),
-                            partial(
-                                _drain_cycle_on_pool,
-                                requester,
-                                files,
-                                candidates,
-                                resolver,
-                                pool=pool,
-                                relay=relay,
-                                recorder=recorder,
-                                handshakes=handshakes,
-                                outcomes=outcomes,
-                            ),
-                            count=count,
-                        )
-                    results.append(result)
-                    for relpath in relpaths:
-                        target = requester.bucket_dir / relpath
-                        assert target.is_file() and target.stat().st_size == LATENCY_SIZE, target
-                    rows.append(
-                        (
-                            f"{delay_ms}ms({workers}w)",
-                            delay_ms,
-                            workers,
-                            ",".join(str(value) for value in handshakes),
-                            result.p50,
-                            sum(row[0] for row in outcomes),
-                            sum(row[1] for row in outcomes),
-                        )
+                    result, summary = _measure_latency_configuration(
+                        label="latency peer",
+                        delay_ms=delay_ms,
+                        workers=workers,
+                        count=count,
+                        requester=requester,
+                        files=files,
+                        relpaths=relpaths,
+                        size=LATENCY_SIZE,
+                        worker=partial(
+                            _download_one, requester, candidates=candidates, resolver=resolver
+                        ),
+                        relay=relay,
+                        recorder=recorder,
                     )
+                    results.append(result)
+                    rows.append(summary)
+            with LatencyRelay("127.0.0.1", master.port, delay_s=delay_s) as relay:
+                requester.retarget_api(f"https://127.0.0.1:{relay.port}")
+                try:
+                    for workers in LATENCY_MASTER_WORKERS:
+                        result, summary = _measure_latency_configuration(
+                            label="latency master",
+                            delay_ms=delay_ms,
+                            workers=workers,
+                            count=count,
+                            requester=requester,
+                            files=files,
+                            relpaths=relpaths,
+                            size=LATENCY_SIZE,
+                            worker=partial(_master_sample, requester),
+                            relay=relay,
+                            recorder=recorder,
+                        )
+                        results.append(result)
+                        rows.append(summary)
+                finally:
+                    requester.retarget_api(master.base_url)
     finally:
         failure_patcher.stop()
         outcome_patcher.stop()

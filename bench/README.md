@@ -123,13 +123,14 @@ telemetry) and the peer seeder, which the raw script never touches.
 * **Comparisons are relative**: numbers are valid for this machine and a warm
   OS page cache; they compare implementations, not production SLAs.
 * **Realistic RTT without privileges**: `--latency` puts a `LatencyRelay` in
-  front of the seeder instead of asking for `tc netem` (root-only here). The relay
-  copies bytes and delays every chunk, so TLS stays end to end and the requester
-  still pins the seeder's real fingerprint, while the connections it accepts count
-  exactly the TLS handshakes a cycle paid. That scenario also drives the
+  front of the seeder *and* the master instead of asking for `tc netem` (root-only
+  here). The relay copies bytes and delays every chunk, so TLS stays end to end and
+  the requester still pins the real fingerprint, while the connections it accepts
+  count exactly the TLS handshakes a cycle paid. That scenario also drives the
   production path through **one long-lived `ThreadPoolExecutor`**, because
   production reuses its transfer pool for the whole run and a per-cycle pool would
-  pay handshakes that production never pays.
+  pay handshakes that production never pays. The master phase sweeps 1 vs 4 workers
+  to price bounded bulk parallelism against a sequential loop.
 
 ## Shared helpers
 

@@ -100,7 +100,8 @@ requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
 | `peer_warm_4KiB_no_bookkeeping` | same, with `transfer._record_synced_base` patched out, to size the per-file sync-state write |
 | `seeder_readcap_batch(1\|2\|4\|8)` | `lan_server` seeder route + read-cap semaphore (`LANServer(peer_read_cap=…)`, `hsync_client/lan_server.py:518-527`) |
 | `peer_cap2_fallback(4 files)` | production `download_file` under the same cap: peer `503` → failure record → master fallback |
-| `latency_{0\|40}ms(24f,2\|8w)` | the same production path driven through ONE long-lived `ThreadPoolExecutor`, behind `lan_peer_common.LatencyRelay` (counts accepted connections = TLS handshakes): the worker-to-seeder affinity question, `--latency` only |
+| `latency_peer_{0\|40}ms(24f,2\|8w)` | the production peer path driven through ONE long-lived `ThreadPoolExecutor`, behind `lan_peer_common.LatencyRelay` (counts accepted connections = TLS handshakes): the worker-to-seeder affinity question |
+| `latency_master_{0\|40}ms(24f,1\|4w)` | the production master path (API retargeted through the relay) on the same pool shape: prices bounded bulk parallelism against the sequential loop, the mobile sync's concurrency decision |
 
 ## Methodology
 
@@ -295,6 +296,27 @@ Warmup cycles included; the first value is the coldest cycle. Seven cycles each
   sizes the peer path is for).
 * This is why the worker-to-seeder affinity phase of the ADR-0030 rollout was
   closed **on measurement**, with no scheduling change to `sync.py`.
+
+### Bounded bulk parallelism: measured (`--latency`, master path)
+
+The same relay and long-lived-pool shape in front of the **master** prices the
+other concurrency decision, the one the mobile client needed: its download loop
+was strictly sequential, and small files are latency-bound — one request round
+trip each, so a cycle's wall time is `files × RTT` with no overlap at all.
+
+| Configuration | p50 per cycle | speed-up | handshakes per cycle |
+| --- | --- | --- | --- |
+| 0 ms RTT, 1 worker (sequential) | 938.3 ms | — | `[1,0,0,0,0,0,0]` |
+| 0 ms RTT, 4 workers | 307.0 ms | 3.1× | `[4,0,0,0,0,0,0]` |
+| 40 ms RTT, 1 worker (sequential) | 2023.1 ms | — | `[1,0,0,0,0,0,0]` |
+| 40 ms RTT, 4 workers | 560.6 ms | 3.6× | `[4,0,0,0,0,0,0]` |
+
+168 master-served files per configuration (7 cycles × 24 files), peer path not
+involved. The speed-up grows with the injected RTT, because the cost being hidden
+is round-trip latency rather than bandwidth, and it saturates near the worker
+count: past that point extra concurrency buys sockets and radio time, not
+throughput. That is why the Android bulk bound is four and not a function of the
+file count.
 
 ## Running
 
