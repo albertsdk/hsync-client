@@ -1,6 +1,6 @@
 # HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
 
-> **Status: Implemented (Rev. 3).** The harness described here is implemented
+> **Status: Implemented (Rev. 4).** The harness described here is implemented
 > — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
 > `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
 > `docs/internal/testing.md` ("Stress suites") for usage and for the engine
@@ -15,6 +15,16 @@
 > replica signal overshoot the manifest forever. All claims about engine
 > behaviour below were verified against the codebase — do not re-derive them
 > blindly.
+>
+> **Rev. 3 → Rev. 4 (2026-09-18) — completeness close-out.** Three documented
+> features were completed: the §13.5 `HSYNC_BB_STRESS_SUBPROCESS=1` wall-clock
+> subprocess driver (server mode, `_subprocess_run` + the `sync_runner`
+> fixture), the §7 cross-iteration median + min/max aggregate (records collected
+> in `stress_tree.RECORDS`, rendered by
+> `tests/conftest.py::pytest_terminal_summary`), and the §11 Makefile wiring
+> correction to include `test-bb-python`. The `SUBPROCESS` knob is now listed in
+> §10 and §13.5; §15 anchors updated. Verified at bounded scale in both runner
+> modes (server in-process and subprocess) and in LAN mode.
 >
 > **Rev. 2 (2026-08-29) — accuracy review pass.** All §13/§15 anchors re-verified
 > against the `hsync-client` working tree at HEAD `da9b1f6` (three line-drifts
@@ -257,7 +267,12 @@ Per-run report (printed table + optional JSON at `HSYNC_BB_STRESS_REPORT` path):
 ```
 
 Phases run **3 iterations** by default (`HSYNC_BB_STRESS_ITERATIONS`) and report
-median + min/max for every metric.
+median + min/max for every metric. Each run appends its record to
+`stress_tree.RECORDS` (via `stress_tree.collect`); after the session
+`tests/conftest.py::pytest_terminal_summary` prints one aggregate row per
+`(mode, phase, max_concurrent_transfers)` group using
+`stress_tree.aggregate` / `stress_tree.format_aggregate` (pytest never invokes
+hooks defined in test modules, hence the conftest host).
 
 ## 8. Incremental mutation phase
 
@@ -312,6 +327,7 @@ the test body (§13.5).
 | `HSYNC_BB_STRESS_TIMEOUT` | `300` | Convergence/run timeout (s) |
 | `HSYNC_BB_STRESS_POLL_INTERVAL` | `0.5` | LAN quiet-poll interval (s); also the convergence-time measurement resolution |
 | `HSYNC_BB_STRESS_MTIME_TOLERANCE` | `2` | mtime tolerance (s) |
+| `HSYNC_BB_STRESS_SUBPROCESS` | unset | Server mode only: `"1"` runs the client as a wall-clock subprocess instead of in-process (plan §13.5) |
 | `HSYNC_BB_STRESS_REPORT` | unset | Path for the JSON report (optional) |
 
 Prefer **CLI flags** over `HSYNC_*` env for per-run tuning (see §13.5 — the
@@ -340,7 +356,8 @@ test-stress:
 	@cd hsync-client && HSYNC_BB_STRESS=1 $(VENV_PY) -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
 ```
 
-Wiring: `ci → test → test-bb → test-bb-client → test-bb-client-stress`, so
+Wiring: `ci → test → test-bb → test-bb-python → test-bb-client →
+test-bb-client-stress`, so
 **`make ci` executes the stress tests too** — at the bounded scale pinned by the
 `HSYNC_BB_STRESS_FILES/DIRS/ITERATIONS` variables (`300/50/1` by default), which
 is what keeps the full CI run bounded. The knobs are override-friendly:
@@ -409,14 +426,18 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
      clear the env-settings cache (`get_env_settings.cache_clear()`, as
      `run_sync_once` does).
    - `run_sync_once` runs the client **in-process** (CliRunner) — engine speed,
-     no process boot noise. For **wall-clock realism**, add a subprocess driver
-     modeled on `lan_helpers._lan_start` but with
-     `<hostname> --port <port> -b <bucket> -p <path> --yes --insecure --once
-     --no-autotune --min-free-disk-space 0` and `HSYNC_API_KEY` in the env.
-     Default the stress suite to in-process for comparability; expose
-     `HSYNC_BB_STRESS_SUBPROCESS=1` for the wall-clock variant.
+     no process boot noise. For **wall-clock realism**, the suite ships a
+     subprocess driver (`_subprocess_run` + the `sync_runner` fixture in
+     `test_bb_server_stress.py`) modeled on `lan_helpers._lan_start`: the same
+     hostname/`--port` form, `-b <bucket>` and `-p <path>`, `--yes --insecure
+     --once --no-autotune --min-free-disk-space 0`, `HSYNC_API_KEY` in the
+     scrubbed env, output to a log file (never an undrained pipe), and a run
+     timeout from `HSYNC_BB_STRESS_TIMEOUT`. Default the stress suite to
+     in-process for comparability; set `HSYNC_BB_STRESS_SUBPROCESS=1` for the
+     wall-clock variant (server mode only — the LAN suite already drives real
+     peer subprocesses).
 6. **Server BB fixture already removes rate-limit noise**:
-   `live_server` (`conftest.py:462`) runs the real server as a **subprocess**
+   `live_server` (`conftest.py:541`) runs the real server as a **subprocess**
    with `HSYNC_RATE_LIMIT_*` raised to 1 M/min — stress runs are not throttled.
 7. **File metadata keys on the wire** (server `/files`): `filepath`, `name`,
    `ctime`, `mtime`, `size`, `sha256sum`, `permissions`, optional `version`.
@@ -464,8 +485,8 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
 
 | Concern | Reference |
 | --- | --- |
-| BB server fixtures | `hsync-client/tests/conftest.py:515` (`live_server`), `:762` (`bb_bucket`), `:762+` (`bb_server_upload`), `bb_server_files`, `bb_server_download`, `:858` (`local_dir`), `:1093` (`run_sync_once`) |
-| BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:108`, `_lan_start:143`, `_terminate:199`, `_wait_for_file:241`, `_wait_for_text_in_stderr:251`, `_wait_for_slave_events:270` (`[READY]` marker), `_wait_for_master:382`; fixtures `lan_master_dir:419`, `lan_slave_dir:427`, `lan_bucket:435` |
+| BB server fixtures | `hsync-client/tests/conftest.py:541` (`live_server`), `:788` (`bb_bucket`), `:815` (`bb_server_upload`), `:843` (`bb_server_files`), `:863` (`bb_server_download`), `:884` (`local_dir`), `:1119` (`run_sync_once`), `:386` (`pytest_terminal_summary` — stress aggregate) |
+| BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:123`, `_lan_start:158`, `_terminate:226`, `_wait_for_file:277`, `_wait_for_text_in_stderr:287`, `_wait_for_slave_events:306` (`[READY]` marker), `_wait_for_master:462`; fixtures `lan_master_dir:499`, `lan_slave_dir:507`, `lan_bucket:515` |
 | CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `lan`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
@@ -476,6 +497,8 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
 | Server upload storage | `hsync-server/hsync_server/api/files/upload.py:270` (`update_file_timestamp`), `:311` (`mkdir parents=True`) |
 | Ignore defaults / engine names | `hsync-common/hsync_common/constants.py:93`; `hsync-common/hsync_common/path_validation.py:413`; `hsync-common/hsync_common/ignore.py` |
 | LAN readiness markers | `lan_handler.py:343` (`[READY] Master ready`), `:525` (`Initial sync complete, connecting to WebSocket…`) |
+| Stress subprocess driver | `hsync-client/tests/test_bb_server_stress.py` — `_subprocess_env`, `_subprocess_run`, `sync_runner` fixture |
+| Stress aggregation | `hsync-client/tests/stress_tree.py` — `collect`, `aggregate`, `format_aggregate`; `tests/conftest.py::pytest_terminal_summary` |
 
 ## 16. Definition of Done — resume checklist
 

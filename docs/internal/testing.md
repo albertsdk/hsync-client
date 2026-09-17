@@ -479,6 +479,13 @@ single source of truth for syntax, defaults and the verification model is
 
 Notes:
 
+- **Server mode runs in-process by default** (``CliRunner``) so timings stay
+  comparable; set `HSYNC_BB_STRESS_SUBPROCESS=1` to drive the client as a real
+  wall-clock subprocess instead (server mode only — the LAN suite already runs
+  real peer subprocesses).
+- At the end of a stress session the suite prints an **aggregate table with
+  median + min/max per phase** (and per concurrency value for the sweep),
+  computed across the `ITERATIONS` runs.
 - The harness generates the tree on the master through the *public contract
   only* (filesystem events are the input), then compares the replica against a
   manifest computed locally — no client internals are imported.

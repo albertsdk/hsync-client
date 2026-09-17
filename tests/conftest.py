@@ -10,6 +10,7 @@ Shared pytest fixtures for the hsync-client test suite.
 
 import os
 import subprocess
+import sys
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
@@ -380,6 +381,23 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
                         + "\n".join(s.ctx for s in samples),
                     )
                 )
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    """Print the stress aggregate (median + min/max) after the session (plan §7).
+
+    The parametrized stress iterations append their per-run records to
+    ``tests.stress_tree.RECORDS``; pytest only invokes hooks defined in
+    conftest/plugins (never in test modules), so the aggregation table is
+    emitted here. No-op unless a stress suite actually ran and collected
+    records: the module is looked up in ``sys.modules`` instead of imported so
+    a non-stress session never touches it.
+    """
+    stress_tree = sys.modules.get("tests.stress_tree")
+    if stress_tree is None:
+        return
+    for line in stress_tree.format_aggregate(stress_tree.aggregate(stress_tree.RECORDS)):
+        terminalreporter.write_line(line)
 
 
 def _free_port() -> int:

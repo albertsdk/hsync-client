@@ -34,6 +34,7 @@ import json
 import os
 import random
 import re
+import statistics
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -868,6 +869,92 @@ def print_report(record: dict[str, object]) -> None:
         "files/s={files_per_s} MiB/s={mib_per_s} "
         "conc={max_concurrent_transfers} phase={phase} mismatches={n_mismatches}".format(**record)
     )
+
+
+# ---------------------------------------------------------------------------
+# Cross-iteration aggregation (plan §7)
+# ---------------------------------------------------------------------------
+
+# Records appended by the stress suites' ``_report`` helper during a run. The
+# terminal-summary hook in ``tests/conftest.py`` aggregates them after the
+# session (test modules cannot host pytest hooks). Empty on non-stress runs.
+RECORDS: list[dict[str, object]] = []
+
+# Per-run record metrics aggregated across the parametrized iterations.
+_AGG_METRICS: Final[tuple[str, ...]] = (
+    "t_generate_s",
+    "t_sync_s",
+    "t_verify_s",
+    "files_per_s",
+    "mib_per_s",
+)
+
+
+def collect(record: dict[str, object]) -> None:
+    """Append one per-run report record for end-of-session aggregation.
+
+    Called by the stress suites right before :func:`print_report` /
+    :func:`write_report`; the aggregated median/min/max table is emitted by
+    ``tests/conftest.py::pytest_terminal_summary`` (plan §7).
+    """
+    RECORDS.append(record)
+
+
+def aggregate(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Group per-run records and compute median/min/max per metric (plan §7).
+
+    Groups by ``(mode, phase, max_concurrent_transfers)`` so the concurrency
+    sweep and the burst/mutation phases never mix, then reports ``median``,
+    ``min`` and ``max`` for every metric in :data:`_AGG_METRICS`. Pure (no I/O,
+    no printing); callers render the rows with :func:`format_aggregate`.
+    """
+    groups: dict[tuple[str, str, int], list[dict[str, object]]] = {}
+    for record in records:
+        key = (
+            str(record.get("mode")),
+            str(record.get("phase")),
+            int(record.get("max_concurrent_transfers", 0)),
+        )
+        groups.setdefault(key, []).append(record)
+    rows: list[dict[str, object]] = []
+    for (mode, phase, max_transfers), group in sorted(groups.items()):
+        row: dict[str, object] = {
+            "mode": mode,
+            "phase": phase,
+            "max_concurrent_transfers": max_transfers,
+            "runs": len(group),
+        }
+        for metric in _AGG_METRICS:
+            values = [float(r[metric]) for r in group if metric in r]
+            if values:
+                row[f"{metric}_median"] = round(statistics.median(values), 3)
+                row[f"{metric}_min"] = round(min(values), 3)
+                row[f"{metric}_max"] = round(max(values), 3)
+        rows.append(row)
+    return rows
+
+
+def _metric_cell(row: dict[str, object], metric: str) -> str:
+    """Format one ``median [min..max]`` aggregate cell."""
+    return f"{row.get(f'{metric}_median')} [{row.get(f'{metric}_min')}..{row.get(f'{metric}_max')}]"
+
+
+def format_aggregate(rows: list[dict[str, object]]) -> list[str]:
+    """Render aggregate rows as human-readable lines (plan §7)."""
+    lines: list[str] = []
+    if rows:
+        lines.append("[STRESS] aggregate (median [min..max]) per phase:")
+    for row in rows:
+        lines.append(
+            f"  mode={row['mode']} phase={row['phase']} "
+            f"conc={row['max_concurrent_transfers']} runs={row['runs']} "
+            f"t_gen={_metric_cell(row, 't_generate_s')}s "
+            f"t_sync={_metric_cell(row, 't_sync_s')}s "
+            f"t_verify={_metric_cell(row, 't_verify_s')}s "
+            f"files/s={_metric_cell(row, 'files_per_s')} "
+            f"MiB/s={_metric_cell(row, 'mib_per_s')}"
+        )
+    return lines
 
 
 def fail_with(mismatches: list[Mismatch], limit: int = 20) -> None:

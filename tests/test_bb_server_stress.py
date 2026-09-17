@@ -24,7 +24,10 @@ scale.
 
 import hashlib
 import os
+import subprocess
+import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -153,8 +156,107 @@ def _combined_verify(live_server, bucket, manifest, mtime_tolerance):
 
 
 def _report(record: dict[str, object]) -> None:
+    stress_tree.collect(record)
     stress_tree.print_report(record)
     stress_tree.write_report(_K["report"], record)  # type: ignore[arg-type]
+
+
+@dataclass
+class _SubprocessResult:
+    """Minimal Typer-``Result`` stand-in for the wall-clock subprocess driver."""
+
+    exit_code: int
+    output: str
+
+
+def _subprocess_env(api_key: str, local_path: str) -> dict[str, str]:
+    """Scrubbed subprocess environment for one server-mode client run.
+
+    Mirrors ``lan_helpers._lan_env``: every inherited ``HSYNC_*`` is dropped (the
+    developer's own configuration must never leak into the run) and a per-run
+    device/state isolation root derived from *local_path* is wired in, so the
+    subprocess never touches the real device identity, locks or state dirs. The
+    forwarded isolation keys are taken from ``conftest._ISOLATION_MANAGED_HSYNC_
+    KEYS`` (single source of truth) so the two cannot drift. ``HSYNC_API_KEY``
+    carries the credential: it is never placed on the command line (same
+    contract as the in-process ``run_sync_once``).
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+    isolation = Path(local_path).parent / f"{Path(local_path).name}-stress-subproc"
+    env["HSYNC_API_KEY"] = api_key
+    for key in conftest._ISOLATION_MANAGED_HSYNC_KEYS:
+        name = key.removeprefix("HSYNC_").removesuffix("_DIR").lower()
+        env[key] = str(isolation / name)
+    return env
+
+
+def _subprocess_run(live_server, bucket: str, local_path: str, *extra: str) -> _SubprocessResult:
+    """Run one wall-clock client sync as a real subprocess (plan §13.5).
+
+    Enabled by ``HSYNC_BB_STRESS_SUBPROCESS=1``; ``run_sync_once`` stays the
+    default so timings remain comparable. Unlike the in-process CliRunner this
+    pays the real process boot and API-key env path the plan asks for. Output is
+    captured to a log **file** (never an undrained pipe) and returned so the
+    caller's ``result.exit_code`` / ``result.output`` assertions keep working.
+    ``--no-autotune`` is forced per the plan and de-duplicated when the caller
+    already passes it (the concurrency sweep does).
+    """
+    base_url, api_key = live_server
+    args = [
+        sys.executable,
+        "-m",
+        "hsync_client",
+        "server",
+        "-b",
+        bucket,
+        *conftest.bb_server_cli_args(base_url),
+        "-p",
+        local_path,
+        "--once",
+        "--yes",
+        "--insecure",
+        "--min-free-disk-space",
+        "0",
+        "--no-autotune",
+        *[a for a in extra if a != "--no-autotune"],
+    ]
+    log_path = Path(local_path).parent / f"{Path(local_path).name}.stress-subprocess.log"
+    timed_out = False
+    with open(log_path, "wb") as log_fh:
+        proc = subprocess.Popen(
+            args,
+            env=_subprocess_env(api_key, local_path),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            proc.wait(timeout=float(_K["timeout"]))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            proc.kill()
+            proc.wait(timeout=10)
+    output = log_path.read_text(encoding="utf-8", errors="replace")
+    if timed_out:
+        return _SubprocessResult(exit_code=124, output=f"TIMEOUT after {_K['timeout']}s\n{output}")
+    return _SubprocessResult(exit_code=proc.returncode, output=output)
+
+
+@pytest.fixture
+def sync_runner(run_sync_once, live_server):
+    """Client runner used by the stress tests (plan §13.5).
+
+    In-process ``run_sync_once`` by default; a wall-clock subprocess when
+    ``HSYNC_BB_STRESS_SUBPROCESS=1``. Both expose ``(bucket, local_path, *extra)
+    -> result`` with ``exit_code`` / ``output``, so the test bodies are identical
+    under either mode.
+    """
+    if not _K["subprocess"]:
+        return run_sync_once
+
+    def _run(bucket: str, local_path: str, *extra: str) -> _SubprocessResult:
+        return _subprocess_run(live_server, bucket, local_path, *extra)
+
+    return _run
 
 
 class TestServerModeStress:
@@ -167,7 +269,7 @@ class TestServerModeStress:
         bb_bucket,
         local_dir,
         tmp_path: Path,
-        run_sync_once,
+        sync_runner,
         iteration: int,
     ) -> None:
         seed = int(_K["seed"]) + iteration  # derived seed, plan §7
@@ -185,7 +287,7 @@ class TestServerModeStress:
         n_files, n_dirs, total_bytes = stress_tree.manifest_totals(manifest)
 
         t0 = time.perf_counter()
-        result = run_sync_once(bb_bucket, str(src))
+        result = sync_runner(bb_bucket, str(src))
         t_sync = time.perf_counter() - t0
         assert result.exit_code == 0, result.output
 
@@ -224,7 +326,7 @@ class TestServerModeStress:
             )
             n_files, n_dirs, total_bytes = stress_tree.manifest_totals(manifest)
             t0 = time.perf_counter()
-            result = run_sync_once(bb_bucket, str(src))
+            result = sync_runner(bb_bucket, str(src))
             t_sync = time.perf_counter() - t0
             assert result.exit_code == 0, result.output
             t0 = time.perf_counter()
@@ -259,7 +361,7 @@ class TestServerModeStress:
         bb_bucket,
         local_dir,
         tmp_path: Path,
-        run_sync_once,
+        sync_runner,
         iteration: int,
         max_transfers: int,
     ) -> None:
@@ -278,7 +380,7 @@ class TestServerModeStress:
         n_files, n_dirs, total_bytes = stress_tree.manifest_totals(manifest)
 
         t0 = time.perf_counter()
-        result = run_sync_once(
+        result = sync_runner(
             bb_bucket,
             str(src),
             "--no-autotune",

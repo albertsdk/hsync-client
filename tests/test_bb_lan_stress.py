@@ -44,6 +44,7 @@ _K = stress_tree.stress_knobs("lan")
 
 
 def _report(record: dict[str, object]) -> None:
+    stress_tree.collect(record)
     stress_tree.print_report(record)
     stress_tree.write_report(_K["report"], record)  # type: ignore[arg-type]
 
