@@ -37,6 +37,7 @@ import time
 from pathlib import Path
 
 import pytest
+from hsync_common.labels import ActionLabel
 
 _LAN_ENABLED = os.environ.get("HSYNC_BB_LAN") == "1"
 _LAN_REASON = (
@@ -92,6 +93,20 @@ def _lan_pin_file(local_path: str) -> str:
     """TOFU pin store (``HSYNC_LAN_PIN_FILE``) for a LAN subprocess."""
     path = Path(local_path)
     return str(path.parent / f"{path.name}_pins.json")
+
+
+def _lan_log_path(local_path: str) -> str:
+    """Log file for a LAN subprocess: a *sibling* of the synced dir.
+
+    Peer output is **redirected to this file**, never to an undrained pipe:
+    a PIPE whose 64 KiB buffer fills during a large sync blocks the peer
+    inside ``write()`` and stalls replication entirely (observed as a
+    scale-dependent timeout: a small tree converges, a few hundred files
+    hang). Sibling of the synced dir for the same reason as the ready file
+    (never synced), and inside the pytest tmp dir so it is cleaned up.
+    """
+    path = Path(local_path)
+    return str(path.parent / f"{path.name}.log")
 
 
 def _free_port() -> int:
@@ -152,9 +167,11 @@ def _lan_start(
 ) -> subprocess.Popen:
     """Start a LAN-mode client subprocess with isolated identity and state.
 
-    Output is captured with stderr merged into stdout (loguru logs to stdout),
+    Output is captured to the per-peer log *file* returned by
+    :func:`_lan_log_path` (stderr merged into stdout: loguru logs to stdout),
     so :func:`_stderr_text` and :func:`_wait_for_text_in_stderr` can observe the
-    process log lines. Pass ``lan_port`` to force the LAN master listening port.
+    process log lines without ever blocking the peer on a full pipe. Pass
+    ``lan_port`` to force the LAN master listening port.
     ``extra_args``/``extra_env`` are appended to the standard arguments /
     merged into the scrubbed environment (see :func:`_lan_env`).
     """
@@ -188,12 +205,22 @@ def _lan_start(
     if lan_port:
         args += ["--listen-port", str(lan_port)]
     args += list(extra_args)
-    return subprocess.Popen(
+    # Output goes to a log FILE, never to an undrained PIPE: a pipe fills up
+    # (64 KiB) during a large sync and blocks the peer in write(), stalling
+    # replication (see _lan_log_path). The handle is kept open for the life of
+    # the process and closed by _terminate; the path is stashed on the Popen so
+    # _stderr_text can re-read the file even after the handle is closed.
+    log_path = _lan_log_path(local_path)
+    log_fh = open(log_path, "wb")
+    proc = subprocess.Popen(
         args,
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_fh,
         stderr=subprocess.STDOUT,
     )
+    proc._hsync_log_path = log_path  # type: ignore[attr-defined]
+    proc._hsync_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc
 
 
 def _terminate(proc: subprocess.Popen) -> None:
@@ -205,22 +232,31 @@ def _terminate(proc: subprocess.Popen) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
-    # Drain pipes to avoid ResourceWarning
+    log_fh = getattr(proc, "_hsync_log_fh", None)
+    if log_fh is not None:
+        with contextlib.suppress(OSError, ValueError):
+            log_fh.close()
+    # Fallback for a PIPE-backed Popen (or an external one): drain and close.
     if proc.stdout:
         proc.stdout.close()
-    # stderr is merged into stdout (PIPE → STDOUT), so no separate pipe to drain.
 
 
 def _stderr_text(proc: subprocess.Popen) -> str:
     """Return all output captured so far (non-blocking, non-destructive).
 
-    Reads from stdout since stderr is merged into it (loguru logs to stdout).
-    Bytes are drained incrementally from the pipe and accumulated on the
-    process object, so repeated calls always return the full text seen so far
-    rather than only the bytes buffered at read time. This keeps substring
-    polling reliable: a log line consumed while waiting for one marker is still
-    visible when a later assertion checks for another.
+    Reads the peer log file written by :func:`_lan_start` (a file, not a pipe:
+    the peer can never block on a full buffer). The whole file is returned on
+    every call, so a log line seen while polling for one marker is still
+    visible when a later assertion checks for another. A PIPE-backed Popen
+    (e.g. one spawned directly by a test) is still supported through the
+    incremental drain path.
     """
+    log_path = getattr(proc, "_hsync_log_path", None)
+    if log_path is not None:
+        try:
+            return Path(log_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
     buf: bytes = getattr(proc, "_hsync_out_buf", b"")
     if proc.stdout is not None:
         try:
@@ -292,6 +328,50 @@ def _wait_for_slave_events(slave: subprocess.Popen, timeout: float = 30.0) -> bo
             "\n--- [BB_DIAG] end of slave log ---"
         )
     return ok
+
+
+_WATCHER_DEGRADED_LABELS = (
+    ActionLabel.WATCHER_FALLBACK.value,
+    ActionLabel.FD_EXHAUSTED.value,
+)
+
+
+def watcher_degraded_lines(proc: subprocess.Popen) -> list[str]:
+    """Return the peer's realtime-watcher degradation lines, if any.
+
+    A live inotify watcher is a **precondition** for every event-driven LAN
+    test: this harness generates the master tree and expects it to be
+    broadcast as events. When the machine exhausts
+    ``fs.inotify.max_user_instances`` (a per-user kernel limit easily reached
+    on a developer desktop — editors and browsers hold instances too) the client
+    correctly degrades to ``PollingObserver``, and a large burst can then be
+    missed until the periodic ``RESYNC`` (default 300s). The observable failure
+    would otherwise be an opaque convergence timeout; returning the log lines
+    lets callers report the real cause.
+    """
+    text = _stderr_text(proc)
+    return [line for line in text.splitlines() if any(m in line for m in _WATCHER_DEGRADED_LABELS)]
+
+
+def assert_realtime_watcher(proc: subprocess.Popen, role: str) -> None:
+    """Fail fast with an actionable message when *proc*'s watcher degraded.
+
+    Called by the stress harness *before* generating a burst: measuring
+    event-driven replication with a polling watcher is not a product failure
+    but an unsatisfied environment precondition (unlike the production
+    behaviour, which stays correct through RESYNC).
+    """
+    lines = watcher_degraded_lines(proc)
+    if not lines:
+        return
+    raise AssertionError(
+        f"{role} (pid={proc.pid}) lost the realtime (inotify) watcher — the "
+        "event-driven LAN stress measurement is invalid:\n  "
+        + "\n  ".join(lines[:5])
+        + "\n  Fix: raise the per-user limit "
+        "(sudo sysctl fs.inotify.max_user_instances=512) or close other "
+        "watcher-heavy applications, then rerun."
+    )
 
 
 def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:

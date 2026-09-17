@@ -455,6 +455,38 @@ design).
 | `BB_API_KEY` | `test-bb-api-key-0123456789abcdef` | API key used by the live server and the client. |
 | `BB_CLIENT_CID` | `TestClientX1234567890` | Well‑formed 21‑character client ID for server uploads. |
 
+## Stress suites
+
+`tests/test_bb_server_stress.py` and `tests/test_bb_lan_stress.py` exercise the
+server-mode and LAN P2P paths under burst load (many files created in one
+wave, then mutated, deleted and re-verified). They are **opt-in black-box
+suites** gated by `HSYNC_BB_STRESS=1`, with bounded scale by default so
+`make ci` stays fast:
+
+```bash
+# Bounded run (default knobs: 300 files / 50 dirs / 1 iteration)
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_server_stress.py
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_lan_stress.py
+
+# Full-scale benchmark (long)
+make -C .. test-stress
+```
+
+All knobs are `HSYNC_BB_STRESS_*` environment variables
+(`FILES`, `DIRS`, `ITERATIONS`, `WAVES`, `POLL_INTERVAL`, `TIMEOUT`, …); the
+single source of truth for syntax, defaults and the verification model is
+[docs/internal/stress-test-plan.md](stress-test-plan.md).
+
+Notes:
+
+- The harness generates the tree on the master through the *public contract
+  only* (filesystem events are the input), then compares the replica against a
+  manifest computed locally — no client internals are imported.
+- LAN runs are timing-sensitive like the rest of the LAN BB suite (see above);
+  run them separately from the server-mode group and prefer `--maxfail`.
+- Peer logs are captured on per-test log **files** (not pipes) inside the
+  pytest tmp dir, so verbose peers can never block the harness on a full pipe.
+
 ## Cross-project testing
 
 The client depends on `hsync-common` models. When changing models in

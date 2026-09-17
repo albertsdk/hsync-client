@@ -1,10 +1,20 @@
 # HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
 
-> **Status: Draft — design approved and code-reviewed, implementation NOT started.**
-> This document is the handoff point for resuming the activity. Follow §16
-> (Definition of Done checklist) and the code references in §15 to pick the work
-> back up. All claims about engine behaviour below were verified against the
-> codebase at commit `a5cf57e` (workspace root) — do not re-derive them blindly.
+> **Status: Implemented (Rev. 3).** The harness described here is implemented
+> — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
+> `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
+> `docs/internal/testing.md` ("Stress suites") for usage and for the engine
+> defects the bring-up runs surfaced. Rev. 2 verified §13/§15 anchors against
+> HEAD `da9b1f6`; Rev. 3 refreshes them against the working tree (the BB
+> helpers moved) and records two design corrections found while bringing the
+> harness up: the §5 permission pool drops `0o200` (the engine deliberately
+> skips owner-unreadable files on upload — `transfer.py` logs "Permission
+> denied reading" — so a write-only file can never reach the replica), and the
+> §7 LAN quiet-poll signal excludes engine-artifact names (`.hsynckeep`,
+> `.hsyncfolder`, …): they live *inside* the LAN synced tree and would make the
+> replica signal overshoot the manifest forever. All claims about engine
+> behaviour below were verified against the codebase — do not re-derive them
+> blindly.
 >
 > **Rev. 2 (2026-08-29) — accuracy review pass.** All §13/§15 anchors re-verified
 > against the `hsync-client` working tree at HEAD `da9b1f6` (three line-drifts
@@ -14,7 +24,7 @@
 > verify (§7); per-iteration / per-sweep isolation and seed derivation specified
 > (§7, §9, §16); server-mode verification hierarchy REST-primary /
 > FS-secondary made explicit (§4, §6, §16); generator depth semantics and leaf
-> invariant tightened (§5); `HSYNC_STRESS_POLL_INTERVAL` knob added (§10).
+> invariant tightened (§5); `HSYNC_BB_STRESS_POLL_INTERVAL` knob added (§10).
 >
 > Scope: `hsync-client` (Python). Reuses the existing black-box harnesses; no
 > changes to engine code are required.
@@ -83,9 +93,9 @@ All new code lives in `hsync-client` and mirrors the existing BB conventions
 | File | Purpose |
 | --- | --- |
 | `hsync-client/tests/stress_tree.py` | Shared, importable-only helper: deterministic generator, manifest, verifier, metrics. **No tests inside.** |
-| `hsync-client/tests/test_bb_server_stress.py` | Server-mode stress (one-shot + mutation + concurrency sweep). Verification is **REST-primary** (listings + per-file download re-hash); FS cross-check on the bucket is **secondary** (§6). Gate: `HSYNC_STRESS=1`. |
-| `hsync-client/tests/test_bb_lan_stress.py` | LAN-mode stress (initial burst + mutation). Gate: `HSYNC_STRESS=1`. |
-| `Makefile` (workspace root) | New target `test-stress` (see §11). |
+| `hsync-client/tests/test_bb_server_stress.py` | Server-mode stress (one-shot + mutation + concurrency sweep). Verification is **REST-primary** (listings + per-file download re-hash); FS cross-check on the bucket is **secondary** (§6). Gate: `HSYNC_BB_STRESS=1`. |
+| `hsync-client/tests/test_bb_lan_stress.py` | LAN-mode stress (initial burst + mutation). Gate: `HSYNC_BB_STRESS=1`. |
+| `Makefile` (workspace root) | `test-bb-client-stress` (bounded scale, inside `make ci`) and `test-stress` (full scale) — see §11. |
 
 ## 5. Tree generator specification (`stress_tree.generate`)
 
@@ -124,11 +134,16 @@ def generate(root: Path, *, seed: int, n_files: int, n_dirs: int,
 - **Content**: two families — **incompressible** random bytes (stresses SHA-256,
   zstd-no-op path) and **compressed** repetitive patterns (zeros, repeating
   blocks — stresses the zstd transfer path). Record family per path.
-- **Permissions**: files drawn from `600, 644, 700, 755, 666, 200, 640`
-  (all ≤ `0o777`; **never setuid/setgid/sticky** — they are stripped on receipt
-  by design). Directories drawn from `700, 750, 755`.
-- **mtime**: random within a window (e.g. `1_700_000_000 .. now`), applied with
-  `os.utime`. Stored as integer seconds in the manifest.
+- **Permissions**: files drawn from `600, 644, 700, 755, 666, 640`
+  (all ≤ `0o777` and owner-readable; **never setuid/setgid/sticky** — they are
+  stripped on receipt by design; `0o200` of the original pool was dropped: the
+  engine skips owner-unreadable files on upload, so they could never reach the
+  replica). Directories drawn from `700, 750, 755`.
+- **mtime**: random within a window (e.g. `1_700_000_000 .. now`), stored as
+  integer seconds in the manifest. Files are **deposited atomically** — bytes
+  written to a staging sibling, final `mode`/`mtime` applied there, then
+  `os.replace` into the tree (`_deposit_file`, §13.9); a plain write-then-`utime`
+  would race the watcher and destroy the mtime assertion.
 - **Manifest**: `{relpath: {"type": "file"|"dir", "size": int,
   "sha256": str | None, "mode": int, "mtime": int}}` returned to the caller and
   persisted to a JSON sidecar (`<root>.<name>.manifest.json`) for cross-run
@@ -192,7 +207,7 @@ but it must never be the sole verdict.
    `stat().st_mode & 0o700 == 0o700` (floor only); LAN mode → equality with
    `(manifest mode & 0o777) | 0o700`.
 7. **mtime**: `abs(stat().st_mtime - manifest mtime) <= MTIME_TOLERANCE_S`
-   (default 2; configurable via `HSYNC_STRESS_MTIME_TOLERANCE`).
+   (default 2; configurable via `HSYNC_BB_STRESS_MTIME_TOLERANCE`).
 8. Returns sorted mismatch list; the test prints the first N mismatches with
    `expected/actual` pairs for diagnosis.
 
@@ -206,11 +221,12 @@ All durations from `time.perf_counter()`; measured **only around engine work**
   subprocess wall-clock (see §13.5). **LAN**: convergence time, measured from
   write-complete on the source side to the replica being **quiet**: poll a
   cheap signal only (file count + total size via an `os.scandir` walk — no
-  hashing) every `HSYNC_STRESS_POLL_INTERVAL` (default 0.5 s) until unchanged
+  hashing, whitelisted engine artifacts excluded) every
+  `HSYNC_BB_STRESS_POLL_INTERVAL` (default 0.5 s) until unchanged
   for 2 consecutive polls, then run the **single** full `verify_tree`.
   `t_sync` stops at quiet-detection (measurement resolution = the poll
   interval); the full verify is accounted in `t_verify`. On mismatch, resume
-  quiet-polling until `HSYNC_STRESS_TIMEOUT`, then fail. Never poll with the
+  quiet-polling until `HSYNC_BB_STRESS_TIMEOUT`, then fail. Never poll with the
   full verifier: hashing ~1500 files per poll makes `t_sync`
   verification-bound and steals disk IO from the engine under measurement.
 - `t_verify` — verification pass.
@@ -219,19 +235,19 @@ All durations from `time.perf_counter()`; measured **only around engine work**
 ### Run isolation (iterations & sweep)
 
 - Iterations are **parametrized** (`@pytest.mark.parametrize("iteration",
-  range(HSYNC_STRESS_ITERATIONS))`) so each gets fresh function-scoped
+  range(HSYNC_BB_STRESS_ITERATIONS))`) so each gets fresh function-scoped
   fixtures: new `live_server` + `bb_bucket` + `local_dir` (server mode) or
   fresh `lan_master_dir`/`lan_slave_dir`/`lan_bucket` (LAN). **No bucket/dir
   reuse across iterations** — a reused bucket has nothing left to transfer
   and yields degenerate timings.
-- **Seed derivation**: iteration `i` uses `seed_i = HSYNC_STRESS_SEED + i`
+- **Seed derivation**: iteration `i` uses `seed_i = HSYNC_BB_STRESS_SEED + i`
   (effective seed goes into the report JSON); mutation wave `w` draws from
   `random.Random(f"{seed_i}:wave{w}")`. With a fixed base seed the repeated
   iterations measure engine variance, not data variance — intentional.
 - Peak disk ≈ one tree + one replica per run; pytest retains the last 3
   `tmp_path` trees. §16 includes the teardown check.
 
-Per-run report (printed table + optional JSON at `HSYNC_STRESS_REPORT` path):
+Per-run report (printed table + optional JSON at `HSYNC_BB_STRESS_REPORT` path):
 
 ```json
 {"mode": "server|lan", "seed": int, "n_files": int, "n_dirs": int,
@@ -240,7 +256,7 @@ Per-run report (printed table + optional JSON at `HSYNC_STRESS_REPORT` path):
  "max_concurrent_transfers": int, "iteration": int, "mismatches": []}
 ```
 
-Phases run **3 iterations** by default (`HSYNC_STRESS_ITERATIONS`) and report
+Phases run **3 iterations** by default (`HSYNC_BB_STRESS_ITERATIONS`) and report
 median + min/max for every metric.
 
 ## 8. Incremental mutation phase
@@ -256,7 +272,7 @@ After the initial burst converges:
 4. **LAN mode**: source-side watcher picks the wave up over the event channel;
    measure convergence time again.
 5. Re-verify with the updated manifest (strict for files, floor for server dirs).
-6. Optionally repeat for `HSYNC_STRESS_WAVES` waves (default 1).
+6. Optionally repeat for `HSYNC_BB_STRESS_WAVES` waves (default 1).
 
 This exercises the **delta path**, **tombstone path**, **permission-only
 chmod detection** (`file_event_handler.py` `[PERMISSION]` branch), and the
@@ -264,7 +280,7 @@ chmod detection** (`file_event_handler.py` `[PERMISSION]` branch), and the
 
 ## 9. Concurrency sweep
 
-For each value in `HSYNC_STRESS_CONCURRENCY` (default: `"1,4,8"`):
+For each value in `HSYNC_BB_STRESS_CONCURRENCY` (default: `"1,4,8"`):
 
 - Run the server-mode initial-burst scenario with
   `--no-autotune --max-concurrent-transfers <N>` (flags exist at `cli.py:350`
@@ -283,46 +299,64 @@ the test body (§13.5).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HSYNC_STRESS` | unset | Gate: `"1"` enables the stress tests (`pytestmark = skipif`) |
-| `HSYNC_STRESS_SEED` | `20260828` | PRNG seed for generation |
-| `HSYNC_STRESS_FILES` | `2000` (server) / `1500` (LAN) | Number of files |
-| `HSYNC_STRESS_DIRS` | `300` (server) / `200` (LAN) | Number of directories |
-| `HSYNC_STRESS_MAXDEPTH` | `5` | Max nesting depth |
-| `HSYNC_STRESS_MAXFILESIZE` | `8388608` | Outlier file size cap |
-| `HSYNC_STRESS_ITERATIONS` | `3` | Repetitions for medians |
-| `HSYNC_STRESS_WAVES` | `1` | Mutation waves |
-| `HSYNC_STRESS_MUTATION_FRACTION` | `0.2` | Mutation wave size |
-| `HSYNC_STRESS_CONCURRENCY` | `"1,4,8"` | Server-mode concurrency sweep |
-| `HSYNC_STRESS_TIMEOUT` | `300` | Convergence/run timeout (s) |
-| `HSYNC_STRESS_POLL_INTERVAL` | `0.5` | LAN quiet-poll interval (s); also the convergence-time measurement resolution |
-| `HSYNC_STRESS_MTIME_TOLERANCE` | `2` | mtime tolerance (s) |
-| `HSYNC_STRESS_REPORT` | unset | Path for the JSON report (optional) |
+| `HSYNC_BB_STRESS` | unset | Gate: `"1"` enables the stress tests (`pytestmark = skipif`) |
+| `HSYNC_BB_STRESS_SEED` | `20260828` | PRNG seed for generation |
+| `HSYNC_BB_STRESS_FILES` | `2000` (server) / `1500` (LAN) | Number of files |
+| `HSYNC_BB_STRESS_DIRS` | `300` (server) / `200` (LAN) | Number of directories |
+| `HSYNC_BB_STRESS_MAXDEPTH` | `5` | Max nesting depth |
+| `HSYNC_BB_STRESS_MAXFILESIZE` | `8388608` | Outlier file size cap |
+| `HSYNC_BB_STRESS_ITERATIONS` | `3` | Repetitions for medians |
+| `HSYNC_BB_STRESS_WAVES` | `1` | Mutation waves |
+| `HSYNC_BB_STRESS_MUTATION_FRACTION` | `0.2` | Mutation wave size |
+| `HSYNC_BB_STRESS_CONCURRENCY` | `"1,4,8"` | Server-mode concurrency sweep |
+| `HSYNC_BB_STRESS_TIMEOUT` | `300` | Convergence/run timeout (s) |
+| `HSYNC_BB_STRESS_POLL_INTERVAL` | `0.5` | LAN quiet-poll interval (s); also the convergence-time measurement resolution |
+| `HSYNC_BB_STRESS_MTIME_TOLERANCE` | `2` | mtime tolerance (s) |
+| `HSYNC_BB_STRESS_REPORT` | unset | Path for the JSON report (optional) |
 
 Prefer **CLI flags** over `HSYNC_*` env for per-run tuning (see §13.5 — the
 autouse env scrub).
 
 ## 11. Makefile integration
 
-Add to the workspace-root `Makefile` (mirrors `test-bb-client`, which keeps
-server and LAN invocations separate):
+The workspace-root `Makefile` mirrors `test-bb-client`, which keeps server and
+LAN invocations separate:
 
 ```make
+# Bounded scale, part of `make ci` (invoked with an explicit small scale).
+test-bb-client-stress:
+	@echo "==> BB client stress (server-mode, bounded scale)"
+	@cd hsync-client && $(STRESS_KNOBS) $(VENV_PY) -m pytest -q \
+		tests/test_bb_server_stress.py
+	@echo "==> BB client stress (LAN, bounded scale)"
+	@cd hsync-client && $(STRESS_KNOBS) $(VENV_PY) -m pytest -q --maxfail=3 \
+		tests/test_bb_lan_stress.py
+
+# Full documented scale (2000/1500 files, 3 iterations) — the benchmark run.
 test-stress:
-	@echo "==> stress: server-mode"
-	@cd hsync-client && HSYNC_STRESS=1 $(VENV_PY) -m pytest -q tests/test_bb_server_stress.py
-	@echo "==> stress: LAN"
-	@cd hsync-client && HSYNC_STRESS=1 $(VENV_PY) -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
+	@echo "==> stress: server-mode (full scale)"
+	@cd hsync-client && HSYNC_BB_STRESS=1 $(VENV_PY) -m pytest -q tests/test_bb_server_stress.py
+	@echo "==> stress: LAN (full scale)"
+	@cd hsync-client && HSYNC_BB_STRESS=1 $(VENV_PY) -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
 ```
 
-`make test-stress` must NOT be part of `test`/`ci`.
+Wiring: `ci → test → test-bb → test-bb-client → test-bb-client-stress`, so
+**`make ci` executes the stress tests too** — at the bounded scale pinned by the
+`HSYNC_BB_STRESS_FILES/DIRS/ITERATIONS` variables (`300/50/1` by default), which
+is what keeps the full CI run bounded. The knobs are override-friendly:
+`make ci HSYNC_BB_STRESS_FILES=2000` runs the same suite at the full scale
+without invoking `test-stress` separately.
+
+`test-stress` remains the "real benchmark" target (documented default scale,
+no knob set) and is *not* expanded inside `ci`.
 
 ## 12. Execution workflow
 
 ```bash
 # Server mode only
-cd hsync-client && HSYNC_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_server_stress.py
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_server_stress.py
 # LAN only (loopback mDNS; separate run as per BB conventions)
-cd hsync-client && HSYNC_STRESS=1 .venv/bin/python -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
 # Both (root orchestrator)
 make test-stress
 # Lint/type gates before committing (Python project rules)
@@ -330,9 +364,9 @@ cd hsync-client && .venv/bin/python -m ruff check . && .venv/bin/python -m ruff 
 cd hsync-client && .venv/bin/python -m mypy hsync_client
 ```
 
-Scale up for a real benchmark (`HSYNC_STRESS_FILES=20000 HSYNC_STRESS_DIRS=3000`),
-scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
-`HSYNC_STRESS_ITERATIONS=1`).
+Scale up for a real benchmark (`HSYNC_BB_STRESS_FILES=20000 HSYNC_BB_STRESS_DIRS=3000`),
+scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
+`HSYNC_BB_STRESS_ITERATIONS=1`).
 
 ## 13. Contract caveats (verified against the code)
 
@@ -380,7 +414,7 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
      `<hostname> --port <port> -b <bucket> -p <path> --yes --insecure --once
      --no-autotune --min-free-disk-space 0` and `HSYNC_API_KEY` in the env.
      Default the stress suite to in-process for comparability; expose
-     `HSYNC_STRESS_SUBPROCESS=1` for the wall-clock variant.
+     `HSYNC_BB_STRESS_SUBPROCESS=1` for the wall-clock variant.
 6. **Server BB fixture already removes rate-limit noise**:
    `live_server` (`conftest.py:462`) runs the real server as a **subprocess**
    with `HSYNC_RATE_LIMIT_*` raised to 1 M/min — stress runs are not throttled.
@@ -396,6 +430,24 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
    Tombstones and version clocks persist in the server state DB
    (`tombstones.py:41`, `versions.py:61`), never inside the bucket — no
    whitelist entry needed.
+9. **Documents must be *deposited*, not written then back-dated.** The engine
+   propagates the metadata it observes **at event time** and deliberately
+   suppresses a later change that keeps the same content hash (a plain `touch`
+   is never broadcast as a transfer; `file_event_handler.py:634-651` skips the
+   hash-identical event and only special-cases a *mode* difference at
+   `:636-645`). Writing bytes and then `chmod`/`utime`-ing the same path
+   therefore races the watcher: the master can broadcast the arrival mtime as
+   final (or miss the attribution entirely) and the replica legitimately ends
+   up holding a different mtime — a **harness artifact**, not an engine defect.
+   → both `generate()` and `apply_mutation` must publish through
+   `stress_tree._deposit_file` (write to a staging sibling outside the synced
+   root, apply the final `mode`/`mtime` there, then `os.replace` into the
+   tree), which emits a single event whose content and metadata are already
+   final. Directory `chmod`/`utime` in `generate()` may stay in place: the
+   directory event carries no content hash, so there is nothing to suppress.
+   Note that a pure `chmod` on an existing file **is** propagated by the engine
+   (mode is part of the stat key at `file_event_handler.py:286`), so mutations
+   may keep exercising `chmod` as a first-class primitive.
 
 ## 14. Out of scope / deferred (v1)
 
@@ -412,8 +464,8 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
 
 | Concern | Reference |
 | --- | --- |
-| BB server fixtures | `hsync-client/tests/conftest.py:462` (`live_server`), `:733` (`bb_bucket`), `:760` (`bb_server_upload`), `:788` (`bb_server_files`), `:808` (`bb_server_download`), `:829` (`local_dir`), `:1007` (`run_sync_once`) |
-| BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:96`, `_lan_start:131`, `_terminate:187`, `_wait_for_file:229`, `_wait_for_text_in_stderr:239`, `_wait_for_slave_events:258` (`[READY]` marker), `_wait_for_master:358`; fixtures `lan_master_dir:392`, `lan_slave_dir:400`, `lan_bucket:408` |
+| BB server fixtures | `hsync-client/tests/conftest.py:515` (`live_server`), `:762` (`bb_bucket`), `:762+` (`bb_server_upload`), `bb_server_files`, `bb_server_download`, `:858` (`local_dir`), `:1093` (`run_sync_once`) |
+| BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:108`, `_lan_start:143`, `_terminate:199`, `_wait_for_file:241`, `_wait_for_text_in_stderr:251`, `_wait_for_slave_events:270` (`[READY]` marker), `_wait_for_master:382`; fixtures `lan_master_dir:419`, `lan_slave_dir:427`, `lan_bucket:435` |
 | CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `lan`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
@@ -429,13 +481,13 @@ scale down for CI (`HSYNC_STRESS_FILES=300 HSYNC_STRESS_DIRS=50`,
 
 - [ ] `hsync-client/tests/stress_tree.py` implementing §5 and §6 (generator,
       mutation, verifier, metrics; no asserts inside).
-- [ ] `hsync-client/tests/test_bb_server_stress.py` (gate `HSYNC_STRESS=1`):
+- [ ] `hsync-client/tests/test_bb_server_stress.py` (gate `HSYNC_BB_STRESS=1`):
       initial burst → primary wire verification: REST listings (`/files` for
       metadata, `/dirs` for dirs) + per-file download re-hash → secondary FS
       cross-check of the bucket via `verify_tree` (`bb_bucket`, §6.2 whitelist
       incl. `.backup`; whitelist hits counted in the report) → mutation wave →
       concurrency sweep → report.
-- [ ] `hsync-client/tests/test_bb_lan_stress.py` (gate `HSYNC_STRESS=1`):
+- [ ] `hsync-client/tests/test_bb_lan_stress.py` (gate `HSYNC_BB_STRESS=1`):
       start master+slave (`_lan_start`), `_wait_for_master`, generate **after**
       `_wait_for_slave_events` (`[READY]`), poll convergence, verify, mutate,
       re-verify; always `_terminate` both peers in `finally`.

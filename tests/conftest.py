@@ -285,6 +285,14 @@ BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789a
 BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
 BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
 
+# Base-url -> buckets-dir registry for the module-scoped live servers. Consumed
+# by the stress suites (``tests/test_bb_server_stress.py``) for the secondary
+# filesystem cross-check of the server bucket (plan §6): the (base_url,
+# api_key) tuple alone cannot give the on-disk bucket root. Keyed by base_url
+# (unique per server instance — it embeds the port), populated/removed by
+# ``live_server`` around its lifetime.
+LIVE_SERVER_BUCKETS_DIRS: dict[str, str] = {}
+
 
 def bb_server_cli_args(base_url: str) -> list[str]:
     """Split the live-server URL into the bare-hostname form of the public CLI.
@@ -575,6 +583,7 @@ def live_server(tmp_path_factory):
     )
 
     base_url = f"https://127.0.0.1:{port}"
+    LIVE_SERVER_BUCKETS_DIRS[base_url] = buckets_dir
 
     try:
         deadline = time.time() + 30
@@ -600,6 +609,7 @@ def live_server(tmp_path_factory):
 
         yield base_url, BB_API_KEY
     finally:
+        LIVE_SERVER_BUCKETS_DIRS.pop(base_url, None)
         proc.terminate()
         try:
             proc.wait(timeout=10)
