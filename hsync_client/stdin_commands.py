@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
+import stat
 from collections.abc import Callable
 from typing import Any
 
@@ -110,9 +112,7 @@ class StdinCommandHandler:
 
     async def run(self) -> None:
         """Read lines from stdin and dispatch commands until EOF."""
-        import os
-
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         reader = asyncio.StreamReader()
         protocol = asyncio.StreamReaderProtocol(reader)
 
@@ -124,6 +124,22 @@ class StdinCommandHandler:
             pipe = os.fdopen(dup_fd, "rb", 0)
         except OSError as exc:
             self._log.debug(f"stdin command reader unavailable: {exc}")
+            return
+
+        # epoll cannot register every file type: /dev/null (a character device
+        # without a poll handler) and regular files fail with EPERM. Since
+        # Python 3.14 the pipe transport no longer swallows that failure, so
+        # it would surface as an unhandled loop callback error and leave the
+        # transport half-broken. The stdin channel contract is a parent
+        # process pipe (desktop GUI) or an interactive terminal, so skip the
+        # reader up front when stdin is anything else (e.g. /dev/null under a
+        # service manager or a test launcher).
+        mode = os.fstat(dup_fd).st_mode
+        if not (
+            stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or (stat.S_ISCHR(mode) and os.isatty(dup_fd))
+        ):
+            self._log.debug("stdin command reader unavailable: stdin is not a pipe or terminal")
+            pipe.close()
             return
 
         try:

@@ -39,7 +39,12 @@ from hsync_common.models.file import File, invalidate_sha256_cache, is_hidden_fi
 from hsync_common.models.symlink import Symlink
 from hsync_common.path_validation import is_safe_symlink_target
 from loguru import logger as log
-from watchdog.events import DirCreatedEvent, DirDeletedEvent, FileSystemEventHandler
+from watchdog.events import (
+    DirCreatedEvent,
+    DirDeletedEvent,
+    FileDeletedEvent,
+    FileSystemEventHandler,
+)
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
@@ -141,6 +146,18 @@ class BaseFileEventHandler(FileSystemEventHandler):
         self._last_broadcast_hash.pop(path, None)
         self._last_broadcast_ts.pop(path, None)
         self._last_mode.pop(path, None)
+
+    def _uses_polling_backend(self) -> bool:
+        """Return whether the active watcher backend is the polling fallback.
+
+        The polling observer emits no close-write event, so file content must
+        be propagated from ``on_created``/``on_modified`` there — the
+        ``SUPPORTS_ON_CLOSED`` shortcut assumes the inotify backend. Without a
+        watcher reference (unit-test construction) the inotify behavior is
+        assumed.
+        """
+        watcher = self._watcher
+        return watcher is not None and getattr(watcher, "backend", "inotify") == "polling"
 
     def __init__(self, watcher: WatcherManager | None = None) -> None:
         # Delete coalescing: buffered (path, is_directory) pairs pending a flush.
@@ -457,6 +474,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 # the directory contents once guarantees they are picked up.
                 self._scan_existing_files(src_path)
 
+        # Polling fallback only: a regular file appearing in the snapshot diff
+        # (fresh creation, or a move-in from outside the tree) has no
+        # close-write event to rely on, so it must be propagated here. A file
+        # still being written is re-propagated by the next poll's
+        # FileModifiedEvent; the two-stage dedup collapses no-op repeats.
+        elif self._uses_polling_backend() and not is_hidden_file(src_path):
+            self._process_file_ready(src_path)
+
     def on_modified(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
 
@@ -544,10 +569,13 @@ class BaseFileEventHandler(FileSystemEventHandler):
                     )
             return
 
-        if SUPPORTS_ON_CLOSED:
-            # Content changes propagate via on_closed on inotify platforms;
+        if SUPPORTS_ON_CLOSED and not self._uses_polling_backend():
+            # Content changes propagate via on_closed on the inotify backend;
             # a chmod (IN_ATTRIB) never fires a close, so inspect mode-only
-            # changes here without touching file bytes.
+            # changes here without touching file bytes. On the polling
+            # fallback there is no close-write event at all: fall through to
+            # _process_file_ready so content changes are still propagated
+            # (the two-stage dedup collapses the repeated mid-write diffs).
             if not is_hidden_file(src_path):
                 self._process_permission_only(src_path)
             return
@@ -659,15 +687,36 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def on_moved(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
         dest_path = ensure_str_path(getattr(event, "dest_path", None))
-        if not dest_path:
+        if not src_path and not dest_path:
             return
 
         # Internal debug trace (not the propagated event): deliberately NOT
         # origin-prefixed — the RENAME line that follows carries the origin.
         log.debug(f'{ActionLabel.MOVE} "{src_path}" -> "{dest_path}"')
 
+        # Full-event emitter (inotify): a move whose other end lies *outside*
+        # the watched tree arrives with an empty source or destination (an
+        # unmatched IN_MOVED_TO / IN_MOVED_FROM). These are ordinary
+        # publishing operations — a file moved into the synced folder from
+        # elsewhere (drag & drop, mv, extraction tools, atomic writers) and a
+        # file moved out of it — and must be propagated as a create/delete:
+        # the standard emitter would collapse the former into
+        # ``FileCreatedEvent``, which ``on_created`` deliberately does not
+        # handle (on inotify a plain IN_CREATE fires while the file is still
+        # being written, so content propagates via ``on_closed`` instead; a
+        # move-in has no close-write, so this is its only event).
         message: Event | None = None
         if event.is_directory:
+            if not src_path:
+                # Move-in from outside the tree: same handling as a fresh
+                # directory (hidden-dir filtering included).
+                self.on_created(DirCreatedEvent(dest_path))
+                return
+            if not dest_path:
+                # Move-out to outside the tree: same handling as a delete
+                # (coalescing and tombstone bookkeeping included).
+                self.on_deleted(DirDeletedEvent(src_path))
+                return
             if is_hidden_dir(src_path) and is_hidden_dir(dest_path):
                 return
             if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
@@ -695,6 +744,22 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 src.path = src_path
                 message = self._make_event(EventName.renamed, src, dst)
         else:
+            if not src_path:
+                # Move-in from outside the tree: the file arrives already
+                # final (no close-write follows), so propagate it exactly like
+                # a close (hidden files filtered exactly like on_closed). The
+                # two-stage stat/hash dedup keeps a hypothetical duplicate (a
+                # later on_closed after an in-place re-write) harmless.
+                if is_hidden_file(dest_path):
+                    return
+                self._process_file_ready(dest_path, trigger="move-in")
+                return
+            if not dest_path:
+                # Move-out to outside the tree: the path vacated the tree, so
+                # route it through on_deleted (tombstones, coalescing and the
+                # delete broadcast are identical to a plain delete).
+                self.on_deleted(FileDeletedEvent(src_path))
+                return
             if is_hidden_file(src_path):
                 # Safe-save: an editor/application wrote to a temp file
                 # (``.goutputstream-*``, ``*.tmp``, …) and atomically renamed

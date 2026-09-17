@@ -738,13 +738,20 @@ class TestLANFileEventHandler:
             ws_server.broadcast_sync.assert_not_called()
 
     def test_on_moved_no_dest_path(self, handler, ws_server, tmp_path):
-        """Test on_moved returns when dest_path is None."""
+        """on_moved with an empty destination is a move-out: routed to on_deleted.
+
+        A file moved out of the watched tree arrives (full-event emitter) as a
+        move event whose destination is empty; it must be treated as a delete,
+        not dropped (regression for the lost move-out).
+        """
         event = MagicMock()
         event.src_path = str(tmp_path / "a.txt")
         event.dest_path = None
         event.is_directory = False
-        handler.on_moved(event)
-        ws_server.broadcast_sync.assert_not_called()
+
+        with patch.object(handler, "on_deleted") as mock_deleted:
+            handler.on_moved(event)
+            mock_deleted.assert_called_once()
 
     def test_on_moved_os_cache_to_os_cache_dir(self, handler, ws_server, tmp_path):
         """Test on_moved returns for OS-cache-to-OS-cache directory."""

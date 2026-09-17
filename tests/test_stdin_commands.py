@@ -6,6 +6,8 @@ JSON parsing, and error handling.
 """
 
 import asyncio
+import contextlib
+import stat
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -95,18 +97,25 @@ def _make_reader(*lines: bytes) -> AsyncMock:
 
 
 def _patch_pipe_setup(reader: AsyncMock):
-    """Return a combined context-manager that patches os.dup, os.fdopen,
-    asyncio.StreamReader (to return *reader*), and connect_read_pipe
-    via a mock event loop."""
+    """Return a combined context-manager that patches the pipe setup path of
+    ``run()``: ``os.dup``, ``os.fdopen``, ``asyncio.StreamReader`` (to return
+    *reader*), ``connect_read_pipe`` via a mock event loop, and the stdin-type
+    pre-check (a FIFO that is not a TTY, so the reader proceeds)."""
     mock_loop = MagicMock()
     mock_loop.connect_read_pipe = AsyncMock()
-    return (
-        patch("os.dup", return_value=99),
-        patch("os.fdopen", return_value=MagicMock()),
-        patch("asyncio.StreamReader", return_value=reader),
-        patch("asyncio.StreamReaderProtocol"),
-        patch("asyncio.get_event_loop", return_value=mock_loop),
-    )
+
+    class _FifoStat:
+        st_mode = stat.S_IFIFO
+
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch("os.dup", return_value=99))
+    stack.enter_context(patch("os.fdopen", return_value=MagicMock()))
+    stack.enter_context(patch("asyncio.StreamReader", return_value=reader))
+    stack.enter_context(patch("asyncio.StreamReaderProtocol"))
+    stack.enter_context(patch("asyncio.get_running_loop", return_value=mock_loop))
+    stack.enter_context(patch("os.fstat", return_value=_FifoStat()))
+    stack.enter_context(patch("os.isatty", return_value=False))
+    return stack
 
 
 class TestRunDispatch:
@@ -122,7 +131,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"cmd": "PREVIEW"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         callback.assert_called_once_with()
@@ -137,7 +146,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"cmd": "SYNC"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         callback.assert_awaited_once_with()
@@ -152,7 +161,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"cmd": "RESYNC", "filter": "docs/"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         callback.assert_called_once_with(filter="docs/")
@@ -167,7 +176,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b"not json\n", b'{"cmd": "OK"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("Invalid JSON" in str(c) for c in log.warning.call_args_list)
@@ -183,7 +192,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"action": "test"}\n', b'{"cmd": "OK"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("missing 'cmd'" in str(c) for c in log.warning.call_args_list)
@@ -199,7 +208,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"cmd": "UNKNOWN"}\n', b'{"cmd": "KNOWN"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("Unknown stdin command" in str(c) for c in log.warning.call_args_list)
@@ -215,7 +224,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"cmd": "FAIL"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("'FAIL' failed" in str(c) for c in log.error.call_args_list)
@@ -230,7 +239,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b'{"cmd": "AFAIL"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("'AFAIL' failed" in str(c) for c in log.error.call_args_list)
@@ -254,7 +263,7 @@ class TestRunDispatch:
             b'{"cmd": "AFTER"}\n',
         )
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         second.assert_not_called()
@@ -269,7 +278,7 @@ class TestRunDispatch:
 
         reader = _make_reader(b"\n", b"   \n", b'{"cmd": "CMD"}\n')
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         callback.assert_called_once()
@@ -283,7 +292,7 @@ class TestRunDispatch:
 
         reader = _make_reader()  # immediate EOF
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("stopped" in str(c) for c in log.debug.call_args_list)
@@ -297,7 +306,7 @@ class TestRunDispatch:
         reader = AsyncMock()
         reader.read = AsyncMock(side_effect=asyncio.CancelledError)
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("stopped" in str(c) for c in log.debug.call_args_list)
@@ -322,17 +331,51 @@ class TestRunDispatch:
         mock_pipe = MagicMock()
         mock_loop = MagicMock()
         mock_loop.connect_read_pipe = AsyncMock(side_effect=OSError("pipe error"))
+
+        class _FifoStat:
+            st_mode = stat.S_IFIFO
+
         with (
             patch("os.dup", return_value=99),
             patch("os.fdopen", return_value=mock_pipe),
             patch("asyncio.StreamReader"),
             patch("asyncio.StreamReaderProtocol"),
-            patch("asyncio.get_event_loop", return_value=mock_loop),
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("os.fstat", return_value=_FifoStat()),
+            patch("os.isatty", return_value=False),
         ):
             await handler.run()
 
         assert any("unavailable" in str(c) for c in log.debug.call_args_list)
         mock_pipe.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_skips_non_pipe_stdin(self):
+        """A character-device stdin that is not a TTY (e.g. /dev/null) is skipped.
+
+        Regression: epoll cannot register /dev/null (``EPERM``) and Python
+        3.14's pipe transport no longer swallows that failure, so the reader
+        must never be connected on such a stdin — it would surface as an
+        unhandled loop-callback error and leave the transport half-broken.
+        """
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        class _DevNullStat:
+            st_mode = stat.S_IFCHR  # character device, like /dev/null
+
+        with (
+            patch("os.dup", return_value=99),
+            patch("os.fdopen", return_value=MagicMock()) as mock_fdopen,
+            patch("os.fstat", return_value=_DevNullStat()),
+            patch("os.isatty", return_value=False),
+            patch("asyncio.StreamReader"),
+            patch("asyncio.StreamReaderProtocol"),
+        ):
+            await handler.run()
+
+        assert any("not a pipe or terminal" in str(c) for c in log.debug.call_args_list)
+        mock_fdopen.return_value.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_multiple_commands_dispatched_in_order(self):
@@ -350,7 +393,7 @@ class TestRunDispatch:
             b'{"cmd": "C"}\n',
         )
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert order == ["A", "B", "C"]
@@ -364,7 +407,7 @@ class TestRunDispatch:
         reader = AsyncMock()
         reader.read = AsyncMock(side_effect=RuntimeError("unexpected"))
         p = _patch_pipe_setup(reader)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p:
             await handler.run()
 
         assert any("stdin reader error" in str(c) for c in log.error.call_args_list)

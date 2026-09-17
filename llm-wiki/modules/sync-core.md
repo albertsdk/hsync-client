@@ -290,8 +290,15 @@ exponential backoff with a dedicated log line. User-facing diagnosis/remedies:
 (`[WATCHER FALLBACK]`, `[WATCHER RESTORE]`, `[FD EXHAUSTED]`, client-only).
 
 `BaseFileEventHandler` (`file_event_handler.py:54`) maps watchdog callbacks to the
-transfer pipeline. Linux uses `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other
-platforms fall back to `on_modified`. Subclasses implement `_on_file_ready`
+transfer pipeline. On Linux with the inotify backend, content propagates via
+`on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other platforms fall back to
+`on_modified`. **Backend-aware propagation** (`_uses_polling_backend`,
+`file_event_handler.py:150`, feeding on `WatcherManager.backend`,
+`watcher.py:124`): the polling fallback observer emits no close-write event,
+so file content is propagated from `on_created`/`on_modified` there (inotify
+keeps the close-write path — a plain `IN_CREATE` fires mid-write and must not
+broadcast partial content; a repeated mid-write poll diff is collapsed by the
+two-stage dedup). Subclasses implement `_on_file_ready`
 (remote/LAN-master variants). `_label` (`:60`) resolves bracketed log labels
 through `hsync_common.labels.resolve_label` with an **origin-aware prefix**:
 `"REMOTE "` when `_origin_cid(src, dst)` attributes the event to a peer (the
@@ -303,12 +310,36 @@ output is colorized identically to the slave's inbound dispatcher. The `[MOVE]`
 debug trace (`:324`) is deliberately unprefixed (internal trace, not the
 propagated event).
 
-**Safe-save handling** (`on_moved` file branch, `:341`): when an editor
+**Safe-save handling** (`on_moved` file branch, `:664`): when an editor
 safe-saves (writes to a temp like `.goutputstream-*` or `*.tmp` then atomically
 renames over the final file), the temp is hidden (`DEFAULT_IGNORE_PATTERNS`)
 so the rename is reframed as a content `modified` of the destination via
 `_process_file_ready(dest, trigger="safe-save")` — not a user-initiated
 `renamed`.
+
+**Move-in / move-out propagation** (`on_moved`, `:664`; observer creation
+`watcher.py:_new_observer`, `:236`): the inotify observer runs with
+`generate_full_events=True`, so a move whose other end lies **outside** the
+watched tree arrives as a move event with an empty source (move-in) or empty
+destination (move-out) instead of being collapsed into a create/delete event.
+`on_moved` maps them explicitly: empty source → the file is propagated exactly
+like a close (`_process_file_ready(dest, trigger="move-in")`; directories via
+`on_created`), empty destination → routed through `on_deleted` (tombstones,
+coalescing, delete broadcast). This closes the gap where a file moved into the
+folder from elsewhere (drag & drop, `mv`, extraction tools, atomic publishers)
+was silently dropped: the standard emitter produced a `FileCreatedEvent`, which
+`on_created` deliberately ignores on inotify (a plain `IN_CREATE` fires while
+the file is still being written — content propagates via `on_closed`, which a
+move-in never emits).
+
+**Stdin command reader guard** (`stdin_commands.py:113`): `epoll` cannot
+register every file type — `/dev/null` and regular files fail with `EPERM`,
+and since Python 3.14 the pipe transport no longer swallows that failure (it
+surfaced as an unhandled `Exception in callback
+_UnixReadPipeTransport._add_reader()` and left the transport half-broken). The
+reader therefore skips itself up front unless stdin is a pipe, socket or
+terminal (the documented channel contract is a parent-process pipe / TTY).
+
 
 **Symlink broadcast guard** (`on_created`, `file_event_handler.py:192`): the
 shared watchdog handler (remote + LAN master) refuses to broadcast a `symlink`

@@ -12,6 +12,12 @@ from unittest.mock import MagicMock, patch
 from hsync_client.remote_websocket import RemoteFileEventHandler
 
 
+class _PollingWatcherStub:
+    """Minimal WatcherManager stand-in reporting the polling backend."""
+
+    backend = "polling"
+
+
 class TestFileEventHandler:
     """Tests for RemoteFileEventHandler class."""
 
@@ -187,6 +193,81 @@ class TestFileEventHandler:
         queued_event = mock_run.call_args.args[0]
         assert queued_event is not None
 
+    # -- polling backend propagation --
+
+    def test_on_created_file_polling_backend_triggers_ready(self):
+        """On the polling fallback a created file is propagated immediately.
+
+        Regression: the polling observer has no close-write event, and
+        ``SUPPORTS_ON_CLOSED`` (platform-based) left file content invisible
+        until the next periodic resync.
+        """
+        self.handler._watcher = _PollingWatcherStub()
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/new.txt"
+
+        with (
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch.object(self.handler, "_process_file_ready") as mock_ready,
+        ):
+            self.handler.on_created(event)
+
+        mock_ready.assert_called_once_with("/bucket/new.txt")
+
+    def test_on_created_file_inotify_backend_ignored(self):
+        """On inotify a created file is NOT propagated from on_created.
+
+        A plain IN_CREATE fires while the file is still being written; content
+        propagates via on_closed instead, so processing it here would
+        broadcast partial content.
+        """
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/new.txt"
+
+        with (
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch.object(self.handler, "_process_file_ready") as mock_ready,
+        ):
+            self.handler.on_created(event)
+
+        mock_ready.assert_not_called()
+
+    def test_on_modified_file_polling_backend_triggers_ready(self):
+        """On the polling fallback a modified file is propagated from on_modified."""
+        self.handler._watcher = _PollingWatcherStub()
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/changed.txt"
+
+        config = {"SYNC_DIRECTION": "bidirectional"}
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch.object(self.handler, "_process_file_ready") as mock_ready,
+        ):
+            self.handler.on_modified(event)
+
+        mock_ready.assert_called_once_with("/bucket/changed.txt")
+
+    def test_on_modified_file_inotify_backend_permission_only(self):
+        """On inotify on_modified does not re-propagate content (close-write owns it)."""
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/changed.txt"
+
+        with (
+            patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", True),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch.object(self.handler, "_process_permission_only") as mock_perm,
+            patch.object(self.handler, "_process_file_ready") as mock_ready,
+        ):
+            self.handler.on_modified(event)
+
+        mock_perm.assert_called_once()
+        mock_ready.assert_not_called()
+
     def test_on_moved_hidden_to_hidden_ignored(self):
         """on_moved ignores moves from hidden to hidden directory."""
         event = MagicMock()
@@ -212,6 +293,71 @@ class TestFileEventHandler:
 
         # Should not send any message
         assert not self.event_queue.enqueue.called
+
+    def test_on_moved_file_into_tree_from_outside_triggers_ready(self, tmp_path):
+        """A file moved in from outside the tree (empty source) propagates.
+
+        Regression for the lost move-in: the standard emitter collapsed the
+        unmatched IN_MOVED_TO into FileCreatedEvent, which on_created drops
+        (on inotify content propagates via on_closed, but a move-in has no
+        close-write).
+        """
+        dest = tmp_path / "moved_in.txt"
+        dest.write_bytes(b"content")
+
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = ""
+        event.dest_path = str(dest)
+
+        with patch.object(self.handler, "_process_file_ready") as mock_ready:
+            self.handler.on_moved(event)
+            mock_ready.assert_called_once_with(str(dest), trigger="move-in")
+
+    def test_on_moved_file_out_of_tree_triggers_deleted(self):
+        """A file moved out of the tree (empty destination) is a delete."""
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/gone.txt"
+        event.dest_path = ""
+
+        with patch.object(self.handler, "on_deleted") as mock_deleted:
+            self.handler.on_moved(event)
+
+        mock_deleted.assert_called_once()
+        deleted_event = mock_deleted.call_args.args[0]
+        assert deleted_event.src_path == "/bucket/gone.txt"
+        assert not deleted_event.is_directory
+
+    def test_on_moved_dir_into_tree_from_outside_triggers_created(self):
+        """A directory moved in from outside the tree is handled as created."""
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = ""
+        event.dest_path = "/bucket/newdir"
+
+        with patch.object(self.handler, "on_created") as mock_created:
+            self.handler.on_moved(event)
+
+        mock_created.assert_called_once()
+        created_event = mock_created.call_args.args[0]
+        assert created_event.src_path == "/bucket/newdir"
+        assert created_event.is_directory
+
+    def test_on_moved_dir_out_of_tree_triggers_deleted(self):
+        """A directory moved out of the tree is handled as deleted."""
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = "/bucket/removed"
+        event.dest_path = ""
+
+        with patch.object(self.handler, "on_deleted") as mock_deleted:
+            self.handler.on_moved(event)
+
+        mock_deleted.assert_called_once()
+        deleted_event = mock_deleted.call_args.args[0]
+        assert deleted_event.src_path == "/bucket/removed"
+        assert deleted_event.is_directory
 
     def test_on_moved_hidden_to_visible_triggers_created(self):
         """on_moved from hidden to visible directory triggers on_created."""

@@ -121,6 +121,17 @@ class WatcherManager:
 
     # -- public API ----------------------------------------------------------
 
+    @property
+    def backend(self) -> str:
+        """Active backend label: ``"inotify"`` or ``"polling"``.
+
+        Read by the event handler to adapt propagation: the polling fallback
+        has no close-write event, so file content must be propagated from
+        ``on_created``/``on_modified`` there instead of ``on_closed``.
+        """
+        with self._lock:
+            return self._backend
+
     def start(self, handler: Any) -> None:
         """Register the root watch and start the best available backend."""
         with self._lock:
@@ -237,7 +248,18 @@ class WatcherManager:
         if backend == "inotify":
             from watchdog.observers import Observer
 
-            return Observer()
+            # generate_full_events: report moves whose other end lies outside
+            # the watched tree as move events with an empty source/destination
+            # instead of collapsing them into create/delete events. The handler
+            # relies on this to distinguish a file moved into the synced tree
+            # from outside (atomic publishers, drag & drop, mv — must be
+            # propagated; a plain IN_CREATE must not, because on inotify it
+            # fires while the file is still being written) and a file moved
+            # out of it (must be propagated as a delete).
+            # watchdog's ObserverType Protocol (watchdog/observers/__init__.py)
+            # predates generate_full_events, so the kwarg is invisible to mypy;
+            # the runtime inotify Observer accepts it (see InotifyObserver).
+            return Observer(generate_full_events=True)  # type: ignore[call-arg]
         from watchdog.observers.polling import PollingObserver
 
         return PollingObserver()
