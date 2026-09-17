@@ -3,6 +3,13 @@
 Mode-agnostic engine: list/diff/transfer + the watcher pipeline. Shared by remote
 and LAN modes.
 
+Mode dispatch (`main_logic.run_sync`) imports the mode-specific stacks **lazily**,
+not at module level: `run_lan_mode` is imported inside the `LAN_MODE` branch
+(`main_logic.py:963`) and `remote_connect` inside `_run_with_stdin_commands`
+(`main_logic.py:1065`). So `import hsync_client.main_logic` pulls only the shared
+engine (requests/loguru) and never `zeroconf`/`watchdog` (LAN-only) or
+`websockets` (remote-only); pinned by `tests/test_startup_imports.py`.
+
 ## sync.py — reconcile loop
 
 | Symbol | Line | Role |

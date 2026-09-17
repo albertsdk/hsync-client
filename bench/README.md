@@ -30,7 +30,7 @@ standalone (see below) and compare with `--json-out` + `compare.py`.
 
 | Script | Measures |
 |---|---|
-| `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic`, from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
+| `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.lan_handler` / `import hsync_client.remote_websocket`), from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
 | `bench_autotune.py` | `classify_network`, `classify_bandwidth`, `derive_timeout`, `derive_retry`, `derive_concurrency`, `derive_profile`, `profile_transfer_queue` (pure policy, no I/O) |
 | `bench_utils.py` | `http_to_ws`, `redact_headers`, `request_headers`, `inbound_size_cap`, `http_connect_timeout`, `upload_timeout`, `is_same_paths`, `ensure_str_path`, `normalize_bucket_relpath` (pure per-request/path helpers) |
 | `bench_event_queue.py` | `QueuedEvent.get_backoff_delay`, `EventQueue.enqueue`, `EventQueue._send_event(success/failure/unserializable)` (async, in-memory socket stub) |

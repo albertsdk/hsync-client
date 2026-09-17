@@ -8,10 +8,12 @@
 
 Measures wall-clock time-to-output for every fast invocation of ``hsync``
 (``--version``, ``--capabilities-json``, ``--help``, ``--help-symbols``) plus the
-two import-only cases (``hsync_client.cli`` and ``hsync_client.main_logic``).
+import-only cases (``hsync_client.cli``, ``hsync_client.main_logic`` and the two
+mode stacks ``hsync_client.lan_handler`` / ``hsync_client.remote_websocket``).
 Each timed sample spawns a fresh process, so the measured region covers
 interpreter/PyInstaller bootloader startup, imports and argument parsing up to
-the process exit.
+the process exit. The per-launch cost of a real sync is modelled as
+``main_logic + one mode stack`` (LAN or remote).
 
 Two forms are measured:
 
@@ -165,6 +167,18 @@ def _scenarios(
             (
                 "source_import_main_logic",
                 [python, "-c", "import hsync_client.main_logic"],
+                lambda _out: True,
+                60,
+            ),
+            (
+                "source_import_lan_stack",
+                [python, "-c", "import hsync_client.lan_handler"],
+                lambda _out: True,
+                60,
+            ),
+            (
+                "source_import_remote_stack",
+                [python, "-c", "import hsync_client.remote_websocket"],
                 lambda _out: True,
                 60,
             ),

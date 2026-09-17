@@ -79,10 +79,8 @@ from hsync_client.constants import (
 )
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
-from hsync_client.lan_handler import run_lan_mode
 from hsync_client.logger import set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
-from hsync_client.remote_websocket import remote_connect
 from hsync_client.sync import (
     log_initial_sync_start,
     sync,
@@ -962,6 +960,8 @@ def run_sync(
     try:
         # LAN Mode: Peer Discovery and Master Election
         if config["LAN_MODE"]:
+            from hsync_client.lan_handler import run_lan_mode
+
             _warn_if_lan_in_container(log)
             sys.exit(run_lan_mode(config, log))
 
@@ -1062,6 +1062,8 @@ def _acquire_instance_lock(local_path: str, log) -> "Any":
 
 async def _run_with_stdin_commands(log) -> None:
     """Run remote_connect with a background stdin command reader."""
+    from hsync_client.remote_websocket import remote_connect
+
     await _with_stdin_commands(log, remote_connect())
 
 

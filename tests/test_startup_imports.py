@@ -22,9 +22,10 @@ import os
 import subprocess
 import sys
 
-# Modules the fast paths must not import. ``asyncio`` and ``hsync_common.models``
-# are the deep stdlib/shared costs that used to be pulled transitively by
-# ``hsync_common.protocol.capabilities`` (via ``hashing``/``peer_download``).
+# Modules the CLI fast paths must not import. ``asyncio`` and
+# ``hsync_common.models`` are the deep stdlib/shared costs that used to be pulled
+# transitively by ``hsync_common.protocol.capabilities`` (via ``hashing``/
+# ``peer_download``).
 FORBIDDEN = [
     "watchdog",
     "zeroconf",
@@ -37,6 +38,12 @@ FORBIDDEN = [
     "hsync_common.models",
 ]
 
+# Mode-specific stacks that ``import hsync_client.main_logic`` must not pull: the
+# LAN stack (zeroconf) and the remote WebSocket stack (websockets) are imported
+# lazily inside ``run_sync`` / ``_run_with_stdin_commands``. The shared engine
+# (requests, loguru, ...) is legitimately loaded at import time.
+FORBIDDEN_MAIN_LOGIC = ["zeroconf", "websockets"]
+
 
 def _clean_env() -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith("HSYNC_")}
@@ -44,12 +51,12 @@ def _clean_env() -> dict[str, str]:
     return env
 
 
-def _loaded_forbidden_modules() -> list[str]:
-    """Return the forbidden modules present after ``import hsync_client.cli``."""
+def _loaded_forbidden_modules(import_stmt: str, forbidden: list[str]) -> list[str]:
+    """Return the ``forbidden`` modules present after running ``import_stmt``."""
     code = (
         "import sys\n"
-        "import hsync_client.cli\n"
-        f"forbidden = {FORBIDDEN!r}\n"
+        f"{import_stmt}\n"
+        f"forbidden = {forbidden!r}\n"
         "loaded = [m for m in forbidden if m in sys.modules]\n"
         "print('\\n'.join(sorted(loaded)))\n"
     )
@@ -65,7 +72,12 @@ def _loaded_forbidden_modules() -> list[str]:
 
 def test_import_cli_leaves_sync_engine_unimported() -> None:
     """The CLI module import must not load the sync engine or its heavy deps."""
-    assert _loaded_forbidden_modules() == []
+    assert _loaded_forbidden_modules("import hsync_client.cli", FORBIDDEN) == []
+
+
+def test_import_main_logic_leaves_mode_stacks_unimported() -> None:
+    """Importing main_logic must not pull the LAN or remote WebSocket stacks."""
+    assert _loaded_forbidden_modules("import hsync_client.main_logic", FORBIDDEN_MAIN_LOGIC) == []
 
 
 def test_capabilities_json_lazy_import_emits_document() -> None:

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from hsync_client.config import HsyncConfig
 from hsync_client.identity import DeviceIdentity
-from hsync_client.main_logic import run_lan_mode
+from hsync_client.lan_handler import run_lan_mode
 
 
 def _make_lan_config(tmp_path: object, **overrides: object) -> HsyncConfig:

@@ -557,7 +557,7 @@ class TestRunSync:
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
@@ -585,7 +585,7 @@ class TestRunSync:
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
             patch("hsync_client.main_logic.get_discovery_timeout", return_value=None),
-            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
@@ -612,7 +612,7 @@ class TestRunSync:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
-                patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+                patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
                 patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
@@ -638,7 +638,7 @@ class TestRunSync:
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),

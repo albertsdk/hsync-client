@@ -274,7 +274,7 @@ class TestRunSyncLanPlaceholder:
         kwargs = _default_run_sync_kwargs(tmp_path, **kwargs_overrides)
         with (
             patch("hsync_client.main_logic.setup_logging", return_value=MagicMock()),
-            patch("hsync_client.main_logic.run_lan_mode") as mock_lan,
+            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
