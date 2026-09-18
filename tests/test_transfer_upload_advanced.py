@@ -12,7 +12,7 @@ import pytest
 from hsync_common.models.file import File
 
 from hsync_client.events import UiEventName
-from hsync_client.transfer import upload_file
+from hsync_client.transfer import UPLOAD_STATUS_PREFLIGHT_MIN_SIZE, upload_file
 
 _BASE_CONFIG = {
     "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
@@ -230,14 +230,18 @@ class TestUploadResumable:
             upload_file(file, check_size=False)
 
     def test_upload_resume_from_offset(self, tmp_path):
-        """Test upload resumes from correct offset."""
+        """Test upload resumes from correct offset.
+
+        Uses a file at the preflight threshold: below it the resumable-upload
+        probe is intentionally skipped (UPLOAD_STATUS_PREFLIGHT_MIN_SIZE).
+        """
         test_file = tmp_path / "file.txt"
-        test_file.write_text("test content here")
+        test_file.write_bytes(b"x" * UPLOAD_STATUS_PREFLIGHT_MIN_SIZE)
 
         file = File(
             filepath=str(test_file),
             sha256sum="abc123",
-            size=17,
+            size=UPLOAD_STATUS_PREFLIGHT_MIN_SIZE,
             mtime=1000,
             ctime=1000,
             permissions="644",
@@ -309,14 +313,18 @@ class TestUploadEdgeCases:
             upload_file(file, check_size=False)
 
     def test_upload_file_complete_on_server(self, tmp_path):
-        """Test upload skips when file is complete on server."""
+        """Test upload skips when file is complete on server.
+
+        Uses a file at the preflight threshold: below it the resumable-upload
+        probe is intentionally skipped (UPLOAD_STATUS_PREFLIGHT_MIN_SIZE).
+        """
         test_file = tmp_path / "file.txt"
-        test_file.write_text("content")
+        test_file.write_bytes(b"x" * UPLOAD_STATUS_PREFLIGHT_MIN_SIZE)
 
         file = File(
             filepath=str(test_file),
             sha256sum="abc123",
-            size=7,
+            size=UPLOAD_STATUS_PREFLIGHT_MIN_SIZE,
             mtime=1000,
             ctime=1000,
         )

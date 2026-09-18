@@ -470,6 +470,32 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
    (mode is part of the stat key at `file_event_handler.py:286`), so mutations
    may keep exercising `chmod` as a first-class primitive.
 
+### 13.11 Metadata-only (mtime) propagation
+
+A `touch` — content identical, corrected mtime changed — is now a first-class
+convergence case in **central-server mode**. `sync.get_sync_actions` compares
+the on-disk corrected mtime against the remote advertised one; when they differ
+by more than `hsync_common.constants.MTIME_PROPAGATION_TOLERANCE_SECONDS` the
+side whose version is causally ahead wins: the editor pushes the new mtime as a
+metadata-only upload (`transfer.patch_permissions_remote` →
+`PATCH …/files/permissions?mtime=…`) and the other side adopts it locally
+(`sync._apply_local_mtime`). The server applies it through the shared
+`apply_metadata_to_existing_file` helper (mode and/or mtime), preserving the
+cached content digest so the same-SHA dedup still hits.
+
+Consequence for the harness: `apply_mutation`'s `modify` primitive may leave the
+content hash unchanged (e.g. an empty file redrawn at size 0). That is a
+legitimate metadata-only mutation and the verifier's mtime check **is**
+meaningful — the engine must converge it (regression backing this section).
+
+**LAN mode** propagates touches through the watcher as well: the master's
+broadcast dedup no longer discards a content-identical mtime change (it calls
+the new `_on_metadata_changed` hook), records the touch with
+`sync_state.note_local_edit`, advertises the corrected mtime in the event
+version (`_attach_effective_version`) and broadcasts a `modified` event; the
+slave adopts the advertised mtime locally in `sync.update_file` when its own
+version is not causally ahead. No bytes cross the wire.
+
 ## 14. Out of scope / deferred (v1)
 
 - **Symlinks** (structural replication with safety checks exists but adds edge

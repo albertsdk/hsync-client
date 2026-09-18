@@ -999,6 +999,7 @@ def _attach_effective_version(entity, abs_path: str) -> None:
                 "version_id": eff.get("version_id", ""),
                 "origin_cid": eff.get("origin_cid"),
                 "ts": eff.get("ts", 0),
+                "corrected_mtime": eff.get("corrected_mtime", 0),
             }
     except Exception as e:  # pragma: no cover - bookkeeping must never break broadcast
         log.debug(f"Could not attach version to broadcast for {abs_path}: {e}")
@@ -1102,6 +1103,32 @@ class LANMasterFileEventHandler(BaseFileEventHandler):
                 flush()
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not self-record local edit for {src_path}: {e}")
+        self._broadcast_event(
+            Event(
+                CONFIG["CID"],
+                CONFIG["LOCAL_BUCKET"],
+                CONFIG["REMOTE_BUCKET"],
+                EventName.modified,
+                file,
+            ),
+            src_abs_path=src_path,
+        )
+
+    def _on_metadata_changed(self, file: File, src_path: str) -> None:
+        """Broadcast a ``modified`` event so slaves converge the new mtime.
+
+        Content and mode are unchanged (a plain ``touch``); the slave applies
+        the advertised corrected mtime locally without re-downloading bytes
+        (see ``update_file``).
+        """
+        try:
+            if peek_inbound_origin(src_path) is None and file.sha256sum:
+                from hsync_client.sync_state import flush, note_local_edit
+
+                note_local_edit(src_path, file.sha256sum)
+                flush()
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not self-record metadata edit for {src_path}: {e}")
         self._broadcast_event(
             Event(
                 CONFIG["CID"],

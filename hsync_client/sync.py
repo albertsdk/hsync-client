@@ -29,7 +29,7 @@ from time import monotonic
 from traceback import print_tb
 from typing import cast
 
-from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store
+from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.file import (
     File,
@@ -1463,6 +1463,23 @@ _DOWNLOAD_ONLY_EXCLUDE: frozenset[SyncActionName] = frozenset(
 )
 
 
+def _apply_local_mtime(abs_path: str, corrected_mtime: int) -> None:
+    """Adopt a peer's corrected mtime on the local file (metadata-only).
+
+    The value is an ADR-0023 *corrected* time, so it is converted back to this
+    node's raw clock before ``utime`` (otherwise the next ``correct_mtime``
+    re-adds the offset and the file stays divergent). Content is untouched; the
+    merge-base refresh that follows records the adopted mtime as the agreed
+    version.
+    """
+    try:
+        raw = uncorrect_mtime(corrected_mtime)
+        os.utime(abs_path, (raw, raw))
+        log.debug(f'Metadata-only converge (mtime): "{abs_path}" ({corrected_mtime})')
+    except OSError as exc:
+        log.debug(f'Could not apply mtime to "{abs_path}": {exc}')
+
+
 def get_sync_actions(
     remote_files: list[dict] | None = None,
     local_files: list[dict] | None = None,
@@ -1607,6 +1624,40 @@ def get_sync_actions(
                                 f'Permission-only converge (remote): "{local_file.filepath}" '
                                 f"({remote_perms})"
                             )
+                    else:
+                        action = SyncActionName.upload
+                        permissions_only = True
+
+            # mtime-only divergence: the content hashes match (the causal
+            # matrix resolved to ``nothing``) but the corrected mtimes differ.
+            # A ``touch`` is still metadata that must converge, so the newer
+            # corrected mtime wins (same tie-break philosophy as ADR-0023): the
+            # winner pushes the value (metadata-only upload, no bytes) and the
+            # loser adopts it locally. Unknown mtimes (0) never diverge.
+            if not lan_mode and action == SyncActionName.nothing and persist_state and abs_local:
+                # Content is identical, so the causal matrix short-circuits; a
+                # divergent on-disk mtime is a ``touch`` that must still
+                # converge. The side whose version is causally ahead made the
+                # change (a touch ticks the local clock in ``sync_state``): the
+                # editor pushes the value (metadata-only upload) and the other
+                # adopts it locally. Ties resolve by sync direction.
+                local_mtime = int(sync_state._corrected_mtime_of(abs_local))
+                remote_mtime = int(remote_corrected)
+                if sync_state.mtime_diverges(local_mtime, remote_mtime):
+                    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+                    if direction == "download-only":
+                        adopt_remote = True
+                    elif direction == "upload-only":
+                        adopt_remote = False
+                    else:
+                        # Bidirectional: the side whose version is causally
+                        # ahead made the touch.
+                        adopt_remote = (
+                            compare_vclocks(local_vclock, remote_vclock) is VClockOrder.dominated
+                        )
+                    if adopt_remote:
+                        if local_file.filepath:
+                            _apply_local_mtime(local_file.filepath, remote_mtime)
                     else:
                         action = SyncActionName.upload
                         permissions_only = True
@@ -1983,15 +2034,35 @@ def update_file(
             # Invalidate cached SHA-256 — file content has changed
             if file_data.filepath:
                 invalidate_sha256_cache(file_data.filepath)
-        elif file and file.permissions != file_data.permissions:
-            # Only permissions differ - update them
-            if file_data.permissions:
-                set_permissions(file_data.filepath, file_data.permissions)
+        elif file is not None:
+            # Content identical. A plain ``touch`` announced by a peer still
+            # converges: adopt the peer's corrected mtime locally when it
+            # diverges and this side is not causally ahead (an ahead local side
+            # will push its own metadata on the next reconcile instead).
+            remote_vclock, remote_corrected = _parse_advertised_version(data.get("version"))
+            if (
+                remote_corrected > 0
+                and file.filepath
+                and sync_state.mtime_diverges(
+                    int(sync_state._corrected_mtime_of(file.filepath)), int(remote_corrected)
+                )
+            ):
+                local_eff, _base = sync_state.local_version_and_base(file.filepath, file.sha256sum)
+                if (
+                    compare_vclocks(local_eff["vclock"] if local_eff else None, remote_vclock)
+                    is not VClockOrder.dominates
+                ):
+                    _apply_local_mtime(file.filepath, int(remote_corrected))
+                    sync_state.merge_and_record(file.filepath, file.sha256sum, remote_vclock)
+                    inventory_observer.upsert(file)
+                    return
+            if file.permissions != file_data.permissions:
+                # Only permissions differ - update them
+                if file_data.permissions:
+                    set_permissions(file_data.filepath, file_data.permissions)
+            else:
+                log.debug(f'File not changed: "{file_data.filepath}"')
             inventory_observer.upsert(file)
-        else:
-            log.debug(f'File not changed: "{file_data.filepath}"')
-            if file is not None:
-                inventory_observer.upsert(file)
     else:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])

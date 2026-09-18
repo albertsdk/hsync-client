@@ -53,6 +53,28 @@ hashes, vclocks, `base_hash`, and `local_corrected_mtime` /
 | `conflict_upload` | concurrent; local wins corrected_mtime (SHA-256 fallback) | upload (receiver preserves its loser) |
 | `conflict_download` | concurrent; remote wins tie-break | preserve local + download |
 
+**Metadata-only divergence (content identical).** `resolve_three_way` checks
+content identity first, so a content-identical file whose corrected mtime
+diverges (a plain `touch`) would otherwise resolve to `nothing` and never
+converge. The reconcile adds an explicit pass (server mode): when the on-disk
+corrected mtime differs from the remote advertised corrected mtime by more than
+`hsync_common.constants.MTIME_PROPAGATION_TOLERANCE_SECONDS`, the side whose
+version is causally ahead wins — the editor pushes the new mtime as a
+metadata-only upload (`transfer.patch_permissions_remote`, first choice) and the
+other side adopts it locally (`sync._apply_local_mtime`). Direction is resolved
+first: `download-only` always adopts the remote, `upload-only` always pushes the
+local, and only `bidirectional` uses the causal order to pick the winner. The
+wire value is an ADR-0023 *corrected* time, so adoption converts it back to the
+local raw clock (`clock.uncorrect_mtime`) before `utime`; the PATCH sends the
+corrected value plus the effective vclock/version id so the server records the
+change as a real version. In LAN mode the master's watcher
+drives it instead: `file_event_handler._on_metadata_changed` is emitted for a
+content-identical mtime change, the master records the touch
+(`sync_state.note_local_edit`) and broadcasts the `File` with the corrected
+mtime in its `version` (`lan_websocket._attach_effective_version`), and the
+slave adopts it in `sync.update_file`. Either way a `touch` propagates without
+transferring bytes.
+
 The local vclock is resolved **purely** (no store mutation) via
 `sync_state.local_version_for_compare` (ticks the stored clock by this node's
 cid when the content differs from the recorded base). Persistence happens only
@@ -97,8 +119,8 @@ caller falls back to a full transfer.
 | ------ | ---- | ---- |
 | `download_file` / `_download_file_attempt` | `transfer.py` | per-path lock + retry wrapper around the frozen source order: master delta, ranked exact-hash peer full downloads, canonical master full fallback. Peer failures advance immediately; only final master transient errors reach retry. Every source uses an explicit certificate fingerprint/session, a completed body must match listing size + SHA-256, and peer success adds `source_cid` to the transfer event |
 | `_download_from_source_attempt` | `transfer.py` | shared peer/master streaming implementation. A valid interrupted prefix survives across sources; `206` requires the exact start/total `Content-Range`; range requests force `identity`; fresh peers may negotiate zstd. `Content-Length` is checked against wire bytes while decoded bytes are checked against listing size. Malformed range/total/source hash or completed hash mismatch deletes `.part`; a resumed master hash mismatch retries that master once from byte zero |
-| `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset; delta upload attempted first via `delta_transfer.upload_delta`. The compressed branch **stream-compresses to a temp file** (`_compress_to_temp_file` → `hsync_common.compress_file_to_file`) and streams it as a regular file part: neither the source nor the zstd frame is ever fully resident in RAM (the old implementation read the whole file into memory before sending) |
-| `_get_upload_status` | `transfer.py:680` | query server for resume offset |
+| `upload_file` / `_upload_file_attempt` | `transfer.py:804` / `:912` | retry wrapper + one attempt; resumable via `.part` + offset, but the resumable-upload status probe is skipped below `UPLOAD_STATUS_PREFLIGHT_MIN_SIZE` (1 MiB) for non-permission uploads — a fresh transfer is cheaper than the extra round trip, a stale server-side partial is discarded by the offset=0 POST and an already-complete file is caught by the 409 dedup, while resume is kept for large files; delta upload attempted first via `delta_transfer.upload_delta`. The compressed branch **stream-compresses to a temp file** (`_compress_to_temp_file` → `hsync_common.compress_file_to_file`) and streams it as a regular file part: neither the source nor the zstd frame is ever fully resident in RAM (the old implementation read the whole file into memory before sending) |
+| `_get_upload_status` | `transfer.py:680` | query server for resume offset; not called for small non-permission uploads (see `upload_file`) |
 | `is_file_stable` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` |
 | `_reschedule_upload` | `transfer.py:764` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py:172` / `:149` | streaming multipart |
@@ -298,8 +320,8 @@ transfer pipeline. On Linux with the inotify backend, content propagates via
 so file content is propagated from `on_created`/`on_modified` there (inotify
 keeps the close-write path — a plain `IN_CREATE` fires mid-write and must not
 broadcast partial content; a repeated mid-write poll diff is collapsed by the
-two-stage dedup). Subclasses implement `_on_file_ready`
-(remote/LAN-master variants). `_label` (`:60`) resolves bracketed log labels
+two-stage dedup). Subclasses implement `_on_file_ready` and, for a
+content-identical `touch`, `_on_metadata_changed` (remote/LAN-master variants). `_label` (`:60`) resolves bracketed log labels
 through `hsync_common.labels.resolve_label` with an **origin-aware prefix**:
 `"REMOTE "` when `_origin_cid(src, dst)` attributes the event to a peer (the
 master's inbound-origin map), `"LOCAL "` otherwise. The static `_LOG_PREFIX`
@@ -370,7 +392,9 @@ preceding no-op close):
 - **Linux (inotify)**: a `chmod` fires only `IN_ATTRIB` (no `IN_CLOSE_WRITE`),
   so `on_modified` calls `_process_permission_only` (`file_event_handler.py`),
   which refreshes the cached mode and, on a real change, invokes the transport
-  hook `_on_permissions_changed(file, path)`. Content bytes are NEVER read from
+  hook `_on_permissions_changed(file, path)`. A plain `touch` (content hash
+  unchanged, mtime changed) is detected in `_process_file_ready` stage 2 and
+  invokes `_on_metadata_changed(file, path)`. Content bytes are NEVER read from
   this path (a concurrent partial write would be torn). The mode baseline lives
   in the dedicated `_last_mode` map — deliberately SEPARATE from
   `_last_broadcast_stat`: writing the first-observed stat there poisoned stage 1

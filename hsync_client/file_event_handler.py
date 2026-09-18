@@ -241,6 +241,17 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """
         raise NotImplementedError
 
+    def _on_metadata_changed(self, file: File, src_path: str) -> None:
+        """Called when only the mtime changed (a plain ``touch``).
+
+        Content and mode are identical, so the regular content dedup would
+        discard it. This hook lets each transport propagate the new mtime: the
+        Remote handler pushes a metadata-only upload (the server applies the
+        mtime on its same-SHA branch) and the LAN master broadcasts the updated
+        ``File`` so slaves converge on the mtime.
+        """
+        raise NotImplementedError
+
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
         """Called after a non-hidden deletion has been observed and broadcast.
 
@@ -670,6 +681,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                         self._last_broadcast_stat[src_path] = current_stat
                         log.info(f'[PERMISSION] mode change: "{src_path}"')
                         self._on_permissions_changed(file_obj, src_path)
+                        return
+                    if prev is not None and current_stat[0] != prev[0]:
+                        # Identical content and mode, newer mtime: a plain
+                        # ``touch``. Propagate the metadata so replicas converge
+                        # on the mtime without re-transferring bytes.
+                        self._last_broadcast_stat[src_path] = current_stat
+                        log.info(f'[TOUCH] mtime change: "{src_path}"')
+                        self._on_metadata_changed(file_obj, src_path)
                         return
                     log.debug(f'Skip unchanged (hash): "{src_path}"')
                     # Update stat so the next no-op close with this mtime is

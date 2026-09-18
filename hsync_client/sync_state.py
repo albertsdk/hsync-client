@@ -26,6 +26,7 @@ import threading
 from pathlib import Path
 
 from hsync_common.clock import correct_mtime
+from hsync_common.constants import MTIME_PROPAGATION_TOLERANCE_SECONDS
 from hsync_common.models.file import File
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.models.version import SyncStateStore, merge_vclocks, new_version_id, tick_vclock
@@ -150,6 +151,18 @@ def _corrected_mtime_of(abs_path: str) -> int:
         return 0
 
 
+def mtime_diverges(local_mtime: int, remote_mtime: int) -> bool:
+    """Return whether two known corrected mtimes differ beyond tolerance.
+
+    An unknown value (0) never diverges: without an authoritative mtime on both
+    sides there is nothing to converge (ADR-0023). Shared by the reconcile
+    (:mod:`hsync_client.sync`) and the touch-detection in :func:`_local_compare`.
+    """
+    if local_mtime <= 0 or remote_mtime <= 0:
+        return False
+    return abs(local_mtime - remote_mtime) > MTIME_PROPAGATION_TOLERANCE_SECONDS
+
+
 def local_version_for_compare(abs_path: str, current_hash: str | None):
     """Return the *effective* version for comparison without persisting (pure).
 
@@ -241,7 +254,15 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
         store = get_sync_state_store()
         entry = store.get(relpath)
         if entry is not None and entry["base_hash"] == current_hash:
-            return  # already current — no-op
+            # Content unchanged. A bare ``touch`` is still a local edit: record
+            # the new on-disk corrected mtime (and tick the clock) so the
+            # change is causally visible and peers converge on it. Without this
+            # the stored entry keeps the old mtime and no peer ever learns of
+            # the touch.
+            if not mtime_diverges(
+                _corrected_mtime_of(abs_path), int(entry.get("corrected_mtime", 0) or 0)
+            ):
+                return  # already current — no-op
         store.record(
             relpath,
             base_hash=current_hash,

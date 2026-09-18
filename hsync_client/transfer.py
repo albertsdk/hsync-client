@@ -91,6 +91,7 @@ from hsync_client.sync_state import (
     abs_in_bucket,
     get_sync_state_store,
     local_version_for_compare,
+    note_local_edit,
     resolve_upload_version_fields,
 )
 from hsync_client.utils import (
@@ -235,6 +236,15 @@ class _ThrottledFileReader:
 # per-chunk syscall overhead of smaller chunks is measurable while memory
 # stays bounded.
 _UPLOAD_CHUNK_SIZE = 256 * 1024
+
+# Below this size a fresh upload is cheaper than the resumable-upload status
+# probe (one extra HTTP round trip per file), so the probe is skipped and the
+# transfer starts at offset 0. Correctness is unaffected: a stale server-side
+# partial is discarded by the offset=0 POST (upload.py removes it), and an
+# already-complete file is caught by the 409 dedup response. Resume is kept for
+# larger files, where re-sending costs real bandwidth. Permission-only uploads
+# never use this short-circuit (their fast path depends on probing).
+UPLOAD_STATUS_PREFLIGHT_MIN_SIZE = 1024 * 1024
 
 
 def _compress_to_temp_file(filepath: str) -> str:
@@ -1679,24 +1689,43 @@ def _remote_vclock(file: File) -> dict[str, int] | None:
     return None
 
 
-def patch_permissions_remote(filename: str, permissions: str) -> bool:
-    """Apply a permission-only change on the remote WITHOUT sending file bytes.
+def patch_permissions_remote(
+    filename: str,
+    permissions: str,
+    mtime: int = 0,
+    vclock_json: str = "",
+    version_id: str = "",
+) -> bool:
+    """Apply a metadata-only change on the remote WITHOUT sending file bytes.
 
     Hits the server's metadata-only ``PATCH …/files/permissions`` endpoint
-    (the same route the LAN master exposes), so a chmod on a large file does
-    not re-upload its content. Best-effort by construction: any transport
-    error or non-200 status degrades to ``False`` and the caller falls back
-    to the regular upload path (whose same-SHA branch applies the mode).
+    (the same route the LAN master exposes), so a chmod or a plain ``touch`` on
+    a large file does not re-upload its content. ``mtime`` is the ADR-0023
+    *corrected* timestamp to apply remotely; ``vclock_json``/``version_id``
+    carry this node's effective causal version so the remote records the
+    metadata change as a real version (listings and events then advertise it,
+    instead of the peer re-detecting the divergence every sync). Best-effort by
+    construction: any transport error or non-200 status degrades to ``False``
+    and the caller falls back to the regular upload path.
 
     Args:
         filename: Bucket-relative remote path of the file.
         permissions: Octal permission string to apply (remote-sanitized).
+        mtime: Corrected modification time to propagate (0 = leave unchanged).
+        vclock_json: JSON-encoded effective vector clock ("" = none).
+        version_id: Effective version id ("" = none).
 
     Returns:
         True when the remote applied the change, False otherwise.
     """
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/permissions"
     params: dict[str, str] = {"filename": filename, "permissions": permissions}
+    if mtime > 0:
+        params["mtime"] = str(mtime)
+    if vclock_json and vclock_json != "{}":
+        params["vclock"] = vclock_json
+    if version_id:
+        params["version_id"] = version_id
     own_cid = CONFIG.get("CID")
     if own_cid:
         params["cid"] = own_cid
@@ -1718,16 +1747,31 @@ def patch_permissions_remote(filename: str, permissions: str) -> bool:
 
 
 def _patch_permissions_only(file: File, filename: str) -> bool:
-    """Resolve a ``permissions_only`` upload through the metadata-only endpoint.
+    """Resolve a content-unchanged metadata divergence through the PATCH endpoint.
 
-    Returns ``True`` when the upload is fully resolved (mode applied remotely,
-    merge base recorded, UI event emitted). Returns ``False`` when the endpoint
-    is unavailable (older server) and the caller must fall back to the legacy
-    full-upload same-SHA branch.
+    Covers every metadata-only change (permissions and/or mtime). Records the
+    local touch first (so the advertised clock and corrected mtime are honest),
+    sends them alongside the mode, and returns ``True`` when the upload is fully
+    resolved (metadata applied remotely, merge base recorded, UI event
+    emitted). Returns ``False`` when the endpoint is unavailable (older server)
+    and the caller must fall back to the legacy full-upload same-SHA branch.
     """
-    if not patch_permissions_remote(filename, file.permissions or ""):
+    abs_path = abs_in_bucket(file.filepath) if file.filepath else ""
+    if abs_path and file.sha256sum:
+        try:
+            note_local_edit(abs_path, file.sha256sum)
+        except Exception as e:  # pragma: no cover - bookkeeping must never break a transfer
+            log.debug(f'Could not self-record metadata edit for "{file.filepath}": {e}')
+    vclock_json, version_id, corrected_mtime = _upload_version_fields(file)
+    if not patch_permissions_remote(
+        filename,
+        file.permissions or "",
+        corrected_mtime,
+        vclock_json,
+        version_id,
+    ):
         return False
-    log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
+    log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (metadata updated)')
     _record_synced_base(file, vclock=_resolve_local_vclock(file))
     emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
     return True
@@ -1930,8 +1974,13 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                     f'Delta upload for "{file.filepath}" fell back to full transfer ({exc})'
                 )
 
-        # Check for resumable upload
-        if file.sha256sum is None:
+        # Check for resumable upload. Permission-only uploads always probe
+        # (their fast path depends on learning the peer already holds the
+        # content); small non-permission uploads skip the probe and start fresh
+        # (see UPLOAD_STATUS_PREFLIGHT_MIN_SIZE).
+        if file.sha256sum is None or (
+            not permissions_only and (file.size or 0) < UPLOAD_STATUS_PREFLIGHT_MIN_SIZE
+        ):
             status, offset = "new", 0
         else:
             status, offset = _get_upload_status(filename, file.sha256sum, file.size)

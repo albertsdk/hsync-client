@@ -43,12 +43,13 @@ from typing import IO, TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import zstandard as zstd
-from hsync_common.clock import clamp_incoming_corrected_mtime
+from hsync_common.clock import clamp_incoming_corrected_mtime, uncorrect_mtime
 from hsync_common.compression import compression_level
 from hsync_common.constants import (
     CONTENT_TYPE_JSON,
     CONTENT_TYPE_OCTET_STREAM,
     HEADER_CHECKSUM_SHA256,
+    MTIME_PROPAGATION_TOLERANCE_SECONDS,
     PARTIAL_DOWNLOAD_SUFFIX,
 )
 from hsync_common.hashing import compute_sha256, is_sha256_hex
@@ -852,15 +853,15 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _handle_patch_permissions(self, query: dict) -> None:
-        """Apply a permission-only change (chmod) from a slave peer.
+        """Apply a content-unchanged metadata change (chmod / touch) from a slave.
 
         Metadata-only convergence: the slave declares the bucket-relative
-        ``filename`` and the desired octal ``permissions``; no file bytes
-        cross the wire. Only REGULAR files are handled (directory modes go
-        through the ``/dirs`` surface — a directory chmod must keep the
-        owner rwx floor, which the file setter does not apply). The new mode
-        is sanitized (special bits stripped) and applied when it diverges
-        from the stored one. The master's own watcher then observes the
+        ``filename``, the desired octal ``permissions`` and/or a corrected
+        ``mtime``; no file bytes cross the wire. Only REGULAR files are handled
+        (directory modes go through the ``/dirs`` surface — a directory chmod
+        must keep the owner rwx floor, which the file setter does not apply).
+        The new mode is sanitized (special bits stripped) and the mtime applied
+        when either diverges. The master's own watcher then observes the
         IN_ATTRIB change and broadcasts the ``modified`` event to the other
         slaves, exactly like the central server's same-SHA branch.
         """
@@ -869,14 +870,28 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
         rel_path = query.get("filename", [None])[0]
         permissions = query.get("permissions", [None])[0]
+        mtime_raw = query.get("mtime", [None])[0]
+        mtime = 0
+        if mtime_raw is not None:
+            try:
+                mtime = int(mtime_raw)
+            except (TypeError, ValueError, OverflowError):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return
+            if mtime < 0:
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return
+            # ADR-0023 receiver-side guard: a far-future peer value must not win
+            # every tie-break.
+            mtime = int(clamp_incoming_corrected_mtime(mtime))
 
-        if not rel_path or not permissions:
-            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' or 'permissions'")
+        if not rel_path or (not permissions and mtime <= 0):
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' or metadata to apply")
             return
 
         from hsync_common.permissions import is_valid_octal_permissions
 
-        if not is_valid_octal_permissions(permissions):
+        if permissions and not is_valid_octal_permissions(permissions):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
             return
 
@@ -912,14 +927,26 @@ class LANRequestHandler(BaseHTTPRequestHandler):
 
             from hsync_client.utils import set_permissions
 
-            set_permissions(full_path, permissions)
-        except (OSError, ValueError) as e:
-            log.warning(f'Permission update failed for "{full_path}": {e}')
-            self._send_error_response(HTTP_INTERNAL_ERROR, "Permission update failed")
+            if permissions:
+                set_permissions(full_path, permissions)
+            if mtime > 0:
+                current_mtime = int(target.stat().st_mtime)
+                if abs(current_mtime - mtime) > MTIME_PROPAGATION_TOLERANCE_SECONDS:
+                    # ``mtime`` is an ADR-0023 corrected time: convert it back
+                    # to the master's raw clock before writing it, or the next
+                    # correction re-adds the offset and the value never matches.
+                    raw_mtime = uncorrect_mtime(mtime)
+                    os.utime(full_path, (raw_mtime, raw_mtime))
+        except (OSError, ValueError, OverflowError) as e:
+            log.warning(f'Metadata update failed for "{full_path}": {e}')
+            self._send_error_response(HTTP_INTERNAL_ERROR, "Metadata update failed")
             return
 
-        log.info(f'{ActionLabel.PERMISSION} Permissions updated: "{full_path}" ({permissions})')
-        self._send_json_response(HTTP_OK, {"info": "Permissions updated"})
+        log.info(
+            f'{ActionLabel.PERMISSION} Metadata updated: "{full_path}" '
+            f"(permissions={permissions}, mtime={mtime})"
+        )
+        self._send_json_response(HTTP_OK, {"info": "Metadata updated"})
 
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from client."""

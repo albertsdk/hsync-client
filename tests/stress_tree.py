@@ -582,6 +582,9 @@ def apply_mutation(
         mtime = _draw_mtime(new_rng)
         mode = int(manifest[f]["mode"])
         # Atomic re-deposit (plan §13.9): one event, final content + metadata.
+        # The new content may coincide with the previous one (e.g. an empty file
+        # redrawn at size 0): that is a metadata-only change and the engine must
+        # still propagate the new mtime (plan §13.11).
         sha = _deposit_file(root, f, new_rng, size=size, mode=mode, mtime=mtime)
         manifest[f] = {
             "type": "file",
@@ -610,9 +613,17 @@ def apply_mutation(
         if dir_relpaths and wrng.random() >= 0.15:
             parent = str(wrng.choice(dir_relpaths))
         # Seed the name PRNG from the wave stream so it stays deterministic
-        # while independent of the generation stream.
+        # while independent of the generation stream. Uniqueness is relative to
+        # *this* parent: a new basename must not collide with an existing file
+        # OR directory entry under the same parent (checking a bare basename
+        # against full relpaths misses the latter, and the atomic replace would
+        # then fail with IsADirectoryError).
         name_rng = random.Random(f"{seed}:wave{wave}:new:{i}:{wrng.getrandbits(64)}")
-        name = _unique_name(name_rng, set(manifest))
+        parent_prefix = parent or ""
+        siblings = {
+            rel.rsplit("/", 1)[-1] for rel in manifest if rel.rpartition("/")[0] == parent_prefix
+        }
+        name = _unique_name(name_rng, siblings)
         relpath = name if parent is None else f"{parent}/{name}"
         _check_safe_name(relpath)
         size = _draw_size(name_rng, max_file_size)

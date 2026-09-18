@@ -559,3 +559,24 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         """
         future = _get_remote_upload_executor().submit(upload_file, file, permissions_only=True)
         future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
+
+    def _on_metadata_changed(self, file: File, src_path: str) -> None:
+        """Propagate a plain ``touch`` to the central server (metadata-only).
+
+        The upload carries the same content hash, so the server's same-SHA
+        branch applies the new mtime (and any permission change) without
+        re-storing bytes. ``permissions_only`` bypasses the upload-status
+        "complete" early-return so the mtime actually reaches the server. The
+        touch is self-recorded first so the uploaded causal clock is honest
+        (self-record-before-advertise invariant, §3.4.7).
+        """
+        try:
+            if file.sha256sum:
+                from hsync_client.sync_state import flush, note_local_edit
+
+                note_local_edit(src_path, file.sha256sum)
+                flush()
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not self-record metadata edit for {src_path}: {e}")
+        future = _get_remote_upload_executor().submit(upload_file, file, permissions_only=True)
+        future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))

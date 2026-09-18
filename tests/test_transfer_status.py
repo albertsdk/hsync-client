@@ -109,6 +109,86 @@ class TestGetUploadStatus:
             assert offset == 0
 
 
+class TestUploadStatusPreflightShortCircuit:
+    """The resumable-upload probe is skipped for small non-permission uploads.
+
+    Regression guard for the per-file ``GET /files/upload-status`` round trip:
+    files below ``UPLOAD_STATUS_PREFLIGHT_MIN_SIZE`` start at offset 0 without
+    probing, while larger files — and every permission-only upload, whose fast
+    path depends on probing — still issue the request.
+    """
+
+    @staticmethod
+    def _file(size: int):
+        file = MagicMock()
+        file.filepath = "/bucket/blob.bin"
+        file.name = "blob.bin"
+        file.size = size
+        file.sha256sum = "a" * 64
+        file.ctime = 1000
+        file.mtime = 1000.0
+        file.permissions = "600"
+        return file
+
+    @staticmethod
+    def _run(transfer_mod, file, probe, permissions_only: bool = False) -> None:
+        response = MagicMock()
+        response.status_code = 201
+        with (
+            patch.object(transfer_mod, "_get_upload_status", probe),
+            patch.object(transfer_mod, "prepare_delta_upload", return_value=None),
+            patch.object(transfer_mod, "_upload_version_fields", return_value=("{}", "", 0)),
+            patch.object(transfer_mod, "should_compress", return_value=False),
+            patch.object(transfer_mod, "_build_multipart_streaming") as mock_build,
+            patch.object(transfer_mod, "post", return_value=response),
+            patch.object(transfer_mod, "path_lock"),
+            patch.object(transfer_mod, "emit_event"),
+            patch.object(transfer_mod, "_record_201_upload"),
+            patch.object(
+                transfer_mod,
+                "CONFIG",
+                {
+                    "API": {"buckets": "http://srv/api/v1/buckets"},
+                    "REMOTE_BUCKET": "demo",
+                    "LOCAL_BUCKET": "/bucket",
+                    "REQUEST_HEADERS": {},
+                    "CID": "TestClientX1234567890",
+                    "HTTP_TIMEOUT": 30,
+                    "COMPRESSION_ENABLED": False,
+                    "SERVER_COMPRESSION_ENABLED": False,
+                },
+            ),
+        ):
+            mock_build.return_value = (b"body", "multipart/form-data; boundary=x")
+            transfer_mod._upload_file_attempt(file, permissions_only=permissions_only)
+
+    def test_small_file_skips_probe(self):
+        from hsync_client import transfer as transfer_mod
+
+        probe = MagicMock(return_value=("new", 0))
+        self._run(transfer_mod, self._file(1024), probe)
+        probe.assert_not_called()
+
+    def test_file_at_threshold_still_probes(self):
+        from hsync_client import transfer as transfer_mod
+
+        probe = MagicMock(return_value=("new", 0))
+        self._run(
+            transfer_mod,
+            self._file(transfer_mod.UPLOAD_STATUS_PREFLIGHT_MIN_SIZE),
+            probe,
+        )
+        probe.assert_called_once()
+
+    def test_permission_only_probes_even_when_small(self):
+        from hsync_client import transfer as transfer_mod
+
+        probe = MagicMock(return_value=("complete", 0))
+        with patch.object(transfer_mod, "_patch_permissions_only", return_value=True):
+            self._run(transfer_mod, self._file(10), probe, permissions_only=True)
+        probe.assert_called_once()
+
+
 class TestIsFileStable:
     """Tests for is_file_stable function."""
 
