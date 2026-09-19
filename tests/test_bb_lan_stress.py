@@ -42,6 +42,10 @@ pytestmark = pytest.mark.skipif(not _ENABLED, reason=_REASON)
 
 _K = stress_tree.stress_knobs("lan")
 
+# Read at import time: the autouse env-isolation fixture scrubs HSYNC_* before
+# each test body, so an os.environ lookup inside the test would always be empty.
+_NO_PEER_DOWNLOAD = os.environ.get("HSYNC_BB_STRESS_NO_PEER_DOWNLOAD") == "1"
+
 
 def _report(record: dict[str, object]) -> None:
     stress_tree.collect(record)
@@ -95,7 +99,12 @@ class TestLanStress:
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"
             )
-            slave = _lan_start(lan_slave_dir, lan_bucket, never_master=True)
+            slave = _lan_start(
+                lan_slave_dir,
+                lan_bucket,
+                never_master=True,
+                extra_args=("--no-peer-download",) if _NO_PEER_DOWNLOAD else (),
+            )
             try:
                 assert _wait_for_slave_events(slave, timeout=90), (
                     "Slave did not become ready (watcher live + handshake done)"

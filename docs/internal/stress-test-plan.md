@@ -421,6 +421,7 @@ the test body (§13.5).
 | `HSYNC_BB_STRESS_POLL_INTERVAL` | `0.5` | LAN quiet-poll interval (s); also the convergence-time measurement resolution |
 | `HSYNC_BB_STRESS_MTIME_TOLERANCE` | `2` | mtime tolerance (s) |
 | `HSYNC_BB_STRESS_SUBPROCESS` | unset | Server mode only: `"1"` runs the client as a wall-clock subprocess instead of in-process (plan §13.5) |
+| `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD` | unset | LAN mode only: `"1"` starts the slave with `--no-peer-download`, for the peer-offload A/B (plan §13.12) |
 | `HSYNC_BB_STRESS_REPORT` | unset | Path for the JSON report (optional) |
 
 Prefer **CLI flags** over `HSYNC_*` env for per-run tuning (see §13.5 — the
