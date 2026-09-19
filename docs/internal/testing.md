@@ -880,6 +880,21 @@ remaining lever is `--no-peer-download` for peers that do not need to serve
 others, and any further gain needs a lane-level redesign (separate process or
 burst-time resolver deferral) with its own freshness/robustness analysis.
 
+**Intervention options, judged by sync reliability (2026-09-21).** Three ways to
+recover the block were evaluated; the default stays unchanged:
+- *Defer the resolver during a burst*: data-correct (the master is always a
+  valid source, so a skipped lookup loses offload, never a transfer), but it
+  shifts the burst's download load onto the master exactly when peers could
+  have shared it — a fleet-robustness regression, not a win.
+- *Move the lane to a separate process*: the only option that removes the GIL
+  contention without changing sync semantics, but it adds a process boundary
+  (lifecycle, crash, reconnect) and needs an ADR plus review.
+- *Keep the default and expose the lever*: `--no-peer-download` is already the
+  supported way to trade offload for burst speed; it stays the recommendation
+  for single-peer or performance-first deployments.
+Decision: **no default change now** (correctness and fleet robustness over pure
+throughput); the separate-process lane is the tracked design task.
+
 ### LAN burst: per-file CPU attribution, and the two wastes it removed
 
 The single-component benches could not explain the burst, so the **real peer** was
