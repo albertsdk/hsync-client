@@ -536,6 +536,13 @@ the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
   stops publishing on that connection without closing the socket, so the
   event flow survives a backlogged master receiver.
   Regression: `tests/test_lan_inventory.py::test_ack_timeout_stops_publisher_without_closing_channel`.
+- *Synchronous log sinks throttled the master's watcher thread.* Each
+  `[LOCAL CREATE]`-style line paid format + write + flush on the emitting
+  thread (measured ~2.5× slower event drain in an in-process replica).
+  Both sinks (`--log-file` and stdout) are now asynchronous (`enqueue=True`):
+  identical lines, written by a dedicated loguru thread; readers that need
+  the file immediately wait via `logger.complete()`.
+  Regression: `tests/test_logger.py::TestSetupLogging::test_setup_with_logfile`.
 
 ## Cross-project testing
 

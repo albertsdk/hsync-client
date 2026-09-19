@@ -226,6 +226,9 @@ class TestSetupLogging:
             log = setup_logging(logfile=logfile)
             # Test that logging works
             log.info("Test message")
+            # The file sink is asynchronous (enqueue=True): drain the queue
+            # before reading the file.
+            log.complete()
 
             # Verify file was written
             with open(logfile) as f:

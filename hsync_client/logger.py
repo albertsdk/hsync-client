@@ -224,6 +224,13 @@ def setup_logging(
             rotation=rotation_config["rotation"],
             retention=rotation_config["retention"],
             compression=rotation_config["compression"],
+            # Asynchronous sink: formatting and the write syscall move to a
+            # dedicated loguru thread, so high-frequency log lines (e.g. one
+            # [LOCAL CREATE] per file during a burst — measured to cost ~2.5x
+            # on the watcher thread when synchronous) never throttle the
+            # engine. Callers that must read the file right after a log call
+            # wait for the queue via ``logger.complete()``.
+            enqueue=True,
         )
     else:
         # Console handler - with colors (unless disabled)
@@ -238,6 +245,10 @@ def setup_logging(
             level=level,
             format=format_func,
             colorize=use_colors,  # Enable loguru's color tag processing
+            # Async here too: when stdout is redirected to a file (service /
+            # test harness) every line pays the same write+flush as the file
+            # sink and must not throttle the engine (see above).
+            enqueue=True,
         )
 
     # Intercept standard logging (for modules using logging.getLogger)

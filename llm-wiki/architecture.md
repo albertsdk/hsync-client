@@ -97,6 +97,14 @@ remote_websocket | lan.py + lan_server + lan_websocket + lan_handler   (modes)
 main_logic (orchestration) ← cli ← main
 ```
 
+**Logger sinks are asynchronous** (`logger.py:setup_logging`, `enqueue=True`
+on both the `--log-file` and stdout sinks): formatting and the write syscall
+run on loguru's dedicated thread, so per-event lines (one `[LOCAL CREATE]`
+per file during a burst) never throttle the emitting engine thread — a
+synchronous file sink measured ~2.5× slower event drain on the master's
+watcher thread. Readers that need the file content immediately after a log
+call wait via `logger.complete()`.
+
 ## State persistence (external SQLite, ADR-0025)
 
 | Store | Module | File | Purpose |
