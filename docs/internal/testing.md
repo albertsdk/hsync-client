@@ -787,6 +787,54 @@ measured urllib3's splitting, not the network path, and overstated the gain
 (6.1 → 2.8 ms/file, +43%). Re-measured with `os.urandom` payloads the effect is
 smaller but real. Always make large-file/transfer fixtures incompressible.
 
+### LAN burst: what the peer-offload block costs per file
+
+A/B on the same probe (2500 files / 200 dirs), 3 runs per arm, alternating:
+
+| arm | files/s (median [min..max]) | slave CPU/file (median [min..max]) |
+| --- | --- | --- |
+| peer offload on | 88.6 [82.3..101.8] | 12.95 ms [11.14..14.06] |
+| `--no-peer-download` | 130.4 [114.2..159.4] | 8.62 ms [6.92..10.05] |
+
++47 % throughput and −33 % CPU/file with the block off; both arms saturate
+~1.15 cores, so the burst is CPU-bound either way.
+
+**Caveat that must not be lost:** `--no-peer-download` is **not one switch**.
+`_start_slave_seeder` (`lan_handler.py:68`) skips *both* the slave's own seeder
+`LANServer` *and* its `LanInventoryPublisher` when it is off, and the resolver's
+`enabled` turns False. The A/B therefore measures the whole peer-offload block
+(source lookup + inventory publication + seeder + capability advertisement), and
+the 4.3 ms/file must **not** be attributed to any single mechanism inside it.
+
+Within the block, the per-file source lookup was measured against the production
+HTTPS server: `http_post` + `_read_bounded_response` on a 200 costs ~1.0-1.1 ms
+(POST alone 1.29 ms; reading a real 200 listing 1.04 ms). `candidates_for(refresh=True)`
+issues **one POST per file** because it calls `resolve([file])`
+(`lan_sources.py:740`), while `resolve` is explicitly designed to batch up to
+`LAN_SOURCES_MAX_FILES` identities — the realtime path defeats that batching by
+feeding it one file at a time, and the realtime path always refreshes
+(`refresh_peer_sources=source_resolver is not None` in `sync.update_file`).
+
+Batching those lookups is the obvious next step, but it changes *when* source
+ranking happens on the transfer hot path (a scheduling/semantics decision for
+peer selection), so it was deliberately left out of the chunk-size change.
+
+Measurement pitfalls found in this round (each produced a wrong number first):
+
+1. A hand-rolled `http.server` stub reported **43 ms** to read a tiny 200 body.
+   The same helper against the production `LANServer`: **1.04 ms**. The stub's
+   unbuffered HTTP/1.1 writes (Nagle / delayed-ACK) were the cost, not the code.
+   Never trust a scratch stub for latency.
+2. The same stub silently short-circuited (**0 POSTs received**) because the
+   test CID `"benchcid"` fails `build_lan_sources_request` validation; the
+   lookup then looked free (0.019 ms). Assert the *observable effect* (request
+   count), not just the elapsed time.
+3. Sampling `/proc/<pid>/task/*/stat` outside the burst window showed both peers
+   idle; aligned sampling showed 1.15 cores. Always confirm the sampling window
+   covers the burst.
+4. A compressible fixture hid the transfer cost behind zstd (see the chunk
+   section above).
+
 ## Cross-project testing
 
 The client depends on `hsync-common` models. When changing models in
