@@ -64,7 +64,10 @@
 > line built a `LogRecord` only to be dropped by the INFO sink (~0.1–0.17 ms/file).
 > Burst probe, 3 runs per arm: **88.6 → 113.1 files/s** (median) and **12.95 →
 > 10.92 ms CPU/file**; every post-fix run stayed ≥ 100 files/s, which no pre-fix
-> run did. Two candidates were measured and rejected with numbers: caching
+> run did. At the documented full scale (6000 files / 400 dirs) the initial burst
+> goes from the recorded **74.3 files/s (t_sync 80.7 s)** to **120.7 files/s
+> (t_sync 49.7 s)**, suite green (3 iterations, 0 mismatches). Two candidates were
+> measured and rejected with numbers: caching
 > `resolve_within`'s base directory (~0.08 ms/file, 0.6 %) and treating
 > `os.path.realpath` as the hot spot (0.11 ms/file — the statistical sampler's
 > 44 % share was GIL-contention bias). The peer-offload block remains the only

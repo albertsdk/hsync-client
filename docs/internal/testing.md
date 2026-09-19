@@ -905,6 +905,14 @@ did; the isolated cost of what was removed is ~1.0 ms/file (~8 %), so part of th
 move is this host's ±15 % run-to-run spread. Treat the direction as confirmed and
 the magnitude as bounded by the isolated figures.
 
+At the documented full scale (6000 files / 400 dirs, `HSYNC_BB_STRESS=1`) the
+initial burst goes from the recorded **74.3 files/s / t_sync 80.7 s** to
+**120.7 files/s [119.6..151.0] / t_sync 49.7 s [39.7..50.1]**, with the suite
+green (3 iterations, 0 mismatches). Cross-run numbers at that scale carry a
+host-state caveat: `t_gen` and `t_verify` — pure harness I/O, untouched by these
+changes — moved 2-3× between the two runs, so the interleaved probe A/B above
+remains the controlled comparison and this one corroborates its direction.
+
 Two conclusions that must not be lost:
 
 - **`os.path.realpath` is not the bottleneck**, although it is the hottest *leaf*
