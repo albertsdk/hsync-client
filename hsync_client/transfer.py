@@ -234,9 +234,9 @@ class _ThrottledFileReader:
 
 
 # Upload streaming chunk size (multipart bodies, plain and compressed spool).
-# 256 KiB matches the download tier (CHUNK_SIZE_LARGE): on fast links the
-# per-chunk syscall overhead of smaller chunks is measurable while memory
-# stays bounded.
+# 256 KiB amortises the per-chunk syscall/Python overhead while keeping the
+# uploader's buffering modest; the download read tiers are chosen separately
+# (see ``adaptive_chunk_size``).
 _UPLOAD_CHUNK_SIZE = 256 * 1024
 
 # Below this size a fresh upload is cheaper than the resumable-upload status

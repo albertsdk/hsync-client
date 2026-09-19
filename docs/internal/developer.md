@@ -77,15 +77,24 @@ To avoid redundant SHA-256 computations during a single sync operation, the clie
 - Individual entries are invalidated after downloads/uploads and before watchdog `File.get()` calls
 - mtime validation provides automatic staleness detection even if manual invalidation is missed
 
-### Adaptive Chunk Size for SHA-256 Computation
+### Adaptive Chunk Size for SHA-256 Computation and Transfer Reads
 
-SHA-256 hashing uses different I/O chunk sizes based on file size for optimal throughput:
+Hashing and download reads use different I/O chunk sizes based on file size for
+optimal throughput:
 
 | File Size | Chunk Size |
 |-----------|------------|
-| < 1 MB | 8 KB |
-| < 100 MB | 64 KB |
-| ≥ 100 MB | 256 KB |
+| < 1 MB | 256 KB |
+| < 100 MB | 512 KB |
+| ≥ 100 MB | 1 MB |
+
+The sub-1MB tier is deliberately large enough to read a typical burst file in a
+single iteration: each iteration pays a frame read, the bandwidth-throttle
+wrapper, one `hash.update` call and a write. Measured on the HTTPS apply path
+with incompressible payloads, an 8 KB tier cost 5.5 ms CPU per 200 KB file
+against 4.3 ms at 256 KB. Above ~1 MB the transfer itself dominates and the
+tier is neutral, so the upper tiers only bound the buffering
+(`CHUNK_SIZE_LARGE × MAX_CONCURRENT_TRANSFERS`).
 
 ### Configurable Parallelization for File Scanning
 

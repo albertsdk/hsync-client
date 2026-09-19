@@ -731,6 +731,62 @@ sends while the slave applies them, and the two processes share the host's
 cores. Reproducing it needs a profile of **both** peers during one real run
 (and ideally two hosts); the single-component benches above cannot capture it.
 
+### LAN burst: the CPU is real, and it is per-file Python
+
+A later round measured the field path directly instead of the pool knob:
+
+- **Thread CPU during the burst** (sampled from `/proc/<pid>/task/*/stat`): the
+  slave burns **1.15-1.16 cores** and the master ~0.9, with the CPU spread over
+  the 7 `asyncio_*` threads that `asyncio.to_thread` creates for the inbound
+  fan-out — *not* the dedicated `hsync-transfer_*` pool used by the reconcile.
+  Two executors serve the same work. Earlier "both peers idle" readings were
+  mis-aligned samples taken outside the burst window; the burst is CPU-bound.
+- **Per-file cost**: `usage` accounting gives **14.2-15.3 ms CPU/file** on the
+  event path (81 files/s) versus ~9.4 ms on the reconcile path (145 files/s,
+  observed concurrency peak 5 / time-weighted mean 2.9).
+- **No waste**: exactly 2500 `[DOWNLOAD]` lines for 2500 unique paths, zero
+  retries, zero errors, `mismatches=0`. The cost is genuine work.
+- **Not the inventory DB**: `record_base + flush` measures 0.05 ms/file
+  (0.02 ms batched) on a real store — the cProfile attribution that looked like
+  40% was lock-wait accounting plus cProfile's per-call inflation on many small
+  SQLite calls. Trust the `ru_utime/ru_stime` numbers, not the profiler shares.
+- **Not the vclock/merge path**: adding the `version` object the master really
+  advertises to the replica events *lowered* per-file cost (3.4 ms), so the
+  merge path is not what makes the field expensive.
+- **Not compression/logging/state**: at 200 KiB those add ~2.6 ms/file.
+- **The replica remains ~3x cheaper per file than the field** (4.3 vs ~15 ms)
+  and the difference is still **unattributed**. It needs both peers profiled in
+  one real run; single-component benches cannot see it.
+
+### Read chunk size (transfer loop)
+
+`adaptive_chunk_size` picked 8 KiB for every file under 1 MB, so a 200 KiB
+transfer paid 26 Python-level iterations (frame read, throttle wrapper,
+`hash.update`, write). A/B on the HTTPS apply path, identical configuration and
+incompressible payloads, 3 runs per arm:
+
+| small tier | ms CPU/file (200 KiB) | files/s |
+| --- | --- | --- |
+| 8 KiB | 5.5 | 232-269 |
+| 256 KiB | 4.3 | 300-348 |
+
+Above ~1 MiB the chunk size measured **neutral** (8 MiB files: 13.9 vs 14.9-18.0
+ms/file), so the tiers were raised for the sub-1MB class and only enough above
+it to keep `CHUNK_SIZE_LARGE * MAX_CONCURRENT_TRANSFERS` buffering small.
+
+**Honest caveat**: the end-to-end LAN probe did **not** resolve the saving
+(75.8 vs 81.3 files/s, i.e. within noise) because that path spends ~15 ms
+CPU/file on the unattributed overhead above. The per-file reduction is real and
+reproducible in isolation; the end-to-end throughput gain stays unproven until
+the field overhead is understood.
+
+**Measurement error worth remembering**: the first chunk A/B used a highly
+compressible fixture (a repeated 18-byte pattern), so zstd shrank the HTTP body
+to a few KB and the "transfer" degenerated into a buffer split — that arm
+measured urllib3's splitting, not the network path, and overstated the gain
+(6.1 → 2.8 ms/file, +43%). Re-measured with `os.urandom` payloads the effect is
+smaller but real. Always make large-file/transfer fixtures incompressible.
+
 ## Cross-project testing
 
 The client depends on `hsync-common` models. When changing models in
