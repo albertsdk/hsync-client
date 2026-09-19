@@ -842,6 +842,82 @@ the master persisting to SQLite) and the slave's seeder `LANServer`, which
 `_start_slave_seeder` creates together with it and which the
 `--no-peer-download` A/B above cannot separate.
 
+### LAN burst: per-file CPU attribution, and the two wastes it removed
+
+The single-component benches could not explain the burst, so the **real peer** was
+instrumented. `/proc/<pid>/task/*/stat` sampled over the burst window, per thread
+name, is the attribution that finally holds (2500 files / 200 dirs):
+
+| thread | CPU share | ms/file |
+| --- | --- | --- |
+| `asyncio_0..7` (the 8 `to_thread` apply workers) | 72 % | 10.6 |
+| `python` (main thread / asyncio loop) | 10.7 % | 1.58 |
+| `Thread-9` (inotify reader) | 7.9 % | 1.17 |
+| `Thread-7` (watchdog emitter) | 4.2 % | 0.62 |
+| `Thread-8`, `loguru-writer-1` | ~2.4 % / 0 % | 0.36 / 0 |
+
+Total **~12-15 ms CPU/file with 83 % user / 17 % syscall**. The whole Python side
+serialises onto ~1 core (the GIL), so throughput ≈ (1 core) / (CPU per file):
+that is the ~90 files/s ceiling, and it is why *more threads make it worse*.
+
+A deterministic `cProfile` inside the workers (one worker, so no cross-thread
+interference) named the composition, per transferred file:
+
+| item | per file | note |
+| --- | --- | --- |
+| `posix.lstat` / `posix.stat` | 54 / 23 calls | path confinement and the stat identity checks |
+| `validate_remote_relpath` (+ `is_reserved_name`, `has_problematic_trailing`) | 18.8 (+60) | our own lexical validation |
+| `os.path.realpath` (via `Path.resolve`) | 10.2 | **0.11 ms** of CPU — see below |
+| `loguru._handler.emit` per accepted record | 1 | 82 µs each |
+| stdlib `LogRecord.__init__` + `findCaller` | 14-26 | records that were dropped |
+| `requests` env-proxy resolution | 5 | `getproxies_environment` + `proxy_bypass_environment`, 167 µs each |
+| `_ssl._SSLSocket.read` | — | 5 % self time, not removable |
+
+Two of those were **pure waste** and are fixed:
+
+- **The pinned LAN session resolved the environment proxies per request.** The
+  fingerprint is the LAN trust anchor, so an environment proxy or CA bundle is
+  both pointless and harmful (it would route the pinned connection through a
+  third party); `get_http_session` now sets `trust_env = False` for
+  fingerprint-pinned sessions only. Measured **0.6-0.85 ms CPU/file** (5 calls
+  per file, 3.8 % of the apply-path profile). Regression:
+  `tests/test_utils.py::TestGetHttpSession::test_fingerprint_session_ignores_environment_proxies`
+  (and `..._plain_session_still_consults_environment_proxies` for remote mode).
+- **Every library DEBUG line built a `LogRecord` to be dropped.** `setup_logging`
+  used loguru's `level=0` recipe, and a NOTSET root answers `True` to
+  `isEnabledFor(DEBUG)`, so `urllib3`'s per-connection/per-request DEBUG messages
+  paid record construction plus a stack walk in `findCaller`, only for the INFO
+  sink to discard them: **14-26 records/file** (two independent windows), 6.5 µs
+  each (**0.1-0.17 ms/file**) against 0.08 µs for the level check that now avoids
+  them. Output is unchanged (they were dropped before and after); `--debug` still
+  enables them. Regression:
+  `tests/test_logger.py::TestSetupLogging::test_stdlib_root_level_follows_the_resolved_level`.
+
+End-to-end on the burst probe, 3 runs per arm (median [min..max]):
+
+| arm | files/s | slave CPU/file |
+| --- | --- | --- |
+| before (documented 3-run A/B) | 88.6 [82.3..101.8] | 12.95 ms [11.14..14.06] |
+| after | 113.1 [101.3..149.5] | 10.92 ms [8.04..12.01] |
+
+Every post-fix run stayed ≥ 100 files/s and ≤ 12.0 ms/file, which no pre-fix run
+did; the isolated cost of what was removed is ~1.0 ms/file (~8 %), so part of the
+move is this host's ±15 % run-to-run spread. Treat the direction as confirmed and
+the magnitude as bounded by the isolated figures.
+
+Two conclusions that must not be lost:
+
+- **`os.path.realpath` is not the bottleneck**, although it is the hottest *leaf*
+  in a statistical sample (44 % of the workers' samples). Its measured CPU is
+  0.11 ms/file (10.2 calls × 11.1 µs). The samples are inflated by GIL
+  contention: a thread waiting for the interpreter is observed inside whatever
+  Python function it was descheduled in.
+- **`resolve_within` is called 5.1 times per file** (`path_validation.py:581`
+  re-resolves the constant `base_dir`, `:583` the target: exactly 2 realpath calls
+  each, 25 456 for 2500 files, 100 % attributed). Caching the base was measured at
+  ~0.08 ms/file and **not** taken: a 0.6 % saving does not justify a
+  process-lifetime cache on a security path.
+
 Measurement pitfalls found in this round (each produced a wrong number first):
 
 1. A hand-rolled `http.server` stub reported **43 ms** to read a tiny 200 body.
@@ -857,6 +933,30 @@ Measurement pitfalls found in this round (each produced a wrong number first):
    covers the burst.
 4. A compressible fixture hid the transfer cost behind zstd (see the chunk
    section above).
+5. **A statistical stack sampler misattributes CPU under the GIL.** It reported
+   `posixpath.realpath` as 44 % of the apply workers' samples; the same function
+   measured in isolation is 11.1 µs, i.e. 0.11 ms/file (0.8 %). A thread waiting
+   for the interpreter is sampled *inside* whatever Python function it was
+   descheduled in. Use the sampler to find *candidates*, then confirm with a call
+   count (`os.path.realpath_calls=25456` for 2500 files) or a per-thread
+   `/proc` CPU split — never as the verdict.
+6. **`cProfile` per thread on eight workers raises inside the code under test.**
+   Each worker enabling its own `Profile` made the apply path fail with
+   `ValueError: Another profiling tool is already active` (363 of 400 profiled
+   calls). Those failures then dominated the profile through loguru's traceback
+   formatting (`_better_exceptions`: source tokenization plus `inspect` of frame
+   locals, ~1.8 ms per exception, 46 % of the profile) and looked exactly like a
+   product defect. Profile with concurrency 1, and check the run logged **zero**
+   exceptions before believing a profile.
+7. **A short "the file count stopped moving" wait is not convergence.** Under
+   instrumentation the burst stalls long enough for a stability heuristic to fire
+   mid-transfer; the teardown then aborts every in-flight download and produces
+   hundreds of error records that have nothing to do with steady state. Wait for
+   the expected file count.
+8. **A grep-shaped line count hides the level you did not ask for.** Counting log
+   lines with `grep -oE 'INFO: |WARNING: '` while comparing against `wc -l` made
+   a 381-line `ERROR:` storm look like a clean run. Count each level explicitly,
+   or reconcile the total with the per-level sum.
 
 ## Cross-project testing
 

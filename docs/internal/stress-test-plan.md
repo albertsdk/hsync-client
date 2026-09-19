@@ -52,6 +52,26 @@
 > burst throughput; details and the measurement table are in
 > `docs/internal/testing.md`.
 >
+> **Rev. 7 → Rev. 8 (2026-09-21) — LAN burst attributed per thread; two wastes
+> removed.** The residual ceiling is now measured, not inferred: the real slave
+> spends **~12–15 ms CPU per transferred file** (83 % user / 17 % syscall), 72 %
+> of it on the eight `asyncio_*` apply workers, and the Python side serialises on
+> ~1 core because of the GIL — throughput ≈ 1 core ÷ CPU-per-file, which *is* the
+> ~90 files/s ceiling. A deterministic `cProfile` inside the workers (run with
+> concurrency 1 so per-thread profiles cannot collide) named the composition and
+> two pure wastes were fixed: the pinned LAN session resolved the environment
+> proxies on **every** request (~0.6–0.85 ms CPU/file) and every library DEBUG
+> line built a `LogRecord` only to be dropped by the INFO sink (~0.1–0.17 ms/file).
+> Burst probe, 3 runs per arm: **88.6 → 113.1 files/s** (median) and **12.95 →
+> 10.92 ms CPU/file**; every post-fix run stayed ≥ 100 files/s, which no pre-fix
+> run did. Two candidates were measured and rejected with numbers: caching
+> `resolve_within`'s base directory (~0.08 ms/file, 0.6 %) and treating
+> `os.path.realpath` as the hot spot (0.11 ms/file — the statistical sampler's
+> 44 % share was GIL-contention bias). The peer-offload block remains the only
+> large lever (+47 % without it), and its remaining ~3 ms/file is *not* the
+> source lookup. Details, per-file tables and four new measurement pitfalls are
+> in `docs/internal/testing.md`.
+>
 > **Rev. 6 → Rev. 7 (2026-09-20) — server-mode baseline + reliability pass.**
 > The 83 server-mode black-box tests (`HSYNC_BB_SERVER=1`) were executed for
 > the first time: **80 passed, 1 failed**, and the failure was a real
