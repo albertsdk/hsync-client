@@ -499,6 +499,17 @@ version is not causally ahead. The reverse direction is symmetric: the slave's
 touch, pushes a metadata-only PATCH to the master
 (`LANSlaveFileEventHandler._propagate_metadata_change`). No bytes cross the wire.
 
+**Scale characteristics.** The LAN initial burst (full reconcile) scales to
+3000 files. The LAN *realtime* mutation path does not: at ~3000 files / ~600
+changed paths the master's watcher loses part of the burst and the replica does
+not settle within the 300 s convergence window (measured: 640 content
+mismatches at 3000, 0 at 2000 where the wave converges in ~14 s). The system
+already has a correctness safety net — periodic `RESYNC` (default 300 s,
+`HSYNC_RESYNC`) reconciles any missed event — so the replica converges on the
+next resync tick; the stress window simply ends first. Reducing realtime event
+loss at that burst size (watcher/broadcast backpressure) is the tracked
+follow-up.
+
 ## 14. Out of scope / deferred (v1)
 
 - **Symlinks** (structural replication with safety checks exists but adds edge
