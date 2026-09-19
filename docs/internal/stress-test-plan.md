@@ -1,6 +1,6 @@
 # HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
 
-> **Status: Implemented (Rev. 7).** The harness described here is implemented
+> **Status: Implemented (Rev. 9).** The harness described here is implemented
 > — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
 > `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
 > `docs/internal/testing.md` ("Stress suites") for usage and for the engine
@@ -74,6 +74,19 @@
 > large lever (+47 % without it), and its remaining ~3 ms/file is *not* the
 > source lookup. Details, per-file tables and four new measurement pitfalls are
 > in `docs/internal/testing.md`.
+>
+> **Rev. 8 → Rev. 9 (2026-09-21) — the §13 realtime-loss item is closed.** A
+> standalone mutation probe (burst → converge → full verify → wave →
+> re-verification, `/tmp/lan_mutate.py` pattern) re-tested the previously
+> failing scale on the post-fix build: at 3000 files / 300 dirs a 20 % wave
+> (600 changed paths) converges realtime-only in **4.6 s** with 0 residual
+> mismatches, a 50 % wave (1500 paths) in **13.4 s**, and the full-scale suite
+> (6000/400, wave included) passes 3/3. The loss reported in Rev. 6 was an
+> artefact of the pre-fix GIL-saturated apply path (~12-15 ms CPU/file then;
+> the same burst now runs ~35-60 % faster), not of watcher/broadcast
+> backpressure — see the revised §13 scale note for the two mechanism caveats
+> that remain (silent `IN_Q_OVERFLOW` discard in watchdog, `HSYNC_RESYNC`
+> safety net).
 >
 > **Rev. 6 → Rev. 7 (2026-09-20) — server-mode baseline + reliability pass.**
 > The 83 server-mode black-box tests (`HSYNC_BB_SERVER=1`) were executed for
@@ -579,16 +592,28 @@ version is not causally ahead. The reverse direction is symmetric: the slave's
 touch, pushes a metadata-only PATCH to the master
 (`LANSlaveFileEventHandler._propagate_metadata_change`). No bytes cross the wire.
 
-**Scale characteristics.** The LAN initial burst (full reconcile) scales to
-3000 files. The LAN *realtime* mutation path does not: at ~3000 files / ~600
-changed paths the master's watcher loses part of the burst and the replica does
-not settle within the 300 s convergence window (measured: 640 content
-mismatches at 3000, 0 at 2000 where the wave converges in ~14 s). The system
-already has a correctness safety net — periodic `RESYNC` (default 300 s,
-`HSYNC_RESYNC`) reconciles any missed event — so the replica converges on the
-next resync tick; the stress window simply ends first. Reducing realtime event
-loss at that burst size (watcher/broadcast backpressure) is the tracked
-follow-up.
+**Scale characteristics.** The LAN initial burst (full reconcile) and the LAN
+*realtime* mutation path both scale: a standalone mutation probe (burst →
+converge → full verify → wave → per-path re-verification every 2 s) measured
+**realtime-only recovery** well beyond the previously failing scale — at
+3000 files / 300 dirs the wave (20 % = 600 changed paths) converges in
+**4.6 s** with 0 residual mismatches, a heavier wave (50 % = 1500 changed
+paths) in **13.4 s**, and the full-scale suite (6000/400, mutation wave)
+passes 3/3 at 0 mismatches. The earlier report (master's watcher losing part
+of a ~600-path wave at ~3000 files, 640 content mismatches, no settle within
+300 s) predates the per-file CPU fixes (environment-proxy resolution and
+stdlib log-record construction, see `docs/internal/testing.md`): with the
+slave's apply path at ~12-15 ms CPU/file the whole pipeline serialised on
+~1 GIL core, and the same burst now runs ~35-60 % faster, which removed the
+loss. Transient mismatches during a wave are expected and are *not* loss:
+the verifier races the wave, so a sample taken 0.2 s into a 600-path wave
+shows ~1000 divergences (extra/missing/mode from in-flight deletes and
+re-creates) that all clear within seconds. Two mechanism notes remain valid
+for future bursts: watchdog silently discards `IN_Q_OVERFLOW` events
+(`read_events` skips any `wd == -1` record), so a kernel-side inotify overflow
+would be invisible in the logs; and the periodic `RESYNC` (default 300 s,
+`HSYNC_RESYNC`) remains the correctness safety net for any event dropped
+anywhere in the chain.
 
 ## 14. Out of scope / deferred (v1)
 

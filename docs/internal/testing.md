@@ -835,12 +835,27 @@ stall the leader longer (a 20 ms window would gather nearly all five and lose
 more than it saves). It was reverted rather than kept as unmeasured complexity
 on the LAN transfer hot path.
 
-**Conclusion for the next attempt:** the remaining ~3 ms/file of the
-peer-offload block is **not** the source lookup. Look at the inventory publisher
-(`LanInventoryPublisher`: a WSS frame plus an ACK round trip per mutation, with
-the master persisting to SQLite) and the slave's seeder `LANServer`, which
-`_start_slave_seeder` creates together with it and which the
-`--no-peer-download` A/B above cannot separate.
+**Conclusion for the next attempt:** the remaining ~3-4 ms/file of the
+peer-offload block is **not** the source lookup. The deep-profile A/B
+(`/tmp/deepprofAB_base` vs `deepprofAB_nopeer`, 2026-09-21) narrows it to the
+slave-side inventory/event chain:
+
+- `on_created` (watchdog handler, `lan_websocket.py`) is called **the same
+  number of times in both arms** (~82 per sampled window) but accumulates
+  **~20× more time with the block on** (0.342 s vs 0.018 s cum): with the
+  inventory lane live the handler feeds the `LanInventoryStore`/publisher per
+  event; with `--no-peer-download` the observer is a NOOP.
+- `_publish_deltas`/`_send_with_ack` ran only **4 times per window** — the
+  publisher is batched, so the per-frame WSS+ACK cost is amortised, not the
+  dominant term the earlier hypothesis assumed.
+- Source-resolution POSTs: **2 `resolve` calls per window** (~0.25 s cum, mostly
+  GIL-wait).
+
+Absolute per-function numbers are GIL-inflated (blocked threads show cum on
+whatever was on the stack), so the block-level delta — **~4.3 ms/file, −33 %
+CPU/file with the lane off** — stays the reliable figure; the split above is
+directional. The engineering takeaway: the cost scales with *per-event work in
+the inventory observer chain*, not with per-frame or per-lookup network calls.
 
 ### LAN burst: per-file CPU attribution, and the two wastes it removed
 
