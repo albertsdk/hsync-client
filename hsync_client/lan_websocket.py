@@ -2007,11 +2007,31 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         Any path covered by a deleted ancestor directory is folded into that
         ancestor's single ``DELETE`` request (``is_dir=true`` → the master
         applies ``rmtree``), so a whole tree removal costs ONE message.
+
+        A path re-created inside the window is dropped (and its causal
+        tombstone cleared) instead of being sent: the DELETE would make the
+        master remove the fresh file — the source losing data on a stale
+        delete echo.
         """
+        from hsync_client.file_event_handler import split_stale_deletes
+        from hsync_client.tombstones import clear_deletion
+
         with self._delete_lock:
             pending = self._pending_deletes
             self._pending_deletes = []
             self._delete_timer = None
+        if not pending:
+            return
+
+        pending, stale = split_stale_deletes(pending)
+        for src_path, is_directory in stale:
+            # Files only: directories never carry a tombstone marker (mirrors
+            # the record side in on_deleted).
+            if not is_directory:
+                try:
+                    clear_deletion(src_path)
+                except Exception as e:  # pragma: no cover - defensive
+                    log.debug(f"Could not clear tombstone for {src_path}: {e}")
         if not pending:
             return
 

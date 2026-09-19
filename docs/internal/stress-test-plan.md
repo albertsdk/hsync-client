@@ -1,6 +1,6 @@
 # HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
 
-> **Status: Implemented (Rev. 5).** The harness described here is implemented
+> **Status: Implemented (Rev. 6).** The harness described here is implemented
 > — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
 > `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
 > `docs/internal/testing.md` ("Stress suites") for usage and for the engine
@@ -25,6 +25,24 @@
 > the LAN download path hashed every file 2–3 times (bounded checksum cache).
 > The LAN full-scale suite now passes at 0 mismatches (see
 > `docs/internal/testing.md`).
+>
+> **Rev. 5 → Rev. 6 (2026-09-20) — mutation-wave defect + stale-delete guard.**
+> A pushed-scale LAN run (6000 files / 400 dirs, mutation wave) failed on one
+> permanently diverged path (`condivisi170`): the harness mutation deletes *and
+> re-creates* paths in the same wave, and the delete coalescing window
+> (`DELETE_COALESCE_WINDOW`) outlived the path — the master broadcast a delete
+> for a file that already existed again, the slave removed it, and the slave's
+> delete echo came back through the master's DELETE API and removed the source
+> too. Both flushes now re-check existence at flush time
+> (`file_event_handler.split_stale_deletes`), the slave clears the tombstone it
+> recorded when buffering, and the folding prefixes use the surviving entries
+> only. Three regressions added. The validation run then passed **3/3
+> iterations** (511 s, was 1 failing iteration after an 8-minute convergence
+> timeout) and measured the throughput work: the initial 6000-file burst
+> converges in a median **80.7 s** (74.3 files/s; best 69.2 s / 86.7 files/s)
+> and the mutation wave in a median **13.2 s** (454.7 files/s), against ~10 min
+> at ~50 files/s before the receive-loop fan-out, the nanosecond SHA-256 cache,
+> the asynchronous log sinks and the inotify event-filter trim.
 >
 > **Rev. 3 → Rev. 4 (2026-09-18) — completeness close-out.** Three documented
 > features were completed: the §13.5 `HSYNC_BB_STRESS_SUBPROCESS=1` wall-clock

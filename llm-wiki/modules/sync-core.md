@@ -327,6 +327,17 @@ exponential backoff with a dedicated log line. User-facing diagnosis/remedies:
 `docs/troubleshooting.md`; parsable log rows in `hsync-common/docs/log-labels.md`
 (`[WATCHER FALLBACK]`, `[WATCHER RESTORE]`, `[FD EXHAUSTED]`, client-only).
 
+**Inotify event-filter trim** (`watcher.py:_INOTIFY_EVENT_FILTER`, passed as
+`event_filter` at every inotify `schedule`): the watch excludes
+`FileOpenedEvent` and `FileClosedNoWriteEvent` — pure reads (the master's own
+HTTP downloads above all) are never sync-relevant, yet the default mask
+parsed/queued/dispatched tens of thousands of them per burst, flooding the
+watcher thread and stalling real events behind them (measured ~7× more
+events parsed, ~6× slower dispatch with downloads running; the replica with
+the filter drains ~2.7× faster under the same load). `FileClosedEvent`
+(IN_CLOSE_WRITE) stays: it is the file-ready signal after a save. The polling
+backend is unaffected (no filter passed).
+
 `BaseFileEventHandler` (`file_event_handler.py:54`) maps watchdog callbacks to the
 transfer pipeline. On Linux with the inotify backend, content propagates via
 `on_closed` (`SUPPORTS_ON_CLOSED`, `:43`); other platforms fall back to
@@ -503,6 +514,25 @@ its own watch on the same path); before this guard the flush emitted two
 identical `[LOCAL DELETE]` lines and two identical `deleted` broadcasts. The
 LAN slave's own buffer (`lan_websocket.py`) applies the same dedup before
 sending the single recursive DELETE to the master.
+
+**Stale-delete guard at flush** (`split_stale_deletes`,
+`file_event_handler.py`): the coalescing window can outlive the path it refers
+to. `rm <f>` immediately followed by a rewrite of the same name — an ordinary
+atomic-writer pattern — leaves the delete queued while the fresh file already
+exists, and the flush then broadcast a delete for a **live** file: the peer
+removed the re-created file and its own delete echo came back through the
+master's DELETE API, wiping the source too (observed in the LAN stress suite as
+a permanently diverged path). Both flushes (base class broadcast and the LAN
+slave's DELETE request) now re-check existence at flush time and drop the stale
+entry; the slave additionally clears the causal tombstone it had recorded when
+buffering, so the marker does not outlive the deletion it refers to. Because the
+folding prefixes are built from the surviving entries only, a re-created
+directory never swallows the deletes of genuinely removed descendants. The
+existence check is `hsync_client.utils.path_present` (symlink-aware: a dangling
+link is still a directory entry). Regression:
+`tests/test_file_event_handler_base.py::TestFileEventHandler::test_stale_delete_*`
+and
+`tests/test_lan_websocket_slave.py::TestSlaveFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`.
 
 **Directory modify dedup** (`on_modified`, directory branch,
 `file_event_handler.py`): inotify fires `IN_ATTRIB` on a directory whenever a

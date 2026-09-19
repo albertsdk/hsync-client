@@ -821,6 +821,39 @@ class TestSlaveFileEventHandler:
             handler._flush_pending_deletes()
         assert len(handler._pending_ops) >= 1
 
+    def test_stale_delete_dropped_when_path_recreated_inside_window(self, handler, tmp_path):
+        """A delete buffered then re-created before the flush is not sent.
+
+        Regression: a slave-local ``rm`` + immediate rewrite of the same name
+        leaves the delete queued while the file exists again; sending it would
+        make the master remove the fresh file (the source losing data on a
+        stale delete echo). The tombstone recorded at buffer time must be
+        cleared too, or the marker would outlive the deletion it refers to.
+        """
+        live = tmp_path / "recreated.txt"
+        live.write_bytes(b"old")
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "IGNORE_DELETE": False,
+        }
+        event = FileDeletedEvent(str(live))
+
+        with (
+            patch("hsync_client.lan_websocket.CONFIG", config),
+            patch.object(handler, "_delete_on_master") as mock_delete,
+            patch("hsync_client.lan_websocket.threading.Timer"),
+            patch("hsync_client.tombstones.clear_deletion") as mock_clear,
+        ):
+            live.unlink()
+            handler.on_deleted(event)
+            live.write_bytes(b"new")  # re-created inside the window
+            handler._flush_pending_deletes()
+
+        mock_delete.assert_not_called()
+        assert handler._pending_ops == []
+        mock_clear.assert_called_once_with(str(live))
+
     def test_on_deleted_temp_file_ignored(self, handler, tmp_path):
         """Test on_deleted ignores temp files."""
         event = FileDeletedEvent(str(tmp_path / "file.part"))

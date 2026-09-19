@@ -46,6 +46,79 @@ _WATCH_ERRNO = OSError(errno.ENOSPC, "inotify watch limit reached")
 _FD_ERRNO = OSError(errno.EMFILE, "Too many open files")
 
 
+class TestInotifyEventFilter:
+    """The inotify watch filter excludes the no-op read-event classes.
+
+    Regression for the burst-throttling storm: every download the LAN master
+    serves opens and closes a bucket file without writing, and the default
+    watchdog mask (FileOpenedEvent + FileClosedNoWriteEvent included) parses,
+    queues and dispatches tens of thousands of those no-op events, stalling
+    the real events behind them (~6x slower dispatch measured with downloads
+    running). FileClosedEvent must stay: it is the file-ready signal after a
+    save.
+    """
+
+    def test_inotify_schedule_carries_trimmed_filter(self):
+        from watchdog.events import (
+            FileClosedEvent,
+            FileClosedNoWriteEvent,
+            FileOpenedEvent,
+        )
+
+        from hsync_client.watcher import _INOTIFY_EVENT_FILTER
+
+        filter_set = set(_INOTIFY_EVENT_FILTER)
+        assert FileOpenedEvent not in filter_set, "open events must be excluded"
+        assert FileClosedNoWriteEvent not in filter_set, "close-no-write events must be excluded"
+        assert FileClosedEvent in filter_set, "close-write (file-ready) must stay"
+
+        captured: dict[str, Any] = {}
+
+        class _FakeObserver:
+            def __init__(self, **kwargs: Any) -> None:
+                pass
+
+            def schedule(self, handler: Any, path: Any, **kwargs: Any) -> None:
+                captured.update(kwargs)
+
+            def start(self) -> None:
+                pass
+
+        manager = WatcherManager("/tmp/fake-bucket")
+        manager._registrations.append((object(), "/tmp/fake-bucket", True))  # type: ignore[attr-defined]
+        with patch(
+            "hsync_client.watcher.WatcherManager._new_observer", return_value=_FakeObserver()
+        ):
+            manager._build_and_start("inotify")
+
+        assert captured["event_filter"] == _INOTIFY_EVENT_FILTER
+
+    def test_polling_schedule_carries_no_filter(self):
+        from hsync_client.watcher import _INOTIFY_EVENT_FILTER
+
+        captured: dict[str, Any] = {}
+
+        class _FakeObserver:
+            def __init__(self, **kwargs: Any) -> None:
+                pass
+
+            def schedule(self, handler: Any, path: Any, **kwargs: Any) -> None:
+                captured.update(kwargs)
+
+            def start(self) -> None:
+                pass
+
+        manager = WatcherManager("/tmp/fake-bucket")
+        manager._registrations.append((object(), "/tmp/fake-bucket", True))  # type: ignore[attr-defined]
+        with patch(
+            "hsync_client.watcher.WatcherManager._new_observer", return_value=_FakeObserver()
+        ):
+            manager._build_and_start("polling")
+
+        assert captured["event_filter"] is None
+        assert _INOTIFY_EVENT_FILTER  # the tuple itself is never empty
+
+
 class TestWatcherOserrorClass:
     """Classifier: inotify limits, FD exhaustion, and pass-through."""
 
@@ -166,12 +239,16 @@ class TestWatcherManagerScheduleDirectory:
     """Runtime dynamic watch: schedule, skip on a limit, re-raise otherwise."""
 
     def test_success_schedules_on_observer(self, tmp_path):
+        from hsync_client.watcher import _INOTIFY_EVENT_FILTER
+
         manager = WatcherManager(str(tmp_path))
         observer = MagicMock()
         manager._observer = observer
         handler = MagicMock()
         manager.schedule_directory(handler, "/new/dir")
-        observer.schedule.assert_called_once_with(handler, "/new/dir", recursive=True)
+        observer.schedule.assert_called_once_with(
+            handler, "/new/dir", recursive=True, event_filter=_INOTIFY_EVENT_FILTER
+        )
         assert (handler, "/new/dir", True) in manager._registrations
 
     def test_inotify_limit_skips_and_requests_downgrade(self, tmp_path):

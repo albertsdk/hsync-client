@@ -344,6 +344,22 @@ def is_valid_logfile(path_string: str) -> bool:
         return False
 
 
+def path_present(filepath: str) -> bool:
+    """Return whether *filepath* exists as a file/dir/link (dangling links too).
+
+    ``Path.exists()`` follows symlinks: a dangling link reports ``False`` even
+    though the directory entry exists. Callers that act on the entry itself
+    (inbound delete/rename dispatch, the delete-broadcast flush) must see both
+    cases, so a symlink entry always counts as present.
+
+    Consumers: ``hsync_client.event_dispatch`` (inbound delete/rename) and
+    ``hsync_client.file_event_handler`` (stale-delete guard in the coalesced
+    delete flush).
+    """
+    path = Path(filepath)
+    return path.is_symlink() or path.exists()
+
+
 def is_same_paths(path1: str, path2: str) -> bool:
     """
     Check if two paths refer to the same location.

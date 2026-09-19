@@ -38,6 +38,39 @@ from enum import StrEnum
 from typing import Any
 
 from loguru import logger as log
+from watchdog.events import (
+    DirCreatedEvent,
+    DirDeletedEvent,
+    DirModifiedEvent,
+    DirMovedEvent,
+    FileClosedEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileMovedEvent,
+)
+
+# Per-watch event filter for the inotify backend: every class maps to the
+# kernel mask bits its handler consumes, EXCEPT FileOpenedEvent and
+# FileClosedNoWriteEvent (deliberately omitted). A pure read — the LAN
+# master's own HTTP downloads above all — opens and closes bucket files
+# without writing, and the default mask would parse, queue and dispatch tens
+# of thousands of those no-op events per burst, flooding the watcher thread
+# and stalling the real events behind them (measured: ~7x more events parsed,
+# ~6x slower dispatch with downloads running). FileClosedEvent (IN_CLOSE_WRITE)
+# stays: it is the file-ready signal after a save. The polling backend is
+# unaffected (no filter passed).
+_INOTIFY_EVENT_FILTER: tuple[type[Any], ...] = (
+    DirCreatedEvent,
+    DirDeletedEvent,
+    DirModifiedEvent,
+    DirMovedEvent,
+    FileClosedEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileMovedEvent,
+)
 
 from hsync_client.constants import (
     WATCHER_DOWNGRADE_DELAY_S,
@@ -185,6 +218,7 @@ class WatcherManager:
         with self._lock:
             self._registrations.append((handler, path, True))
             observer = self._observer
+            backend = self._backend
         if observer is None:
             # No observer adopted yet (startup window): the registration stays
             # recorded and is replayed on the next backend swap.
@@ -195,7 +229,8 @@ class WatcherManager:
         # registration recorded above is replayed on the next swap and
         # periodic RESYNC reconciles any gap.
         try:
-            observer.schedule(handler, path, recursive=True)
+            event_filter = _INOTIFY_EVENT_FILTER if backend == "inotify" else None
+            observer.schedule(handler, path, recursive=True, event_filter=event_filter)
         except OSError as exc:
             kind = watcher_oserror_class(exc)
             if kind is None:
@@ -238,8 +273,9 @@ class WatcherManager:
         observer = self._new_observer(backend)
         with self._lock:
             registrations = list(self._registrations)
+        event_filter = _INOTIFY_EVENT_FILTER if backend == "inotify" else None
         for handler, path, recursive in registrations:
-            observer.schedule(handler, path, recursive=recursive)
+            observer.schedule(handler, path, recursive=recursive, event_filter=event_filter)
         observer.start()
         return observer
 
@@ -259,6 +295,12 @@ class WatcherManager:
             # watchdog's ObserverType Protocol (watchdog/observers/__init__.py)
             # predates generate_full_events, so the kwarg is invisible to mypy;
             # the runtime inotify Observer accepts it (see InotifyObserver).
+            #
+            # The per-watch event filter (see ``_INOTIFY_EVENT_FILTER``, passed
+            # at ``schedule`` time) trims IN_OPEN/IN_CLOSE_NOWRITE from the
+            # kernel mask: those read-side events are never sync-relevant but
+            # would otherwise flood the watcher thread during bursts (every
+            # download the master serves opens and closes a bucket file).
             return Observer(generate_full_events=True)  # type: ignore[call-arg]
         from watchdog.observers.polling import PollingObserver
 

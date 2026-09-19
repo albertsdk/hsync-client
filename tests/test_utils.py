@@ -22,6 +22,7 @@ from hsync_client.utils import (
     is_same_paths,
     is_valid_logfile,
     path_lock,
+    path_present,
     set_permissions,
     warn_if_inotify_watch_limit_low,
 )
@@ -714,3 +715,32 @@ class TestPathLock:
         with path_lock(target):
             assert key in _path_locks
         assert key not in _path_locks
+
+
+class TestPathPresent:
+    """Tests for path_present (symlink-aware existence check)."""
+
+    def test_existing_file(self, tmp_path):
+        """A regular file counts as present."""
+        target = tmp_path / "file.txt"
+        target.write_bytes(b"x")
+        assert path_present(str(target)) is True
+
+    def test_existing_directory(self, tmp_path):
+        """A directory counts as present."""
+        assert path_present(str(tmp_path)) is True
+
+    def test_missing_path(self, tmp_path):
+        """A path with no directory entry counts as absent."""
+        assert path_present(str(tmp_path / "ghost.txt")) is False
+
+    def test_dangling_symlink_counts_as_present(self, tmp_path):
+        """A dangling symlink is a real directory entry, so it is present.
+
+        ``Path.exists()`` follows the link and reports False; callers that act
+        on the entry (inbound delete/rename, the stale-delete guard) must see
+        it as present or they would drop a genuine entry from their decisions.
+        """
+        link = tmp_path / "dangling"
+        link.symlink_to(tmp_path / "does-not-exist")
+        assert path_present(str(link)) is True

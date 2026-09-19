@@ -543,6 +543,51 @@ the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
   identical lines, written by a dedicated loguru thread; readers that need
   the file immediately wait via `logger.complete()`.
   Regression: `tests/test_logger.py::TestSetupLogging::test_setup_with_logfile`.
+- *The master's own downloads flooded its watcher.* Every file the LAN master
+  serves is opened and closed without a write, and the default inotify mask
+  parsed/queued/dispatched those no-op events (measured ~7× more events
+  parsed, ~6× slower dispatch with downloads running — the actual cause of
+  the ~60 files/s burst ceiling). The inotify watch now excludes
+  `FileOpenedEvent`/`FileClosedNoWriteEvent` via an event filter (the
+  file-ready `FileClosedEvent` stays); the replica drains ~2.7× faster under
+  the same download load.
+  Regression: `tests/test_watcher_start.py::TestInotifyEventFilter`.
+
+### Stress-found correctness defects (fixed)
+
+- *A stale delete could destroy a re-created file on **both** peers.* The delete
+  coalescing window (`DELETE_COALESCE_WINDOW`) can outlive the path it refers
+  to: `rm <f>` followed by an immediate rewrite of the same name (the atomic
+  pattern the mutation wave uses) left the delete queued while the fresh file
+  already existed. The flush then broadcast a delete for a live file, the peer
+  removed it, and the peer's own delete echo came back through the master's
+  DELETE API — removing the source as well. Both flushes now re-check existence
+  at flush time and drop the stale entry (`split_stale_deletes`); the slave also
+  clears the tombstone recorded when buffering. Regressions:
+  `tests/test_file_event_handler_base.py::TestFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`,
+  `...::test_stale_delete_does_not_swallow_live_descendants`,
+  `tests/test_lan_websocket_slave.py::TestSlaveFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`.
+
+### Measured remaining limit (next target, not fixed)
+
+The full-scale LAN burst is now bounded by the **slave's inbound apply
+pipeline**, not by the master or the network:
+
+- the master queues the 6400 `LOCAL CREATE` broadcasts of a 6000-file tree in
+  **~9 s (711 ev/s peak, 1331/s)**, and `scripts/benchmark_lan_transfers.py`
+  shows it serves 16 KiB downloads at ~0.4 ms/req (2493 req/s keep-alive);
+- the slave nevertheless drains at **~90 files/s**, i.e. an *effective*
+  concurrency of ~1.6 against the fan-out semaphore
+  (`MAX_CONCURRENT_TRANSFERS` = 5), while each `[DOWNLOAD]` reports a median of
+  only 11 ms (mean 17.8 ms). Per-event handler CPU is ~0.1 ms (hash + SQLite
+  `note_local_edit` + `flush` measured at 0.09/0.03 ms on tmpfs), so the loss is
+  in the event→task pipeline (`_spawn_file_download` scheduling, the per-file
+  watchdog echo traffic on the replica, and WS send/parse interleaving with the
+  master's HTTP threads) rather than in any single hot function.
+
+Both peers run on the same host in this harness, so any attribution must be
+confirmed with an in-process profile of the slave's apply path (the pattern
+used for the master broadcast before) and, ideally, two separate hosts.
 
 ## Cross-project testing
 

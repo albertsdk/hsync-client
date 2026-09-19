@@ -53,18 +53,7 @@ from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserve
 from hsync_client.lan_sources import LanSourceResolver
 from hsync_client.sync import update_dir, update_file
 from hsync_client.transfer import download_file
-from hsync_client.utils import cid_suffix, path_lock, safe_rmdir_if_empty
-
-
-def _path_present(filepath: str) -> bool:
-    """True when *filepath* exists as a file/dir/link (dangling links included).
-
-    ``Path.exists()`` follows symlinks: a dangling link reports ``False`` even
-    though the directory entry exists. Deletion/rename of an inbound link must
-    act on the entry, so both cases must be recognized.
-    """
-    p = Path(filepath)
-    return p.is_symlink() or p.exists()
+from hsync_client.utils import cid_suffix, path_lock, path_present, safe_rmdir_if_empty
 
 
 def _remove_locked(filepath: str) -> bool:
@@ -75,7 +64,7 @@ def _remove_locked(filepath: str) -> bool:
     a real directory entry and is removed too.
     """
     with path_lock(filepath):
-        if _path_present(filepath):
+        if path_present(filepath):
             remove(filepath)
             return True
     return False
@@ -546,7 +535,7 @@ async def _rename_path(
     _mark(ctx, src_path)
     _mark(ctx, dst_path)
     try:
-        if _path_present(src_path):
+        if path_present(src_path):
             log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{cid_suffix(origin_cid)}')
             emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             _ensure_parent_dir(dst_path)
@@ -589,7 +578,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
             ctx.record_inbound_delete(local)
         _mark(ctx, local)
         try:
-            if _path_present(local):
+            if path_present(local):
                 log.info(f'{_tag("DELETE")} "{local}"{cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 if Path(local).is_symlink():
@@ -619,7 +608,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
             return
         _mark(ctx, local)
         try:
-            if _path_present(local):
+            if path_present(local):
                 log.info(f'{_tag("DELETE")} "{local}"{cid_suffix(origin_cid)}')
                 emit_event(UiEventName.transfer, op="delete", file=local)
                 await asyncio.to_thread(_remove_locked, local)

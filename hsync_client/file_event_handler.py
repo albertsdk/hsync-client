@@ -48,7 +48,7 @@ from watchdog.events import (
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
-from hsync_client.utils import cid_suffix, ensure_str_path, is_same_paths
+from hsync_client.utils import cid_suffix, ensure_str_path, is_same_paths, path_present
 
 if TYPE_CHECKING:
     from hsync_client.watcher import WatcherManager
@@ -65,6 +65,42 @@ MODIFIED_DEBOUNCE_INTERVAL = 1.0
 # for this window and then flushed as a single recursive `deleted` event for
 # the topmost deleted directory(s); descendants are folded away.
 DELETE_COALESCE_WINDOW = 0.2
+
+
+def split_stale_deletes(
+    pending: list[tuple[str, bool]],
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """Split *pending* deletes into still-valid entries and stale ones.
+
+    Deletes are buffered for ``DELETE_COALESCE_WINDOW`` before being
+    propagated, so a path deleted and re-created inside that window still has
+    its delete queued when the fresh file already exists on disk. Propagating
+    it would wipe the re-created file on every peer — and, through the peer's
+    delete echo, on the source itself — so the stale entry is dropped: the
+    re-creation already propagated on its own event.
+
+    A path counts as present when it exists as a file/dir or as a (possibly
+    dangling) symlink entry: see ``hsync_client.utils.path_present``.
+
+    Returns ``(valid, stale)``; callers that recorded a causal tombstone when
+    buffering the delete must clear it for the *stale* entries, otherwise the
+    marker outlives the deletion its premise refers to.
+
+    Consumers: ``BaseFileEventHandler._flush_pending_deletes`` (master/remote
+    broadcast) and ``LANSlaveFileEventHandler._flush_pending_deletes`` (slave
+    delete requests to the master).
+    """
+    valid: list[tuple[str, bool]] = []
+    stale: list[tuple[str, bool]] = []
+    for entry in pending:
+        src_path = entry[0]
+        if path_present(src_path):
+            log.debug(f'Stale delete dropped, path exists again: "{src_path}"')
+            stale.append(entry)
+        else:
+            valid.append(entry)
+    return valid, stale
+
 
 # Minimum quiet window for directory MODIFY events. inotify fires IN_ATTRIB on
 # a directory once per child create/write/rename/remove, so a single recursive
@@ -821,6 +857,16 @@ class BaseFileEventHandler(FileSystemEventHandler):
         FILE paths still pass through :meth:`_on_deleted` so the LAN master
         records their tombstones; folded directory paths need no marker
         (directories never carry tombstones).
+
+        The filesystem is re-checked at flush time: a buffered path that
+        exists again was re-created while its delete sat in the window
+        (``rm`` + immediate rewrite of the same name — an ordinary atomic
+        writer pattern). That delete is stale: the re-creation already
+        propagated on its own event, and broadcasting the delete would wipe
+        the fresh file on every peer — and, through the LAN delete echo, on
+        the source itself. The ancestor-folding prefixes are built from the
+        surviving entries, so a re-created directory never swallows the
+        individual deletes of genuinely removed descendants.
         """
         with self._delete_lock:
             pending = self._pending_deletes
@@ -828,6 +874,19 @@ class BaseFileEventHandler(FileSystemEventHandler):
             self._pending_delete_set = set()
             self._pending_delete_dir_paths = set()
             self._delete_timer = None
+        if not pending:
+            return
+
+        # Invalidate the content-dedup cache for every buffered path: a
+        # re-created file must be re-evaluated against a fresh stat/hash, not
+        # skipped because it happens to share mtime+size (stage 1) or sha256
+        # (stage 2) with the pre-deletion version. Without this, create ->
+        # delete -> re-create of the same file (same content, preserved mtime)
+        # silently drops the third event as "Skip unchanged (stat)".
+        for src_path, _is_directory in pending:
+            self._invalidate_dedup(src_path)
+
+        pending, _stale = split_stale_deletes(pending)
         if not pending:
             return
 
@@ -840,15 +899,6 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return any(prefix.startswith(d) and d != prefix for d in deleted_dir_prefixes)
 
         for src_path, is_directory in pending:
-            # Invalidate the content-dedup cache for this path: a re-created
-            # file must be re-evaluated against a fresh stat/hash, not skipped
-            # because it happens to share mtime+size (stage 1) or sha256
-            # (stage 2) with the pre-deletion version. Without this,
-            # create -> delete -> re-create of the same file (same content,
-            # preserved mtime) silently drops the third event as
-            # "Skip unchanged (stat)".
-            self._invalidate_dedup(src_path)
-
             if covered_by_deleted_ancestor(src_path):
                 log.debug(f'Folded into ancestor delete: "{src_path}"')
                 if not is_directory:

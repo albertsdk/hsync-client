@@ -984,6 +984,93 @@ class TestFileEventHandler:
 
         assert mock_broadcast.call_count == 2
 
+    def test_stale_delete_dropped_when_path_recreated_inside_window(self, tmp_path):
+        """A delete buffered then re-created before the flush is not broadcast.
+
+        Regression: the coalescing window can outlive the path it refers to.
+        ``rm`` + immediate rewrite of the same name (ordinary atomic-writer
+        pattern) re-creates the file while its delete is still buffered; the
+        flush then broadcast a delete for a live file, wiping the fresh bytes
+        on every peer and — through the LAN delete echo — on the source
+        itself. The stale entry must be dropped (no broadcast, no tombstone).
+        """
+        live = tmp_path / "recreated.txt"
+        live.write_bytes(b"old")
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = str(live)
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted") as mock_on_deleted,
+        ):
+            # Buffered while the file is gone (the rm already happened).
+            live.unlink()
+            self.handler.on_deleted(event)
+            # Re-created inside the window: the entry now points at a live file.
+            live.write_bytes(b"new")
+            self.handler._flush_pending_deletes()
+
+        mock_broadcast.assert_not_called()
+        mock_on_deleted.assert_not_called()
+
+    def test_stale_delete_does_not_swallow_live_descendants(self, tmp_path):
+        """A re-created directory must not fold away its live children's deletes.
+
+        The folding prefixes are built from the surviving entries only, so a
+        directory deleted and re-created inside the window does not count as a
+        deleted ancestor: a sibling child that really is gone is still
+        broadcast individually.
+        """
+        root = tmp_path / "subdir"
+        root.mkdir()
+        gone = root / "gone.txt"
+        live = root / "kept.txt"
+        gone.write_bytes(b"x")
+        live.write_bytes(b"y")
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "mybucket",
+            "IGNORE_DELETE": False,
+        }
+        gone_event = MagicMock()
+        gone_event.is_directory = False
+        gone_event.src_path = str(gone)
+        dir_event = MagicMock()
+        dir_event.is_directory = True
+        dir_event.src_path = str(root)
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.threading.Timer"),
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch.object(self.handler, "_on_deleted"),
+        ):
+            gone.unlink()
+            self.handler.on_deleted(gone_event)
+            # The directory itself is deleted and re-created inside the window.
+            self.handler.on_deleted(dir_event)
+            self.handler._flush_pending_deletes()
+
+        # Exactly the genuinely removed child is broadcast; the live (re-created)
+        # directory is not.
+        mock_broadcast.assert_called_once()
+        event = mock_broadcast.call_args.args[0]
+        assert event.name == "deleted"
+        assert event.src.filepath == "subdir/gone.txt"
+
     def test_on_deleted_folded_file_still_records_lan_tombstone(self):
         """Descendant files folded into a dir delete still pass _on_deleted."""
         config = {
