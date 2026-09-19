@@ -251,8 +251,17 @@ def setup_logging(
             enqueue=True,
         )
 
-    # Intercept standard logging (for modules using logging.getLogger)
-    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    # Intercept standard logging (for modules using logging.getLogger).
+    #
+    # The level is the resolved one, not loguru's usual `level=0` recipe: a
+    # NOTSET root logger answers True to `isEnabledFor(DEBUG)` (0 <= 10), so
+    # every DEBUG line a library emits builds a LogRecord and walks the stack in
+    # `findCaller` before crossing into loguru — which then drops the record,
+    # because the sinks above are configured at this same level. Measured on the
+    # LAN burst: 14-26 such records per transferred file, 6.5 us each, against
+    # 0.08 us for the level check that avoids them. Output is unchanged: with
+    # `--debug` the level is DEBUG and everything still flows.
+    logging.basicConfig(handlers=[InterceptHandler()], level=level, force=True)
 
     # Configure specific loggers to use intercept handler
     for logger_name in (

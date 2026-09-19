@@ -105,6 +105,15 @@ synchronous file sink measured ~2.5× slower event drain on the master's
 watcher thread. Readers that need the file content immediately after a log
 call wait via `logger.complete()`.
 
+**The stdlib root level is the resolved level, not loguru's `level=0`
+recipe** (`logging.basicConfig(..., level=level)`): a NOTSET root answers
+`True` to `isEnabledFor(DEBUG)`, so every DEBUG line a library emits would
+build a `LogRecord` and walk the stack in `findCaller` before the interceptor
+forwarded it to loguru, whose sink then dropped it — ~26 dropped records per
+transferred file on a LAN burst, 6.5 µs each against 0.08 µs for the level
+check that now avoids them. Output is unchanged (those records were discarded
+either way); `--debug` raises the root to DEBUG and lets them through.
+
 **Exit paths flush the sinks** (`logger.py:flush_logs`, blocking `complete()`
 wrapper, best-effort): an asynchronous sink writes from another thread, so a
 path that logs its reason and terminates lost that record — observed

@@ -242,6 +242,28 @@ class TestSetupLogging:
         # Should not raise
         setup_logging(no_color=True)
 
+    def test_stdlib_root_level_follows_the_resolved_level(self):
+        """The stdlib root level must match what the sinks actually display.
+
+        Regression: ``logging.basicConfig(..., level=0)`` (the common loguru
+        recipe) leaves the root logger NOTSET, and a NOTSET root answers ``True``
+        to ``isEnabledFor(DEBUG)`` (``DEBUG >= 0``). Every DEBUG line a library
+        emits therefore built a LogRecord — walking the stack in ``findCaller`` —
+        before loguru's INFO sink discarded it. Measured on the LAN burst: ~26
+        such records per transferred file at 6.5 us each, against 0.08 us for the
+        level check that now avoids them. Output is unchanged, because those
+        records were dropped either way.
+        """
+        setup_logging()
+        assert logging.getLogger().level == logging.INFO
+        assert not logging.getLogger("urllib3").isEnabledFor(logging.DEBUG)
+
+    def test_stdlib_root_level_is_debug_in_debug_mode(self):
+        """``--debug`` still lets library DEBUG records through."""
+        setup_logging(debug=True)
+        assert logging.getLogger().level == logging.DEBUG
+        assert logging.getLogger("urllib3").isEnabledFor(logging.DEBUG)
+
     def test_flush_logs_drains_the_async_sink(self):
         """``flush_logs`` delivers a record logged immediately before exit.
 
