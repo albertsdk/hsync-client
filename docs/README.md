@@ -57,6 +57,7 @@ see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 ### 6. Reference & internals
 
 - [Usage](usage.md) — CLI syntax and behaviour (symlinks, error handling, auto-tuning).
+- [Performance](performance.md) — measured throughput by mode, workload and phase.
 - [Internal architecture](internal/architecture.md) — how the client is structured.
 - [LAN protocol internals](internal/lan-internals.md) — deep P2P details.
 - [Auto-tuning internals](internal/autotune.md) — environment-adaptive defaults.
