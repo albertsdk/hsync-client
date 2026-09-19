@@ -112,6 +112,6 @@ single-core GIL ceiling.
 | Peer offloading on the burst path | currently costs ~38 % of burst throughput when enabled |
 | TLS/hashing | release the GIL partially; contribute but are not the bottleneck |
 
-Changes to the LAN trust model or sync engine may move these numbers; when they
-do, re-run the stress harness and update this page (see
-[Stress Test Plan](internal/stress-test-plan.md) for the exact commands).
+Changes to the LAN trust model or sync engine may move these numbers.
+To re-run the stress see
+[Stress Test Plan](internal/stress-test-plan.md) for the exact commands.
