@@ -17,7 +17,7 @@ engine (requests/loguru) and never `zeroconf`/`watchdog` (LAN-only) or
 | `sync` | `sync.py:263` | one full reconcile cycle (lan_mode flag) |
 | `log_initial_sync_start` | `sync.py:263` (above `sync`) | emits the colored `[INITIAL SYNC]` phase marker; called by the three initial-sync entry points (`lan_handler._run_as_slave`, `remote_websocket.remote_connect`, `main_logic` one-shot) right before the first `sync()` of a run |
 | `periodic_resync` | `sync.py:105` | shared RESYNC loop for remote + LAN slave; re-raises `CancelledError` |
-| `get_files_local` | `sync.py:863` | scan local tree (parallel, adaptive workers `_get_optimal_workers:816`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed. `_get_optimal_workers` bounds the `ThreadPoolExecutor` by the cgroup CPU quota **and**, when a cgroup memory limit is detected (containers), by `get_memory_limit_bytes` / `WORKER_MEMORY_BUDGET_BYTES` (8 MiB/worker); on bare metal the memory probe is `None` and only the CPU quota applies |
+| `get_files_local` | `sync.py:863` | scan local tree (parallel, adaptive workers `_get_optimal_workers:816`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed. `_get_optimal_workers` bounds the `ThreadPoolExecutor` by the cgroup CPU quota **and**, when a cgroup memory limit is detected (containers), by `get_memory_limit_bytes` / `WORKER_MEMORY_BUDGET_BYTES` (8 MiB/worker); on bare metal the memory probe is `None` and only the CPU quota applies. **Unchanged files are never re-hashed across cycles**: `File.get`'s SHA-256 cache is keyed on the nanosecond stat identity (see `hsync-common` data-models) and `sync()` no longer clears it per cycle — continuous-mode force resyncs are metadata-only |
 | `get_files_remote` | `sync.py:661` | fetch remote file list |
 | `get_tombstones_remote` / `push_tombstones_remote` | `sync.py:950` / `:998` | tombstone exchange |
 | offline-deletion tombstone minting | `sync.py`, within `sync()` | a merge-base entry missing from the local filesystem is tombstoned (deleted while offline, or below the watcher's radar in a one-shot run). The existence check uses the ignore-agnostic `_existing_file_paths` (`sync.py`) snapshot only — it enumerates every real file bypassing the active `IgnoreMatcher`, so a file hidden by `.hsyncignore` is never mistaken for a deletion ("exclude protects, it does not delete", rsync `--exclude`, Syncthing `.stignore`); it is a superset of the syncable listing for on-disk files, so the syncable `local_keys` set is redundant and was dropped to fix a mid-scan race (a file deleted while `get_files_remote` retries bridge a transiently-unreachable master would otherwise survive in the stale listing and be resurrected). The same snapshot keeps the merge base alive across `retain`, so re-including the file later reconciles with full causal history instead of a false conflict. Paths are normalized via `relpath_in_bucket` before hashing (absolute-path hashes never match the relative-keyed store) |
@@ -178,6 +178,19 @@ non-`None`, so a security-rejected directory is not pre-logged as created), `_ap
 locked via `_remove_locked:67`), `_apply_symlink` (`:523`). Echo suppression uses
 the `EventDispatchContext` (`:121`) marking (`_mark:218`/`_unmark:223`).
 Path resolution: `_resolve_local_path` (`:334`).
+
+**Bounded file-download fan-out** (`_spawn_file_download:238` +
+`drain_file_downloads:296`): when the context carries a
+`file_download_semaphore` (set by the LAN slave ctx), the `added`/`modified`
+file branch schedules the `update_file` download as a task instead of
+awaiting it inline. Events for the **same path** are chained after the
+previous task (order preserved; `download_file` also holds `path_lock`), the
+**mark/unmark** echo suppression brackets the write inside the task, and
+distinct paths run concurrently under the semaphore. The receive loop's
+teardown drains the pending tasks before the discovery loop's full sync.
+The serial `await` this replaces capped a LAN burst at ~60 files/s while the
+master serves 200+ req/s; remote-mode contexts (no semaphore) keep the
+inline behavior.
 
 **Inbound directory dedup** (`_apply_add_or_modify` + `_DirDedup`): the master
 broadcasts a burst of near-identical `added`/`modified` directory events per

@@ -230,9 +230,8 @@ class TestSyncRunsDirConverge:
                 stack.enter_context(
                     patch.object(sync_mod, "get_sync_actions", return_value=[action])
                 )
-                stack.enter_context(patch.object(sync_mod, "clear_sha256_cache"))
-                stack.enter_context(patch.object(sync_mod, "sync_state"))
                 stack.enter_context(patch.object(sync_mod, "_cleanup_partial_files"))
+                stack.enter_context(patch.object(sync_mod, "sync_state"))
                 stack.enter_context(patch.object(sync_mod, "ensure_hsynckeep_files"))
                 stack.enter_context(
                     patch.object(sync_mod, "_execute_parallel_transfers", new=transfers)

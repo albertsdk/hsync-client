@@ -517,6 +517,26 @@ These fixes took the LAN full-scale suite (6000 files / 400 dirs / ~1.5 GB)
 from a 600 s convergence timeout with 163 mismatches to `1 passed in ~138 s`
 with 0 mismatches (burst ≈ 67 file/s, mutation wave ≈ 147 file/s).
 
+**Throughput follow-ups (fixed)** — attribution via
+`scripts/benchmark_lan_transfers.py` + a throwaway HTTPS micro-bench showed
+the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
+
+- *The slave's WSS receive loop serialized downloads.* Every inbound file
+  event was `await`ed inline (~10–26 ms each), capping a burst at ~60
+  files/s. Inbound file downloads are now fanned out per-path-chained,
+  bounded by `MAX_CONCURRENT_TRANSFERS` (`event_dispatch._spawn_file_download`).
+  Regression: `tests/test_event_dispatch_file_fanout.py`.
+- *Every sync cycle re-hashed the whole local tree.* The SHA-256 cache is now
+  keyed on the nanosecond stat identity (mtime/ctime/size) in `hsync-common`
+  and is no longer cleared per cycle: continuous-mode resyncs are
+  metadata-only. Regressions:
+  `hsync-common/tests/test_models_file.py::TestFileGetSha256Cache`,
+  `hsync-client/tests/test_sync_local.py::TestSyncPreservesSha256Cache`.
+- *An inventory ACK timeout used to kill the WSS channel.* The publisher now
+  stops publishing on that connection without closing the socket, so the
+  event flow survives a backlogged master receiver.
+  Regression: `tests/test_lan_inventory.py::test_ack_timeout_stops_publisher_without_closing_channel`.
+
 ## Cross-project testing
 
 The client depends on `hsync-common` models. When changing models in

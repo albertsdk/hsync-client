@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -59,6 +60,22 @@ class AckingWebSocket:
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = True
+
+
+class SilentWebSocket:
+    """Transport that never ACKs: reproduces a backlogged master receiver."""
+
+    def __init__(self) -> None:
+        self.frames: list[dict] = []
+        self.closed = False
+        self.closed_code: int | None = None
+
+    async def send(self, message: str) -> None:
+        self.frames.append(json.loads(message))
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed = True
+        self.closed_code = code
 
 
 def test_legacy_volatile_schema_is_recreated(tmp_path: Path) -> None:
@@ -230,6 +247,31 @@ def test_old_owner_disconnect_cannot_purge_reconnected_session(tmp_path: Path) -
     assert store.end_session(CID_A, new_token) is True
     assert store.holders_for(_query("one.txt", DIGEST_A))[("one.txt", DIGEST_A)] == ()
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_ack_timeout_stops_publisher_without_closing_channel(tmp_path: Path) -> None:
+    """Regression: an unacknowledged frame must not tear down the WSS channel.
+
+    Under a burst the master's receiver can be backlogged for tens of seconds;
+    the old behaviour closed the websocket with 1011 after one ACK timeout,
+    which killed the event channel carried by the same connection and forced a
+    full resync on both peers. The publisher now degrades to "stopped" (its
+    master-side session expires via TTL) while the channel stays open.
+    """
+    (tmp_path / "file.txt").write_text("content")
+    publisher = LanInventoryPublisher(tmp_path, ack_timeout_s=0.05)
+    websocket = SilentWebSocket()
+    task = publisher.start(websocket)
+
+    with contextlib.suppress(asyncio.TimeoutError):
+        async with asyncio.timeout(2):
+            await task
+
+    assert websocket.closed is False, "an ACK timeout must not close the WSS channel"
+    assert publisher._disabled is True
+    assert len(websocket.frames) >= 2  # snapshot terminal sent, resent once
+    await publisher.stop()
 
 
 @pytest.mark.asyncio

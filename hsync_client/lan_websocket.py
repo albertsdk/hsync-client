@@ -76,7 +76,11 @@ from hsync_client.constants import (
     WS_MAX_MESSAGE_BYTES,
     ActionLabel,
 )
-from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
+from hsync_client.event_dispatch import (
+    EventDispatchContext,
+    apply_inbound_event,
+    drain_file_downloads,
+)
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
@@ -1299,6 +1303,10 @@ async def lan_websocket_client(
 
         ssl_context = create_fingerprint_ssl_context(str(expected_fingerprint or ""))
 
+    # Bound so the teardown path below can drain pending event downloads even
+    # when the connection failed before the dispatch context was built.
+    ctx: EventDispatchContext | None = None
+
     try:
         async with websockets.connect(
             uri,
@@ -1441,6 +1449,7 @@ async def lan_websocket_client(
                 _slave_event_handler,
                 inventory_observer,
                 source_resolver,
+                fan_out=True,
             )
 
             # Process incoming events
@@ -1475,6 +1484,11 @@ async def lan_websocket_client(
                 await resync_task
         if inventory_publisher is not None:
             await inventory_publisher.stop()
+        # Drain pending event-driven downloads before returning to the
+        # discovery loop: the reconnect's full sync must not race writes that
+        # are still in flight (fan-out path).
+        if ctx is not None:
+            await drain_file_downloads(ctx)
         # Wait for pending client→master operations to complete before
         # returning to the discovery loop (which triggers a full sync).
         # This prevents race conditions where a rename/upload/delete is
@@ -1509,6 +1523,8 @@ def _build_lan_dispatch_ctx(
     slave_handler: LANSlaveFileEventHandler | None,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
     source_resolver: LanSourceResolver | None = None,
+    *,
+    fan_out: bool = False,
 ) -> EventDispatchContext:
     """Build the LAN slave's inbound event dispatch context.
 
@@ -1519,6 +1535,10 @@ def _build_lan_dispatch_ctx(
     must survive across events, otherwise every event starts with an empty
     cache and the duplicate added/modified burst a single directory
     broadcast produces is re-logged as a fresh change.
+
+    ``fan_out=True`` (the WSS receive loop) additionally arms the bounded
+    per-path file-download fan-out; the default keeps the legacy inline
+    behavior for one-off callers (``_handle_lan_event`` without a context).
     """
     return EventDispatchContext(
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
@@ -1528,6 +1548,13 @@ def _build_lan_dispatch_ctx(
         recover_on_missing_rename_src=False,
         inventory_observer=inventory_observer,
         source_resolver=source_resolver,
+        # Fan out inbound file downloads: the WSS receive loop must never
+        # serialize on them (measured ~60 files/s ceiling during bursts,
+        # vs 200+ files/s the master serves). Bounded by the same knob as
+        # the reconcile transfers; per-path ordering is preserved.
+        file_download_semaphore=(
+            asyncio.Semaphore(int(CONFIG.get("MAX_CONCURRENT_TRANSFERS", 5))) if fan_out else None
+        ),
     )
 
 

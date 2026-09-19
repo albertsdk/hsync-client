@@ -33,7 +33,6 @@ from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, unc
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.file import (
     File,
-    clear_sha256_cache,
     invalidate_sha256_cache,
     is_hidden_file,
     is_partial_file,
@@ -324,8 +323,13 @@ async def sync(
     _sync_cycle_active.set()
     try:
         offset_store.begin_epoch()
-        # Clear SHA-256 cache so every file is re-hashed with fresh content
-        clear_sha256_cache()
+        # The SHA-256 cache is intentionally NOT cleared per cycle anymore:
+        # entries are keyed on the nanosecond stat identity (mtime_ns, ctime_ns,
+        # size) validated on every hit, and watchers invalidate single entries
+        # on observed mutations — so an unchanged file is never re-hashed by a
+        # later cycle (continuous-mode force resyncs become metadata-only),
+        # while any real write evicts the stale digest. One-shot runs get one
+        # cycle per process, so the old clear was a no-op there.
 
         # Clean up any leftover partial downloads from previous sessions
         _cleanup_partial_files()

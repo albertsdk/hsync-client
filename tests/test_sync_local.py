@@ -751,7 +751,6 @@ class TestSyncCycleFlag:
                 patch("hsync_client.sync.get_files_remote", side_effect=capturing_get_files_remote),
                 patch("hsync_client.sync.get_tombstones_remote", return_value={}),
                 patch("hsync_client.sync.push_tombstones_remote"),
-                patch("hsync_client.sync.clear_sha256_cache"),
                 patch("hsync_client.sync._cleanup_partial_files"),
                 patch("hsync_client.sync.ensure_hsynckeep_files"),
                 patch("hsync_client.sync.sync_state"),
@@ -778,7 +777,6 @@ class TestSyncCycleFlag:
                 patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": "/tmp"}),
                 patch("hsync_client.sync.get_files_local", return_value=[]),
                 patch("hsync_client.sync.get_files_remote", side_effect=RuntimeError("boom")),
-                patch("hsync_client.sync.clear_sha256_cache"),
                 patch("hsync_client.sync._cleanup_partial_files"),
                 patch("hsync_client.sync.ensure_hsynckeep_files"),
             ):
@@ -959,6 +957,59 @@ class TestHsyncignoreDoesNotDelete:
                 assert get_sync_state_store().base_hash("keep.txt") is not None
         finally:
             set_active_matcher(None)
+
+
+class TestSyncPreservesSha256Cache:
+    """A sync cycle must not clear the process-wide SHA-256 cache.
+
+    Regression for the cross-cycle reuse: the cache is keyed on the
+    nanosecond stat identity (validated on every hit) and watchers invalidate
+    single entries on mutations, so clearing it per cycle only forced every
+    continuous-mode resync to re-hash the whole local tree. An unchanged
+    entry must survive a full ``sync()`` cycle.
+    """
+
+    def test_cycle_keeps_cached_digests(self, tmp_path):
+        import asyncio
+        from unittest.mock import patch
+
+        from hsync_common.models.file import File, clear_sha256_cache
+
+        from hsync_client.sync import sync
+
+        clear_sha256_cache()
+        stable = tmp_path / "stable.txt"
+        stable.write_bytes(b"unchanged across cycles")
+        digest = File.get(str(stable))
+        assert digest is not None and digest.sha256sum is not None
+
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": "clientcid000000000000"}
+
+        async def _run() -> None:
+            with (
+                patch("hsync_client.sync.CONFIG", cfg),
+                patch("hsync_client.state_backend.CONFIG", cfg),
+                patch("hsync_client.sync.get_files_local", return_value=[]),
+                patch("hsync_client.sync.get_files_remote", return_value=[]),
+                patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                patch("hsync_client.sync.push_tombstones_remote"),
+                patch("hsync_client.sync.get_sync_actions", return_value=[]),
+                patch("hsync_client.sync.get_dirs_remote", return_value=[]),
+            ):
+                await sync(lan_mode=True)
+
+        asyncio.run(_run())
+
+        # The untouched file's digest must still be cached: the cycle did not
+        # clear it and did not need to re-hash anything. Membership is the real
+        # regression signal — with the old per-cycle clear the entry would be
+        # gone (nothing re-hashes it during the mocked cycle).
+        from hsync_common.models.file import _sha256_cache
+
+        assert str(stable) in _sha256_cache
+        again = File.get(str(stable))
+        assert again is not None and again.sha256sum == digest.sha256sum
+        clear_sha256_cache()
 
 
 class TestGetSyncActionsTombstones:

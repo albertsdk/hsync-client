@@ -1116,8 +1116,13 @@ class LanInventoryPublisher:
                     frame["gen"],
                     frame["seq"],
                 )
-        with contextlib.suppress(Exception):
-            await websocket.close(code=1011, reason="inventory acknowledgement timeout")
+        # The acknowledgement never arrived. The master's WSS receiver is
+        # backlogged (typical under a burst): the channel is congested, not
+        # necessarily dead. Do NOT close the websocket here — closing it would
+        # tear down the event channel this same connection carries and force a
+        # full resync on both peers. The publish loop treats the timeout as
+        # "stop publishing on this connection" instead; the event flow keeps
+        # working and the next connection re-publishes a fresh snapshot.
         raise TimeoutError("LAN inventory acknowledgement timed out")
 
     async def _publish_snapshot(self) -> tuple[str, int, int]:
@@ -1167,6 +1172,19 @@ class LanInventoryPublisher:
         return "ok", next_seq
 
     async def _publish_loop(self) -> None:
+        try:
+            await self._publish_loop_inner()
+        except (TimeoutError, ConnectionError):
+            # The master stopped acknowledging (receiver backlogged under a
+            # burst) or the transport died. Publishing is disabled for this
+            # connection; the websocket stays open so the event channel it
+            # carries keeps flowing, and the next connection's ``start()``
+            # resets the publisher and re-snapshots. The master's session
+            # expires via its staging TTL in the meantime.
+            self._disabled = True
+            log.warning("LAN inventory publisher stopped: master not acknowledging")
+
+    async def _publish_loop_inner(self) -> None:
         while True:
             status, generation, next_seq = await self._publish_snapshot()
             if status == "rejected":

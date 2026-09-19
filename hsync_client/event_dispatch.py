@@ -24,6 +24,7 @@ while large transfers are in flight.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -159,6 +160,12 @@ class EventDispatchContext:
     dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER
     source_resolver: LanSourceResolver | None = None
+    # When set, inbound FILE events are applied through a bounded per-path
+    # chain instead of inline (see ``_spawn_file_download``). ``None`` keeps
+    # the legacy serial behavior (remote mode). Set by the LAN slave ctx.
+    file_download_semaphore: asyncio.Semaphore | None = None
+    file_download_paths: dict[str, asyncio.Task] = field(default_factory=dict)
+    file_download_tasks: set[asyncio.Task] = field(default_factory=set)
 
 
 #: Prefix for every inbound-dispatch label: the event is always caused by a
@@ -227,6 +234,78 @@ def _mark(ctx: EventDispatchContext, path: str) -> None:
 def _unmark(ctx: EventDispatchContext, path: str) -> None:
     if ctx.unmark_receiving:
         ctx.unmark_receiving(path)
+
+
+def _spawn_file_download(
+    ctx: EventDispatchContext,
+    src: dict,
+    target: str | None,
+    path_key: str,
+) -> None:
+    """Schedule one inbound-file download on the ctx's bounded per-path chain.
+
+    The WSS receive loop must never block on a download: under a burst the
+    serial ``await update_file(...)`` per event capped the LAN slave at
+    ~60 files/s while the master serves 200+ req/s. Downloads for the SAME
+    path are chained after the previous one (event order per path preserved;
+    the download itself additionally holds ``path_lock``), while distinct
+    paths run concurrently under ``file_download_semaphore``. The
+    mark/unmark echo-suppression brackets the actual write inside the task.
+    """
+
+    async def _job() -> None:
+        if target:
+            _mark(ctx, target)
+        try:
+            await asyncio.to_thread(
+                update_file,
+                src,
+                inventory_observer=ctx.inventory_observer,
+                source_resolver=ctx.source_resolver,
+            )
+        finally:
+            if target:
+                _unmark(ctx, target)
+
+    previous = ctx.file_download_paths.get(path_key)
+    semaphore = ctx.file_download_semaphore
+    if semaphore is None:  # pragma: no cover - guarded by the caller
+        raise RuntimeError("file download fan-out without a semaphore")
+
+    async def _chained() -> None:
+        try:
+            if previous is not None:
+                with contextlib.suppress(Exception):
+                    await previous
+            async with semaphore:
+                await _job()
+        except Exception:
+            log.exception(f"Error applying inbound file event: {src.get('filepath')!r}")
+
+    task = asyncio.create_task(_chained())
+    ctx.file_download_paths[path_key] = task
+    ctx.file_download_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        ctx.file_download_tasks.discard(t)
+        if ctx.file_download_paths.get(path_key) is t:
+            del ctx.file_download_paths[path_key]
+
+    task.add_done_callback(_done)
+
+
+async def drain_file_downloads(ctx: EventDispatchContext) -> None:
+    """Await every pending inbound-file download before the connection teardown.
+
+    Returning to the discovery loop (which triggers a full sync) while a
+    download is still writing would race the reconcile against the event path.
+    """
+    tasks = list(ctx.file_download_tasks)
+    ctx.file_download_tasks.clear()
+    ctx.file_download_paths.clear()
+    if not tasks:
+        return
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> None:
@@ -352,6 +431,17 @@ async def _apply_add_or_modify(
             )
     elif "filepath" in src:
         target = _resolve_local_path(src, "filepath") if ctx.mark_receiving else None
+        if ctx.file_download_semaphore is not None:
+            # Fan-out: never block the WSS receive loop on a download (the
+            # serial await capped the LAN burst at ~60 files/s). Per-path
+            # ordering and echo suppression are preserved inside the chain.
+            _spawn_file_download(
+                ctx,
+                src,
+                target,
+                path_key=target or str(src.get("filepath") or ""),
+            )
+            return
         _mark(ctx, target) if target else None
         try:
             await asyncio.to_thread(
