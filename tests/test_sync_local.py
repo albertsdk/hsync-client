@@ -788,6 +788,138 @@ class TestSyncCycleFlag:
         _sync_cycle_active.clear()
         asyncio.run(_check_flag_after_error())
 
+    def test_cycle_age_is_none_when_idle(self):
+        """No cycle running → no age (the watchdog must not report a phantom)."""
+        from hsync_client import sync as sync_mod
+
+        sync_mod._sync_cycle_active.clear()
+        with sync_mod._cycle_bookkeeping_lock:
+            sync_mod._sync_cycle_started_at = None
+        assert sync_mod.sync_cycle_age() is None
+
+    def test_cycle_bookkeeping_tracks_a_real_cycle(self, tmp_path):
+        """A completed cycle leaves no age behind and records its end.
+
+        Regression: `sync()` rebinds module state, so without the `global`
+        declaration the assignments would create locals and the watchdog would
+        always read None — reporting "idle" for a permanently stuck cycle,
+        which is exactly the case it exists to detect.
+        """
+        import asyncio
+        from unittest.mock import patch
+
+        from hsync_client import sync as sync_mod
+
+        seen: list[float | None] = []
+
+        def capturing_get_files_remote():
+            seen.append(sync_mod.sync_cycle_age())
+            return []
+
+        async def _run():
+            with (
+                patch.object(sync_mod, "CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch.object(sync_mod, "get_files_local", return_value=[]),
+                patch.object(sync_mod, "get_files_remote", side_effect=capturing_get_files_remote),
+                patch.object(sync_mod, "get_tombstones_remote", return_value={}),
+                patch.object(sync_mod, "push_tombstones_remote"),
+                patch.object(sync_mod, "_cleanup_partial_files"),
+                patch.object(sync_mod, "ensure_hsynckeep_files"),
+                patch.object(sync_mod, "sync_state"),
+            ):
+                await sync_mod.sync()
+
+        sync_mod._sync_cycle_active.clear()
+        with sync_mod._cycle_bookkeeping_lock:
+            sync_mod._sync_cycle_started_at = None
+            sync_mod._last_cycle_ended_at = None
+
+        asyncio.run(_run())
+
+        assert seen and seen[0] is not None, "cycle age was not visible mid-cycle"
+        assert sync_mod.sync_cycle_age() is None
+        assert sync_mod.seconds_since_last_cycle() is not None
+
+    async def test_resync_warns_when_cycle_outlives_the_interval(self):
+        """A cycle older than the resync interval escalates the skip to WARNING.
+
+        Regression: the skip was DEBUG-only, so a cycle that never returned
+        disabled the periodic safety net forever and the operator had no signal
+        that missed events were no longer being recovered.
+        """
+        import asyncio as aio
+        from contextlib import suppress
+        from time import monotonic
+        from unittest.mock import patch
+
+        from loguru import logger
+
+        from hsync_client import sync as sync_mod
+        from hsync_client.logger import _format_record_plain
+
+        captured: list[str] = []
+        handler_id = logger.add(
+            lambda m: captured.append(str(m)),
+            level="WARNING",
+            format=_format_record_plain,
+            catch=False,
+        )
+        try:
+            with patch.object(sync_mod, "CONFIG", {"RESYNC": 0.01}):
+                sync_mod._sync_cycle_active.set()
+                with sync_mod._cycle_bookkeeping_lock:
+                    sync_mod._sync_cycle_started_at = monotonic() - 60.0
+                task = aio.create_task(sync_mod.periodic_resync())
+                await aio.sleep(0.1)
+                task.cancel()
+                with suppress(aio.CancelledError):
+                    await task
+        finally:
+            sync_mod._sync_cycle_active.clear()
+            with sync_mod._cycle_bookkeeping_lock:
+                sync_mod._sync_cycle_started_at = None
+            logger.remove(handler_id)
+
+        assert any("safety net is NOT running" in line for line in captured), captured
+
+    async def test_resync_skip_stays_debug_while_the_cycle_is_recent(self):
+        """A cycle still within its interval is a normal skip, not an alarm."""
+        import asyncio as aio
+        from contextlib import suppress
+        from time import monotonic
+        from unittest.mock import patch
+
+        from loguru import logger
+
+        from hsync_client import sync as sync_mod
+        from hsync_client.logger import _format_record_plain
+
+        captured: list[str] = []
+        handler_id = logger.add(
+            lambda m: captured.append(str(m)),
+            level="WARNING",
+            format=_format_record_plain,
+            catch=False,
+        )
+        try:
+            with patch.object(sync_mod, "CONFIG", {"RESYNC": 30}):
+                sync_mod._sync_cycle_active.set()
+                # Younger than the 30 s interval: still a healthy long cycle.
+                with sync_mod._cycle_bookkeeping_lock:
+                    sync_mod._sync_cycle_started_at = monotonic() - 1.0
+                task = aio.create_task(sync_mod.periodic_resync())
+                await aio.sleep(0.15)
+                task.cancel()
+                with suppress(aio.CancelledError):
+                    await task
+        finally:
+            sync_mod._sync_cycle_active.clear()
+            with sync_mod._cycle_bookkeeping_lock:
+                sync_mod._sync_cycle_started_at = None
+            logger.remove(handler_id)
+
+        assert captured == [], captured
+
 
 class TestTombstoneDecision:
     """Unit tests for the causal _tombstone_deletes_local rule (ADR-0003)."""

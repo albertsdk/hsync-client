@@ -615,8 +615,43 @@ converges 2000 files in 9.3 s (214 files/s), the LAN burst 6000 files at 74–87
 files/s. The LAN path is markedly slower per file despite both peers being
 local, which is where the remaining LAN investigation should start.
 
+#### Reconcile cycle cost: first vs quiescent
+
+Measured with a real LAN master (separate process) and `sync(lan_mode=True)`
+called three times on a 2000-file / 70 KiB tree:
+
+| Cycle | t_sync | transfers |
+| --- | --- | --- |
+| 1st (populate) | 9.40 s | 2000 |
+| 2nd (quiescent) | 0.43 s | 0 |
+| 3rd (quiescent) | 0.23 s | 0 |
+
+A no-op cycle is therefore **~0.25 s per 2000 files** (≈0.7 s at 6000 files):
+the per-`RESYNC` (300 s) steady-state cost of the safety net is negligible, so
+the mechanism earns its keep and its real risk is *silence*, not overhead (see
+the watchdog entry below). The residual cost is the remote listing fetch plus a
+`stat` sweep of the local tree; the SHA-256 cache makes it metadata-only, which
+is why it does not scale with bytes.
+
 ### Stress-found correctness defects (fixed)
 
+- *The periodic safety net could be disabled in silence.* `periodic_resync`
+  skips a cycle when one is already running, and the skip was **DEBUG-only**.
+  A cycle that never returns (a hung mount, a deadlock on `path_lock` /
+  `sync_state._lock`) never executes its `finally`, so the coordination flag
+  stays set and every later resync is skipped **forever** — with no signal that
+  the only recovery mechanism for events missed by the watcher (`IN_Q_OVERFLOW`
+  is not surfaced by watchdog, per `utils.py`) had stopped working. The skip now
+  escalates to **WARNING** once the running cycle outlives the RESYNC interval
+  (a cycle older than its own period means the safety net has already missed a
+  scheduled recovery), and the age of the active cycle is part of the message.
+  New accessors `sync_cycle_age()` / `seconds_since_last_cycle()` expose the
+  bookkeeping for logs and diagnosis.
+  Regressions: `tests/test_sync_local.py::TestSyncCycleFlag::test_resync_warns_when_cycle_outlives_the_interval`,
+  `...::test_resync_skip_stays_debug_while_the_cycle_is_recent`,
+  `...::test_cycle_bookkeeping_tracks_a_real_cycle` (pins that `sync()` really
+  rebinds the module state — without the `global` declaration Python binds
+  locals and the watchdog would always read "idle"), `...::test_cycle_age_is_none_when_idle`.
 - *The per-cycle leftover sweep deleted `.part` files of live transfers.*
   `sync._cleanup_partial_files` walks the whole bucket at the start of every
   cycle to clear what a *previous* process left behind, but inbound downloads

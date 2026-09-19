@@ -94,6 +94,13 @@ from hsync_client.utils import (
 
 _sync_cycle_active = threading.Event()
 
+# Cycle bookkeeping for the safety-net watchdog below. The flag alone cannot
+# answer "is the safety net still working?": a cycle that never returns leaves
+# the flag set forever and every later resync is skipped in silence.
+_cycle_bookkeeping_lock = threading.Lock()
+_sync_cycle_started_at: float | None = None
+_last_cycle_ended_at: float | None = None
+
 
 def is_sync_cycle_active() -> bool:
     """Return True while a full sync() cycle is in progress.
@@ -103,6 +110,32 @@ def is_sync_cycle_active() -> bool:
     callers never wait on it.
     """
     return _sync_cycle_active.is_set()
+
+
+def sync_cycle_age() -> float | None:
+    """Seconds the current sync cycle has been running, or None when idle.
+
+    Used by the periodic resync to tell "busy" apart from "stuck": a cycle
+    that outlives the resync interval means the safety net is no longer
+    firing (it is skipped every period), which is a silent loss of the only
+    recovery mechanism for events missed by the watcher.
+    """
+    with _cycle_bookkeeping_lock:
+        if _sync_cycle_started_at is None:
+            return None
+        return monotonic() - _sync_cycle_started_at
+
+
+def seconds_since_last_cycle() -> float | None:
+    """Seconds since the last sync cycle *ended* (success or failure), or None.
+
+    Observability for the safety-net watchdog: together with
+    :func:`sync_cycle_age` it answers "is the periodic recovery still running?".
+    """
+    with _cycle_bookkeeping_lock:
+        if _last_cycle_ended_at is None:
+            return None
+        return monotonic() - _last_cycle_ended_at
 
 
 async def periodic_resync(
@@ -115,6 +148,11 @@ async def periodic_resync(
 
     Shared by remote continuous mode and the LAN slave. ``CancelledError`` is
     re-raised so task cancellation actually stops the loop.
+
+    A skipped cycle is DEBUG while the running one is still within its
+    interval and **WARNING** once it outlives it: at that point this loop is
+    no longer recovering anything and the operator had no signal at all — a
+    DEBUG line made a permanently disabled safety net invisible.
     """
     label = "LAN force resync" if lan_mode else "Force sync"
     skip_msg = (
@@ -123,11 +161,20 @@ async def periodic_resync(
         else "Force sync skipped: a sync cycle is already in progress"
     )
     stop_msg = "LAN resync task stopped" if lan_mode else "Resync task stopped"
+    interval = CONFIG["RESYNC"] or 60
     try:
         while True:
-            await asyncio.sleep(CONFIG["RESYNC"] or 60)
+            await asyncio.sleep(interval)
             if is_sync_cycle_active():
-                log.debug(skip_msg)
+                age = sync_cycle_age()
+                if age is not None and age > interval:
+                    log.warning(
+                        f"{skip_msg} for {age:.0f}s (interval {interval}s): the periodic "
+                        "safety net is NOT running, so file-system events missed in the "
+                        "meantime are not being recovered"
+                    )
+                else:
+                    log.debug(skip_msg)
                 continue
             log.info(f"{label} ({CONFIG['RESYNC']} sec.)")
             await sync(
@@ -322,6 +369,11 @@ async def sync(
     # Import here to avoid circular import
     from hsync_client.transfer import nothing_to_do
 
+    # Rebinding the cycle bookkeeping is module state, not a local: without the
+    # declaration Python would bind locals and the watchdog would always see
+    # None (i.e. silently report "idle" for a stuck cycle).
+    global _last_cycle_ended_at, _sync_cycle_started_at
+
     inventory_observer = inventory_observer or NOOP_INVENTORY_OBSERVER
 
     # Check if local directory exists before starting sync
@@ -331,6 +383,8 @@ async def sync(
             completed=False, transfers=0, failed=0, conflicts=0, guard_tripped=False
         )
 
+    with _cycle_bookkeeping_lock:
+        _sync_cycle_started_at = monotonic()
     _sync_cycle_active.set()
     try:
         offset_store.begin_epoch()
@@ -677,6 +731,9 @@ async def sync(
         raise
     finally:
         offset_store.end_epoch()
+        with _cycle_bookkeeping_lock:
+            _last_cycle_ended_at = monotonic()
+            _sync_cycle_started_at = None
         _sync_cycle_active.clear()
 
 
