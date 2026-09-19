@@ -1641,6 +1641,11 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # propagated as a permission-only upload. Pop the entry on delete/rename
         # so a re-created path with a different mode is never suppressed.
         self._last_mode: dict[str, int] = {}
+        # Same idea for a content-identical ``touch`` (utime also fires only
+        # IN_ATTRIB on Linux): the mtime is tracked separately so a slave-local
+        # touch is pushed to the master as a metadata-only PATCH instead of
+        # being silently discarded. Popped on delete/rename like ``_last_mode``.
+        self._last_mtime: dict[str, int] = {}
         # Same dedup, for directories: a directory chmod fires only IN_ATTRIB
         # (no close, no content hash), so the mode is tracked separately and a
         # change triggers a /dirs call to the master (directory-permission
@@ -2153,21 +2158,29 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
 
         if SUPPORTS_ON_CLOSED:
             # On inotify platforms content changes propagate via on_closed; a
-            # chmod fires only IN_ATTRIB (no close). Inspect the mode and, on a
-            # change, propagate a permission-only upload (the master's watcher
-            # then broadcasts the new mode to the other slaves).
+            # chmod or a touch fires only IN_ATTRIB (no close). Inspect the mode
+            # first (chmod -> permission-only upload), then the mtime (a
+            # content-identical touch -> metadata-only PATCH); the master's
+            # watcher then broadcasts the change to the other slaves.
             try:
-                mode = Path(src_path).stat().st_mode & 0o7777
+                file_stat = Path(src_path).stat()
             except OSError:
                 return
-            prev = self._last_mode.get(src_path)
+            mode = file_stat.st_mode & 0o7777
+            mtime_ns = file_stat.st_mtime_ns
+            prev_mode = self._last_mode.get(src_path)
+            prev_mtime = self._last_mtime.get(src_path)
             self._last_mode[src_path] = mode
-            if prev is None:
+            self._last_mtime[src_path] = mtime_ns
+            if prev_mode is None:
                 return
-            if prev == mode:
+            if prev_mode != mode:
+                log.info(f'[PERMISSION] mode change: "{src_path}"')
+                self._handle_file_upload(src_path)
                 return
-            log.info(f'[PERMISSION] mode change: "{src_path}"')
-            self._handle_file_upload(src_path)
+            if prev_mtime is not None and mtime_ns != prev_mtime:
+                log.info(f'[TOUCH] mtime change: "{src_path}"')
+                self._propagate_metadata_change(src_path)
             return
 
         # A file-symlink created via a deferred path (e.g. atomic rename of a
@@ -2209,6 +2222,56 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
             args=(src_path,),
             kwargs={"permissions": f"{mode:o}"},
             name=f"dir-permissions-{src_path}",
+        )
+
+    def _propagate_metadata_change(self, src_path: str) -> None:
+        """Push a content-identical local ``touch`` to the master.
+
+        Linux fires only IN_ATTRIB for a utime (no close), so the content path
+        never sees it. The slave self-records the edit and sends a metadata-only
+        PATCH (corrected mtime + effective vclock) to the master's
+        ``/files/permissions`` route; the master applies/records it and
+        re-broadcasts to the other slaves. Inbound adoptions run while
+        ``update_file`` holds the receiving mark, so they never echo back here.
+        """
+        if CONFIG.get("SYNC_DIRECTION") == "download-only":
+            return
+        try:
+            rel = self._rel_in_bucket(src_path)
+        except ValueError:
+            return
+        file_obj = File.get(src_path)
+        if not file_obj or not file_obj.sha256sum:
+            return
+        try:
+            from hsync_client.sync_state import (
+                flush,
+                note_local_edit,
+                resolve_upload_version_fields,
+            )
+
+            note_local_edit(src_path, file_obj.sha256sum)
+            flush()
+            vclock_json, version_id, corrected_mtime = resolve_upload_version_fields(file_obj)
+        except Exception as e:  # pragma: no cover - bookkeeping must never break propagation
+            log.debug(f"Could not self-record metadata edit for {src_path}: {e}")
+            return
+        from hsync_client.utils import http_patch
+
+        params = self._master_params(
+            filename=rel,
+            permissions=file_obj.permissions or "",
+        )
+        if corrected_mtime > 0:
+            params["mtime"] = str(corrected_mtime)
+        if vclock_json and vclock_json != "{}":
+            params["vclock"] = vclock_json
+        if version_id:
+            params["version_id"] = version_id
+        self._start_operation(
+            target=self._call_master,
+            args=(http_patch, "/files/permissions", params),
+            name=f"metadata-{src_path}",
         )
 
     def on_closed(self, event) -> None:
@@ -2347,6 +2410,7 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # a stale timer does not try to upload a deleted file.
         self._cancel_create_upload(src_path)
         self._last_mode.pop(src_path, None)
+        self._last_mtime.pop(src_path, None)
         self._last_dir_mode.pop(src_path, None)
 
         # Skip temp files (.part files used during downloads)
@@ -2424,11 +2488,13 @@ class LANSlaveFileEventHandler(FileSystemEventHandler):
         # upload for it so a stale timer does not upload a moved file.
         self._cancel_create_upload(src_path)
         self._last_mode.pop(src_path, None)
+        self._last_mtime.pop(src_path, None)
         self._last_dir_mode.pop(src_path, None)
         # The destination is a fresh path: reset any mode tracking so the
         # first event for it records the current mode instead of comparing
         # against the stale one from the source.
         self._last_mode.pop(dest_path, None)
+        self._last_mtime.pop(dest_path, None)
         self._last_dir_mode.pop(dest_path, None)
 
         # Skip temp files (.part files used during downloads)

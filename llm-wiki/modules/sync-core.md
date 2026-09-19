@@ -67,13 +67,16 @@ local, and only `bidirectional` uses the causal order to pick the winner. The
 wire value is an ADR-0023 *corrected* time, so adoption converts it back to the
 local raw clock (`clock.uncorrect_mtime`) before `utime`; the PATCH sends the
 corrected value plus the effective vclock/version id so the server records the
-change as a real version. In LAN mode the master's watcher
-drives it instead: `file_event_handler._on_metadata_changed` is emitted for a
-content-identical mtime change, the master records the touch
-(`sync_state.note_local_edit`) and broadcasts the `File` with the corrected
-mtime in its `version` (`lan_websocket._attach_effective_version`), and the
-slave adopts it in `sync.update_file`. Either way a `touch` propagates without
-transferring bytes.
+change as a real version. In LAN mode the master's watcher drives it instead:
+`file_event_handler._on_metadata_changed` is emitted for a content-identical
+mtime change, the master records the touch (`sync_state.note_local_edit`) and
+broadcasts the `File` with the corrected mtime in its `version`
+(`lan_websocket._attach_effective_version`), and the slave adopts it in
+`sync.update_file`. The reverse direction is symmetric: the slave's `on_modified`
+tracks the mtime alongside the mode and, on a content-identical touch, pushes a
+metadata-only PATCH to the master (`_propagate_metadata_change`); inbound
+adoptions hold the receiving mark so they never echo back. Either way a `touch`
+propagates without transferring bytes.
 
 The local vclock is resolved **purely** (no store mutation) via
 `sync_state.local_version_for_compare` (ticks the stored clock by this node's

@@ -588,6 +588,33 @@ class TestSlaveFileEventHandler:
         handler.on_modified(event)
         assert len(handler._pending_ops) == 0
 
+    def test_on_modified_touch_propagates_metadata(self, handler, tmp_path, monkeypatch):
+        """A slave-local touch (mode unchanged, mtime changed) is pushed."""
+        p = tmp_path / "f.txt"
+        p.write_bytes(b"content")
+        handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+        handler._last_mtime[str(p)] = 1  # a stale mtime so the touch is detected
+        seen: list[str] = []
+        monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
+
+        handler.on_modified(FileModifiedEvent(str(p)))
+
+        assert seen == [str(p)]
+
+    def test_on_modified_unchanged_does_not_propagate(self, handler, tmp_path, monkeypatch):
+        """No metadata push when neither mode nor mtime changed."""
+        p = tmp_path / "f.txt"
+        p.write_bytes(b"content")
+        st = p.stat()
+        handler._last_mode[str(p)] = st.st_mode & 0o7777
+        handler._last_mtime[str(p)] = st.st_mtime_ns
+        seen: list[str] = []
+        monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
+
+        handler.on_modified(FileModifiedEvent(str(p)))
+
+        assert seen == []
+
     def test_on_modified_directory_inbound_delete_echo_suppressed(self, handler, tmp_path):
         """Dir MODIFY covered by an inbound recursive delete is suppressed.
 
