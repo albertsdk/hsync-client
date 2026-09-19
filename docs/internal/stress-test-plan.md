@@ -42,7 +42,14 @@
 > converges in a median **80.7 s** (74.3 files/s; best 69.2 s / 86.7 files/s)
 > and the mutation wave in a median **13.2 s** (454.7 files/s), against ~10 min
 > at ~50 files/s before the receive-loop fan-out, the nanosecond SHA-256 cache,
-> the asynchronous log sinks and the inotify event-filter trim.
+> the asynchronous log sinks and the inotify event-filter trim. A follow-up
+> investigation of the residual ~90 files/s ceiling eliminated every
+> single-component candidate (master HTTP capacity, event origination, checksum
+> cache, watchdog echo, inventory publisher, per-event CPU) and found **negative
+> scaling on both peers** instead — `sys._is_gil_enabled()` is True here, so more
+> threads make the burst *slower* (1 worker 501 files/s vs 5 workers 269 in the
+> slave replica). Do **not** raise `MAX_CONCURRENT_TRANSFERS` hoping for
+> throughput; details and the measurement table are in `docs/internal/testing.md`.
 >
 > **Rev. 3 → Rev. 4 (2026-09-18) — completeness close-out.** Three documented
 > features were completed: the §13.5 `HSYNC_BB_STRESS_SUBPROCESS=1` wall-clock

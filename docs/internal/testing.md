@@ -570,24 +570,49 @@ the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
 
 ### Measured remaining limit (next target, not fixed)
 
-The full-scale LAN burst is now bounded by the **slave's inbound apply
-pipeline**, not by the master or the network:
+The full-scale LAN burst drains at **~90 files/s** and no single hot function
+explains it. The hypotheses below were each measured and **eliminated**:
 
-- the master queues the 6400 `LOCAL CREATE` broadcasts of a 6000-file tree in
-  **~9 s (711 ev/s peak, 1331/s)**, and `scripts/benchmark_lan_transfers.py`
-  shows it serves 16 KiB downloads at ~0.4 ms/req (2493 req/s keep-alive);
-- the slave nevertheless drains at **~90 files/s**, i.e. an *effective*
-  concurrency of ~1.6 against the fan-out semaphore
-  (`MAX_CONCURRENT_TRANSFERS` = 5), while each `[DOWNLOAD]` reports a median of
-  only 11 ms (mean 17.8 ms). Per-event handler CPU is ~0.1 ms (hash + SQLite
-  `note_local_edit` + `flush` measured at 0.09/0.03 ms on tmpfs), so the loss is
-  in the event→task pipeline (`_spawn_file_download` scheduling, the per-file
-  watchdog echo traffic on the replica, and WS send/parse interleaving with the
-  master's HTTP threads) rather than in any single hot function.
+| Candidate | Measurement | Verdict |
+| --- | --- | --- |
+| Master's HTTP capacity | 1 vs 5 vs 10 **process-isolated** clients, 70 KiB: ~2900/3300/1180/820 req/s | Not the limit (field needs ~450/s) |
+| Master's event origination | 6400 `LOCAL CREATE` logged in ~9 s (711 ev/s, peak 1331/s) | Not the limit |
+| Master checksum cache lock | held only for the dict op, never during hashing | Not the limit |
+| Slave watchdog echo per downloaded file | `on_created`/`on_closed`/`on_moved` all test `is_receiving` **before** any hashing; only 329 `LOCAL CREATE` for 6779 downloads | Not the limit |
+| Inventory publisher | `upsert` = dict insert + `call_soon_threadsafe` | Not the limit |
+| Per-event handler CPU | hash 0.09 ms + SQLite `note_local_edit`/`flush` 0.03 ms (tmpfs) | Not the limit |
 
-Both peers run on the same host in this harness, so any attribution must be
-confirmed with an in-process profile of the slave's apply path (the pattern
-used for the master broadcast before) and, ideally, two separate hosts.
+**What the measurements do show is negative scaling on both peers.** In an
+in-process replica of the slave's apply path (`sync.update_file`, master in a
+separate process, destination on tmpfs), concurrency makes things *worse*:
+
+```
+workers=1:  501.6 files/s  per-call mean  2.0 ms  median 1.7 ms
+workers=5:  269.0 files/s  per-call mean 18.5 ms  median 12.4 ms   (eff. conc 4.97)
+```
+
+and the master degrades the same way under concurrent clients even for a
+trivial endpoint (`/health`: 9186 → 1708 req/s in-process; 6800 → ~4100 req/s
+with process-isolated clients), while heavy 70 KiB downloads degrade least
+because hashlib/zstd release the GIL. `sys._is_gil_enabled()` is **True** in
+this environment (CPython 3.14.4, standard build), so this is the classic GIL
+convoy: many threads doing short CPU bursts share one interpreter lock, and
+the per-request latency inflates faster than the parallelism grows.
+
+Two consequences worth recording before anyone "optimises" the knobs:
+
+- **Raising `MAX_CONCURRENT_TRANSFERS` is counterproductive** on this workload
+  (1 worker already beats 5); the limit is not a queue-depth problem.
+- Throughput must come from **less per-file Python work** (fewer statements,
+  fewer locks touched, fewer encode/decode round trips per file), not from more
+  threads or processes on the same host.
+
+The gap between the replica (269 files/s) and the field (~90 files/s) is *not*
+attributable to any component in isolation: in the field the master runs its
+own watcher over the same 6000 files, serves the downloads and drives the WSS
+sends while the slave applies them, and the two processes share the host's
+cores. Reproducing it needs a profile of **both** peers during one real run
+(and ideally two hosts); the single-component benches above cannot capture it.
 
 ## Cross-project testing
 
