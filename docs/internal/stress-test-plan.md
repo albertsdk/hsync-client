@@ -1,6 +1,6 @@
 # HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
 
-> **Status: Implemented (Rev. 6).** The harness described here is implemented
+> **Status: Implemented (Rev. 7).** The harness described here is implemented
 > — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
 > `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
 > `docs/internal/testing.md` ("Stress suites") for usage and for the engine
@@ -48,8 +48,30 @@
 > cache, watchdog echo, inventory publisher, per-event CPU) and found **negative
 > scaling on both peers** instead — `sys._is_gil_enabled()` is True here, so more
 > threads make the burst *slower* (1 worker 501 files/s vs 5 workers 269 in the
-> slave replica). Do **not** raise `MAX_CONCURRENT_TRANSFERS` hoping for
-> throughput; details and the measurement table are in `docs/internal/testing.md`.
+> slave replica). Do **not** raise `MAX_CONCURRENT_TRANSFERS` hoping for LAN
+> burst throughput; details and the measurement table are in
+> `docs/internal/testing.md`.
+>
+> **Rev. 6 → Rev. 7 (2026-09-20) — server-mode baseline + reliability pass.**
+> The 83 server-mode black-box tests (`HSYNC_BB_SERVER=1`) were executed for
+> the first time: **80 passed, 1 failed**, and the failure was a real
+> user-visible regression from the asynchronous log sinks (the instance-lock
+> refusal printed nothing, because the record died with the process). Fixed
+> with `logger.flush_logs()` drained by every fatal exit. A second defect was
+> confirmed and fixed in the same pass: `sync._cleanup_partial_files` deleted
+> the `.part` of a transfer still streaming (a RESYNC landing mid-download),
+> which failed the transfer at its final rename with no retry — writers now
+> register their artifacts and the sweep skips them.
+>
+> The server-mode stress now has a recorded baseline at 2000 files / 300 dirs
+> (all 12 tests pass, 0 mismatches): initial burst **9.34 s** (214 files/s),
+> mutation wave **3.09 s** (647 files/s), and a concurrency sweep that
+> **scales** — 1 → 75, 4 → 171, 8 → 211 files/s. That last number corrects the
+> earlier note: the negative scaling belongs to the **LAN inbound-apply path**
+> only, not to reconcile transfers, so the two knobs must not be conflated.
+> Note also that `t_verify` (~32 s) dominates the harness wall clock: the
+> REST-primary verdict re-downloads and re-hashes every file, so it measures
+> the *verification*, not the sync.
 >
 > **Rev. 3 → Rev. 4 (2026-09-18) — completeness close-out.** Three documented
 > features were completed: the §13.5 `HSYNC_BB_STRESS_SUBPROCESS=1` wall-clock

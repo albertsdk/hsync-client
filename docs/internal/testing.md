@@ -584,6 +584,37 @@ defect introduced by the asynchronous log sinks:
   a good example of an existing guard catching a performance regression that no
   behavioural test would have noticed.
 
+#### Server-mode stress baseline (2000 files / 300 dirs, cap 512 KiB)
+
+`HSYNC_BB_STRESS=1 pytest tests/test_bb_server_stress.py` → **12 passed in
+11:22, 0 mismatches** (the mismatch assertions live in the tests, so a green run
+is the integrity verdict). Medians of 3 runs per phase:
+
+| Phase | t_sync | files/s | MiB/s |
+| --- | --- | --- | --- |
+| initial burst (autotune concurrency) | 9.34 s | 214.1 | 14.5 |
+| mutation wave | 3.09 s | 647.2 | 48.8 |
+| sweep `--max-concurrent-transfers=1` | 26.64 s | 75.1 | 4.9 |
+| sweep `=4` | 11.70 s | 171.0 | 11.6 |
+| sweep `=8` | 9.49 s | 210.7 | 14.0 |
+
+Two readings matter:
+
+- **The concurrency sweep scales monotonically** (75 → 171 → 211 files/s), i.e.
+  reconcile transfers *do* benefit from concurrency. This is the counter-evidence
+  to the LAN inbound-apply convoy: the negative scaling recorded earlier is a
+  property of that path, not of `MAX_CONCURRENT_TRANSFERS` in general.
+- **`t_verify` (~32 s) dominates the harness wall clock**, because the
+  REST-primary verdict re-downloads and re-hashes every file. The suite duration
+  is therefore not a sync metric; only `t_sync` is.
+
+Cross-mode reading (indicative, **not** an apples-to-apples comparison: the LAN
+run covers 3× the files and drives one WSS event plus one HTTP download per
+file, while server mode reconciles a listing with parallel uploads): server mode
+converges 2000 files in 9.3 s (214 files/s), the LAN burst 6000 files at 74–87
+files/s. The LAN path is markedly slower per file despite both peers being
+local, which is where the remaining LAN investigation should start.
+
 ### Stress-found correctness defects (fixed)
 
 - *The per-cycle leftover sweep deleted `.part` files of live transfers.*
@@ -645,11 +676,18 @@ the per-request latency inflates faster than the parallelism grows.
 
 Two consequences worth recording before anyone "optimises" the knobs:
 
-- **Raising `MAX_CONCURRENT_TRANSFERS` is counterproductive** on this workload
-  (1 worker already beats 5); the limit is not a queue-depth problem.
+- The negative scaling above is **specific to the LAN inbound-apply path** (the
+  slave's event-driven downloads), not a general property of the engine. The
+  server-mode concurrency sweep measures the **opposite** for reconcile
+  transfers (client → server uploads), where more concurrency helps clearly:
+  `--max-concurrent-transfers` 1 → 75 files/s, 4 → 171, 8 → 211 (medians of 3
+  runs of a 2000-file burst, all 0 mismatches). Do not generalise the LAN
+  finding to `MAX_CONCURRENT_TRANSFERS` as a whole; the two paths scale
+  differently and only the inbound-apply one showed a convoy.
 - Throughput must come from **less per-file Python work** (fewer statements,
   fewer locks touched, fewer encode/decode round trips per file), not from more
-  threads or processes on the same host.
+  threads on the same host — and the LAN apply path needs a profile of both
+  peers during one real run before any knob is changed.
 
 The gap between the replica (269 files/s) and the field (~90 files/s) is *not*
 attributable to any component in isolation: in the field the master runs its
