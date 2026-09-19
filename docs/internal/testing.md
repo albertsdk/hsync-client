@@ -815,9 +815,32 @@ issues **one POST per file** because it calls `resolve([file])`
 feeding it one file at a time, and the realtime path always refreshes
 (`refresh_peer_sources=source_resolver is not None` in `sync.update_file`).
 
-Batching those lookups is the obvious next step, but it changes *when* source
-ranking happens on the transfer hot path (a scheduling/semantics decision for
-peer selection), so it was deliberately left out of the chunk-size change.
+Batching those lookups is the obvious next step — **and it was implemented,
+measured, and reverted: it does not pay at the default concurrency.** A
+micro-batching layer was built (the first caller collects for
+`LAN_SOURCE_LOOKUP_WINDOW_S` = 3 ms so the transfer pool's concurrent workers
+share one wantlist POST; the others read the resulting TTL candidate cache, so
+the per-file outcome is unchanged) and A/B'd 3 runs per arm on the same probe:
+
+| arm | files/s (median [min..max]) | slave CPU/file (median [min..max]) |
+| --- | --- | --- |
+| per-file lookup (reverted to this) | 88.6 [82.3..101.8] | 12.95 ms [11.14..14.06] |
+| micro-batched lookup | 90.7 [83.9..102.1] | 12.13 ms [10.58..13.14] |
+
+The ranges overlap and the medians differ by ~6 %, which the arithmetic
+explains: the POST is ~1 ms of ~13 ms per file, and at the default 5-way
+concurrency a 3 ms collection window rarely gathers more than ~1.5 callers while
+its own download waits for the leader. A wider window would collect more but
+stall the leader longer (a 20 ms window would gather nearly all five and lose
+more than it saves). It was reverted rather than kept as unmeasured complexity
+on the LAN transfer hot path.
+
+**Conclusion for the next attempt:** the remaining ~3 ms/file of the
+peer-offload block is **not** the source lookup. Look at the inventory publisher
+(`LanInventoryPublisher`: a WSS frame plus an ACK round trip per mutation, with
+the master persisting to SQLite) and the slave's seeder `LANServer`, which
+`_start_slave_seeder` creates together with it and which the
+`--no-peer-download` A/B above cannot separate.
 
 Measurement pitfalls found in this round (each produced a wrong number first):
 
