@@ -728,8 +728,11 @@ The gap between the replica (269 files/s) and the field (~90 files/s) is *not*
 attributable to any component in isolation: in the field the master runs its
 own watcher over the same 6000 files, serves the downloads and drives the WSS
 sends while the slave applies them, and the two processes share the host's
-cores. Reproducing it needs a profile of **both** peers during one real run
-(and ideally two hosts); the single-component benches above cannot capture it.
+cores. *(Update: that both-peer profile in one real run has since been done —
+see "LAN burst: what the peer-offload block costs per file" below. With the
+per-file CPU fixes applied the field runs ~113 files/s, and the largest
+remaining field-vs-replica term is the peer-offload/inventory lane,
+~4.3 ms/file, measured as a block.)*
 
 ### LAN burst: the CPU is real, and it is per-file Python
 
@@ -754,9 +757,11 @@ A later round measured the field path directly instead of the pool knob:
   advertises to the replica events *lowered* per-file cost (3.4 ms), so the
   merge path is not what makes the field expensive.
 - **Not compression/logging/state**: at 200 KiB those add ~2.6 ms/file.
-- **The replica remains ~3x cheaper per file than the field** (4.3 vs ~15 ms)
-  and the difference is still **unattributed**. It needs both peers profiled in
-  one real run; single-component benches cannot see it.
+- **The replica remains cheaper per file than the field** (4.3 vs ~11 ms
+  post-fix), and the field-vs-replica delta is now largely accounted for by
+  the peer-offload/inventory lane (~4.3 ms/file as a block, see the
+  peer-offload section below); what remains unattributed is the *internal*
+  split inside that lane, which needs finer instrumentation.
 
 ### Read chunk size (transfer loop)
 
@@ -775,10 +780,11 @@ ms/file), so the tiers were raised for the sub-1MB class and only enough above
 it to keep `CHUNK_SIZE_LARGE * MAX_CONCURRENT_TRANSFERS` buffering small.
 
 **Honest caveat**: the end-to-end LAN probe did **not** resolve the saving
-(75.8 vs 81.3 files/s, i.e. within noise) because that path spends ~15 ms
-CPU/file on the unattributed overhead above. The per-file reduction is real and
-reproducible in isolation; the end-to-end throughput gain stays unproven until
-the field overhead is understood.
+(75.8 vs 81.3 files/s, i.e. within noise) because that path spends its CPU
+budget on the field overhead above (now largely traced to the peer-offload
+lane, see the peer-offload section below). The per-file reduction is real and
+reproducible in isolation; the end-to-end throughput gain stays unproven and
+should be re-tested after the lane is optimised.
 
 **Measurement error worth remembering**: the first chunk A/B used a highly
 compressible fixture (a repeated 18-byte pattern), so zstd shrank the HTTP body
