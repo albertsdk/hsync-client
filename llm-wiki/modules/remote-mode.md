@@ -27,10 +27,10 @@ All REST calls go through a single pinned/configured `requests.Session`:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `get_http_session` | `utils.py:93` | shared session (keep-alive, TLS verify) |
-| `http_get/post/delete/patch` | `utils.py:120`–`:176` | thin verbs over the session |
-| `get_ssl_verify` | `utils.py:65` | TLS verification policy |
-| `diagnose_connection_error` | `utils.py:146` | classify TLS/plaintext mismatches for clear errors |
+| `get_http_session` | `utils.py:152` | shared session (keep-alive, TLS verify); honours the environment proxies — unlike the fingerprint-pinned LAN session, which sets `trust_env = False` |
+| `http_get/post/delete/patch` | `utils.py:219`–`:290` | thin verbs over the session |
+| `get_ssl_verify` | `utils.py:121` | TLS verification policy |
+| `diagnose_connection_error` | `utils.py:260` | classify TLS/plaintext mismatches for clear errors |
 
 REST requests carry `X-Protocol-Version` (`PROTOCOL_VERSION_REST`); the server
 hard-fails 426 on mismatch (server `middleware.py:111`). Endpoints mirror the

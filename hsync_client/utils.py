@@ -191,6 +191,21 @@ def get_http_session(
 
         _suppress_insecure_warning()
         session.mount("https://", FingerprintHTTPAdapter(str(fingerprint)))
+        # The pinned fingerprint IS the LAN trust anchor (TOFU): the environment
+        # must not add a second, conflicting one. `trust_env = False` stops
+        # `requests` from consulting `*_proxy`, `REQUESTS_CA_BUNDLE` /
+        # `CURL_CA_BUNDLE` and `.netrc` for these sessions — a peer-to-peer LAN
+        # connection routed through an environment proxy would leave the
+        # certificate pinning meaningless, and an environment CA bundle is
+        # irrelevant when trust is the pinned fingerprint.
+        #
+        # It is also a measured cost: `requests` resolves the environment proxy
+        # configuration on EVERY request (`Session.merge_environment_settings` ->
+        # `get_environ_proxies` -> `getproxies_environment` +
+        # `proxy_bypass_environment`, which walk `os.environ`). On the LAN burst
+        # that is 5 calls per transferred file, 3.8% of the apply-path profile
+        # (~0.6-0.85 ms CPU/file at ~90 files/s).
+        session.trust_env = False
     store[cache_key] = session
     return session
 

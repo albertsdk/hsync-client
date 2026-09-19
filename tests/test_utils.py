@@ -437,6 +437,56 @@ class TestGetHttpSession:
         finally:
             set_config(original)
 
+    def test_fingerprint_session_ignores_environment_proxies(self):
+        """A pinned LAN session must not consult the environment for proxies.
+
+        The pinned fingerprint *is* the LAN trust anchor (TOFU): an environment
+        proxy or CA bundle would add a second, conflicting one, and a
+        peer-to-peer connection routed through an environment proxy would make
+        the certificate pinning meaningless.
+
+        It is also a per-file cost on the hot path: ``requests`` re-resolves the
+        environment proxy configuration on every request
+        (``Session.merge_environment_settings`` → ``get_environ_proxies`` →
+        ``getproxies``/``proxy_bypass_environment``, each walking ``os.environ``),
+        measured at 5 calls and ~3.8% of the LAN apply-path profile.
+        """
+        original = CONFIG.copy()
+        calls: list[int] = []
+        try:
+            with patch("requests.utils.getproxies", lambda: calls.append(1) or {}):
+                CONFIG["MASTER_CERT_FINGERPRINT"] = "deadbeef" * 8
+                session = get_http_session()
+                try:
+                    assert session.trust_env is False
+                    session.merge_environment_settings(
+                        "https://peer.invalid/x", {}, None, None, None
+                    )
+                finally:
+                    session.close()
+        finally:
+            set_config(original)
+        assert calls == [], "a pinned LAN session consulted the environment proxies"
+
+    def test_plain_session_still_consults_environment_proxies(self):
+        """Remote mode keeps honouring the environment proxy configuration."""
+        original = CONFIG.copy()
+        calls: list[int] = []
+        try:
+            with patch("requests.utils.getproxies", lambda: calls.append(1) or {}):
+                CONFIG.pop("MASTER_CERT_FINGERPRINT", None)
+                session = get_http_session()
+                try:
+                    assert session.trust_env is True
+                    session.merge_environment_settings(
+                        "https://server.invalid/x", {}, None, None, None
+                    )
+                finally:
+                    session.close()
+        finally:
+            set_config(original)
+        assert calls, "remote mode stopped honouring the environment proxies"
+
 
 class TestGetSslVerifyWithFingerprint:
     """Tests for get_ssl_verify with fingerprint verification."""
