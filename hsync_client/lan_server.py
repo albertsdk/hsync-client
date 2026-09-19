@@ -31,6 +31,7 @@ import stat as stat_module
 import tempfile
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from enum import StrEnum
@@ -134,21 +135,56 @@ class LANServerMode(StrEnum):
     seeder = "seeder"
 
 
+def _stat_identity(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Return the identity tuple shared by :func:`_same_open_file` and the cache."""
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
+
+
 def _same_open_file(before: os.stat_result, after: os.stat_result) -> bool:
     """Return whether an opened regular file retained identity and content metadata."""
-    return (
-        before.st_dev,
-        before.st_ino,
-        before.st_size,
-        before.st_mtime_ns,
-        before.st_ctime_ns,
-    ) == (
-        after.st_dev,
-        after.st_ino,
-        after.st_size,
-        after.st_mtime_ns,
-        after.st_ctime_ns,
-    )
+    return _stat_identity(before) == _stat_identity(after)
+
+
+class _ChecksumCache:
+    """Bounded LRU of served-file checksums keyed by stat identity.
+
+    Every download used to re-hash the whole file before serving it, costing a
+    full extra disk pass per request on top of the (optional) compressed-staging
+    read. The cache keys a checksum on the same ``(dev, ino, size, mtime_ns,
+    ctime_ns)`` identity the engine already trusts for mid-serve consistency
+    checks, so a served-unchanged file repeats its checksum for free and any
+    observed content change necessarily evicts the stale entry. The trade-off
+    is identical to the existing model: content rewritten without any stat
+    field changing cannot be detected by the engine either.
+    """
+
+    def __init__(self, maxsize: int = 512) -> None:
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+        self._entries: OrderedDict[tuple[int, int, int, int, int], str] = OrderedDict()
+
+    def get(self, identity: tuple[int, int, int, int, int]) -> str | None:
+        with self._lock:
+            checksum = self._entries.get(identity)
+            if checksum is not None:
+                self._entries.move_to_end(identity)
+            return checksum
+
+    def put(self, identity: tuple[int, int, int, int, int], checksum: str) -> None:
+        with self._lock:
+            self._entries[identity] = checksum
+            self._entries.move_to_end(identity)
+            while len(self._entries) > self._maxsize:
+                self._entries.popitem(last=False)
+
+
+_CHECKSUM_CACHE = _ChecksumCache()
 
 
 @contextmanager
@@ -1546,7 +1582,11 @@ class LANRequestHandler(BaseHTTPRequestHandler):
         try:
             with _open_regular_beneath(local_bucket, normalized) as (stream, opened):
                 file_size = opened.st_size
-                checksum = _hash_open_file(stream)
+                identity = _stat_identity(opened)
+                checksum = _CHECKSUM_CACHE.get(identity)
+                if checksum is None:
+                    checksum = _hash_open_file(stream)
+                    _CHECKSUM_CACHE.put(identity, checksum)
                 if not _same_open_file(opened, os.fstat(stream.fileno())):
                     self._send_error_response(HTTP_CONFLICT, "File changed while opening")
                     return

@@ -1,6 +1,6 @@
 # HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
 
-> **Status: Implemented (Rev. 4).** The harness described here is implemented
+> **Status: Implemented (Rev. 5).** The harness described here is implemented
 > — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
 > `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
 > `docs/internal/testing.md` ("Stress suites") for usage and for the engine
@@ -15,6 +15,16 @@
 > replica signal overshoot the manifest forever. All claims about engine
 > behaviour below were verified against the codebase — do not re-derive them
 > blindly.
+>
+> **Rev. 4 → Rev. 5 (2026-09-19) — full-scale LAN bring-up.** Pushed-scale LAN
+> runs (6000 files / 400 dirs / ~1.5 GB) surfaced three engine defects, all
+> fixed with regressions: a shared `ZstdDecompressor` corrupted streams under
+> parallel transfer threads (`hsync-common` per-thread decompressors), LAN
+> directory permissions never converged for directories created by a cycle's
+> own downloads (converge pass moved after transfers and gated for LAN), and
+> the LAN download path hashed every file 2–3 times (bounded checksum cache).
+> The LAN full-scale suite now passes at 0 mismatches (see
+> `docs/internal/testing.md`).
 >
 > **Rev. 3 → Rev. 4 (2026-09-18) — completeness close-out.** Three documented
 > features were completed: the §13.5 `HSYNC_BB_STRESS_SUBPROCESS=1` wall-clock

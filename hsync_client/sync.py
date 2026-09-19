@@ -423,13 +423,6 @@ async def sync(
             remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
         )
 
-        # Directory permission-only convergence (download-only): the remote
-        # mode wins. Directories never appear in the /files listing, so the
-        # dedicated /dirs listing is fetched on demand (best-effort: an older
-        # peer without the endpoint simply skips the converge).
-        if CONFIG.get("SYNC_DIRECTION", "bidirectional") == "download-only":
-            converge_directory_permissions(get_dirs_remote())
-
         # A fresh sync cycle starts — clear the per-cycle skip-set of
         # permanently-failed downloads so a file that failed last tick is
         # retried once (it may have been fixed on the remote).
@@ -609,6 +602,20 @@ async def sync(
                 source_resolver,
                 source_candidates,
             )
+
+        # Directory permission convergence: the authoritative peer's mode
+        # wins wherever this node accepts remote content (see
+        # ``_dir_converge_enabled``). Directories never appear in the /files
+        # listing, so the dedicated /dirs listing is fetched on demand
+        # (best-effort: an older peer without the endpoint simply skips the
+        # converge). It runs *after* the transfers because the download path
+        # creates missing parents with ``mkdir`` defaults: only at this point
+        # does the whole replicated tree exist, so a single reconcile repairs
+        # the current cycle's creations as well as any earlier divergence —
+        # including the modes of directories whose live event was dropped
+        # while the WSS was down during a burst.
+        if _dir_converge_enabled(lan_mode):
+            converge_directory_permissions(get_dirs_remote())
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
         # and every _record_synced_base() from completed transfers) in a single
@@ -1373,12 +1380,38 @@ def _parse_advertised_version(
     return parsed["vclock"], int(clamp_incoming_corrected_mtime(float(parsed["corrected_mtime"])))
 
 
-# ── Download-only directory permission converge (dir chmod) ───────────────
+# ── Directory permission converge (dir chmod) ─────────────────────────────
 # Directories carry no content hash and never appear in the /files listing, so
 # the reconcile compares the dedicated /dirs listing against the local tree and
-# applies the remote mode when it diverges. This runs only inside sync() —
-# never in previews: a dry-run calls get_sync_actions(persist_state=False)
+# applies the authoritative peer's mode when it diverges. This runs only inside
+# sync() — never in previews: a dry-run calls get_sync_actions(persist_state=False)
 # directly and never reaches this path.
+
+
+def _dir_converge_enabled(lan_mode: bool) -> bool:
+    """Whether the current cycle reconciles directory modes from the peer.
+
+    The authoritative peer (central server in download-only, LAN master
+    always) owns directory modes; this node mirrors them.
+
+    * ``upload-only`` — never: this node pushes content and takes nothing
+      back, so a remote mode must not be forced onto the local tree.
+    * LAN (``lan_mode``) — always otherwise. The master is the guaranteed
+      source of the whole tree and the slave is its replica, but a directory
+      mode has no representation in the /files listing: it travels as a live
+      dir event only. Any dropped event (WSS drop during a burst, watcher
+      gap, reconnect window) would therefore leave a divergence no later
+      cycle could ever repair — the periodic reconcile makes mode parity
+      eventually consistent instead of event-delivery dependent.
+    * Remote central server — only in ``download-only``: there mirroring the
+      server *is* the contract. In bidirectional mode the local modes are
+      user intent (the server only stores file-backed parents whose modes are
+      mkdir defaults), so they are never rewritten from the listing.
+    """
+    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    if direction == "upload-only":
+        return False
+    return lan_mode or direction == "download-only"
 
 
 def get_dirs_remote() -> list[dict]:
@@ -1408,11 +1441,15 @@ def get_dirs_remote() -> list[dict]:
 
 
 def converge_directory_permissions(remote_dirs: list[dict]) -> None:
-    """Apply divergent remote directory permissions locally (download-only).
+    """Apply divergent remote directory permissions locally.
 
     Each entry is validated (untrusted wire input) and compared against the
-    local directory mode; on divergence the remote mode wins. Every chmod is
-    best-effort — a failure is logged and never aborts the cycle.
+    local directory mode; on divergence the authoritative peer's mode wins.
+    A directory that does not exist locally yet is skipped — the caller runs
+    this after the transfers, so every directory of the replicated tree is
+    already present and a missing entry can only be a directory the peer
+    itself does not materialise. Every chmod is best-effort — a failure is
+    logged and never aborts the cycle.
     """
     for info in remote_dirs:
         if not isinstance(info, dict):

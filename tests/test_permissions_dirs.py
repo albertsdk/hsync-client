@@ -4,18 +4,31 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Tests for the download-only directory permission converge.
+"""Tests for the directory permission converge.
 
-``converge_directory_permissions`` applies the remote directory mode when
-the local mode diverges (download-only: remote wins), with the owner rwx
+``converge_directory_permissions`` applies the authoritative peer's directory
+mode when the local mode diverges (the remote mode wins), with the owner rwx
 floor preserved. ``update_dir`` applies the same floor for realtime events.
+``_dir_converge_enabled`` is the per-cycle gate, and ``sync`` runs the
+converge after the transfers so directories created by the download path are
+repaired in the same cycle.
 """
 
+import asyncio
 import os
+from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from hsync_client.sync import converge_directory_permissions
+import pytest
+from hsync_common.models.file import File
+from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+from hsync_client.sync import (
+    _dir_converge_enabled,
+    converge_directory_permissions,
+    sync,
+)
 
 
 class TestConvergeDirectoryPermissions:
@@ -133,3 +146,122 @@ class TestUpdateDirOwnerFloor:
         created = tmp_path / "newdir"
         assert created.is_dir()
         assert oct(created.stat().st_mode & 0o777) == "0o750"
+
+
+class TestDirConvergeGate:
+    """``_dir_converge_enabled`` decides which cycles reconcile remote modes.
+
+    Regression for the 6000-file LAN stress divergence: the converge gate used
+    to be ``SYNC_DIRECTION == "download-only"``, so a LAN slave never
+    reconciled directory modes from the master. A directory whose live create
+    event was dropped while the WSS was down during a burst then kept the
+    download path's ``mkdir`` default mode forever.
+    """
+
+    @pytest.mark.parametrize(
+        ("lan_mode", "direction", "expected"),
+        [
+            # LAN: the master owns the whole tree, so its modes always win.
+            (True, "bidirectional", True),
+            (True, "download-only", True),
+            # ... except when this node pushes content and takes nothing back.
+            (True, "upload-only", False),
+            # Remote server: mirroring is the contract only in download-only.
+            (False, "download-only", True),
+            (False, "bidirectional", False),
+            (False, "upload-only", False),
+        ],
+    )
+    def test_gate(self, lan_mode, direction, expected):
+        from hsync_client import sync as sync_mod
+
+        with patch.object(sync_mod, "CONFIG", {"SYNC_DIRECTION": direction}):
+            assert _dir_converge_enabled(lan_mode) is expected
+
+    def test_missing_direction_defaults_to_bidirectional(self):
+        """An unset SYNC_DIRECTION must behave like the explicit default."""
+        from hsync_client import sync as sync_mod
+
+        with patch.object(sync_mod, "CONFIG", {}):
+            assert _dir_converge_enabled(False) is False
+            assert _dir_converge_enabled(True) is True
+
+
+class TestSyncRunsDirConverge:
+    """``sync`` reconciles directory modes *after* the transfers complete.
+
+    The download path creates missing parents with ``mkdir`` defaults, so a
+    converge running before the transfers would silently skip exactly the
+    directories the current cycle is about to create (the local-dir-missing
+    branch of ``converge_directory_permissions``).
+    """
+
+    @staticmethod
+    def _run_cycle(
+        tmp_path: Path, *, lan_mode: bool, direction: str
+    ) -> tuple[list[str], MagicMock]:
+        """Run one sync cycle with a single (mocked) download action.
+
+        Returns the observed call order of ``_execute_parallel_transfers`` /
+        ``converge_directory_permissions`` plus the converge mock.
+        """
+        from hsync_client import sync as sync_mod
+
+        order: list[str] = []
+        action = SyncAction(File(str(tmp_path / "file.txt")), SyncActionName.download)
+        transfers = AsyncMock(side_effect=lambda *a, **k: order.append("transfers"))
+        converge = MagicMock(side_effect=lambda *a, **k: order.append("converge"))
+
+        async def _cycle() -> None:
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch.object(
+                        sync_mod,
+                        "CONFIG",
+                        {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": direction},
+                    )
+                )
+                stack.enter_context(patch.object(sync_mod, "get_files_local", return_value=[]))
+                stack.enter_context(patch.object(sync_mod, "get_files_remote", return_value=[]))
+                stack.enter_context(
+                    patch.object(sync_mod, "get_tombstones_remote", return_value={})
+                )
+                stack.enter_context(patch.object(sync_mod, "push_tombstones_remote"))
+                stack.enter_context(
+                    patch.object(sync_mod, "get_sync_actions", return_value=[action])
+                )
+                stack.enter_context(patch.object(sync_mod, "clear_sha256_cache"))
+                stack.enter_context(patch.object(sync_mod, "sync_state"))
+                stack.enter_context(patch.object(sync_mod, "_cleanup_partial_files"))
+                stack.enter_context(patch.object(sync_mod, "ensure_hsynckeep_files"))
+                stack.enter_context(
+                    patch.object(sync_mod, "_execute_parallel_transfers", new=transfers)
+                )
+                stack.enter_context(
+                    patch.object(sync_mod, "converge_directory_permissions", new=converge)
+                )
+                stack.enter_context(patch.object(sync_mod, "get_dirs_remote", return_value=[]))
+                await sync(lan_mode=lan_mode)
+
+        asyncio.run(_cycle())
+        return order, converge
+
+    def test_lan_cycle_converges_after_transfers(self, tmp_path):
+        order, converge = self._run_cycle(tmp_path, lan_mode=True, direction="bidirectional")
+
+        converge.assert_called_once()
+        assert order == ["transfers", "converge"], (
+            f"the LAN converge must run once, after the transfers: {order}"
+        )
+
+    def test_remote_download_only_converges_after_transfers(self, tmp_path):
+        order, converge = self._run_cycle(tmp_path, lan_mode=False, direction="download-only")
+
+        converge.assert_called_once()
+        assert order == ["transfers", "converge"], order
+
+    def test_remote_bidirectional_never_converges(self, tmp_path):
+        order, converge = self._run_cycle(tmp_path, lan_mode=False, direction="bidirectional")
+
+        converge.assert_not_called()
+        assert order == ["transfers"], order

@@ -494,6 +494,29 @@ Notes:
 - Peer logs are captured on per-test log **files** (not pipes) inside the
   pytest tmp dir, so verbose peers can never block the harness on a full pipe.
 
+**Defects surfaced by full-scale runs (fixed)**:
+
+- *Concurrent zstd decompression corrupted streams.* A single shared
+  `ZstdDecompressor` in `hsync-common` was used by all parallel transfer
+  threads; under LAN burst load this produced `Unknown frame descriptor` /
+  `Data corrupted` errors and, with zstandard ≥ 0.25, could crash the
+  interpreter. Fixed by making decompressors per-thread (`threading.local()`).
+  Regression: `hsync-common/tests/test_compression.py::TestThreadSafety`.
+- *Directory permissions never converged on the LAN.* Directories created by
+  a download cycle's `mkdir(parents=True)` inherit the process umask (e.g.
+  `0o775` instead of `0o750`), and the one-shot `converge_directory_permissions`
+  pass ran before the transfers and skipped not-yet-existing directories — so
+  burst-created directories stayed divergent. Fixed by moving the converge
+  pass after `_execute_parallel_transfers` and gating it for LAN mode.
+  Regression: `hsync-client/tests/test_permissions_dirs.py`.
+- *LAN download serving hashed every file 2–3 times.* Fixed with a bounded
+  checksum cache on the LAN master (invalidated on any stat identity change).
+  Regression: `hsync-client/tests/test_lan_server_checksum_cache.py`.
+
+These fixes took the LAN full-scale suite (6000 files / 400 dirs / ~1.5 GB)
+from a 600 s convergence timeout with 163 mismatches to `1 passed in ~138 s`
+with 0 mismatches (burst ≈ 67 file/s, mutation wave ≈ 147 file/s).
+
 ## Cross-project testing
 
 The client depends on `hsync-common` models. When changing models in

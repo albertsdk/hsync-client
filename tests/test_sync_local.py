@@ -926,6 +926,7 @@ class TestHsyncignoreDoesNotDelete:
                     patch("hsync_client.state_backend.CONFIG", cfg),
                     patch("hsync_client.sync.get_files_remote", return_value=[]),
                     patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                    patch("hsync_client.sync.get_dirs_remote", return_value=[]),
                     patch("hsync_client.sync.push_tombstones_remote") as mock_push,
                     patch("hsync_client.sync.get_sync_actions", return_value=[]),
                 ):

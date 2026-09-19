@@ -448,10 +448,16 @@ appear in the `/files` listing):
 - **Inbound events**: `update_dir` (`sync.py`) applies the remote mode with
   the owner rwx floor via `set_permissions_on_dir` (`utils.py`) — a peer mode
   like `000` can never lock the receiver out of its own storage.
-- **One-shot reconcile (download-only)**: `converge_directory_permissions`
+- **One-shot reconcile**: `converge_directory_permissions`
   (`sync.py`) compares the dedicated `GET /dirs` listing (exposed by both the
   server and the LAN master) against the local tree and applies the remote
-  mode where it diverges. Runs only inside `sync()`, never in previews.
+  mode where it diverges. Gate is `_dir_converge_enabled` (`sync.py`): it runs
+  in LAN mode (both directions) **and** server download-only — never in
+  upload-only or previews. It runs **after** `_execute_parallel_transfers`
+  inside `sync()`: directories materialized by the same cycle's downloads
+  (whose `mkdir(parents=True)` creates them with the process umask, since
+  directory entries are never part of the file listing) are corrected within
+  the cycle instead of staying divergent until an event-driven fix.
 
 This correctly handles the no-op-close-before-safe-save scenario: the first
 close (content unchanged) is skipped at stage 2, and the subsequent rename
