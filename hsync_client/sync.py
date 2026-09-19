@@ -82,6 +82,7 @@ from hsync_client.retry import retry_on_network_error
 from hsync_client.state_backend import local_cid
 from hsync_client.utils import (
     get_ssl_verify,
+    is_inflight_partial,
     set_permissions,
     set_permissions_on_dir,
 )
@@ -193,6 +194,13 @@ def _cleanup_partial_files() -> int:
     This is called at the start of each sync to remove any leftover
     partial files that may have been left behind by interrupted downloads.
 
+    Artifacts currently being written by a live transfer are skipped: inbound
+    downloads (LAN fan-out, remote event loop) run outside the sync cycle that
+    owns this sweep, so without the check the sweep would delete the ``.part``
+    of a stream in flight — the transfer then fails at its final atomic rename
+    (logged as "Error saving file", no retry) and the path stays unsynced until
+    the next cycle.
+
     Returns:
         Number of partial files removed.
     """
@@ -203,6 +211,9 @@ def _cleanup_partial_files() -> int:
         for file in files:
             if is_partial_file(file):
                 partial_path = os.path.join(root, file)
+                if is_inflight_partial(partial_path):
+                    log.debug(f"Keeping in-flight partial: {partial_path}")
+                    continue
                 try:
                     remove(partial_path)
                     log.debug(f"Removed incomplete download: {partial_path}")

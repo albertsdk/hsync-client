@@ -9,7 +9,7 @@ import os
 import tempfile
 from datetime import UTC
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from hsync_common.labels import LABEL_STYLES
 from hsync_common.labels import colorize_labels as _colorize_labels
@@ -241,6 +241,40 @@ class TestSetupLogging:
         """Test logging setup with colors disabled."""
         # Should not raise
         setup_logging(no_color=True)
+
+    def test_flush_logs_drains_the_async_sink(self):
+        """``flush_logs`` delivers a record logged immediately before exit.
+
+        Regression: an asynchronous sink (``enqueue=True``) writes from a
+        dedicated thread, so a fatal path that logs its reason and exits right
+        away lost the message — the user saw a bare non-zero exit with no
+        explanation (observed end-to-end through ``CliRunner``, whose captured
+        stream is torn down before the writer thread flushes). ``flush_logs``
+        is the contract every exit path relies on.
+        """
+        from hsync_client.logger import flush_logs
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            logfile = f.name
+
+        try:
+            log = setup_logging(logfile=logfile)
+            log.error("Refusing to start: reason")
+            flush_logs()
+
+            with open(logfile) as f:
+                assert "Refusing to start: reason" in f.read()
+        finally:
+            os.unlink(logfile)
+
+    def test_flush_logs_never_raises(self):
+        """Flushing is best-effort: it must never break an exit path."""
+        from hsync_client.logger import flush_logs
+
+        # No handler configured for this sink, and a closed sink: still silent.
+        flush_logs()
+        with patch("hsync_client.logger.logger.complete", side_effect=RuntimeError("boom")):
+            flush_logs()
 
 
 class TestInterceptHandler:

@@ -99,7 +99,9 @@ from hsync_client.utils import (
     get_throttle_delay,
     normalize_bucket_relpath,
     path_lock,
+    register_inflight_partial,
     set_permissions,
+    unregister_inflight_partial,
 )
 from hsync_client.utils import (
     http_get as get,
@@ -852,6 +854,10 @@ def _download_from_source_attempt(
             return True
 
     cleanup_partial = True
+    # Mark the artifact in flight for the whole body: the sync cycle's
+    # leftover sweep must never delete a ``.part`` a live transfer is still
+    # writing (that sweep runs in the resync task, outside this transfer).
+    register_inflight_partial(partial_file_path)
     sha256 = hashlib.sha256()
     written = resume_offset
     wire_bytes = 0
@@ -1136,6 +1142,10 @@ def _download_from_source_attempt(
         if cleanup_partial and partial_file_path and Path(partial_file_path).exists():
             _discard_partial(partial_file_path)
             log.debug(f"Cleaned up partial file: {partial_file_path}")
+        # Released last: while the artifact is still ours the sweep skips it,
+        # so it cannot delete the leftover in the window between the two
+        # statements (and a successful transfer already renamed it away).
+        unregister_inflight_partial(partial_file_path)
 
 
 def _download_file_attempt(

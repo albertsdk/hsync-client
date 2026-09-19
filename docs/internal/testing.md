@@ -553,8 +553,52 @@ the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
   the same download load.
   Regression: `tests/test_watcher_start.py::TestInotifyEventFilter`.
 
+### Server-mode black-box suite (first full run)
+
+The 83 server-mode black-box tests (`remote_sync`, `continuous_sync`,
+`cli_surface`, `safety_guards`, `corrected_mtime`, `offline_changes`) are gated
+behind `HSYNC_BB_SERVER=1` and had never been executed in this workspace. First
+full run: **80 passed, 1 failed** — and the failure was a real, user-visible
+defect introduced by the asynchronous log sinks:
+
+- *The instance-lock refusal printed nothing.* A second client on the same
+  directory exited non-zero (correct) and logged the reason, but the record was
+  still queued on loguru's writer thread when the process left — loguru reported
+  `ValueError: I/O operation on closed file` from its queued writer and the
+  user saw a bare failure with no explanation. The test invokes the CLI
+  in-process through `CliRunner`, whose captured stream is torn down before the
+  writer flushes, which made the race deterministic in CI.
+  Fixed with `logger.flush_logs()` (a blocking, best-effort `logger.complete()`
+  wrapper) drained by every fatal exit: the lock refusal itself, the one-shot
+  run's `finally` (before *and* after the shutdown steps, so the diagnostic
+  cannot be lost if they fail) and `cli.run` as the process-level net.
+  Regressions: `tests/test_logger.py::TestSetupLogging::test_flush_logs_drains_the_async_sink`,
+  `...::test_flush_logs_never_raises`, plus the end-to-end
+  `tests/test_bb_server_safety_guards.py::TestInstanceLock::test_second_process_on_same_directory_refused`.
+  The first attempt wired the flush through a module-level import in
+  `hsync_client/cli.py`, which the **startup-import guard**
+  (`tests/test_startup_imports.py`, `FORBIDDEN` list) rejected: `import
+  hsync_client.cli` must not pull `loguru`/`asyncio`, because `--version` and
+  `--help` only need the argparse surface. `cli.run` therefore drains
+  **lazily and only when `hsync_client.logger` is already in `sys.modules`** —
+  a good example of an existing guard catching a performance regression that no
+  behavioural test would have noticed.
+
 ### Stress-found correctness defects (fixed)
 
+- *The per-cycle leftover sweep deleted `.part` files of live transfers.*
+  `sync._cleanup_partial_files` walks the whole bucket at the start of every
+  cycle to clear what a *previous* process left behind, but inbound downloads
+  run **outside** the cycle that owns the sweep (LAN fan-out, remote event
+  loop), so a RESYNC / reconnect landing mid-transfer removed the artifact a
+  stream was still writing. The writer keeps a valid descriptor, so the failure
+  surfaced only at the final atomic rename — logged as "Error saving file",
+  with no retry and no transfer-failure counted, leaving the path unsynced until
+  the next cycle (up to `RESYNC`, default 300 s). Writers now register their
+  artifacts in a lock-guarded registry (`utils.register_inflight_partial`) and
+  the sweep skips them.
+  Regression: `tests/test_transfer_download.py::TestDownloadFileResume::test_inflight_partial_survives_cycle_cleanup`
+  (fails without the fix with exactly that log sequence).
 - *A stale delete could destroy a re-created file on **both** peers.* The delete
   coalescing window (`DELETE_COALESCE_WINDOW`) can outlive the path it refers
   to: `rm <f>` followed by an immediate rewrite of the same name (the atomic

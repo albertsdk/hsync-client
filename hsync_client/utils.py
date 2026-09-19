@@ -543,6 +543,42 @@ def warn_if_open_fds_high() -> None:
 _path_locks: dict[str, list] = {}
 _path_locks_guard = threading.Lock()
 
+# In-flight transfer artifacts (``<final>.part``, ``<final>.delta.part`` and
+# the parked ``<final>.delta.part.lit`` payload), held only for the duration of
+# the stream that writes them. ``sync._cleanup_partial_files`` sweeps the bucket
+# for leftover artifacts at the start of every cycle to clear what a *previous*
+# process left behind; without this registry that sweep also deletes artifacts
+# a concurrently running transfer is still writing, because inbound downloads
+# (LAN fan-out, remote event loop) run outside the sync cycle that owns the
+# sweep. The writer keeps a valid descriptor either way, so the transfer would
+# only fail at its final atomic rename — silently, as an "Error saving file"
+# with no retry — leaving the path unsynced until the next cycle.
+_inflight_partials: set[str] = set()
+_inflight_partials_guard = threading.Lock()
+
+
+def register_inflight_partial(path: str) -> None:
+    """Mark *path* as an in-flight artifact until it is unregistered.
+
+    Consumers: ``hsync_client.transfer`` (full/compressed/resumed download)
+    and ``hsync_client.delta_transfer`` (delta rebuild and its parked literal
+    payload), both read by ``sync._cleanup_partial_files``.
+    """
+    with _inflight_partials_guard:
+        _inflight_partials.add(path)
+
+
+def unregister_inflight_partial(path: str) -> None:
+    """Release *path* from the in-flight registry (idempotent)."""
+    with _inflight_partials_guard:
+        _inflight_partials.discard(path)
+
+
+def is_inflight_partial(path: str) -> bool:
+    """Return whether *path* is currently being written by a transfer."""
+    with _inflight_partials_guard:
+        return path in _inflight_partials
+
 
 def open_partial_no_follow(path: str, write_mode: str) -> IO[bytes]:
     """Open a ``.part`` file without following planted symlinks.

@@ -78,7 +78,7 @@ from hsync_client.constants import (
 )
 from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
-from hsync_client.logger import set_client_id, setup_logging
+from hsync_client.logger import flush_logs, set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.sync import (
     log_initial_sync_start,
@@ -1027,12 +1027,20 @@ def run_sync(
                 )
             )
     finally:
+        # The async sinks must be drained before the process leaves: this
+        # finally runs for every exit inside the run (including the sys.exit
+        # calls that map the cycle verdict to an exit code), so the last
+        # diagnostic line is never lost to the writer-thread race.
+        flush_logs()
         # Compact syncstate.db once at process exit (best-effort): the state
         # stores are no longer writing here, so the VACUUM cannot race a flush.
         from hsync_client.state_maintenance import vacuum_on_shutdown
 
         vacuum_on_shutdown()
         instance_lock.release()
+        # Second drain: lines emitted by the shutdown steps above are flushed
+        # too (the first call already guaranteed the fatal diagnostic).
+        flush_logs()
 
 
 def _acquire_instance_lock(local_path: str, log) -> "Any":
@@ -1048,6 +1056,10 @@ def _acquire_instance_lock(local_path: str, log) -> "Any":
         return InstanceLock.acquire(local_path)
     except InstanceLockError as e:
         log.error(str(e))
+        # The message IS the refusal: with asynchronous sinks it must be
+        # flushed before the process terminates or the user sees a bare
+        # non-zero exit with no explanation.
+        flush_logs()
         sys.exit(1)
 
 

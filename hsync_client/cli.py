@@ -1170,4 +1170,20 @@ def server(
 
 def run() -> None:
     """Entry point for the CLI application."""
-    app()
+    try:
+        app()
+    finally:
+        # Process-level safety net for the asynchronous log sinks: whatever
+        # exit path was taken (normal, SystemExit, unhandled error), the queued
+        # records reach the terminal before the interpreter tears the stream
+        # down.
+        #
+        # Drained only when the logging stack was actually initialised: the same
+        # entry point serves the fast paths (``--version`` / ``--help``), whose
+        # contract is that importing ``hsync_client.cli`` pulls none of the heavy
+        # dependencies (pinned by ``tests/test_startup_imports.py``), so the
+        # import stays lazy and conditional.
+        if "hsync_client.logger" in sys.modules:
+            from hsync_client.logger import flush_logs
+
+            flush_logs()

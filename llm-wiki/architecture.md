@@ -105,6 +105,21 @@ synchronous file sink measured ~2.5× slower event drain on the master's
 watcher thread. Readers that need the file content immediately after a log
 call wait via `logger.complete()`.
 
+**Exit paths flush the sinks** (`logger.py:flush_logs`, blocking `complete()`
+wrapper, best-effort): an asynchronous sink writes from another thread, so a
+path that logs its reason and terminates lost that record — observed
+end-to-end as a bare non-zero exit with no explanation, because `CliRunner`
+(the CLI is invoked in-process by the black-box server tests) tears the
+captured stream down before the writer thread flushes
+(`ValueError: I/O operation on closed file`). Every fatal exit therefore
+drains the queue first: `main_logic._acquire_instance_lock` (the lock refusal
+message *is* the error), the `finally` of the one-shot run (twice: once before
+the shutdown steps so the diagnostic cannot be lost if they fail, once after
+them), and `cli.run` as the process-level net — the latter importing `loguru`
+**lazily and only when `hsync_client.logger` is already in `sys.modules`**, so
+the `--version` / `--help` fast paths keep the minimal import surface pinned by
+`tests/test_startup_imports.py`.
+
 ## State persistence (external SQLite, ADR-0025)
 
 | Store | Module | File | Purpose |

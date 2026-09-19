@@ -72,6 +72,8 @@ from hsync_client.sync_state import get_base_hash, resolve_upload_version_fields
 from hsync_client.utils import (
     get_ssl_verify,
     inbound_size_cap,
+    register_inflight_partial,
+    unregister_inflight_partial,
 )
 from hsync_client.utils import (
     http_connect_timeout as _timeout,
@@ -388,6 +390,10 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
 
     part_path = f"{ctx.local_path}{PARTIAL_DELTA_SUFFIX}"
     payload_path = f"{part_path}.lit"
+    # Both artifacts are written over the network below: mark them in flight so
+    # the sync cycle's leftover sweep cannot delete a rebuild mid-apply.
+    register_inflight_partial(part_path)
+    register_inflight_partial(payload_path)
     try:
         with get(
             data_uri,
@@ -453,3 +459,8 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
         for leftover in (part_path, payload_path):
             if Path(leftover).exists():
                 remove(leftover)
+        # Released last: while the artifacts are still ours the sweep skips
+        # them, so it cannot delete a leftover we are about to remove (or a
+        # rebuild we just renamed) in the window between the two statements.
+        unregister_inflight_partial(part_path)
+        unregister_inflight_partial(payload_path)

@@ -320,6 +320,68 @@ class TestDownloadFileResume:
             mock_remove.assert_not_called()
             assert partial_file.read_bytes() == partial_prefix + new_chunk
 
+    def test_inflight_partial_survives_cycle_cleanup(self, tmp_path):
+        """A ``.part`` being streamed is not deleted by the cycle's sweep.
+
+        Regression: ``sync._cleanup_partial_files`` runs at the start of every
+        sync cycle (the periodic RESYNC / a reconnect) and sweeps the bucket
+        for leftover artifacts. Inbound downloads run *outside* that cycle
+        (LAN fan-out, remote event loop), so the sweep used to delete the
+        ``.part`` of a stream in flight: the transfer then failed at its final
+        atomic rename, logged as "Error saving file" with no retry, and the
+        path stayed unsynced until the next cycle. The sweep must skip
+        artifacts a live transfer owns.
+        """
+        import hashlib
+
+        from hsync_client.sync import _cleanup_partial_files
+
+        first = b"A" * 4096
+        second = b"B" * 4096
+        content = first + second
+        file = File(
+            filepath="file.txt",
+            sha256sum=hashlib.sha256(content).hexdigest(),
+            size=len(content),
+            mtime=1000,
+            ctime=1000,
+        )
+
+        def chunks():
+            yield first
+            # A sync cycle starts here and runs its leftover sweep while this
+            # transfer is mid-stream — the exact production interleaving.
+            _cleanup_partial_files()
+            yield second
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"Content-Encoding": "", "Content-Length": str(len(content))}
+        mock_response.iter_content = MagicMock(side_effect=lambda *a, **k: chunks())
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            # ``_cleanup_partial_files`` reads the bucket from the sync module's
+            # own CONFIG reference, so both must point at the test bucket.
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.utime"),
+            patch("hsync_client.transfer.set_permissions"),
+        ):
+            download_file(file)
+
+        # The transfer completed: the sweep left the in-flight artifact alone.
+        assert (tmp_path / "file.txt").read_bytes() == content
+
     def test_download_partial_file_larger_than_expected(self, tmp_path):
         """Test download restarts when partial file is too large."""
         file = File(

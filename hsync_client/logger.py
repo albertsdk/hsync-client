@@ -266,3 +266,27 @@ def setup_logging(
         logging.getLogger(logger_name).propagate = False
 
     return logger
+
+
+def flush_logs() -> None:
+    """Block until every enqueued log record has been written (best-effort).
+
+    Both sinks are asynchronous (``enqueue=True``), so a process that logs and
+    then terminates immediately can lose the last records: the writer thread
+    races the exit and the stream may already be closed when it flushes
+    (observed as ``ValueError: I/O operation on closed file`` from loguru's
+    queued writer, with the message — typically the *reason* for a fatal exit —
+    silently missing from the user's output).
+
+    Every fatal exit path must therefore flush before leaving. Best-effort by
+    contract: a failure here must never replace the error being reported.
+
+    Consumers: ``main_logic`` (instance-lock refusal and the run's exit paths)
+    and ``cli.run`` (the process entry point, which drains only when the logging
+    stack was actually imported, so the ``--version`` / ``--help`` fast paths
+    keep their minimal import surface).
+    """
+    try:
+        logger.complete()
+    except Exception:  # pragma: no cover - flushing must never break the exit path
+        pass
