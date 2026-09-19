@@ -863,6 +863,23 @@ CPU/file with the lane off** — stays the reliable figure; the split above is
 directional. The engineering takeaway: the cost scales with *per-event work in
 the inventory observer chain*, not with per-frame or per-lookup network calls.
 
+**Per-event observer cost ruled out (2026-09-21).** The publisher's per-event
+`upsert` is not the block: `LanInventoryPublisher._normalize_entry` (path
+normalisation + one `lstat`) measures **~9 µs** and
+`utils.normalize_bucket_relpath` ~3 µs, i.e. ~55 ms for 6000 files — three
+orders of magnitude below the ~4.3 ms/file (~10.8 s) block delta. A coalesced
+wakeup (`_notify` once per burst instead of once per event) and a single-`lstat`
+`_normalize_entry` were implemented and A/B'd 3 runs per arm at 2500 files:
+medians 179.2 → 187.2 files/s (+4.5 %, inside the ±15 % host spread), so both
+were **reverted** rather than kept as unmeasured complexity. The block is
+therefore not removable per-event computation: it is the resolver's per-file
+lookup POST plus the extra lane threads (seeder HTTPS server, publisher task)
+contending for the GIL with the apply workers. The only per-file reduction
+identified (source-lookup batching) was already measured and reverted; the
+remaining lever is `--no-peer-download` for peers that do not need to serve
+others, and any further gain needs a lane-level redesign (separate process or
+burst-time resolver deferral) with its own freshness/robustness analysis.
+
 ### LAN burst: per-file CPU attribution, and the two wastes it removed
 
 The single-component benches could not explain the burst, so the **real peer** was
