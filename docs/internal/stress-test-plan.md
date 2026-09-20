@@ -422,6 +422,7 @@ the test body (§13.5).
 | `HSYNC_BB_STRESS_MTIME_TOLERANCE` | `2` | mtime tolerance (s) |
 | `HSYNC_BB_STRESS_SUBPROCESS` | unset | Server mode only: `"1"` runs the client as a wall-clock subprocess instead of in-process (plan §13.5) |
 | `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD` | unset | LAN mode only: `"1"` starts the slave with `--no-peer-download`, for the peer-offload A/B (plan §13.12) |
+| `HSYNC_BB_STRESS_PROFILE_CPU` | unset | LAN mode only: `"1"` prints the slave's per-thread CPU across the initial burst (`[LAN-CPU]`, plan §13.13) |
 | `HSYNC_BB_STRESS_REPORT` | unset | Path for the JSON report (optional) |
 
 Prefer **CLI flags** over `HSYNC_*` env for per-run tuning (see §13.5 — the
@@ -615,6 +616,24 @@ for future bursts: watchdog silently discards `IN_Q_OVERFLOW` events
 would be invisible in the logs; and the periodic `RESYNC` (default 300 s,
 `HSYNC_RESYNC`) remains the correctness safety net for any event dropped
 anywhere in the chain.
+
+### 13.12 LAN peer-offload A/B
+
+`HSYNC_BB_STRESS_NO_PEER_DOWNLOAD=1` starts the slave with `--no-peer-download`
+so the whole peer-offload block (seeder + inventory publisher + source resolver)
+can be measured against the default with the same harness. The knob is read at
+import time because the autouse env-isolation fixture scrubs `HSYNC_*` before
+each test body.
+
+### 13.13 LAN lane CPU attribution (Phase 0 of ADR-0031)
+
+`HSYNC_BB_STRESS_PROFILE_CPU=1` samples `/proc/<slave-pid>/task/*/stat` around
+the initial burst and prints one `[LAN-CPU]` line: total slave CPU seconds,
+ms/file, and the top threads by CPU. Run it once with the lane on and once with
+`HSYNC_BB_STRESS_NO_PEER_DOWNLOAD=1` to attribute the peer-offload block by
+thread. This is the reproducible harness the
+[ADR-0031](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0031-lan-peer-offload-lane-cost-reduction.md)
+stages gate on; it changes no product behaviour.
 
 ## 14. Out of scope / deferred (v1)
 

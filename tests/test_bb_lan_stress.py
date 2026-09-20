@@ -32,6 +32,7 @@ from .lan_helpers import (
     _wait_for_slave_events,
     _wait_for_text_in_stderr,
     assert_realtime_watcher,
+    thread_cpu_totals,
     watcher_degraded_lines,
 )
 
@@ -45,6 +46,27 @@ _K = stress_tree.stress_knobs("lan")
 # Read at import time: the autouse env-isolation fixture scrubs HSYNC_* before
 # each test body, so an os.environ lookup inside the test would always be empty.
 _NO_PEER_DOWNLOAD = os.environ.get("HSYNC_BB_STRESS_NO_PEER_DOWNLOAD") == "1"
+
+# Optional per-thread CPU attribution of the slave across the initial burst
+# (plan §13.13); read at import time for the same env-scrub reason.
+_PROFILE_CPU = os.environ.get("HSYNC_BB_STRESS_PROFILE_CPU") == "1"
+
+
+def _report_thread_cpu(pid: int, before: dict[str, float], n_files: int) -> None:
+    """Print the slave's per-thread CPU delta over the burst (Phase 0 harness)."""
+    after = thread_cpu_totals(pid)
+    delta = {name: after.get(name, 0.0) - before.get(name, 0.0) for name in after}
+    total = sum(delta.values())
+    per_file = (total * 1000.0 / n_files) if n_files else 0.0
+    top = ", ".join(
+        f"{name}={value:.2f}s"
+        for name, value in sorted(delta.items(), key=lambda item: -item[1])[:6]
+        if value > 0.01
+    )
+    print(
+        f"\n[LAN-CPU] slave pid={pid} files={n_files} total={total:.2f}s "
+        f"({per_file:.2f} ms/file) threads: {top}"
+    )
 
 
 def _report(record: dict[str, object]) -> None:
@@ -131,6 +153,7 @@ class TestLanStress:
                 t_generate = time.perf_counter() - t0
                 n_files, n_dirs, total_bytes = stress_tree.manifest_totals(manifest)
 
+                cpu_before = thread_cpu_totals(slave.pid) if _PROFILE_CPU else {}
                 mismatches, _stats, t_sync, t_verify = stress_tree.converge_quiet_poll(
                     Path(lan_slave_dir),
                     manifest,
@@ -139,6 +162,8 @@ class TestLanStress:
                     poll_interval=float(_K["poll_interval"]),
                     mtime_tolerance=float(_K["mtime_tolerance"]),
                 )
+                if _PROFILE_CPU:
+                    _report_thread_cpu(slave.pid, cpu_before, n_files)
                 _report(
                     stress_tree.make_record(
                         mode="lan",

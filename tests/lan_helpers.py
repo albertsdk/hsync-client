@@ -771,3 +771,41 @@ def _lan_upload(
         timeout=30.0,
         verify=False,
     )
+
+
+def thread_cpu_totals(pid: int) -> dict[str, float]:
+    """Return per-thread CPU seconds (utime+stime) for *pid*, keyed by name.
+
+    Linux ``/proc/<pid>/task/*/stat`` reader used by the optional LAN lane
+    attribution (``HSYNC_BB_STRESS_PROFILE_CPU=1``, plan §13.13) to split the
+    slave's CPU by thread across a burst. Sums threads that share a name.
+    Returns ``{}`` when ``/proc`` is unavailable (non-Linux, or the process
+    exited); never raises.
+    """
+    try:
+        ticks = float(os.sysconf("SC_CLK_TCK"))
+    except (ValueError, OSError):
+        ticks = 100.0
+    totals: dict[str, float] = {}
+    try:
+        entries = list(Path(f"/proc/{pid}/task").iterdir())
+    except OSError:
+        return {}
+    for entry in entries:
+        try:
+            raw = (entry / "stat").read_text()
+        except OSError:
+            continue
+        lparen = raw.find("(")
+        rparen = raw.rfind(")")
+        if lparen < 0 or rparen < 0:
+            continue
+        name = raw[lparen + 1 : rparen]
+        # Fields after ") " start at state (index 0); utime=11, stime=12.
+        fields = raw[rparen + 2 :].split()
+        try:
+            cpu_ticks = int(fields[11]) + int(fields[12])
+        except (IndexError, ValueError):
+            continue
+        totals[name] = totals.get(name, 0.0) + cpu_ticks / ticks
+    return totals
