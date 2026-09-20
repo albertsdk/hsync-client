@@ -625,15 +625,17 @@ can be measured against the default with the same harness. The knob is read at
 import time because the autouse env-isolation fixture scrubs `HSYNC_*` before
 each test body.
 
-### 13.13 LAN lane CPU attribution (Phase 0 of ADR-0031)
+### 13.13 LAN lane CPU attribution (ADR-0031)
 
 `HSYNC_BB_STRESS_PROFILE_CPU=1` samples `/proc/<slave-pid>/task/*/stat` around
 the initial burst and prints one `[LAN-CPU]` line: total slave CPU seconds,
 ms/file, and the top threads by CPU. Run it once with the lane on and once with
 `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD=1` to attribute the peer-offload block by
-thread. This is the reproducible harness the
-[ADR-0031](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0031-lan-peer-offload-lane-cost-reduction.md)
-stages gate on; it changes no product behaviour.
+thread. It is the reproducible harness behind
+[ADR-0031](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0031-lan-peer-offload-lane-cost.md),
+which used it to accept the lane cost (seeder isolation refuted; the per-file
+resolver lookup is required for per-file offload). It changes no product
+behaviour.
 
 ## 14. Out of scope / deferred (v1)
 
