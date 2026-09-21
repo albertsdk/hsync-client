@@ -6,7 +6,7 @@ the canonical store and relays events to all connected clients in real time.
 > **Quick links**
 > - Full option & environment-variable reference → [Configuration — Server Mode](configuration-server.md#server-connection-options)
 > - Ready-to-use recipes → [Examples — Server Mode](examples-server.md)
-> - Server vs LAN comparison → [Sync Modes](sync-modes.md)
+> - Server vs p2p comparison → [Sync Modes](sync-modes.md)
 > - Client-side sync flow (diagrams, delta transfer, event handling) → [Sync Flow](sync-flow.md)
 
 ## Overview
@@ -191,7 +191,7 @@ over the encrypted channel and is **required**.
 | **API Key** | Set `HSYNC_API_KEY` (env var only — no CLI flag). Missing key → client aborts before connecting |
 | **HTTPS/WSS** | Always on; the client refuses to send the API key over plain HTTP. Works through reverse proxies that terminate TLS |
 | **Custom CA** | Trust a self-signed server certificate with `--ca-cert server.crt` |
-| **Server cert fingerprint** | The desktop GUI pins the server's SHA-256 fingerprint on first connect (TOFU), like LAN mode does for peer certificates |
+| **Server cert fingerprint** | The desktop GUI pins the server's SHA-256 fingerprint on first connect (TOFU), like p2p mode does for peer certificates |
 | **Skip verification** | `--insecure` disables all certificate checks — **development only** |
 
 > Complete SSL/TLS documentation, including certificate pinning,
@@ -248,7 +248,7 @@ Key server-mode specific options:
 > **Tip**: use a `.env` file to avoid typing credentials on every command.
 > See [Environment Files](configuration.md#environment-files).
 
-## Comparison: Server Mode vs LAN Mode
+## Comparison: Server Mode vs p2p Mode
 
 See [Sync Modes](sync-modes.md) for the full comparison table.
 

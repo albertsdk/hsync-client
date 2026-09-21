@@ -42,7 +42,7 @@ class TestMassDeleteGuard:
     In server mode the mass-deletion guard CANNOT trip because local-only
     files produce ``upload`` actions (not ``delete``) and tombstone-confirmed
     deletes bypass the guard by design. The guard only produces unconfirmed
-    ``delete`` actions in LAN ``download-only`` mode (slave mirrors master).
+    ``delete`` actions in P2P ``download-only`` mode (slave mirrors master).
 
     The guard *logic* is unit-tested in ``test_sync_local.py::
     TestMassDeletionGuard``.  These BB tests verify the observable
@@ -189,7 +189,7 @@ class TestInstanceLock:
     def test_second_process_on_same_directory_refused(
         self, live_server, bb_bucket, local_dir, watch_sync, run_cli, monkeypatch
     ):
-        from tests.lan_helpers import _terminate, _wait_for_client_ready
+        from tests.p2p_helpers import _terminate, _wait_for_client_ready
 
         # The in-process run must resolve the same locks dir as the watch
         # subprocess (the watch_sync fixture uses <tmp_path>/locks).

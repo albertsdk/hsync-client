@@ -258,7 +258,7 @@ def setup_logging(
     # every DEBUG line a library emits builds a LogRecord and walks the stack in
     # `findCaller` before crossing into loguru — which then drops the record,
     # because the sinks above are configured at this same level. Measured on the
-    # LAN burst: 14-26 such records per transferred file, 6.5 us each, against
+    # P2P burst: 14-26 such records per transferred file, 6.5 us each, against
     # 0.08 us for the level check that avoids them. Output is unchanged: with
     # `--debug` the level is DEBUG and everything still flows.
     logging.basicConfig(handlers=[InterceptHandler()], level=level, force=True)
@@ -267,9 +267,9 @@ def setup_logging(
     for logger_name in (
         "hsync",
         "hsync_client",
-        "hsync.lan",
-        "hsync.lan_server",
-        "hsync.lan_websocket",
+        "hsync.p2p",
+        "hsync.p2p_server",
+        "hsync.p2p_websocket",
     ):
         logging.getLogger(logger_name).handlers = [InterceptHandler()]
         logging.getLogger(logger_name).propagate = False

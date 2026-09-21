@@ -107,7 +107,7 @@ def redact_headers[T: Mapping[str, object]](headers: T) -> T:
 
     ``safe_json_for_log`` escapes loguru markup but does NOT redact secrets:
     every log/data path that serialises request headers must route through
-    here, otherwise the Bearer token (API key or ``HSYNC_LAN_KEY``) lands in
+    here, otherwise the Bearer token (API key or ``HSYNC_P2P_KEY``) lands in
     plaintext in the log file. Used by ``main_logic`` (config dump) and
     ``transfer`` (per-request debug logging). Accepts any string-keyed mapping
     (TypedDicts with optional keys included) and returns the same mapping type.
@@ -122,11 +122,11 @@ def get_ssl_verify() -> bool | str:
     """
     Get the SSL verification setting for requests library.
 
-    For LAN mode with MASTER_CERT_FINGERPRINT, returns False to disable
+    For P2P mode with MASTER_CERT_FINGERPRINT, returns False to disable
     standard SSL verification (fingerprint verification is done separately).
 
     Returns:
-        - False if SSL verification is disabled (--insecure or LAN fingerprint mode)
+        - False if SSL verification is disabled (--insecure or P2P fingerprint mode)
         - Path to CA certificate if --ca-cert is provided
         - True for default SSL verification
     """
@@ -135,7 +135,7 @@ def get_ssl_verify() -> bool | str:
         # urllib3 warning so it does not flood the logs on every transfer.
         _suppress_insecure_warning()
         return False
-    # In LAN mode with fingerprint, we disable standard SSL verification
+    # In P2P mode with fingerprint, we disable standard SSL verification
     # and verify the fingerprint manually before each request
     if CONFIG.get("MASTER_CERT_FINGERPRINT"):
         # Suppress the InsecureRequestWarning since we verify via fingerprint
@@ -152,14 +152,14 @@ _CONFIG_FINGERPRINT = object()
 def get_http_session(
     cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
 ) -> "Session":
-    """Build a ``requests.Session`` that pins the LAN master cert when required.
+    """Build a ``requests.Session`` that pins the P2P master cert when required.
 
     When ``MASTER_CERT_FINGERPRINT`` is set the session mounts a
     :class:`~hsync_client.ssl_utils.FingerprintHTTPAdapter`, which binds the
     SHA-256 fingerprint check to the very TLS connection that carries the
     request. This eliminates the previous TOCTOU gap where the certificate was
     probed on a separate connection and the real request ran with
-    ``verify=False``. Outside LAN fingerprint mode the session behaves like a
+    ``verify=False``. Outside P2P fingerprint mode the session behaves like a
     plain one; per-request ``verify`` (from :func:`get_ssl_verify`) still
     governs chain validation for remote mode.
 
@@ -191,10 +191,10 @@ def get_http_session(
 
         _suppress_insecure_warning()
         session.mount("https://", FingerprintHTTPAdapter(str(fingerprint)))
-        # The pinned fingerprint IS the LAN trust anchor (TOFU): the environment
+        # The pinned fingerprint IS the P2P trust anchor (TOFU): the environment
         # must not add a second, conflicting one. `trust_env = False` stops
         # `requests` from consulting `*_proxy`, `REQUESTS_CA_BUNDLE` /
-        # `CURL_CA_BUNDLE` and `.netrc` for these sessions — a peer-to-peer LAN
+        # `CURL_CA_BUNDLE` and `.netrc` for these sessions — a peer-to-peer P2P
         # connection routed through an environment proxy would leave the
         # certificate pinning meaningless, and an environment CA bundle is
         # irrelevant when trust is the pinned fingerprint.
@@ -202,7 +202,7 @@ def get_http_session(
         # It is also a measured cost: `requests` resolves the environment proxy
         # configuration on EVERY request (`Session.merge_environment_settings` ->
         # `get_environ_proxies` -> `getproxies_environment` +
-        # `proxy_bypass_environment`, which walk `os.environ`). On the LAN burst
+        # `proxy_bypass_environment`, which walk `os.environ`). On the P2P burst
         # that is 5 calls per transferred file, 3.8% of the apply-path profile
         # (~0.6-0.85 ms CPU/file at ~90 files/s).
         session.trust_env = False
@@ -564,7 +564,7 @@ _path_locks_guard = threading.Lock()
 # for leftover artifacts at the start of every cycle to clear what a *previous*
 # process left behind; without this registry that sweep also deletes artifacts
 # a concurrently running transfer is still writing, because inbound downloads
-# (LAN fan-out, remote event loop) run outside the sync cycle that owns the
+# (P2P fan-out, remote event loop) run outside the sync cycle that owns the
 # sweep. The writer keeps a valid descriptor either way, so the transfer would
 # only fail at its final atomic rename — silently, as an "Error saving file"
 # with no retry — leaving the path unsynced until the next cycle.
@@ -618,7 +618,7 @@ def inbound_size_cap(declared_size: int | None, max_inbound_size: int) -> int | 
     """Effective cap in bytes on the bytes written to disk for one inbound file.
 
     Single implementation of the anti decompression-bomb bound shared by
-    downloads (`transfer.py`) and LAN-master received uploads (`lan_server.py`).
+    downloads (`transfer.py`) and P2P-master received uploads (`p2p_server.py`).
     The peer-declared size alone is not a safe bound: a hostile peer can
     declare an arbitrary size and expand a bomb (or stream an undeclared-length
     body) up to it on disk before the SHA-256 check discards the content.
@@ -805,7 +805,7 @@ def set_permissions(file_path: str, permissions: str) -> None:
     mode and applies it to the file.
 
     Every call site applies a value received from a remote peer (download
-    metadata, inbound events, LAN uploads), so special bits
+    metadata, inbound events, P2P uploads), so special bits
     (setuid/setgid/sticky) are always stripped: a synced file carrying
     ``4755`` must never become a setuid executable on this host.
 

@@ -17,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from .lan_helpers import (  # noqa: F401
+from .p2p_helpers import (  # noqa: F401
     _upload_form_fields,
-    lan_bucket,
-    lan_master_dir,
-    lan_slave_dir,
+    p2p_bucket,
+    p2p_master_dir,
+    p2p_slave_dir,
 )
 
 
@@ -29,19 +29,19 @@ from .lan_helpers import (  # noqa: F401
 def _reset_realtime_pools():
     """Give every test a fresh realtime/transfer pool (test isolation).
 
-    The realtime operation pools (``lan_websocket`` slave ops, ``remote_websocket``
+    The realtime operation pools (``p2p_websocket`` slave ops, ``remote_websocket``
     realtime uploads, ``sync`` transfer executor) are process-wide singletons.
     Without a reset, an operation queued but not yet executed by test A could
     run during test B — reading test B's patched CONFIG — and slow tests would
     see workers still busy from earlier tests.
     """
-    from hsync_client import lan_websocket, remote_websocket
+    from hsync_client import p2p_websocket, remote_websocket
     from hsync_client import sync as sync_mod
 
     yield
 
     for module, attr in (
-        (lan_websocket, "_realtime_executor"),
+        (p2p_websocket, "_realtime_executor"),
         (remote_websocket, "_remote_upload_executor"),
         (sync_mod, "_transfer_executor"),
     ):
@@ -156,7 +156,7 @@ def reset_sync_state_stores() -> None:
 def _reset_clock_offset() -> Generator[None]:
     """Clear the process-wide clock offset around each test.
 
-    The LAN startup NTP probe runs on a background thread; a slow probe from a
+    The P2P startup NTP probe runs on a background thread; a slow probe from a
     previous test must not leak its offset. Tests that need a specific offset
     set it themselves.
     """
@@ -168,8 +168,8 @@ def _reset_clock_offset() -> Generator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _stub_lan_ntp_probe(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Do not spawn real SNTP workers from in-process ``run_lan_mode`` tests.
+def _stub_p2p_ntp_probe(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not spawn real SNTP workers from in-process ``run_p2p_mode`` tests.
 
     ``test_timesync`` exercises the real launcher (with the probe body mocked).
     """
@@ -204,8 +204,8 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
 def _terminate_child_hsync_processes() -> None:
     """Terminate orphaned hsync_client/hsync_server subprocesses of this pytest.
 
-    The LAN black-box tests spawn ``hsync_client`` subprocesses via
-    ``_lan_start`` (``lan_helpers.py``). When an assertion fires before the
+    The P2P black-box tests spawn ``hsync_client`` subprocesses via
+    ``_p2p_start`` (``p2p_helpers.py``). When an assertion fires before the
     test's ``finally: _terminate(...)`` runs — or the kill doesn't reach the
     children in time — stale mDNS peers linger (``PEER_TIMEOUT = 15s``) and
     cascade into later tests (split-brain elections, port conflicts, stale
@@ -215,7 +215,7 @@ def _terminate_child_hsync_processes() -> None:
     ``pgrep -P <pytest_pid> -f <pattern>`` filters to *direct* children of this
     pytest process only, so unrelated ``hsync_client`` processes running on the
     host (e.g. active development) are never touched. Linux-only by design:
-    the LAN BB suite already requires Linux inotify / ``on_closed`` behaviour
+    the P2P BB suite already requires Linux inotify / ``on_closed`` behaviour
     (``file_event_handler.py`` ``SUPPORTS_ON_CLOSED``), so ``pgrep`` is
     guaranteed available. Falls back to a silent skip if ``pgrep`` is missing.
     """
@@ -261,7 +261,7 @@ def _terminate_child_hsync_processes() -> None:
 
 @pytest.fixture(autouse=True)
 def _kill_orphan_hsync_processes() -> Generator[None]:
-    """Reap orphaned LAN subprocesses after each test (see helper above).
+    """Reap orphaned P2P subprocesses after each test (see helper above).
 
     Function-scoped because the mDNS cascade happens *between* tests: a peer
     orphaned by test N interferes with the election of test N+1. Overhead is

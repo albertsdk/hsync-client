@@ -5,10 +5,10 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-SSL Certificate Utilities for LAN Mode.
+SSL Certificate Utilities for P2P Mode.
 
 This module provides functions to generate self-signed SSL certificates
-for secure communication in LAN P2P mode, and utilities for fingerprint-based
+for secure communication in P2P P2P mode, and utilities for fingerprint-based
 certificate verification.
 """
 
@@ -38,15 +38,15 @@ from urllib3.util.ssl_ import create_urllib3_context
 # RSA key size
 RSA_KEY_SIZE = DEFAULT_KEY_SIZE
 
-# Persistent LAN master certificate validity. Identity is established by
+# Persistent P2P master certificate validity. Identity is established by
 # fingerprint pinning (TOFU), not by chain/date validation, so a long validity
 # only avoids the operational nuisance of regenerating an expired identity.
 MASTER_CERT_VALIDITY_DAYS = 3650  # ~10 years
 
 # The keypair lives in the device identity directory; see
 # :func:`hsync_client.identity.default_device_dir` (``HSYNC_DEVICE_DIR``).
-_MASTER_CERT_FILENAME = "lan_master_cert.pem"
-_MASTER_KEY_FILENAME = "lan_master_key.pem"
+_MASTER_CERT_FILENAME = "p2p_master_cert.pem"
+_MASTER_KEY_FILENAME = "p2p_master_key.pem"
 
 
 __all__ = [
@@ -64,7 +64,7 @@ __all__ = [
 
 @dataclass
 class CertificateInfo:
-    """Container for a LAN master certificate, its private key and fingerprint.
+    """Container for a P2P master certificate, its private key and fingerprint.
 
     The keypair is persisted on disk (``cert_file``/``key_file``) so the
     fingerprint is stable across restarts. The private key is stored unencrypted
@@ -80,7 +80,7 @@ class CertificateInfo:
 
 
 def default_master_cert_dir() -> Path:
-    """Resolve the LAN master cert dir — delegates to the device identity dir.
+    """Resolve the P2P master cert dir — delegates to the device identity dir.
 
     The keypair lives in the device directory (``$HSYNC_DEVICE_DIR``, else an
     OS state dir): see :func:`hsync_client.identity.default_device_dir`, the
@@ -93,7 +93,7 @@ def default_master_cert_dir() -> Path:
 
 
 def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInfo:
-    """Load the persistent LAN master keypair, generating it on first use.
+    """Load the persistent P2P master keypair, generating it on first use.
 
     The keypair lives in the device identity directory (``$HSYNC_DEVICE_DIR``,
     else an OS state directory) so the master's fingerprint stays stable
@@ -104,7 +104,7 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
     permissions (``0o600`` in a ``0o700`` directory), the standard model for
     long-lived self-signed service identities (SSH host keys, Syncthing):
     identity is pinned, not derived from an encrypted-at-rest secret, and on the
-    LAN threat model local filesystem access already implies full compromise.
+    P2P threat model local filesystem access already implies full compromise.
 
     Returns:
         CertificateInfo with ``cert_file`` and ``key_file`` pointing at the
@@ -121,7 +121,7 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
         cert_pem = cert_path.read_bytes()
         key_pem = key_path.read_bytes()
         fingerprint = compute_cert_fingerprint(x509.load_pem_x509_certificate(cert_pem))
-        log.info(f"Loaded persistent LAN master certificate: {fingerprint[:16]}...")
+        log.info(f"Loaded persistent P2P master certificate: {fingerprint[:16]}...")
         return CertificateInfo(
             cert_pem=cert_pem,
             key_pem=key_pem,
@@ -135,7 +135,7 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
         private_key,
         subject_attrs=[
             x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "HSYNC LAN Mode"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "HSYNC P2P Mode"),
         ],
         san_list=[
             x509.DNSName("localhost"),
@@ -155,7 +155,7 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
         f.write(key_pem)
     os.chmod(key_path, 0o600)
 
-    log.info(f"Generated persistent LAN master certificate: {fingerprint[:16]}...")
+    log.info(f"Generated persistent P2P master certificate: {fingerprint[:16]}...")
     return CertificateInfo(
         cert_pem=cert_pem,
         key_pem=key_pem,
@@ -212,7 +212,7 @@ class FingerprintHTTPAdapter(HTTPAdapter):
     old "probe the cert on a separate connection, then request with
     ``verify=False``" pattern. The certificate chain and hostname are
     intentionally not validated: trust is established solely by the pinned
-    fingerprint (TOFU), which is the LAN identity model.
+    fingerprint (TOFU), which is the P2P identity model.
     """
 
     def __init__(self, fingerprint: str, **kwargs) -> None:

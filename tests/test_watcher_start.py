@@ -18,7 +18,7 @@ sync. The hardening under test:
    startup and, deferred, at runtime), logs a parsable ``[WATCHER FALLBACK]`` /
    ``[FD EXHAUSTED]`` line, and restores inotify (``[WATCHER RESTORE]``) once
    the limits free up;
-3. every retry loop (LAN master, LAN slave, remote continuous) applies the
+3. every retry loop (P2P master, P2P slave, remote continuous) applies the
    dedicated slow backoff instead of the normal cadence when both backends fail;
 4. a backend swap racing ``stop()`` never adopts the freshly built observer:
    it is torn down instead, so no live watcher can outlive ``stop()``.
@@ -49,7 +49,7 @@ _FD_ERRNO = OSError(errno.EMFILE, "Too many open files")
 class TestInotifyEventFilter:
     """The inotify watch filter excludes the no-op read-event classes.
 
-    Regression for the burst-throttling storm: every download the LAN master
+    Regression for the burst-throttling storm: every download the P2P master
     serves opens and closes a bucket file without writing, and the default
     watchdog mask (FileOpenedEvent + FileClosedNoWriteEvent included) parses,
     queues and dispatches tens of thousands of those no-op events, stalling
@@ -426,15 +426,15 @@ class TestWatcherManagerDowngradeBackoff:
         )
 
 
-def _lan_config(tmp_path, **overrides: Any) -> HsyncConfig:
-    """Minimal config for lan_handler functions (mirrors test_lan_handler_advanced)."""
+def _p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
+    """Minimal config for p2p_handler functions (mirrors test_p2p_handler_advanced)."""
     defaults: dict[str, Any] = {
         "CID": "test-cid",
         "REMOTE_BUCKET": "test-bucket",
-        "LAN_PORT": 9000,
-        "LAN_GROUP": None,
+        "P2P_LISTEN_PORT": 9000,
+        "P2P_GROUP": None,
         "LOCAL_BUCKET": str(tmp_path),
-        "LAN_KEY": None,
+        "P2P_KEY": None,
         "DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
@@ -466,27 +466,27 @@ class TestRunAsMasterWatcherBackoff:
     """A watcher that cannot start tears the half-started WSS server and backs off."""
 
     def test_master_watcher_failure_stops_ws_and_backs_off(self, tmp_path):
-        from hsync_client.lan_handler import _run_as_master
+        from hsync_client.p2p_handler import _run_as_master
 
-        config = _lan_config(tmp_path)
-        lan_sync = MagicMock()
-        lan_sync.port = 9000
+        config = _p2p_config(tmp_path)
+        p2p_sync = MagicMock()
+        p2p_sync.port = 9000
         existing_server = MagicMock()
         ws_instance = MagicMock()
         ws_instance.start.side_effect = WatcherStartError("inotify")
 
         sleep_calls: list[float] = []
         with (
-            patch("hsync_client.lan_handler.LANWebSocketServer", return_value=ws_instance),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=ws_instance),
             patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
         ):
             result = _run_as_master(
                 config=config,
                 log=MagicMock(),
-                lan_sync=lan_sync,
+                p2p_sync=p2p_sync,
                 cert_info=MagicMock(),
-                lan_server=existing_server,
-                lan_ws_server=None,
+                p2p_server=existing_server,
+                p2p_ws_server=None,
             )
 
         assert result == (existing_server, None), (
@@ -499,50 +499,50 @@ class TestRunAsMasterWatcherBackoff:
 
     def test_master_ready_signal_skipped_on_watcher_failure(self, tmp_path):
         """server_ready is not advertised when the watcher could not start."""
-        from hsync_client.lan_handler import _run_as_master
+        from hsync_client.p2p_handler import _run_as_master
 
-        config = _lan_config(tmp_path)
-        lan_sync = MagicMock()
-        lan_sync.port = 9000
+        config = _p2p_config(tmp_path)
+        p2p_sync = MagicMock()
+        p2p_sync.port = 9000
         ws_instance = MagicMock()
         ws_instance.start.side_effect = WatcherStartError("inotify")
 
         with (
-            patch("hsync_client.lan_handler.LANWebSocketServer", return_value=ws_instance),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=ws_instance),
             patch("time.sleep"),
         ):
             _run_as_master(
                 config=config,
                 log=MagicMock(),
-                lan_sync=lan_sync,
+                p2p_sync=p2p_sync,
                 cert_info=MagicMock(),
-                lan_server=MagicMock(),
-                lan_ws_server=None,
+                p2p_server=MagicMock(),
+                p2p_ws_server=None,
             )
 
-        lan_sync.update_server_ready.assert_not_called()
+        p2p_sync.update_server_ready.assert_not_called()
 
 
 class TestRunAsSlaveWatcherBackoff:
     """A slave whose watcher cannot start backs off before re-entering discovery."""
 
     def test_slave_watcher_failure_backs_off_and_loops(self, tmp_path):
-        from hsync_client.lan_handler import _run_as_slave
+        from hsync_client.p2p_handler import _run_as_slave
 
-        config = _lan_config(tmp_path, ONE_SHOT=False)
+        config = _p2p_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _master_peer()
         mock_log = MagicMock()
 
         sleep_calls: list[float] = []
         with (
-            patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
-            patch("hsync_client.lan_handler.sync", new=MagicMock()),
+            patch("hsync_client.p2p_handler.set_config"),
+            patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             # Mocked asyncio.run must not receive real coroutines: patched as
             # MagicMocks, no un-awaited coroutine objects are created.
-            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
-            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
+            patch("hsync_client.p2p_handler.p2p_websocket_client", new=MagicMock()),
+            patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run", side_effect=[None, WatcherStartError("inotify")]),
             patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
         ):
@@ -559,18 +559,18 @@ class TestRunAsSlaveWatcherBackoff:
 
     def test_slave_generic_ws_error_keeps_old_fast_loop(self, tmp_path):
         """Non-watcher WebSocket failures keep the pre-existing generic retry."""
-        from hsync_client.lan_handler import _run_as_slave
+        from hsync_client.p2p_handler import _run_as_slave
 
-        config = _lan_config(tmp_path, ONE_SHOT=False)
+        config = _p2p_config(tmp_path, ONE_SHOT=False)
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _master_peer()
 
         with (
-            patch("hsync_client.lan_handler.set_config"),
-            patch("hsync_client.lan_handler._evaluate_master_pin", return_value=True),
-            patch("hsync_client.lan_handler.sync", new=MagicMock()),
-            patch("hsync_client.lan_handler.lan_websocket_client", new=MagicMock()),
-            patch("hsync_client.lan_handler._with_stdin_commands", new=MagicMock()),
+            patch("hsync_client.p2p_handler.set_config"),
+            patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.p2p_handler.sync", new=MagicMock()),
+            patch("hsync_client.p2p_handler.p2p_websocket_client", new=MagicMock()),
+            patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
             patch("time.sleep") as mock_sleep,
         ):

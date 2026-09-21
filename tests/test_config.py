@@ -82,21 +82,54 @@ class TestEnvSettings:
         assert settings.server is None
         assert settings.api_key.get_secret_value() == ""
         assert settings.stability_delay is None
-        assert settings.lan_key is None
-        assert settings.lan_group is None
-        assert settings.lan_port is None
+        assert settings.p2p_key is None
+        assert settings.p2p_group is None
+        assert settings.p2p_listen_port is None
         assert settings.discovery_timeout is None
         assert settings.ignore_delete is False
         assert settings.compression_enabled is True
-        assert settings.lan_peer_download is True
-        assert settings.lan_peer_read_cap == 2
-        assert settings.lan_allow_unauthenticated_writes is False
+        assert settings.p2p_peer_download is True
+        assert settings.p2p_peer_read_cap == 2
+        assert settings.p2p_allow_unauthenticated_writes is False
 
     def test_no_persistent_setting_exists(self):
         """There is no persistence knob: continuous is the default, --once opts out."""
         get_env_settings.cache_clear()
         settings = EnvSettings()
-        assert not hasattr(settings, "lan_persistent")
+        assert not hasattr(settings, "p2p_persistent")
+
+    def test_bootnode_default_none(self):
+        """Unset HSYNC_BOOTNODE means the mDNS discovery plan."""
+        get_env_settings.cache_clear()
+        assert EnvSettings().bootnode is None
+
+    def test_bootnode_accepts_bare_host(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        get_env_settings.cache_clear()
+        assert EnvSettings().bootnode == "boot.example.net"
+
+    def test_bootnode_rejects_scheme_path_and_port(self, monkeypatch):
+        """The bootnode is a bare host: no scheme, no path, no host:port."""
+        for bad in (
+            "https://boot.example.net",
+            "boot.example.net/path",
+            "boot.example.net:8443",
+        ):
+            monkeypatch.setenv("HSYNC_BOOTNODE", bad)
+            get_env_settings.cache_clear()
+            with pytest.raises(ValueError):
+                EnvSettings()
+
+    def test_upnp_enabled_default_and_override(self, monkeypatch):
+        """Unset = plan default; an explicit value overrides it."""
+        get_env_settings.cache_clear()
+        assert EnvSettings().upnp_enabled is None
+        monkeypatch.setenv("HSYNC_UPNP_ENABLED", "true")
+        get_env_settings.cache_clear()
+        assert EnvSettings().upnp_enabled is True
+        monkeypatch.setenv("HSYNC_UPNP_ENABLED", "false")
+        get_env_settings.cache_clear()
+        assert EnvSettings().upnp_enabled is False
 
     def test_discovery_timeout_zero_is_valid(self):
         """HSYNC_DISCOVERY_TIMEOUT=0 means wait indefinitely and is valid."""
@@ -124,29 +157,29 @@ class TestEnvSettings:
             del os.environ["HSYNC_SERVER"]
             get_env_settings.cache_clear()
 
-    def test_lan_key_is_preserved(self):
-        """lan_key is always preserved (the LAN transport is HTTPS-only)."""
+    def test_p2p_key_is_preserved(self):
+        """p2p_key is always preserved (the P2P transport is HTTPS-only)."""
         get_env_settings.cache_clear()
-        os.environ["HSYNC_LAN_KEY"] = "shared-secret"
+        os.environ["HSYNC_P2P_KEY"] = "shared-secret"
         try:
             settings = EnvSettings()
-            assert settings.lan_key is not None
-            assert settings.lan_key.get_secret_value() == "shared-secret"
+            assert settings.p2p_key is not None
+            assert settings.p2p_key.get_secret_value() == "shared-secret"
         finally:
-            del os.environ["HSYNC_LAN_KEY"]
+            del os.environ["HSYNC_P2P_KEY"]
             get_env_settings.cache_clear()
 
     def test_peer_download_and_unauthenticated_write_env_settings(self, monkeypatch):
         """Peer download policy knobs use the HSYNC_ environment contract."""
-        monkeypatch.setenv("HSYNC_LAN_PEER_DOWNLOAD", "false")
-        monkeypatch.setenv("HSYNC_LAN_PEER_READ_CAP", "7")
-        monkeypatch.setenv("HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES", "true")
+        monkeypatch.setenv("HSYNC_P2P_PEER_DOWNLOAD", "false")
+        monkeypatch.setenv("HSYNC_P2P_PEER_READ_CAP", "7")
+        monkeypatch.setenv("HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES", "true")
         get_env_settings.cache_clear()
         try:
             settings = EnvSettings()
-            assert settings.lan_peer_download is False
-            assert settings.lan_peer_read_cap == 7
-            assert settings.lan_allow_unauthenticated_writes is True
+            assert settings.p2p_peer_download is False
+            assert settings.p2p_peer_read_cap == 7
+            assert settings.p2p_allow_unauthenticated_writes is True
         finally:
             get_env_settings.cache_clear()
 

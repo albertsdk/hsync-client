@@ -7,7 +7,7 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `main` (parent callback) | `cli.py:750` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
-| `lan` | `cli.py` | LAN P2P subcommand: shared + LAN-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
+| `lan` | `cli.py` | p2p subcommand: shared + LAN-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
 | `server` | `cli.py` `server` | central-server subcommand: bare `HOSTNAME` positional + `--port` + shared flags, resolves the server URL eagerly (bare `HOSTNAME` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
 | `run` | `:1121` | console-script entry |
 | `collect_subcommand_options` | `:89` | introspects each subcommand's long flags for the capabilities document |
@@ -23,8 +23,8 @@ level, so the fast paths `--version` / `--help` / `--help-symbols` do not pay th
 `hashing`→`asyncio` and `models` import chain that only `--capabilities-json`
 needs. Pinned by `tests/test_startup_imports.py`.
 
-Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_LAN_KEY`, or hidden
-`--api-key-fd` (server subcommand) / `--lan-key-fd` (lan subcommand) for a
+Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_P2P_KEY`, or hidden
+`--api-key-fd` (server subcommand) / `--p2p-key-fd` (lan subcommand) for a
 parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `lan`/`server` subcommand
@@ -48,15 +48,15 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_sync` | `main_logic.py:539` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: LAN mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
+| `run_sync` | `main_logic.py:539` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: p2p mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
 | `_check_deletion_risk` | `:285` | warn/prompt on risky delete settings (`--yes` bypass; fails fast with exit 1 when no interactive TTY) |
-| `_check_lan_write_policy` | `main_logic.py` | default-deny every write-capable no-key LAN run, independent of TTY/`--yes`; only `--allow-unauthenticated-writes` or `HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
-| `_warn_if_lan_in_container` | `:424` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
+| `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key LAN run, independent of TTY/`--yes`; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
+| `_warn_if_p2p_in_container` | `:424` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `:441` | min-free-disk guard |
 | `_check_server_connectivity` | `:1142` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (LAN parity) |
 | `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `:116` / `:130` / `:147` | resolve CLI > env > default |
 | `_start_hsyncignore_watcher` | `:474` | hot-reload `.hsyncignore` matcher |
-| `_safe_config_for_log` | `:512` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`LAN_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
+| `_safe_config_for_log` | `:512` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`P2P_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
 | `_run_preview` | `:87` | dry-run action preview |
 | stdin runtime control | `:916`/`:1014`/`:1019` | live commands (e.g. change direction) via `stdin_commands.StdinCommandHandler` (`stdin_commands.py:35`) |
 
@@ -64,16 +64,29 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `EnvSettings` | `config.py:47` | pydantic-settings model for all `HSYNC_*` vars |
+| `EnvSettings` | `config.py:63` | pydantic-settings model for all `HSYNC_*` vars |
 | `HsyncConfig` / `ApiEndpoints` | `:294` / `:275` | the merged runtime config TypedDicts |
 | `CONFIG` (global) | `:511` | the live config SSOT |
 | `set_config` | `:517` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
 | `set_debug` / `is_debug` | `:411` / `:432` | debug flag |
 | `load_env_file` | `:33` | dotenv loader |
-| typed getters | `:154`–`:265` | `get_server_url`, `get_api_key`, LAN getters, guard getters, delta getters (`get_delta_enabled`, `get_delta_min_file_size`, `get_delta_min_file_size_lan`), etc. |
+| typed getters | `:154`–`:300` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_upnp_enabled`), guard getters, delta getters, etc. |
 
-Peer-download settings are `HSYNC_LAN_PEER_DOWNLOAD=true` and
-`HSYNC_LAN_PEER_READ_CAP=2`. `--no-peer-download` is applied as
+The `p2p` subcommand takes an optional positional `BOOTNODE` (bare host) plus
+`--port` (bootnode UDP, default 443) and `--no-upnp`; `_build_bootnode`
+(`cli.py`) validates them and refuses `--port` without a host (never a silently
+ignored flag). The plan is selected in `p2p_discovery.build_discovery_plan`
+(`config["BOOTNODE"]` unset → mDNS, set → bootnode), so `p2p_handler.run_p2p_mode`
+only sees the `DiscoveryPlan` surface.
+
+The bootnode host is `HSYNC_BOOTNODE` (a **bare** host: the `_validate_bootnode_host`
+validator rejects a scheme, a path or `host:port`; the QUIC port is `--port`), and
+UPnP is `HSYNC_UPNP_ENABLED` (`None` = plan default: on only with a bootnode).
+`HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the `p2p_listen_port`
+field; `BOOTNODE_DEFAULT_PORT = 443` in `constants.py`).
+
+Peer-download settings are `HSYNC_P2P_PEER_DOWNLOAD=true` and
+`HSYNC_P2P_PEER_READ_CAP=2`. `--no-peer-download` is applied as
 `CLI-enabled AND environment-enabled`, so the CLI opt-out is final. The no-key
 write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 
@@ -84,15 +97,15 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
   defines `CLIENT_NAME = "hsync-client"` (the `X-Client-Name` REST header
   value built in `main_logic.py`); re-exports the wire content types
   `CONTENT_TYPE_OCTET_STREAM`/`CONTENT_TYPE_JSON` used by
-  `lan_server.py`/`transfer.py`/`delta_transfer.py`/`lan_delta.py`.
+  `p2p_server.py`/`transfer.py`/`delta_transfer.py`/`p2p_delta.py`.
   Bounds + defaults: stability (`:57`–`:73`), reschedule
   (`:79`/`:80`), concurrency (`:90`), retry (`:99`–`:101`), mass-delete (`:112`–`:114`),
   bandwidth (`:121`/`:122`), resync (`:130`–`:135`), max inbound file size
   (  `MAX_INBOUND_SIZE_MB_*`, default 10 GB — absolute anti-bomb cap applied as
-  `min(declared, cap)` to downloads and received LAN uploads, wired into
+  `min(declared, cap)` to downloads and received p2p uploads, wired into
   `CONFIG["MAX_INBOUND_SIZE"]` in bytes), inotify (`:176`/`:178`); visual
    `ActionLabel` enum (`:195`); delta transfer (`:185`–`:189`: `DELTA_ENABLED`,
-   `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_LAN` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB).
+   `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_P2P` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB).
    `WORKER_MEMORY_BUDGET_BYTES` (`:213`, 8 MiB) — per-worker memory budget for the
    parallel local-file scan/hash pool (`_get_optimal_workers`), combined with the
    cgroup memory limit to cap parallelism inside containers (no effect on bare
@@ -105,7 +118,7 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
   `_validate_shared_options` (`cli.py:185`); bucket naming
   via `_validate_bucket` (`cli.py:126`); LAN-only checks (discovery timeout,
-  `--force-master` exclusivity) live in the `lan` subcommand. There is no
+  `--force-master` exclusivity) live in the `p2p` subcommand. There is no
   separate validators module.
 
 ## UI events (`events.py`)
@@ -120,4 +133,4 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 > binary: `--no-autotune` / `--http-timeout` / `--retry-delay`, and exports
 > `HSYNC_TRANSFER_RETRY_MIN_WAIT` / `HSYNC_TRANSFER_RETRY_MAX_WAIT` (no CLI).
 > Empty UI values are omitted so autotune/defaults apply. Secrets stay env-only.
-> Human guides: `../../docs/configuration.md`, `../../docs/configuration-server.md`, `../../docs/configuration-lan.md`, `../../docs/usage.md`.
+> Human guides: `../../docs/configuration.md`, `../../docs/configuration-server.md`, `../../docs/configuration-p2p.md`, `../../docs/usage.md`.

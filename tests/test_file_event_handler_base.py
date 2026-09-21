@@ -991,7 +991,7 @@ class TestFileEventHandler:
         ``rm`` + immediate rewrite of the same name (ordinary atomic-writer
         pattern) re-creates the file while its delete is still buffered; the
         flush then broadcast a delete for a live file, wiping the fresh bytes
-        on every peer and — through the LAN delete echo — on the source
+        on every peer and — through the P2P delete echo — on the source
         itself. The stale entry must be dropped (no broadcast, no tombstone).
         """
         live = tmp_path / "recreated.txt"
@@ -1071,7 +1071,7 @@ class TestFileEventHandler:
         assert event.name == "deleted"
         assert event.src.filepath == "subdir/gone.txt"
 
-    def test_on_deleted_folded_file_still_records_lan_tombstone(self):
+    def test_on_deleted_folded_file_still_records_p2p_tombstone(self):
         """Descendant files folded into a dir delete still pass _on_deleted."""
         config = {
             "CID": "testcid",
@@ -1099,7 +1099,7 @@ class TestFileEventHandler:
             self.handler.on_deleted(root_dir)
             self.handler._flush_pending_deletes()
 
-        # The folded FILE hits _on_deleted (LAN master tombstone chokepoint);
+        # The folded FILE hits _on_deleted (P2P master tombstone chokepoint);
         # the directory itself too (once, after its broadcast).
         mock_on_deleted.assert_any_call("/bucket/subdir/a.txt", False)
         mock_on_deleted.assert_any_call("/bucket/subdir", True)
@@ -1210,7 +1210,7 @@ class TestFileEventHandler:
         Regression: the shared watcher broadcast the ``symlink`` event for any
         visible symlink, so an escaping target such as ``secret -> /etc/passwd``
         propagated to peers that would re-create the out-of-bucket link (or, on
-        the LAN slave, materialise the target's content).
+        the P2P slave, materialise the target's content).
         """
         event = MagicMock()
         event.is_directory = False

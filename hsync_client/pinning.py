@@ -5,9 +5,9 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Trust-On-First-Use certificate pinning store for LAN mode.
+Trust-On-First-Use certificate pinning store for P2P mode.
 
-A LAN master authenticates its transport with a self-signed certificate whose
+A P2P master authenticates its transport with a self-signed certificate whose
 fingerprint travels in the mDNS TXT record. That certificate is only meaningful
 once it is *pinned*: the first fingerprint seen for a ``(cid, bucket)`` is
 remembered, and a later mismatch is treated as a possible man-in-the-middle and
@@ -16,7 +16,7 @@ refused. The trust *decision* is the shared source of truth in
 applies that decision.
 
 Pins live outside the synced bucket (an OS state directory, overridable via
-``HSYNC_LAN_PIN_FILE``) so they survive restarts and are never themselves synced.
+``HSYNC_P2P_PIN_FILE``) so they survive restarts and are never themselves synced.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ __all__ = [
 
 # Environment override for the pin store location (used by tests and operators
 # who keep state outside the default OS location).
-PIN_FILE_ENV = "HSYNC_LAN_PIN_FILE"
+PIN_FILE_ENV = "HSYNC_P2P_PIN_FILE"
 
 # Owner-only permissions for the pin file: it records which peers this host
 # trusts and must not be world-readable/writable.
@@ -89,12 +89,12 @@ def _unlock_fd(fd: int) -> None:
 
 
 def default_pin_store_path() -> Path:
-    """Resolve the pin-store path: ``$HSYNC_LAN_PIN_FILE`` or an OS state dir."""
+    """Resolve the pin-store path: ``$HSYNC_P2P_PIN_FILE`` or an OS state dir."""
     override = os.environ.get(PIN_FILE_ENV)
     if override:
         return Path(override)
     base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
-    return Path(base) / "hsync" / "lan_known_peers.json"
+    return Path(base) / "hsync" / "p2p_known_peers.json"
 
 
 def _pin_key(cid: str, bucket: str) -> str:
@@ -123,15 +123,15 @@ class PinStore:
         except FileNotFoundError:
             return {}
         except OSError as exc:
-            raise PinStoreError(f"could not read LAN pin store: {exc}") from exc
+            raise PinStoreError(f"could not read P2P pin store: {exc}") from exc
         try:
             data = json.loads(raw)
         except (ValueError, TypeError) as exc:
-            raise PinStoreError("LAN pin store is corrupt") from exc
+            raise PinStoreError("P2P pin store is corrupt") from exc
         if not isinstance(data, dict) or any(
             not isinstance(key, str) or not isinstance(value, str) for key, value in data.items()
         ):
-            raise PinStoreError("LAN pin store is corrupt")
+            raise PinStoreError("P2P pin store is corrupt")
         return dict(data)
 
     def _save_unlocked(self, data: dict[str, str]) -> None:
@@ -180,7 +180,7 @@ class PinStore:
             except PinStoreError:
                 raise
             except OSError as exc:
-                raise PinStoreError(f"could not lock or persist LAN pin store: {exc}") from exc
+                raise PinStoreError(f"could not lock or persist P2P pin store: {exc}") from exc
 
     def get(self, cid: str, bucket: str) -> str | None:
         """Return the pinned fingerprint for ``(cid, bucket)``, or ``None``."""
@@ -191,7 +191,7 @@ class PinStore:
         """Pin (or repin) ``fingerprint`` for ``(cid, bucket)``."""
         normalized = normalize_fingerprint(fingerprint)
         if normalized is None:
-            raise ValueError("fingerprint is mandatory for LAN HTTPS pinning")
+            raise ValueError("fingerprint is mandatory for P2P HTTPS pinning")
         with self._transaction():
             data = self._load_unlocked()
             data[_pin_key(cid, bucket)] = normalized
@@ -202,7 +202,7 @@ class PinStore:
 
         A first sighting (``trusted``) is persisted so the next run can detect a
         change; ``matched``/``changed`` never mutate the store. ``observed_fp``
-        must be present (LAN transport is HTTPS-only); a missing fingerprint is a
+        must be present (P2P transport is HTTPS-only); a missing fingerprint is a
         contract violation and :func:`evaluate_pin` raises.
         """
         key = _pin_key(cid, bucket)
@@ -213,11 +213,11 @@ class PinStore:
             if decision is PinDecision.trusted:
                 normalized = normalize_fingerprint(observed_fp)
                 if normalized is None:
-                    raise ValueError("fingerprint is mandatory for LAN HTTPS pinning")
+                    raise ValueError("fingerprint is mandatory for P2P HTTPS pinning")
                 data[key] = normalized
                 self._save_unlocked(data)
                 if self._load_unlocked().get(key) != normalized:
-                    raise PinStoreError("LAN pin store verification failed")
+                    raise PinStoreError("P2P pin store verification failed")
             return decision
 
 

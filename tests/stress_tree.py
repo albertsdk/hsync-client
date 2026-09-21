@@ -7,7 +7,7 @@
 """Deterministic stress-tree generator, mutator and verifier (stress suites).
 
 Shared, importable-only helper for ``tests/test_bb_server_stress.py`` and
-``tests/test_bb_lan_stress.py``. The design is specified in
+``tests/test_bb_p2p_stress.py``. The design is specified in
 ``docs/internal/stress-test-plan.md`` (§5 generator, §6 verifier, §7 metrics,
 §8 mutation, §10 knobs); this module implements it without deviating.
 
@@ -306,7 +306,7 @@ def _replica_state(root: Path) -> tuple[int, int, int]:
 
     No hashing (plan §7). Engine artifacts whitelisted in verification
     (``.hsynckeep`` sentinels, ``.hsyncfolder`` marker, partial/backup suffixes)
-    are excluded from the signal: in LAN mode they live *inside* the synced tree
+    are excluded from the signal: in P2P mode they live *inside* the synced tree
     and would otherwise make the replica signal permanently overshoot the
     manifest totals, so convergence could never be detected. In-flight
     ``*.part*`` artifacts are counted separately instead of being dropped: they
@@ -662,9 +662,9 @@ def verify_tree(
 ) -> tuple[list[Mismatch], VerificationStats]:
     """Compare a replica root against a manifest.
 
-    ``mode`` is ``"server"`` or ``"lan"``: directory modes are asserted
+    ``mode`` is ``"server"`` or ``"p2p"``: directory modes are asserted
     floor-only (``>= 0o700``) in server mode (plan §13.3) and strict equality
-    with ``(source & 0o777) | 0o700`` in LAN mode; file modes, sizes and
+    with ``(source & 0o777) | 0o700`` in P2P mode; file modes, sizes and
     streaming SHA-256 digests are strict in both; mtimes are tolerance-checked.
     Never asserts; returns the sorted mismatch list plus stats. Whitelisted
     engine artifacts found on disk are *counted*, never silently dropped
@@ -737,7 +737,7 @@ def verify_tree(
 
 
 # ---------------------------------------------------------------------------
-# LAN convergence measurement (plan §7)
+# P2P convergence measurement (plan §7)
 # ---------------------------------------------------------------------------
 
 
@@ -750,7 +750,7 @@ def converge_quiet_poll(
     poll_interval: float = 0.5,
     mtime_tolerance: float = 2.0,
 ) -> tuple[list[Mismatch], VerificationStats, float, float]:
-    """Measure LAN convergence: quiet-poll the replica (cheap count+bytes
+    """Measure P2P convergence: quiet-poll the replica (cheap count+bytes
     signal, no hashing) until unchanged for two consecutive polls **with no
     in-flight transfer artifact on disk**, then run the single full
     ``verify_tree`` (plan §7). On mismatch, resume polling until *timeout*.
@@ -803,7 +803,7 @@ def converge_quiet_poll(
 
 def stress_knobs(mode: str) -> dict[str, object]:
     """``HSYNC_BB_STRESS_*`` environment knobs with the documented defaults
-    (plan §10). *mode* is ``"server"`` or ``"lan"`` (different default scale)."""
+    (plan §10). *mode* is ``"server"`` or ``"p2p"`` (different default scale)."""
     env = os.environ
     return {
         "seed": int(env.get("HSYNC_BB_STRESS_SEED", "20260828")),

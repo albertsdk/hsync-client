@@ -76,8 +76,8 @@ from hsync_client.exceptions import (
     PermanentDownloadError,
     ServerError,
 )
-from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
-from hsync_client.lan_sources import LanCandidateMap, LanSourceResolver
+from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
+from hsync_client.p2p_sources import P2PCandidateMap, P2PSourceResolver
 from hsync_client.retry import retry_on_network_error
 from hsync_client.state_backend import local_cid
 from hsync_client.utils import (
@@ -140,13 +140,13 @@ def seconds_since_last_cycle() -> float | None:
 
 async def periodic_resync(
     *,
-    lan_mode: bool = False,
+    p2p_mode: bool = False,
     inventory_observer: InventoryObserver | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    source_resolver: P2PSourceResolver | None = None,
 ) -> None:
     """Run full sync cycles at ``CONFIG["RESYNC"]`` until cancelled.
 
-    Shared by remote continuous mode and the LAN slave. ``CancelledError`` is
+    Shared by remote continuous mode and the P2P slave. ``CancelledError`` is
     re-raised so task cancellation actually stops the loop.
 
     A skipped cycle is DEBUG while the running one is still within its
@@ -154,13 +154,13 @@ async def periodic_resync(
     no longer recovering anything and the operator had no signal at all — a
     DEBUG line made a permanently disabled safety net invisible.
     """
-    label = "LAN force resync" if lan_mode else "Force sync"
+    label = "P2P force resync" if p2p_mode else "Force sync"
     skip_msg = (
-        "LAN force resync skipped: sync already in progress"
-        if lan_mode
+        "P2P force resync skipped: sync already in progress"
+        if p2p_mode
         else "Force sync skipped: a sync cycle is already in progress"
     )
-    stop_msg = "LAN resync task stopped" if lan_mode else "Resync task stopped"
+    stop_msg = "P2P resync task stopped" if p2p_mode else "Resync task stopped"
     interval = CONFIG["RESYNC"] or 60
     try:
         while True:
@@ -178,7 +178,7 @@ async def periodic_resync(
                 continue
             log.info(f"{label} ({CONFIG['RESYNC']} sec.)")
             await sync(
-                lan_mode=lan_mode,
+                p2p_mode=p2p_mode,
                 inventory_observer=inventory_observer,
                 source_resolver=source_resolver,
             )
@@ -242,7 +242,7 @@ def _cleanup_partial_files() -> int:
     partial files that may have been left behind by interrupted downloads.
 
     Artifacts currently being written by a live transfer are skipped: inbound
-    downloads (LAN fan-out, remote event loop) run outside the sync cycle that
+    downloads (P2P fan-out, remote event loop) run outside the sync cycle that
     owns this sweep, so without the check the sweep would delete the ``.part``
     of a stream in flight — the transfer then fails at its final atomic rename
     (logged as "Error saving file", no retry) and the path stays unsynced until
@@ -332,7 +332,7 @@ class SyncCycleResult:
 def log_initial_sync_start() -> None:
     """Emit the colored ``[INITIAL SYNC]`` phase marker for a run's first sync.
 
-    Called by the three initial-sync entry points (LAN slave handler, remote
+    Called by the three initial-sync entry points (P2P slave handler, remote
     reconnect loop, one-shot CLI run) immediately before the first ``sync()``,
     so the log marks the "initial reconciliation" phase explicitly ahead of the
     per-file ``[DOWNLOAD]``/``[UPLOAD]`` lines and before the trailing
@@ -342,9 +342,9 @@ def log_initial_sync_start() -> None:
 
 
 async def sync(
-    lan_mode: bool = False,
+    p2p_mode: bool = False,
     inventory_observer: InventoryObserver | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    source_resolver: P2PSourceResolver | None = None,
 ) -> SyncCycleResult:
     """
     Perform a full synchronization between local and remote files.
@@ -356,7 +356,7 @@ async def sync(
     transfers and avoid overwhelming the server.
 
     Args:
-        lan_mode: If True, sync is coordinated against a LAN master peer.
+        p2p_mode: If True, sync is coordinated against a P2P master peer.
             Local-only files are uploaded to the master in bidirectional and
             upload-only modes; they are deleted only in download-only mode
             (slave mirrors the master).
@@ -413,7 +413,7 @@ async def sync(
 
         # Merge the remote markers into our persistent local store and push the
         # accumulated union back so the server / master converges to every known
-        # deletion.  In LAN mode the master can change (elected), making gossip
+        # deletion.  In P2P mode the master can change (elected), making gossip
         # mandatory; in remote mode the server is the single authority, but
         # pushing our local tombstones is necessary when this peer deleted files
         # while offline and is now reconnecting — otherwise those files would be
@@ -489,7 +489,7 @@ async def sync(
 
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(
-            remote_files, local_files, lan_mode=lan_mode, tombstones=tombstones
+            remote_files, local_files, p2p_mode=p2p_mode, tombstones=tombstones
         )
 
         # A fresh sync cycle starts — clear the per-cycle skip-set of
@@ -596,7 +596,7 @@ async def sync(
             )
             deletes = []
 
-        # Handle deletions (files that exist only locally in LAN mode)
+        # Handle deletions (files that exist only locally in P2P mode)
         for file in deletes:
             if file.filepath and Path(file.filepath).exists():
                 try:
@@ -683,7 +683,7 @@ async def sync(
         # the current cycle's creations as well as any earlier divergence —
         # including the modes of directories whose live event was dropped
         # while the WSS was down during a burst.
-        if _dir_converge_enabled(lan_mode):
+        if _dir_converge_enabled(p2p_mode):
             converge_directory_permissions(get_dirs_remote())
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
@@ -829,8 +829,8 @@ async def _execute_parallel_transfers(
     counters: dict[str, int] | None = None,
     permission_uploads: list[File] | None = None,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
-    source_resolver: LanSourceResolver | None = None,
-    source_candidates: LanCandidateMap | None = None,
+    source_resolver: P2PSourceResolver | None = None,
+    source_candidates: P2PCandidateMap | None = None,
 ) -> None:
     """
     Execute file transfers in parallel using a thread pool.
@@ -951,8 +951,8 @@ def ensure_sentinel(dir_path: str, *, label: str | None = None) -> bool:
     create sentinels outside the watcher leave it unset.
 
     Shared by :func:`ensure_hsynckeep_files` (walk-all at cycle start),
-    ``lan_websocket.LANSlaveFileEventHandler`` (single dir on create) and
-    ``lan_server.LANRequestHandler`` (parent-of-deleted).
+    ``p2p_websocket.P2PSlaveFileEventHandler`` (single dir on create) and
+    ``p2p_server.P2PRequestHandler`` (parent-of-deleted).
     """
     try:
         entries = os.listdir(dir_path)
@@ -1120,7 +1120,7 @@ def iter_bucket_entries(bucket: str) -> Iterator[tuple[str, Symlink | None]]:
     yield their :class:`Symlink` (never dereferenced); regular files and
     unreadable symlinks yield ``None``.
 
-    Shared by :func:`get_files_local` and the LAN master's ``_handle_list_files``
+    Shared by :func:`get_files_local` and the P2P master's ``_handle_list_files``
     so the two listing surfaces can never drift on the security filter.
     """
     for root, dirs, files in walk(bucket):
@@ -1327,11 +1327,11 @@ def get_tombstones_remote() -> dict[str, dict]:
 
 def push_tombstones_remote(payload: Mapping[str, TombstoneEntry]) -> None:
     """
-    Push this peer's deletion markers to the current LAN master (gossip up).
+    Push this peer's deletion markers to the current P2P master (gossip up).
 
     Best-effort by design: a master that does not expose the endpoint (older
     version), an empty payload, or any transport/HTTP failure is swallowed so
-    the rest of the sync proceeds unchanged. This is only used in LAN mode,
+    the rest of the sync proceeds unchanged. This is only used in P2P mode,
     where every peer persists its own store and a freshly elected master must
     converge to the union of all known deletions.
 
@@ -1460,15 +1460,15 @@ def _parse_advertised_version(
 # directly and never reaches this path.
 
 
-def _dir_converge_enabled(lan_mode: bool) -> bool:
+def _dir_converge_enabled(p2p_mode: bool) -> bool:
     """Whether the current cycle reconciles directory modes from the peer.
 
-    The authoritative peer (central server in download-only, LAN master
+    The authoritative peer (central server in download-only, P2P master
     always) owns directory modes; this node mirrors them.
 
     * ``upload-only`` — never: this node pushes content and takes nothing
       back, so a remote mode must not be forced onto the local tree.
-    * LAN (``lan_mode``) — always otherwise. The master is the guaranteed
+    * P2P (``p2p_mode``) — always otherwise. The master is the guaranteed
       source of the whole tree and the slave is its replica, but a directory
       mode has no representation in the /files listing: it travels as a live
       dir event only. Any dropped event (WSS drop during a burst, watcher
@@ -1483,7 +1483,7 @@ def _dir_converge_enabled(lan_mode: bool) -> bool:
     direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
     if direction == "upload-only":
         return False
-    return lan_mode or direction == "download-only"
+    return p2p_mode or direction == "download-only"
 
 
 def get_dirs_remote() -> list[dict]:
@@ -1592,7 +1592,7 @@ def _apply_local_mtime(abs_path: str, corrected_mtime: int) -> None:
 def get_sync_actions(
     remote_files: list[dict] | None = None,
     local_files: list[dict] | None = None,
-    lan_mode: bool = False,
+    p2p_mode: bool = False,
     tombstones: dict[str, dict] | None = None,
     persist_state: bool = True,
 ) -> list[SyncAction]:
@@ -1608,7 +1608,7 @@ def get_sync_actions(
     Args:
         remote_files: List of file metadata from server.
         local_files: List of file metadata from local filesystem.
-        lan_mode: If True, sync targets a LAN master peer. Local-only files
+        p2p_mode: If True, sync targets a P2P master peer. Local-only files
             are uploaded in bidirectional/upload-only modes and deleted only
             when SYNC_DIRECTION is "download-only".
         tombstones: Optional deletion-marker payload from the server, keyed by
@@ -1648,7 +1648,7 @@ def get_sync_actions(
         # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
         if basename(str(remote_file_info.get("filepath", ""))) == HSYNCKEEP_FILENAME:
             continue
-        # The remote listing is untrusted input (hostile server or LAN
+        # The remote listing is untrusted input (hostile server or P2P
         # master): drop entries whose path is unsafe or names an internal
         # engine artifact instead of acting on them.
         if validate_remote_relpath(str(remote_file_info.get("filepath", ""))) is None:
@@ -1658,7 +1658,7 @@ def get_sync_actions(
             )
             continue
         # Symlink entry: replicate STRUCTURALLY (the link, never the target
-        # content). The same code path serves remote (server listing) and LAN
+        # content). The same code path serves remote (server listing) and P2P
         # (master listing); the target containment is re-validated on receive.
         if remote_file_info.get("type") == "symlink":
             link = Symlink.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
@@ -1743,7 +1743,7 @@ def get_sync_actions(
             # corrected mtime wins (same tie-break philosophy as ADR-0023): the
             # winner pushes the value (metadata-only upload, no bytes) and the
             # loser adopts it locally. Unknown mtimes (0) never diverge.
-            if not lan_mode and action == SyncActionName.nothing and persist_state and abs_local:
+            if not p2p_mode and action == SyncActionName.nothing and persist_state and abs_local:
                 # Content is identical, so the causal matrix short-circuits; a
                 # divergent on-disk mtime is a ``touch`` that must still
                 # converge. The side whose version is causally ahead made the
@@ -1841,8 +1841,8 @@ def get_sync_actions(
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
             file = File.get(local_file_dict["filepath"])
             if file:
-                if lan_mode and CONFIG.get("SYNC_DIRECTION") == "download-only":
-                    # LAN download-only slave mirrors master - delete local-only files
+                if p2p_mode and CONFIG.get("SYNC_DIRECTION") == "download-only":
+                    # P2P download-only slave mirrors master - delete local-only files
                     sync_actions.append(SyncAction(file, SyncActionName.delete))
                 elif entry := tombstones.get(tombstone_key(local_file_info.filepath)):
                     # Causal delete-vs-recreate (ADR-0003): compare the tombstone
@@ -1866,7 +1866,7 @@ def get_sync_actions(
                     else:
                         sync_actions.append(SyncAction(file, SyncActionName.upload))
                 else:
-                    # Default: upload local-only files (server mode and LAN
+                    # Default: upload local-only files (server mode and P2P
                     # bidirectional/upload-only converge toward shared state)
                     sync_actions.append(SyncAction(file, SyncActionName.upload))
 
@@ -2051,7 +2051,7 @@ def update_dir(data: dict) -> Dir | None:
 def update_file(
     data: dict,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
-    source_resolver: LanSourceResolver | None = None,
+    source_resolver: P2PSourceResolver | None = None,
 ) -> None:
     """
     Update a local file based on remote event data.

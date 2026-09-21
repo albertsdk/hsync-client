@@ -79,11 +79,11 @@ from hsync_client.exceptions import (
     PermanentUploadError,
     ServerError,
 )
-from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
-from hsync_client.lan_sources import (
-    LanCandidateMap,
-    LanPeerSource,
-    LanSourceResolver,
+from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
+from hsync_client.p2p_sources import (
+    P2PCandidateMap,
+    P2PPeerSource,
+    P2PSourceResolver,
     PeerFailureKind,
 )
 from hsync_client.retry import retry_on_transient_transfer_error
@@ -396,7 +396,7 @@ _CONTENT_RANGE_RE = re.compile(r"bytes ([0-9]+)-([0-9]+)/([0-9]+)\Z")
 def _parse_retry_after(value: str | None) -> float | None:
     """Parse a ``Retry-After`` delay in seconds, or ``None`` when unusable.
 
-    Only the delay-seconds form is honoured (HTTP-date is not used by the LAN
+    Only the delay-seconds form is honoured (HTTP-date is not used by the P2P
     seeder); unparseable or negative values fall back to the local default so a
     malformed header can never stall the requester.
     """
@@ -466,7 +466,7 @@ class _CountingReader:
 
 
 def _normalized_download_path(file: File) -> str | None:
-    """Return the canonical bucket-relative path used on LAN source requests."""
+    """Return the canonical bucket-relative path used on P2P source requests."""
     return normalize_bucket_relpath(str(file.filepath), CONFIG["LOCAL_BUCKET"])
 
 
@@ -509,8 +509,8 @@ def download_file(
     file: File,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
     *,
-    candidates: LanCandidateMap | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    candidates: P2PCandidateMap | None = None,
+    source_resolver: P2PSourceResolver | None = None,
     refresh_peer_sources: bool = False,
 ) -> None:
     """
@@ -567,8 +567,8 @@ def download_file(
 def _build_download_request(
     file: File,
     normalized_path: str,
-    source: LanPeerSource | None,
-    source_resolver: LanSourceResolver | None,
+    source: P2PPeerSource | None,
+    source_resolver: P2PSourceResolver | None,
     resume_offset: int,
     own_cid: Any,
 ) -> tuple[str, dict[str, str], dict[str, str]]:
@@ -603,8 +603,8 @@ def _download_from_source_attempt(
     file: File,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
     *,
-    source: LanPeerSource | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    source: P2PPeerSource | None = None,
+    source_resolver: P2PSourceResolver | None = None,
     allow_delta: bool = True,
     delta_only: bool = False,
     force_restart: bool = False,
@@ -1152,8 +1152,8 @@ def _download_file_attempt(
     file: File,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
     *,
-    candidates: LanCandidateMap | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    candidates: P2PCandidateMap | None = None,
+    source_resolver: P2PSourceResolver | None = None,
     refresh_peer_sources: bool = False,
 ) -> None:
     """Try delta, ranked exact-hash peers, then the canonical master."""
@@ -1170,7 +1170,7 @@ def _download_file_attempt(
             candidates,
             refresh=refresh_peer_sources,
         )
-        source_limit = int(CONFIG.get("LAN_PEER_SOURCES_MAX", 3))
+        source_limit = int(CONFIG.get("P2P_PEER_SOURCES_MAX", 3))
         for source in peer_sources[:source_limit]:
             if not source_resolver.authorize(source):
                 continue
@@ -1468,10 +1468,10 @@ def delete_file_remote(file: File) -> None:
     (it must not resolve to a local file).
 
     The two transports speak different contracts for this endpoint: the
-    central server expects form fields (``filename`` + ``cid``) while the LAN
+    central server expects form fields (``filename`` + ``cid``) while the P2P
     master reads query parameters (``path`` + ``is_dir`` + ``cid``, see
-    ``lan_server._handle_delete``). The branch below picks the wire shape
-    from ``CONFIG["LAN_MODE"]`` so the same action works in both modes.
+    ``p2p_server._handle_delete``). The branch below picks the wire shape
+    from ``CONFIG["P2P_MODE"]`` so the same action works in both modes.
 
     Raises:
         NetworkError: On a connection-level error.
@@ -1486,11 +1486,11 @@ def delete_file_remote(file: File) -> None:
     prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
     filename = str(file.filepath).removeprefix(prefix).lstrip("/")
 
-    lan_mode = bool(CONFIG.get("LAN_MODE", False))
+    p2p_mode = bool(CONFIG.get("P2P_MODE", False))
     response = http_delete(
         uri,
-        params=({"path": filename, "is_dir": "false", "cid": CONFIG["CID"]} if lan_mode else None),
-        data=None if lan_mode else {"cid": CONFIG["CID"], "filename": filename},
+        params=({"path": filename, "is_dir": "false", "cid": CONFIG["CID"]} if p2p_mode else None),
+        data=None if p2p_mode else {"cid": CONFIG["CID"], "filename": filename},
         headers=dict(CONFIG["REQUEST_HEADERS"]),
         verify=get_ssl_verify(),
         timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
@@ -1558,7 +1558,7 @@ def upload_file(
         return
 
     # Security: never dereference a symlink whose target escapes the bucket.
-    # This covers the realtime (watch/LAN slave) upload path, which builds the
+    # This covers the realtime (watch/P2P slave) upload path, which builds the
     # ``File`` directly from the watchdog event without the ``get_files_local``
     # scan guard. A symlink that stays inside the bucket is uploaded as the
     # link entry itself (its dereferenced metadata), not as a symlink object.
@@ -1709,7 +1709,7 @@ def patch_permissions_remote(
     """Apply a metadata-only change on the remote WITHOUT sending file bytes.
 
     Hits the server's metadata-only ``PATCH …/files/permissions`` endpoint
-    (the same route the LAN master exposes), so a chmod or a plain ``touch`` on
+    (the same route the P2P master exposes), so a chmod or a plain ``touch`` on
     a large file does not re-upload its content. ``mtime`` is the ADR-0023
     *corrected* timestamp to apply remotely; ``vclock_json``/``version_id``
     carry this node's effective causal version so the remote records the
@@ -2036,7 +2036,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         log.debug(f"Upload file: {file.filepath}")
         log.debug(f"        URI: {uri}")
         # safe_json_for_log escapes loguru markup but does NOT redact secrets:
-        # the Authorization header (API key / HSYNC_LAN_KEY) must be masked.
+        # the Authorization header (API key / HSYNC_P2P_KEY) must be masked.
         from hsync_client.utils import redact_headers
 
         log.debug(f"     Header: {safe_json_for_log(redact_headers(CONFIG['REQUEST_HEADERS']))}")
@@ -2154,9 +2154,9 @@ def nothing_to_do(file: File) -> None:
 # Symlinks are replicated STRUCTURALLY: the (path, target) pair travels the
 # sync channel and the receiver recreates the link. Never the target content.
 # This is the reconcile (full-sync) counterpart of the realtime WS `symlink`
-# event. Both server mode and LAN mode use the same HTTP surface: the central
-# server exposes POST /symlinks; the LAN master exposes the same route
-# (lan_server.py) so the client code is transport-agnostic.
+# event. Both server mode and P2P mode use the same HTTP surface: the central
+# server exposes POST /symlinks; the P2P master exposes the same route
+# (p2p_server.py) so the client code is transport-agnostic.
 
 
 def _local_symlink_relpath(link: Symlink) -> str | None:
@@ -2225,7 +2225,7 @@ def materialize_symlink_local(link: Symlink) -> bool:
 
 def upload_symlink(link: Symlink) -> None:
     """Upload a symlink structurally to the remote (server in remote mode,
-    LAN master in LAN mode — the same POST /symlinks surface)."""
+    P2P master in P2P mode — the same POST /symlinks surface)."""
     rel = _local_symlink_relpath(link)
     if rel is None or not link.target:
         log.warning(

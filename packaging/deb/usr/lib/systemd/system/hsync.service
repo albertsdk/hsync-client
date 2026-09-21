@@ -9,7 +9,7 @@ Type=simple
 User=_hsync
 Group=_hsync
 EnvironmentFile=-/etc/hsync/hsync.conf
-ExecStart=/usr/lib/hsync/hsync lan --bucket ${HSYNC_BUCKET} --path ${HSYNC_PATH} --yes
+ExecStart=/usr/lib/hsync/hsync p2p --bucket ${HSYNC_BUCKET} --path ${HSYNC_PATH} --yes
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/var/log/hsync/hsync.log
@@ -23,7 +23,7 @@ ProtectSystem=strict
 # If you change HSYNC_PATH to a path under /home, you must also add
 # that path to ReadWritePaths below (use: systemctl edit hsync.service).
 ProtectHome=read-only
-ReadWritePaths=/var/lib/hsync /var/lib/hsync/lan_cert /var/log/hsync
+ReadWritePaths=/var/lib/hsync /var/lib/hsync/p2p_cert /var/log/hsync
 ReadOnlyPaths=/etc/hsync
 
 [Install]

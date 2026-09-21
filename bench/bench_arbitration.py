@@ -4,10 +4,10 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""L1 — LAN upload-arbitration micro-benchmark (temp bucket + temp state dir).
+"""L1 — P2P upload-arbitration micro-benchmark (temp bucket + temp state dir).
 
 Measures :func:`hsync_client.arbitration.arbitrate_upload` — the causal gate the
-LAN master runs on every slave upload before touching the filesystem (ADR-0022).
+P2P master runs on every slave upload before touching the filesystem (ADR-0022).
 The pure decision (``resolve_three_way``) lives in ``hsync-common``; this
 benchmark measures the **client-side binding** around it: the in-bucket relpath
 computation, the sync-state store read, the tolerant wire-clock parse and the

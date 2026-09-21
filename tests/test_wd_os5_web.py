@@ -36,3 +36,52 @@ def test_bucket_pattern_is_v_flag_safe() -> None:
         f"bucket pattern is {pattern!r}, expected {EXPECTED_BUCKET_PATTERN!r} "
         "(unescaped '-' in a character class is invalid under the JS v flag)"
     )
+
+
+# ── C2 bootnode / mode consistency ────────────────────────────────────────
+PKG = PROJECT_ROOT / "packaging" / "wd-os5"
+WEB = PKG / "Apkg" / "web"
+I18N = WEB / "i18n"
+
+
+def test_bootnode_fields_present_in_ui() -> None:
+    """The p2p section exposes the optional bootnode host and the UPnP toggle."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="HSYNC_BOOTNODE"' in html
+    assert 'id="HSYNC_UPNP_ENABLED"' in html
+
+
+def test_php_config_whitelists_bootnode_keys() -> None:
+    """Both PHP endpoints whitelist the two new environment keys."""
+    for name in ("config_get.php", "config_set.php"):
+        text = (WEB / name).read_text(encoding="utf-8")
+        assert "HSYNC_BOOTNODE" in text, name
+        assert "HSYNC_UPNP_ENABLED" in text, name
+
+
+def test_i18n_has_bootnode_keys_in_all_locales() -> None:
+    import json
+
+    for locale in ("en", "it", "de", "es", "fr"):
+        data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
+        assert data.get("field.bootnode"), locale
+        assert data.get("field.upnp"), locale
+
+
+def test_start_sh_uses_p2p_subcommand_and_exports_bootnode() -> None:
+    start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
+    assert 'SUBCOMMAND="p2p"' in start
+    assert 'SUBCOMMAND="lan"' not in start
+    assert "export HSYNC_BOOTNODE" in start
+    assert "export HSYNC_UPNP_ENABLED" in start
+
+
+def test_mode_value_is_p2p_everywhere() -> None:
+    """The mode value ``lan`` is retired: UI, validation and service agree on p2p."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert '<option value="p2p"' in html
+    assert '<option value="lan"' not in html
+    php = (WEB / "config_set.php").read_text(encoding="utf-8")
+    assert "['p2p', 'server']" in php
+    start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
+    assert "p2p)    SUBCOMMAND=" in start

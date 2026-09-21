@@ -6,7 +6,7 @@
 
 """Process-wide bounded executor pools (lazy singletons).
 
-The transfer executor (``sync``) and the two realtime pools (LAN slave ops,
+The transfer executor (``sync``) and the two realtime pools (P2P slave ops,
 remote uploads) are process-wide singletons so their worker threads — and
 their per-thread ``requests.Session`` keep-alive connections — survive across
 sync cycles and handler recreation instead of paying a fresh TCP+TLS

@@ -1,8 +1,8 @@
 # Benchmarks — hsync-client
 
 Two tiers today: **L1 in-process micro-benchmarks** of the client-specific hot
-paths, and an **L2 loopback wire benchmark** of the LAN peer-download path
-(real `LANServer` seeder + master, real TLS). The shared library primitives
+paths, and an **L2 loopback wire benchmark** of the p2p peer-download path
+(real `P2PServer` seeder + master, real TLS). The shared library primitives
 (`hsync_common` hashing, compression, delta, models, path validation, stores) are
 already covered by `hsync-common/bench`; this directory measures only what the
 client adds on top:
@@ -11,7 +11,7 @@ client adds on top:
 |---|---|---|
 | Startup — process spawn cost | **implemented** (`bench_startup.py`) | Wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus the import-only cases, from source and from the packaged PyInstaller binary |
 | L1 — in-process micro-benchmark | **implemented** (this directory) | Measures the client wrappers the sync engine calls per path/per event |
-| L2 — transport load (peer-download path) | **implemented** (`bench_lan_peer_transfer.py`, `bench_lan_sources.py`) | The two full-download paths and the source lookup, end to end over loopback with real servers; measures what JSON-level fixtures cannot (TLS handshake, keep-alive reuse, seeder read cap) |
+| L2 — transport load (peer-download path) | **implemented** (`bench_p2p_peer_transfer.py`, `bench_p2p_sources.py`) | The two full-download paths and the source lookup, end to end over loopback with real servers; measures what JSON-level fixtures cannot (TLS handshake, keep-alive reuse, seeder read cap) |
 | L2/L3 — full-fleet load + soak | deferred | Spawning the `hsync` binary as a multi-node fleet, wire-only; decided after this peer-download baseline |
 | L4 — profiling diagnostic | n/a (yet) | Added only when a specific anomaly needs a cost breakdown |
 | L5 — CPU-saturation sweep | n/a | Multi-process LAN topology, not a single Python call — revisit with the fleet tier |
@@ -30,7 +30,7 @@ standalone (see below) and compare with `--json-out` + `compare.py`.
 
 | Script | Measures |
 |---|---|
-| `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.lan_handler` / `import hsync_client.remote_websocket`), from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
+| `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.p2p_handler` / `import hsync_client.remote_websocket`), from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
 | `bench_autotune.py` | `classify_network`, `classify_bandwidth`, `derive_timeout`, `derive_retry`, `derive_concurrency`, `derive_profile`, `profile_transfer_queue` (pure policy, no I/O) |
 | `bench_utils.py` | `http_to_ws`, `redact_headers`, `request_headers`, `inbound_size_cap`, `http_connect_timeout`, `upload_timeout`, `is_same_paths`, `ensure_str_path`, `normalize_bucket_relpath` (pure per-request/path helpers) |
 | `bench_event_queue.py` | `QueuedEvent.get_backoff_delay`, `EventQueue.enqueue`, `EventQueue._send_event(success/failure/unserializable)` (async, in-memory socket stub) |
@@ -39,9 +39,9 @@ standalone (see below) and compare with `--json-out` + `compare.py`.
 | `bench_tombstones.py` | `get_tombstone_store`, `get_payload`, `record_deletion` (persist), `merge_payload` (dominant), `mint_50(memory)` / `mint_50_then_flush` (batched offline mint) |
 | `bench_arbitration.py` | `arbitrate_upload` on the first / dominant / superseded / conflict branches, `conflicted_copy_name` |
 | `bench_reconcile.py` | reconcile core: `_compare_files` (5 branches), `_tombstone_clock_dominates`/`_tombstone_deletes_local`, `_parse_advertised_version`, and the full `get_sync_actions` bulk diff over an in-sync listing |
-| `bench_lan_peer_transfer.py` | **L2** — cold/warm peer download vs warm master download per size (4 KiB…8 MiB) through the production `download_file`, seeder read-cap saturation sweep, concurrent production fallback |
-| `bench_lan_sources.py` | **L2** — `LanSourceResolver._identity` eligibility branches, `_source_batches` splitting, real `POST /files/sources` round trips, `LanSourceTelemetry` rank/record cost |
-| `lan_peer_common.py` | Shared L2 fixtures (loopback seeder/master harness, temp cert + bucket + pin file + state dir, `measure_with_setup`); also `LatencyRelay`, the unprivileged RTT injector that counts TLS handshakes (`tc netem` needs root). Imports `hsync_client`, so it stays out of `common.py`, which is stdlib-only |
+| `bench_p2p_peer_transfer.py` | **L2** — cold/warm peer download vs warm master download per size (4 KiB…8 MiB) through the production `download_file`, seeder read-cap saturation sweep, concurrent production fallback |
+| `bench_p2p_sources.py` | **L2** — `P2PSourceResolver._identity` eligibility branches, `_source_batches` splitting, real `POST /files/sources` round trips, `P2PSourceTelemetry` rank/record cost |
+| `p2p_peer_common.py` | Shared L2 fixtures (loopback seeder/master harness, temp cert + bucket + pin file + state dir, `measure_with_setup`); also `LatencyRelay`, the unprivileged RTT injector that counts TLS handshakes (`tc netem` needs root). Imports `hsync_client`, so it stays out of `common.py`, which is stdlib-only |
 | `run_all.py` | Chained runner: runs every **L1** script above and writes `bench_result.txt` at the repo root (committed baseline, diff-friendly); `--json-out-dir DIR` also dumps one `<script>.json` per scenario for A/B comparison |
 | `compare.py` | A/B comparator of two `--json-out` runs (single file or directory): flags median regressions over a noise floor, `exit 1` on any regression |
 | `bench_result.txt` | **Committed baseline** (default `--count 2000`, this machine): compare revisions with `git diff bench_result.txt` |
@@ -66,9 +66,9 @@ cd hsync-client
 .venv/bin/python bench/bench_reconcile.py --count 2000
 
 # L2 wire benchmark (standalone: not part of run_all.py / bench_result.txt)
-.venv/bin/python bench/bench_lan_peer_transfer.py --count 40 --json-out /tmp/peer.json
-.venv/bin/python bench/bench_lan_peer_transfer.py --count 6 --latency   # handshake/RTT scenario
-.venv/bin/python bench/bench_lan_sources.py --count 2000 --json-out /tmp/sources.json
+.venv/bin/python bench/bench_p2p_peer_transfer.py --count 40 --json-out /tmp/peer.json
+.venv/bin/python bench/bench_p2p_peer_transfer.py --count 6 --latency   # handshake/RTT scenario
+.venv/bin/python bench/bench_p2p_sources.py --count 2000 --json-out /tmp/sources.json
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary
@@ -91,12 +91,12 @@ default run stays short; the reported `n` column shows the effective sample
 count.
 
 The L2 benchmarks follow the same rule from the other direction: their default is
-`--count 40` (one wire sample costs 1–30 ms, not 2 µs) and `bench_lan_sources.py`
+`--count 40` (one wire sample costs 1–30 ms, not 2 µs) and `bench_p2p_sources.py`
 caps its `POST /files/sources` scenarios at `min(--count, 50)`. Both need no
 external service: they start their own loopback servers, generate their own
 self-signed certificates, and keep every state file in a `TemporaryDirectory`.
 
-**See also**: `scripts/benchmark_lan_transfers.py` is the older HTTP-level
+**See also**: `scripts/benchmark_p2p_transfers.py` is the older HTTP-level
 micro-benchmark of the master's *raw* per-request overhead (keep-alive vs
 connection-per-request, TCP_NODELAY, compressed/uncompressed throughput) using
 `http.client` directly. It shares no scope with the L2 scripts here: those drive
@@ -141,15 +141,15 @@ harness must stay usable if the client internals are rewritten.
   `scaled_warmup`, `print_table`, `add_json_out`, `maybe_write_json`;
 * deterministic CIDs — `make_cid`, `make_cids`, `ALPHABET`.
 
-`bench/lan_peer_common.py` is the L2 counterpart and **does** import
+`bench/p2p_peer_common.py` is the L2 counterpart and **does** import
 `hsync_client` (it stands up real servers and configures the real transfer path,
 which is the point of the tier). It lives outside `common.py` on purpose so the
 stdlib-only contract of the measurement core holds:
 
-* `LanServerHarness` — one loopback node (`LANServer` seeder or master, own temp
+* `P2PServerHarness` — one loopback node (`P2PServer` seeder or master, own temp
   bucket, own device dir and self-signed cert); `peer_source()` yields the
   immutable source a master would return for it;
-* `LanRequesterEnv` — requester `CONFIG`, temp state dir / pin file, cache resets,
+* `P2PRequesterEnv` — requester `CONFIG`, temp state dir / pin file, cache resets,
   `resolver()`, and destination removal with optional session eviction;
 * `measure_with_setup` — per-sample setup outside the timed region;
 * `concurrent_peer_gets` / `peer_get` — production-shaped exact-hash peer GETs,

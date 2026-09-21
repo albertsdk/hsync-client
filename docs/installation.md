@@ -122,19 +122,19 @@ The package installs the `hsync` command system-wide.
 
 The `.deb` ships a systemd unit that starts `hsync` automatically at boot.
 Configuration is read from `/etc/hsync/hsync.conf` (an environment file loaded
-by the unit). By default the service runs in **LAN mode** with continuous
+by the unit). By default the service runs in **p2p mode** with continuous
 watch as the `_hsync` system user; see the comments in
 `/etc/hsync/hsync.conf` to switch to Server Mode.
 
 > ⚠️ The service runs non-interactively (`--yes`) with bidirectional sync, so
-> `HSYNC_LAN_KEY` **must be set** in `/etc/hsync/hsync.conf` before enabling
+> `HSYNC_P2P_KEY` **must be set** in `/etc/hsync/hsync.conf` before enabling
 > it — otherwise the client aborts with `[AUTH REQUIRED]`. All peers in the
-> same LAN group must share the same key. The default config also sets
+> same p2p group must share the same key. The default config also sets
 > `HSYNC_DEVICE_DIR=/var/lib/hsync/device` because the `_hsync` system
 > user has no home directory.
 
 ```bash
-# 1. Edit the configuration (bucket, path, LAN key, …)
+# 1. Edit the configuration (bucket, path, p2p key, …)
 sudo nano /etc/hsync/hsync.conf
 
 # 2. Enable and start the service at boot

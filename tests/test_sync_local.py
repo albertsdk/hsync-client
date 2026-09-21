@@ -383,20 +383,20 @@ class TestGetSyncActions:
         ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            # Server mode and LAN mode must both ignore the sentinel completely
-            for lan_mode in (False, True):
-                result = get_sync_actions(remote_files, local_files, lan_mode=lan_mode)
+            # Server mode and P2P mode must both ignore the sentinel completely
+            for p2p_mode in (False, True):
+                result = get_sync_actions(remote_files, local_files, p2p_mode=p2p_mode)
                 assert result == [], (
                     f"sync_actions must be empty for .hsynckeep "
-                    f"(lan_mode={lan_mode}), got: {result}"
+                    f"(p2p_mode={p2p_mode}), got: {result}"
                 )
 
 
 class TestGetSyncActionsLanMode:
-    """Tests for get_sync_actions function in LAN mode."""
+    """Tests for get_sync_actions function in P2P mode."""
 
-    def test_delete_action_for_local_only_file_in_lan_download_only(self, tmp_path):
-        """Local-only file triggers delete only in LAN download-only mode (mirror master)."""
+    def test_delete_action_for_local_only_file_in_p2p_download_only(self, tmp_path):
+        """Local-only file triggers delete only in P2P download-only mode (mirror master)."""
         local_file = tmp_path / "local_only.txt"
         local_file.write_text("local content")
 
@@ -408,12 +408,12 @@ class TestGetSyncActionsLanMode:
             "hsync_client.sync.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "download-only"},
         ):
-            result = get_sync_actions([], local_files, lan_mode=True)
+            result = get_sync_actions([], local_files, p2p_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.delete
 
-    def test_upload_action_for_local_only_file_in_lan_bidirectional(self, tmp_path):
-        """Local-only file is uploaded to master in LAN bidirectional mode."""
+    def test_upload_action_for_local_only_file_in_p2p_bidirectional(self, tmp_path):
+        """Local-only file is uploaded to master in P2P bidirectional mode."""
         local_file = tmp_path / "local_only.txt"
         local_file.write_text("local content")
 
@@ -425,12 +425,12 @@ class TestGetSyncActionsLanMode:
             "hsync_client.sync.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"},
         ):
-            result = get_sync_actions([], local_files, lan_mode=True)
+            result = get_sync_actions([], local_files, p2p_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
-    def test_upload_action_for_local_only_file_in_lan_upload_only(self, tmp_path):
-        """Local-only file is uploaded to master in LAN upload-only mode."""
+    def test_upload_action_for_local_only_file_in_p2p_upload_only(self, tmp_path):
+        """Local-only file is uploaded to master in P2P upload-only mode."""
         local_file = tmp_path / "local_only.txt"
         local_file.write_text("local content")
 
@@ -442,7 +442,7 @@ class TestGetSyncActionsLanMode:
             "hsync_client.sync.CONFIG",
             {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "upload-only"},
         ):
-            result = get_sync_actions([], local_files, lan_mode=True)
+            result = get_sync_actions([], local_files, p2p_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
@@ -456,12 +456,12 @@ class TestGetSyncActionsLanMode:
         local_files = [file.to_dict()]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            result = get_sync_actions([], local_files, lan_mode=False)
+            result = get_sync_actions([], local_files, p2p_mode=False)
             assert len(result) == 1
             assert result[0].name == SyncActionName.upload
 
-    def test_download_action_for_remote_only_file_in_lan_mode(self, tmp_path):
-        """Remote-only file triggers download action in LAN mode."""
+    def test_download_action_for_remote_only_file_in_p2p_mode(self, tmp_path):
+        """Remote-only file triggers download action in P2P mode."""
         remote_files = [
             {
                 "filepath": "remote_only.txt",
@@ -475,12 +475,12 @@ class TestGetSyncActionsLanMode:
         ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            result = get_sync_actions(remote_files, [], lan_mode=True)
+            result = get_sync_actions(remote_files, [], p2p_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
 
-    def test_lan_mode_does_not_affect_existing_files(self, tmp_path):
-        """LAN mode doesn't change behavior for files that exist on both sides."""
+    def test_p2p_mode_does_not_affect_existing_files(self, tmp_path):
+        """P2P mode doesn't change behavior for files that exist on both sides."""
         local_file = tmp_path / "both_sides.txt"
         local_file.write_text("content")
         mtime = int(os.path.getmtime(str(local_file)))
@@ -503,12 +503,12 @@ class TestGetSyncActionsLanMode:
         ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
+            result = get_sync_actions(remote_files, [local_file_dict], p2p_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.nothing
 
-    def test_lan_mode_download_newer_remote(self, tmp_path):
-        """LAN mode downloads newer remote files."""
+    def test_p2p_mode_download_newer_remote(self, tmp_path):
+        """P2P mode downloads newer remote files."""
         local_file = tmp_path / "file.txt"
         local_file.write_text("old content")
         local_mtime = int(os.path.getmtime(str(local_file)))
@@ -531,7 +531,7 @@ class TestGetSyncActionsLanMode:
         ]
 
         with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
-            result = get_sync_actions(remote_files, [local_file_dict], lan_mode=True)
+            result = get_sync_actions(remote_files, [local_file_dict], p2p_mode=True)
             assert len(result) == 1
             assert result[0].name == SyncActionName.download
 
@@ -1060,7 +1060,7 @@ class TestHsyncignoreDoesNotDelete:
                     patch("hsync_client.sync.push_tombstones_remote") as mock_push,
                     patch("hsync_client.sync.get_sync_actions", return_value=[]),
                 ):
-                    await sync(lan_mode=True)
+                    await sync(p2p_mode=True)
                     return mock_push
 
             mock_push = asyncio.run(_run())
@@ -1128,7 +1128,7 @@ class TestSyncPreservesSha256Cache:
                 patch("hsync_client.sync.get_sync_actions", return_value=[]),
                 patch("hsync_client.sync.get_dirs_remote", return_value=[]),
             ):
-                await sync(lan_mode=True)
+                await sync(p2p_mode=True)
 
         asyncio.run(_run())
 

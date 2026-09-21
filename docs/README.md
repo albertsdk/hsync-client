@@ -2,7 +2,7 @@
 
 HSYNC is a file-synchronization client. It keeps a local directory in sync in
 real-time either with a central **HSYNC server** (Server Mode) or directly with
-other devices on the same network (peer-to-peer **LAN Mode**). It ships as a
+other devices on the same network (peer-to-peer **p2p Mode**). It ships as a
 single self-contained binary — no Python runtime is required to run it.
 
 ## Start here
@@ -27,30 +27,37 @@ chooser picks the right path; each path is a complete, copy-paste walkthrough:
 | Mode | Walkthrough | Best for |
 |------|-------------|----------|
 | **Server Mode** (central server) | [Getting Started — Server Mode](getting-started-server.md) | remote / internet sync, multiple sites |
-| **LAN Mode** (peer-to-peer) | [Getting Started — LAN P2P Mode](getting-started-lan.md) | devices on the same network, no server |
+| **p2p Mode** (peer-to-peer) | [Getting Started — p2p Mode](getting-started-p2p.md) | devices on the same network, no server |
 
 For the concepts behind each mode (how they work, security, master election),
-see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
+see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
 
 ### 3. Configure
 
 - [Configuration](configuration.md) — shared options: sync, compression, delta, logging, auto-tuning.
 - [Configuration — Server Mode](configuration-server.md) — server URL, API key, SSL/TLS, env vars.
-- [Configuration — LAN P2P Mode](configuration-lan.md) — discovery, master election, `HSYNC_LAN_KEY`, stability.
-- [Sync Modes](sync-modes.md) — server vs LAN topologies and how to combine flags.
+- [Configuration — p2p Mode](configuration-p2p.md) — discovery, master election, `HSYNC_P2P_KEY`, stability.
+- [Sync Modes](sync-modes.md) — server vs p2p topologies and how to combine flags.
+
+### 3b. Choose the p2p discovery plan
+
+| Task | Guide |
+|------|-------|
+| Sync devices on the **same network** (mDNS, no bootnode) | [Sync on the local network](p2p-lan.md) |
+| Sync across networks through a **bootnode** | [Sync across networks](p2p-bootnode.md) |
 
 ### 4. Operate
 
 | Task | Guide |
 |------|-------|
-| Practical recipes (backup, mirror, multi-device, bandwidth) | [Examples](examples.md) → `examples-server.md` / `examples-lan.md` |
+| Practical recipes (backup, mirror, multi-device, bandwidth) | [Examples](examples.md) → `examples-server.md` / `examples-p2p.md` |
 | Schedule one-shot syncs (cron, systemd timers, alerts) | [Scheduling](scheduling.md) |
 | Read the client logs | [Log Labels](log-labels.md) |
-| Troubleshooting | [Troubleshooting](troubleshooting.md) — [FAQ](faq.md) → `faq-server.md` / `faq-lan.md` |
+| Troubleshooting | [Troubleshooting](troubleshooting.md) — [FAQ](faq.md) → `faq-server.md` / `faq-p2p.md` |
 
 ### 5. Understand
 
-- [Authentication](authentication.md) — API key, LAN_KEY, hello handshake.
+- [Authentication](authentication.md) — API key, P2P_KEY, hello handshake.
 - [Sync Flow](sync-flow.md) — client-side flow, split by mode.
 - [Conflict Resolution](conflict-resolution.md) — causal model and decision trees.
 
@@ -59,11 +66,11 @@ see [Server Mode](server-mode.md) and [LAN Mode](lan-mode.md).
 - [Usage](usage.md) — CLI syntax and behaviour (symlinks, error handling, auto-tuning).
 - [Performance](performance.md) — measured throughput by mode, workload and phase.
 - [Internal architecture](internal/architecture.md) — how the client is structured.
-- [LAN protocol internals](internal/lan-internals.md) — deep P2P details.
+- [LAN protocol internals](internal/p2p-internals.md) — deep P2P details.
 - [Auto-tuning internals](internal/autotune.md) — environment-adaptive defaults.
 - [Developer Guide](internal/developer.md) — for contributors.
 - [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.
-- [Stress Test Plan](internal/stress-test-plan.md) — load/replication stress harness for LAN P2P and server mode (design + resume checklist).
+- [Stress Test Plan](internal/stress-test-plan.md) — load/replication stress harness for p2p and server mode (design + resume checklist).
 
 ## Associated Ecosystem Components
 

@@ -93,7 +93,7 @@ def main() -> None:
     count = args.count
 
     rtts: list[float | None] = [None, 10.0, 60.0, 200.0]
-    rtt_expected = [NetClass.UNKNOWN, NetClass.LAN, NetClass.BROADBAND, NetClass.MOBILE]
+    rtt_expected = [NetClass.UNKNOWN, NetClass.P2P, NetClass.BROADBAND, NetClass.MOBILE]
     assert [classify_network(r) for r in rtts] == rtt_expected
 
     mbps: list[float | None] = [None, 10.0, 100.0, 1000.0, 3000.0]
@@ -120,7 +120,7 @@ def main() -> None:
         assert classify_bandwidth(mbps[i]) is bw_expected[i]
 
     def op_derive_timeout() -> None:
-        out = derive_timeout(10.0, NetClass.LAN, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX)
+        out = derive_timeout(10.0, NetClass.P2P, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX)
         assert out == _clamp(30, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX)
 
     def op_derive_timeout_unknown() -> None:
@@ -128,7 +128,7 @@ def main() -> None:
         assert out == SAFE.http_timeout
 
     def op_derive_retry() -> None:
-        out = derive_retry(10.0, NetClass.LAN, RECONNECT_DELAY_MIN, RECONNECT_DELAY_MAX)
+        out = derive_retry(10.0, NetClass.P2P, RECONNECT_DELAY_MIN, RECONNECT_DELAY_MAX)
         assert isinstance(out, tuple) and len(out) == 3
         assert all(isinstance(v, int) for v in out)
 
@@ -144,7 +144,7 @@ def main() -> None:
 
     profile_results = ProbeResults(
         rtt_ms=10.0,
-        net_class=NetClass.LAN,
+        net_class=NetClass.P2P,
         bw_class=BwClass.MID,
         storage_type=StorageType.SSD,
         queue_profile=QueueProfile.MIXED,

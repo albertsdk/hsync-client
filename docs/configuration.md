@@ -1,10 +1,10 @@
 # Configuration
 
-Shared configuration options that apply to both Server Mode and LAN P2P Mode.
+Shared configuration options that apply to both Server Mode and p2p Mode.
 
 > **See also:**
 > - [Configuration — Server Mode](configuration-server.md) — server connection, SSL/TLS, API key
-> - [Configuration — LAN P2P Mode](configuration-lan.md) — LAN options, master election, discovery
+> - [Configuration — p2p Mode](configuration-p2p.md) — p2p options, master election, discovery
 
 ## Sync Options
 
@@ -12,7 +12,7 @@ Shared configuration options that apply to both Server Mode and LAN P2P Mode.
 |---|---|---|
 | `-b, --bucket` | Bucket name | (required) |
 | `-p, --path` | Local directory path | cwd |
-| `--once` | Run a single sync cycle and exit. Without it the client runs continuously and retries an unreachable server indefinitely (the default). In LAN mode it runs one slave sync cycle and exits (the master role stays continuous) | `false` |
+| `--once` | Run a single sync cycle and exit. Without it the client runs continuously and retries an unreachable server indefinitely (the default). In p2p mode it runs one slave sync cycle and exits (the master role stays continuous) | `false` |
 | `-i, --interval` | Force full sync every N seconds (continuous mode only) | — |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--ignore-delete` | Do not propagate file deletions (backup mode) | `false` |
@@ -46,7 +46,7 @@ There is no `--log-level` flag. Verbosity is `-v` / `-q` only.
 
 In verbose mode the startup log includes a `Local configuration` JSON dump of
 the effective settings plus a `PATHS` section (env file, device identity dir,
-state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `LAN_KEY`,
+state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `P2P_KEY`,
 `Authorization`) are masked.
 
 ## General Options
@@ -74,11 +74,11 @@ state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `LAN_KEY`,
 | Option | Description | Default |
 |---|---|---|
 | `--delta-min-file-size` | Min file size in bytes for delta transfer in Server Mode | `262144` (256 KB) |
-| `--delta-min-file-size-lan` | Min file size in bytes for delta transfer in LAN Mode | `1048576` (1 MB) |
+| `--delta-min-file-size-p2p` | Min file size in bytes for delta transfer in p2p Mode | `1048576` (1 MB) |
 
 The environment equivalents are documented per mode:
 `HSYNC_DELTA_MIN_FILE_SIZE` in [Configuration — Server Mode](configuration-server.md)
-and `HSYNC_DELTA_MIN_FILE_SIZE_LAN` in [Configuration — LAN P2P Mode](configuration-lan.md).
+and `HSYNC_DELTA_MIN_FILE_SIZE_P2P` in [Configuration — p2p Mode](configuration-p2p.md).
 
 ## Bandwidth Limiting
 
@@ -140,7 +140,7 @@ built-in static defaults.
 
 ## Clock synchronisation (NTP)
 
-In LAN mode there is no server at startup, so the client measures its clock
+In p2p mode there is no server at startup, so the client measures its clock
 offset against public SNTP servers. The offset powers the chronological
 conflict tie-break (`corrected_mtime`, see
 [Conflict Resolution](conflict-resolution.md)): the most recent

@@ -5,10 +5,10 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Persistent device identity for LAN mode (Syncthing-style).
+Persistent device identity for P2P mode (Syncthing-style).
 
 Every hsync installation owns **one** device identity: a stable device ID
-plus the TLS keypair used for LAN P2P mode. The identity lives in a single
+plus the TLS keypair used for P2P P2P mode. The identity lives in a single
 state directory (``$HSYNC_DEVICE_DIR``, falling back to an OS state dir) so
 it survives process restarts:
 
@@ -110,8 +110,8 @@ class DeviceIdentity:
 
     Attributes:
         device_id: Stable 21-char alphanumeric ID (CID_PATTERN-compatible),
-            used as the LAN ``cid`` and as the identity anchor in TOFU pins.
-        cert_info: The persistent LAN keypair and its fingerprint.
+            used as the P2P ``cid`` and as the identity anchor in TOFU pins.
+        cert_info: The persistent P2P keypair and its fingerprint.
     """
 
     device_id: str

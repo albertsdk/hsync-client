@@ -26,6 +26,7 @@ from hsync_client.config import (
     HsyncConfig,
     get_api_key,
     get_autotune_enabled,
+    get_bootnode,
     get_compression_enabled,
     get_connectivity_retry_attempts,
     get_connectivity_retry_max_wait,
@@ -35,19 +36,19 @@ from hsync_client.config import (
     get_heartbeat_interval,
     get_ignore_delete,
     get_ignore_patterns,
-    get_lan_allow_unauthenticated_writes,
-    get_lan_group,
-    get_lan_key,
-    get_lan_peer_download,
-    get_lan_peer_read_cap,
-    get_lan_peer_sources_max,
-    get_lan_port,
-    get_lan_require_pairing,
     get_mass_delete_guard,
     get_mass_delete_percent,
     get_mass_delete_threshold,
     get_max_concurrent_transfers,
     get_never_master,
+    get_p2p_allow_unauthenticated_writes,
+    get_p2p_group,
+    get_p2p_key,
+    get_p2p_listen_port,
+    get_p2p_peer_download,
+    get_p2p_peer_read_cap,
+    get_p2p_peer_sources_max,
+    get_p2p_require_pairing,
     get_peer_timeout,
     get_resync,
     get_server_url,
@@ -57,6 +58,7 @@ from hsync_client.config import (
     set_debug,
 )
 from hsync_client.constants import (
+    BOOTNODE_DEFAULT_PORT,
     CLIENT_NAME,
     CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT,
     CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT,
@@ -108,7 +110,7 @@ def _read_secret_from_fd(fd: int | None) -> str | None:
         return None
 
 
-# Provenance of a resolved tuning value; feeds AUTOTUNE_MANAGED_KEYS so the LAN
+# Provenance of a resolved tuning value; feeds AUTOTUNE_MANAGED_KEYS so the P2P
 # post-discovery refresh re-derives only autotune/default-sourced keys and never
 # clobbers explicit CLI/env overrides. Single encode site: the resolvers below.
 TuningSource = Literal["cli", "env", "autotune", "default"]
@@ -237,7 +239,7 @@ def _get_mass_delete_percent_value(cli_value: int | None) -> int:
 
 def _check_deletion_risk(
     local_path: str,
-    lan_mode: bool,
+    p2p_mode: bool,
     force_master: bool,
     sync_direction: str,
     auto_confirm: bool,
@@ -261,14 +263,14 @@ def _check_deletion_risk(
     if sync_direction == "upload-only":
         return
 
-    # force_master in LAN mode means this peer serves files to slaves — the
+    # force_master in P2P mode means this peer serves files to slaves — the
     # deletion-risk guard concerns serving, not authority (no peer is
     # authoritative under the causal model).
-    if lan_mode and force_master:
+    if p2p_mode and force_master:
         return
 
     # Only download-only mode can wipe local-only files at the initial sync.
-    # Bidirectional (server or LAN) uploads local-only files instead of
+    # Bidirectional (server or P2P) uploads local-only files instead of
     # deleting them; remote delete events are expected normal behaviour.
     if sync_direction != "download-only":
         return
@@ -299,11 +301,13 @@ def _check_deletion_risk(
         "and local-only files may be removed"
     )
 
-    logger.warning(
+    warnings = [
         f"The shared directory '{local_path}' is not empty and the current "
-        f"sync settings could DELETE local files."
-    )
-    logger.warning(f"Reason: {reason}")
+        f"sync settings could DELETE local files.",
+        f"Reason: {reason}",
+    ]
+    for line in warnings:
+        logger.warning(line)
 
     if auto_confirm:
         logger.warning("--yes flag set – proceeding without confirmation.")
@@ -313,10 +317,16 @@ def _check_deletion_risk(
     # (containers, systemd units, cron, pipes): fail fast with a clear
     # message instead of blocking on input() or silently declining via EOF.
     if not is_tty_interactive():
-        logger.error(
+        error = (
             "Deletion-risk confirmation required but no interactive terminal is "
             "available. Re-run with --yes to accept the risk and proceed."
         )
+        logger.error(error)
+        # The loguru sinks are asynchronous (enqueue=True): a message written
+        # right before SystemExit can be lost. Echo the full diagnostic through
+        # the synchronous CLI error channel too, so the operator always sees why
+        # the run aborted.
+        print("Error: " + " ".join([*warnings, error]), file=sys.stderr)
         raise SystemExit(1)
 
     try:
@@ -329,54 +339,54 @@ def _check_deletion_risk(
         raise SystemExit(0)
 
 
-def _check_lan_write_policy(
-    lan_mode: bool,
-    lan_key: str | None,
+def _check_p2p_write_policy(
+    p2p_mode: bool,
+    p2p_key: str | None,
     sync_direction: str,
     logger: Any,
     allow_unauthenticated_writes: bool = False,
 ) -> None:
-    """Require authorization for every write-capable LAN sync.
+    """Require authorization for every write-capable P2P sync.
 
-    A self-signed LAN transport hides traffic but does not prove the master's
+    A self-signed P2P transport hides traffic but does not prove the master's
     identity, so a client that uploads data must authenticate with
-    ``HSYNC_LAN_KEY`` unless the dangerous explicit opt-in is enabled. The policy lives in
-    :func:`hsync_common.protocol.pairing.lan_write_requires_key`; here we apply it.
+    ``HSYNC_P2P_KEY`` unless the dangerous explicit opt-in is enabled. The policy lives in
+    :func:`hsync_common.protocol.pairing.p2p_write_requires_key`; here we apply it.
 
     Raises SystemExit when the policy is violated.
     """
-    if not lan_mode:
+    if not p2p_mode:
         return
 
-    if lan_key:
+    if p2p_key:
         return
 
-    from hsync_client.preview import _lan_write_blocked
+    from hsync_client.preview import _p2p_write_blocked
 
-    if _lan_write_blocked(
+    if _p2p_write_blocked(
         sync_direction,
         allow_unauthenticated_writes=allow_unauthenticated_writes,
         log=logger,
         hint=(
-            "Set HSYNC_LAN_KEY, use --sync-direction download-only, or explicitly accept "
+            "Set HSYNC_P2P_KEY, use --sync-direction download-only, or explicitly accept "
             "the risk with --allow-unauthenticated-writes."
         ),
     ):
         raise SystemExit(1)
 
 
-def _warn_if_lan_in_container(logger: Any) -> None:
+def _warn_if_p2p_in_container(logger: Any) -> None:
     """Warn that mDNS peer discovery usually fails under container networking.
 
-    LAN discovery relies on multicast, which does not cross the NAT boundary
-    of the default bridge network used by container runtimes; LAN mode inside
+    P2P discovery relies on multicast, which does not cross the NAT boundary
+    of the default bridge network used by container runtimes; P2P mode inside
     a container therefore requires host networking to find peers.
     """
     info = detect_container()
     if not info.is_container:
         return
     logger.warning(
-        f"LAN mode inside a {info.runtime or 'unknown'} container: mDNS peer "
+        f"P2P mode inside a {info.runtime or 'unknown'} container: mDNS peer "
         "discovery cannot cross container bridge/NAT networking. Use host "
         "networking (e.g. 'docker run --network host') or peers will not be found."
     )
@@ -435,7 +445,7 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
                 if Path(event.src_path).name == HSYNCIGNORE_FILENAME:
                     _log.debug(".hsyncignore changed — reloading ignore matcher")
                     matcher.reload()
-                    from hsync_client.lan_inventory import refresh_active_inventory
+                    from hsync_client.p2p_inventory import refresh_active_inventory
 
                     refresh_active_inventory()
 
@@ -461,7 +471,7 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
 def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str, Any]:
     """Build the redacted config dump for the verbose "Local configuration" log.
 
-    Masks ``API_KEY``, ``LAN_KEY`` and the ``Authorization`` header, and appends
+    Masks ``API_KEY``, ``P2P_KEY`` and the ``Authorization`` header, and appends
     a ``PATHS`` section resolving the filesystem locations the client uses
     (env file, device identity dir, state dir, SQLite DB, instance-lock dir).
     """
@@ -473,8 +483,8 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
     safe: dict[str, Any] = {**config}
     safe["REQUEST_HEADERS"] = redact_headers(config["REQUEST_HEADERS"])
     safe["API_KEY"] = "****"
-    if safe.get("LAN_KEY"):
-        safe["LAN_KEY"] = "****"
+    if safe.get("P2P_KEY"):
+        safe["P2P_KEY"] = "****"
     safe["PATHS"] = {
         "ENV_FILE": env_file,
         "DEVICE_DIR": str(default_device_dir()),
@@ -505,19 +515,19 @@ def run_sync(
     compression_enabled: bool,
     max_bandwidth_upload: int | None,
     max_bandwidth_download: int | None,
-    lan_mode: bool,
-    lan_port: int,
+    p2p_mode: bool,
+    p2p_listen_port: int,
     discovery_timeout: int | None,
-    lan_group: str | None,
+    p2p_group: str | None,
     force_master: bool,
     never_master: bool,
     debug: bool,
     quiet: bool,
     logfile: str | None,
     no_color: bool,
-    lan_require_pairing: bool = False,
+    p2p_require_pairing: bool = False,
     api_key_fd: int | None = None,
-    lan_key_fd: int | None = None,
+    p2p_key_fd: int | None = None,
     events_json_fd: int | None = None,
     auto_confirm: bool = False,
     min_free_disk_space: int = 500,
@@ -530,9 +540,12 @@ def run_sync(
     mass_delete_percent: int | None = None,
     delta_enabled: bool = True,
     delta_min_file_size: int | None = None,
-    delta_min_file_size_lan: int | None = None,
-    lan_peer_download_enabled: bool = True,
-    lan_allow_unauthenticated_writes: bool = False,
+    delta_min_file_size_p2p: int | None = None,
+    p2p_peer_download_enabled: bool = True,
+    p2p_allow_unauthenticated_writes: bool = False,
+    p2p_bootnode: str | None = None,
+    p2p_bootnode_port: int | None = None,
+    p2p_upnp_enabled: bool | None = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -544,13 +557,13 @@ def run_sync(
     - Running sync (single or continuous)
 
     By default the client runs continuously (daemon): it keeps the connection
-    up and retries an unreachable server forever, mirroring LAN mode. A
+    up and retries an unreachable server forever, mirroring P2P mode. A
     one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
     a single cycle (or after the finite startup connectivity retries).
     """
     # Read secrets from file descriptors if provided (secure passing from parent)
     api_key_from_fd = _read_secret_from_fd(api_key_fd)
-    lan_key_from_fd = _read_secret_from_fd(lan_key_fd)
+    p2p_key_from_fd = _read_secret_from_fd(p2p_key_fd)
 
     # Install the structured event emitter (P0-B). No-op when the parent did
     # not pass --events-json-fd, so a plain CLI run is unaffected.
@@ -609,36 +622,36 @@ def run_sync(
     # Determine server URL (CLI argument takes precedence over env var)
     effective_server_url = server_url or get_server_url()
 
-    # LAN mode without a configured server URL runs on a placeholder until the
+    # P2P mode without a configured server URL runs on a placeholder until the
     # master is discovered: the RTT probe and the UI server event are deferred
     # (probing the placeholder would always fail with a spurious warning).
-    using_lan_placeholder = lan_mode and not effective_server_url
+    using_p2p_placeholder = p2p_mode and not effective_server_url
 
-    # Validate server URL is provided (not required in LAN mode)
-    if not effective_server_url and not lan_mode:
+    # Validate server URL is provided (not required in P2P mode)
+    if not effective_server_url and not p2p_mode:
         log.error("Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER)")
         sys.exit(1)
 
-    # In LAN mode without server URL, use placeholder
-    if lan_mode and not effective_server_url:
+    # In P2P mode without server URL, use placeholder
+    if p2p_mode and not effective_server_url:
         effective_server_url = "http://localhost:9753"
 
     # At this point, effective_server_url is guaranteed to be set
-    # (either from args, env, or LAN mode placeholder)
+    # (either from args, env, or P2P mode placeholder)
     assert effective_server_url is not None
-    if not using_lan_placeholder:
+    if not using_p2p_placeholder:
         emit_event(UiEventName.server, url=effective_server_url)
 
     # Convert HTTP URL to WebSocket URL for events endpoint
     ws_url = http_to_ws(effective_server_url)
 
-    # Client identity. LAN mode presents the persistent device identity
+    # Client identity. P2P mode presents the persistent device identity
     # (Syncthing-style: one device ID per installation, anchored in
     # $HSYNC_DEVICE_DIR) so TOFU pins survive restarts and a changed
     # certificate for the same device ID is detectable. Remote mode keeps a
     # per-session random CID: it only feeds echo suppression — the API key
     # is the identity there.
-    if lan_mode:
+    if p2p_mode:
         from hsync_client.identity import load_or_create_device_identity
 
         cid = load_or_create_device_identity().device_id
@@ -652,16 +665,16 @@ def run_sync(
 
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
-    resolved_lan_key = lan_key_from_fd or get_lan_key()
-    allow_unauthenticated_lan_writes = (
-        lan_allow_unauthenticated_writes or get_lan_allow_unauthenticated_writes()
+    resolved_p2p_key = p2p_key_from_fd or get_p2p_key()
+    allow_unauthenticated_p2p_writes = (
+        p2p_allow_unauthenticated_writes or get_p2p_allow_unauthenticated_writes()
     )
 
     # Fail fast on a missing API key: every authenticated server endpoint
     # requires a valid key, so an empty key can never sync. Reporting it here
-    # avoids a late, opaque "Invalid API key" failure mid-sync. LAN mode has
+    # avoids a late, opaque "Invalid API key" failure mid-sync. P2P mode has
     # its own shared-key policy and is exempt.
-    if not lan_mode and not resolved_api_key:
+    if not p2p_mode and not resolved_api_key:
         log.error(
             "No API key configured. Set HSYNC_API_KEY (or pass it via "
             "--api-key-fd) to authenticate with the server."
@@ -672,7 +685,7 @@ def run_sync(
     # The rule keys on the URL scheme the client connects to, so an HTTPS
     # reverse proxy in front of an HTTP backend is fully supported (the
     # client uses an https:// URL; the backend stays HTTP behind the proxy).
-    if not lan_mode and not effective_server_url.lower().startswith("https://"):
+    if not p2p_mode and not effective_server_url.lower().startswith("https://"):
         log.error(
             f"API key provided but server URL is not HTTPS ('{effective_server_url}'). "
             "Refusing to send credentials over an unencrypted connection. "
@@ -705,15 +718,15 @@ def run_sync(
             rtt_host = parsed.hostname or "localhost"
             rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-            # LAN placeholder: no server to probe yet — defer RTT measurement
-            # to the post-discovery refresh in lan_handler (slave role only).
-            rtt_ms = None if using_lan_placeholder else measure_rtt(rtt_host, rtt_port)
+            # P2P placeholder: no server to probe yet — defer RTT measurement
+            # to the post-discovery refresh in p2p_handler (slave role only).
+            rtt_ms = None if using_p2p_placeholder else measure_rtt(rtt_host, rtt_port)
             net_class = classify_network(rtt_ms)
             # Active bandwidth probe seeds the class at startup when the passive
-            # EMA has no data yet (no transfers have run). Skipped for the LAN
+            # EMA has no data yet (no transfers have run). Skipped for the P2P
             # placeholder — no server URL exists until a master is discovered.
             active_mbps = None
-            if not using_lan_placeholder and autotune_mod._bw_ema is None:
+            if not using_p2p_placeholder and autotune_mod._bw_ema is None:
                 active_mbps = measure_bandwidth_active(effective_server_url, verify=verify_ssl)
             bw_class = classify_bandwidth(autotune_mod._bw_ema, active_mbps)
             storage_type = detect_storage_type(local_path)
@@ -809,7 +822,7 @@ def run_sync(
         "REMOTE_BUCKET": bucket,
         "REQUEST_HEADERS": {
             "accept": "application/json",
-            "Authorization": f"Bearer {resolved_lan_key or '' if lan_mode else resolved_api_key}",
+            "Authorization": f"Bearer {resolved_p2p_key or '' if p2p_mode else resolved_api_key}",
             HEADER_CLIENT_NAME: CLIENT_NAME,
             HEADER_CLIENT_VERSION: HSYNC_VERSION,
             HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION_REST,
@@ -820,23 +833,30 @@ def run_sync(
         "STABILITY_DELAY": _get_stability_delay_value(stability_delay),
         "HTTP_TIMEOUT": _resolved_http_timeout,
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
-        "LAN_MODE": lan_mode,
-        "LAN_PORT": lan_port or get_lan_port() or 0,
+        "P2P_MODE": p2p_mode,
+        "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
+        "BOOTNODE": p2p_bootnode or get_bootnode(),
+        "BOOTNODE_PORT": p2p_bootnode_port or BOOTNODE_DEFAULT_PORT,
+        "UPNP_ENABLED": (
+            p2p_upnp_enabled
+            if p2p_upnp_enabled is not None
+            else bool(p2p_bootnode or get_bootnode())
+        ),
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
         "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
-        "LAN_KEY": resolved_lan_key,
-        "LAN_GROUP": lan_group or get_lan_group(),
+        "P2P_KEY": resolved_p2p_key,
+        "P2P_GROUP": p2p_group or get_p2p_group(),
         # One-shot is derived solely from --once: continuous is the default
         # and no env/flag knob for "persistence" exists.
         "ONE_SHOT": not continuous,
-        "LAN_FORCE_MASTER": force_master,
-        "LAN_NEVER_MASTER": never_master or get_never_master(),
-        "LAN_REQUIRE_PAIRING": lan_require_pairing or get_lan_require_pairing(),
-        "LAN_PEER_DOWNLOAD": lan_peer_download_enabled and get_lan_peer_download(),
-        "LAN_PEER_READ_CAP": get_lan_peer_read_cap(),
-        "LAN_PEER_SOURCES_MAX": get_lan_peer_sources_max(),
-        "LAN_ALLOW_UNAUTHENTICATED_WRITES": allow_unauthenticated_lan_writes,
+        "P2P_FORCE_MASTER": force_master,
+        "P2P_NEVER_MASTER": never_master or get_never_master(),
+        "P2P_REQUIRE_PAIRING": p2p_require_pairing or get_p2p_require_pairing(),
+        "P2P_PEER_DOWNLOAD": p2p_peer_download_enabled and get_p2p_peer_download(),
+        "P2P_PEER_READ_CAP": get_p2p_peer_read_cap(),
+        "P2P_PEER_SOURCES_MAX": get_p2p_peer_sources_max(),
+        "P2P_ALLOW_UNAUTHENTICATED_WRITES": allow_unauthenticated_p2p_writes,
         "MASTER_CERT_FINGERPRINT": None,
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
@@ -845,7 +865,7 @@ def run_sync(
         "SERVER_DELTA_ENABLED": False,  # Set during WebSocket handshake / master election
         # CLI overrides for the delta size floor (None = use env settings)
         "DELTA_MIN_FILE_SIZE": delta_min_file_size,
-        "DELTA_MIN_FILE_SIZE_LAN": delta_min_file_size_lan,
+        "DELTA_MIN_FILE_SIZE_P2P": delta_min_file_size_p2p,
         "SYNC_DIRECTION": sync_direction,
         "MAX_BANDWIDTH_UPLOAD": max_bandwidth_upload,
         "MAX_BANDWIDTH_DOWNLOAD": max_bandwidth_download,
@@ -869,7 +889,7 @@ def run_sync(
         # Auto-tuning runtime state (updated below after set_config)
         "AUTOTUNE_ENABLED": autotune_enabled,
         "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
-        # Keys the LAN post-discovery refresh AND the per-cycle concurrency
+        # Keys the P2P post-discovery refresh AND the per-cycle concurrency
         # refresh may re-derive: only those resolved from autotune/default
         # (CLI/env overrides are preserved). Derived from `_tuning_keys` so it
         # stays in sync with the user-override log above.
@@ -897,11 +917,11 @@ def run_sync(
     if config["NO_VERIFY_SSL"]:
         _suppress_insecure_warning()
 
-    # Surface the bucket / LAN group on the structured channel so the GUI does
+    # Surface the bucket / P2P group on the structured channel so the GUI does
     # not have to scrape them from log wording.
     emit_event(UiEventName.bucket, bucket=config["REMOTE_BUCKET"])
-    if config["LAN_GROUP"]:
-        emit_event(UiEventName.group, group=config["LAN_GROUP"])
+    if config["P2P_GROUP"]:
+        emit_event(UiEventName.group, group=config["P2P_GROUP"])
 
     # Install the process-wide IgnoreMatcher so that all call sites that use
     # is_hidden_file / is_hidden_dir automatically benefit from the new filtering.
@@ -918,21 +938,21 @@ def run_sync(
     if not dryrun:
         _check_deletion_risk(
             local_path=local_path,
-            lan_mode=lan_mode,
+            p2p_mode=p2p_mode,
             force_master=force_master,
             sync_direction=sync_direction,
             auto_confirm=auto_confirm,
             logger=log,
         )
 
-    # Enforce the LAN-key policy for every write-capable sync.
+    # Enforce the P2P-key policy for every write-capable sync.
     if not dryrun:
-        _check_lan_write_policy(
-            lan_mode=config["LAN_MODE"],
-            lan_key=config["LAN_KEY"],
+        _check_p2p_write_policy(
+            p2p_mode=config["P2P_MODE"],
+            p2p_key=config["P2P_KEY"],
             sync_direction=config["SYNC_DIRECTION"],
             logger=log,
-            allow_unauthenticated_writes=config["LAN_ALLOW_UNAUTHENTICATED_WRITES"],
+            allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
         )
 
     # Check disk space before syncing
@@ -945,22 +965,22 @@ def run_sync(
     # Cross-process instance lock: two hsync processes must never sync the
     # same local directory — they would race the same folder UUID in
     # syncstate.db and echo each other's watcher events. The
-    # flock is held for the whole run (LAN or remote) and is released by the
+    # flock is held for the whole run (P2P or remote) and is released by the
     # kernel even on SIGKILL; see hsync_client.identity.InstanceLock.
     instance_lock = _acquire_instance_lock(local_path, log)
     try:
-        # LAN Mode: Peer Discovery and Master Election
-        if config["LAN_MODE"]:
-            from hsync_client.lan_handler import run_lan_mode
+        # P2P Mode: Peer Discovery and Master Election
+        if config["P2P_MODE"]:
+            from hsync_client.p2p_handler import run_p2p_mode
 
-            _warn_if_lan_in_container(log)
-            sys.exit(run_lan_mode(config, log))
+            _warn_if_p2p_in_container(log)
+            sys.exit(run_p2p_mode(config, log))
 
         # Server Connectivity Check with retry. In one-shot mode an
         # unreachable server is a failed run: exit non-zero instead of
         # returning silently with a success exit code. In continuous mode
         # (the default) the client stays alive and the reconnect loop below
-        # retries the connection forever, mirroring LAN mode.
+        # retries the connection forever, mirroring P2P mode.
         if not _check_server_connectivity(
             server_url=effective_server_url,
             timeout=min(config["HTTP_TIMEOUT"], 10),

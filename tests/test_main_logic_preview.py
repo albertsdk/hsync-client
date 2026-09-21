@@ -17,7 +17,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         with (
@@ -41,7 +41,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create a download action
@@ -70,7 +70,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create an upload action
@@ -99,7 +99,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create a delete action
@@ -128,7 +128,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create a nothing action (already synced)
@@ -157,7 +157,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create delete and download actions with same sha256sum (rename)
@@ -195,7 +195,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create action for sentinel file
@@ -224,7 +224,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         with (
@@ -247,7 +247,7 @@ class TestRunPreview:
         mock_logger = MagicMock()
 
         config = {
-            "LAN_MODE": False,
+            "P2P_MODE": False,
         }
 
         # Create various actions

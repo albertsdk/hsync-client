@@ -6,11 +6,11 @@ and log labels see [Usage](usage.md) and [Configuration](configuration.md).
 This document has been split by deployment mode:
 
 - **[Examples — Server Mode](examples-server.md)** — central server examples (sections 1.1–1.8)
-- **[Examples — LAN P2P Mode](examples-lan.md)** — peer-to-peer examples (sections 2.1–2.8)
+- **[Examples — p2p Mode](examples-p2p.md)** — peer-to-peer examples (sections 2.1–2.8)
 
 ## Common Operational Patterns
 
-These patterns apply to **both** Server Mode and LAN P2P Mode.
+These patterns apply to **both** Server Mode and p2p Mode.
 
 ### 3.1 Dry run (preview changes)
 

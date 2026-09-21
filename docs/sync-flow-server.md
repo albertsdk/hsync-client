@@ -3,7 +3,7 @@
 This document describes how the HSYNC client handles file synchronization when
 connected to a central server.
 
-> For LAN P2P sync flow, see [Sync Flow — LAN P2P Mode](sync-flow-lan.md).
+> For p2p sync flow, see [Sync Flow — p2p Mode](sync-flow-p2p.md).
 
 ## 1. Initial Connection
 

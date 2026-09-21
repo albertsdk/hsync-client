@@ -82,7 +82,7 @@ area; each file name starts with `test_` and groups related functionality.
 | **Sync engine** | `test_sync_local.py`, `test_sync_remote.py`, `test_sync_update.py`, `test_sync_workers.py`, `test_sync_permanent_failures.py` | File comparison, action generation, parallel transfers, permanent-failure skip-set |
 | **Transfer** | `test_transfer_download.py`, `test_transfer_upload.py`, `test_transfer_status.py` | Upload/download, resumable transfers, status tracking |
 | **WebSocket / events** | `test_websocket_events.py`, `test_events.py`, `test_event_queue.py`, `test_event_dispatch_*.py` | WS event processing, event queue, inbound dispatch (delete/rename/symlink) |
-| **LAN mode** | `test_lan_peer.py`, `test_lan_peer_manager.py`, `test_lan_handler_advanced.py`, `test_lan_sync.py`, `test_lan_server_*.py`, `test_lan_websocket_*.py`, `test_lan_utils.py` | Discovery, election, master server, slave client, WSS, security, thread cap |
+| **p2p mode** | `test_p2p_peer.py`, `test_p2p_peer_manager.py`, `test_p2p_handler_advanced.py`, `test_p2p_sync.py`, `test_p2p_server_*.py`, `test_p2p_websocket_*.py`, `test_p2p_utils.py` | Discovery, election, master server, slave client, WSS, security, thread cap |
 | **Security** | `test_security_inbound.py`, `test_pinning.py`, `test_ssl_utils.py` | Inbound path validation, TOFU pinning, SSL utils |
 | **Config / CLI** | `test_config.py`, `test_cli.py`, `test_exceptions.py` | Config loading, CLI parsing (inline Typer validation), exception hierarchy |
 | **Delta transfer** | `test_delta_transfer.py` | rsync-style block sync |
@@ -94,7 +94,7 @@ area; each file name starts with `test_` and groups related functionality.
 
 1. Use `tmp_path` fixture from pytest for temporary directories
 2. Mock the server with `responses` or `httpx` test fixtures
-3. LAN mode tests may need `pytest-asyncio` for async discovery
+3. p2p mode tests may need `pytest-asyncio` for async discovery
 4. Avoid tests that require a real HSYNC Server — use mocks
 
 ### Cross-project testing

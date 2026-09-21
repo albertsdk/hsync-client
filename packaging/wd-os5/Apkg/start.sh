@@ -63,18 +63,20 @@ fi
 # sync group) and keeps a safe copy of the clients' data. Deletions on the
 # clients are NOT propagated (HSYNC_IGNORE_DELETE=true), so the backup never
 # loses files because a source host removed them.
-: "${HSYNC_MODE:=lan}"
+: "${HSYNC_MODE:=p2p}"
 : "${HSYNC_PATH:=${HSYNC_DATA_DIR}}"
 : "${HSYNC_BUCKET:=hsync}"
 : "${HSYNC_ROLE:=master}"
-: "${HSYNC_LAN_GROUP:=}"
-: "${HSYNC_LAN_KEY:=}"
-: "${HSYNC_LAN_REQUIRE_PAIRING:=false}"
-: "${HSYNC_LAN_PEER_DOWNLOAD:=true}"
-: "${HSYNC_LAN_PEER_READ_CAP:=2}"
-: "${HSYNC_LAN_PEER_SOURCES_MAX:=3}"
-: "${HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES:=false}"
+: "${HSYNC_P2P_GROUP:=}"
+: "${HSYNC_P2P_KEY:=}"
+: "${HSYNC_P2P_REQUIRE_PAIRING:=false}"
+: "${HSYNC_P2P_PEER_DOWNLOAD:=true}"
+: "${HSYNC_P2P_PEER_READ_CAP:=2}"
+: "${HSYNC_P2P_PEER_SOURCES_MAX:=3}"
+: "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES:=false}"
 : "${HSYNC_DISCOVERY_TIMEOUT:=0}"
+: "${HSYNC_BOOTNODE:=}"
+: "${HSYNC_UPNP_ENABLED:=true}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
 : "${HSYNC_INTERVAL:=0}"
@@ -82,7 +84,7 @@ fi
 : "${HSYNC_NO_COMPRESSION:=false}"
 : "${HSYNC_DELTA_ENABLED:=true}"
 : "${HSYNC_DELTA_MIN_FILE_SIZE:=}"
-: "${HSYNC_DELTA_MIN_FILE_SIZE_LAN:=}"
+: "${HSYNC_DELTA_MIN_FILE_SIZE_P2P:=}"
 : "${HSYNC_MAX_BW_UPLOAD:=}"
 : "${HSYNC_MAX_BW_DOWNLOAD:=}"
 : "${HSYNC_MIN_FREE_DISK_MB:=}"
@@ -98,11 +100,11 @@ fi
 mkdir -p "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}" "${HSYNC_PATH}"
 
 # ---------------------------------------------------------------------------
-# Build the argument vector. The subcommand is always the first token: ``lan``
+# Build the argument vector. The subcommand is always the first token: ``p2p``
 # for peer-to-peer and ``server`` for the central server.
 # ---------------------------------------------------------------------------
 case "${HSYNC_MODE}" in
-    lan)    SUBCOMMAND="lan" ;;
+    p2p)    SUBCOMMAND="p2p" ;;
     server) SUBCOMMAND="server" ;;
     *)
         echo "Unknown HSYNC_MODE=${HSYNC_MODE}" >> "$LOG"
@@ -116,15 +118,15 @@ set -- "${SUBCOMMAND}" \
     --yes
 
 case "${HSYNC_MODE}" in
-    lan)
-        # LAN transport is HTTPS/WSS-only (protocol lan/1): the master always
+    p2p)
+        # p2p transport is HTTPS/WSS-only (protocol p2p/1): the master always
         # serves over TLS with a persistent self-signed identity and advertises
         # its certificate fingerprint, which slaves pin (TOFU). There is no
         # plain-HTTP option.
-        [ "${HSYNC_LAN_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
-        [ "${HSYNC_LAN_PEER_DOWNLOAD}" = "false" ]    && set -- "$@" --no-peer-download
-        [ "${HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES}" = "true" ] && set -- "$@" --allow-unauthenticated-writes
-        [ -n "${HSYNC_LAN_GROUP}" ]                   && set -- "$@" --group "${HSYNC_LAN_GROUP}"
+        [ "${HSYNC_P2P_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
+        [ "${HSYNC_P2P_PEER_DOWNLOAD}" = "false" ]    && set -- "$@" --no-peer-download
+        [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES}" = "true" ] && set -- "$@" --allow-unauthenticated-writes
+        [ -n "${HSYNC_P2P_GROUP}" ]                   && set -- "$@" --group "${HSYNC_P2P_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in
             master)       set -- "$@" --force-master ;;
@@ -149,7 +151,7 @@ esac
 [ "${HSYNC_NO_COMPRESSION}" = "true" ] && set -- "$@" --no-compression
 [ "${HSYNC_DELTA_ENABLED}" = "false" ] && set -- "$@" --no-delta
 [ -n "${HSYNC_DELTA_MIN_FILE_SIZE}" ]     && set -- "$@" --delta-min-file-size "${HSYNC_DELTA_MIN_FILE_SIZE}"
-[ -n "${HSYNC_DELTA_MIN_FILE_SIZE_LAN}" ] && set -- "$@" --delta-min-file-size-lan "${HSYNC_DELTA_MIN_FILE_SIZE_LAN}"
+[ -n "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}" ] && set -- "$@" --delta-min-file-size-p2p "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}"
 [ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --limit-upload "${HSYNC_MAX_BW_UPLOAD}"
 [ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --limit-download "${HSYNC_MAX_BW_DOWNLOAD}"
 [ -n "${HSYNC_MIN_FREE_DISK_MB}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK_MB}"
@@ -161,7 +163,7 @@ esac
 
 # ---------------------------------------------------------------------------
 # Launch under nohup. Secrets are exported (not passed as flags) so the binary
-# picks them up via HSYNC_API_KEY / HSYNC_LAN_KEY without leaking them through
+# picks them up via HSYNC_API_KEY / HSYNC_P2P_KEY without leaking them through
 # ``ps``. HSYNC_NTP_HOSTS is exported too because it is read from the process
 # environment (never a CLI flag) by the client's SNTP probe (ADR-0023).
 #
@@ -171,12 +173,17 @@ esac
 # invisible to the nohup'd binary.
 # ---------------------------------------------------------------------------
 export HSYNC_API_KEY
-export HSYNC_LAN_KEY
-export HSYNC_LAN_PEER_DOWNLOAD
-export HSYNC_LAN_PEER_READ_CAP
-export HSYNC_LAN_PEER_SOURCES_MAX
-export HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES
+export HSYNC_P2P_KEY
+export HSYNC_P2P_PEER_DOWNLOAD
+export HSYNC_P2P_PEER_READ_CAP
+export HSYNC_P2P_PEER_SOURCES_MAX
+export HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES
 export HSYNC_NTP_HOSTS
+# Cross-network discovery: the bootnode host and the UPnP choice are
+# env-driven (the client also accepts a positional, but the service exports
+# them so no argument ordering is involved).
+export HSYNC_BOOTNODE
+export HSYNC_UPNP_ENABLED
 # Server-mode endpoint: exported like the keys above — the client reads it
 # from the environment (no CLI flag carries the URL anymore).
 export HSYNC_SERVER

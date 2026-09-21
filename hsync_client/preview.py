@@ -5,9 +5,9 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Preview and stdin-command helpers shared across server and LAN modes.
+Preview and stdin-command helpers shared across server and P2P modes.
 
-Extracted from ``main_logic.py`` and ``lan_handler.py`` to break a circular
+Extracted from ``main_logic.py`` and ``p2p_handler.py`` to break a circular
 import between the two modules and eliminate duplicated code.
 """
 
@@ -17,13 +17,13 @@ from typing import Literal
 from hsync_common.format import format_bytes
 from hsync_common.models.file import clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
-from hsync_common.protocol.pairing import lan_write_requires_key
+from hsync_common.protocol.pairing import p2p_write_requires_key
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, SYNC_DIRECTIONS, ActionLabel
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.lan_inventory import InventoryObserver
-from hsync_client.lan_sources import LanSourceResolver
+from hsync_client.p2p_inventory import InventoryObserver
+from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.presence import reemit_presence
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
@@ -39,37 +39,37 @@ from hsync_client.utils import reset_bandwidth_throttle
 _BANDWIDTH_KEY = Literal["MAX_BANDWIDTH_UPLOAD", "MAX_BANDWIDTH_DOWNLOAD"]
 
 
-def _lan_write_blocked(direction: str, allow_unauthenticated_writes: bool, log, hint: str) -> bool:
-    """Return True (and report) when a LAN write requires auth that is missing.
+def _p2p_write_blocked(direction: str, allow_unauthenticated_writes: bool, log, hint: str) -> bool:
+    """Return True (and report) when a P2P write requires auth that is missing.
 
-    The policy predicate lives in ``hsync_common.protocol.pairing.lan_write_requires_key``;
+    The policy predicate lives in ``hsync_common.protocol.pairing.p2p_write_requires_key``;
     this helper only applies the user-facing consequence (log + ``auth_required``
-    event). Shared by :func:`_lan_write_allowed` (runtime-triggered) and
-    ``main_logic._check_lan_write_policy`` (CLI-triggered), which differ only in
+    event). Shared by :func:`_p2p_write_allowed` (runtime-triggered) and
+    ``main_logic._check_p2p_write_policy`` (CLI-triggered), which differ only in
     the remediation wording (env vars vs CLI flags).
     """
-    if not lan_write_requires_key(
+    if not p2p_write_requires_key(
         direction,
         allow_unauthenticated_writes=allow_unauthenticated_writes,
     ):
         return False
-    log.error(f"{ActionLabel.AUTH_REQUIRED} LAN writes require authentication. {hint}")
+    log.error(f"{ActionLabel.AUTH_REQUIRED} P2P writes require authentication. {hint}")
     emit_event(
         UiEventName.auth_required,
-        message="A shared LAN key or explicit unauthenticated-write opt-in is required",
+        message="A shared P2P key or explicit unauthenticated-write opt-in is required",
     )
     return True
 
 
-def _lan_write_allowed(direction: str, log) -> bool:
-    """Enforce the no-key write policy for runtime-triggered LAN syncs."""
-    if not CONFIG.get("LAN_MODE", False) or CONFIG.get("LAN_KEY"):
+def _p2p_write_allowed(direction: str, log) -> bool:
+    """Enforce the no-key write policy for runtime-triggered P2P syncs."""
+    if not CONFIG.get("P2P_MODE", False) or CONFIG.get("P2P_KEY"):
         return True
-    return not _lan_write_blocked(
+    return not _p2p_write_blocked(
         direction,
-        allow_unauthenticated_writes=CONFIG.get("LAN_ALLOW_UNAUTHENTICATED_WRITES", False),
+        allow_unauthenticated_writes=CONFIG.get("P2P_ALLOW_UNAUTHENTICATED_WRITES", False),
         log=log,
-        hint="Set HSYNC_LAN_KEY, use download-only, or explicitly allow unauthenticated writes.",
+        hint="Set HSYNC_P2P_KEY, use download-only, or explicitly allow unauthenticated writes.",
     )
 
 
@@ -119,11 +119,11 @@ def _run_preview(log) -> None:
         local_files = get_files_local()
         remote_files = get_files_remote()
         tombstones = get_tombstones_remote()
-        lan_mode = CONFIG.get("LAN_MODE", False)
+        p2p_mode = CONFIG.get("P2P_MODE", False)
         sync_actions = get_sync_actions(
             remote_files,
             local_files,
-            lan_mode=lan_mode,
+            p2p_mode=p2p_mode,
             tombstones=tombstones,
             persist_state=False,
         )
@@ -216,7 +216,7 @@ async def _with_stdin_commands(
     log,
     coro,
     inventory_observer: InventoryObserver | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    source_resolver: P2PSourceResolver | None = None,
 ) -> None:
     """Run *coro* with a background stdin command reader.
 
@@ -233,11 +233,11 @@ async def _with_stdin_commands(
     handler.register("PEERS", lambda **_kw: reemit_presence())
 
     async def _handle_sync(**_kw: object) -> None:
-        lan = CONFIG.get("LAN_MODE", False)
-        if not _lan_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
+        lan = CONFIG.get("P2P_MODE", False)
+        if not _p2p_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
             return
         await sync(
-            lan_mode=lan,
+            p2p_mode=lan,
             inventory_observer=inventory_observer,
             source_resolver=source_resolver,
         )
@@ -253,14 +253,14 @@ async def _with_stdin_commands(
         if direction == old:
             log.debug(f"Sync direction already set to {direction!r}, no change.")
             return
-        if not _lan_write_allowed(direction, log):
+        if not _p2p_write_allowed(direction, log):
             return
         CONFIG["SYNC_DIRECTION"] = direction
         log.info(f"Sync direction changed: {old!r} → {direction!r}")
         # Trigger an immediate resync with the new direction
-        lan = CONFIG.get("LAN_MODE", False)
+        lan = CONFIG.get("P2P_MODE", False)
         await sync(
-            lan_mode=lan,
+            p2p_mode=lan,
             inventory_observer=inventory_observer,
             source_resolver=source_resolver,
         )
@@ -309,11 +309,11 @@ async def _with_stdin_commands(
 async def _run_stdin_wait(
     log,
     inventory_observer: InventoryObserver | None = None,
-    source_resolver: LanSourceResolver | None = None,
+    source_resolver: P2PSourceResolver | None = None,
 ) -> None:
     """Block reading stdin commands until EOF or SYNC.
 
-    Used in continuous dry-run mode (LAN or server) where there is no
+    Used in continuous dry-run mode (P2P or server) where there is no
     WebSocket connection yet.  When a ``SYNC`` command arrives the
     handler performs the full sync, then stops the reader so the caller
     can proceed to the next phase (e.g. WebSocket connection).
@@ -323,12 +323,12 @@ async def _run_stdin_wait(
     handler.register("PEERS", lambda **_kw: reemit_presence())
 
     async def _handle_sync(**_kw: object) -> None:
-        if not _lan_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
+        if not _p2p_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
             return
         CONFIG["DRYRUN"] = False
-        lan = CONFIG.get("LAN_MODE", False)
+        lan = CONFIG.get("P2P_MODE", False)
         await sync(
-            lan_mode=lan,
+            p2p_mode=lan,
             inventory_observer=inventory_observer,
             source_resolver=source_resolver,
         )

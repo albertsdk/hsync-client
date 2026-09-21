@@ -60,7 +60,7 @@ opaque internal formats.
 - 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
 - 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
 - ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets. After the system closes the file, the upload starts in a fraction of a second — not after a 5–10s quiet window (the default in tools like Syncthing). Already-idle files (full resync, atomic moves) skip the wait.
-- 🕸️ **Your own private sync network** — no vendor account and no third-party service in the data path: on a single network, devices sync directly peer-to-peer (`hsync lan`), optionally isolated with `--group` and authenticated with `HSYNC_LAN_KEY`; across networks you host the HSYNC Server yourself.
+- 🕸️ **Your own private sync network** — no vendor account and no third-party service in the data path: on a single network, devices sync directly peer-to-peer (`hsync p2p`), optionally isolated with `--group` and authenticated with `HSYNC_P2P_KEY`; across networks you host the HSYNC Server yourself.
 
 ## Technical Capabilities
 
@@ -87,7 +87,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Zero-Config Discovery:** Utilizes mDNS (Bonjour/Avahi) for automatic peer detection within broadcast domains.
 * **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
-* **Network Isolation:** Supports `HSYNC_LAN_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
+* **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
 
 > **Roadmap — Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) will extend the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). The client-side `hsync p2p` mode that consumes it is **in development** and not available yet: today, peer-to-peer sync requires all devices to share a network segment.
 
@@ -95,7 +95,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 
 **LAN/P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--lan-p2p-mode-no-server-needed) steps for details.
 <p align="center">
-  <img src="docs/assets/demo-lan.gif" alt="LAN/P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
+  <img src="docs/assets/demo-p2p.gif" alt="LAN/P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
 </p>
 
 ### Step 1 — Agent Installation
@@ -114,7 +114,7 @@ curl -fsSL https://github.com/albertsdk/hsync-client/releases/latest/download/in
 
 HSYNC supports two sync topologies — pick the one that fits your environment:
 
-- **Option A — LAN Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network. Fastest to try: zero infrastructure, works with two terminals on the same machine. Writes are authorized by a shared LAN key — a keyless LAN is read-only.
+- **Option A — p2p Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network. Fastest to try: zero infrastructure, works with two terminals on the same machine. Writes are authorized by a shared p2p key — a keyless LAN is read-only.
 - **Option B — Server Mode**: Centralized hub. Requires a running [HSYNC Server](https://github.com/albertsdk/hsync-server). Best for multi-site sync over firewalled networks (HTTP/HTTPS only).
 
 Both options produce the same result: bidirectional file sync in real time. Choose one and follow the steps below.
@@ -123,7 +123,7 @@ If you prefer the centralized approach, jump to [Option B](#option-b--server-mod
 
 #### Option A — LAN P2P Mode (no server needed)
 
-Initialize direct peer-to-peer synchronization without central infrastructure. Peers discover each other via mDNS and authorize writes with a shared LAN key, so the two terminals below use the same demo key (a keyless LAN is read-only). You can
+Initialize direct peer-to-peer synchronization without central infrastructure. Peers discover each other via mDNS and authorize writes with a shared p2p key, so the two terminals below use the same demo key (a keyless LAN is read-only). You can
 test it locally with two terminals on the same machine:
 
 ```mermaid
@@ -150,7 +150,7 @@ flowchart TB
     style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
 ```
 
-**LAN Mode Flow:**
+**p2p Mode Flow:**
 1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
 2. **② Elect Master** — One device becomes the master (a transport hub that
    coordinates sync without ever deciding conflicts by role)
@@ -165,16 +165,16 @@ echo "hello hsync" > /tmp/hsync-a/hello.txt
 
 # 2. Terminal 1 — Initialize Node A (Authoritative Data Source)
 #    Utilizing --force-master prevents initial data reconciliation conflicts.
-#    HSYNC_LAN_KEY authorizes writes: a keyless LAN is read-only, and a
+#    HSYNC_P2P_KEY authorizes writes: a keyless LAN is read-only, and a
 #    write-capable run without a key is refused with [AUTH REQUIRED].
-HSYNC_LAN_KEY="demo-lan-secret" HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
-  hsync lan -b mybucket -p /tmp/hsync-a --force-master
+HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
+  hsync p2p -b mybucket -p /tmp/hsync-a --force-master
 
 # 3. Terminal 2 — Initialize Node B (Receiver)
 # Automatically discovers Node A via mDNS and downloads hello.txt automatically.
 # Same key as Node A — every peer in the group must share it.
-HSYNC_LAN_KEY="demo-lan-secret" HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
-  hsync lan -b mybucket -p /tmp/hsync-b
+HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
+  hsync p2p -b mybucket -p /tmp/hsync-b
 
 # 4. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
@@ -182,11 +182,11 @@ cat /tmp/hsync-b/hello.txt   # → hello hsync
 
 Watch above animation to see what happens.
 
-**Implementation Note (Device Identity):** The `HSYNC_DEVICE_DIR` variable is used here exclusively to simulate two distinct hardware instances on the same host. In standard multi-device deployments, this variable is omitted, and the agent utilizes the default identity path (`~/.local/state/hsync/device/`). See [LAN Mode → Device Identity](docs/lan-mode.md#device-identity).
+**Implementation Note (Device Identity):** The `HSYNC_DEVICE_DIR` variable is used here exclusively to simulate two distinct hardware instances on the same host. In standard multi-device deployments, this variable is omitted, and the agent utilizes the default identity path (`~/.local/state/hsync/device/`). See [p2p Mode → Device Identity](docs/p2p-mode.md#device-identity).
 
 **Architectural Note (Conflict Resolution):** The `--force-master` flag establishes the initial file ledger. The master acts merely as a transport hub; logical conflicts are resolved deterministically across all nodes using vector clocks. Always assign the initial master role to the endpoint housing the authoritative data.
 
-> **Note:** `HSYNC_LAN_KEY` is required by every write-capable LAN run — a keyless LAN is read-only, and a keyless bidirectional run is refused with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key. For the full P2P setup (master election, pairing, group filtering with `--group`) see [LAN Mode](docs/lan-mode.md) and [LAN Mode → Security & Pairing](docs/lan-mode.md#security--pairing).
+> **Note:** `HSYNC_P2P_KEY` is required by every write-capable LAN run — a keyless LAN is read-only, and a keyless bidirectional run is refused with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key. For the full P2P setup (master election, pairing, group filtering with `--group`) see [p2p Mode](docs/p2p-mode.md) and [p2p Mode → Security & Pairing](docs/p2p-mode.md#security--pairing).
 
 #### Option B — Server Mode (centralized)
 
@@ -284,9 +284,9 @@ If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server
 
 - [Getting Started](docs/getting-started.md) - Build and run
 - [Configuration](docs/configuration.md) - Environment variables and CLI options (complete reference)
-- [Sync Modes](docs/sync-modes.md) - Single, Watch, LAN modes
+- [Sync Modes](docs/sync-modes.md) - Single, Watch, p2p modes
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
-- [LAN Mode](docs/lan-mode.md) - P2P synchronization details
+- [p2p Mode](docs/p2p-mode.md) - P2P synchronization details
 - [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling

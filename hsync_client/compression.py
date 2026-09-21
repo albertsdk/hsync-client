@@ -8,7 +8,7 @@
 Compression utilities for HSYNC Client.
 
 Re-exports from hsync_common.compression. All compression logic and
-thresholds (download/upload/LAN) live in hsync-common.
+thresholds (download/upload/P2P) live in hsync-common.
 """
 
 # Re-export the compression API used by client modules.

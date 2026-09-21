@@ -13,11 +13,11 @@ On a true divergence (concurrent clocks) a **chronological tie-break**
 *clock-offset-corrected* modification time (`corrected_mtime`) keeps the
 original path. The offset is measured against a shared time reference — the
 server in server mode, a list of public SNTP servers (configurable via
-`HSYNC_NTP_HOSTS`) in LAN mode — so raw device-clock skew never decides the
+`HSYNC_NTP_HOSTS`) in p2p mode — so raw device-clock skew never decides the
 outcome. When either side does not carry the field (or the two values tie),
 a **deterministic SHA-256 fallback** decides, so every peer still converges.
 The losing content is preserved as a `_conflicted_copy_` (extrema ratio).
-**No node is authoritative**: the server and the elected LAN master are
+**No node is authoritative**: the server and the elected p2p master are
 transport hubs only; every node applies the same algorithm, and uploads
 arriving at the server/master are arbitrated with the *same* matrix.
 
@@ -30,7 +30,7 @@ arriving at the server/master are arbitrated with the *same* matrix.
 - [The store (`SyncStateStore`)](#the-store-syncstatestore)
 - [Lifecycle in a sync cycle](#lifecycle-in-a-sync-cycle)
 - [Conflict handling on the pulling side](#conflict-handling-on-the-pulling-side)
-- [Upload arbitration on the server / LAN master](#upload-arbitration-on-the-server--lan-master)
+- [Upload arbitration on the server / p2p master](#upload-arbitration-on-the-server--p2p-master)
 - [Deletions and tombstones (ADR-0003)](#deletions-and-tombstones-adr-0003)
 - [Boundary cases](#boundary-cases)
 
@@ -86,7 +86,7 @@ the offset-corrected `corrected_mtime` enters the chronological tie-break, and
 only after causal dominance failed to find a winner. The algorithm lives in
 `hsync_common.models.version.resolve_three_way()` and is consumed by the
 client's `get_sync_actions()`, by the real-time inbound-event path, and by the
-upload arbitration on both the central server and the LAN master.
+upload arbitration on both the central server and the p2p master.
 
 ---
 
@@ -304,7 +304,7 @@ HSYNC uses a **chronological tie-break with preservation**: when both sides
 diverge concurrently, the version whose offset-corrected modification time is
 the most recent keeps the original path. The offset is measured against a
 shared time reference — the server's `/api/v1/time` endpoint in server mode,
-public SNTP servers (configurable via `HSYNC_NTP_HOSTS`) in LAN mode — so a
+public SNTP servers (configurable via `HSYNC_NTP_HOSTS`) in p2p mode — so a
 skewed device clock cannot decide the winner. When either side lacks the
 field (e.g. a legacy peer or a degraded offline measurement) the higher
 SHA-256 hash (lexicographic) wins instead, so every peer still converges.
@@ -322,11 +322,11 @@ approach as Dropbox/OneDrive.
 
 ---
 
-## Upload arbitration on the server / LAN master
+## Upload arbitration on the server / p2p master
 
-The server and the LAN master are transport hubs, but every upload landing on
+The server and the p2p master are transport hubs, but every upload landing on
 them is **arbitrated** with the same causal matrix (`arbitrate_upload`),
-mirrored on the client side for the LAN master. Four outcomes exist:
+mirrored on the client side for the p2p master. Four outcomes exist:
 
 | Outcome | Condition | Action taken |
 |---------|-----------|--------------|
@@ -343,7 +343,7 @@ honest.
 ```mermaid
 sequenceDiagram
     participant C as Uploader
-    participant A as Arbitrator<br/>(server / LAN master)
+    participant A as Arbitrator<br/>(server / p2p master)
     participant F as Hub storage
 
     C->>A: POST file (hash, vclock, version_id)
@@ -390,7 +390,7 @@ ancestor, so the file is deleted instead of being resurrected. The deletion
 | Tombstone and local clocks **concurrent** | Local edit is an intentional re-creation | Keep / upload |
 | Local clock **dominates** tombstone | Re-creation happened after the deletion | Keep |
 
-Every peer records the marker when **it** observes the deletion — as LAN master
+Every peer records the marker when **it** observes the deletion — as p2p master
 or as slave alike — so a deletion made while the elected master is temporarily
 unreachable is never lost: the next reconciliation recognises the recorded
 marker and deletes the stale copy still held by the (restarted) master, instead

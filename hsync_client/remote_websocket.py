@@ -143,7 +143,7 @@ async def remote_events() -> None:
         # Authenticate via first message (more secure than URL token). The frame
         # follows the shared handshake contract (hsync_common.protocol.handshake);
         # the advertised capabilities are the shared runtime-derived set
-        # (ADR-0024), identical to the one the LAN handshake announces.
+        # (ADR-0024), identical to the one the P2P handshake announces.
         auth_message = build_ws_auth_request(
             token=CONFIG.get("API_KEY") or get_api_key(),
             app_version=HSYNC_VERSION,
@@ -176,7 +176,7 @@ async def remote_events() -> None:
             return
 
         # Parse the server's advertised capabilities for this session and adopt
-        # them as the transfer gates (shared helper, same semantics as the LAN
+        # them as the transfer gates (shared helper, same semantics as the P2P
         # handshake — ADR-0024).
         server_caps = decode_capabilities(auth_result.get("capabilities"))
         adopt_remote_capabilities(server_caps)
@@ -294,7 +294,7 @@ async def _process_remote_events(websocket, bucket: str) -> None:
         # (handle_symlink_event materialises the link and returns the Event,
         # and ConnectionManager.send_message broadcasts it to every peer
         # except the sender): applying them here gives real-time symlink
-        # replication between clients in remote mode, matching LAN mode.
+        # replication between clients in remote mode, matching P2P mode.
         if message.get("name") not in {
             EventName.added.value,
             EventName.modified.value,
@@ -312,7 +312,7 @@ async def _process_remote_events(websocket, bucket: str) -> None:
 
         # Echo suppression, upload-only filter, and the per-event apply
         # logic are delegated to the unified dispatcher. One malformed event
-        # must not kill the connection loop (the LAN client loop isolates
+        # must not kill the connection loop (the P2P client loop isolates
         # per-message failures the same way).
         try:
             await apply_inbound_event(message, REMOTE_DISPATCH_CTX)
@@ -327,7 +327,7 @@ async def _process_remote_events(websocket, bucket: str) -> None:
 
 async def resync() -> None:
     """Periodic resynchronization task for remote continuous mode."""
-    await periodic_resync(lan_mode=False)
+    await periodic_resync(p2p_mode=False)
 
 
 async def _refresh_network_tuning() -> None:
@@ -335,8 +335,8 @@ async def _refresh_network_tuning() -> None:
 
     Only keys listed in ``CONFIG["AUTOTUNE_MANAGED_KEYS"]`` are rewritten, so
     an explicit CLI/env override (``--http-timeout``, ``HSYNC_RECONNECT_DELAY`` …)
-    survives the refresh — same guard as the LAN post-discovery refresh
-    (``lan_handler._refresh_lan_network_tuning``). A failed/unmeasurable probe
+    survives the refresh — same guard as the P2P post-discovery refresh
+    (``p2p_handler._refresh_p2p_network_tuning``). A failed/unmeasurable probe
     keeps the current values instead of resetting them to the SAFE profile.
     When the passive bandwidth EMA is still empty (startup active probe
     failed), it also re-seeds it from a fresh active probe so the per-cycle

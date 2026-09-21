@@ -82,7 +82,7 @@ class TestApplyInboundSymlinkEvent:
 
         Regression: applying an inbound ``symlink`` event mutated the local
         filesystem (unlink + symlink) WITHOUT marking the path via the
-        dispatch context, so the LAN slave's own watcher saw the mutation as a
+        dispatch context, so the P2P slave's own watcher saw the mutation as a
         fresh local change and re-uploaded it to the master — which broadcast
         it back, producing an infinite ping-pong loop between peers. The
         marking must cover the whole mutation (cleanup + creation), mirroring

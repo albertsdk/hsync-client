@@ -1,6 +1,6 @@
 # HSYNC — WD My Cloud OS5 Package
 
-**HSYNC** keeps your NAS folders in sync — either with a central [HSYNC Server](https://github.com/albertsdk/hsync-server) (Server Mode) or directly with other devices on the same network (LAN Mode, no server required).
+**HSYNC** keeps your NAS folders in sync — either with a central [HSYNC Server](https://github.com/albertsdk/hsync-server) (Server Mode) or directly with other devices on the same network (p2p Mode, no server required).
 
 This is the **WD My Cloud OS5 package**. It installs the HSYNC client as a background service on your NAS.
 
@@ -41,7 +41,7 @@ Use the **Web UI** (accessible from the Apps dashboard) to set:
 Configuration is saved automatically. The service reads it and starts
 synchronising.
 
-For LAN Mode (peer-to-peer, no server), toggle **LAN Mode** in the Web
+For p2p Mode (peer-to-peer, no server), toggle **p2p Mode** in the Web
 UI. Peers on the same network discover each other via mDNS.
 
 ## Using the CLI
@@ -56,8 +56,8 @@ hsync server server.example.com --once -b mybucket -p /path/to/dir
 # Continuous mode (the default)
 hsync server server.example.com -b mybucket -p /path/to/dir
 
-# LAN mode (peer-to-peer, no server)
-hsync lan -b mybucket -p /path/to/dir
+# p2p mode (peer-to-peer, no server)
+hsync p2p -b mybucket -p /path/to/dir
 ```
 
 > The API key is **required** in Server Mode. Set it via the Web UI or
@@ -71,7 +71,7 @@ see the [HSYNC Documentation](https://github.com/albertsdk/hsync-client/tree/mai
 
 - [Getting Started](https://github.com/albertsdk/hsync-client/blob/main/docs/getting-started.md)
 - [Server Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/server-mode.md)
-- [LAN Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/lan-mode.md)
+- [p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-mode.md)
 - [Configuration](https://github.com/albertsdk/hsync-client/blob/main/docs/configuration.md)
 - [Examples](https://github.com/albertsdk/hsync-client/blob/main/docs/examples.md)
 

@@ -47,7 +47,7 @@ chmod 0750 "${DATA_DIR}/state"
 
 # ── Config file permissions (conffile) ────────────────────────────────────
 # dpkg marks /etc/hsync/hsync.conf as a conffile, so its contents are
-# preserved across upgrades. It may hold secrets (API key, LAN key), so it is
+# preserved across upgrades. It may hold secrets (API key, p2p key), so it is
 # restricted to root only — systemd reads the EnvironmentFile as root before
 # dropping to the _hsync user, so the daemon never needs direct read access.
 if [ -f "${CONFIG_DIR}/hsync.conf" ]; then

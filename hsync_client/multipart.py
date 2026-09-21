@@ -5,15 +5,15 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Streaming multipart/form-data parsing for the LAN master server.
+Streaming multipart/form-data parsing for the P2P master server.
 
-Self-contained component extracted from ``lan_server.py``: it reads small form
+Self-contained component extracted from ``p2p_server.py``: it reads small form
 fields into memory (hard-capped) and streams the file part body through a writer
 callback, so a large upload is never buffered in RAM. Also provides the
 decompression-bomb containment writer (:class:`_CappedBytesWriter`) used on the
 receiving side of compressed uploads.
 
-Consumers: ``hsync_client.lan_server`` (upload and delta-apply endpoints).
+Consumers: ``hsync_client.p2p_server`` (upload and delta-apply endpoints).
 """
 
 import re

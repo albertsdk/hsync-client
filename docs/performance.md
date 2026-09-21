@@ -20,7 +20,7 @@ methodology, measurement pitfalls), see the
 | Runtime | CPython 3.14.4 (GIL build), both peers on the same host for LAN |
 | Client version | current `main` at measurement date (2026-09) |
 | Server-mode tree | 2000 files / 300 dirs, random sizes up to 512 KiB (~70 KiB average) |
-| LAN-mode tree | 6000 files / 400 dirs, random sizes up to 512 KiB (~255 KiB average) |
+| p2p-mode tree | 6000 files / 400 dirs, random sizes up to 512 KiB (~255 KiB average) |
 | Phases | *initial burst* = first sync of an empty replica; *mutation wave* = all files re-written while realtime sync is connected |
 
 ## Server Mode
@@ -45,7 +45,7 @@ Readings:
   after the initial sync, only changed files are transferred and the event
   pipeline skips the full listing round trip.
 
-## LAN Mode (peer-to-peer)
+## p2p Mode (peer-to-peer)
 
 6000 files / 400 dirs (~1.5 GiB), master and slave on the same host, master
 elected with `--force-master`, replica connected over the pinned WSS+HTTPS
@@ -77,7 +77,7 @@ Known scaling characteristics:
   `--no-peer-download` was measured at **+38 %** burst throughput in the same
   probe (101 vs 73 files/s at the time of measurement).
 
-## LAN Mode before/after the current tuning (history)
+## p2p Mode before/after the current tuning (history)
 
 For continuity with earlier measurements, the LAN initial burst at the documented
 full scale moved from **74 files/s / t_sync 80.7 s** to **121 files/s /
@@ -93,13 +93,13 @@ The two stress configurations are **not** apples-to-apples:
 
 - Server Mode: 2000 small files (~70 KiB average), reconcile transfers driven by
   a listing with parallel uploads.
-- LAN Mode: 6000 files (~255 KiB average), one WSS event plus one pinned HTTPS
+- p2p Mode: 6000 files (~255 KiB average), one WSS event plus one pinned HTTPS
   download per file, both processes sharing the same host's cores.
 
 With that caveat, the observed ordering is: LAN mutation wave (224 files/s) ≳
 server initial burst (214) ≫ LAN event burst (121) > LAN event burst at
 concurrency 1 (75). The realtime paths of both modes are the fast paths; the
-initial-sync burst is bounded by per-file Python work and, in LAN mode, by the
+initial-sync burst is bounded by per-file Python work and, in p2p mode, by the
 single-core GIL ceiling.
 
 ## What limits throughput today

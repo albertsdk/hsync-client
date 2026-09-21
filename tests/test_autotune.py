@@ -38,8 +38,8 @@ class _FakeFile:
 
 
 class TestClassifyNetwork:
-    def test_lan(self):
-        assert classify_network(30) == NetClass.LAN
+    def test_p2p(self):
+        assert classify_network(30) == NetClass.P2P
 
     def test_broadband(self):
         assert classify_network(80) == NetClass.BROADBAND
@@ -51,7 +51,7 @@ class TestClassifyNetwork:
         assert classify_network(None) == NetClass.UNKNOWN
 
     def test_boundary_50(self):
-        assert classify_network(50) == NetClass.LAN
+        assert classify_network(50) == NetClass.P2P
 
     def test_boundary_150(self):
         assert classify_network(150) == NetClass.BROADBAND
@@ -116,8 +116,8 @@ class TestDeriveTimeout:
         for rtt in (None, 30, 80, 200):
             assert derive_timeout(rtt, NetClass.MOBILE, 1, 300) == 60
 
-    def test_lan_30s(self):
-        assert derive_timeout(20, NetClass.LAN, 1, 300) == 30
+    def test_p2p_30s(self):
+        assert derive_timeout(20, NetClass.P2P, 1, 300) == 30
 
     def test_broadband_45s(self):
         assert derive_timeout(80, NetClass.BROADBAND, 1, 300) == 45
@@ -131,8 +131,8 @@ class TestDeriveRetry:
         result = derive_retry(None, NetClass.UNKNOWN, 1, 60)
         assert result == (SAFE.retry_min_wait, SAFE.retry_max_wait, SAFE.reconnect_delay)
 
-    def test_lan_returns_low_values(self):
-        min_w, max_w, rec = derive_retry(20, NetClass.LAN, 1, 60)
+    def test_p2p_returns_low_values(self):
+        min_w, max_w, rec = derive_retry(20, NetClass.P2P, 1, 60)
         assert min_w == 6  # round(5 * 1.2) = 6
         assert max_w == 12  # round(6 * 2) = 12
         assert rec == 6
@@ -184,12 +184,12 @@ class TestDeriveConcurrency:
 
 
 class TestDeriveProfile:
-    def test_lan_workstation(self):
+    def test_p2p_workstation(self):
         from hsync_client.autotune import ProbeResults
 
         results = ProbeResults(
             rtt_ms=5,
-            net_class=NetClass.LAN,
+            net_class=NetClass.P2P,
             bw_class=BwClass.TEN_G,
             storage_type=StorageType.NVME,
             queue_profile=QueueProfile.MANY_SMALL,
@@ -307,7 +307,7 @@ class TestThreadSafety:
 
         def _call():
             for _ in range(100):
-                r = derive_retry(50, NetClass.LAN, 1, 60)
+                r = derive_retry(50, NetClass.P2P, 1, 60)
                 results.append(r)
 
         threads = [threading.Thread(target=_call) for _ in range(4)]
@@ -582,7 +582,7 @@ class TestIntegration:
         for st in (StorageType.HDD, StorageType.SSD, StorageType.NVME, StorageType.UNKNOWN):
             results = ProbeResults(
                 rtt_ms=10,
-                net_class=NetClass.LAN,
+                net_class=NetClass.P2P,
                 bw_class=BwClass.MID,
                 storage_type=st,
                 queue_profile=QueueProfile.MIXED,
@@ -596,7 +596,7 @@ class TestIntegration:
 
         results = ProbeResults(
             rtt_ms=5,
-            net_class=NetClass.LAN,
+            net_class=NetClass.P2P,
             bw_class=BwClass.TEN_G,
             storage_type=StorageType.NVME,
             queue_profile=QueueProfile.MANY_SMALL,

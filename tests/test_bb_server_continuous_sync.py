@@ -28,7 +28,7 @@ from tests.conftest import (
     _wait_for_watcher_pipeline,
     _watch_client_log_tail,
 )
-from tests.lan_helpers import _terminate, _wait_for_client_ready
+from tests.p2p_helpers import _terminate, _wait_for_client_ready
 
 _BB_SERVER_ENABLED = os.environ.get("HSYNC_BB_SERVER") == "1"
 _BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
@@ -448,7 +448,7 @@ class TestContinuousSync:
 
 
 # =============================================================================
-# Parity with the LAN black-box suite: symlink stability, .hsyncignore
+# Parity with the P2P black-box suite: symlink stability, .hsyncignore
 # hot-reload, and client restart — all in watch (continuous) mode.
 # =============================================================================
 

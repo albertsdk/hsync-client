@@ -4,11 +4,11 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""L1 — LAN TOFU pin-store micro-benchmark (disk-backed, temp file).
+"""L1 — P2P TOFU pin-store micro-benchmark (disk-backed, temp file).
 
 Measures the per-connection trust checks in
 :class:`~hsync_client.pinning.PinStore`, the durable Trust-On-First-Use store the
-LAN slave consults before every master connection:
+P2P slave consults before every master connection:
 
 * ``get`` (hit) / (miss) — read + advisory flock + JSON load, on a present and
   an absent ``(cid, bucket)`` pin;

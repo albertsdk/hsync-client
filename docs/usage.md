@@ -19,29 +19,38 @@ HSYNC runs in one of two mutually exclusive operating modes:
 # Server Mode — connect to a central HSYNC server
 hsync server <hostname> [--port <port>] -b <bucket_name> [options]
 
-# LAN Mode — peer-to-peer, no server (mDNS discovery, implicit continuous mode).
-# Write-capable runs need a shared key: a keyless LAN is read-only.
-HSYNC_LAN_KEY=<shared-secret> hsync lan -b <bucket_name> [options]
+# p2p Mode — peer-to-peer, no server (implicit continuous mode).
+# Write-capable runs need a shared key: a keyless p2p is read-only.
+HSYNC_P2P_KEY=<shared-secret> hsync p2p -b <bucket_name> [options]
+
+# p2p Mode across networks — discover peers through a boot/1 bootstrap node
+# instead of mDNS (see "Sync across networks").
+hsync p2p -b <bucket_name> [bootnode_host] [options]
 ```
+
+With no `BOOTNODE` hostname (positional) and no `HSYNC_BOOTNODE`, `hsync p2p`
+uses the mDNS plan on the local network; with a bootnode it discovers peers
+across networks. See [Sync on the local network](p2p-lan.md) and
+[Sync across networks](p2p-bootnode.md).
 
 See [Sync Modes](sync-modes.md) for when to use each.
 
 ### Options Overview
 
-Options are grouped into **Connection**, **Sync**, **LAN**, **Output** and
-**General** panels (run `hsync --help` to see them in your terminal).
+Options are grouped into **Required**, **Connection**, **Sync**, **p2p Mode**
+and **Output** panels (run `hsync --help` to see them in your terminal).
 
 > For the **complete option reference** (descriptions, defaults and accepted
-> values) see [Configuration](configuration.md). `HSYNC_LAN_KEY` is set via
-> environment variable only, and it is what authorizes writes: a keyless LAN is
+> values) see [Configuration](configuration.md). `HSYNC_P2P_KEY` is set via
+> environment variable only, and it is what authorizes writes: a keyless p2p is
 > read-only, and a write-capable run without a key is refused with
 > `[AUTH REQUIRED]`.
 
 ## Usage Scenarios
 
-For end-user oriented examples — sync between two devices, backup, LAN
-P2P, read-only mirror, scripted execution and so on — see the dedicated
-[Examples](examples.md) document, split between server-based and LAN
+For end-user oriented examples — sync between two devices, backup, p2p,
+read-only mirror, scripted execution and so on — see the dedicated
+[Examples](examples.md) document, split between server-based and p2p
 deployments.
 
 ## Log Labels
@@ -80,12 +89,12 @@ documented in the single configuration reference:
 
 - [Configuration](configuration.md) — shared options and `HSYNC_*` variables
 - [Configuration → Environment files](configuration.md#environment-files)
-- [Configuration — Server Mode](configuration-server.md#environment-variables--server-mode) / [Configuration — LAN P2P Mode](configuration-lan.md#environment-variables--lan-p2p-mode) — per-mode variables
+- [Configuration — Server Mode](configuration-server.md#environment-variables--server-mode) / [Configuration — p2p Mode](configuration-p2p.md#environment-variables--p2p-mode) — per-mode variables
 
 ## Symlinks
 
 Symbolic links are **replicated structurally**, both on the first sync and
-during continuous operation, in server mode and LAN mode alike:
+during continuous operation, in server mode and p2p mode alike:
 
 - A symlink whose target stays inside the synced folder is copied **as a
   link**: the target is not followed and its content is not transferred.
@@ -104,8 +113,8 @@ during continuous operation, in server mode and LAN mode alike:
 End-user oriented examples have moved to a dedicated document:
 
 - [Examples](examples.md) — practical scenarios grouped by deployment
-  model (server-based and LAN P2P), including syncing a folder between
+  model (server-based and p2p), including syncing a folder between
   two devices, push-only backups, read-only mirrors, scripted /
   unattended execution, bandwidth tuning and more.
 
-> **Note**: In LAN mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. Use `--never-master` to keep a peer out of the election entirely (incompatible with `--force-master`); if every peer is `--never-master`, no master is elected and a `[NO MASTER]` warning is logged after 60 s. See [LAN Mode > Master Election](lan-mode.md#master-election) for the full election algorithm.
+> **Note**: In p2p mode, `--force-master` cannot be combined with `--sync-direction upload-only` or `download-only` (the client will exit with an error). During automatic election, bidirectional peers are preferred as master. Use `--never-master` to keep a peer out of the election entirely (incompatible with `--force-master`); if every peer is `--never-master`, no master is elected and a `[NO MASTER]` warning is logged after 60 s. See [p2p Mode > Master Election](p2p-mode.md#master-election) for the full election algorithm.

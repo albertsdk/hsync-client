@@ -7,7 +7,7 @@
 """L1 — client utility micro-benchmark (pure helpers, no sockets/disk).
 
 Measures the per-request / per-path helpers in :mod:`hsync_client.utils` that sit
-on every REST and LAN round-trip but carry no I/O of their own:
+on every REST and P2P round-trip but carry no I/O of their own:
 
 * URL/header shaping — ``http_to_ws``, ``redact_headers``, ``request_headers``;
 * the anti decompression-bomb bound — ``inbound_size_cap``;

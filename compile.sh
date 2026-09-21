@@ -467,7 +467,7 @@ _finalize_deb_stage() {
     chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
     local man="${stage_dir}/usr/share/man/man1/${APP_NAME}.1"
     [[ -f "${man}" ]] && gzip -n -9 -f "${man}"
-    # Sensitive configuration (API/LAN keys): restrict to root only so the
+    # Sensitive configuration (API/p2p keys): restrict to root only so the
     # shipped package is never world-readable. postinst re-asserts ownership.
     chmod 0750 "${stage_dir}/etc/hsync" 2>/dev/null || true
     [[ -f "${stage_dir}/etc/hsync/hsync.conf" ]] && chmod 0600 "${stage_dir}/etc/hsync/hsync.conf"

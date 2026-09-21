@@ -50,7 +50,7 @@ ARG PYTHON_SHA256
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
-    LANG=C.UTF-8
+    P2PG=C.UTF-8
 
 # Buster reached LTS end-of-life in 2024 and the regular Debian mirrors no
 # longer serve it. Repoint apt to archive.debian.org, drop the no-longer
@@ -163,7 +163,7 @@ FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE} AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
-    LANG=C.UTF-8 \
+    P2PG=C.UTF-8 \
     PATH=/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

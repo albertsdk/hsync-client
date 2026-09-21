@@ -30,13 +30,13 @@ informed of remediation progress.
 - **Transport security** — HTTPS/WSS supported. Use `--ca-cert` to trust a
   self-signed server certificate. `--insecure` disables verification and should
   be used only for testing.
-- **LAN mode (P2P)** — HTTPS/WSS only, with a persistent self-signed identity and
+- **p2p mode (P2P)** — HTTPS/WSS only, with a persistent self-signed identity and
   connection-level fingerprint pinning (TOFU); optional shared-secret
-  authentication (`HSYNC_LAN_KEY`) and group isolation (`--group`).
+  authentication (`HSYNC_P2P_KEY`) and group isolation (`--group`).
 - **Integrity** — transfers are verified with SHA-256 checksums.
 
 ## Hardening Recommendations
 
 - Prefer HTTPS endpoints and avoid `--insecure` outside testing.
-- Set `HSYNC_LAN_KEY` when using LAN mode on shared networks.
+- Set `HSYNC_P2P_KEY` when using p2p mode on shared networks.
 - Keep your API key out of shell history and logs.

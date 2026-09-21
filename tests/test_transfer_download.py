@@ -17,7 +17,7 @@ from requests import RequestException
 
 from hsync_client.events import UiEventName
 from hsync_client.exceptions import PermanentDownloadError
-from hsync_client.lan_sources import LanPeerSource, PeerFailureKind
+from hsync_client.p2p_sources import P2PPeerSource, PeerFailureKind
 from hsync_client.transfer import _parse_retry_after, download_file
 
 
@@ -326,7 +326,7 @@ class TestDownloadFileResume:
         Regression: ``sync._cleanup_partial_files`` runs at the start of every
         sync cycle (the periodic RESYNC / a reconnect) and sweeps the bucket
         for leftover artifacts. Inbound downloads run *outside* that cycle
-        (LAN fan-out, remote event loop), so the sweep used to delete the
+        (P2P fan-out, remote event loop), so the sweep used to delete the
         ``.part`` of a stream in flight: the transfer then failed at its final
         atomic rename, logged as "Error saving file" with no retry, and the
         path stayed unsynced until the next cycle. The sweep must skip
@@ -516,7 +516,7 @@ class TestDownloadCompressed:
         The decompression body was once nested under the resume-offset branch,
         so a first-attempt compressed download wrote nothing and the checksum
         read then failed with ENOENT on the ``.part`` file (surfaced by the
-        LAN black-box large-file test). Unlike ``test_download_compressed_response``
+        P2P black-box large-file test). Unlike ``test_download_compressed_response``
         this keeps the real filesystem — no ``compute_sha256``/``replace``
         mocks — so the write path is exercised end to end.
         """
@@ -790,8 +790,8 @@ class TestPeerDownloadFallback:
         }
 
     @staticmethod
-    def _source(cid: str, *, compression: bool = False) -> LanPeerSource:
-        return LanPeerSource(
+    def _source(cid: str, *, compression: bool = False) -> P2PPeerSource:
+        return P2PPeerSource(
             cid=cid,
             download_url="https://10.0.0.2:8443/api/v1/buckets/test/files/download",
             cert_fingerprint="a" * 64,
@@ -811,7 +811,7 @@ class TestPeerDownloadFallback:
         return response
 
     @staticmethod
-    def _resolver(sources: tuple[LanPeerSource, ...]) -> MagicMock:
+    def _resolver(sources: tuple[P2PPeerSource, ...]) -> MagicMock:
         resolver = MagicMock()
         resolver.candidates_for.return_value = sources
         resolver.authorize.return_value = True
@@ -862,7 +862,7 @@ class TestPeerDownloadFallback:
         file = File(filepath="ordered.bin", sha256sum="d" * 64, size=10)
         source = self._source("s" * 21)
         resolver = self._resolver((source,))
-        calls: list[tuple[bool, LanPeerSource | None, bool]] = []
+        calls: list[tuple[bool, P2PPeerSource | None, bool]] = []
 
         def attempt(_file, _observer, **kwargs):
             calls.append(
@@ -1236,7 +1236,7 @@ class TestDownloadPathLocking:
 class TestRetryAfterParsing:
     """``Retry-After`` is honoured only as a usable non-negative delay in seconds.
 
-    The LAN seeder sends delay-seconds; HTTP-date and malformed values must never
+    The P2P seeder sends delay-seconds; HTTP-date and malformed values must never
     stall a requester, and a negative value must not shorten a deferral.
     """
 

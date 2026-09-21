@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-16" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-22" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -19,9 +19,11 @@ hsync \- file synchronization client (Server and LAN P2P modes)
 .YS
 .
 .SY hsync
-.B lan
+.B p2p
 .OP \-b NAME
 .OP \-p DIR
+.RI [ BOOTNODE ]
+.OP \-\-port PORT
 .RI [ OPTIONS ]
 .YS
 .
@@ -48,16 +50,16 @@ synchronization between all connected clients.
 .
 .TP 4
 \(bu
-.BR "LAN Mode (P2P)" " (" hsync " " lan ):
+.BR "p2p Mode (P2P)" " (" hsync " " p2p ):
 Clients discover each other automatically via mDNS on the local network.
 One peer is elected
 .B master
 and the others become
 .BR slaves .
-No central server is required. LAN traffic is always HTTPS/WSS
+No central server is required. p2p traffic is always HTTPS/WSS
 (there is no plaintext transport). Writes are authorized by a shared secret
-.RB ( HSYNC_LAN_KEY );
-a keyless LAN group is read-only.
+.RB ( HSYNC_P2P_KEY );
+a keyless p2p group is read-only.
 .
 .SS Features
 \(bu Real-time file watching with
@@ -66,7 +68,7 @@ a keyless LAN group is read-only.
 .br
 \(bu Compression of transferred data via zstd
 .br
-\(bu Exact-hash peer-assisted LAN downloads with automatic master fallback
+\(bu Exact-hash peer-assisted p2p downloads with automatic master fallback
 .br
 \(bu Bandwidth throttling per transfer direction
 .br
@@ -132,7 +134,7 @@ Run a single sync cycle and exit. Without
 .B \-\-once
 the client runs continuously (daemon mode, the default): it keeps the
 connection open, syncs changes in real time, and retries an unreachable
-server indefinitely instead of exiting. In LAN mode it runs one slave sync
+server indefinitely instead of exiting. In p2p mode it runs one slave sync
 cycle and exits (the master role stays continuous regardless).
 .TP
 .BR \-i ", " \-\-interval =\fISEC\fP
@@ -190,17 +192,17 @@ Disable zstd compression for file transfers.
 Disable rsync-style delta transfer (block-level sync) for large files with
 small changes. When disabled, all files are transferred in full. Delta transfer
 is enabled by default and automatically reduces bandwidth for files \(>= 256 KB
-(server mode) or \(>= 1 MB (LAN mode) when both peers support it.
+(server mode) or \(>= 1 MB (p2p mode) when both peers support it.
 .TP
 .BR \-\-delta\-min\-file\-size =\fIBYTES\fP
 Minimum file size in bytes for delta transfer in server mode (default:
 .BR 262144 ,
 256 KB). Files smaller than this threshold are always transferred in full.
 .TP
-.BR \-\-delta\-min\-file\-size\-lan =\fIBYTES\fP
-Minimum file size in bytes for delta transfer in LAN mode (default:
+.BR \-\-delta\-min\-file\-size\-p2p =\fIBYTES\fP
+Minimum file size in bytes for delta transfer in p2p mode (default:
 .BR 1048576 ,
-1 MB). LAN mode uses a higher threshold because the bandwidth savings are
+1 MB). p2p mode uses a higher threshold because the bandwidth savings are
 less significant on fast local networks.
 .TP
 .BR \-\-min\-free\-disk\-space =\fIMB\fP
@@ -239,7 +241,7 @@ Maximum number of concurrent file transfers (default:
 range: 1\(en20).
 .TP
 .BR \-\-max\-inbound\-size =\fIMB\fP
-Maximum size in MB of a single inbound file (download or received LAN upload),
+Maximum size in MB of a single inbound file (download or received p2p upload),
 enforced as an absolute cap on top of the peer-declared size (default:
 .BR 10240 ,
 10 GB; 0 = disabled).
@@ -253,50 +255,67 @@ deriving them from the runtime environment. Equivalent to setting
 .BR \-\-http\-timeout =\fISEC\fP
 HTTP request timeout in seconds. When auto-tuning is enabled (default), the
 timeout is derived from measured network latency if not set explicitly.
-Applies to server REST requests and, in LAN mode, to the master's HTTPS
+Applies to server REST requests and, in p2p mode, to the master's HTTPS
 transport. Range: 1\(en300.
 .TP
 .BR \-\-events\-json\-fd =\fIFD\fP
 Write structured JSON-Lines status events to the given file descriptor.
 Hidden option intended for GUI integration.
 .
-.\" --- LAN subcommand ---
-.SS LAN subcommand
+.\" --- p2p subcommand ---
+.SS p2p subcommand
+.TP
+.BR BOOTNODE
+Optional bootnode hostname for cross-network peer discovery. A bare hostname
+(the QUIC scheme is implied; use
+.B \-\-port
+for the port, never host:port); omit it to stay on mDNS only.
 .TP
 .BR \-\-listen\-port =\fIPORT\fP
-Port to listen on when acting as LAN master (default: 0 = auto).
+Port to listen on when acting as p2p master (default: 0 = auto).
+.TP
+.BR \-\-port =\fIPORT\fP
+UDP (QUIC) port of the remote bootnode (default: 443). Only meaningful with
+.BR BOOTNODE ;
+without it,
+.B \-\-port
+is refused rather than ignored.
+.TP
+.B \-\-no\-upnp
+Do not try to map the master TCP port with UPnP. Without a bootnode the flag
+has no effect (mDNS discovery stays on the local network).
 .TP
 .BR \-\-discovery\-timeout =\fISEC\fP
-Time to wait for initial LAN peer discovery
+Time to wait for initial p2p peer discovery
 (default:
 .BR 0 ;
 wait indefinitely, matching the server-mode default of retrying an
 unreachable server forever).
 .TP
 .BR \-\-group =\fIGROUP\fP
-Group name for LAN peer filtering. Only peers with the same group
+Group name for p2p peer filtering. Only peers with the same group
 will discover each other.
 .TP
 .B \-\-force\-master
-Force this client to always act as master in LAN mode.
+Force this client to always act as master in p2p mode.
 .TP
 .B \-\-never\-master
-Never become master in LAN mode (always remain a slave).
+Never become master in p2p mode (always remain a slave).
 .TP
 .B \-\-require\-pairing
-Strict pairing: refuse a first-seen LAN master certificate until it is
+Strict pairing: refuse a first-seen p2p master certificate until it is
 confirmed out of band (disables Trust-On-First-Use auto-pinning).
 .TP
 .B \-\-no\-peer\-download
-Disable peer-assisted LAN downloads for this run. By default, large full-file
+Disable peer-assisted p2p downloads for this run. By default, large full-file
 downloads may use a verified continuous slave before falling back to the master.
 .TP
 .B \-\-allow\-unauthenticated\-writes
-Dangerous explicit opt-in: allow LAN mutations when no shared LAN key is
-configured. Without this option, no-key LAN groups are read-only.
+Dangerous explicit opt-in: allow LAN mutations when no shared p2p key is
+configured. Without this option, no-key p2p groups are read-only.
 .TP
-.BR \-\-lan\-key\-fd =\fIFD\fP
-Read the LAN shared secret from the given file descriptor. Hidden option.
+.BR \-\-p2p\-key\-fd =\fIFD\fP
+Read the p2p shared secret from the given file descriptor. Hidden option.
 .
 .\" --- Output ---
 .SS Output (both subcommands)
@@ -344,7 +363,7 @@ Show a legend of the output symbols.
 Files are synced in both directions: local changes are pushed, remote changes
 are pulled. This is the default and the only mode compatible with
 .B \-\-force\-master
-in LAN Mode.
+in p2p Mode.
 .TP
 .B upload\-only
 Only local changes are pushed to the server/master.
@@ -355,10 +374,10 @@ Only remote changes are pulled from the server/master.
 Local changes are ignored.
 .
 .\" ---------------------------------------------------------------------
-.SH LAN MODE DETAILS
+.SH P2P MODE DETAILS
 In
-.B LAN Mode
-.RB ( hsync " " lan ),
+.B p2p Mode
+.RB ( hsync " " p2p ),
 clients on the same local network discover each other automatically
 using
 .B mDNS
@@ -374,10 +393,10 @@ per device).
 .
 .P
 A shared secret is set via the
-.B HSYNC_LAN_KEY
+.B HSYNC_P2P_KEY
 environment variable and authenticates peers: only clients with the same
 key can join the session. The key is also what authorizes writes — a keyless
-LAN group is read-only, and a write-capable run is refused unless it is
+p2p group is read-only, and a write-capable run is refused unless it is
 download-only or passes
 .B \-\-allow\-unauthenticated\-writes
 on both sides.
@@ -401,15 +420,15 @@ argument of
 .B HSYNC_API_KEY
 API key for authenticating with the server.
 .TP
-.B HSYNC_LAN_KEY
-Shared secret for LAN mode peer authentication, and the credential that
+.B HSYNC_P2P_KEY
+Shared secret for p2p mode peer authentication, and the credential that
 authorizes writes: without it the group is read-only and a write-capable run
 is refused unless it is download-only or the dangerous
 .B \-\-allow\-unauthenticated\-writes
 opt-in is explicit.
 .TP
 .B HSYNC_NTP_HOSTS
-Comma-separated list of SNTP servers, tried in order, used in LAN mode
+Comma-separated list of SNTP servers, tried in order, used in p2p mode
 (no server at startup) to measure the clock offset for chronological
 conflict resolution with
 .IR corrected_mtime
@@ -460,45 +479,53 @@ Periodic resync interval in seconds (default:
 .BR 300 ;
 0 = disabled).
 .TP
-.B HSYNC_LAN_PORT
-Port to use when acting as LAN master (default: 0 = auto).
+.B HSYNC_BOOTNODE
+Bare bootnode hostname for cross-network discovery (no scheme, no port); unset
+keeps discovery on mDNS only.
 .TP
-.B HSYNC_LAN_GROUP
-Group name for LAN peer filtering (default: empty = no filter).
+.B HSYNC_UPNP_ENABLED
+Map the master TCP port with UPnP (true/false). Unset = on only when a bootnode
+is configured.
+.TP
+.B HSYNC_P2P_LISTEN_PORT
+Port to use when acting as p2p master (default: 0 = auto).
+.TP
+.B HSYNC_P2P_GROUP
+Group name for p2p peer filtering (default: empty = no filter).
 .TP
 .B HSYNC_DISCOVERY_TIMEOUT
-Seconds to wait for the first LAN peer (default:
+Seconds to wait for the first p2p peer (default:
 .BR 0 ;
 wait indefinitely, mirroring the server-mode default of retrying an
 unreachable server forever).
 .TP
 .B HSYNC_NEVER_MASTER
-Never become master in LAN mode (default:
+Never become master in p2p mode (default:
 .BR false ).
 .TP
-.B HSYNC_LAN_REQUIRE_PAIRING
+.B HSYNC_P2P_REQUIRE_PAIRING
 Strict pairing: require out-of-band confirmation for first-seen master
 certificates (default:
 .BR false ).
 .TP
-.B HSYNC_LAN_PEER_DOWNLOAD
+.B HSYNC_P2P_PEER_DOWNLOAD
 Enable exact-hash peer-assisted LAN full downloads (default:
 .BR true ).
 .TP
-.B HSYNC_LAN_PEER_READ_CAP
+.B HSYNC_P2P_PEER_READ_CAP
 Maximum concurrent peer-download response bodies served by a continuous slave
 (advertised on the LAN handshake so requesters stay within it; saturation
 answers 503 with a suggested retry delay) (default:
 .BR 2 ;
 range: 1\(en32).
 .TP
-.B HSYNC_LAN_PEER_SOURCES_MAX
+.B HSYNC_P2P_PEER_SOURCES_MAX
 Maximum unique peer devices attempted per file before the master fallback
 (default:
 .BR 3 ;
 range: 1\(en8).
 .TP
-.B HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES
+.B HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES
 Dangerously permit LAN mutations without a shared key (default:
 .BR false ).
 Reads remain available when this setting is false.
@@ -523,20 +550,20 @@ Minimum file size in bytes for delta transfer in server mode (default:
 .BR 262144 ,
 256 KB). Files smaller than this threshold are always transferred in full.
 .TP
-.B HSYNC_DELTA_MIN_FILE_SIZE_LAN
-Minimum file size in bytes for delta transfer in LAN mode (default:
+.B HSYNC_DELTA_MIN_FILE_SIZE_P2P
+Minimum file size in bytes for delta transfer in p2p mode (default:
 .BR 1048576 ,
-1 MB). LAN mode uses a higher threshold because bandwidth savings are less
+1 MB). p2p mode uses a higher threshold because bandwidth savings are less
 significant on fast local networks.
 .TP
 .B HSYNC_HEARTBEAT_INTERVAL
-Heartbeat interval in seconds for LAN mode (default:
+Heartbeat interval in seconds for p2p mode (default:
 .BR 5 ;
 range: 1\(en60). Governs how often a peer's mDNS presence is re-announced and how
 often the discovery loop re-evaluates peer liveness.
 .TP
 .B HSYNC_PEER_TIMEOUT
-Peer timeout in seconds for LAN mode (default:
+Peer timeout in seconds for p2p mode (default:
 .BR 15 ;
 range: 3\(en600). A peer whose heartbeat has not been seen within this window is
 considered dead and excluded from master election; the surviving peers then
@@ -569,7 +596,7 @@ Days to retain deletion markers before garbage collection (default:
 .TP
 .B HSYNC_DEVICE_DIR
 Directory holding the persistent device identity: the stable device ID and
-the LAN keypair (default:
+the p2p keypair (default:
 .IR ~/.local/state/hsync/device
 ).
 .TP
@@ -580,9 +607,9 @@ Directory holding the installation causal-state database
 .IR ~/.local/state/hsync
 ).
 .TP
-.B HSYNC_LAN_PIN_FILE
-File storing the pinned fingerprints of known LAN peers (default:
-.I ~/.local/state/hsync/lan_known_peers.json
+.B HSYNC_P2P_PIN_FILE
+File storing the pinned fingerprints of known p2p peers (default:
+.I ~/.local/state/hsync/p2p_known_peers.json
 ).
 .
 .\" ---------------------------------------------------------------------
@@ -647,17 +674,30 @@ hsync server server.example.com \-b backup \-n
 .EE
 .RE
 .TP
-LAN peer-to-peer mode (the shared key authorizes writes):
+p2p peer-to-peer mode (the shared key authorizes writes):
 .RS
 .EX
-HSYNC_LAN_KEY=mysecret hsync lan \-b shared
+HSYNC_P2P_KEY=mysecret hsync p2p \-b shared
 .EE
 .RE
 .TP
-LAN mode with a specific group:
+p2p mode with a specific group:
 .RS
 .EX
-HSYNC_LAN_KEY=mysecret hsync lan \-b shared \-\-group home
+HSYNC_P2P_KEY=mysecret hsync p2p \-b shared \-\-group home
+
+.SS Bootnode discovery
+Discover peers across networks through a boot/1 bootstrap node:
+.PP
+.EX
+hsync p2p \-b shared boot.example.net
+.EE
+.PP
+Pin the bootnode certificate and map the master port:
+.PP
+.EX
+hsync p2p \-b shared boot.example.net \-\-ca\-cert /etc/hsync/boot.pem
+.EE
 .EE
 .RE
 .TP

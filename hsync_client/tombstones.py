@@ -5,11 +5,11 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Per-peer tombstone management for HSYNC Client (LAN P2P mode).
+Per-peer tombstone management for HSYNC Client (P2P P2P mode).
 
 Every peer keeps its own persistent :class:`TombstoneStore`, backed by the
 installation ``syncstate.db`` and keyed by the ``.hsyncfolder`` UUID
-(ADR-0025). Because the LAN master is elected and can change over time,
+(ADR-0025). Because the P2P master is elected and can change over time,
 knowledge of deletions must not live only on the current master: each peer
 records the deletions it observes, merges the master's markers on every sync
 (gossip), and serves the accumulated union if it later becomes master. This

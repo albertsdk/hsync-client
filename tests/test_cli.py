@@ -9,10 +9,13 @@
 import runpy
 from unittest.mock import patch
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
 from hsync_client.cli import app
 from hsync_client.config import get_env_settings
+from hsync_client.constants import BOOTNODE_DEFAULT_PORT
 
 runner = CliRunner()
 
@@ -127,9 +130,9 @@ class TestTyperCli:
         assert call_kwargs["continuous"] is False
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_once_in_lan_is_one_shot(self, mock_run_sync):
-        """--once in LAN mode selects a one-shot slave run."""
-        result = runner.invoke(app, ["lan", "--once", "-b", "test"])
+    def test_once_in_p2p_is_one_shot(self, mock_run_sync):
+        """--once in P2P mode selects a one-shot slave run."""
+        result = runner.invoke(app, ["p2p", "--once", "-b", "test"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["continuous"] is False
@@ -252,7 +255,7 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_discovery_timeout_accepts_zero(self, mock_run_sync):
         """--discovery-timeout 0 is accepted as wait-indefinitely."""
-        result = runner.invoke(app, ["lan", "-b", "test", "--discovery-timeout", "0"])
+        result = runner.invoke(app, ["p2p", "-b", "test", "--discovery-timeout", "0"])
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["discovery_timeout"] == 0
 
@@ -260,7 +263,7 @@ class TestTyperCli:
         """Help output documents the 0 = wait indefinitely convention."""
         # Force a wide terminal so Rich does not word-wrap the help text and
         # split the documented sentinel across lines.
-        result = runner.invoke(app, ["lan", "--help"], env={"COLUMNS": "200"})
+        result = runner.invoke(app, ["p2p", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
         assert "0 = wait indefinitely" in result.output
 
@@ -275,53 +278,53 @@ class TestTyperCli:
         assert call_kwargs["env_file"] == "/path/to/env"
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_lan_mode_option(self, mock_run_sync):
+    def test_p2p_mode_option(self, mock_run_sync):
         """CLI accepts the lan subcommand."""
-        result = runner.invoke(app, ["lan", "-b", "test"])
+        result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["lan_mode"] is True
+        assert call_kwargs["p2p_mode"] is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_require_pairing_default_false(self, mock_run_sync):
-        """Without --require-pairing, lan_require_pairing defaults to False."""
-        result = runner.invoke(app, ["lan", "-b", "test"])
+        """Without --require-pairing, p2p_require_pairing defaults to False."""
+        result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["lan_require_pairing"] is False
+        assert call_kwargs["p2p_require_pairing"] is False
 
     @patch("hsync_client.main_logic.run_sync")
     def test_require_pairing_option(self, mock_run_sync):
-        """CLI accepts --require-pairing and forwards lan_require_pairing=True."""
-        result = runner.invoke(app, ["lan", "-b", "test", "--require-pairing"])
+        """CLI accepts --require-pairing and forwards p2p_require_pairing=True."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--require-pairing"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["lan_require_pairing"] is True
+        assert call_kwargs["p2p_require_pairing"] is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_peer_download_default_and_opt_out(self, mock_run_sync):
         """Peer downloading is on by default and --no-peer-download is final."""
-        result = runner.invoke(app, ["lan", "-b", "test"])
+        result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["lan_peer_download_enabled"] is True
+        assert mock_run_sync.call_args.kwargs["p2p_peer_download_enabled"] is True
 
-        result = runner.invoke(app, ["lan", "-b", "test", "--no-peer-download"])
+        result = runner.invoke(app, ["p2p", "-b", "test", "--no-peer-download"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["lan_peer_download_enabled"] is False
+        assert mock_run_sync.call_args.kwargs["p2p_peer_download_enabled"] is False
 
     @patch("hsync_client.main_logic.run_sync")
     def test_allow_unauthenticated_writes_option(self, mock_run_sync):
         """The dangerous no-key mutation opt-in is explicit and defaults off."""
-        result = runner.invoke(app, ["lan", "-b", "test"])
+        result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["lan_allow_unauthenticated_writes"] is False
+        assert mock_run_sync.call_args.kwargs["p2p_allow_unauthenticated_writes"] is False
 
         result = runner.invoke(
             app,
-            ["lan", "-b", "test", "--allow-unauthenticated-writes"],
+            ["p2p", "-b", "test", "--allow-unauthenticated-writes"],
         )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["lan_allow_unauthenticated_writes"] is True
+        assert mock_run_sync.call_args.kwargs["p2p_allow_unauthenticated_writes"] is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_yes_flag_long(self, mock_run_sync):
@@ -474,7 +477,7 @@ class TestCLIValidation:
 
     def test_rejects_negative_discovery_timeout(self):
         """CLI rejects negative --discovery-timeout values."""
-        result = runner.invoke(app, ["lan", "-b", "test", "--discovery-timeout", "-1"])
+        result = runner.invoke(app, ["p2p", "-b", "test", "--discovery-timeout", "-1"])
         assert result.exit_code != 0
         assert "discovery timeout" in result.output.lower()
 
@@ -491,7 +494,7 @@ class TestCLIValidation:
         result = runner.invoke(
             app,
             [
-                "lan",
+                "p2p",
                 "-b",
                 "test",
                 "--force-master",
@@ -507,7 +510,7 @@ class TestCLIValidation:
         result = runner.invoke(
             app,
             [
-                "lan",
+                "p2p",
                 "-b",
                 "test",
                 "--force-master",
@@ -526,7 +529,7 @@ class TestCLIValidation:
             result = runner.invoke(
                 app,
                 [
-                    "lan",
+                    "p2p",
                     "-b",
                     "test",
                     "--force-master",
@@ -657,11 +660,14 @@ class TestCapabilitiesJson:
             "--no-peer-download",
             "--allow-unauthenticated-writes",
         ):
-            assert flag in doc["cli_options"]["lan"]
+            assert flag in doc["cli_options"]["p2p"]
         for flag in ("--port", "--insecure", "--ca-cert"):
             assert flag in doc["cli_options"]["server"]
         assert "--listen-port" not in doc["cli_options"]["server"]
-        assert "--port" not in doc["cli_options"]["lan"]
+        # C2: the p2p subcommand owns --port (the bootnode UDP port) and
+        # --no-upnp; --listen-port is the master TCP port and stays p2p-only.
+        for flag in ("--port", "--no-upnp", "--insecure", "--ca-cert", "--listen-port"):
+            assert flag in doc["cli_options"]["p2p"]
 
     def test_does_not_require_bucket(self):
         """The eager option short-circuits before bucket validation."""
@@ -675,11 +681,58 @@ class TestCapabilitiesJson:
         from hsync_client.cli import collect_subcommand_options
 
         options = collect_subcommand_options(typer_app)
-        assert set(options) == {"lan", "server"}
+        assert set(options) == {"p2p", "server"}
         for flags in options.values():
             assert flags == sorted(flags)
             assert all(f.startswith("--") for f in flags)
-        assert "--limit-upload" in options["lan"]
+        assert "--limit-upload" in options["p2p"]
         assert "--port" in options["server"]
         assert "--listen-port" not in options["server"]
-        assert "--port" not in options["lan"]
+        assert "--port" in options["p2p"]
+        assert "--no-upnp" in options["p2p"]
+
+
+class TestBuildBootnode:
+    """The C2 bootnode CLI resolution rules (D15)."""
+
+    def test_no_bootnode_selects_the_mdns_plan(self):
+        from hsync_client.cli import _build_bootnode
+
+        assert _build_bootnode(None, None, no_upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
+
+    def test_default_bootnode_port_is_443_and_upnp_defaults_on(self):
+        from hsync_client.cli import _build_bootnode
+
+        assert _build_bootnode("boot.example.net", None, no_upnp=False) == (
+            "boot.example.net",
+            443,
+            True,
+        )
+
+    def test_explicit_port_wins_and_no_upnp_disables_mapping(self):
+        from hsync_client.cli import _build_bootnode
+
+        assert _build_bootnode("boot.example.net", 8443, no_upnp=True) == (
+            "boot.example.net",
+            8443,
+            False,
+        )
+
+    def test_port_without_bootnode_is_refused(self):
+        from hsync_client.cli import _build_bootnode
+
+        with pytest.raises(typer.BadParameter):
+            _build_bootnode(None, 8443, no_upnp=False)
+
+    def test_url_and_host_port_are_refused(self):
+        from hsync_client.cli import _build_bootnode
+
+        for bad in ("https://boot.example.net", "boot.example.net/path", "boot.example.net:8443"):
+            with pytest.raises(typer.BadParameter):
+                _build_bootnode(bad, None, no_upnp=False)
+
+    def test_out_of_range_port_is_refused(self):
+        from hsync_client.cli import _build_bootnode
+
+        with pytest.raises(typer.BadParameter):
+            _build_bootnode("boot.example.net", 70000, no_upnp=False)

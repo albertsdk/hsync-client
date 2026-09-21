@@ -67,15 +67,15 @@ stale snapshots.
 `derive_profile()` produces a `TuningProfile`. Each field is passed as the
 `autotune` parameter to the `_get_*_value` resolvers.
 
-**LAN placeholder**: in LAN mode without a configured server URL the startup
+**LAN placeholder**: in p2p mode without a configured server URL the startup
 RTT probe is skipped (`rtt_ms=None`, `main_logic.py:758`) — there is no server
 to measure yet, and probing the placeholder URL would always fail with a
 spurious warning. The placeholder URL is also not emitted as a `server` UI
 event (`main_logic.py:681`).
 
-### LAN post-discovery refresh (`lan_handler._refresh_lan_network_tuning`)
+### LAN post-discovery refresh (`p2p_handler._refresh_p2p_network_tuning`)
 
-`lan_handler.py:53`, called from `_run_as_slave` (`lan_handler.py:434`) after
+`p2p_handler.py:53`, called from `_run_as_slave` (`p2p_handler.py:434`) after
 the master is pinned and `set_config(config)` has run. Measures the real RTT
 toward the elected master and re-derives `HTTP_TIMEOUT`,
 `TRANSFER_RETRY_MIN_WAIT`, `TRANSFER_RETRY_MAX_WAIT` and `RECONNECT_DELAY` via
@@ -148,7 +148,7 @@ entirely and restores static defaults.
 precedence tests (CLI > env > autotune > default), integration tests, and
 thread-safety tests.
 
-`tests/test_lan_network_tuning.py` — LAN refresh (`_refresh_lan_network_tuning`
+`tests/test_p2p_network_tuning.py` — LAN refresh (`_refresh_p2p_network_tuning`
 derivation, managed-keys precedence, dual-write, no-op paths), slave call
 ordering (pin → refresh), and `run_sync` LAN-placeholder behaviour (probe
 skipped, no placeholder `server` event, managed-keys provenance).

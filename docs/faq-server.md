@@ -1,6 +1,6 @@
 # FAQ — Server Mode
 
-> For LAN P2P FAQ, see [FAQ — LAN P2P Mode](faq-lan.md).
+> For p2p FAQ, see [FAQ — p2p Mode](faq-p2p.md).
 
 ## General
 
@@ -11,11 +11,11 @@ an authority: conflicts are resolved causally by every client with the same
 algorithm, and no node's copy wins by role.
 
 **Q: Is the server required for HSYNC to work?**
-No. You can use LAN P2P Mode without a server. The server is only needed if
+No. You can use p2p Mode without a server. The server is only needed if
 you want to sync devices across different networks (e.g., home ↔ office) or
 if you prefer a central hub.
 
-**Q: Can I use both Server Mode and LAN Mode at the same time?**
+**Q: Can I use both Server Mode and p2p Mode at the same time?**
 No. Each HSYNC instance operates in one mode at a time. Configure based on
 your use case.
 
@@ -125,7 +125,7 @@ They are harmless: zero bytes, hidden, and excluded from both sync and Git.
 ## Debian Package
 
 **Q: How do I configure the systemd service for server mode?**
-The packaged unit starts **LAN** mode (`hsync lan`, continuous by default)
+The packaged unit starts **p2p** mode (`hsync p2p`, continuous by default)
 and reads `/etc/hsync/hsync.conf`. `HSYNC_BUCKET` / `HSYNC_PATH` in that file
 are expanded by systemd into `--bucket` / `--path`; they are not client
 settings keys.

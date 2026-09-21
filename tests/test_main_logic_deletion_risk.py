@@ -10,7 +10,7 @@ import pytest
 
 from hsync_client.main_logic import (
     _check_deletion_risk,
-    _check_lan_write_policy,
+    _check_p2p_write_policy,
     _run_stdin_wait,
     _with_stdin_commands,
 )
@@ -38,7 +38,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -52,7 +52,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=False,
             sync_direction="upload-only",
             auto_confirm=False,
@@ -60,13 +60,13 @@ class TestCheckDeletionRisk:
         )
         mock_logger.warning.assert_not_called()
 
-    def test_lan_force_master_no_warning(self, tmp_path):
-        """No warning when LAN mode with force-master (this client is authoritative)."""
+    def test_p2p_force_master_no_warning(self, tmp_path):
+        """No warning when P2P mode with force-master (this client is authoritative)."""
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=True,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -80,7 +80,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=False,
+            p2p_mode=False,
             force_master=False,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -93,7 +93,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path / "nonexistent"),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=False,
             sync_direction="download-only",
             auto_confirm=False,
@@ -109,7 +109,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -125,7 +125,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -146,7 +146,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", return_value="y"):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -155,13 +155,13 @@ class TestCheckDeletionRisk:
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
         assert "DELETE" in warning_texts
 
-    def test_lan_bidirectional_no_warning(self, tmp_path):
-        """No warning for bidirectional LAN: local-only files are uploaded, not deleted."""
+    def test_p2p_bidirectional_no_warning(self, tmp_path):
+        """No warning for bidirectional P2P: local-only files are uploaded, not deleted."""
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=True,
+            p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
             auto_confirm=False,
@@ -171,15 +171,15 @@ class TestCheckDeletionRisk:
 
     # ── Risky scenarios ──────────────────────────────────────────────
 
-    def test_lan_download_only_warns(self, tmp_path):
-        """Warns when LAN mode is download-only and dir is non-empty."""
+    def test_p2p_download_only_warns(self, tmp_path):
+        """Warns when P2P mode is download-only and dir is non-empty."""
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
         with patch("builtins.input", return_value="y"):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -199,7 +199,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", return_value="y"):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=False,
+                p2p_mode=False,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -222,7 +222,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", side_effect=AssertionError("should not prompt")):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=True,
@@ -242,7 +242,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", return_value="y"):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -258,7 +258,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", return_value="yes"):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -273,7 +273,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", return_value="n"), pytest.raises(SystemExit) as exc_info:
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -291,7 +291,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", return_value=""), pytest.raises(SystemExit) as exc_info:
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -308,7 +308,7 @@ class TestCheckDeletionRisk:
         with patch("builtins.input", side_effect=EOFError), pytest.raises(SystemExit) as exc_info:
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -328,7 +328,7 @@ class TestCheckDeletionRisk:
         ):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -344,7 +344,7 @@ class TestCheckDeletionRisk:
 
         _check_deletion_risk(
             local_path=str(tmp_path),
-            lan_mode=False,
+            p2p_mode=False,
             force_master=False,
             sync_direction="download-only",
             auto_confirm=True,
@@ -367,7 +367,7 @@ class TestCheckDeletionRisk:
         ):
             _check_deletion_risk(
                 local_path=str(tmp_path),
-                lan_mode=True,
+                p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
                 auto_confirm=False,
@@ -380,15 +380,15 @@ class TestCheckDeletionRisk:
 
 
 class TestCheckLanWritePolicy:
-    """Tests for _check_lan_write_policy (LAN-key requirement)."""
+    """Tests for _check_p2p_write_policy (P2P-key requirement)."""
 
     # ── Allowed scenarios (no SystemExit) ────────────────────────────
 
-    def test_non_lan_mode_is_skipped(self):
-        """Outside LAN mode the policy never applies, even without a key."""
-        _check_lan_write_policy(
-            lan_mode=False,
-            lan_key=None,
+    def test_non_p2p_mode_is_skipped(self):
+        """Outside P2P mode the policy never applies, even without a key."""
+        _check_p2p_write_policy(
+            p2p_mode=False,
+            p2p_key=None,
             sync_direction="bidirectional",
             logger=MagicMock(),
         )
@@ -396,9 +396,9 @@ class TestCheckLanWritePolicy:
     def test_write_without_key_is_refused(self):
         """A TTY is context only and does not authorize unauthenticated writes."""
         with pytest.raises(SystemExit) as exc_info:
-            _check_lan_write_policy(
-                lan_mode=True,
-                lan_key=None,
+            _check_p2p_write_policy(
+                p2p_mode=True,
+                p2p_key=None,
                 sync_direction="bidirectional",
                 logger=MagicMock(),
             )
@@ -406,9 +406,9 @@ class TestCheckLanWritePolicy:
 
     def test_explicit_unauthenticated_write_opt_in_is_allowed(self):
         """The dangerous explicit opt-in authorizes a no-key write-capable run."""
-        _check_lan_write_policy(
-            lan_mode=True,
-            lan_key=None,
+        _check_p2p_write_policy(
+            p2p_mode=True,
+            p2p_key=None,
             sync_direction="bidirectional",
             logger=MagicMock(),
             allow_unauthenticated_writes=True,
@@ -416,18 +416,18 @@ class TestCheckLanWritePolicy:
 
     def test_download_only_is_allowed(self):
         """download-only never writes to the master, so no key is required."""
-        _check_lan_write_policy(
-            lan_mode=True,
-            lan_key=None,
+        _check_p2p_write_policy(
+            p2p_mode=True,
+            p2p_key=None,
             sync_direction="download-only",
             logger=MagicMock(),
         )
 
     def test_write_with_key_is_allowed(self):
-        """A key satisfies the policy for writes over the secure LAN."""
-        _check_lan_write_policy(
-            lan_mode=True,
-            lan_key="secret",
+        """A key satisfies the policy for writes over the secure P2P."""
+        _check_p2p_write_policy(
+            p2p_mode=True,
+            p2p_key="secret",
             sync_direction="bidirectional",
             logger=MagicMock(),
         )
@@ -441,9 +441,9 @@ class TestCheckLanWritePolicy:
             patch("hsync_client.preview.emit_event") as mock_emit,
             pytest.raises(SystemExit) as exc_info,
         ):
-            _check_lan_write_policy(
-                lan_mode=True,
-                lan_key=None,
+            _check_p2p_write_policy(
+                p2p_mode=True,
+                p2p_key=None,
                 sync_direction="bidirectional",
                 logger=mock_logger,
             )
@@ -458,9 +458,9 @@ class TestCheckLanWritePolicy:
             patch("hsync_client.preview.emit_event"),
             pytest.raises(SystemExit) as exc_info,
         ):
-            _check_lan_write_policy(
-                lan_mode=True,
-                lan_key=None,
+            _check_p2p_write_policy(
+                p2p_mode=True,
+                p2p_key=None,
                 sync_direction="upload-only",
                 logger=MagicMock(),
             )
@@ -546,26 +546,26 @@ class TestStdinCommandHandlers:
         return registered
 
     @pytest.mark.asyncio
-    async def test_sync_handler_uses_lan_mode(self):
-        """The SYNC handler syncs with the configured LAN_MODE flag."""
+    async def test_sync_handler_uses_p2p_mode(self):
+        """The SYNC handler syncs with the configured P2P_MODE flag."""
         registered = await self._register_and_capture()
         with (
             patch(
                 "hsync_client.preview.CONFIG",
-                {"LAN_MODE": True, "LAN_KEY": "shared-key"},
+                {"P2P_MODE": True, "P2P_KEY": "shared-key"},
             ),
             patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
         ):
             await registered["SYNC"]()
         mock_sync.assert_awaited_once_with(
-            lan_mode=True, inventory_observer=None, source_resolver=None
+            p2p_mode=True, inventory_observer=None, source_resolver=None
         )
 
     @pytest.mark.asyncio
     async def test_set_sync_direction_valid_invalid_and_noop(self):
         """SET_SYNC_DIRECTION applies valid changes, rejects invalid, skips no-ops."""
         registered = await self._register_and_capture()
-        cfg = {"LAN_MODE": False, "SYNC_DIRECTION": "bidirectional"}
+        cfg = {"P2P_MODE": False, "SYNC_DIRECTION": "bidirectional"}
         with (
             patch("hsync_client.preview.CONFIG", cfg),
             patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
@@ -609,7 +609,7 @@ class TestStdinCommandHandlers:
         handler_inst.register.side_effect = lambda name, fn: registered.__setitem__(name, fn)
         handler_inst.run = AsyncMock()
 
-        cfg = {"LAN_MODE": False, "DRYRUN": True}
+        cfg = {"P2P_MODE": False, "DRYRUN": True}
         with (
             patch("hsync_client.preview.StdinCommandHandler", return_value=handler_inst),
             patch("hsync_client.preview.CONFIG", cfg),
@@ -620,7 +620,7 @@ class TestStdinCommandHandlers:
 
         assert cfg["DRYRUN"] is False
         mock_sync.assert_awaited_once_with(
-            lan_mode=False, inventory_observer=None, source_resolver=None
+            p2p_mode=False, inventory_observer=None, source_resolver=None
         )
         handler_inst.stop.assert_called_once()
 

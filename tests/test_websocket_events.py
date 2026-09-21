@@ -327,7 +327,7 @@ class TestProcessWebsocketEvents:
 
         The server materialises the link and rebroadcasts the ``symlink``
         event to every peer except the sender, so remote-mode clients must
-        apply it for real-time symlink replication (parity with LAN mode).
+        apply it for real-time symlink replication (parity with P2P mode).
         Regression: the event used to be dropped as an invalid type, so
         symlinks only converged on the next full sync.
         """
@@ -440,7 +440,7 @@ class TestResync:
 
         call_count = 0
 
-        async def mock_sync(lan_mode: bool = False, **kwargs):
+        async def mock_sync(p2p_mode: bool = False, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count >= 2:

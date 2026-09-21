@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Tests for the client delta transfer orchestration (upload/download/LAN)."""
+"""Tests for the client delta transfer orchestration (upload/download/P2P)."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def client_config(monkeypatch, tmp_path):
         "SERVER_DELTA_ENABLED": True,
         "COMPRESSION_ENABLED": False,
         "SERVER_COMPRESSION_ENABLED": False,
-        "LAN_MODE": False,
+        "P2P_MODE": False,
         "HTTP_TIMEOUT": 10,
         "MAX_INBOUND_SIZE": 0,
     }
@@ -470,12 +470,12 @@ class TestDownloadDelta:
 
 
 # ---------------------------------------------------------------------------
-# LAN handlers (stdlib master server)
+# P2P handlers (stdlib master server)
 # ---------------------------------------------------------------------------
 
 
 class _FakeHandler:
-    """Minimal stand-in for LANRequestHandler (captures responses)."""
+    """Minimal stand-in for P2PRequestHandler (captures responses)."""
 
     def __init__(self, body: bytes = b""):
         from io import BytesIO
@@ -507,29 +507,29 @@ class _FakeHandler:
 
 
 @pytest.fixture
-def lan_config(monkeypatch, tmp_path):
-    from hsync_client import lan_delta as ld
+def p2p_config(monkeypatch, tmp_path):
+    from hsync_client import p2p_delta as ld
 
     cfg = {
         "LOCAL_BUCKET": str(tmp_path / "master"),
         "REMOTE_BUCKET": "bucket1",
         "DELTA_ENABLED": True,
         "COMPRESSION_ENABLED": False,
-        "LAN_KEY": None,
+        "P2P_KEY": None,
     }
     monkeypatch.setattr(ld, "CONFIG", cfg)
     Path(cfg["LOCAL_BUCKET"]).mkdir(parents=True, exist_ok=True)
-    ld.reset_delta_lan_state()
+    ld.reset_delta_p2p_state()
     yield cfg
-    ld.reset_delta_lan_state()
+    ld.reset_delta_p2p_state()
 
 
-class TestLanDelta:
-    def test_signatures_get(self, lan_config, tmp_path):
-        from hsync_client import lan_delta as ld
+class TestP2PDelta:
+    def test_signatures_get(self, p2p_config, tmp_path):
+        from hsync_client import p2p_delta as ld
 
         base = _base_bytes()
-        target = Path(lan_config["LOCAL_BUCKET"]) / "big.bin"
+        target = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
         target.write_bytes(base)
         handler = _FakeHandler()
         ld.handle_delta_signatures_get(handler, {"path": ["big.bin"]})
@@ -539,21 +539,21 @@ class TestLanDelta:
         assert body["block_size"] == BLOCK
         assert len(body["signatures"]) == 12
 
-    def test_signatures_get_disabled_is_404(self, lan_config, monkeypatch):
-        from hsync_client import lan_delta as ld
+    def test_signatures_get_disabled_is_404(self, p2p_config, monkeypatch):
+        from hsync_client import p2p_delta as ld
 
         monkeypatch.setitem(ld.CONFIG, "DELTA_ENABLED", False)
         handler = _FakeHandler()
         ld.handle_delta_signatures_get(handler, {"path": ["big.bin"]})
         assert handler.sent[0][0] == 404
 
-    def test_signatures_post_and_data_roundtrip(self, lan_config, tmp_path):
-        from hsync_client import lan_delta as ld
+    def test_signatures_post_and_data_roundtrip(self, p2p_config, tmp_path):
+        from hsync_client import p2p_delta as ld
 
         base = _base_bytes()
         new = bytearray(base)
         new[200:264] = b"L" * 64
-        target = Path(lan_config["LOCAL_BUCKET"]) / "big.bin"
+        target = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
         target.write_bytes(bytes(new))
 
         client_base = tmp_path / "client-base.bin"
@@ -590,12 +590,12 @@ class TestLanDelta:
         ld.handle_delta_data(again, "bucket1", token)
         assert again.sent[0][0] == 404
 
-    def test_signatures_post_not_worthwhile(self, lan_config, tmp_path):
-        from hsync_client import lan_delta as ld
+    def test_signatures_post_not_worthwhile(self, p2p_config, tmp_path):
+        from hsync_client import p2p_delta as ld
 
         new = _base_bytes(seed=1)
         base = _base_bytes(seed=2)
-        target = Path(lan_config["LOCAL_BUCKET"]) / "big.bin"
+        target = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
         target.write_bytes(new)
         client_base = tmp_path / "client-base.bin"
         client_base.write_bytes(base)
@@ -609,21 +609,21 @@ class TestLanDelta:
         assert resp_body["delta"] is False
         assert resp_body["reason"] == "too_many_changed_blocks"
 
-    def test_data_wrong_bucket_is_404(self, lan_config, tmp_path):
-        from hsync_client import lan_delta as ld
+    def test_data_wrong_bucket_is_404(self, p2p_config, tmp_path):
+        from hsync_client import p2p_delta as ld
 
         token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
         handler = _FakeHandler()
         ld.handle_delta_data(handler, "bucket2", token)
         assert handler.sent[0][0] == 404
 
-    def test_apply_roundtrip(self, lan_config, tmp_path):
-        from hsync_client import lan_delta as ld
+    def test_apply_roundtrip(self, p2p_config, tmp_path):
+        from hsync_client import p2p_delta as ld
 
         base = _base_bytes()
         new = bytearray(base)
         new[500:600] = b"A" * 100
-        target = Path(lan_config["LOCAL_BUCKET"]) / "big.bin"
+        target = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
         target.write_bytes(base)
 
         client_base = tmp_path / "client-base.bin"
@@ -652,11 +652,11 @@ class TestLanDelta:
         assert resp_body["sha256"] == sha256(bytes(new)).hexdigest()
         assert target.read_bytes() == bytes(new)
 
-    def test_apply_base_changed_is_409(self, lan_config, tmp_path):
-        from hsync_client import lan_delta as ld
+    def test_apply_base_changed_is_409(self, p2p_config, tmp_path):
+        from hsync_client import p2p_delta as ld
 
         base = _base_bytes()
-        target = Path(lan_config["LOCAL_BUCKET"]) / "big.bin"
+        target = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
         target.write_bytes(base)
         metadata = {
             "cid": "slave-1",

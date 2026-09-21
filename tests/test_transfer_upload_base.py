@@ -265,7 +265,7 @@ class TestUploadRetry:
 class TestUploadFileSymlinkSafety:
     """upload_file must never dereference a symlink whose target escapes the bucket.
 
-    This is the defence-in-depth guard for the realtime (watch/LAN slave) upload
+    This is the defence-in-depth guard for the realtime (watch/P2P slave) upload
     path, which builds the ``File`` directly from the watchdog event without the
     ``get_files_local`` scan guard.
     """

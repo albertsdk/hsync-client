@@ -11,7 +11,7 @@ Both transports compute the same display-ready pair — ``connected`` clients
 over ``total`` clients in the share, self included — and feed it here so the
 ``peers`` event has exactly one emission point:
 
-- LAN mode: :meth:`hsync_client.lan.LANSync.wait_for_discovery` polls mDNS and
+- P2P mode: :meth:`hsync_client.p2p.MdnsDiscovery.wait_for_discovery` polls mDNS and
   the master's WebSocket client count on every discovery iteration.
 - Server mode: the ``presence`` WebSocket frame broadcast by the server on
   every join/leave (``hsync_client.remote_websocket``).

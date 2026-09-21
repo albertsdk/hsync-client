@@ -9,36 +9,57 @@ implements it, plus client-only operational rules.
 
 | ADR | Client implementation |
 | --- | --------------------- |
-| [0001 server-vs-lan-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-lan-modes.md) | `run_sync` branch (`main_logic.py:539`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs LAN stack ([lan-mode.md](modules/lan-mode.md)) |
-| [0002 lan-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-lan-master-election.md) | `PeerManager._elect_master` (`lan.py:129`) → calls common `elect_master` |
+| [0001 server-vs-p2p-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-p2p-modes.md) | `run_sync` branch (`main_logic.py:539`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs P2P stack ([p2p-mode.md](modules/p2p-mode.md)) |
+| [0002 p2p-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-p2p-master-election.md) | `PeerManager._elect_master` (`p2p_peers.py / p2p_discovery_mdns.py:129`) → calls common `elect_master` |
 | [0003 tombstone-gossip](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
 | [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:109`) |
 | [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:170`); REST `X-Protocol-Version` (`utils.py`) — hard-fail on mismatch |
-| [0017 lan-slave-outbound-event-reliability](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0017-lan-slave-outbound-event-reliability.md) | `LANSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([lan-mode.md](modules/lan-mode.md)) |
+| [0017 p2p-slave-outbound-event-reliability](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0017-p2p-slave-outbound-event-reliability.md) | `P2PSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([p2p-mode.md](modules/p2p-mode.md)) |
 | [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py:989`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
-| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `lan_handler.run_lan_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `lan_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
+| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `p2p_handler.run_p2p_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `p2p_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
 | [0025 sqlite-external-state-store](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + `syncstate.db`); `HSYNC_STATE_DIR` |
-| [0030 lan-seeder-capacity-advertisement](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0030-lan-seeder-capacity-advertisement.md) | Seeder advertisement (`lan_websocket.py` `lan_websocket_client` handshake), master session storage (`lan_inventory.py` `begin_session(serve_slots=…)`/`session_serve_slots`), candidate echo (`lan_sources.py` `LanSourceService`), requester admission + busy-as-scheduling (`lan_sources.py` `acquire_slot`/`release_slot`, `transfer.py` `_parse_retry_after`), seeder `Retry-After` (`lan_server.py`) |
+| [0030 p2p-seeder-capacity-advertisement](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0030-p2p-seeder-capacity-advertisement.md) | Seeder advertisement (`p2p_websocket.py` `p2p_websocket_client` handshake), master session storage (`p2p_inventory.py` `begin_session(serve_slots=…)`/`session_serve_slots`), candidate echo (`p2p_sources.py` `P2PSourceService`), requester admission + busy-as-scheduling (`p2p_sources.py` `acquire_slot`/`release_slot`, `transfer.py` `_parse_retry_after`), seeder `Retry-After` (`p2p_server.py`) |
 
 LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
-in [`lan-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/lan-protocol.md) and maps to
-`pinning.py` + `ssl_utils.py` ([lan-mode.md](modules/lan-mode.md)).
+in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) and maps to
+`pinning.py` + `ssl_utils.py` ([p2p-mode.md](modules/p2p-mode.md)).
 
 ## Client-only operational rules
 - **Continuous/daemon mode is the default in both topologies**: the client
   runs indefinitely, retries an unreachable server forever (`run_sync`
   connectivity gate is non-fatal in continuous mode; `remote_connect`
   (`remote_websocket.py`) loops forever with full-jitter exponential
-  backoff), and LAN discovery waits indefinitely by default
+  backoff), and p2p discovery waits indefinitely by default
   (`DISCOVERY_TIMEOUT_DEFAULT = 0`).
   Continuous is the default and `--once` is the single
-  one-shot selector in both topologies (in LAN mode it runs one slave sync
+  one-shot selector in both topologies (in p2p mode it runs one slave sync
   cycle and exits; the master role stays continuous). Rationale: sync
   daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
   connectivity loss; schedulers want the explicit one-shot + exit-code
   contract.
 
-- **One device identity per installation (Syncthing model)**: LAN mode identifies
+- **A retired server role never answers a pooled connection (role handover)**:
+  the slave seeder and the master share the client's listen port, so on
+  promotion (`_start_slave_seeder` → master) `P2PServer.stop()` sets
+  `stopping` on the bounded server, releases the listener and calls
+  `close_active_connections()`; `P2PRequestHandler.parse_request` refuses any
+  request that lands on a `stopping` server with 503. Rationale: with
+  `daemon_threads` a keep-alive connection established while the process was a
+  seeder survives the handover and would otherwise be served by the retired
+  seeder handler — a master download (`filename`+`cid`, no `sha256`) was
+  rejected as an "Invalid seeder query" (400) and failover never resumed sync.
+  Regression: `tests/test_p2p_server_keepalive.py::TestRoleHandover` (unit) and
+  `tests/test_bb_p2p_advanced.py::TestMasterFailover::test_master_death_reelects_successor` (black-box).
+
+- **Guard abort diagnostics are synchronous**: the loguru sinks are
+  `enqueue=True`, so a message written immediately before `raise SystemExit`
+  can be lost (the queue drains after the process/stream teardown marks the
+  sink closed). The deletion-risk guard therefore also echoes its full
+  diagnostic through the synchronous stderr channel, the same channel the CLI
+  uses for other fatal errors. Regression:
+  `tests/test_bb_p2p_security.py::TestLanDeletionRiskGuard::test_download_only_without_yes_aborts_in_noninteractive`.
+
+- **One device identity per installation (Syncthing model)**: p2p mode identifies
   with the persistent device ID from `identity.py` (anchored in
   `HSYNC_DEVICE_DIR`), never a per-session random CID; remote mode keeps random
   session CIDs (echo suppression only — the API key is the identity there).
@@ -61,10 +82,10 @@ in [`lan-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   with the version metadata, with the deterministic SHA-256 fallback when a
   side lacks the field. Offline (no NTP answer) ⇒ offset 0 ⇒ hash fallback;
   sync never blocks.
-- **Mandatory TLS in LAN mode**: HTTPS/WSS only; no plaintext fallback
+- **Mandatory TLS in p2p mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
-- **Write-policy gate**: non-interactive write-capable LAN sync requires a LAN key
-  (`_check_lan_write_policy`, `main_logic.py:379`).
+- **Write-policy gate**: non-interactive write-capable LAN sync requires a p2p key
+  (`_check_p2p_write_policy`, `main_logic.py:379`).
 - **Mass-deletion guard (§12)**: bulk deletes pause the cycle
   (`_mass_deletion_blocked`, `sync.py:94`) unless explicitly allowed.
 - **Per-path serialization (§14)**: all transfers take `utils.path_lock`
@@ -72,7 +93,7 @@ in [`lan-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Failover via periodic staleness sweep**: a hard-crashed master sends no
   mDNS goodbye and no further announce, so election is also re-run on every
   discovery wake and on a slave WebSocket drop
-  (`PeerManager.reconcile_stale_peers`, `lan.py:430`), which demotes any peer
+  (`PeerManager.reconcile_stale_peers`, `p2p_peers.py / p2p_discovery_mdns.py:430`), which demotes any peer
   whose heartbeat is older than `HSYNC_PEER_TIMEOUT`. The peer timeout must be
   ≥ 2× `HSYNC_HEARTBEAT_INTERVAL` (enforced in `config.EnvSettings`) so a
   single missed announce never flaps a live peer; the survivor only demotes a

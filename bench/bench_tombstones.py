@@ -7,7 +7,7 @@
 """L1 — client tombstone wrapper micro-benchmark (temp bucket + temp state dir).
 
 Measures the client-side binding around the shared ``TombstoneStore``
-(:mod:`hsync_client.tombstones`), the deletion-propagation path of LAN mode:
+(:mod:`hsync_client.tombstones`), the deletion-propagation path of P2P mode:
 
 * ``get_tombstone_store`` — the cached store resolution;
 * ``get_payload`` — the JSON-serializable copy served/gossiped to the master;

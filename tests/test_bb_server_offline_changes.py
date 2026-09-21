@@ -35,7 +35,7 @@ from tests.conftest import (
     _wait_for,
     _wait_for_watcher_pipeline,
 )
-from tests.lan_helpers import (
+from tests.p2p_helpers import (
     _terminate,
     _wait_for_client_ready,
     _wait_for_file_gone,

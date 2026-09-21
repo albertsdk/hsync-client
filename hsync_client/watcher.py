@@ -52,7 +52,7 @@ from watchdog.events import (
 
 # Per-watch event filter for the inotify backend: every class maps to the
 # kernel mask bits its handler consumes, EXCEPT FileOpenedEvent and
-# FileClosedNoWriteEvent (deliberately omitted). A pure read — the LAN
+# FileClosedNoWriteEvent (deliberately omitted). A pure read — the P2P
 # master's own HTTP downloads above all — opens and closes bucket files
 # without writing, and the default mask would parse, queue and dispatch tens
 # of thousands of those no-op events per burst, flooding the watcher thread

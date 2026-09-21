@@ -2,7 +2,7 @@
 
 HSYNC supports two operating topologies. This page covers **Server Mode**.
 
-> For LAN P2P mode, see [Sync Modes — LAN P2P Mode](sync-modes-lan.md).
+> For p2p mode, see [Sync Modes — p2p Mode](sync-modes-p2p.md).
 
 ## Server Mode
 
@@ -22,7 +22,7 @@ hsync server server.example.com -b mybucket -p ~/Sync
 3. Performs an initial full sync (bidirectional by default).
 4. Enters continuous mode: monitors the local folder and receives real-time
    events from the server via WebSocket. If the server is unreachable at
-   startup, it keeps retrying forever (like LAN mode) instead of exiting.
+   startup, it keeps retrying forever (like p2p mode) instead of exiting.
 
 ### Sync Directions
 
@@ -40,7 +40,7 @@ Continuous mode is the **default**. The client runs as a daemon:
 - Changes are immediately uploaded to the server.
 - The WebSocket pushes remote changes to the client in real time.
 - If the server is unreachable, it retries the connection indefinitely
-  instead of exiting — matching LAN mode.
+  instead of exiting — matching p2p mode.
 
 ```bash
 hsync server server.example.com -b mybucket -p ~/Sync

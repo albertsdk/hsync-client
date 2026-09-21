@@ -1114,9 +1114,9 @@ class TestRemoteSyncNegative:
 
 
 # =============================================================================
-# Parity with the LAN black-box suite: file-size boundaries, symlink delete,
+# Parity with the P2P black-box suite: file-size boundaries, symlink delete,
 # bandwidth throttle, subdir, concurrent writers, tombstone catch-up.
-# Each mirrors a test_bb_lan_* scenario so the same replication behaviour is
+# Each mirrors a test_bb_p2p_* scenario so the same replication behaviour is
 # verified in client-server mode.
 # =============================================================================
 
@@ -1227,7 +1227,7 @@ class TestRemoteFilterPath:
         self, live_server, bb_bucket, local_dir, run_sync_once, tmp_path, bb_server_download
     ):
         # Given the server holds files in two subdirectories (uploaded by a first,
-        # unrestricted sync) — mirroring the LAN test where the master already
+        # unrestricted sync) — mirroring the P2P test where the master already
         # holds both subtrees before the slave filters
         (Path(local_dir) / "kept").mkdir()
         (Path(local_dir) / "kept" / "a.txt").write_bytes(b"in-kept\n")

@@ -3,7 +3,7 @@
 Server-mode configuration for connecting to a central HSYNC Server.
 
 > For shared options (sync, compression, delta, logging), see [Configuration](configuration.md).
-> For LAN P2P options, see [Configuration — LAN P2P Mode](configuration-lan.md).
+> For p2p options, see [Configuration — p2p Mode](configuration-p2p.md).
 
 ## Server Connection Options
 

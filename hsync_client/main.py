@@ -13,7 +13,7 @@ It uses Typer for CLI parsing and delegates to main_logic for execution.
 
 Usage:
     hsync server <hostname> -b <bucket> [options]   (https:// and port 9753 implied)
-    hsync lan -b <bucket> [options]
+    hsync p2p -b <bucket> [options]
 
 Environment Variables:
     HSYNC_SERVER: Server URL

@@ -323,7 +323,7 @@
         <label class="hsync-label">
             <span data-i18n="field.mode">Mode</span>
             <select name="HSYNC_MODE" id="HSYNC_MODE">
-                <option value="lan" data-i18n="mode.lan">LAN (peer-to-peer)</option>
+                <option value="p2p" data-i18n="mode.p2p">p2p (peer-to-peer)</option>
                 <option value="server" data-i18n="mode.server">Server (central HSYNC server)</option>
             </select>
         </label>
@@ -352,24 +352,32 @@
     </div>
 
     <!-- LAN -------------------------------------------------------- -->
-    <div class="hsync-section" id="hsync-lan-options">
-        <div class="hsync-legend" data-i18n="section.lan">LAN options</div>
-        <p class="hsync-note" data-i18n="note.lan_secure">LAN transport is always encrypted (HTTPS/WSS). The master keeps a persistent identity and peers pin its certificate on first contact.</p>
+    <div class="hsync-section" id="hsync-p2p-options">
+        <div class="hsync-legend" data-i18n="section.p2p">LAN options</div>
+        <p class="hsync-note" data-i18n="note.p2p_secure">LAN transport is always encrypted (HTTPS/WSS). The master keeps a persistent identity and peers pin its certificate on first contact.</p>
         <label class="hsync-label">
-            <span data-i18n="field.lan_key">LAN shared key (optional)</span>
-            <input type="password" name="HSYNC_LAN_KEY" id="HSYNC_LAN_KEY" autocomplete="new-password">
+            <span data-i18n="field.p2p_key">LAN shared key (optional)</span>
+            <input type="password" name="HSYNC_P2P_KEY" id="HSYNC_P2P_KEY" autocomplete="new-password">
         </label>
         <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_LAN_REQUIRE_PAIRING" id="HSYNC_LAN_REQUIRE_PAIRING">
-            <span data-i18n="field.lan_require_pairing">Strict pairing (confirm the master certificate out of band)</span>
+            <input type="checkbox" name="HSYNC_P2P_REQUIRE_PAIRING" id="HSYNC_P2P_REQUIRE_PAIRING">
+            <span data-i18n="field.p2p_require_pairing">Strict pairing (confirm the master certificate out of band)</span>
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.lan_group">LAN group (optional)</span>
-            <input type="text" name="HSYNC_LAN_GROUP" id="HSYNC_LAN_GROUP">
+            <span data-i18n="field.p2p_group">p2p group (optional)</span>
+            <input type="text" name="HSYNC_P2P_GROUP" id="HSYNC_P2P_GROUP">
         </label>
         <label class="hsync-label">
             <span data-i18n="field.discovery_timeout">Discovery timeout (s)</span>
             <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="1" max="600">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bootnode">Bootnode (optional)</span>
+            <input type="text" name="HSYNC_BOOTNODE" id="HSYNC_BOOTNODE" placeholder="boot.example.net">
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_UPNP_ENABLED" id="HSYNC_UPNP_ENABLED">
+            <span data-i18n="field.upnp">Map the master port with UPnP</span>
         </label>
     </div>
 
@@ -389,9 +397,9 @@
     <!-- Connect another device ------------------------------------- -->
     <div class="hsync-section">
         <div class="hsync-legend" data-i18n="section.connect">Connect another device</div>
-        <p class="hsync-note" id="hsync-connect-note-lan" data-i18n="note.connect_lan">Run this command on another device to connect it directly to this NAS. Replace the local folder with the folder to sync on that device.</p>
+        <p class="hsync-note" id="hsync-connect-note-p2p" data-i18n="note.connect_p2p">Run this command on another device to connect it directly to this NAS. Replace the local folder with the folder to sync on that device.</p>
         <p class="hsync-note" id="hsync-connect-note-server" data-i18n="note.connect_server" hidden>This NAS runs in server mode and connects to a central HSYNC server. To sync another device with the same data, point it at the same server URL and bucket.</p>
-        <textarea id="hsync-connect-command" class="hsync-connect-cmd" readonly rows="2" spellcheck="false">hsync lan -b 'hsync' -p '<local-folder>'</textarea>
+        <textarea id="hsync-connect-command" class="hsync-connect-cmd" readonly rows="2" spellcheck="false">hsync p2p -b 'hsync' -p '<local-folder>'</textarea>
         <div class="hsync-actions">
             <button type="button" id="hsync-btn-copy" class="hsync-btn" data-i18n="action.copy">Copy</button>
             <button type="button" id="hsync-btn-reveal-key" class="hsync-btn" data-i18n="action.reveal_key" hidden>Show key</button>
@@ -418,22 +426,22 @@
             <span data-i18n="field.delta_enabled">Enable delta transfer (rsync-style block sync)</span>
         </label>
         <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_LAN_PEER_DOWNLOAD" id="HSYNC_LAN_PEER_DOWNLOAD" checked>
-            <span data-i18n="field.lan_peer_download">Enable peer-assisted LAN downloads</span>
+            <input type="checkbox" name="HSYNC_P2P_PEER_DOWNLOAD" id="HSYNC_P2P_PEER_DOWNLOAD" checked>
+            <span data-i18n="field.p2p_peer_download">Enable peer-assisted p2p downloads</span>
         </label>
         <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES" id="HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES">
-            <span data-i18n="field.lan_unauthenticated_writes">Dangerous: allow LAN writes without a shared key</span>
+            <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES">
+            <span data-i18n="field.p2p_unauthenticated_writes">Dangerous: allow LAN writes without a shared key</span>
         </label>
-        <input type="hidden" name="HSYNC_LAN_PEER_READ_CAP" id="HSYNC_LAN_PEER_READ_CAP" value="2">
-        <input type="hidden" name="HSYNC_LAN_PEER_SOURCES_MAX" id="HSYNC_LAN_PEER_SOURCES_MAX" value="3">
+        <input type="hidden" name="HSYNC_P2P_PEER_READ_CAP" id="HSYNC_P2P_PEER_READ_CAP" value="2">
+        <input type="hidden" name="HSYNC_P2P_PEER_SOURCES_MAX" id="HSYNC_P2P_PEER_SOURCES_MAX" value="3">
         <label class="hsync-label">
             <span data-i18n="field.delta_min_size">Delta min file size - server (bytes, 0 = default)</span>
             <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE" id="HSYNC_DELTA_MIN_FILE_SIZE" min="0">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.delta_min_size_lan">Delta min file size - LAN (bytes, 0 = default)</span>
-            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE_LAN" id="HSYNC_DELTA_MIN_FILE_SIZE_LAN" min="0">
+            <span data-i18n="field.delta_min_size_p2p">Delta min file size - LAN (bytes, 0 = default)</span>
+            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE_P2P" id="HSYNC_DELTA_MIN_FILE_SIZE_P2P" min="0">
         </label>
         <label class="hsync-label">
             <span data-i18n="field.bw_upload">Max upload bandwidth (e.g. 1MB)</span>

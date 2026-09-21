@@ -23,7 +23,7 @@ Every operational failure raises :class:`DeltaTransferError` and the caller
 falls back to the full transfer within the same attempt; transient transport
 errors (``RequestException``/``ServerError``) propagate to the existing retry
 policy unchanged. This module works against both the FastAPI server and the
-stdlib LAN master: the wire contract is identical (``hsync_common.delta``).
+stdlib P2P master: the wire contract is identical (``hsync_common.delta``).
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from hsync_client.compression import (
 from hsync_client.config import (
     CONFIG,
     get_delta_min_file_size,
-    get_delta_min_file_size_lan,
+    get_delta_min_file_size_p2p,
 )
 from hsync_client.exceptions import ServerError
 from hsync_client.sync_state import get_base_hash, resolve_upload_version_fields
@@ -128,14 +128,14 @@ def _peer_supports_delta() -> bool:
 
 
 def _delta_min_size() -> int:
-    """Size floor for delta, higher on LAN (CPU-bound, bandwidth-rich).
+    """Size floor for delta, higher on P2P (CPU-bound, bandwidth-rich).
 
-    CLI flags (--delta-min-file-size / --delta-min-file-size-lan) take
-    precedence over the HSYNC_DELTA_MIN_FILE_SIZE[_LAN] env settings.
+    CLI flags (--delta-min-file-size / --delta-min-file-size-p2p) take
+    precedence over the HSYNC_DELTA_MIN_FILE_SIZE[_P2P] env settings.
     """
-    if CONFIG.get("LAN_MODE", False):
-        override = CONFIG.get("DELTA_MIN_FILE_SIZE_LAN")
-        return override if override is not None else get_delta_min_file_size_lan()
+    if CONFIG.get("P2P_MODE", False):
+        override = CONFIG.get("DELTA_MIN_FILE_SIZE_P2P")
+        return override if override is not None else get_delta_min_file_size_p2p()
     override = CONFIG.get("DELTA_MIN_FILE_SIZE")
     return override if override is not None else get_delta_min_file_size()
 

@@ -6,6 +6,22 @@ behaviour. Symptom → cause → remedy, with copy-paste commands.
 > The log labels referenced here (e.g. `[WATCHER ERROR]`) are catalogued in
 > [Log Labels](log-labels.md).
 
+## No peers are discovered
+
+**Symptom.** The client starts, logs `Discovery: mDNS on the local network` (or
+a bootnode banner), but the peer list stays empty and no sync happens.
+
+**Cause & remedy.**
+
+- Devices on **different networks** cannot see each other over mDNS → configure
+  a bootstrap node on every device: [Sync across networks](p2p-bootnode.md).
+- Same network but still nothing: mDNS is blocked (guest Wi-Fi, some container
+  or VPN interfaces) or devices sit on different VLANs. Run the mDNS plan
+  checklist in [Sync on the local network](p2p-lan.md).
+- Peers listed but no sync → different `HSYNC_P2P_KEY`, bucket or `--group`.
+- The log shows `Discovery: bootnode …` although mDNS was intended → a bootnode
+  is configured; unset `HSYNC_BOOTNODE` (or drop the positional).
+
 ## The file watcher degrades to polling (inotify limits)
 
 **Symptom.** The client log shows a parsable warning and the watcher switches

@@ -6,15 +6,15 @@ CI, no user-facing behaviour.
 
 ## Why two tiers (today)
 
-`hsync-client` is a sync daemon with a transport (LAN P2P master/slave +
+`hsync-client` is a sync daemon with a transport (p2p master/slave +
 server REST). This directory ships:
 
 * **L1 in-process micro-benchmarks** — the shared library primitives are already
   covered by `hsync-common/bench`, so here we measure only what the client adds
   on top of `hsync_common` (the wrappers in `sync_state`, `tombstones`,
   `arbitration`, `pinning`, `event_queue`, `autotune`, `utils`);
-* **L2 loopback wire benchmark of the LAN peer-download path** (ADR-0028/0030) —
-  a real `LANServer` seeder and master on loopback with real self-signed TLS,
+* **L2 loopback wire benchmark of the p2p peer-download path** (ADR-0028/0030) —
+  a real `P2PServer` seeder and master on loopback with real self-signed TLS,
   driven through the production `download_file` entry point. Added to size the
   peer path's fixed cost: the question it answers cannot be answered by mocks,
   because the cost under test is TLS handshake, keep-alive reuse, TOFU pin reads
@@ -25,11 +25,11 @@ The full-fleet load + soak tier (spawn the `hsync` binary as a multi-node fleet,
 wire-only) is still deferred, as are L4/L5. L4/L5 are added only when a concrete
 anomaly needs a cost breakdown / CPU saturation sweep.
 
-Out of scope by design: `scripts/benchmark_lan_transfers.py` (not in this
+Out of scope by design: `scripts/benchmark_p2p_transfers.py` (not in this
 directory) measures the master's *raw* HTTP overhead with `http.client`
 (keep-alive, TCP_NODELAY, compression throughput) — it never enters the client
 transfer path. The L2 scripts here measure the opposite end: the production
-requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
+requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 
 ## Files
 
@@ -45,10 +45,10 @@ requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
 | `bench/bench_tombstones.py` | `hsync_client/tombstones.py` wrapper scenarios |
 | `bench/bench_arbitration.py` | `hsync_client/arbitration.py` upload-gate scenarios |
 | `bench/bench_reconcile.py` | `hsync_client/sync.py` reconcile-core scenarios (decision leaves + bulk `get_sync_actions`) |
-| `bench/bench_lan_peer_transfer.py` | **L2** LAN peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback, cycle acceptance, and (`--latency`) the per-cycle TLS-handshake question behind an injected RTT |
-| `bench/bench_lan_sources.py` | **L2** source-lookup scenarios: eligibility filter, batch splitting, wire `POST /files/sources`, telemetry rank/record |
-| `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.lan_handler` / `import hsync_client.remote_websocket`), from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
-| `bench/lan_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`LANServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup`, `LatencyRelay` (unprivileged RTT injection that counts TLS handshakes) |
+| `bench/bench_p2p_peer_transfer.py` | **L2** p2p peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback, cycle acceptance, and (`--latency`) the per-cycle TLS-handshake question behind an injected RTT |
+| `bench/bench_p2p_sources.py` | **L2** source-lookup scenarios: eligibility filter, batch splitting, wire `POST /files/sources`, telemetry rank/record |
+| `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.p2p_handler` / `import hsync_client.remote_websocket`), from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
+| `bench/p2p_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`P2PServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup`, `LatencyRelay` (unprivileged RTT injection that counts TLS handshakes) |
 | `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline, **L1 scripts only**); `--json-out-dir` also dumps one `<script>.json` per scenario |
 | `bench/compare.py` | A/B comparator over two `--json-out` runs (file or dir); flags median regressions above a noise floor, `exit 1` on regression |
 
@@ -92,15 +92,15 @@ requester (`download_file`, `LanSourceResolver`, telemetry) and the peer seeder.
 | `tombstone_deletes_local(delete\|keep)` | `sync._tombstone_deletes_local` (`:1345`) |
 | `parse_advertised_version(valid\|absent\|malformed)` | `sync._parse_advertised_version` (`:1358`) — wire `version` decode |
 | `get_sync_actions(100 in_sync)` | `sync.get_sync_actions` (`:1466`, `persist_state=False`) — full steady-state diff (divisibile per 100 per il costo per-file) |
-| `identity(eligible_1KiB\|eligible_4KiB\|rejected_bad_hash)` | `lan_sources.LanSourceResolver._identity` (`hsync_client/lan_sources.py:573`) — the lookup gate; size is deliberately not part of it (ADR-0030), so a 1 KiB and a 4 KiB file take the same branch |
-| `batch_split(10\|100\|500\|1000)` | `lan_sources.LanSourceResolver._source_batches` (`:474`) — identity, byte-budget and 500-per-request splitting |
-| `source_lookup(100\|500)` | `lan_sources.LanSourceResolver.resolve` (`:522`) against a live master (`lan_server._handle_sources`, `hsync_client/lan_server.py:649`) |
-| `telemetry_rank(4)` / `telemetry_record_success` | `lan_sources.LanSourceTelemetry.rank` (`:330`), `record_success` (`:358`) |
+| `identity(eligible_1KiB\|eligible_4KiB\|rejected_bad_hash)` | `p2p_sources.P2PSourceResolver._identity` (`hsync_client/p2p_sources.py:573`) — the lookup gate; size is deliberately not part of it (ADR-0030), so a 1 KiB and a 4 KiB file take the same branch |
+| `batch_split(10\|100\|500\|1000)` | `p2p_sources.P2PSourceResolver._source_batches` (`:474`) — identity, byte-budget and 500-per-request splitting |
+| `source_lookup(100\|500)` | `p2p_sources.P2PSourceResolver.resolve` (`:522`) against a live master (`p2p_server._handle_sources`, `hsync_client/p2p_server.py:649`) |
+| `telemetry_rank(4)` / `telemetry_record_success` | `p2p_sources.P2PSourceTelemetry.rank` (`:330`), `record_success` (`:358`) |
 | `peer_cold_*` / `peer_warm_*` / `master_warm_*` | `transfer.download_file` (`hsync_client/transfer.py:471`) with a real seeder (`transfer._download_file_attempt`, `:1104`) vs the master fallback |
 | `peer_warm_4KiB_no_bookkeeping` | same, with `transfer._record_synced_base` patched out, to size the per-file sync-state write |
-| `seeder_readcap_batch(1\|2\|4\|8)` | `lan_server` seeder route + read-cap semaphore (`LANServer(peer_read_cap=…)`, `hsync_client/lan_server.py:518-527`) |
+| `seeder_readcap_batch(1\|2\|4\|8)` | `p2p_server` seeder route + read-cap semaphore (`P2PServer(peer_read_cap=…)`, `hsync_client/p2p_server.py:518-527`) |
 | `peer_cap2_fallback(4 files)` | production `download_file` under the same cap: peer `503` → failure record → master fallback |
-| `latency_peer_{0\|40}ms(24f,2\|8w)` | the production peer path driven through ONE long-lived `ThreadPoolExecutor`, behind `lan_peer_common.LatencyRelay` (counts accepted connections = TLS handshakes): the worker-to-seeder affinity question |
+| `latency_peer_{0\|40}ms(24f,2\|8w)` | the production peer path driven through ONE long-lived `ThreadPoolExecutor`, behind `p2p_peer_common.LatencyRelay` (counts accepted connections = TLS handshakes): the worker-to-seeder affinity question |
 | `latency_master_{0\|40}ms(24f,1\|4w)` | the production master path (API retargeted through the relay) on the same pool shape: prices bounded bulk parallelism against the sequential loop, the mobile sync's concurrency decision |
 
 ## Methodology
@@ -113,11 +113,11 @@ CIDs). State-dependent scenarios set a `HSYNC_STATE_DIR` override + a seeded
 `mean`/`p50`/`p99` plus `stdev`/`min`/`max`. Results are comparative (this
 machine, warm page cache), never production SLAs.
 
-L2 additions: `bench/lan_peer_common.py::measure_with_setup` runs per-sample setup
+L2 additions: `bench/p2p_peer_common.py::measure_with_setup` runs per-sample setup
 (dropping the destination, evicting this thread's HTTP session) outside the timed
-region; the harness patches the server-role `CONFIG` of `hsync_client.lan_server`
+region; the harness patches the server-role `CONFIG` of `hsync_client.p2p_server`
 so one process hosts both a seeder and a master with separate buckets, exactly as
-two processes would; `HSYNC_DEVICE_DIR` / `HSYNC_STATE_DIR` / `HSYNC_LAN_PIN_FILE`
+two processes would; `HSYNC_DEVICE_DIR` / `HSYNC_STATE_DIR` / `HSYNC_P2P_PIN_FILE`
 are pointed at the temp fixture so no real device identity, sync-state DB or pin
 file is touched, and every patch/env override is restored on exit. A wire sample
 costs 1–30 ms, so wire scenarios are capped (`--count` default 40; lookups capped
@@ -205,10 +205,10 @@ producing false positives. A scenario present in `before` but missing from
   (`local_version_for_compare` ~0.0035 + `get_base_hash` ~0.0020 = ~0.0055 ms),
   and `get_sync_actions(100 in_sync)` dropped ~24.6 → ~22.7 µs/file.
 
-## LAN peer download (`bench_lan_peer_transfer.py`, `bench_lan_sources.py`) — what the L2 coverage found
+## p2p peer download (`bench_p2p_peer_transfer.py`, `bench_p2p_sources.py`) — what the L2 coverage found
 
-Run: `bench_lan_peer_transfer.py --count 40` and `bench_lan_sources.py --count 2000`,
-loopback, real `LANServer` seeder (cap 2) + master, self-signed TLS, one Python
+Run: `bench_p2p_peer_transfer.py --count 40` and `bench_p2p_sources.py --count 2000`,
+loopback, real `P2PServer` seeder (cap 2) + master, self-signed TLS, one Python
 3.14 process (both roles share the CPU — a loopback figure is a comparative
 lower bound, not a Wi-Fi/LAN prediction).
 
@@ -228,7 +228,7 @@ lower bound, not a Wi-Fi/LAN prediction).
 * **The per-file eligibility filter itself is free** (`_identity` ~2.8 µs on every
   branch) and so is telemetry (`rank(4)` ~1.8 µs, `record_success` ~0.5 µs): the
   gate's cost is entirely the transfer-side connection behaviour behind it, not
-  the bookkeeping it skips. `bench_lan_sources.py` now measures the eligible
+  the bookkeeping it skips. `bench_p2p_sources.py` now measures the eligible
   1 KiB and 4 KiB branches plus the malformed one, so the scenario states the
   current size-independent policy instead of a threshold that no longer exists.
 * **The 4 KiB bookkeeping share is real but small**: patching out
@@ -240,7 +240,7 @@ lower bound, not a Wi-Fi/LAN prediction).
   at all — 5,000 small files ≈ 10 requests ≈ 160 ms total. Lookup cost can never
   justify a size threshold.
 * **The real hazard for small files is the seeder read cap.** With
-  `HSYNC_LAN_PEER_READ_CAP=2`, 1 and 2 concurrent requester workers get 40/40
+  `HSYNC_P2P_PEER_READ_CAP=2`, 1 and 2 concurrent requester workers get 40/40
   served and **0** 503s, but 4 workers produce ~20/40 and 8 workers ~24–26/40
   `503 busy` (p99 latency inflates by 1–2 orders of magnitude, ~0.1–1 s). Each 503
   used to cost `record_failure` → exponential cooldown (up to 60 s) → master
@@ -327,9 +327,9 @@ cd hsync-client
 # ... (one script per module; see bench/README.md)
 
 # L2 wire benchmark (standalone: not in run_all.py, baseline untouched)
-.venv/bin/python bench/bench_lan_peer_transfer.py --count 40 [--json-out FILE]
-.venv/bin/python bench/bench_lan_peer_transfer.py --count 6 --latency   # + handshake/RTT scenario
-.venv/bin/python bench/bench_lan_sources.py --count 2000 [--json-out FILE]
+.venv/bin/python bench/bench_p2p_peer_transfer.py --count 40 [--json-out FILE]
+.venv/bin/python bench/bench_p2p_peer_transfer.py --count 6 --latency   # + handshake/RTT scenario
+.venv/bin/python bench/bench_p2p_sources.py --count 2000 [--json-out FILE]
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary [--json-out FILE]

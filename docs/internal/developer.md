@@ -14,7 +14,7 @@ developers working on the HSYNC Client codebase.
 - [Compression Internals](#compression-internals)
 - [WebSocket Reconnection](#websocket-reconnection)
 - [Stdin Command Protocol](#stdin-command-protocol)
-- [LAN Peer Pairing Flow](#lan-peer-pairing-flow)
+- [p2p Peer Pairing Flow](#p2p-peer-pairing-flow)
 
 ---
 
@@ -36,11 +36,11 @@ graph LR
         stdin[stdin_commands.py]
 
         subgraph "LAN/"
-            lan[lan.py]
-            lan_server[lan_server.py]
+            lan[p2p.py]
+            p2p_server[p2p_server.py]
             multipart[multipart.py]
-            lan_websocket[lan_websocket.py]
-            lan_handler[lan_handler.py]
+            p2p_websocket[p2p_websocket.py]
+            p2p_handler[p2p_handler.py]
         end
 
         subgraph "models (from hsync-common)"
@@ -61,9 +61,9 @@ graph LR
     websocket --> transfer
     cli --> logger
     main --> lan
-    lan --> lan_server
-    lan --> lan_websocket
-    lan_websocket --> lan_handler
+    lan --> p2p_server
+    lan --> p2p_websocket
+    p2p_websocket --> p2p_handler
     transfer --> compression
 ```
 
@@ -121,13 +121,13 @@ For usage details, see [Configuration > Bandwidth Limiting](../configuration.md#
 ### Transfer Throughput Optimizations
 
 Transfers are optimized end-to-end; the effects are measurable with
-`scripts/benchmark_lan_transfers.py` (HTTP-level micro-benchmark against
-the LAN master — sequential requests run ~3× faster with keep-alive), and the
+`scripts/benchmark_p2p_transfers.py` (HTTP-level micro-benchmark against
+the p2p master — sequential requests run ~3× faster with keep-alive), and the
 peer-download half (exact-hash peer fetch vs master fallback, source lookup,
-seeder read cap) with `bench/bench_lan_peer_transfer.py` /
-`bench/bench_lan_sources.py` — see `bench/README.md`:
+seeder read cap) with `bench/bench_p2p_peer_transfer.py` /
+`bench/bench_p2p_sources.py` — see `bench/README.md`:
 
-- **HTTP/1.1 keep-alive on the LAN master** (`lan_server.py`): connections
+- **HTTP/1.1 keep-alive on the p2p master** (`p2p_server.py`): connections
   are reused across requests, so no TCP+TLS handshake is paid per file;
   every response is framed with an exact `Content-Length` and idle
   connections are reaped after 300 s.
@@ -135,7 +135,7 @@ seeder read cap) with `bench/bench_lan_peer_transfer.py` /
   small response body behind the peer's delayed ACK — a ~40 ms stall per
   response on persistent connections (24 vs 5500 req/s in the benchmark).
 - **Persistent worker pools**: the transfer executor and both realtime
-  pools (LAN slave ops, remote uploads) are process-wide singletons
+  pools (p2p slave ops, remote uploads) are process-wide singletons
   (`pools.py`), keeping per-thread keep-alive `requests.Session`s warm
   across sync cycles instead of paying a fresh TLS handshake per worker.
 - **Streaming compressed upload**: the zstd frame is built incrementally
@@ -191,7 +191,7 @@ Different thresholds balance CPU cost vs. bandwidth savings for each direction:
 |---------|-----------|-----------|
 | **Download** (Server→Client) | 10 KB | Server CPU is acceptable, clear benefit above this size |
 | **Upload** (Client→Server) | 32 KB | Client CPU is more precious, typical production threshold |
-| **LAN mode** | 100 KB | Local network is fast (1Gbps+), only compress large files |
+| **p2p mode** | 100 KB | Local network is fast (1Gbps+), only compress large files |
 
 ### Skipped Files
 
@@ -202,7 +202,7 @@ Compression is automatically skipped for:
 ### Protocol
 
 - Server informs client about compression support during WebSocket handshake
-- In LAN mode, peers advertise compression capability via mDNS
+- In p2p mode, peers advertise compression capability via mDNS
 
 For usage and configuration, see [Configuration > Compression](../configuration.md#compression).
 
@@ -258,9 +258,9 @@ already in the queue are filtered by the new direction immediately.
 > The desktop client (`hsync-desktop`) uses this protocol via the subprocess
 > stdin pipe to implement GUI controls like the sync direction selector.
 
-## LAN Peer Pairing Flow
+## p2p Peer Pairing Flow
 
-When two LAN peers discover each other for the first time, they establish trust
+When two p2p peers discover each other for the first time, they establish trust
 through a **Trust On First Use (TOFU)** model:
 
 ```mermaid
@@ -272,7 +272,7 @@ sequenceDiagram
     M-->>A: ② 200 OK + TLS certificate
 
     Note over A: ③ Record fingerprint of M's cert
-    Note over A:    in HSYNC_LAN_PIN_FILE (default ~/.local/state/hsync/lan_known_peers.json)
+    Note over A:    in HSYNC_P2P_PIN_FILE (default ~/.local/state/hsync/p2p_known_peers.json)
 
     A->>M: ④ Subsequent connections: verify fingerprint
     alt Fingerprint matches
@@ -285,7 +285,7 @@ sequenceDiagram
 ### Fingerprint pinning
 
 The certificate's SHA-256 fingerprint is stored in a local JSON file
-(`HSYNC_LAN_PIN_FILE`, default `~/.local/state/hsync/lan_known_peers.json`).
+(`HSYNC_P2P_PIN_FILE`, default `~/.local/state/hsync/p2p_known_peers.json`).
 On every subsequent connection, the presented certificate's fingerprint is
 checked against the pinned value. If it doesn't match, the connection is
 refused — this prevents man-in-the-middle attacks on the LAN.
@@ -303,6 +303,6 @@ multiple untrusted devices share the same network.
 - [Conflict Resolution](../conflict-resolution.md) — three-way merge algorithm and conflict handling.
 - [Architecture](architecture.md) — high-level system overview and data flows.
 - [Sync Flow](../sync-flow.md) — client-side sync flow.
-- [LAN Internals](lan-internals.md) — deep dive into the LAN protocol.
+- [p2p Internals](p2p-internals.md) — deep dive into the LAN protocol.
 - [Contributing](../../CONTRIBUTING.md) — development setup and guidelines.
 - [HSYNC Common docs](https://github.com/albertsdk/hsync-common/blob/main/docs/README.md) — shared models and protocol.

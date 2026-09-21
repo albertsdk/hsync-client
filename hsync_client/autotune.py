@@ -54,7 +54,7 @@ class NetClass(StrEnum):
     """Network class based on RTT."""
 
     UNKNOWN = "unknown"
-    LAN = "lan"
+    P2P = "p2p"
     BROADBAND = "broadband"
     MOBILE = "mobile"
 
@@ -184,7 +184,7 @@ def classify_network(rtt_ms: float | None) -> NetClass:
         return NetClass.MOBILE
     if rtt_ms > 50:
         return NetClass.BROADBAND
-    return NetClass.LAN
+    return NetClass.P2P
 
 
 # =============================================================================
@@ -230,7 +230,7 @@ def measure_bandwidth_active(
     *verify* controls TLS certificate verification (same semantics as
     ``requests``). When left at its default (``True``) the function falls back
     to :func:`hsync_client.utils.get_ssl_verify` so that late callers (e.g. the
-    LAN post-discovery refresh) benefit from the already-populated ``CONFIG``.
+    P2P post-discovery refresh) benefit from the already-populated ``CONFIG``.
     """
     try:
         from requests.exceptions import RequestException
@@ -241,7 +241,7 @@ def measure_bandwidth_active(
         return None
 
     # Resolve the effective verify value: an explicit override always wins;
-    # otherwise consult CONFIG via get_ssl_verify() so that the LAN refresh
+    # otherwise consult CONFIG via get_ssl_verify() so that the P2P refresh
     # path picks up --insecure / CA_CERT / fingerprint settings.
     effective_verify: bool | str = verify if verify is not True else get_ssl_verify()
 
@@ -433,7 +433,7 @@ def derive_managed_rtt_updates(rtt_ms: float, managed: set[str]) -> dict[str, in
     """Derive autotune-managed timeout/retry keys from a measured RTT.
 
     Only keys present in *managed* are included. Callers write the result onto
-    ``CONFIG`` (and, in LAN mode, the local config dict).
+    ``CONFIG`` (and, in P2P mode, the local config dict).
     """
     net_class = classify_network(rtt_ms)
     updates: dict[str, int | float] = {}

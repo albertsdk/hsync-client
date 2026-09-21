@@ -12,7 +12,7 @@ Resolves the process-wide offset used to compute ``corrected_mtime``:
 * **Server mode** — the configured server is the time authority:
   ``measure_clock_offset`` performs an NTP-like HTTP round-trip against
   ``/api/v1/time`` *before* the first sync advertises versions.
-* **LAN mode / placeholder URL** — no server is known yet, so a configurable
+* **P2P mode / placeholder URL** — no server is known yet, so a configurable
   list of public SNTP servers (``HSYNC_NTP_HOSTS``, comma-separated; defaults
   from ``hsync_common.constants.NTP_DEFAULT_HOSTS``) is probed **in the
   background** so discovery is never blocked. ``sync()`` freezes the offset
@@ -27,7 +27,7 @@ The offset is stored process-wide in
 transfer engine through ``correct_mtime``.
 
 Consumers: ``hsync_client.main_logic`` (server mode),
-``hsync_client.lan_handler`` (LAN mode).
+``hsync_client.p2p_handler`` (P2P mode).
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ from loguru import logger as log
 
 from hsync_client.utils import get_ssl_verify
 
-# Generation of the in-flight LAN NTP probe. A newer start_ntp_clock_offset_probe
+# Generation of the in-flight P2P NTP probe. A newer start_ntp_clock_offset_probe
 # call invalidates older workers so a slow probe cannot overwrite a fresher result.
 _probe_generation = 0
 _probe_lock = threading.Lock()
@@ -110,7 +110,7 @@ def _measure_ntp_offset(logger: Any) -> tuple[float, str | None]:
 def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
     """Start the SNTP offset probe on a background daemon thread.
 
-    LAN discovery must never wait on an external time source: the probe runs
+    P2P discovery must never wait on an external time source: the probe runs
     concurrently with discovery. A newer call invalidates in-flight workers
     (generation token) so a slow probe cannot overwrite a fresher result.
     ``sync()`` freezes the offset for one cycle, so a probe that finishes

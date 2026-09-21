@@ -9,7 +9,7 @@ import tempfile
 
 from hsync_common.compression import (
     MIN_SIZE_FOR_COMPRESSION,
-    MIN_SIZE_FOR_LAN,
+    MIN_SIZE_FOR_P2P,
     MIN_SIZE_FOR_UPLOAD,
     compress_file,
     decompress_data,
@@ -39,15 +39,15 @@ class TestShouldCompress:
         size = MIN_SIZE_FOR_UPLOAD + 1
         assert should_compress("file.txt", size, transfer_type="upload") is True
 
-    def test_small_file_lan_skipped(self):
-        """Files below LAN threshold are not compressed in LAN mode."""
-        size = MIN_SIZE_FOR_LAN - 1
-        assert should_compress("file.txt", size, is_lan=True) is False
+    def test_small_file_p2p_skipped(self):
+        """Files below P2P threshold are not compressed in P2P mode."""
+        size = MIN_SIZE_FOR_P2P - 1
+        assert should_compress("file.txt", size, is_p2p=True) is False
 
-    def test_large_file_lan_compressed(self):
-        """Files above LAN threshold are compressed in LAN mode."""
-        size = MIN_SIZE_FOR_LAN + 1
-        assert should_compress("file.txt", size, is_lan=True) is True
+    def test_large_file_p2p_compressed(self):
+        """Files above P2P threshold are compressed in P2P mode."""
+        size = MIN_SIZE_FOR_P2P + 1
+        assert should_compress("file.txt", size, is_p2p=True) is True
 
     def test_precompressed_extension_skipped(self):
         """Already compressed files are not compressed again."""
@@ -81,12 +81,12 @@ class TestShouldCompress:
         """Zero-size files are not compressed."""
         assert should_compress("file.txt", 0) is False
 
-    def test_lan_mode_overrides_transfer_type(self):
-        """LAN mode uses LAN threshold regardless of transfer_type."""
+    def test_p2p_mode_overrides_transfer_type(self):
+        """P2P mode uses P2P threshold regardless of transfer_type."""
         size = MIN_SIZE_FOR_UPLOAD + 1  # above upload threshold
-        # If it's also below LAN threshold, it should be skipped
-        if size < MIN_SIZE_FOR_LAN:
-            assert should_compress("file.txt", size, transfer_type="upload", is_lan=True) is False
+        # If it's also below P2P threshold, it should be skipped
+        if size < MIN_SIZE_FOR_P2P:
+            assert should_compress("file.txt", size, transfer_type="upload", is_p2p=True) is False
 
 
 class TestCompressDecompress:

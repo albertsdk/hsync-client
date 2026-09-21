@@ -41,18 +41,19 @@ parse_str($raw, $post);
 
 const KEYS = [
     'HSYNC_MODE', 'HSYNC_PATH', 'HSYNC_BUCKET', 'HSYNC_ROLE',
-    'HSYNC_LAN_KEY', 'HSYNC_LAN_REQUIRE_PAIRING',
-    'HSYNC_LAN_PEER_DOWNLOAD',
-    'HSYNC_LAN_PEER_READ_CAP', 'HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES',
-    'HSYNC_LAN_PEER_SOURCES_MAX',
-    'HSYNC_LAN_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
+    'HSYNC_P2P_KEY', 'HSYNC_P2P_REQUIRE_PAIRING',
+    'HSYNC_P2P_PEER_DOWNLOAD',
+    'HSYNC_P2P_PEER_READ_CAP', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES',
+    'HSYNC_P2P_PEER_SOURCES_MAX',
+    'HSYNC_P2P_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
     'HSYNC_SERVER', 'HSYNC_API_KEY',
     'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_NO_COMPRESSION',
-    'HSYNC_DELTA_ENABLED', 'HSYNC_DELTA_MIN_FILE_SIZE', 'HSYNC_DELTA_MIN_FILE_SIZE_LAN',
+    'HSYNC_DELTA_ENABLED', 'HSYNC_DELTA_MIN_FILE_SIZE', 'HSYNC_DELTA_MIN_FILE_SIZE_P2P',
     'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB',
     'HSYNC_MAX_INBOUND_SIZE_MB', 'HSYNC_VERBOSE',
     'HSYNC_AUTOTUNE', 'HSYNC_HTTP_TIMEOUT', 'HSYNC_RECONNECT_DELAY',
     'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
+    'HSYNC_BOOTNODE', 'HSYNC_UPNP_ENABLED',
     'HSYNC_NTP_HOSTS',
 ];
 
@@ -64,10 +65,15 @@ foreach (KEYS as $key) {
     // Defensive validation for fields with strict grammars.
     switch ($key) {
         case 'HSYNC_MODE':
-            if (!in_array($val, ['lan', 'server'], true)) $val = 'lan';
+            if (!in_array($val, ['p2p', 'server'], true)) $val = 'p2p';
             break;
         case 'HSYNC_ROLE':
             if (!in_array($val, ['auto', 'master', 'slave', 'never-master'], true)) $val = 'auto';
+            break;
+        case 'HSYNC_BOOTNODE':
+            // Bare hostname only (no scheme, no path, no host:port); empty is
+            // valid and means "mDNS-only discovery".
+            if ($val !== '' && !preg_match('/^[A-Za-z0-9.\-]+$/', $val)) $val = '';
             break;
         case 'HSYNC_BUCKET':
             if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/', $val)) $val = 'hsync';
@@ -77,9 +83,9 @@ foreach (KEYS as $key) {
         case 'HSYNC_MIN_FREE_DISK_MB':
         case 'HSYNC_MAX_INBOUND_SIZE_MB':
         case 'HSYNC_DELTA_MIN_FILE_SIZE':
-        case 'HSYNC_DELTA_MIN_FILE_SIZE_LAN':
-        case 'HSYNC_LAN_PEER_READ_CAP':
-        case 'HSYNC_LAN_PEER_SOURCES_MAX':
+        case 'HSYNC_DELTA_MIN_FILE_SIZE_P2P':
+        case 'HSYNC_P2P_PEER_READ_CAP':
+        case 'HSYNC_P2P_PEER_SOURCES_MAX':
         case 'HSYNC_HTTP_TIMEOUT':
         case 'HSYNC_RECONNECT_DELAY':
             if (!preg_match('/^[0-9]*$/', $val)) $val = '';
@@ -88,10 +94,11 @@ foreach (KEYS as $key) {
         case 'HSYNC_TRANSFER_RETRY_MAX_WAIT':
             if (!preg_match('/^[0-9]*\.?[0-9]*$/', $val)) $val = '';
             break;
+        case 'HSYNC_UPNP_ENABLED':
         case 'HSYNC_AUTOTUNE':
-        case 'HSYNC_LAN_REQUIRE_PAIRING':
-        case 'HSYNC_LAN_PEER_DOWNLOAD':
-        case 'HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES':
+        case 'HSYNC_P2P_REQUIRE_PAIRING':
+        case 'HSYNC_P2P_PEER_DOWNLOAD':
+        case 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES':
         case 'HSYNC_IGNORE_DELETE':
         case 'HSYNC_NO_COMPRESSION':
         case 'HSYNC_DELTA_ENABLED':

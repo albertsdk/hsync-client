@@ -6,7 +6,7 @@
 
 """Tests for the bounded per-path file-download fan-out in ``event_dispatch``.
 
-The LAN slave's WSS receive loop used to ``await`` every inbound file event's
+The P2P slave's WSS receive loop used to ``await`` every inbound file event's
 download inline, serializing the whole burst at ~60 files/s. With a
 ``file_download_semaphore`` on the context, distinct paths download
 concurrently while events for the SAME path stay strictly ordered; without

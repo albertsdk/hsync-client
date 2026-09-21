@@ -364,17 +364,17 @@ class TestConcurrency:
 
 
 class TestLANHandler:
-    """Tests for LAN handler functions."""
+    """Tests for P2P handler functions."""
 
     def test_run_preview_calls_preview_impl(self, tmp_path):
         """Test _run_preview calls the preview implementation."""
         from unittest.mock import patch
 
-        from hsync_client import lan_handler
+        from hsync_client import p2p_handler
 
         mock_log = MagicMock()
 
-        with patch("hsync_client.lan_handler._run_preview") as mock_preview_impl:
-            lan_handler._run_preview(mock_log)
+        with patch("hsync_client.p2p_handler._run_preview") as mock_preview_impl:
+            p2p_handler._run_preview(mock_log)
 
         mock_preview_impl.assert_called_once_with(mock_log)

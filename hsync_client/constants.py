@@ -184,6 +184,10 @@ MASS_DELETE_PERCENT_DEFAULT = 50  # percentage of total local files (0 = disable
 # runs without `--port`. Matches the hsync-server default (HSYNC_PORT).
 SERVER_DEFAULT_PORT = 9753
 
+# Default UDP port of the remote hsync-bootnode when `hsync p2p HOSTNAME` runs
+# without `--port` (the boot/1 channel is QUIC/UDP, not HTTPS/TCP).
+BOOTNODE_DEFAULT_PORT = 443
+
 # =============================================================================
 # CLI Validation Limits
 # =============================================================================
@@ -210,7 +214,7 @@ HTTP_TIMEOUT_MIN = 1
 HTTP_TIMEOUT_MAX = 300
 HTTP_TIMEOUT_DEFAULT = 30
 
-# LAN heartbeat / peer timeout defaults (seconds)
+# P2P heartbeat / peer timeout defaults (seconds)
 HEARTBEAT_INTERVAL = 5
 PEER_TIMEOUT = 15
 
@@ -224,7 +228,7 @@ HEARTBEAT_INTERVAL_MAX = 60
 PEER_TIMEOUT_MIN = 3
 PEER_TIMEOUT_MAX = 600
 
-# LAN discovery timeout (seconds). Default is 0 = "wait indefinitely",
+# P2P discovery timeout (seconds). Default is 0 = "wait indefinitely",
 # mirroring the client-server behaviour (the client keeps retrying the
 # connection forever by default). A finite positive value bounds how long
 # the client waits for the initial peer discovery before reporting no peer.
@@ -236,7 +240,7 @@ MIN_FREE_DISK_SPACE_MB_MAX = 100_000  # 100 GB
 MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
 
 # Maximum size of a single inbound file (MB), applied to downloads and to
-# received LAN uploads as an absolute cap on top of the peer-declared size:
+# received P2P uploads as an absolute cap on top of the peer-declared size:
 # the effective anti-bomb cap is min(declared, MAX_INBOUND_SIZE). Without an
 # absolute cap a hostile peer could declare an arbitrary size and expand a
 # decompression bomb up to it on disk before the SHA-256 check discards it.
@@ -246,19 +250,19 @@ MAX_INBOUND_SIZE_MB_MIN = 0  # 0 = disabled (cap = declared size only)
 MAX_INBOUND_SIZE_MB_MAX = 10_000_000  # 10 TB
 MAX_INBOUND_SIZE_MB_DEFAULT = 10_240  # 10 GB
 
-# LAN peer-assisted download defaults (ADR-0028/0029).
-LAN_PEER_DOWNLOAD_DEFAULT = True
-LAN_PEER_READ_CAP_DEFAULT = 2
-LAN_PEER_READ_CAP_MIN = 1
-LAN_PEER_READ_CAP_MAX = 32
-LAN_PEER_SOURCES_MAX_DEFAULT = 3
-LAN_PEER_SOURCES_MAX_MIN = 1
-LAN_PEER_SOURCES_MAX_MAX = 8
+# P2P peer-assisted download defaults (ADR-0028/0029).
+P2P_PEER_DOWNLOAD_DEFAULT = True
+P2P_PEER_READ_CAP_DEFAULT = 2
+P2P_PEER_READ_CAP_MIN = 1
+P2P_PEER_READ_CAP_MAX = 32
+P2P_PEER_SOURCES_MAX_DEFAULT = 3
+P2P_PEER_SOURCES_MAX_MIN = 1
+P2P_PEER_SOURCES_MAX_MAX = 8
 
 # Wire-supplied mtimes/ctimes may not exceed now + this skew: a peer asserting
 # far-future timestamps would win every mtime-based conflict resolution on
-# every other peer (conflict engineering). Consumers: hsync_client.lan_server,
-# hsync_client.lan_delta.
+# every other peer (conflict engineering). Consumers: hsync_client.p2p_server,
+# hsync_client.p2p_delta.
 MTIME_MAX_FUTURE_SKEW_SECONDS = 300
 
 # Per-worker memory budget for the parallel local-file scan/hash pool

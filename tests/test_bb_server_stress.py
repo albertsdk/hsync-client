@@ -172,7 +172,7 @@ class _SubprocessResult:
 def _subprocess_env(api_key: str, local_path: str) -> dict[str, str]:
     """Scrubbed subprocess environment for one server-mode client run.
 
-    Mirrors ``lan_helpers._lan_env``: every inherited ``HSYNC_*`` is dropped (the
+    Mirrors ``p2p_helpers._p2p_env``: every inherited ``HSYNC_*`` is dropped (the
     developer's own configuration must never leak into the run) and a per-run
     device/state isolation root derived from *local_path* is wired in, so the
     subprocess never touches the real device identity, locks or state dirs. The

@@ -1,5 +1,5 @@
 """
-Tests for hsync_client.pinning (LAN Trust-On-First-Use certificate store).
+Tests for hsync_client.pinning (P2P Trust-On-First-Use certificate store).
 """
 
 import json
@@ -44,7 +44,7 @@ class TestDefaultPinStorePath:
         monkeypatch.delenv(PIN_FILE_ENV, raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         path = default_pin_store_path()
-        assert path == tmp_path / "hsync" / "lan_known_peers.json"
+        assert path == tmp_path / "hsync" / "p2p_known_peers.json"
 
 
 class TestPinStore:
@@ -97,7 +97,7 @@ class TestPinStore:
         assert store.get("cid-1", "bucket") == "abc123"
 
     def test_check_and_record_missing_fingerprint_raises(self, tmp_path):
-        """A missing fingerprint violates the HTTPS-only LAN contract."""
+        """A missing fingerprint violates the HTTPS-only P2P contract."""
         store = PinStore(tmp_path / "pins.json")
         with pytest.raises(ValueError, match="fingerprint is mandatory"):
             store.check_and_record("cid-1", "bucket", None)

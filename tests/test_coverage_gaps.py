@@ -120,9 +120,9 @@ class TestPinningCoverageGaps:
         assert decision is PinDecision.changed
 
     def test_default_pin_store_path_env_override(self, tmp_path, monkeypatch):
-        """HSYNC_LAN_PIN_FILE overrides the default path."""
+        """HSYNC_P2P_PIN_FILE overrides the default path."""
         custom = tmp_path / "custom_pins.json"
-        monkeypatch.setenv("HSYNC_LAN_PIN_FILE", str(custom))
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(custom))
         assert default_pin_store_path() == custom
 
 

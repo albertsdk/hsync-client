@@ -8,6 +8,6 @@ Homepage: https://github.com/albertsdk/hsync-client
 Description: HSYNC - file synchronization client
  HSYNC keeps directories in sync across machines and NAS devices.
  .
- Supports LAN peer-to-peer (no cloud) and remote server modes
+ Supports p2p peer-to-peer (no cloud) and remote server modes
  with real-time file watching, compression, and bandwidth control.
 Depends: adduser, systemd

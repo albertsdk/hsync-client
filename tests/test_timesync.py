@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Tests for the LAN startup clock-offset probe (ADR-0023)."""
+"""Tests for the P2P startup clock-offset probe (ADR-0023)."""
 
 import threading
 from unittest.mock import patch

@@ -15,7 +15,7 @@ import re
 from functools import lru_cache
 from typing import Any, TypedDict, cast
 
-from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_LAN
+from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -26,16 +26,16 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL_MAX,
     HEARTBEAT_INTERVAL_MIN,
     HOSTNAME_PATTERN,
-    LAN_PEER_DOWNLOAD_DEFAULT,
-    LAN_PEER_READ_CAP_DEFAULT,
-    LAN_PEER_READ_CAP_MAX,
-    LAN_PEER_READ_CAP_MIN,
-    LAN_PEER_SOURCES_MAX_DEFAULT,
-    LAN_PEER_SOURCES_MAX_MAX,
-    LAN_PEER_SOURCES_MAX_MIN,
     MASS_DELETE_GUARD_DEFAULT,
     MASS_DELETE_PERCENT_DEFAULT,
     MASS_DELETE_THRESHOLD_DEFAULT,
+    P2P_PEER_DOWNLOAD_DEFAULT,
+    P2P_PEER_READ_CAP_DEFAULT,
+    P2P_PEER_READ_CAP_MAX,
+    P2P_PEER_READ_CAP_MIN,
+    P2P_PEER_SOURCES_MAX_DEFAULT,
+    P2P_PEER_SOURCES_MAX_MAX,
+    P2P_PEER_SOURCES_MAX_MIN,
     PEER_TIMEOUT,
     PEER_TIMEOUT_MAX,
     PEER_TIMEOUT_MIN,
@@ -90,6 +90,33 @@ class EnvSettings(BaseSettings):
             raise ValueError(f"Invalid server URL format: {v!r}")
         return v
 
+    @field_validator("bootnode", mode="before")
+    @classmethod
+    def _validate_bootnode_host(cls, v: str | None) -> str | None:
+        """Accept only a bare host: no scheme, no path, no ``host:port``.
+
+        The bootnode channel is QUIC/UDP (not HTTPS), so the ``https://``
+        validator used for ``HSYNC_SERVER`` does not apply; the port is a
+        separate CLI flag (``--port``), never part of the host.
+        """
+        if v is None:
+            return None
+        host = str(v).strip()
+        if not host:
+            return None
+        if "://" in host or "/" in host:
+            raise ValueError(
+                "HSYNC_BOOTNODE must be a bare hostname (the QUIC scheme is implied), "
+                "e.g. 'HSYNC_BOOTNODE=boot.example.net'"
+            )
+        if ":" in host and not (host.startswith("[") and host.endswith("]")):
+            raise ValueError("HSYNC_BOOTNODE must be a bare hostname; pass the port with --port.")
+        if not (
+            re.match(rf"^{HOSTNAME_PATTERN}$", host) or re.match(r"^\[[0-9A-Fa-f:.]+\]$", host)
+        ):
+            raise ValueError(f"Invalid bootnode host format: {v!r}")
+        return host
+
     api_key: SecretStr = Field(default=SecretStr(""), description="API key for authentication")
 
     # Sync Settings
@@ -100,12 +127,28 @@ class EnvSettings(BaseSettings):
         description="Periodic resync interval in seconds (0 = disabled, unset = default)",
     )
 
-    # LAN Mode Settings
-    lan_key: SecretStr | None = Field(default=None, description="LAN shared secret key")
-    lan_group: str | None = Field(default=None, description="LAN group name for peer filtering")
-    lan_port: int | None = Field(default=None, ge=1, le=65535, description="LAN port")
+    # P2P Mode Settings
+    p2p_key: SecretStr | None = Field(default=None, description="P2P shared secret key")
+    p2p_group: str | None = Field(default=None, description="P2P group name for peer filtering")
+    p2p_listen_port: int | None = Field(
+        default=None, ge=1, le=65535, description="P2P master TCP listen port"
+    )
+    bootnode: str | None = Field(
+        default=None,
+        description=(
+            "Bare bootnode host for cross-network discovery (QUIC/UDP, no scheme). "
+            "Unset = mDNS-only discovery"
+        ),
+    )
+    upnp_enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Map the master TCP port with UPnP. Unset = plan default (on only with "
+            "a bootnode); set explicitly to override"
+        ),
+    )
 
-    # LAN Discovery Settings
+    # P2P Discovery Settings
     discovery_timeout: int | None = Field(
         default=None,
         ge=0,
@@ -125,34 +168,34 @@ class EnvSettings(BaseSettings):
     )
     never_master: bool = Field(
         default=False,
-        description="Never become master in LAN mode (always remain a client/slave)",
+        description="Never become master in P2P mode (always remain a client/slave)",
     )
-    lan_require_pairing: bool = Field(
+    p2p_require_pairing: bool = Field(
         default=False,
         description=(
-            "Strict pairing: refuse a first-seen LAN master certificate until it is "
+            "Strict pairing: refuse a first-seen P2P master certificate until it is "
             "confirmed out of band (disables Trust-On-First-Use auto-pinning)"
         ),
     )
-    lan_peer_download: bool = Field(
-        default=LAN_PEER_DOWNLOAD_DEFAULT,
-        description="Enable peer-assisted downloads in LAN mode",
+    p2p_peer_download: bool = Field(
+        default=P2P_PEER_DOWNLOAD_DEFAULT,
+        description="Enable peer-assisted downloads in P2P mode",
     )
-    lan_peer_read_cap: int = Field(
-        default=LAN_PEER_READ_CAP_DEFAULT,
-        ge=LAN_PEER_READ_CAP_MIN,
-        le=LAN_PEER_READ_CAP_MAX,
+    p2p_peer_read_cap: int = Field(
+        default=P2P_PEER_READ_CAP_DEFAULT,
+        ge=P2P_PEER_READ_CAP_MIN,
+        le=P2P_PEER_READ_CAP_MAX,
         description="Maximum concurrent peer-seeder reads",
     )
-    lan_peer_sources_max: int = Field(
-        default=LAN_PEER_SOURCES_MAX_DEFAULT,
-        ge=LAN_PEER_SOURCES_MAX_MIN,
-        le=LAN_PEER_SOURCES_MAX_MAX,
+    p2p_peer_sources_max: int = Field(
+        default=P2P_PEER_SOURCES_MAX_DEFAULT,
+        ge=P2P_PEER_SOURCES_MAX_MIN,
+        le=P2P_PEER_SOURCES_MAX_MAX,
         description="Maximum unique peer sources attempted per file",
     )
-    lan_allow_unauthenticated_writes: bool = Field(
+    p2p_allow_unauthenticated_writes: bool = Field(
         default=False,
-        description="Explicitly allow dangerous no-key LAN mutation requests",
+        description="Explicitly allow dangerous no-key P2P mutation requests",
     )
 
     # Sync Settings
@@ -170,10 +213,10 @@ class EnvSettings(BaseSettings):
         ge=0,
         description="Minimum file size in bytes for delta transfer (remote mode)",
     )
-    delta_min_file_size_lan: int = Field(
-        default=DELTA_MIN_FILE_SIZE_LAN,
+    delta_min_file_size_p2p: int = Field(
+        default=DELTA_MIN_FILE_SIZE_P2P,
         ge=0,
-        description="Minimum file size in bytes for delta transfer in LAN mode",
+        description="Minimum file size in bytes for delta transfer in P2P mode",
     )
     ignore_patterns: str = Field(
         default="",
@@ -304,20 +347,30 @@ def get_resync() -> int | None:
     return get_env_settings().resync
 
 
-def get_lan_key() -> str | None:
-    """Get LAN shared secret key from environment."""
-    key = get_env_settings().lan_key
+def get_p2p_key() -> str | None:
+    """Get P2P shared secret key from environment."""
+    key = get_env_settings().p2p_key
     return key.get_secret_value() if key is not None else None
 
 
-def get_lan_group() -> str | None:
-    """Get LAN group name from environment."""
-    return get_env_settings().lan_group
+def get_p2p_group() -> str | None:
+    """Get P2P group name from environment."""
+    return get_env_settings().p2p_group
 
 
-def get_lan_port() -> int | None:
-    """Get LAN port from environment."""
-    return get_env_settings().lan_port
+def get_p2p_listen_port() -> int | None:
+    """Get P2P port from environment."""
+    return get_env_settings().p2p_listen_port
+
+
+def get_bootnode() -> str | None:
+    """Get the bare bootnode host from ``HSYNC_BOOTNODE`` (None = mDNS plan)."""
+    return get_env_settings().bootnode
+
+
+def get_upnp_enabled() -> bool | None:
+    """Explicit UPnP override from ``HSYNC_UPNP_ENABLED`` (None = plan default)."""
+    return get_env_settings().upnp_enabled
 
 
 def get_discovery_timeout() -> int | None:
@@ -345,29 +398,29 @@ def get_never_master() -> bool:
     return get_env_settings().never_master
 
 
-def get_lan_require_pairing() -> bool:
+def get_p2p_require_pairing() -> bool:
     """Get strict-pairing mode (out-of-band cert confirmation) from environment."""
-    return get_env_settings().lan_require_pairing
+    return get_env_settings().p2p_require_pairing
 
 
-def get_lan_peer_download() -> bool:
-    """Get whether LAN peer-assisted download is enabled."""
-    return get_env_settings().lan_peer_download
+def get_p2p_peer_download() -> bool:
+    """Get whether P2P peer-assisted download is enabled."""
+    return get_env_settings().p2p_peer_download
 
 
-def get_lan_peer_read_cap() -> int:
+def get_p2p_peer_read_cap() -> int:
     """Get the peer seeder's concurrent read cap."""
-    return get_env_settings().lan_peer_read_cap
+    return get_env_settings().p2p_peer_read_cap
 
 
-def get_lan_peer_sources_max() -> int:
+def get_p2p_peer_sources_max() -> int:
     """Get the maximum peer CIDs attempted for one file."""
-    return get_env_settings().lan_peer_sources_max
+    return get_env_settings().p2p_peer_sources_max
 
 
-def get_lan_allow_unauthenticated_writes() -> bool:
-    """Get the explicit dangerous opt-in for keyless LAN writes."""
-    return get_env_settings().lan_allow_unauthenticated_writes
+def get_p2p_allow_unauthenticated_writes() -> bool:
+    """Get the explicit dangerous opt-in for keyless P2P writes."""
+    return get_env_settings().p2p_allow_unauthenticated_writes
 
 
 def get_ignore_delete() -> bool:
@@ -390,9 +443,9 @@ def get_delta_min_file_size() -> int:
     return get_env_settings().delta_min_file_size
 
 
-def get_delta_min_file_size_lan() -> int:
-    """Get the minimum file size for delta transfer in LAN mode."""
-    return get_env_settings().delta_min_file_size_lan
+def get_delta_min_file_size_p2p() -> int:
+    """Get the minimum file size for delta transfer in P2P mode."""
+    return get_env_settings().delta_min_file_size_p2p
 
 
 def get_ignore_patterns() -> list[str]:
@@ -532,34 +585,40 @@ class HsyncConfig(TypedDict):
     HTTP_TIMEOUT: int
     # Maximum wait timeout for file stability in seconds
     MAX_WAIT_TIMEOUT: int
-    # LAN P2P mode flag
-    LAN_MODE: bool
-    # LAN port for master server
-    LAN_PORT: int
-    # Discovery timeout in seconds for LAN mode (0 = wait indefinitely)
+    # P2P P2P mode flag
+    P2P_MODE: bool
+    # P2P port for master server
+    P2P_LISTEN_PORT: int
+    # Discovery timeout in seconds for P2P mode (0 = wait indefinitely)
     DISCOVERY_TIMEOUT: int
-    # Heartbeat interval in seconds for LAN mode
+    # Heartbeat interval in seconds for P2P mode
     HEARTBEAT_INTERVAL: int
-    # Peer timeout in seconds for LAN mode
+    # Peer timeout in seconds for P2P mode
     PEER_TIMEOUT: int
-    # LAN shared secret key for authentication (None = no auth)
-    LAN_KEY: str | None
-    # LAN group name for peer filtering (None = no filtering)
-    LAN_GROUP: str | None
+    # P2P shared secret key for authentication (None = no auth)
+    P2P_KEY: str | None
+    # P2P group name for peer filtering (None = no filtering)
+    P2P_GROUP: str | None
     # One-shot run: a single sync cycle then exit (False = continuous, the default)
     ONE_SHOT: bool
-    # Force this client to be master in LAN mode
-    LAN_FORCE_MASTER: bool
-    # Never let this client become master in LAN mode (always client/slave)
-    LAN_NEVER_MASTER: bool
+    # Force this client to be master in P2P mode
+    P2P_FORCE_MASTER: bool
+    # Never let this client become master in P2P mode (always client/slave)
+    P2P_NEVER_MASTER: bool
     # Strict pairing: refuse a first-seen master cert until confirmed out of band
-    LAN_REQUIRE_PAIRING: bool
+    P2P_REQUIRE_PAIRING: bool
     # Peer-assisted download requester/seeder controls
-    LAN_PEER_DOWNLOAD: bool
-    LAN_PEER_READ_CAP: int
-    LAN_PEER_SOURCES_MAX: int
+    P2P_PEER_DOWNLOAD: bool
+    P2P_PEER_READ_CAP: int
+    P2P_PEER_SOURCES_MAX: int
+    # Bootnode host for cross-network discovery (None = mDNS-only plan)
+    BOOTNODE: str | None
+    # UDP (QUIC) port of the remote bootnode
+    BOOTNODE_PORT: int
+    # Map the master TCP port with UPnP (plan default: on only with a bootnode)
+    UPNP_ENABLED: bool
     # Dangerous explicit opt-in: permit keyless mutation requests
-    LAN_ALLOW_UNAUTHENTICATED_WRITES: bool
+    P2P_ALLOW_UNAUTHENTICATED_WRITES: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Ignore file deletion events (backup mode)
@@ -575,9 +634,9 @@ class HsyncConfig(TypedDict):
     # CLI override for the minimum file size for delta transfer, remote mode
     # (None = use HSYNC_DELTA_MIN_FILE_SIZE / built-in default)
     DELTA_MIN_FILE_SIZE: int | None
-    # CLI override for the minimum file size for delta transfer, LAN mode
-    # (None = use HSYNC_DELTA_MIN_FILE_SIZE_LAN / built-in default)
-    DELTA_MIN_FILE_SIZE_LAN: int | None
+    # CLI override for the minimum file size for delta transfer, P2P mode
+    # (None = use HSYNC_DELTA_MIN_FILE_SIZE_P2P / built-in default)
+    DELTA_MIN_FILE_SIZE_P2P: int | None
     # Sync direction: "bidirectional", "upload-only", or "download-only"
     SYNC_DIRECTION: str
     # Maximum upload bandwidth in bytes per second (None = unlimited)
@@ -617,7 +676,7 @@ class HsyncConfig(TypedDict):
     # Cached storage type from autotune probes (set at runtime for per-cycle refresh)
     AUTOTUNE_STORAGE_TYPE: str
     # Tuning keys resolved from autotune/default at startup (not CLI/env) —
-    # the LAN post-discovery refresh may re-derive only these
+    # the P2P post-discovery refresh may re-derive only these
     AUTOTUNE_MANAGED_KEYS: list[str]
 
 

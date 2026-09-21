@@ -19,15 +19,15 @@ hsync server server.example.com -b docs --once
 Without `--once` the client keeps running and retries an unreachable server
 forever, so schedulers must always pass `--once`.
 
-In **LAN P2P Mode** the same `--once` flag runs one slave sync cycle and
+In **p2p Mode** the same `--once` flag runs one slave sync cycle and
 exits. Schedulers run non-interactively, so a write-capable LAN run must carry
-the shared key (a keyless LAN is read-only):
+the shared key (a keyless p2p is read-only):
 
 ```bash
-HSYNC_LAN_KEY="shared-secret" hsync lan -b docs -p ~/Sync --once
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b docs -p ~/Sync --once
 ```
 
-> **Note:** the LAN master role is inherently continuous (it must stay
+> **Note:** the p2p master role is inherently continuous (it must stay
 > available to serve peers). One-shot LAN runs apply to the slave side:
 > keep the master running and start the slave with `--once`.
 
@@ -134,12 +134,12 @@ Notes:
 
 ### LAN one-shot via cron
 
-Schedules a slave that syncs against the LAN master and exits (exit `5`
+Schedules a slave that syncs against the p2p master and exits (exit `5`
 means "no peer found"). A finite `--discovery-timeout` bounds the wait for
 the first peer (the default is to wait indefinitely):
 
 ```cron
-0 2 * * * hsyncuser HSYNC_LAN_KEY="shared-secret" hsync lan -b shared \
+0 2 * * * hsyncuser HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared \
     -p /data/shared --once --discovery-timeout 30 -y
 ```
 
@@ -233,5 +233,5 @@ systemctl list-timers hsync-documents.timer
 
 - [CLI Options](configuration.md) — full reference of every flag.
 - [Sync Modes](sync-modes.md) — one-shot vs continuous watch.
-- [LAN Mode](lan-mode.md) — peer discovery and one-shot `--once` runs.
+- [p2p Mode](p2p-mode.md) — peer discovery and one-shot `--once` runs.
 - [Server Mode](server-mode.md) — server-mode setup.

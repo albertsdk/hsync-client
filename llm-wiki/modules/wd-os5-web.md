@@ -14,6 +14,14 @@ logic.
 | `Apkg/web/app.js` | controller: load/persist config, daemon service, log viewer, i18n, connect-command generator |
 | `Apkg/web/config_get.php` | returns the whitelisted `HSYNC_*` keys from `hsync.env` as JSON |
 | `Apkg/web/config_set.php` | writes the whitelisted keys back atomically (POSIX-quoted) |
+
+The p2p section exposes the bootnode field (`HSYNC_BOOTNODE`, bare host) and the
+UPnP toggle (`HSYNC_UPNP_ENABLED`); both are whitelisted in `config_get.php` /
+`config_set.php` (with host/boolean validation) and carried by `install.sh` /
+exported by `start.sh`. The connect-command builder prefixes
+`HSYNC_BOOTNODE='<host>'` so the other device joins the same discovery plan. The
+`HSYNC_MODE` value is `p2p` (not `lan`): `start.sh` maps it to the `p2p`
+subcommand, and UI + PHP validation agree.
 | `Apkg/web/service.php` | start/stop/restart/status of the daemon |
 | `Apkg/web/log_get.php` | incremental tail of `hsync.log` |
 | `Apkg/web/i18n/{en,it,de,es,fr}.json` | lightweight dictionary; `app.js` `t()` falls back to the key name |
@@ -29,7 +37,7 @@ second device to join the sync group coordinated by the NAS. The command is
 shown in a readonly `#hsync-connect-command` textarea (not `<code>`: the WD
 dashboard / remotewd injector can strip or hide `code` contents). It is
 recomputed live from the form fields (`#HSYNC_MODE`, `#HSYNC_BUCKET`,
-`#HSYNC_LAN_GROUP`, `#HSYNC_LAN_KEY`) on `input`/`change`/`keyup` — delegated
+`#HSYNC_P2P_GROUP`, `#HSYNC_P2P_KEY`) on `input`/`change`/`keyup` — delegated
 on `document` so they survive dashboard node replacement (`app.js:396`) — and
 on mode switches (`syncModeVisibility`), and re-applied on delayed timeouts so
 a post-inject DOM replace cannot leave the field empty. After a successful
@@ -39,10 +47,10 @@ a post-inject DOM replace cannot leave the field empty. After a successful
 `true`/`false`, invalid numerics → empty), so the section always reflects what
 `hsync.env` actually contains, not just the pre-save form values.
 
-Scope: **LAN mode only**. In server mode the NAS is a client of a central
+Scope: **p2p mode only**. In server mode the NAS is a client of a central
 `hsync-server`, so the section shows an explanatory note instead of a command.
 
-Only connection-matching fields are emitted — bucket, mode, group, LAN key.
+Only connection-matching fields are emitted — bucket, mode, group, p2p key.
 Per-device sync behaviour and the NAS role are omitted: continuous mode is
 the default in both LAN and server mode, and master election resolves the
 remote role automatically. The LAN

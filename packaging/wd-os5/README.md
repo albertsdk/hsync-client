@@ -127,7 +127,7 @@ transport hub, not a conflict authority) and **ignores client-side
 deletions**, so the backup never loses files because a source host removed
 them. Adjust from the UI for other use cases.
 
-The LAN transport is **HTTPS/WSS-only** (protocol `lan/1`): the master serves
+The LAN transport is **HTTPS/WSS-only** (protocol `p2p/1`): the master serves
 over TLS with a persistent self-signed identity and advertises its certificate
 fingerprint, which slaves pin (Trust-On-First-Use). There is no plain-HTTP
 option to configure.
@@ -135,17 +135,19 @@ option to configure.
 | UI field            | CLI flag                                       | Default                          |
 | ------------------- | ---------------------------------------------- | -------------------------------- |
 | Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
-| Mode                | `hsync lan` vs `hsync server <hostname>`      | LAN                              |
+| Mode                | `hsync p2p` vs `hsync server <hostname>`      | LAN                              |
 | Role                | `--force-master` + `--sync-direction`          | Master (NAS coordinates the group) |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
-| LAN shared key      | `HSYNC_LAN_KEY` env var                        | random 192-bit value generated at install |
+| LAN shared key      | `HSYNC_P2P_KEY` env var                        | random 192-bit value generated at install |
 | Strict pairing      | `--require-pairing`                            | off                              |
-| Peer-assisted LAN downloads | `--no-peer-download` (when disabled)    | enabled                          |
+| Peer-assisted p2p downloads | `--no-peer-download` (when disabled)    | enabled                          |
 | Unauthenticated LAN writes | `--allow-unauthenticated-writes`          | disabled                         |
-| Seeder read cap     | `HSYNC_LAN_PEER_READ_CAP`                      | `2`                              |
-| Peer attempts       | `HSYNC_LAN_PEER_SOURCES_MAX`                    | `3`                              |
+| Seeder read cap     | `HSYNC_P2P_PEER_READ_CAP`                      | `2`                              |
+| Peer attempts       | `HSYNC_P2P_PEER_SOURCES_MAX`                    | `3`                              |
 | Group               | `--group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
+| Bootnode (optional) | `HSYNC_BOOTNODE` env var                       | _empty_ (discovery stays on the local network; set the same host on every device) |
+| UPnP port mapping   | `HSYNC_UPNP_ENABLED` env var                   | `true` (only effective with a bootnode) |
 | Server URL          | `HSYNC_SERVER` env var                         | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
 | Resync interval     | `-i / --interval`                              | `0` (off)                        |
@@ -154,7 +156,7 @@ option to configure.
 | Compression         | `--no-compression`                             | enabled                          |
 | Delta transfer      | `HSYNC_DELTA_ENABLED`                          | enabled                          |
 | Delta min size      | `HSYNC_DELTA_MIN_FILE_SIZE`                    | `262144` (256 KB)                |
-| Delta min size LAN  | `HSYNC_DELTA_MIN_FILE_SIZE_LAN`                | `1048576` (1 MB)                 |
+| Delta min size p2p  | `HSYNC_DELTA_MIN_FILE_SIZE_P2P`                | `1048576` (1 MB)                 |
 | NTP hosts           | `HSYNC_NTP_HOSTS` env var                      | `pool.ntp.org,time.cloudflare.com,time.google.com` (probed in order; used by the client for LAN time synchronisation / conflict tie-break) |
 | Min free disk space | `--min-free-disk-space`                        | service default                  |
 | Max inbound size    | `--max-inbound-size`                          | service default                  |
@@ -180,7 +182,7 @@ The role selector maps to the existing CLI primitives:
 
 ## Connect another device
 
-When the NAS runs in **LAN mode**, the web UI shows a live-generated
+When the NAS runs in **p2p mode**, the web UI shows a live-generated
 `hsync` command under a **Connect another device** section. Run that command
 on another device to join the sync group coordinated by the NAS instead of
 assembling the flags by hand.
@@ -193,7 +195,7 @@ such as an invalid bucket or boolean fields), so the command always matches
 what the NAS runs with:
 
 ```
-HSYNC_LAN_KEY='<masked>' hsync lan -b '<bucket>' -p '<local-folder>' [--group '<group>']
+HSYNC_P2P_KEY='<masked>' hsync p2p -b '<bucket>' -p '<local-folder>' [--group '<group>']
 ```
 
 - `<bucket>` and `--group` mirror the NAS settings so the peer can find the

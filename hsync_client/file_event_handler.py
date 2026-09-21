@@ -5,10 +5,10 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Base watchdog handler shared by Remote sync and LAN master.
+Base watchdog handler shared by Remote sync and P2P master.
 
 ``RemoteFileEventHandler`` (push to central server over HTTP/WebSocket)
-and ``LANMasterFileEventHandler`` (broadcast metadata over LAN WebSocket)
+and ``P2PMasterFileEventHandler`` (broadcast metadata over P2P WebSocket)
 both observe the local bucket via the same watchdog events. The bulk of
 that logic — hidden-path filtering, directory rename normalisation, file
 debouncing on platforms without ``on_closed`` — is identical. This module
@@ -18,7 +18,7 @@ points so each transport plugs in its own behaviour:
 * ``_broadcast_event(event, src_abs_path, dst_abs_path)`` sends event
   metadata to peers/server.
 * ``_on_file_ready(file, src_path)`` is invoked once a file's bytes are
-  ready to propagate; Remote uploads via HTTP, LAN master broadcasts a
+  ready to propagate; Remote uploads via HTTP, P2P master broadcasts a
   ``modified`` event so slaves can pull.
 """
 
@@ -87,7 +87,7 @@ def split_stale_deletes(
     marker outlives the deletion its premise refers to.
 
     Consumers: ``BaseFileEventHandler._flush_pending_deletes`` (master/remote
-    broadcast) and ``LANSlaveFileEventHandler._flush_pending_deletes`` (slave
+    broadcast) and ``P2PSlaveFileEventHandler._flush_pending_deletes`` (slave
     delete requests to the master).
     """
     valid: list[tuple[str, bool]] = []
@@ -118,7 +118,7 @@ DEDUP_MAX_ENTRIES: int = 10_000
 
 
 class BaseFileEventHandler(FileSystemEventHandler):
-    """Common watchdog handler shared by Remote sync and LAN master."""
+    """Common watchdog handler shared by Remote sync and P2P master."""
 
     # Cache of resolved ``(prefix, name) -> label`` pairs. ``resolve_label``
     # is deterministic and the key space is tiny (both prefixes × a handful
@@ -154,7 +154,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         """Return the originator CID for a filesystem event, if known.
 
         The base implementation returns ``None`` (no origin attribution).
-        The LAN master overrides this to peek the inbound-origin map so the
+        The P2P master overrides this to peek the inbound-origin map so the
         log line can attribute the event to the peer that triggered it via
         the HTTP API. The CID is *not* consumed here: the subsequent
         ``_broadcast_event`` still needs it for echo suppression.
@@ -272,7 +272,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         the content hash, so the regular content dedup would discard it. This
         hook lets each transport propagate the permission-only change as a
         normal ``modified`` event: the Remote handler uploads the file (the
-        server applies the new permissions on its same-SHA branch) and the LAN
+        server applies the new permissions on its same-SHA branch) and the P2P
         master broadcasts the updated ``File`` so slaves converge.
         """
         raise NotImplementedError
@@ -283,7 +283,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         Content and mode are identical, so the regular content dedup would
         discard it. This hook lets each transport propagate the new mtime: the
         Remote handler pushes a metadata-only upload (the server applies the
-        mtime on its same-SHA branch) and the LAN master broadcasts the updated
+        mtime on its same-SHA branch) and the P2P master broadcasts the updated
         ``File`` so slaves converge on the mtime.
         """
         raise NotImplementedError
@@ -291,7 +291,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
         """Called after a non-hidden deletion has been observed and broadcast.
 
-        Default no-op. The LAN master overrides this to record a deletion
+        Default no-op. The P2P master overrides this to record a deletion
         marker (tombstone); the Remote handler leaves it unimplemented because
         the central server records tombstones itself.
         """
@@ -854,7 +854,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         removed directory is present in the buffer. Any path covered by a
         deleted ancestor directory is folded into that ancestor's single
         recursive ``deleted`` event (one message instead of N+1). Folded
-        FILE paths still pass through :meth:`_on_deleted` so the LAN master
+        FILE paths still pass through :meth:`_on_deleted` so the P2P master
         records their tombstones; folded directory paths need no marker
         (directories never carry tombstones).
 
@@ -863,7 +863,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         (``rm`` + immediate rewrite of the same name — an ordinary atomic
         writer pattern). That delete is stale: the re-creation already
         propagated on its own event, and broadcasting the delete would wipe
-        the fresh file on every peer — and, through the LAN delete echo, on
+        the fresh file on every peer — and, through the P2P delete echo, on
         the source itself. The ancestor-folding prefixes are built from the
         surviving entries, so a re-created directory never swallows the
         individual deletes of genuinely removed descendants.

@@ -23,7 +23,7 @@ and caveats to watch for.
 | Push or pull on demand | Continuous bidirectional sync |
 | Connects via SSH or rsync daemon | Connects via HTTP/HTTPS only |
 | No conflict handling (overwrites) | Three-way merge with conflict preservation |
-| Single pair of hosts | Multiple clients via central server or LAN P2P |
+| Single pair of hosts | Multiple clients via central server or p2p |
 | No file watching | Real-time watchdog with debouncing |
 
 ### Migration steps
@@ -68,9 +68,9 @@ and caveats to watch for.
 
 | Syncthing | HSYNC |
 |-----------|-------|
-| P2P only (no central server) | Server mode + LAN P2P mode |
+| P2P only (no central server) | Server mode + p2p mode |
 | Custom protocol (BEP) on port 22000 | HTTP/HTTPS on port 9753 or custom port |
-| Global discovery via relays | Central server or mDNS LAN discovery |
+| Global discovery via relays | Central server or mDNS p2p discovery |
 | File versioning built-in | Conflict files (.hsyncconflict-*) |
 | Web GUI for management | CLI + desktop GUI (hsync-desktop) |
 
@@ -79,10 +79,13 @@ and caveats to watch for.
 1. **Decide on topology**:
    - **Server Mode** (recommended for internet sync): set up an HSYNC Server
      and connect all devices to it.
-   - **LAN Mode** (equivalent to Syncthing's P2P): run `hsync lan` on
-     each device on the same network, with the same `HSYNC_LAN_KEY` on every
-     device — the shared key authorizes writes (a keyless LAN is read-only, and
-     a keyless bidirectional run is refused).
+   - **p2p Mode** (equivalent to Syncthing's P2P): run `hsync p2p` on
+     each device, with the same `HSYNC_P2P_KEY` on every device — the shared key
+     authorizes writes (a keyless p2p is read-only, and a keyless bidirectional
+     run is refused). Devices on the same network discover each other over mDNS;
+     if they are spread across networks, point them at a bootstrap node (see
+     [Sync across networks](p2p-bootnode.md)) — same mode, same election, same
+     data plane.
 
 2. **Export your Syncthing ignore patterns**. Syncthing's `.stignore` uses a
    similar syntax to `.gitignore`. Convert your patterns to `.hsyncignore`:
@@ -119,7 +122,7 @@ and caveats to watch for.
   snapshots or external backup.
 - Syncthing's "Receive Only" folder type maps to HSYNC's `--sync-direction
   download-only`.
-- LAN Mode does not support Syncthing's global discovery or relays — it's
+- p2p Mode does not support Syncthing's global discovery or relays — it's
   local network only. For internet sync, use Server Mode.
 
 ---
@@ -177,7 +180,7 @@ drives), HSYNC automates the entire process:
 3. **Run in continuous mode** (the default) on each device. HSYNC will detect changes in
    real time and propagate them automatically.
 
-4. **For LAN-only sync**, use the `lan` subcommand without a server — devices
+4. **For LAN-only sync**, use the `p2p` subcommand without a server — devices
    discover each other via mDNS and sync directly.
 
 ---
@@ -185,7 +188,7 @@ drives), HSYNC automates the entire process:
 ## General migration checklist
 
 - [ ] HSYNC Server is deployed and reachable (Server Mode) or devices are on
-  the same LAN (LAN Mode)
+  the same LAN (p2p Mode)
 - [ ] Source-of-truth device has been identified
 - [ ] Source device has uploaded all files to the bucket
 - [ ] Additional devices have downloaded to **empty** directories
@@ -202,4 +205,4 @@ drives), HSYNC automates the entire process:
 - [Getting Started](getting-started.md) — build and run your first sync.
 - [Configuration](configuration.md) — all CLI options and environment variables.
 - [Examples](examples.md) — practical usage scenarios.
-- [Sync Modes](sync-modes.md) — Server Mode vs LAN Mode comparison.
+- [Sync Modes](sync-modes.md) — Server Mode vs p2p Mode comparison.

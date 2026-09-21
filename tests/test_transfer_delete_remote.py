@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Tests for the delete_file_remote action (remote-mode + LAN-mode wire shapes)."""
+"""Tests for the delete_file_remote action (remote-mode + P2P-mode wire shapes)."""
 
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +15,7 @@ from hsync_client.exceptions import ServerError
 from hsync_client.transfer import delete_file_remote
 
 
-def _config(tmp_path, *, lan_mode: bool):
+def _config(tmp_path, *, p2p_mode: bool):
     return {
         "API": {"buckets": "https://peer/api/v1/buckets"},
         "REMOTE_BUCKET": "test",
@@ -23,7 +23,7 @@ def _config(tmp_path, *, lan_mode: bool):
         "LOCAL_BUCKET": str(tmp_path),
         "CID": "ClientDeleter1234567",
         "HTTP_TIMEOUT": 10,
-        "LAN_MODE": lan_mode,
+        "P2P_MODE": p2p_mode,
     }
 
 
@@ -31,8 +31,8 @@ class TestDeleteFileRemote:
     """The same reconcile action must speak each transport's DELETE contract:
 
     - central server: form fields ``filename`` + ``cid`` (fastapi ``Form``);
-    - LAN master: query params ``path`` + ``is_dir`` + ``cid``
-      (``lan_server._handle_delete`` reads only the query string).
+    - P2P master: query params ``path`` + ``is_dir`` + ``cid``
+      (``p2p_server._handle_delete`` reads only the query string).
 
     Sending the wrong shape makes the other side answer 400 and the stale
     remote copy survives (the resurrection bug). This is the regression test
@@ -47,7 +47,7 @@ class TestDeleteFileRemote:
         mock_response.status_code = 200
 
         with (
-            patch("hsync_client.transfer.CONFIG", _config(tmp_path, lan_mode=False)),
+            patch("hsync_client.transfer.CONFIG", _config(tmp_path, p2p_mode=False)),
             patch("hsync_client.transfer.get_ssl_verify", return_value=True),
             patch("hsync_client.utils.http_delete", return_value=mock_response) as mock_delete,
         ):
@@ -61,15 +61,15 @@ class TestDeleteFileRemote:
             "filename": "gone.txt",
         }
 
-    def test_lan_mode_sends_query_params(self, tmp_path):
-        """LAN mode sends ``path``/``is_dir``/``cid`` query params, no form body."""
+    def test_p2p_mode_sends_query_params(self, tmp_path):
+        """P2P mode sends ``path``/``is_dir``/``cid`` query params, no form body."""
         file = File.from_dict({"filepath": "gone.txt"}, str(tmp_path), False)
 
         mock_response = MagicMock()
         mock_response.status_code = 204
 
         with (
-            patch("hsync_client.transfer.CONFIG", _config(tmp_path, lan_mode=True)),
+            patch("hsync_client.transfer.CONFIG", _config(tmp_path, p2p_mode=True)),
             patch("hsync_client.transfer.get_ssl_verify", return_value=True),
             patch("hsync_client.utils.http_delete", return_value=mock_response) as mock_delete,
         ):
@@ -92,7 +92,7 @@ class TestDeleteFileRemote:
         mock_response.status_code = 404
 
         with (
-            patch("hsync_client.transfer.CONFIG", _config(tmp_path, lan_mode=True)),
+            patch("hsync_client.transfer.CONFIG", _config(tmp_path, p2p_mode=True)),
             patch("hsync_client.transfer.get_ssl_verify", return_value=True),
             patch("hsync_client.utils.http_delete", return_value=mock_response),
         ):
@@ -108,7 +108,7 @@ class TestDeleteFileRemote:
         mock_response.text = "boom"
 
         with (
-            patch("hsync_client.transfer.CONFIG", _config(tmp_path, lan_mode=True)),
+            patch("hsync_client.transfer.CONFIG", _config(tmp_path, p2p_mode=True)),
             patch("hsync_client.transfer.get_ssl_verify", return_value=True),
             patch("hsync_client.utils.http_delete", return_value=mock_response),
         ):

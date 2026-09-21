@@ -1,8 +1,8 @@
-# HSYNC Client — Stress Test Plan (LAN P2P + Client-Server)
+# HSYNC Client — Stress Test Plan (p2p + Client-Server)
 
 > **Status: Implemented (Rev. 9).** The harness described here is implemented
 > — `tests/stress_tree.py`, `tests/test_bb_server_stress.py`,
-> `tests/test_bb_lan_stress.py`, root `Makefile` target `test-stress`. See
+> `tests/test_bb_p2p_stress.py`, root `Makefile` target `test-stress`. See
 > `docs/internal/testing.md` ("Stress suites") for usage and for the engine
 > defects the bring-up runs surfaced. Rev. 2 verified §13/§15 anchors against
 > HEAD `da9b1f6`; Rev. 3 refreshes them against the working tree (the BB
@@ -22,7 +22,7 @@
 > parallel transfer threads (`hsync-common` per-thread decompressors), LAN
 > directory permissions never converged for directories created by a cycle's
 > own downloads (converge pass moved after transfers and gated for LAN), and
-> the LAN download path hashed every file 2–3 times (bounded checksum cache).
+> the p2p download path hashed every file 2–3 times (bounded checksum cache).
 > The LAN full-scale suite now passes at 0 mismatches (see
 > `docs/internal/testing.md`).
 >
@@ -52,7 +52,7 @@
 > burst throughput; details and the measurement table are in
 > `docs/internal/testing.md`.
 >
-> **Rev. 7 → Rev. 8 (2026-09-21) — LAN burst attributed per thread; two wastes
+> **Rev. 7 → Rev. 8 (2026-09-21) — p2p burst attributed per thread; two wastes
 > removed.** The residual ceiling is now measured, not inferred: the real slave
 > spends **~12–15 ms CPU per transferred file** (83 % user / 17 % syscall), 72 %
 > of it on the eight `asyncio_*` apply workers, and the Python side serialises on
@@ -77,7 +77,7 @@
 >
 > **Rev. 8 → Rev. 9 (2026-09-21) — the §13 realtime-loss item is closed.** A
 > standalone mutation probe (burst → converge → full verify → wave →
-> re-verification, `/tmp/lan_mutate.py` pattern) re-tested the previously
+> re-verification, `/tmp/p2p_mutate.py` pattern) re-tested the previously
 > failing scale on the post-fix build: at 3000 files / 300 dirs a 20 % wave
 > (600 changed paths) converges realtime-only in **4.6 s** with 0 residual
 > mismatches, a 50 % wave (1500 paths) in **13.4 s**, and the full-scale suite
@@ -117,7 +117,7 @@
 > `tests/conftest.py::pytest_terminal_summary`), and the §11 Makefile wiring
 > correction to include `test-bb-python`. The `SUBPROCESS` knob is now listed in
 > §10 and §13.5; §15 anchors updated. Verified at bounded scale in both runner
-> modes (server in-process and subprocess) and in LAN mode.
+> modes (server in-process and subprocess) and in p2p mode.
 >
 > **Rev. 2 (2026-08-29) — accuracy review pass.** All §13/§15 anchors re-verified
 > against the `hsync-client` working tree at HEAD `da9b1f6` (three line-drifts
@@ -132,13 +132,13 @@
 > Scope: `hsync-client` (Python). Reuses the existing black-box harnesses; no
 > changes to engine code are required.
 
-> **Related tooling (implemented)** — `scripts/benchmark_lan_transfers.py`
+> **Related tooling (implemented)** — `scripts/benchmark_p2p_transfers.py`
 > is the lightweight HTTP-level micro-benchmark that complements this plan:
-> it measures the LAN master's per-request overhead (keep-alive vs
+> it measures the p2p master's per-request overhead (keep-alive vs
 > connection-per-request, TCP_NODELAY effect), the per-file upload-status
 > round trip and compressed/uncompressed download throughput, against an
-> in-process master on loopback. `bench/bench_lan_peer_transfer.py` and
-> `bench/bench_lan_sources.py` (see `bench/README.md`) cover the ADR-0028
+> in-process master on loopback. `bench/bench_p2p_peer_transfer.py` and
+> `bench/bench_p2p_sources.py` (see `bench/README.md`) cover the ADR-0028
 > peer-assisted download path the same way — cold/warm peer fetch vs master
 > fallback, source lookup and seeder read-cap saturation. This full e2e stress
 > harness remains the tool for convergence/throughput under real two-peer
@@ -153,7 +153,7 @@ A repeatable, deterministic **load/stress harness** that:
    and mtimes** (seeded PRNG → reproducible).
 2. Drives the real client through its **public CLI** in both run modes:
    - **Server mode** (client ↔ `hsync-server`, REST+WS);
-   - **LAN P2P mode** (master/slave, mDNS + HTTPS/WSS).
+   - **p2p mode** (master/slave, mDNS + HTTPS/WSS).
 3. Verifies that the replica matches the source **byte-for-byte**, including
    structure, size, content digests, permissions and (within tolerance) mtime.
 4. Measures and reports **replication time and throughput** (files/s, MiB/s) per
@@ -174,7 +174,7 @@ A repeatable, deterministic **load/stress harness** that:
 
 ## 3. Verifiable assertions per mode
 
-| Assertion | Server mode | LAN mode |
+| Assertion | Server mode | p2p mode |
 | --- | --- | --- |
 | All files present on the replica, no extra user files | **strict** | **strict** |
 | All directories present on the replica | **strict** (dirs implied by file parents) | **strict** |
@@ -191,13 +191,13 @@ Expected *applied* directory mode on any receiver:
 ## 4. Harness layout (files to create)
 
 All new code lives in `hsync-client` and mirrors the existing BB conventions
-(MPL header, `pytestmark` env gate, helpers module like `lan_helpers.py`).
+(MPL header, `pytestmark` env gate, helpers module like `p2p_helpers.py`).
 
 | File | Purpose |
 | --- | --- |
 | `hsync-client/tests/stress_tree.py` | Shared, importable-only helper: deterministic generator, manifest, verifier, metrics. **No tests inside.** |
 | `hsync-client/tests/test_bb_server_stress.py` | Server-mode stress (one-shot + mutation + concurrency sweep). Verification is **REST-primary** (listings + per-file download re-hash); FS cross-check on the bucket is **secondary** (§6). Gate: `HSYNC_BB_STRESS=1`. |
-| `hsync-client/tests/test_bb_lan_stress.py` | LAN-mode stress (initial burst + mutation). Gate: `HSYNC_BB_STRESS=1`. |
+| `hsync-client/tests/test_bb_p2p_stress.py` | p2p-mode stress (initial burst + mutation). Gate: `HSYNC_BB_STRESS=1`. |
 | `Makefile` (workspace root) | `test-bb-client-stress` (bounded scale, inside `make ci`) and `test-stress` (full scale) — see §11. |
 
 ## 5. Tree generator specification (`stress_tree.generate`)
@@ -260,7 +260,7 @@ manifest current; returns the list of primitives applied per path
 file set, see §8). The wave RNG is `random.Random(f"{seed}:wave{w}")` —
 deterministic and independent of the generation stream, so the post-mutation
 manifest is exactly reproducible. `chmod` primitives target **files**; a
-directory chmod propagates only in LAN mode (§13.3 — the server-mode
+directory chmod propagates only in p2p mode (§13.3 — the server-mode
 floor-only dir assertion is unaffected either way).
 
 ### `stress_tree.verify_tree`
@@ -307,7 +307,7 @@ but it must never be the sole verdict.
    (`hashlib.sha256` over 1 MiB chunks) `== sha256`.
 5. **File mode**: `stat().st_mode & 0o777 == manifest mode & 0o777`.
 6. **Directory mode**: server mode → assertion that
-   `stat().st_mode & 0o700 == 0o700` (floor only); LAN mode → equality with
+   `stat().st_mode & 0o700 == 0o700` (floor only); p2p mode → equality with
    `(manifest mode & 0o777) | 0o700`.
 7. **mtime**: `abs(stat().st_mtime - manifest mtime) <= MTIME_TOLERANCE_S`
    (default 2; configurable via `HSYNC_BB_STRESS_MTIME_TOLERANCE`).
@@ -340,7 +340,7 @@ All durations from `time.perf_counter()`; measured **only around engine work**
 - Iterations are **parametrized** (`@pytest.mark.parametrize("iteration",
   range(HSYNC_BB_STRESS_ITERATIONS))`) so each gets fresh function-scoped
   fixtures: new `live_server` + `bb_bucket` + `local_dir` (server mode) or
-  fresh `lan_master_dir`/`lan_slave_dir`/`lan_bucket` (LAN). **No bucket/dir
+  fresh `p2p_master_dir`/`p2p_slave_dir`/`p2p_bucket` (LAN). **No bucket/dir
   reuse across iterations** — a reused bucket has nothing left to transfer
   and yields degenerate timings.
 - **Seed derivation**: iteration `i` uses `seed_i = HSYNC_BB_STRESS_SEED + i`
@@ -377,7 +377,7 @@ After the initial burst converges:
    existing tree, never touching engine artefacts).
 3. **Server mode**: re-run the one-shot sync (delta diff picks up content/mode
    changes and tombstones for deletes). Measure `t_sync` again.
-4. **LAN mode**: source-side watcher picks the wave up over the event channel;
+4. **p2p mode**: source-side watcher picks the wave up over the event channel;
    measure convergence time again.
 5. Re-verify with the updated manifest (strict for files, floor for server dirs).
 6. Optionally repeat for `HSYNC_BB_STRESS_WAVES` waves (default 1).
@@ -399,7 +399,7 @@ For each value in `HSYNC_BB_STRESS_CONCURRENCY` (default: `"1,4,8"`):
   (`max_concurrent_transfers`).
 - Record `t_sync` + throughput per N; print the scaling table.
 
-LAN stress runs with the existing `_lan_start` args (`--no-autotune`), keeping
+LAN stress runs with the existing `_p2p_start` args (`--no-autotune`), keeping
 the default concurrency unless `HSYNC_MAX_CONCURRENT_TRANSFERS` is set inside
 the test body (§13.5).
 
@@ -421,8 +421,8 @@ the test body (§13.5).
 | `HSYNC_BB_STRESS_POLL_INTERVAL` | `0.5` | LAN quiet-poll interval (s); also the convergence-time measurement resolution |
 | `HSYNC_BB_STRESS_MTIME_TOLERANCE` | `2` | mtime tolerance (s) |
 | `HSYNC_BB_STRESS_SUBPROCESS` | unset | Server mode only: `"1"` runs the client as a wall-clock subprocess instead of in-process (plan §13.5) |
-| `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD` | unset | LAN mode only: `"1"` starts the slave with `--no-peer-download`, for the peer-offload A/B (plan §13.12) |
-| `HSYNC_BB_STRESS_PROFILE_CPU` | unset | LAN mode only: `"1"` prints the slave's per-thread CPU across the initial burst (`[LAN-CPU]`, plan §13.13) |
+| `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD` | unset | p2p mode only: `"1"` starts the slave with `--no-peer-download`, for the peer-offload A/B (plan §13.12) |
+| `HSYNC_BB_STRESS_PROFILE_CPU` | unset | p2p mode only: `"1"` prints the slave's per-thread CPU across the initial burst (`[LAN-CPU]`, plan §13.13) |
 | `HSYNC_BB_STRESS_REPORT` | unset | Path for the JSON report (optional) |
 
 Prefer **CLI flags** over `HSYNC_*` env for per-run tuning (see §13.5 — the
@@ -441,14 +441,14 @@ test-bb-client-stress:
 		tests/test_bb_server_stress.py
 	@echo "==> BB client stress (LAN, bounded scale)"
 	@cd hsync-client && $(STRESS_KNOBS) $(VENV_PY) -m pytest -q --maxfail=3 \
-		tests/test_bb_lan_stress.py
+		tests/test_bb_p2p_stress.py
 
 # Full documented scale (2000/1500 files, 3 iterations) — the benchmark run.
 test-stress:
 	@echo "==> stress: server-mode (full scale)"
 	@cd hsync-client && HSYNC_BB_STRESS=1 $(VENV_PY) -m pytest -q tests/test_bb_server_stress.py
 	@echo "==> stress: LAN (full scale)"
-	@cd hsync-client && HSYNC_BB_STRESS=1 $(VENV_PY) -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
+	@cd hsync-client && HSYNC_BB_STRESS=1 $(VENV_PY) -m pytest -q --maxfail=3 tests/test_bb_p2p_stress.py
 ```
 
 Wiring: `ci → test → test-bb → test-bb-python → test-bb-client →
@@ -468,7 +468,7 @@ no knob set) and is *not* expanded inside `ci`.
 # Server mode only
 cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_server_stress.py
 # LAN only (loopback mDNS; separate run as per BB conventions)
-cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q --maxfail=3 tests/test_bb_lan_stress.py
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q --maxfail=3 tests/test_bb_p2p_stress.py
 # Both (root orchestrator)
 make test-stress
 # Lint/type gates before committing (Python project rules)
@@ -495,7 +495,7 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
 2. **Empty directories are not replicated in server mode.** Server storage is
    file-backed: dirs materialize as parents of uploaded files
    (`upload.py:311 mkdir(parents=True)`), so a dir with no file in the tree has
-   no server-side representation. LAN mode preserves empty dirs via the
+   no server-side representation. p2p mode preserves empty dirs via the
    `.hsynckeep` sentinel (`constants.py:74`). → generator: **no empty dirs**;
    verifier: whitelist `.hsynckeep`.
 3. **Directory-mode parity is LAN/event-driven only.** In server mode the
@@ -523,7 +523,7 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
    - `run_sync_once` runs the client **in-process** (CliRunner) — engine speed,
      no process boot noise. For **wall-clock realism**, the suite ships a
      subprocess driver (`_subprocess_run` + the `sync_runner` fixture in
-     `test_bb_server_stress.py`) modeled on `lan_helpers._lan_start`: the same
+     `test_bb_server_stress.py`) modeled on `p2p_helpers._p2p_start`: the same
      hostname/`--port` form, `-b <bucket>` and `-p <path>`, `--yes --insecure
      --once --no-autotune --min-free-disk-space 0`, `HSYNC_API_KEY` in the
      scrubbed env, output to a log file (never an undrained pipe), and a run
@@ -583,7 +583,7 @@ content hash unchanged (e.g. an empty file redrawn at size 0). That is a
 legitimate metadata-only mutation and the verifier's mtime check **is**
 meaningful — the engine must converge it (regression backing this section).
 
-**LAN mode** propagates touches through the watcher as well: the master's
+**p2p mode** propagates touches through the watcher as well: the master's
 broadcast dedup no longer discards a content-identical mtime change (it calls
 the new `_on_metadata_changed` hook), records the touch with
 `sync_state.note_local_edit`, advertises the corrected mtime in the event
@@ -592,7 +592,7 @@ slave adopts the advertised mtime locally in `sync.update_file` when its own
 version is not causally ahead. The reverse direction is symmetric: the slave's
 `on_modified` tracks the mtime next to the mode and, on a content-identical
 touch, pushes a metadata-only PATCH to the master
-(`LANSlaveFileEventHandler._propagate_metadata_change`). No bytes cross the wire.
+(`P2PSlaveFileEventHandler._propagate_metadata_change`). No bytes cross the wire.
 
 **Scale characteristics.** The LAN initial burst (full reconcile) and the LAN
 *realtime* mutation path both scale: a standalone mutation probe (burst →
@@ -617,7 +617,7 @@ would be invisible in the logs; and the periodic `RESYNC` (default 300 s,
 `HSYNC_RESYNC`) remains the correctness safety net for any event dropped
 anywhere in the chain.
 
-### 13.12 LAN peer-offload A/B
+### 13.12 p2p peer-offload A/B
 
 `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD=1` starts the slave with `--no-peer-download`
 so the whole peer-offload block (seeder + inventory publisher + source resolver)
@@ -632,7 +632,7 @@ the initial burst and prints one `[LAN-CPU]` line: total slave CPU seconds,
 ms/file, and the top threads by CPU. Run it once with the lane on and once with
 `HSYNC_BB_STRESS_NO_PEER_DOWNLOAD=1` to attribute the peer-offload block by
 thread. It is the reproducible harness behind
-[ADR-0031](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0031-lan-peer-offload-lane-cost.md),
+[ADR-0031](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0031-p2p-peer-offload-lane-cost.md),
 which used it to accept the lane cost (seeder isolation refuted; the per-file
 resolver lookup is required for per-file offload). It changes no product
 behaviour.
@@ -653,7 +653,7 @@ behaviour.
 | Concern | Reference |
 | --- | --- |
 | BB server fixtures | `hsync-client/tests/conftest.py:541` (`live_server`), `:788` (`bb_bucket`), `:815` (`bb_server_upload`), `:843` (`bb_server_files`), `:863` (`bb_server_download`), `:884` (`local_dir`), `:1119` (`run_sync_once`), `:386` (`pytest_terminal_summary` — stress aggregate) |
-| BB LAN helpers | `hsync-client/tests/lan_helpers.py` — `_lan_env:123`, `_lan_start:158`, `_terminate:226`, `_wait_for_file:277`, `_wait_for_text_in_stderr:287`, `_wait_for_slave_events:306` (`[READY]` marker), `_wait_for_master:462`; fixtures `lan_master_dir:499`, `lan_slave_dir:507`, `lan_bucket:515` |
+| BB LAN helpers | `hsync-client/tests/p2p_helpers.py` — `_p2p_env:123`, `_p2p_start:158`, `_terminate:226`, `_wait_for_file:277`, `_wait_for_text_in_stderr:287`, `_wait_for_slave_events:306` (`[READY]` marker), `_wait_for_master:462`; fixtures `p2p_master_dir:499`, `p2p_slave_dir:507`, `p2p_bucket:515` |
 | CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `lan`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
@@ -663,7 +663,7 @@ behaviour.
 | Server listing | `hsync-server/hsync_server/api/files/list.py:162` (`GET /dirs`), `:220` (`GET /files`) |
 | Server upload storage | `hsync-server/hsync_server/api/files/upload.py:270` (`update_file_timestamp`), `:311` (`mkdir parents=True`) |
 | Ignore defaults / engine names | `hsync-common/hsync_common/constants.py:93`; `hsync-common/hsync_common/path_validation.py:413`; `hsync-common/hsync_common/ignore.py` |
-| LAN readiness markers | `lan_handler.py:343` (`[READY] Master ready`), `:525` (`Initial sync complete, connecting to WebSocket…`) |
+| LAN readiness markers | `p2p_handler.py:343` (`[READY] Master ready`), `:525` (`Initial sync complete, connecting to WebSocket…`) |
 | Stress subprocess driver | `hsync-client/tests/test_bb_server_stress.py` — `_subprocess_env`, `_subprocess_run`, `sync_runner` fixture |
 | Stress aggregation | `hsync-client/tests/stress_tree.py` — `collect`, `aggregate`, `format_aggregate`; `tests/conftest.py::pytest_terminal_summary` |
 
@@ -677,8 +677,8 @@ behaviour.
       cross-check of the bucket via `verify_tree` (`bb_bucket`, §6.2 whitelist
       incl. `.backup`; whitelist hits counted in the report) → mutation wave →
       concurrency sweep → report.
-- [ ] `hsync-client/tests/test_bb_lan_stress.py` (gate `HSYNC_BB_STRESS=1`):
-      start master+slave (`_lan_start`), `_wait_for_master`, generate **after**
+- [ ] `hsync-client/tests/test_bb_p2p_stress.py` (gate `HSYNC_BB_STRESS=1`):
+      start master+slave (`_p2p_start`), `_wait_for_master`, generate **after**
       `_wait_for_slave_events` (`[READY]`), poll convergence, verify, mutate,
       re-verify; always `_terminate` both peers in `finally`.
 - [ ] Isolation per §7: iterations and sweep steps parametrized (fresh

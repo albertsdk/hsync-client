@@ -6,11 +6,11 @@ REST+WS) and **LAN** (peer-to-peer master/slave over mDNS + HTTPS/WSS) — shari
 one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
 > End-user / human docs live in [`../docs/`](../docs/README.md)
-> (`getting-started`, `getting-started-server`, `getting-started-lan`,
-> `usage`, `configuration`, `configuration-server`, `configuration-lan`,
-> `sync-modes-server`, `sync-modes-lan`, `server-mode`, `lan-mode`,
-> `sync-flow-server`, `sync-flow-lan`, `examples-server`, `examples-lan`,
-> `faq-server`, `faq-lan`, `internal/testing`,
+> (`getting-started`, `getting-started-server`, `getting-started-p2p`,
+> `usage`, `configuration`, `configuration-server`, `configuration-p2p`,
+> `sync-modes-server`, `sync-modes-p2p`, `server-mode`, `p2p-mode`,
+> `sync-flow-server`, `sync-flow-p2p`, `examples-server`, `examples-p2p`,
+> `faq-server`, `faq-p2p`, `internal/testing`,
 > `internal/stress-test-plan`). This wiki is the
 > **first search surface**:
 > start here, follow the `path/to/file.py:line` references to reach code directly.
@@ -22,11 +22,11 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | [architecture.md](architecture.md) | Entry points, the two run modes, config flow, layering, watcher/transfer core |
 | [modules/sync-core.md](modules/sync-core.md) | `watcher.py`, `sync.py`, `transfer.py`, `event_dispatch.py`, `file_event_handler.py`, `event_queue.py` |
 | [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, reconnect |
-| [modules/lan-mode.md](modules/lan-mode.md) | `lan.py` discovery/election, `lan_server.py`, `lan_websocket.py`, `lan_handler.py`, `pinning.py`, `ssl_utils.py`, `identity.py` (device identity + instance lock) |
+| [modules/p2p-mode.md](modules/p2p-mode.md) | `p2p_peers.py` + `p2p_discovery.py` interface + `p2p_discovery_mdns.py` / `boot_client.py` + `stun.py` (bootnode plan) discovery/election, `p2p_server.py`, `p2p_websocket.py`, `p2p_handler.py`, `pinning.py`, `ssl_utils.py`, `identity.py` (device identity + instance lock) |
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |
 | [modules/wd-os5-web.md](modules/wd-os5-web.md) | WD My Cloud OS5 web UI (`packaging/wd-os5/Apkg/web`) + connect-command generator |
 | [modules/autotune.md](modules/autotune.md) | `autotune.py` — adaptive tuning of timeout, retry & concurrency |
-| [modules/benchmarks.md](modules/benchmarks.md) | L1 micro-benchmark suite + L2 loopback LAN peer-download bench (`bench/`): tiers, scenario→code anchors, methodology, findings |
+| [modules/benchmarks.md](modules/benchmarks.md) | L1 micro-benchmark suite + L2 loopback p2p peer-download bench (`bench/`): tiers, scenario→code anchors, methodology, findings |
 | [data-models.md](data-models.md) | reused common models + client-local state stores (sync_state, tombstones, pins) |
 | [decisions.md](decisions.md) | pointer to ecosystem ADRs + client-local choices |
 
@@ -39,7 +39,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
   LAN, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.
 - Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py:98`);
-  LAN → `lan_handler.run_lan_mode` (`lan_handler.py:109`).
+  LAN → `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`).
 - Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
   (`constants.py:21`); `CLIENT_NAME = "hsync-client"` (`:32`) feeds the
   `X-Client-Name` REST header build in `main_logic.py`.

@@ -130,14 +130,14 @@ Clamped to `[1, 20]`.
 4. `CONFIG["AUTOTUNE_STORAGE_TYPE"]` is cached from `tuning.storage_type.value`
    for the per-cycle refresh.
 
-**LAN mode**: without a configured server URL the client runs on a placeholder
+**p2p mode**: without a configured server URL the client runs on a placeholder
 URL until a master is discovered, so the startup RTT probe is skipped
 (`rtt_ms=None` → SAFE values) instead of failing against the placeholder, and
 the placeholder URL is not emitted as a `server` UI event.
 
-### LAN post-discovery refresh (`lan_handler._refresh_lan_network_tuning`)
+### LAN post-discovery refresh (`p2p_handler._refresh_p2p_network_tuning`)
 
-In LAN mode the real network endpoint is known only after master election.
+In p2p mode the real network endpoint is known only after master election.
 Once the master is discovered and pinned, `_run_as_slave` measures the RTT
 toward it and re-derives the timeout/retry/reconnect values **before** the
 clock-offset probe, so every subsequent HTTP call uses the tuned timeout.

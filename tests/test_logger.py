@@ -249,7 +249,7 @@ class TestSetupLogging:
         recipe) leaves the root logger NOTSET, and a NOTSET root answers ``True``
         to ``isEnabledFor(DEBUG)`` (``DEBUG >= 0``). Every DEBUG line a library
         emits therefore built a LogRecord — walking the stack in ``findCaller`` —
-        before loguru's INFO sink discarded it. Measured on the LAN burst: ~26
+        before loguru's INFO sink discarded it. Measured on the P2P burst: ~26
         such records per transferred file at 6.5 us each, against 0.08 us for the
         level check that now avoids them. Output is unchanged, because those
         records were dropped either way.

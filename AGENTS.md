@@ -94,7 +94,7 @@ documentation-engineering rules:
 ## ⚠️ Domain-Critical Rules
 
 * **LAN Discovery & Master Election**
-  Before modifying any logic related to these mechanisms, you **MUST** read and follow the specifications outlined in `hsync-common/docs/lan-protocol.md`.
+  Before modifying any logic related to these mechanisms, you **MUST** read and follow the specifications outlined in `hsync-common/docs/p2p-protocol.md`.
 
 * **Packaging WD My Cloud OS5**
   Any change to CLI flags, environment variables (`HSYNC_*`), or user-facing behaviors/defaults **REQUIRES** a synchronous update to `hsync-client/packaging/wd-os5`:
@@ -168,7 +168,7 @@ Every bug fix must include a regression test that fails against the faulty behav
 * Does the test verify a behavior that the end user or a remote client can actually observe?
 
 Black-box tests that spawn client/server processes must go through the shared
-harness helpers (`_lan_start` / `_lan_env` in `tests/lan_helpers.py`,
+harness helpers (`_p2p_start` / `_p2p_env` in `tests/p2p_helpers.py`,
 `watch_sync`/`live_server` in `tests/conftest.py`) — never a hand-rolled
 `subprocess.Popen` with an unscrubbed environment. Readiness is signalled via
 `HSYNC_READY_FILE` PID files (clients) and the `/health` probe (server); see

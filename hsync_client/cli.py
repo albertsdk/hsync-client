@@ -8,7 +8,7 @@
 Command-line interface for HSYNC Client.
 
 This module provides the Typer-based CLI for the HSYNC command-line interface.
-It exposes two mutually exclusive subcommands — ``lan`` (LAN peer-to-peer sync)
+It exposes two mutually exclusive subcommands — ``p2p`` (P2P peer-to-peer sync)
 and ``server`` (central-server sync) — under a parent callback that carries the
 global options (``--version``, ``--capabilities-json``, ``--help-symbols``).
 """
@@ -25,6 +25,7 @@ import typer.main
 from hsync_client.constants import (
     BANDWIDTH_MAX,
     BANDWIDTH_MIN,
+    BOOTNODE_DEFAULT_PORT,
     DISCOVERY_TIMEOUT_DEFAULT,
     HOSTNAME_PATTERN,
     HSYNC_VERSION,
@@ -182,6 +183,45 @@ def _build_server_url(hostname: str | None, port: int | None) -> str | None:
     return f"https://{host}:{SERVER_DEFAULT_PORT if port is None else port}"
 
 
+def _build_bootnode(
+    hostname: str | None,
+    port: int | None,
+    *,
+    no_upnp: bool,
+) -> tuple[str | None, int, bool]:
+    """Resolve the bootnode plan inputs; return ``(host, port, upnp_enabled)``.
+
+    A ``None`` host selects the mDNS plan (``port``/``upnp`` are then
+    irrelevant). ``--port`` without a bootnode is a hard error, never a
+    silently ignored flag; ``HSYNC_BOOTNODE`` is a host-only fallback (no port
+    is read from the environment — the QUIC port comes from ``--port`` or the
+    443 default). Raises ``typer.BadParameter`` on a URL-like or port-bearing
+    host, mirroring ``_build_server_url``.
+    """
+    if port is not None and not 1 <= port <= 65535:
+        raise typer.BadParameter("--port must be between 1 and 65535.")
+    if hostname is None:
+        if port is not None:
+            raise typer.BadParameter(
+                "--port requires a bootnode hostname (or set the full host via HSYNC_BOOTNODE)."
+            )
+        return None, BOOTNODE_DEFAULT_PORT, False
+    host = hostname.strip()
+    if "://" in host or "/" in host:
+        raise typer.BadParameter(
+            f"pass the bare bootnode hostname, not a URL ('{hostname}'): the QUIC "
+            "scheme is implied, e.g. 'hsync p2p -b shared boot.example.net'."
+        )
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        host = f"[{host}]"  # bare IPv6 literal
+    if not (_HOSTNAME_PATTERN.match(host) or _IPV6_BRACKETED_PATTERN.match(host)):
+        raise typer.BadParameter(
+            f"invalid bootnode hostname: {hostname!r} (a hostname, IPv4 or IPv6 "
+            "literal is expected; use --port for the port, not host:port)."
+        )
+    return host, port if port is not None else BOOTNODE_DEFAULT_PORT, not no_upnp
+
+
 # =============================================================================
 # Shared validation (called by both subcommands)
 # =============================================================================
@@ -224,9 +264,9 @@ def _validate_shared_options(
     mass_delete_threshold: int | None,
     mass_delete_percent: int | None,
     delta_min_file_size: int | None,
-    delta_min_file_size_lan: int | None,
+    delta_min_file_size_p2p: int | None,
 ) -> tuple[int | None, int | None]:
-    """Validate the options shared by the ``lan`` and ``server`` subcommands.
+    """Validate the options shared by the ``p2p`` and ``server`` subcommands.
 
     Returns the parsed upload/download bandwidth limits (bytes/s, or ``None``).
     """
@@ -298,8 +338,8 @@ def _validate_shared_options(
     # Validate delta size floors (0 = delta for every file size)
     if delta_min_file_size is not None and delta_min_file_size < 0:
         raise typer.BadParameter("--delta-min-file-size must be >= 0.")
-    if delta_min_file_size_lan is not None and delta_min_file_size_lan < 0:
-        raise typer.BadParameter("--delta-min-file-size-lan must be >= 0.")
+    if delta_min_file_size_p2p is not None and delta_min_file_size_p2p < 0:
+        raise typer.BadParameter("--delta-min-file-size-p2p must be >= 0.")
 
     return parsed_bw_upload, parsed_bw_download
 
@@ -342,7 +382,7 @@ OnceOpt = Annotated[
         help=(
             "Run a single sync cycle and exit. Without --once, the client "
             "keeps running and retries the connection indefinitely (the "
-            "default). In LAN mode it runs one slave sync cycle and exits."
+            "default). In P2P mode it runs one slave sync cycle and exits."
         ),
         rich_help_panel="Sync",
     ),
@@ -459,8 +499,8 @@ NoPeerDownloadOpt = Annotated[
     bool,
     typer.Option(
         "--no-peer-download",
-        help="Disable peer-assisted downloads and local read-only seeding in LAN mode.",
-        rich_help_panel="LAN Mode",
+        help="Disable peer-assisted downloads and local read-only seeding in P2P mode.",
+        rich_help_panel="P2P Mode",
     ),
 ]
 DeltaMinFileSizeOpt = Annotated[
@@ -472,11 +512,11 @@ DeltaMinFileSizeOpt = Annotated[
         rich_help_panel="Sync",
     ),
 ]
-DeltaMinFileSizeLanOpt = Annotated[
+DeltaMinFileSizeP2POpt = Annotated[
     int | None,
     typer.Option(
-        "--delta-min-file-size-lan",
-        help="Minimum file size in bytes for delta transfer (LAN mode). Default: 1048576 (1 MB).",
+        "--delta-min-file-size-p2p",
+        help="Minimum file size in bytes for delta transfer (P2P mode). Default: 1048576 (1 MB).",
         metavar="BYTES",
         rich_help_panel="Sync",
     ),
@@ -513,7 +553,7 @@ MaxInboundSizeOpt = Annotated[
         "--max-inbound-size",
         help=(
             "Maximum size in MB of a single inbound file (download or "
-            "received LAN upload), enforced as an absolute cap on top of "
+            "received P2P upload), enforced as an absolute cap on top of "
             "the peer-declared size. 0 = disabled."
         ),
         metavar="MB",
@@ -680,16 +720,49 @@ ApiKeyFdOpt = Annotated[
 ]
 
 # =============================================================================
-# lan-subcommand options
+# p2p-subcommand options
 # =============================================================================
 
 ListenPortOpt = Annotated[
     int,
     typer.Option(
         "--listen-port",
-        help="Port to listen on when acting as LAN master (0 = auto).",
+        help="Port to listen on when acting as P2P master (0 = auto).",
         metavar="PORT",
-        rich_help_panel="LAN Mode",
+        rich_help_panel="P2P Mode",
+    ),
+]
+
+BootnodeArg = Annotated[
+    str | None,
+    typer.Argument(
+        help=(
+            "Optional bootnode host for cross-network discovery (a bare hostname, "
+            "like `server HOSTNAME`); omit it to stay on mDNS only."
+        ),
+        metavar="BOOTNODE",
+    ),
+]
+
+BootnodePortOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--port",
+        help="UDP port of the remote bootnode (QUIC); default 443.",
+        metavar="PORT",
+        rich_help_panel="P2P Mode",
+    ),
+]
+
+NoUpnpOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-upnp",
+        help=(
+            "Do not try to map the master TCP port with UPnP. Only meaningful with "
+            "a bootnode: without one, mDNS already keeps discovery on the local network."
+        ),
+        rich_help_panel="P2P Mode",
     ),
 ]
 DiscoveryTimeoutOpt = Annotated[
@@ -697,37 +770,37 @@ DiscoveryTimeoutOpt = Annotated[
     typer.Option(
         "--discovery-timeout",
         help=(
-            "Time to wait for initial LAN peer discovery in seconds "
+            "Time to wait for initial P2P peer discovery in seconds "
             f"(default: {DISCOVERY_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
         ),
         metavar="SEC",
         show_default=False,
-        rich_help_panel="LAN Mode",
+        rich_help_panel="P2P Mode",
     ),
 ]
 GroupOpt = Annotated[
     str | None,
     typer.Option(
         "--group",
-        help="Group name for LAN peer filtering.",
+        help="Group name for P2P peer filtering.",
         metavar="GROUP",
-        rich_help_panel="LAN Mode",
+        rich_help_panel="P2P Mode",
     ),
 ]
 ForceMasterOpt = Annotated[
     bool,
     typer.Option(
         "--force-master",
-        help="Force this client to always be master in LAN mode.",
-        rich_help_panel="LAN Mode",
+        help="Force this client to always be master in P2P mode.",
+        rich_help_panel="P2P Mode",
     ),
 ]
 NeverMasterOpt = Annotated[
     bool,
     typer.Option(
         "--never-master",
-        help="Never become master in LAN mode (always remain a client/slave).",
-        rich_help_panel="LAN Mode",
+        help="Never become master in P2P mode (always remain a client/slave).",
+        rich_help_panel="P2P Mode",
     ),
 ]
 RequirePairingOpt = Annotated[
@@ -735,10 +808,10 @@ RequirePairingOpt = Annotated[
     typer.Option(
         "--require-pairing",
         help=(
-            "Strict pairing: refuse a first-seen LAN master certificate until it is "
+            "Strict pairing: refuse a first-seen P2P master certificate until it is "
             "confirmed out of band (disables Trust-On-First-Use auto-pinning)."
         ),
-        rich_help_panel="LAN Mode",
+        rich_help_panel="P2P Mode",
     ),
 ]
 AllowUnauthenticatedWritesOpt = Annotated[
@@ -746,20 +819,20 @@ AllowUnauthenticatedWritesOpt = Annotated[
     typer.Option(
         "--allow-unauthenticated-writes",
         help=(
-            "Dangerous: allow LAN uploads, deletes, and other mutations without "
-            "HSYNC_LAN_KEY. Reads remain available without this option."
+            "Dangerous: allow P2P uploads, deletes, and other mutations without "
+            "HSYNC_P2P_KEY. Reads remain available without this option."
         ),
-        rich_help_panel="LAN Mode",
+        rich_help_panel="P2P Mode",
     ),
 ]
-LanKeyFdOpt = Annotated[
+P2PKeyFdOpt = Annotated[
     int | None,
     typer.Option(
-        "--lan-key-fd",
-        help="Read LAN key from the given file descriptor (for secure passing from a parent process).",
+        "--p2p-key-fd",
+        help="Read P2P key from the given file descriptor (for secure passing from a parent process).",
         metavar="FD",
         hidden=True,
-        rich_help_panel="LAN Mode",
+        rich_help_panel="P2P Mode",
     ),
 ]
 
@@ -805,14 +878,14 @@ def main(
 
     Synchronize files between a local directory and a remote bucket. A bucket
     is a shared directory hosted on a central HSYNC server or on another peer
-    in LAN Mode. In [bold]Server Mode[/bold], clients connect to a centralized server.
-    In [bold]LAN Mode[/bold] (P2P), clients discover each other via mDNS and one
+    in P2P Mode. In [bold]Server Mode[/bold], clients connect to a centralized server.
+    In [bold]P2P Mode[/bold] (P2P), clients discover each other via mDNS and one
     automatically becomes the master—no central server required.
 
     [bold]Subcommands:[/bold]
 
         [cyan]server[/cyan]   Synchronize with a central HSYNC server (REST + WebSocket)
-        [cyan]lan[/cyan]      Synchronize peer-to-peer over the local network
+        [cyan]p2p[/cyan]      Synchronize peer-to-peer over the local network
 
     [bold]Global Options:[/bold]
 
@@ -834,17 +907,17 @@ def main(
         [dim]# Dry run to see what would be synced[/dim]
         $ hsync server server.example.com -b backup -n
 
-        [dim]# LAN mode (no central server, peer-to-peer)[/dim]
-        $ hsync lan -b shared
+        [dim]# P2P mode (no central server, peer-to-peer)[/dim]
+        $ hsync p2p -b shared
 
-        [dim]# LAN mode with authentication[/dim]
-        $ HSYNC_LAN_KEY=mysecret hsync lan -b shared
+        [dim]# P2P mode with authentication[/dim]
+        $ HSYNC_P2P_KEY=mysecret hsync p2p -b shared
 
     [bold]Environment Variables:[/bold]
 
         HSYNC_SERVER    Full server URL (alternative to the HOSTNAME argument)
         HSYNC_API_KEY   API key for authentication
-        HSYNC_LAN_KEY   Shared secret for LAN mode authentication
+        HSYNC_P2P_KEY   Shared secret for P2P mode authentication
 
     [bold]Project:[/bold]
 
@@ -857,17 +930,22 @@ def main(
 
 
 @app.command()
-def lan(
+def p2p(
     bucket: BucketOpt,
+    bootnode: BootnodeArg = None,
     http_timeout: HttpTimeoutOpt = None,
-    lan_port: ListenPortOpt = 0,
+    p2p_listen_port: ListenPortOpt = 0,
     discovery_timeout: DiscoveryTimeoutOpt = None,
-    lan_group: GroupOpt = None,
+    p2p_group: GroupOpt = None,
     force_master: ForceMasterOpt = False,
     never_master: NeverMasterOpt = False,
     require_pairing: RequirePairingOpt = False,
     allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
-    lan_key_fd: LanKeyFdOpt = None,
+    p2p_key_fd: P2PKeyFdOpt = None,
+    port: BootnodePortOpt = None,
+    no_upnp: NoUpnpOpt = False,
+    insecure: InsecureOpt = False,
+    ca_cert: CaCertOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
     once: OnceOpt = False,
@@ -885,7 +963,7 @@ def lan(
     no_delta: NoDeltaOpt = False,
     no_peer_download: NoPeerDownloadOpt = False,
     delta_min_file_size: DeltaMinFileSizeOpt = None,
-    delta_min_file_size_lan: DeltaMinFileSizeLanOpt = None,
+    delta_min_file_size_p2p: DeltaMinFileSizeP2POpt = None,
     max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
     no_autotune: NoAutotuneOpt = False,
     mass_delete_guard: MassDeleteGuardOpt = True,
@@ -902,21 +980,24 @@ def lan(
     env_file: EnvFileOpt = None,
 ) -> None:
     """
-    Synchronize a bucket over LAN peer-to-peer (P2P).
+    Synchronize a bucket over P2P peer-to-peer (P2P).
 
     Peers on the same local network discover each other via mDNS and one is
     elected master (an HTTPS/WSS transport hub). No central server is required.
 
     [bold]Examples:[/bold]
 
-        [dim]# Basic LAN sync[/dim]
-        $ hsync lan -b shared
+        [dim]# Basic P2P sync[/dim]
+        $ hsync p2p -b shared
 
         [dim]# Force this peer to be the master[/dim]
-        $ hsync lan -b shared --force-master
+        $ hsync p2p -b shared --force-master
 
         [dim]# Isolate a sync group and authenticate it[/dim]
-        $ HSYNC_LAN_KEY=mysecret hsync lan -b shared --group home
+        $ HSYNC_P2P_KEY=mysecret hsync p2p -b shared --group home
+
+        [dim]# Discover peers across networks through a bootnode[/dim]
+        $ hsync p2p -b shared boot.example.net
     """
     parsed_bw_upload, parsed_bw_download = _validate_shared_options(
         http_timeout=http_timeout,
@@ -933,10 +1014,10 @@ def lan(
         mass_delete_threshold=mass_delete_threshold,
         mass_delete_percent=mass_delete_percent,
         delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_lan=delta_min_file_size_lan,
+        delta_min_file_size_p2p=delta_min_file_size_p2p,
     )
 
-    # LAN-only validation
+    # P2P-only validation
     if discovery_timeout is not None and discovery_timeout < 0:
         raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
 
@@ -944,7 +1025,7 @@ def lan(
     if force_master and sync_direction != "bidirectional":
         raise typer.BadParameter(
             f"--force-master is incompatible with --sync-direction={sync_direction}. "
-            f"The LAN master always operates in bidirectional mode."
+            f"The P2P master always operates in bidirectional mode."
         )
 
     # --force-master and --never-master are mutually exclusive (contradictory)
@@ -954,17 +1035,19 @@ def lan(
             "cannot be forced to be master and forbidden from being master at once."
         )
 
+    bootnode_host, bootnode_port, upnp_enabled = _build_bootnode(bootnode, port, no_upnp=no_upnp)
+
     from hsync_client.main_logic import run_sync
 
     run_sync(
         bucket=bucket,
         env_file=env_file,
         server_url=None,
-        verify_ssl=True,
-        ca_cert=None,
+        verify_ssl=not insecure,
+        ca_cert=ca_cert,
         http_timeout=http_timeout,
         api_key_fd=None,
-        lan_key_fd=lan_key_fd,
+        p2p_key_fd=p2p_key_fd,
         events_json_fd=events_json_fd,
         local_path=local_path,
         continuous=not once,
@@ -979,18 +1062,21 @@ def lan(
         compression_enabled=not no_compression,
         delta_enabled=not no_delta,
         delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_lan=delta_min_file_size_lan,
+        delta_min_file_size_p2p=delta_min_file_size_p2p,
         max_bandwidth_upload=parsed_bw_upload,
         max_bandwidth_download=parsed_bw_download,
-        lan_mode=True,
-        lan_port=lan_port,
+        p2p_mode=True,
+        p2p_listen_port=p2p_listen_port,
+        p2p_bootnode=bootnode_host,
+        p2p_bootnode_port=bootnode_port,
+        p2p_upnp_enabled=upnp_enabled,
         discovery_timeout=discovery_timeout,
-        lan_group=lan_group,
+        p2p_group=p2p_group,
         force_master=force_master,
         never_master=never_master,
-        lan_require_pairing=require_pairing,
-        lan_peer_download_enabled=not no_peer_download,
-        lan_allow_unauthenticated_writes=allow_unauthenticated_writes,
+        p2p_require_pairing=require_pairing,
+        p2p_peer_download_enabled=not no_peer_download,
+        p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
         debug=verbose,
         quiet=quiet,
         logfile=logfile,
@@ -1032,7 +1118,7 @@ def server(
     no_compression: NoCompressionOpt = False,
     no_delta: NoDeltaOpt = False,
     delta_min_file_size: DeltaMinFileSizeOpt = None,
-    delta_min_file_size_lan: DeltaMinFileSizeLanOpt = None,
+    delta_min_file_size_p2p: DeltaMinFileSizeP2POpt = None,
     max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
     no_autotune: NoAutotuneOpt = False,
     mass_delete_guard: MassDeleteGuardOpt = True,
@@ -1112,7 +1198,7 @@ def server(
         mass_delete_threshold=mass_delete_threshold,
         mass_delete_percent=mass_delete_percent,
         delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_lan=delta_min_file_size_lan,
+        delta_min_file_size_p2p=delta_min_file_size_p2p,
     )
 
     from hsync_client.main_logic import run_sync
@@ -1125,7 +1211,7 @@ def server(
         ca_cert=ca_cert,
         http_timeout=http_timeout,
         api_key_fd=api_key_fd,
-        lan_key_fd=None,
+        p2p_key_fd=None,
         events_json_fd=events_json_fd,
         local_path=local_path,
         continuous=not once,
@@ -1140,18 +1226,18 @@ def server(
         compression_enabled=not no_compression,
         delta_enabled=not no_delta,
         delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_lan=delta_min_file_size_lan,
+        delta_min_file_size_p2p=delta_min_file_size_p2p,
         max_bandwidth_upload=parsed_bw_upload,
         max_bandwidth_download=parsed_bw_download,
-        lan_mode=False,
-        lan_port=0,
+        p2p_mode=False,
+        p2p_listen_port=0,
         discovery_timeout=None,
-        lan_group=None,
+        p2p_group=None,
         force_master=False,
         never_master=False,
-        lan_require_pairing=False,
-        lan_peer_download_enabled=False,
-        lan_allow_unauthenticated_writes=False,
+        p2p_require_pairing=False,
+        p2p_peer_download_enabled=False,
+        p2p_allow_unauthenticated_writes=False,
         debug=verbose,
         quiet=quiet,
         logfile=logfile,

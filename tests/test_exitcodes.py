@@ -57,7 +57,7 @@ class TestExitCodes:
         assert int(ExitCode.TRANSFER_ERRORS) == 2
         assert int(ExitCode.DELETION_GUARD) == 3
         assert int(ExitCode.CONFLICTS) == 4
-        assert int(ExitCode.LAN_NO_PEER) == 5
+        assert int(ExitCode.P2P_NO_PEER) == 5
 
 
 class TestParallelTransferFailureCounting:

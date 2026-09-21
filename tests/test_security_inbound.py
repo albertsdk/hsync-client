@@ -6,8 +6,8 @@
 
 """Security regression tests for untrusted remote input.
 
-Covers the inbound-validation hardening: remote peers (central server, LAN
-master or any LAN client) must not be able to steer local filesystem
+Covers the inbound-validation hardening: remote peers (central server, P2P
+master or any P2P client) must not be able to steer local filesystem
 operations outside the bucket, rewrite engine state files, plant setuid
 binaries or exhaust resources with decompression bombs.
 """
@@ -23,14 +23,14 @@ import zstandard as zstd
 from hsync_common.models.file import File
 
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
-from hsync_client.lan_server import LANServer
+from hsync_client.p2p_server import P2PServer
 from hsync_client.remote_websocket import REMOTE_DISPATCH_CTX
 
-from .lan_helpers import unauth_write_config
+from .p2p_helpers import unauth_write_config
 
 
 class TestInboundEventPathValidation:
-    """apply_inbound_event must drop unsafe remote paths (remote + LAN slave)."""
+    """apply_inbound_event must drop unsafe remote paths (remote + P2P slave)."""
 
     async def test_traversal_delete_rejected(self, tmp_path):
         """A deleted event with ../ must not remove files outside the bucket."""
@@ -466,7 +466,7 @@ class TestListingValidation:
             actions = get_sync_actions(
                 [remote_entry],
                 [{"filepath": "present.txt"}],
-                lan_mode=True,
+                p2p_mode=True,
             )
 
         assert all(a.action != "delete" for a in actions)
@@ -523,19 +523,19 @@ class TestRemotePermissionMask:
 
 
 # =============================================================================
-# LAN master HTTP surface
+# P2P master HTTP surface
 # =============================================================================
 
 
 class TestLANServerHardening:
-    """LAN master endpoints must confine and verify peer-supplied input."""
+    """P2P master endpoints must confine and verify peer-supplied input."""
 
     @pytest.fixture
     def server(self):
-        from hsync_client.lan import get_free_port
+        from hsync_client.p2p_peers import get_free_port
 
         port = get_free_port()
-        server = LANServer(port=port)
+        server = P2PServer(port=port)
         server.start()
         time.sleep(0.1)
         yield server, port
@@ -552,7 +552,7 @@ class TestLANServerHardening:
         (evil / "secret.txt").write_text("secret")
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(bucket))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(bucket))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files/download"
             response = requests.get(url, params={"filename": "../sync-evil/secret.txt"}, timeout=5)
             assert response.status_code in (400, 403, 404)
@@ -568,7 +568,7 @@ class TestLANServerHardening:
         (evil / "keep.txt").write_text("keep")
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(bucket))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(bucket))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.delete(url, params={"path": "../sync-evil"}, timeout=5)
             assert response.status_code == 400
@@ -584,7 +584,7 @@ class TestLANServerHardening:
         evil.mkdir()
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(bucket))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(bucket))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             response = requests.patch(
                 url, params={"src": "a.txt", "dst": "../sync-evil/a.txt"}, timeout=5
@@ -600,7 +600,7 @@ class TestLANServerHardening:
         bucket.mkdir()
         srv, port = server
         with patch(
-            "hsync_client.lan_server.CONFIG", {"LOCAL_BUCKET": str(bucket), "LAN_KEY": None}
+            "hsync_client.p2p_server.CONFIG", {"LOCAL_BUCKET": str(bucket), "P2P_KEY": None}
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
@@ -619,7 +619,7 @@ class TestLANServerHardening:
         import requests
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",
@@ -637,7 +637,7 @@ class TestLANServerHardening:
         import requests
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",
@@ -655,7 +655,7 @@ class TestLANServerHardening:
         import requests
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {"cid": "t", "path": "", "mtime": "", "ctime": ""}
             files = {"file": ("f.txt", b"real content")}
@@ -671,7 +671,7 @@ class TestLANServerHardening:
         compressed = zstd.ZstdCompressor().compress(content)
 
         srv, port = server
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",
@@ -693,8 +693,8 @@ class TestLANServerHardening:
 
         srv, port = server
         with (
-            patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))),
-            patch("hsync_client.lan_server.MAX_TOMBSTONE_PAYLOAD_BYTES", 1024),
+            patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))),
+            patch("hsync_client.p2p_server.MAX_TOMBSTONE_PAYLOAD_BYTES", 1024),
             patch("hsync_client.tombstones.merge_payload", return_value=0) as mock_merge,
         ):
             url = f"http://localhost:{port}/api/v1/buckets/test/tombstones"
@@ -718,7 +718,7 @@ class TestLANServerHardening:
 
         srv, port = server
         future = str(time.time() + 10_000_000)
-        with patch("hsync_client.lan_server.CONFIG", unauth_write_config(str(tmp_path))):
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))):
             url = f"http://localhost:{port}/api/v1/buckets/test/files"
             data = {
                 "cid": "t",

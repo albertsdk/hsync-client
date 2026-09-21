@@ -28,7 +28,7 @@ from hsync_client.main_logic import (
     _get_resync_value,
     _get_stability_delay_value,
     _safe_config_for_log,
-    _warn_if_lan_in_container,
+    _warn_if_p2p_in_container,
     run_sync,
 )
 from hsync_client.sync import SyncCycleResult
@@ -424,10 +424,10 @@ class _RunSyncKwargs(TypedDict, total=False):
     compression_enabled: bool
     max_bandwidth_upload: int | None
     max_bandwidth_download: int | None
-    lan_mode: bool
-    lan_port: int
+    p2p_mode: bool
+    p2p_listen_port: int
     discovery_timeout: int | None
-    lan_group: str | None
+    p2p_group: str | None
     force_master: bool
     never_master: bool
     debug: bool
@@ -435,7 +435,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     logfile: str | None
     no_color: bool
     api_key_fd: int | None
-    lan_key_fd: int | None
+    p2p_key_fd: int | None
 
 
 def _default_run_sync_kwargs(
@@ -462,10 +462,10 @@ def _default_run_sync_kwargs(
         "compression_enabled": True,
         "max_bandwidth_upload": None,
         "max_bandwidth_download": None,
-        "lan_mode": False,
-        "lan_port": 0,
+        "p2p_mode": False,
+        "p2p_listen_port": 0,
         "discovery_timeout": 5,
-        "lan_group": None,
+        "p2p_group": None,
         "force_master": False,
         "never_master": False,
         "debug": False,
@@ -495,7 +495,7 @@ class TestRunSync:
             assert any("does not exist" in str(c) for c in mock_logger.error.call_args_list)
 
     def test_returns_early_if_no_server_url(self, tmp_path):
-        """run_sync exits non-zero when no server URL and not in LAN mode."""
+        """run_sync exits non-zero when no server URL and not in P2P mode."""
         kwargs = _default_run_sync_kwargs(tmp_path, server_url=None)
 
         with (
@@ -545,38 +545,38 @@ class TestRunSync:
 
         assert any("Server URL is required" in m for m in captured)
 
-    def test_lan_mode_uses_placeholder_url(self, tmp_path):
-        """In LAN mode without server URL, a placeholder is used."""
+    def test_p2p_mode_uses_placeholder_url(self, tmp_path):
+        """In P2P mode without server URL, a placeholder is used."""
         kwargs = _default_run_sync_kwargs(
             tmp_path,
             server_url=None,
-            lan_mode=True,
+            p2p_mode=True,
             sync_direction="download-only",
         )
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
+            patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
-            mock_lan.return_value = 0
+            mock_p2p.return_value = 0
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
                 run_sync(**kwargs)
             assert exc_info.value.code == 0
-            # run_lan_mode should have been called
-            mock_lan.assert_called_once()
+            # run_p2p_mode should have been called
+            mock_p2p.assert_called_once()
 
-    def test_lan_mode_uses_default_discovery_timeout_when_unset(self, tmp_path):
-        """LAN discovery timeout defaults to 10 when CLI and env are unset."""
+    def test_p2p_mode_uses_default_discovery_timeout_when_unset(self, tmp_path):
+        """P2P discovery timeout defaults to 10 when CLI and env are unset."""
         kwargs = _default_run_sync_kwargs(
             tmp_path,
             server_url=None,
-            lan_mode=True,
+            p2p_mode=True,
             discovery_timeout=None,
             sync_direction="download-only",
         )
@@ -585,52 +585,52 @@ class TestRunSync:
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
             patch("hsync_client.main_logic.get_discovery_timeout", return_value=None),
-            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
+            patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
-            mock_lan.return_value = 0
+            mock_p2p.return_value = 0
             mock_log_setup.return_value = MagicMock()
             with pytest.raises(SystemExit) as exc_info:
                 run_sync(**kwargs)
             assert exc_info.value.code == 0
 
-        config_arg = mock_lan.call_args.args[0]
+        config_arg = mock_p2p.call_args.args[0]
         assert config_arg["DISCOVERY_TIMEOUT"] == DISCOVERY_TIMEOUT_DEFAULT
 
-    def test_lan_mode_derives_one_shot_from_continuous(self, tmp_path):
+    def test_p2p_mode_derives_one_shot_from_continuous(self, tmp_path):
         """ONE_SHOT mirrors --once: continuous=False -> True, True -> False."""
         for continuous_value, expected in ((False, True), (True, False)):
             kwargs = _default_run_sync_kwargs(
                 tmp_path,
                 server_url=None,
-                lan_mode=True,
+                p2p_mode=True,
                 continuous=continuous_value,
                 sync_direction="download-only",
             )
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
-                patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
+                patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
                 patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
             ):
-                mock_lan.return_value = 0
+                mock_p2p.return_value = 0
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
                     run_sync(**kwargs)
                 assert exc_info.value.code == 0
-            config_arg = mock_lan.call_args.args[0]
+            config_arg = mock_p2p.call_args.args[0]
             assert config_arg["ONE_SHOT"] is expected
 
-    def test_lan_mode_preserves_zero_discovery_timeout(self, tmp_path):
-        """LAN discovery timeout of 0 is preserved as wait-indefinitely."""
+    def test_p2p_mode_preserves_zero_discovery_timeout(self, tmp_path):
+        """P2P discovery timeout of 0 is preserved as wait-indefinitely."""
         kwargs = _default_run_sync_kwargs(
             tmp_path,
             server_url=None,
-            lan_mode=True,
+            p2p_mode=True,
             discovery_timeout=0,
             sync_direction="download-only",
         )
@@ -638,18 +638,18 @@ class TestRunSync:
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.lan_handler.run_lan_mode") as mock_lan,
+            patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
         ):
-            mock_lan.return_value = 0
+            mock_p2p.return_value = 0
             mock_log_setup.return_value = MagicMock()
             with pytest.raises(SystemExit) as exc_info:
                 run_sync(**kwargs)
             assert exc_info.value.code == 0
 
-        config_arg = mock_lan.call_args.args[0]
+        config_arg = mock_p2p.call_args.args[0]
         assert config_arg["DISCOVERY_TIMEOUT"] == 0
 
     def test_invalid_logfile_returns_early(self, tmp_path):
@@ -825,7 +825,7 @@ class TestRunSync:
 
 
 class TestWarnIfLanInContainer:
-    """Tests for _warn_if_lan_in_container (container networking caveat)."""
+    """Tests for _warn_if_p2p_in_container (container networking caveat)."""
 
     def test_no_warning_outside_container(self):
         """On bare metal no container warning is emitted."""
@@ -834,7 +834,7 @@ class TestWarnIfLanInContainer:
             "hsync_client.main_logic.detect_container",
             return_value=ContainerInfo(False),
         ):
-            _warn_if_lan_in_container(mock_logger)
+            _warn_if_p2p_in_container(mock_logger)
         mock_logger.warning.assert_not_called()
 
     def test_warning_inside_container(self):
@@ -844,7 +844,7 @@ class TestWarnIfLanInContainer:
             "hsync_client.main_logic.detect_container",
             return_value=ContainerInfo(True, "docker", "/.dockerenv"),
         ):
-            _warn_if_lan_in_container(mock_logger)
+            _warn_if_p2p_in_container(mock_logger)
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
         assert "docker" in warning_texts
         assert "--network host" in warning_texts
@@ -859,7 +859,7 @@ class TestSafeConfigForLog:
             HsyncConfig,
             {
                 "API_KEY": "super-secret-api-key",
-                "LAN_KEY": "super-secret-lan-key",
+                "P2P_KEY": "super-secret-lan-key",
                 "REQUEST_HEADERS": {
                     "accept": "application/json",
                     "Authorization": "Bearer super-secret-api-key",
@@ -872,10 +872,10 @@ class TestSafeConfigForLog:
         )
 
     def test_masks_secrets(self):
-        """API_KEY, LAN_KEY and the Authorization header are redacted."""
+        """API_KEY, P2P_KEY and the Authorization header are redacted."""
         safe = _safe_config_for_log(self._make_config(), None)
         assert safe["API_KEY"] == "****"
-        assert safe["LAN_KEY"] == "****"
+        assert safe["P2P_KEY"] == "****"
         assert safe["REQUEST_HEADERS"]["Authorization"] == "Bearer ****"
 
     def test_paths_section_resolves_env_overrides(self, tmp_path, monkeypatch):

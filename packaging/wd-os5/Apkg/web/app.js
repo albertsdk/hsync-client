@@ -18,8 +18,9 @@
 
     const SUPPORTED = ['en', 'it', 'de', 'es', 'fr'];
     const CHECKBOX_KEYS = [
-        'HSYNC_LAN_REQUIRE_PAIRING',
-        'HSYNC_LAN_PEER_DOWNLOAD', 'HSYNC_LAN_ALLOW_UNAUTHENTICATED_WRITES',
+        'HSYNC_P2P_REQUIRE_PAIRING',
+        'HSYNC_UPNP_ENABLED',
+        'HSYNC_P2P_PEER_DOWNLOAD', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES',
         'HSYNC_IGNORE_DELETE',
         'HSYNC_NO_COMPRESSION', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
         'HSYNC_AUTOTUNE',
@@ -27,7 +28,7 @@
 
     // Fields whose values are interpolated into the generated connect command;
     // editing any of them must re-render the section.
-    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_LAN_GROUP', 'HSYNC_LAN_KEY'];
+    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_BOOTNODE'];
 
     function isConnectField(id) {
         return CONNECT_FIELDS.includes(id);
@@ -154,10 +155,10 @@
 
     function syncModeVisibility() {
         const modeEl = $('#HSYNC_MODE');
-        const mode = modeEl ? modeEl.value : 'lan';
-        const lan = $('#hsync-lan-options');
+        const mode = modeEl ? modeEl.value : 'p2p';
+        const p2p_section = $('#hsync-p2p-options');
         const srv = $('#hsync-server-options');
-        if (lan) lan.hidden = (mode !== 'lan');
+        if (p2p_section) p2p_section.hidden = (mode !== 'p2p');
         if (srv) srv.hidden = (mode !== 'server');
         renderConnectCommand();
     }
@@ -167,7 +168,7 @@
     // -----------------------------------------------------------------
     // Builds the hsync command to run on a second device to join the sync
     // group coordinated by this NAS. Only the connection-matching fields are
-    // emitted (bucket, mode, group, LAN key); per-device sync-behaviour flags
+    // emitted (bucket, mode, group, p2p key); per-device sync-behaviour flags
     // (ignore-delete, compression, ...) are intentionally omitted — they
     // do not need to match between peers. The NAS role is also omitted: LAN
     // master election resolves the remote device's role automatically regardless
@@ -177,21 +178,27 @@
         const bucket = (bucketEl && bucketEl.value.trim())
             || (bucketEl && bucketEl.placeholder)
             || '<bucket>';
-        const groupEl = $('#HSYNC_LAN_GROUP');
-        const keyEl = $('#HSYNC_LAN_KEY');
+        const groupEl = $('#HSYNC_P2P_GROUP');
+        const keyEl = $('#HSYNC_P2P_KEY');
         const group = groupEl ? groupEl.value.trim() : '';
         const key = keyEl ? keyEl.value : '';
 
         // POSIX single-quote every interpolated value so the generated command
         // is safe to paste into a shell regardless of its contents (no $ /
         // backtick / " expansion, no < > redirection from the placeholder).
-        let cmd = 'hsync lan -b ' + shellQuote(bucket)
+        let cmd = 'hsync p2p -b ' + shellQuote(bucket)
             + ' -p ' + shellQuote(PATH_PLACEHOLDER);
         if (group) cmd += ' --group ' + shellQuote(group);
 
+        // Cross-network discovery: the other device must use the same bootnode,
+        // so it travels as an env prefix (bare host; no scheme/port).
+        const bootnodeEl = $('#HSYNC_BOOTNODE');
+        const bootnode = bootnodeEl ? bootnodeEl.value.trim() : '';
+        if (bootnode) cmd = 'HSYNC_BOOTNODE=' + shellQuote(bootnode) + ' ' + cmd;
+
         const showKey = key.length > 0;
-        const masked = showKey ? ('HSYNC_LAN_KEY=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;
-        const unmasked = showKey ? ('HSYNC_LAN_KEY=' + shellQuote(key) + ' ' + cmd) : cmd;
+        const masked = showKey ? ('HSYNC_P2P_KEY=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;
+        const unmasked = showKey ? ('HSYNC_P2P_KEY=' + shellQuote(key) + ' ' + cmd) : cmd;
         return { masked, unmasked, showKey };
     }
 
@@ -205,12 +212,12 @@
         if (!cmdEl) return;
 
         const modeEl = $('#HSYNC_MODE');
-        const isLan = !!modeEl && modeEl.value === 'lan';
+        const isP2p = !!modeEl && modeEl.value === 'p2p';
 
         // Resolve the command text first: it is the core of this section, so
         // a missing optional element (note/button) can never leave it empty.
         let showKey = false;
-        if (isLan) {
+        if (isP2p) {
             const built = buildConnectCommand();
             connectUnmasked = built.unmasked;
             showKey = built.showKey;
@@ -227,9 +234,9 @@
             cmdEl.textContent = '';
         }
 
-        const noteLan = $('#hsync-connect-note-lan');
+        const noteP2p = $('#hsync-connect-note-p2p');
         const noteServer = $('#hsync-connect-note-server');
-        if (noteLan) noteLan.hidden = !isLan;
+        if (noteLan) noteP2p.hidden = !isLan;
         if (noteServer) noteServer.hidden = isLan;
 
         const copyBtn = $('#hsync-btn-copy');

@@ -12,7 +12,7 @@ tests, how to write new tests, and cross-project testing with `hsync-common`.
 - [Fixtures](#fixtures)
 - [Writing new tests](#writing-new-tests)
 - [Mocking the server](#mocking-the-server)
-- [LAN mode testing](#lan-mode-testing)
+- [p2p mode testing](#p2p-mode-testing)
 - [Black‑box tests (`test_bb_*.py`)](#blackbox-tests-test_bb_py)
 - [Cross-project testing](#cross-project-testing)
 
@@ -43,9 +43,9 @@ tests, how to write new tests, and cross-project testing with `hsync-common`.
 .venv/bin/python -m pytest -x
 ```
 
-> For LAN black-box tests, prefer `--maxfail=N` over `-x`: a single mDNS
+> For p2p black-box tests, prefer `--maxfail=N` over `-x`: a single mDNS
 > election timeout is expected intermittently and should not abort the other
-> independent LAN files. See [LAN‑mode Black‑Box tests](#lanmode-blackbox-tests).
+> independent p2p files. See [p2p‑mode Black‑Box tests](#p2p-mode-black-box-tests).
 
 ## Test structure
 
@@ -55,7 +55,7 @@ tests/
 ├── conftest.py                         # Shared fixtures and test configuration
 │                                          (autouse fixtures, Black‑Box harness,
 │                                           live_server, ClientGlobalsGuard, …)
-├── lan_helpers.py                      # Shared LAN test helpers
+├── p2p_helpers.py                      # Shared p2p test helpers
 ├── test_autotune.py                    # Autotune concurrency heuristics
 ├── test_bb_server_remote_sync.py       # Black‑Box: client‑server sync
 ├── test_bb_server_continuous_sync.py   # Black‑Box: continuous sync
@@ -63,18 +63,18 @@ tests/
 ├── test_bb_server_safety_guards.py     # Black‑Box: mass‑delete guard, disk‑space
 ├── test_bb_server_cli_surface.py       # Black‑Box: CLI help / error messages
 ├── test_bb_server_corrected_mtime.py   # Black‑Box: ADR-0023 tie‑break (server mode)
-├── test_bb_lan_advanced.py             # Black‑Box: LAN advanced scenarios
-├── test_bb_lan_auth_direction.py       # Black‑Box: LAN auth and sync direction
-├── test_bb_lan_core.py                 # Black‑Box: LAN core sync cycle
-├── test_bb_lan_delta.py                # Black‑Box: LAN delta transfer (REST)
-├── test_bb_lan_delta_apply.py          # Black‑Box: LAN delta‑apply upload (REST)
-├── test_bb_lan_features.py             # Black‑Box: LAN feature flags
-├── test_bb_lan_files.py                # Black‑Box: LAN file operations
-├── test_bb_lan_resumable.py            # Black‑Box: LAN resumable upload (REST)
-├── test_bb_lan_security.py             # Black‑Box: LAN security (TOFU, certs)
-├── test_bb_lan_upload_negatives.py     # Black‑Box: LAN upload rejection paths (REST)
-├── test_bb_lan_websocket_relay.py      # Black‑Box: LAN WebSocket relay & handshake
-├── test_bb_lan_corrected_mtime.py      # Black‑Box: ADR-0023 tie‑break (LAN mode)
+├── test_bb_p2p_advanced.py             # Black‑Box: p2p advanced scenarios
+├── test_bb_p2p_auth_direction.py       # Black‑Box: p2p auth and sync direction
+├── test_bb_p2p_core.py                 # Black‑Box: p2p core sync cycle
+├── test_bb_p2p_delta.py                # Black‑Box: p2p delta transfer (REST)
+├── test_bb_p2p_delta_apply.py          # Black‑Box: p2p delta‑apply upload (REST)
+├── test_bb_p2p_features.py             # Black‑Box: p2p feature flags
+├── test_bb_p2p_files.py                # Black‑Box: p2p file operations
+├── test_bb_p2p_resumable.py            # Black‑Box: p2p resumable upload (REST)
+├── test_bb_p2p_security.py             # Black‑Box: p2p security (TOFU, certs)
+├── test_bb_p2p_upload_negatives.py     # Black‑Box: p2p upload rejection paths (REST)
+├── test_bb_p2p_websocket_relay.py      # Black‑Box: p2p WebSocket relay & handshake
+├── test_bb_p2p_corrected_mtime.py      # Black‑Box: ADR-0023 tie‑break (p2p mode)
 ├── test_sync_local.py                  # Local file comparison and action generation
 ├── test_sync_remote.py                 # Remote file comparison
 ├── test_sync_update.py                 # File update detection
@@ -92,30 +92,30 @@ tests/
 ├── test_event_dispatch_rename.py       # Inbound rename event dispatch
 ├── test_event_dispatch_symlink.py      # Inbound symlink event dispatch
 ├── test_file_event_handler_base.py     # Base file event handler logic
-├── test_lan_peer.py                    # LAN peer model and logic
-├── test_lan_peer_manager.py            # LAN peer manager
-├── test_lan_handler_advanced.py        # Advanced LAN handler scenarios
-├── test_lan_delta.py                   # LAN delta transfer
-├── test_lan_network_tuning.py          # LAN network tuning parameters
-├── test_lan_sync.py                    # LAN sync operations
-├── test_lan_server_endpoints_advanced.py  # LAN server: advanced endpoints
-├── test_lan_server_endpoints_base.py      # LAN server: base endpoints
-├── test_lan_server_endpoints_mutations.py # LAN server: mutation endpoints
-├── test_lan_server_https.py            # LAN server HTTPS setup
-├── test_lan_server_security.py         # LAN server security
-├── test_lan_server_thread_cap.py       # LAN server thread cap
-├── test_lan_service_listener.py        # LAN service discovery listener
-├── test_lan_utils.py                   # LAN utility functions
-├── test_lan_websocket_handle.py        # LAN WebSocket handle
-├── test_lan_websocket_handler.py       # LAN WebSocket handler
-├── test_lan_websocket_server.py        # LAN WebSocket server
-├── test_lan_websocket_slave.py         # LAN WebSocket slave client
+├── test_p2p_peer.py                    # p2p peer model and logic
+├── test_p2p_peer_manager.py            # p2p peer manager
+├── test_p2p_handler_advanced.py        # Advanced LAN handler scenarios
+├── test_p2p_delta.py                   # LAN delta transfer
+├── test_p2p_network_tuning.py          # p2p network tuning parameters
+├── test_p2p_sync.py                    # LAN sync operations
+├── test_p2p_server_endpoints_advanced.py  # LAN server: advanced endpoints
+├── test_p2p_server_endpoints_base.py      # LAN server: base endpoints
+├── test_p2p_server_endpoints_mutations.py # LAN server: mutation endpoints
+├── test_p2p_server_https.py            # LAN server HTTPS setup
+├── test_p2p_server_security.py         # LAN server security
+├── test_p2p_server_thread_cap.py       # LAN server thread cap
+├── test_p2p_service_listener.py        # LAN service discovery listener
+├── test_p2p_utils.py                   # LAN utility functions
+├── test_p2p_websocket_handle.py        # LAN WebSocket handle
+├── test_p2p_websocket_handler.py       # LAN WebSocket handler
+├── test_p2p_websocket_server.py        # LAN WebSocket server
+├── test_p2p_websocket_slave.py         # LAN WebSocket slave client
 ├── test_config.py                      # Configuration loading and CLI arg parsing
 ├── test_compression.py                 # Zstandard compression/decompression
 ├── test_cli.py                         # CLI argument parsing
 ├── test_exceptions.py                  # Exception hierarchy
 ├── test_main_logic_deletion_risk.py    # Core sync orchestration: deletion risk
-├── test_main_logic_lan.py              # Core sync orchestration: LAN mode
+├── test_main_logic_p2p.py              # Core sync orchestration: p2p mode
 ├── test_main_logic_preview.py          # Core sync orchestration: preview mode
 ├── test_main_logic_sync.py             # Core sync orchestration: sync flow
 ├── test_logger.py                      # Logging configuration
@@ -281,9 +281,9 @@ async def test_websocket_event(mock_ws):
     # Test event handling logic
 ```
 
-## LAN mode testing
+## p2p mode testing
 
-LAN mode tests require special setup because they involve mDNS discovery and
+p2p mode tests require special setup because they involve mDNS discovery and
 peer-to-peer connections:
 
 1. Use `pytest-asyncio` for async LAN operations
@@ -340,27 +340,30 @@ To opt in:
 HSYNC_BB_SERVER=1 .venv/bin/python -m pytest tests/test_bb_server_*
 ```
 
-### LAN‑mode Black‑Box tests
+### p2p‑mode Black‑Box tests
 
-Tests the LAN peer‑to‑peer sync use case: two real client instances that
+Tests the p2p peer‑to‑peer sync use case: two real client instances that
 discover each other via mDNS/zeroconf, elect a master, and sync over
 HTTPS/WSS with TOFU certificate pinning. The suite is split across twelve
 files:
 
 | File | What it covers |
 |------|---------------|
-| `test_bb_lan_core.py` | Core LAN sync cycle: discovery, election, full sync. |
-| `test_bb_lan_advanced.py` | Advanced LAN scenarios (edge cases, complex file trees). |
-| `test_bb_lan_auth_direction.py` | LAN authentication and sync‑direction enforcement. |
-| `test_bb_lan_delta.py` | LAN delta transfer over the public REST surface (reconstruct, 404s). |
-| `test_bb_lan_delta_apply.py` | LAN delta‑apply (upload‑side delta) over the public REST surface (reconstruct, missing‑base 404). |
-| `test_bb_lan_features.py` | LAN feature flags (compression, delta, autotune). |
-| `test_bb_lan_files.py` | LAN file operations (create, modify, delete, rename). |
-| `test_bb_lan_resumable.py` | LAN resumable upload over the public REST surface. |
-| `test_bb_lan_security.py` | LAN security (TOFU pinning, certificate validation). |
-| `test_bb_lan_upload_negatives.py` | LAN upload rejection paths over the public REST surface (checksum, traversal, engine artifacts, compressed+offset). |
-| `test_bb_lan_websocket_relay.py` | LAN WebSocket relay, fan‑out, and handshake protocol. |
-| `test_bb_lan_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break in LAN mode: divergent edits converge on the newer corrected mtime with loser preservation; sync completes when NTP is unreachable. |
+| `test_bb_p2p_core.py` | Core LAN sync cycle: discovery, election, full sync. |
+| `test_bb_p2p_advanced.py` | Advanced LAN scenarios (edge cases, complex file trees). |
+| `test_bb_p2p_auth_direction.py` | LAN authentication and sync‑direction enforcement. |
+| `test_bb_p2p_delta.py` | LAN delta transfer over the public REST surface (reconstruct, 404s). |
+| `test_bb_p2p_delta_apply.py` | LAN delta‑apply (upload‑side delta) over the public REST surface (reconstruct, missing‑base 404). |
+| `test_bb_p2p_features.py` | LAN feature flags (compression, delta, autotune). |
+| `test_bb_p2p_files.py` | LAN file operations (create, modify, delete, rename). |
+| `test_bb_p2p_resumable.py` | LAN resumable upload over the public REST surface. |
+| `test_bb_p2p_security.py` | p2p security (TOFU pinning, certificate validation). |
+| `test_bb_p2p_upload_negatives.py` | p2p upload rejection paths over the public REST surface (checksum, traversal, engine artifacts, compressed+offset). |
+| `test_bb_p2p_websocket_relay.py` | p2p WebSocket relay, fan‑out, and handshake protocol. |
+| `test_bb_p2p_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break in p2p mode: divergent edits converge on the newer corrected mtime with loser preservation; sync completes when NTP is unreachable. |
+
+| `test_bb_p2p_bootnode_client.py` | the client's `BootnodeClient` against the **real** `hsync-bootnode` (register → ack/STUN-echo, query relay, refresh, leave); skips when the sibling bootnode is not built. |
+| `test_bb_p2p_bootnode_discovery.py` | two clients discover **and sync through** a loopback bootnode (`BOOTNODE 127.0.0.1 --port <p> --insecure --no-upnp`); also holds the opt-in real-NAT check. |
 
 **These tests are disabled by default** because they are inherently
 environment‑sensitive (multicast on loopback, self‑signed certificate
@@ -368,17 +371,20 @@ generation, election timing, multi‑process coordination).
 
 To opt in:
 ```bash
-HSYNC_BB_LAN=1 .venv/bin/python -m pytest --maxfail=3 tests/test_bb_lan_*
+HSYNC_BB_P2P=1 .venv/bin/python -m pytest --maxfail=3 tests/test_bb_p2p_*
 ```
 
-Run the LAN group **isolated** from the remote/server black-box suite: do not
+Set `HSYNC_BB_P2P_NAT=1` to also run the opt-in real-NAT checks (they need a
+live UPnP/IGD and are skipped otherwise); CI stays loopback-only.
+
+Run the p2p group **isolated** from the remote/server black-box suite: do not
 combine the two in the same `pytest` invocation with `-x`, or a single LAN
 timeout will abort the stable remote suite. `--maxfail` keeps one flaky LAN
 file from masking the others.
 
-The LAN tests start two subprocesses with the `lan` subcommand (and
-`--force-master` / `--never-master`) via the `_lan_start` helper in
-`tests/lan_helpers.py`. They use the `_HSYNC_COMMON_DIR`
+The LAN tests start two subprocesses with the `p2p` subcommand (and
+`--force-master` / `--never-master`) via the `_p2p_start` helper in
+`tests/p2p_helpers.py`. They use the `_HSYNC_COMMON_DIR`
 constant to inject the `hsync-common` source directory into
 `PYTHONPATH` so the subprocess can import shared models.
 
@@ -388,8 +394,8 @@ constant to inject the `hsync-common` source directory into
 |---------|------------------|
 | `hsync-server` subprocess | Poll `GET /health` until 200 (real readiness probe). |
 | Client in continuous mode | `HSYNC_READY_FILE` PID file, written after the first completed sync cycle. |
-| LAN master | `HSYNC_READY_FILE` PID file, written once its HTTP+WSS servers are up. |
-| LAN slave | `HSYNC_READY_FILE` PID file, written after the initial sync. |
+| p2p master | `HSYNC_READY_FILE` PID file, written once its HTTP+WSS servers are up. |
+| p2p slave | `HSYNC_READY_FILE` PID file, written after the initial sync. |
 
 The ready file is written **atomically** (temp + rename) by the client and
 is accepted by `_wait_for_client_ready` **only when its content equals the
@@ -403,7 +409,7 @@ design).
 **Isolation contract** (no dirty data across tests or on the host):
 
 - Every LAN subprocess gets its own `HSYNC_DEVICE_DIR` (device ID + keypair)
-  and `HSYNC_LAN_PIN_FILE` (TOFU pins) under the test's `tmp_path` — nothing
+  and `HSYNC_P2P_PIN_FILE` (TOFU pins) under the test's `tmp_path` — nothing
   ever touches the developer's real `~/.local/state/hsync`. Two peers in one
   test are *distinct devices* by construction (same host + same bucket +
   same device ID would be ignored as "self" in discovery). Restarting a peer
@@ -411,7 +417,7 @@ design).
   rotates the certificate while keeping the device ID (used by the
   fingerprint-changed test).
 - Subprocess environments are scrubbed of every pre-existing `HSYNC_*`
-  variable before test overrides are applied (`_lan_env`, `watch_sync`, and
+  variable before test overrides are applied (`_p2p_env`, `watch_sync`, and
   `_server_env` for the `hsync-server` subprocess).
 - The in-process `tests/conftest.py` autouse fixture `_scrub_hsync_env`
   removes every `HSYNC_*` inherited from the developer's shell before each
@@ -442,7 +448,7 @@ design).
   failures.
 - Subprocess stdout is captured via `subprocess.PIPE` (stderr merged into
   it; loguru logs to stdout) and polled for log markers (`MASTER`,
-  `Pinned LAN master certificate`, etc.) with `_wait_for_text_in_stderr`,
+  `Pinned p2p master certificate`, etc.) with `_wait_for_text_in_stderr`,
   which also drains the final output of fast-exiting processes.
 - Do **not** combine LAN and remote/server black-box tests in the same
   `pytest` invocation with `-x`: a LAN timeout will abort the stable
@@ -457,8 +463,8 @@ design).
 
 ## Stress suites
 
-`tests/test_bb_server_stress.py` and `tests/test_bb_lan_stress.py` exercise the
-server-mode and LAN P2P paths under burst load (many files created in one
+`tests/test_bb_server_stress.py` and `tests/test_bb_p2p_stress.py` exercise the
+server-mode and p2p paths under burst load (many files created in one
 wave, then mutated, deleted and re-verified). They are **opt-in black-box
 suites** gated by `HSYNC_BB_STRESS=1`, with bounded scale by default so
 `make ci` stays fast:
@@ -466,7 +472,7 @@ suites** gated by `HSYNC_BB_STRESS=1`, with bounded scale by default so
 ```bash
 # Bounded run (default knobs: 300 files / 50 dirs / 1 iteration)
 cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_server_stress.py
-cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_lan_stress.py
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_p2p_stress.py
 
 # Full-scale benchmark (long)
 make -C .. test-stress
@@ -498,7 +504,7 @@ Notes:
 
 - *Concurrent zstd decompression corrupted streams.* A single shared
   `ZstdDecompressor` in `hsync-common` was used by all parallel transfer
-  threads; under LAN burst load this produced `Unknown frame descriptor` /
+  threads; under p2p burst load this produced `Unknown frame descriptor` /
   `Data corrupted` errors and, with zstandard ≥ 0.25, could crash the
   interpreter. Fixed by making decompressors per-thread (`threading.local()`).
   Regression: `hsync-common/tests/test_compression.py::TestThreadSafety`.
@@ -507,19 +513,19 @@ Notes:
   `0o775` instead of `0o750`), and the one-shot `converge_directory_permissions`
   pass ran before the transfers and skipped not-yet-existing directories — so
   burst-created directories stayed divergent. Fixed by moving the converge
-  pass after `_execute_parallel_transfers` and gating it for LAN mode.
+  pass after `_execute_parallel_transfers` and gating it for p2p mode.
   Regression: `hsync-client/tests/test_permissions_dirs.py`.
-- *LAN download serving hashed every file 2–3 times.* Fixed with a bounded
-  checksum cache on the LAN master (invalidated on any stat identity change).
-  Regression: `hsync-client/tests/test_lan_server_checksum_cache.py`.
+- *p2p download serving hashed every file 2–3 times.* Fixed with a bounded
+  checksum cache on the p2p master (invalidated on any stat identity change).
+  Regression: `hsync-client/tests/test_p2p_server_checksum_cache.py`.
 
 These fixes took the LAN full-scale suite (6000 files / 400 dirs / ~1.5 GB)
 from a 600 s convergence timeout with 163 mismatches to `1 passed in ~138 s`
 with 0 mismatches (burst ≈ 67 file/s, mutation wave ≈ 147 file/s).
 
 **Throughput follow-ups (fixed)** — attribution via
-`scripts/benchmark_lan_transfers.py` + a throwaway HTTPS micro-bench showed
-the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
+`scripts/benchmark_p2p_transfers.py` + a throwaway HTTPS micro-bench showed
+the p2p master serves 200–600 req/s, so the burst ceiling was client-side:
 
 - *The slave's WSS receive loop serialized downloads.* Every inbound file
   event was `await`ed inline (~10–26 ms each), capping a burst at ~60
@@ -535,7 +541,7 @@ the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
 - *An inventory ACK timeout used to kill the WSS channel.* The publisher now
   stops publishing on that connection without closing the socket, so the
   event flow survives a backlogged master receiver.
-  Regression: `tests/test_lan_inventory.py::test_ack_timeout_stops_publisher_without_closing_channel`.
+  Regression: `tests/test_p2p_inventory.py::test_ack_timeout_stops_publisher_without_closing_channel`.
 - *Synchronous log sinks throttled the master's watcher thread.* Each
   `[LOCAL CREATE]`-style line paid format + write + flush on the emitting
   thread (measured ~2.5× slower event drain in an in-process replica).
@@ -543,7 +549,7 @@ the LAN master serves 200–600 req/s, so the burst ceiling was client-side:
   identical lines, written by a dedicated loguru thread; readers that need
   the file immediately wait via `logger.complete()`.
   Regression: `tests/test_logger.py::TestSetupLogging::test_setup_with_logfile`.
-- *The master's own downloads flooded its watcher.* Every file the LAN master
+- *The master's own downloads flooded its watcher.* Every file the p2p master
   serves is opened and closed without a write, and the default inotify mask
   parsed/queued/dispatched those no-op events (measured ~7× more events
   parsed, ~6× slower dispatch with downloads running — the actual cause of
@@ -611,13 +617,13 @@ Two readings matter:
 Cross-mode reading (indicative, **not** an apples-to-apples comparison: the LAN
 run covers 3× the files and drives one WSS event plus one HTTP download per
 file, while server mode reconciles a listing with parallel uploads): server mode
-converges 2000 files in 9.3 s (214 files/s), the LAN burst 6000 files at 74–87
+converges 2000 files in 9.3 s (214 files/s), the p2p burst 6000 files at 74–87
 files/s. The LAN path is markedly slower per file despite both peers being
 local, which is where the remaining LAN investigation should start.
 
 #### Reconcile cycle cost: first vs quiescent
 
-Measured with a real LAN master (separate process) and `sync(lan_mode=True)`
+Measured with a real p2p master (separate process) and `sync(p2p_mode=True)`
 called three times on a 2000-file / 70 KiB tree:
 
 | Cycle | t_sync | transfers |
@@ -676,11 +682,11 @@ is why it does not scale with bytes.
   clears the tombstone recorded when buffering. Regressions:
   `tests/test_file_event_handler_base.py::TestFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`,
   `...::test_stale_delete_does_not_swallow_live_descendants`,
-  `tests/test_lan_websocket_slave.py::TestSlaveFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`.
+  `tests/test_p2p_websocket_slave.py::TestSlaveFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`.
 
 ### Measured remaining limit (next target, not fixed)
 
-The full-scale LAN burst drains at **~90 files/s** and no single hot function
+The full-scale p2p burst drains at **~90 files/s** and no single hot function
 explains it. The hypotheses below were each measured and **eliminated**:
 
 | Candidate | Measurement | Verdict |
@@ -729,12 +735,12 @@ attributable to any component in isolation: in the field the master runs its
 own watcher over the same 6000 files, serves the downloads and drives the WSS
 sends while the slave applies them, and the two processes share the host's
 cores. *(Update: that both-peer profile in one real run has since been done —
-see "LAN burst: what the peer-offload block costs per file" below. With the
+see "p2p burst: what the peer-offload block costs per file" below. With the
 per-file CPU fixes applied the field runs ~113 files/s, and the largest
 remaining field-vs-replica term is the peer-offload/inventory lane,
 ~4.3 ms/file, measured as a block.)*
 
-### LAN burst: the CPU is real, and it is per-file Python
+### p2p burst: the CPU is real, and it is per-file Python
 
 A later round measured the field path directly instead of the pool knob:
 
@@ -793,7 +799,7 @@ measured urllib3's splitting, not the network path, and overstated the gain
 (6.1 → 2.8 ms/file, +43%). Re-measured with `os.urandom` payloads the effect is
 smaller but real. Always make large-file/transfer fixtures incompressible.
 
-### LAN burst: what the peer-offload block costs per file
+### p2p burst: what the peer-offload block costs per file
 
 A/B on the same probe (2500 files / 200 dirs), 3 runs per arm, alternating:
 
@@ -806,8 +812,8 @@ A/B on the same probe (2500 files / 200 dirs), 3 runs per arm, alternating:
 ~1.15 cores, so the burst is CPU-bound either way.
 
 **Caveat that must not be lost:** `--no-peer-download` is **not one switch**.
-`_start_slave_seeder` (`lan_handler.py:68`) skips *both* the slave's own seeder
-`LANServer` *and* its `LanInventoryPublisher` when it is off, and the resolver's
+`_start_slave_seeder` (`p2p_handler.py:68`) skips *both* the slave's own seeder
+`P2PServer` *and* its `P2PInventoryPublisher` when it is off, and the resolver's
 `enabled` turns False. The A/B therefore measures the whole peer-offload block
 (source lookup + inventory publication + seeder + capability advertisement), and
 the 4.3 ms/file must **not** be attributed to any single mechanism inside it.
@@ -816,15 +822,15 @@ Within the block, the per-file source lookup was measured against the production
 HTTPS server: `http_post` + `_read_bounded_response` on a 200 costs ~1.0-1.1 ms
 (POST alone 1.29 ms; reading a real 200 listing 1.04 ms). `candidates_for(refresh=True)`
 issues **one POST per file** because it calls `resolve([file])`
-(`lan_sources.py:740`), while `resolve` is explicitly designed to batch up to
-`LAN_SOURCES_MAX_FILES` identities — the realtime path defeats that batching by
+(`p2p_sources.py:740`), while `resolve` is explicitly designed to batch up to
+`P2P_SOURCES_MAX_FILES` identities — the realtime path defeats that batching by
 feeding it one file at a time, and the realtime path always refreshes
 (`refresh_peer_sources=source_resolver is not None` in `sync.update_file`).
 
 Batching those lookups is the obvious next step — **and it was implemented,
 measured, and reverted: it does not pay at the default concurrency.** A
 micro-batching layer was built (the first caller collects for
-`LAN_SOURCE_LOOKUP_WINDOW_S` = 3 ms so the transfer pool's concurrent workers
+`P2P_SOURCE_LOOKUP_WINDOW_S` = 3 ms so the transfer pool's concurrent workers
 share one wantlist POST; the others read the resulting TTL candidate cache, so
 the per-file outcome is unchanged) and A/B'd 3 runs per arm on the same probe:
 
@@ -846,10 +852,10 @@ peer-offload block is **not** the source lookup. The deep-profile A/B
 (`/tmp/deepprofAB_base` vs `deepprofAB_nopeer`, 2026-09-21) narrows it to the
 slave-side inventory/event chain:
 
-- `on_created` (watchdog handler, `lan_websocket.py`) is called **the same
+- `on_created` (watchdog handler, `p2p_websocket.py`) is called **the same
   number of times in both arms** (~82 per sampled window) but accumulates
   **~20× more time with the block on** (0.342 s vs 0.018 s cum): with the
-  inventory lane live the handler feeds the `LanInventoryStore`/publisher per
+  inventory lane live the handler feeds the `P2PInventoryStore`/publisher per
   event; with `--no-peer-download` the observer is a NOOP.
 - `_publish_deltas`/`_send_with_ack` ran only **4 times per window** — the
   publisher is batched, so the per-frame WSS+ACK cost is amortised, not the
@@ -864,7 +870,7 @@ directional. The engineering takeaway: the cost scales with *per-event work in
 the inventory observer chain*, not with per-frame or per-lookup network calls.
 
 **Per-event observer cost ruled out (2026-09-21).** The publisher's per-event
-`upsert` is not the block: `LanInventoryPublisher._normalize_entry` (path
+`upsert` is not the block: `P2PInventoryPublisher._normalize_entry` (path
 normalisation + one `lstat`) measures **~9 µs** and
 `utils.normalize_bucket_relpath` ~3 µs, i.e. ~55 ms for 6000 files — three
 orders of magnitude below the ~4.3 ms/file (~10.8 s) block delta. A coalesced
@@ -895,7 +901,7 @@ recover the block were evaluated; the default stays unchanged:
 Decision: **no default change now** (correctness and fleet robustness over pure
 throughput); the separate-process lane is the tracked design task.
 
-### LAN burst: per-file CPU attribution, and the two wastes it removed
+### p2p burst: per-file CPU attribution, and the two wastes it removed
 
 The single-component benches could not explain the burst, so the **real peer** was
 instrumented. `/proc/<pid>/task/*/stat` sampled over the burst window, per thread
@@ -982,11 +988,11 @@ Two conclusions that must not be lost:
 Measurement pitfalls found in this round (each produced a wrong number first):
 
 1. A hand-rolled `http.server` stub reported **43 ms** to read a tiny 200 body.
-   The same helper against the production `LANServer`: **1.04 ms**. The stub's
+   The same helper against the production `P2PServer`: **1.04 ms**. The stub's
    unbuffered HTTP/1.1 writes (Nagle / delayed-ACK) were the cost, not the code.
    Never trust a scratch stub for latency.
 2. The same stub silently short-circuited (**0 POSTs received**) because the
-   test CID `"benchcid"` fails `build_lan_sources_request` validation; the
+   test CID `"benchcid"` fails `build_p2p_sources_request` validation; the
    lookup then looked free (0.019 ms). Assert the *observable effect* (request
    count), not just the elapsed time.
 3. Sampling `/proc/<pid>/task/*/stat` outside the burst window showed both peers

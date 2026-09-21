@@ -5,11 +5,11 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Local capability computation shared by the remote and LAN transport layers.
+Local capability computation shared by the remote and P2P transport layers.
 
 Single place that maps this binary's enabled features to the wire
 :class:`~hsync_common.protocol.handshake.Capability` tokens advertised during
-handshakes (ADR-0024). The central-server WebSocket auth and the LAN
+handshakes (ADR-0024). The central-server WebSocket auth and the P2P
 master⇄slave handshake advertise the same set, so they must never be
 re-assembled independently in each transport module.
 """
@@ -28,12 +28,12 @@ def local_capabilities() -> set[Capability]:
 
     ``vector_clocks`` (causal version metadata, ADR-0022) and ``tombstones``
     (deletion-marker gossip, ADR-0003) are always implemented by this client;
-    ``compression`` and ``delta`` are feature-toggled. The LAN mDNS/TXT record
+    ``compression`` and ``delta`` are feature-toggled. The P2P mDNS/TXT record
     announces the same set, but the connect-time handshake is the
     authenticated capability source (ADR-0024).
     """
     caps: set[Capability] = {Capability.vector_clocks, Capability.tombstones}
-    if CONFIG.get("LAN_PEER_DOWNLOAD", True):
+    if CONFIG.get("P2P_PEER_DOWNLOAD", True):
         caps.add(Capability.peer_download)
     if CONFIG.get("COMPRESSION_ENABLED", False):
         caps.add(Capability.compression)

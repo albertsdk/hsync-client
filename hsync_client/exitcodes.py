@@ -39,9 +39,9 @@ class ExitCode(IntEnum):
     #: Causal conflicts were resolved by preserving ``*_conflicted_copy_*``
     #: files. Requires operator attention.
     CONFLICTS = 4
-    #: LAN one-shot: no peer/master was found within the discovery timeout;
+    #: P2P one-shot: no peer/master was found within the discovery timeout;
     #: nothing was synchronized.
-    LAN_NO_PEER = 5
+    P2P_NO_PEER = 5
 
 
 def exit_code_for_result(

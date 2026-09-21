@@ -7,7 +7,7 @@
 """
 Unified inbound event application for HSYNC Client.
 
-Both Remote sync (events from the central server) and LAN slave mode
+Both Remote sync (events from the central server) and P2P slave mode
 (events from the master) need to apply the same set of file system
 operations — add/modify a file or directory, rename, delete, recreate a
 symlink — in response to events received over a WebSocket. This module
@@ -49,8 +49,8 @@ from loguru import logger as log
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.lan_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
-from hsync_client.lan_sources import LanSourceResolver
+from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
+from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.sync import update_dir, update_file
 from hsync_client.transfer import download_file
 from hsync_client.utils import cid_suffix, path_lock, path_present, safe_rmdir_if_empty
@@ -148,17 +148,17 @@ class EventDispatchContext:
     recover_on_missing_rename_src: bool = False
     dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER
-    source_resolver: LanSourceResolver | None = None
+    source_resolver: P2PSourceResolver | None = None
     # When set, inbound FILE events are applied through a bounded per-path
     # chain instead of inline (see ``_spawn_file_download``). ``None`` keeps
-    # the legacy serial behavior (remote mode). Set by the LAN slave ctx.
+    # the legacy serial behavior (remote mode). Set by the P2P slave ctx.
     file_download_semaphore: asyncio.Semaphore | None = None
     file_download_paths: dict[str, asyncio.Task] = field(default_factory=dict)
     file_download_tasks: set[asyncio.Task] = field(default_factory=set)
 
 
 #: Prefix for every inbound-dispatch label: the event is always caused by a
-#: remote peer (the master for a LAN slave, the central server in remote
+#: remote peer (the master for a P2P slave, the central server in remote
 #: mode), so the origin prefix is constant for this whole module.
 INBOUND_PREFIX = "REMOTE "
 
@@ -234,7 +234,7 @@ def _spawn_file_download(
     """Schedule one inbound-file download on the ctx's bounded per-path chain.
 
     The WSS receive loop must never block on a download: under a burst the
-    serial ``await update_file(...)`` per event capped the LAN slave at
+    serial ``await update_file(...)`` per event capped the P2P slave at
     ~60 files/s while the master serves 200+ req/s. Downloads for the SAME
     path are chained after the previous one (event order per path preserved;
     the download itself additionally holds ``path_lock``), while distinct
@@ -298,7 +298,7 @@ async def drain_file_downloads(ctx: EventDispatchContext) -> None:
 
 
 async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> None:
-    """Apply an event received from a remote peer (central server or LAN master).
+    """Apply an event received from a remote peer (central server or P2P master).
 
     Performs CID-based echo suppression and upload-only filtering, then
     dispatches to the appropriate per-action helper. Unknown event names
@@ -325,7 +325,7 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
     # Paths arriving from a remote peer are untrusted input: reject
     # traversal, absolute paths, backslashes and internal engine artifacts
     # before any local filesystem operation is derived from them. This is the
-    # single choke point covering remote mode (hostile server) and LAN slave
+    # single choke point covering remote mode (hostile server) and P2P slave
     # mode (hostile master) alike.
     for payload in (p for p in (src, dst) if isinstance(p, dict)):
         rels = wire_relpaths(payload)
@@ -363,7 +363,7 @@ async def _apply_add_or_modify(
         # after update_dir: a directory that already exists with the same
         # permissions this event carries is NOT a change — it is the echo of
         # an inbound event looping back (typically the master broadcasting
-        # the very directory this node asked it to create, when no LAN key
+        # the very directory this node asked it to create, when no P2P key
         # enables CID echo suppression). Presenting it as INFO + a transfer
         # UI event would fake an operation that never happened locally; it
         # degrades to DEBUG below (same pattern as the inbound-delete
@@ -422,7 +422,7 @@ async def _apply_add_or_modify(
         target = _resolve_local_path(src, "filepath") if ctx.mark_receiving else None
         if ctx.file_download_semaphore is not None:
             # Fan-out: never block the WSS receive loop on a download (the
-            # serial await capped the LAN burst at ~60 files/s). Per-path
+            # serial await capped the P2P burst at ~60 files/s). Per-path
             # ordering and echo suppression are preserved inside the chain.
             _spawn_file_download(
                 ctx,
@@ -572,7 +572,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         # Record the recursive delete BEFORE rmtree: the mark above only
         # covers the tree root, so the applying node's own watcher will still
         # fire `deleted` events for every descendant removed by rmtree. The
-        # callback lets the caller (LAN slave) recognise those descendant
+        # callback lets the caller (P2P slave) recognise those descendant
         # events as echoes and not re-send them to the master.
         if ctx.record_inbound_delete is not None:
             ctx.record_inbound_delete(local)
@@ -592,7 +592,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 # (the originator deleted it, or a peer's delete converged
                 # after a local deletion, or the path never existed here).
                 # Mirrors the master's "File already deleted" success branch
-                # (lan_server.py:_handle_delete) and the rename 404-echo
+                # (p2p_server.py:_handle_delete) and the rename 404-echo
                 # degradation (_rename_on_master): a WARNING here is noise
                 # because there is nothing to act on; the periodic resync
                 # catches genuine divergences.
@@ -621,7 +621,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 # (the originator deleted it, or a peer's delete converged
                 # after a local deletion, or the path never existed here).
                 # Mirrors the master's "File already deleted" success branch
-                # (lan_server.py:_handle_delete) and the rename 404-echo
+                # (p2p_server.py:_handle_delete) and the rename 404-echo
                 # degradation (_rename_on_master): a WARNING here is noise
                 # because there is nothing to act on; the periodic resync
                 # catches genuine divergences.
@@ -670,7 +670,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     # Mark the path as being mutated on behalf of a peer so the local
     # watcher can suppress the resulting deleted/created events instead of
     # rebroadcasting them as fresh local changes (echo suppression). Without
-    # this mark a LAN peer that materialises an inbound link re-uploads it to
+    # this mark a P2P peer that materialises an inbound link re-uploads it to
     # the master, which broadcasts it back: an infinite ping-pong loop. Every
     # validation has passed by this point, so a rejected path is never marked.
     _mark(ctx, local)

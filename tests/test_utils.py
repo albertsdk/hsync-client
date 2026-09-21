@@ -438,9 +438,9 @@ class TestGetHttpSession:
             set_config(original)
 
     def test_fingerprint_session_ignores_environment_proxies(self):
-        """A pinned LAN session must not consult the environment for proxies.
+        """A pinned P2P session must not consult the environment for proxies.
 
-        The pinned fingerprint *is* the LAN trust anchor (TOFU): an environment
+        The pinned fingerprint *is* the P2P trust anchor (TOFU): an environment
         proxy or CA bundle would add a second, conflicting one, and a
         peer-to-peer connection routed through an environment proxy would make
         the certificate pinning meaningless.
@@ -449,7 +449,7 @@ class TestGetHttpSession:
         environment proxy configuration on every request
         (``Session.merge_environment_settings`` → ``get_environ_proxies`` →
         ``getproxies``/``proxy_bypass_environment``, each walking ``os.environ``),
-        measured at 5 calls and ~3.8% of the LAN apply-path profile.
+        measured at 5 calls and ~3.8% of the P2P apply-path profile.
         """
         original = CONFIG.copy()
         calls: list[int] = []
@@ -466,7 +466,7 @@ class TestGetHttpSession:
                     session.close()
         finally:
             set_config(original)
-        assert calls == [], "a pinned LAN session consulted the environment proxies"
+        assert calls == [], "a pinned P2P session consulted the environment proxies"
 
     def test_plain_session_still_consults_environment_proxies(self):
         """Remote mode keeps honouring the environment proxy configuration."""

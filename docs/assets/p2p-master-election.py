@@ -327,7 +327,7 @@ def draw_caption(d, t, F):
 
 
 def draw_header(d, F):
-    center_text(d, W / 2, 24, "P2P Master Election & Peer Downloads - LAN Mode", F["title"], TXT)
+    center_text(d, W / 2, 24, "P2P Master Election & Peer Downloads - p2p Mode", F["title"], TXT)
     center_text(
         d,
         W / 2,

@@ -39,7 +39,7 @@ FORBIDDEN = [
 ]
 
 # Mode-specific stacks that ``import hsync_client.main_logic`` must not pull: the
-# LAN stack (zeroconf) and the remote WebSocket stack (websockets) are imported
+# P2P stack (zeroconf) and the remote WebSocket stack (websockets) are imported
 # lazily inside ``run_sync`` / ``_run_with_stdin_commands``. The shared engine
 # (requests, loguru, ...) is legitimately loaded at import time.
 FORBIDDEN_MAIN_LOGIC = ["zeroconf", "websockets"]
@@ -76,7 +76,7 @@ def test_import_cli_leaves_sync_engine_unimported() -> None:
 
 
 def test_import_main_logic_leaves_mode_stacks_unimported() -> None:
-    """Importing main_logic must not pull the LAN or remote WebSocket stacks."""
+    """Importing main_logic must not pull the P2P or remote WebSocket stacks."""
     assert _loaded_forbidden_modules("import hsync_client.main_logic", FORBIDDEN_MAIN_LOGIC) == []
 
 
@@ -90,5 +90,5 @@ def test_capabilities_json_lazy_import_emits_document() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     doc = json.loads(proc.stdout)
-    assert doc["schema_version"] == 2
+    assert doc["schema_version"] == 3
     assert isinstance(doc["subcommands"], list)

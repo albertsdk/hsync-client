@@ -5,10 +5,10 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Causal upload arbitration for the LAN master.
+Causal upload arbitration for the P2P master.
 
 Mirrors :mod:`hsync_server.arbitration` using the client's own sync-state
-store (``syncstate.db``) and the master's CID. The LAN master is a transport
+store (``syncstate.db``) and the master's CID. The P2P master is a transport
 coordinator, not an authority: every slave upload is arbitrated causally
 against the stored version for the path (ADR-0022), exactly as the central
 server does. The pure decision logic lives in ``hsync-common`` and is shared
