@@ -36,6 +36,8 @@ from hsync_client.constants import (
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
     MAX_CONCURRENT_TRANSFERS_DEFAULT,
+    MAX_CONCURRENT_TRANSFERS_MAX,
+    MAX_CONCURRENT_TRANSFERS_MIN,
     RECONNECT_DELAY_DEFAULT,
     RECONNECT_DELAY_MAX,
     RECONNECT_DELAY_MIN,
@@ -382,15 +384,6 @@ def profile_transfer_queue(files: "list[File]") -> QueueProfile:
 
 def derive_profile(results: ProbeResults) -> TuningProfile:
     """Convert ``ProbeResults`` into a ``TuningProfile``."""
-    from hsync_client.constants import (
-        HTTP_TIMEOUT_MAX,
-        HTTP_TIMEOUT_MIN,
-        MAX_CONCURRENT_TRANSFERS_MAX,
-        MAX_CONCURRENT_TRANSFERS_MIN,
-        RECONNECT_DELAY_MAX,
-        RECONNECT_DELAY_MIN,
-    )
-
     timeout = derive_timeout(results.rtt_ms, results.net_class, HTTP_TIMEOUT_MIN, HTTP_TIMEOUT_MAX)
     min_wait, max_wait, reconnect = derive_retry(
         results.rtt_ms,
@@ -490,6 +483,16 @@ def derive_retry(
     return (SAFE.retry_min_wait, SAFE.retry_max_wait, SAFE.reconnect_delay)
 
 
+# Base concurrency by storage class, hoisted out of derive_concurrency so the
+# hot policy call does not rebuild the same four-entry dict per derivation.
+_STORAGE_BASE_CONCURRENCY: dict[StorageType, int] = {
+    StorageType.HDD: 5,
+    StorageType.SSD: 10,
+    StorageType.NVME: 15,
+    StorageType.UNKNOWN: 5,
+}
+
+
 def derive_concurrency(
     storage: StorageType,
     bw: BwClass,
@@ -497,12 +500,7 @@ def derive_concurrency(
     concurrency_min: int,
     concurrency_max: int,
 ) -> int:
-    base = {
-        StorageType.HDD: 5,
-        StorageType.SSD: 10,
-        StorageType.NVME: 15,
-        StorageType.UNKNOWN: 5,
-    }[storage]
+    base = _STORAGE_BASE_CONCURRENCY[storage]
 
     if bw == BwClass.TEN_G and storage in (StorageType.SSD, StorageType.NVME):
         base += 5

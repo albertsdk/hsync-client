@@ -1726,7 +1726,7 @@ def get_sync_actions(
                 local_perms = local_file.permissions
                 remote_perms = remote_file.permissions
                 if local_perms and remote_perms and local_perms != remote_perms:
-                    if CONFIG.get("SYNC_DIRECTION", "bidirectional") == "download-only":
+                    if _direction == "download-only":
                         if local_file.filepath:
                             set_permissions(local_file.filepath, remote_perms)
                             log.debug(
@@ -1753,10 +1753,9 @@ def get_sync_actions(
                 local_mtime = int(sync_state._corrected_mtime_of(abs_local))
                 remote_mtime = int(remote_corrected)
                 if sync_state.mtime_diverges(local_mtime, remote_mtime):
-                    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-                    if direction == "download-only":
+                    if _direction == "download-only":
                         adopt_remote = True
-                    elif direction == "upload-only":
+                    elif _direction == "upload-only":
                         adopt_remote = False
                     else:
                         # Bidirectional: the side whose version is causally
@@ -1814,7 +1813,7 @@ def get_sync_actions(
                 remote_file_info.get("version")
             )
             causal_match = bool(entry and _tombstone_clock_dominates(entry, remote_vclock))
-            if causal_match and CONFIG.get("SYNC_DIRECTION", "bidirectional") != "download-only":
+            if causal_match and _direction != "download-only":
                 log.info(
                     f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
                     "deleting stale copy on remote"
@@ -1841,7 +1840,7 @@ def get_sync_actions(
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
             file = File.get(local_file_dict["filepath"])
             if file:
-                if p2p_mode and CONFIG.get("SYNC_DIRECTION") == "download-only":
+                if p2p_mode and _direction == "download-only":
                     # P2P download-only slave mirrors master - delete local-only files
                     sync_actions.append(SyncAction(file, SyncActionName.delete))
                 elif entry := tombstones.get(tombstone_key(local_file_info.filepath)):
