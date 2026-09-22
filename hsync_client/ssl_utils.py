@@ -8,7 +8,7 @@
 SSL Certificate Utilities for P2P Mode.
 
 This module provides functions to generate self-signed SSL certificates
-for secure communication in P2P P2P mode, and utilities for fingerprint-based
+for secure communication in P2P mode, and utilities for fingerprint-based
 certificate verification.
 """
 

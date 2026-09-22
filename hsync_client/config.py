@@ -585,7 +585,7 @@ class HsyncConfig(TypedDict):
     HTTP_TIMEOUT: int
     # Maximum wait timeout for file stability in seconds
     MAX_WAIT_TIMEOUT: int
-    # P2P P2P mode flag
+    # P2P mode flag
     P2P_MODE: bool
     # P2P port for master server
     P2P_LISTEN_PORT: int

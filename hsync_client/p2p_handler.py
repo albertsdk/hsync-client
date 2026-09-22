@@ -7,7 +7,7 @@
 """
 P2P Mode Handler for HSYNC Client.
 
-This module handles P2P P2P synchronization including peer discovery,
+This module handles P2P synchronization including peer discovery,
 master election, and WebSocket communication.
 """
 
@@ -191,7 +191,7 @@ def _refresh_p2p_network_tuning(master, config: "HsyncConfig", log) -> None:
 
 def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     """
-    Handle P2P P2P mode synchronization.
+    Handle P2P mode synchronization.
 
     This function orchestrates peer discovery, master election,
     and either runs as master or connects to a master peer.
@@ -206,7 +206,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
         discovered peer yields P2P_NO_PEER, and an interrupted run
         yields OK.
     """
-    log.info("P2P P2P mode enabled")
+    log.info("P2P mode enabled")
 
     # Clock offset (ADR-0023): in P2P mode no server is known at startup, so
     # the public SNTP hosts (HSYNC_NTP_HOSTS) are the time authority. The probe

@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Stress tests — P2P P2P load/replication harness (black-box).
+"""Stress tests — P2P load/replication harness (black-box).
 
 Starts a real master + slave pair over loopback mDNS (via the shared
 ``p2p_helpers``), generates the tree **after** the slave is ``[READY]`` (plan

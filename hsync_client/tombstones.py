@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Alberto Basso
 
 """
-Per-peer tombstone management for HSYNC Client (P2P P2P mode).
+Per-peer tombstone management for HSYNC Client (P2P mode).
 
 Every peer keeps its own persistent :class:`TombstoneStore`, backed by the
 installation ``syncstate.db`` and keyed by the ``.hsyncfolder`` UUID

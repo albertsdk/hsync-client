@@ -8,7 +8,7 @@
 Embedded HTTP Server for P2P Master Mode.
 
 This module provides a lightweight HTTP server that runs when a client
-becomes the master in P2P P2P mode. It exposes the essential hsync API
+becomes the master in P2P mode. It exposes the essential hsync API
 endpoints so that other peers can sync with the master.
 
 Endpoints:
@@ -1760,7 +1760,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
 
         Reports whether an interrupted upload can be resumed from a partial
         ``.part`` file, mirroring the central server's endpoint so the same
-        client resume logic works in P2P P2P mode.
+        client resume logic works in P2P mode.
 
         Query params:
             filename:  Path to the file within the bucket.
