@@ -54,10 +54,6 @@ from hsync_client.upnp import UpnpMapper
 
 __all__ = ["BootnodeDiscovery"]
 
-# TTL requested from the bootnode; the lease is refreshed at the heartbeat
-# cadence so the record never expires while the node is alive.
-BOOTNODE_TTL_S = 60
-
 # How often the lease loop wakes to refresh/query. Reuses the shared heartbeat
 # cadence (which the handler already keeps well below PEER_TIMEOUT).
 _DEFAULT_REFRESH_S = HEARTBEAT_INTERVAL

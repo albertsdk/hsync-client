@@ -406,8 +406,6 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                 should_continue, exit_code = _run_as_slave(
                     config=config,
                     log=log,
-                    p2p_sync=p2p_sync,
-                    cert_info=cert_info,
                     one_shot=one_shot,
                     peer_manager=peer_manager,
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
@@ -672,8 +670,6 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
 def _run_as_slave(
     config: "HsyncConfig",
     log,
-    p2p_sync: DiscoveryPlan,
-    cert_info,
     one_shot: bool,
     peer_manager,
     wait_indefinitely_for_peer: bool = False,

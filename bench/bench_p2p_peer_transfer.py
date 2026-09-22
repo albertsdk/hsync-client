@@ -123,7 +123,6 @@ CYCLE_WORKERS = (4, 8)
 # It answers the question a worker-to-seeder affinity scheme would have to win.
 LATENCY_LABEL = "lat4KiB"
 LATENCY_SIZE = 4 * 1024
-LATENCY_FILES = 24
 LATENCY_WORKERS = (2, 8)
 # Bulk parallelism sweep for the master path: one worker is the sequential loop
 # the mobile sync used, four is the bound it now applies.

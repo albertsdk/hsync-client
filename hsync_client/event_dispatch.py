@@ -200,11 +200,11 @@ def _confined_local(
         else None
     )
     if local is None:
-        _reject_unsafe(event_name, rel if isinstance(rel, str) else None, ctx)
+        _reject_unsafe(event_name, rel if isinstance(rel, str) else None)
     return local
 
 
-def _reject_unsafe(event_name: object, rel: str | None, ctx: EventDispatchContext) -> None:
+def _reject_unsafe(event_name: object, rel: str | None) -> None:
     """Log and surface the rejection of an unsafe remote-supplied path."""
     log.warning(f"{_tag('SECURITY')} Rejected unsafe {event_name} path: {rel!r}")
     emit_event(
@@ -330,7 +330,7 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
     for payload in (p for p in (src, dst) if isinstance(p, dict)):
         rels = wire_relpaths(payload)
         if not rels or any(validate_remote_relpath(rel) is None for rel in rels):
-            _reject_unsafe(event_name, rels[0] if rels else None, ctx)
+            _reject_unsafe(event_name, rels[0] if rels else None)
             return
 
     if event_name in {EventName.added.value, EventName.modified.value}:
@@ -649,7 +649,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     if not target:
         return
     if not is_safe_symlink_target(local, target, CONFIG["LOCAL_BUCKET"]):
-        _reject_unsafe(EventName.symlink.value, target, ctx)
+        _reject_unsafe(EventName.symlink.value, target)
         return
     # Idempotency: a link already present with the SAME target is a converged
     # echo (this node applied the very same event before, or its own re-upload

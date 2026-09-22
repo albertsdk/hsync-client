@@ -293,7 +293,7 @@ class SlaveCidRegistry:
         if not ip:
             return ""
         if ip.startswith("::ffff:") and "." in ip:
-            return ip[len("::ffff:") :]
+            return ip.removeprefix("::ffff:")
         return ip
 
     def try_reserve(self, cid: str, peer_ip: str | None, websocket: Any) -> tuple[bool, Any | None]:
@@ -1631,7 +1631,7 @@ def _rename_descendant_match(src: str, dst: str, r_src: str, r_dst: str) -> bool
     """True when ``(src, dst)`` is the same-suffix descendant of ``(r_src, r_dst)``."""
     if not dst.startswith(r_dst):
         return False
-    suffix = dst[len(r_dst) :]
+    suffix = dst.removeprefix(r_dst)
     return (not suffix or suffix.startswith("/")) and src == r_src + suffix
 
 

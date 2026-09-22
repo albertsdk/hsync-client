@@ -546,7 +546,7 @@ class TestRunAsSlaveWatcherBackoff:
             patch("asyncio.run", side_effect=[None, WatcherStartError("inotify")]),
             patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, mock_log, False, peer_mgr)
 
         assert result == (True, 0), "continuous mode must survive the watcher failure"
         assert sleep_calls == [WATCHER_START_RETRY_DELAY_S], (
@@ -574,7 +574,7 @@ class TestRunAsSlaveWatcherBackoff:
             patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
             patch("time.sleep") as mock_sleep,
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), False, peer_mgr)
 
         assert result == (True, 0)
         mock_sleep.assert_not_called()

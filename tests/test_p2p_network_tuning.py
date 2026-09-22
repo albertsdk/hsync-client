@@ -244,7 +244,7 @@ class TestSlaveTuningRefreshOrdering:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), True, peer_mgr)
 
         assert result == (False, 0)
         assert calls == ["pin", "refresh"]

@@ -982,7 +982,7 @@ class P2PInventoryPublisher:
             matches = [path for path in self._entries if path == src_rel or path.startswith(prefix)]
             for path in matches:
                 entry = self._entries.pop(path)
-                suffix = path[len(src_rel) :]
+                suffix = path.removeprefix(src_rel)
                 renamed_path = f"{dst_rel}{suffix}"
                 renamed = P2PInventoryUpsertEntry(
                     path=renamed_path,

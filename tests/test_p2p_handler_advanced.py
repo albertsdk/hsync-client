@@ -637,8 +637,6 @@ class TestRunAsSlave:
             result = _run_as_slave(
                 config,
                 MagicMock(),
-                MagicMock(),
-                None,
                 True,
                 peer_mgr,
             )
@@ -670,7 +668,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), True, peer_mgr)
 
         assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] == "f" * 64
@@ -699,7 +697,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            _run_as_slave(config, MagicMock(), True, peer_mgr)
 
         assert PinStore(pin_file).get("master-1", "test-bucket") == "a" * 64
 
@@ -749,7 +747,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=mock_sync),
             patch("asyncio.run") as mock_run,
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, mock_log, True, peer_mgr)
 
         assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] is None
@@ -779,7 +777,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, mock_log, True, peer_mgr)
 
         assert result == (False, 0)
         assert config["MASTER_CERT_FINGERPRINT"] is None
@@ -802,7 +800,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, mock_log, True, peer_mgr)
 
         assert result == (False, 0)
         assert "Authorization" not in config["REQUEST_HEADERS"]
@@ -821,8 +819,6 @@ class TestRunAsSlave:
         result = _run_as_slave(
             config,
             mock_log,
-            MagicMock(),
-            None,
             True,
             peer_mgr,
             wait_indefinitely_for_peer=True,
@@ -847,7 +843,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()) as mock_wsc,
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), False, peer_mgr)
 
         assert result[0] is True
         mock_wsc.assert_called_once()
@@ -870,7 +866,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
         ):
-            result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, mock_log, False, peer_mgr)
 
         assert result[0] is True
         assert any("WebSocket connection ended" in str(c) for c in mock_log.warning.call_args_list)
@@ -897,7 +893,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run", side_effect=[None, RuntimeError("boom")]),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), False, peer_mgr)
 
         assert result[0] is True
         peer_mgr.reconcile_stale_peers.assert_called_once()
@@ -923,7 +919,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run", side_effect=NetworkError("boom")),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), False, peer_mgr)
 
         assert result == (True, 0)
 
@@ -942,7 +938,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run", side_effect=NetworkError("boom")),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, True, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), True, peer_mgr)
 
         assert result == (False, 1)
 
@@ -964,7 +960,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run", side_effect=RuntimeError("boom")),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), False, peer_mgr)
 
         assert result == (False, 1)
 
@@ -985,7 +981,7 @@ class TestRunAsSlave:
             patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()),
             patch("asyncio.run"),
         ):
-            result = _run_as_slave(config, MagicMock(), MagicMock(), None, False, peer_mgr)
+            result = _run_as_slave(config, MagicMock(), False, peer_mgr)
 
         assert result[0] is True
         mock_preview.assert_called_once()
@@ -999,7 +995,7 @@ class TestRunAsSlave:
         peer_mgr.get_master.return_value = None
         mock_log = MagicMock()
 
-        result = _run_as_slave(config, mock_log, MagicMock(), None, False, peer_mgr)
+        result = _run_as_slave(config, mock_log, False, peer_mgr)
 
         assert result[0] is True
         assert any("Waiting for peers" in str(c) for c in mock_log.info.call_args_list)
