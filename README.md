@@ -9,7 +9,7 @@ The **HSYNC Client** is the endpoint software agent deployed on individual devic
 It is engineered to operate in two distinct network topologies:
 
 * **Centralized (Server Mode):** The agent authenticates and connects to a centralized hub ([HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md)).
-* **Decentralized (P2P Mode):** Agents autonomously discover peers via mDNS within the same network segment and dynamically elect a transport coordinator, operating entirely without central infrastructure.
+* **Decentralized (P2P Mode):** Agents autonomously discover peers via mDNS on the local network — or across networks through an optional bootnode — and dynamically elect a transport coordinator, operating entirely without central infrastructure.
 
 > 👉 **Operational Advisory:** As with any automated filesystem mutation utility, administrators are strongly advised to maintain validated, independent backups prior to initial deployment in production environments.
 
@@ -89,7 +89,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
 * **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
 
-> **Roadmap — Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) will extend the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). The client-side `hsync p2p` mode that consumes it is **in development** and not available yet: today, peer-to-peer sync requires all devices to share a network segment.
+> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode project itself is still **in development** (v1).
 
 ## Quick Start
 
@@ -114,7 +114,7 @@ curl -fsSL https://github.com/albertsdk/hsync-client/releases/latest/download/in
 
 HSYNC supports two sync topologies — pick the one that fits your environment:
 
-- **Option A — p2p Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network. Fastest to try: zero infrastructure, works with two terminals on the same machine. Writes are authorized by a shared p2p key — a keyless LAN is read-only.
+- **Option A — p2p Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network (or across networks with a bootnode). Fastest to try: zero infrastructure, works with two terminals on the same machine. Writes are authorized by a shared p2p key — a keyless LAN is read-only.
 - **Option B — Server Mode**: Centralized hub. Requires a running [HSYNC Server](https://github.com/albertsdk/hsync-server). Best for multi-site sync over firewalled networks (HTTP/HTTPS only).
 
 Both options produce the same result: bidirectional file sync in real time. Choose one and follow the steps below.
@@ -287,6 +287,7 @@ If you prefer to go serverless, use [Option A](#option-a--p2p-mode-no-server-nee
 - [Sync Modes](docs/sync-modes.md) - Single, Watch, p2p modes
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [p2p Mode](docs/p2p-mode.md) - P2P synchronization details
+- [p2p across networks (bootnode)](docs/p2p-bootnode.md) - Cross-network discovery through a `boot/1` bootstrap node
 - [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
@@ -303,6 +304,7 @@ If you prefer to go serverless, use [Option A](#option-a--p2p-mode-no-server-nee
 - [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
 - [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
 - [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
+- [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode/blob/main/README.md) — Optional Internet discovery node for P2P topologies; consumed through `HSYNC_BOOTNODE` *(in development)*.
 
 > **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
 > are still under active development and are not yet ready for production use.

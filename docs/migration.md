@@ -77,7 +77,8 @@ and caveats to watch for.
 ### Migration steps
 
 1. **Decide on topology**:
-   - **Server Mode** (recommended for internet sync): set up an HSYNC Server
+   - **Server Mode** (recommended for a central hub across the internet): set up
+     an HSYNC Server
      and connect all devices to it.
    - **p2p Mode** (equivalent to Syncthing's P2P): run `hsync p2p` on
      each device, with the same `HSYNC_P2P_KEY` on every device — the shared key
@@ -122,8 +123,11 @@ and caveats to watch for.
   snapshots or external backup.
 - Syncthing's "Receive Only" folder type maps to HSYNC's `--sync-direction
   download-only`.
-- p2p Mode does not support Syncthing's global discovery or relays — it's
-  local network only. For internet sync, use Server Mode.
+- p2p Mode does not use Syncthing's global discovery or relays. It discovers
+  peers over mDNS on the local network, or across networks through your own
+  self-hosted `boot/1` bootnode (see
+  [Sync across networks](p2p-bootnode.md)); Server Mode remains the alternative
+  when you prefer a central hub.
 
 ---
 

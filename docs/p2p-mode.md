@@ -405,7 +405,7 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 ### Peers Not Discovering Each Other
 
 1. **Check firewall**: Ensure mDNS (UDP port 5353) is allowed
-2. **Check network**: All devices must be on the same subnet
+2. **Check network**: All devices must be on the same subnet (or point the whole group at the same bootnode for cross-network discovery)
 3. **Increase timeout**: Use `--discovery-timeout 15` for slower networks, or `--discovery-timeout 0` to wait indefinitely for the first peer/master
 4. **Running in a container?**: mDNS multicast cannot cross the NAT boundary of
    the default bridge network used by container runtimes, so peers will never

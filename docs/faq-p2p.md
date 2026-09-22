@@ -123,16 +123,20 @@ Use the `--group` flag. Only devices with the same group name will see
 each other. Devices with different groups (or no group) are isolated.
 
 **Q: Do I need to set up port forwarding on my router?**
-No. p2p mode uses mDNS for discovery and works within the local subnet only.
-No router configuration is needed.
+Not for local-network (mDNS) sync — discovery stays within the subnet and needs
+no router configuration. Cross-network groups that use a bootnode must expose
+the master's sync port: the client maps it with UPnP by default (`--no-upnp`
+disables that), otherwise forward it on the router.
 
 **Q: Can I sync over Wi-Fi and wired Ethernet?**
 Yes. As long as devices are on the same subnet, they will discover each other
 regardless of whether they use Wi-Fi or Ethernet.
 
 **Q: Does p2p mode work across VLANs or different subnets?**
-No. mDNS discovery is subnet-local. Use Server Mode to sync across different
-networks.
+Not with mDNS: that discovery is subnet-local. Point every device of the group
+at the same `boot/1` bootnode to sync across subnets/VLANs (see
+[Sync across networks](p2p-bootnode.md)); Server Mode is the alternative when
+you prefer a central hub.
 
 **Q: What ports does p2p mode use?**
 Two consecutive ports, starting from `--listen-port` (default 9753):
