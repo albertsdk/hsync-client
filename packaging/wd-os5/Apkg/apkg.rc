@@ -4,7 +4,7 @@ Version:	__HSYNC_VERSION__
 Packager:	Alberto Basso
 Email:
 Homepage:	https://github.com/albertsdk/hsync
-Description:	HSYNC - file synchronization client, server or LAN P2P
+Description:	HSYNC - file synchronization client, server or p2p
 Icon:		hsync.png
 AddonShowName:	HSYNC
 AddonIndexPage:	index.html

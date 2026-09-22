@@ -9,7 +9,7 @@ The **HSYNC Client** is the endpoint software agent deployed on individual devic
 It is engineered to operate in two distinct network topologies:
 
 * **Centralized (Server Mode):** The agent authenticates and connects to a centralized hub ([HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md)).
-* **Decentralized (LAN/P2P Mode):** Agents autonomously discover peers via mDNS within the same network segment and dynamically elect a transport coordinator, operating entirely without central infrastructure.
+* **Decentralized (P2P Mode):** Agents autonomously discover peers via mDNS within the same network segment and dynamically elect a transport coordinator, operating entirely without central infrastructure.
 
 > 👉 **Operational Advisory:** As with any automated filesystem mutation utility, administrators are strongly advised to maintain validated, independent backups prior to initial deployment in production environments.
 
@@ -82,7 +82,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Secure Authentication:** Validates endpoints via API Key (Bearer token for REST operations, first-frame verification for WebSockets).
 * **TLS Enforcement:** Requires SSL/TLS encryption for all payload transmissions.
 
-**🔗 Decentralized Connectivity (LAN/P2P Mode)**
+**🔗 Decentralized Connectivity (P2P Mode)**
 
 * **Zero-Config Discovery:** Utilizes mDNS (Bonjour/Avahi) for automatic peer detection within broadcast domains.
 * **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
@@ -93,9 +93,9 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 
 ## Quick Start
 
-**LAN/P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--lan-p2p-mode-no-server-needed) steps for details.
+**P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--p2p-mode-no-server-needed) steps for details.
 <p align="center">
-  <img src="docs/assets/demo-p2p.gif" alt="LAN/P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
+  <img src="docs/assets/demo-p2p.gif" alt="P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
 </p>
 
 ### Step 1 — Agent Installation
@@ -121,7 +121,7 @@ Both options produce the same result: bidirectional file sync in real time. Choo
 
 If you prefer the centralized approach, jump to [Option B](#option-b--server-mode-centralized).
 
-#### Option A — LAN P2P Mode (no server needed)
+#### Option A — P2P Mode (no server needed)
 
 Initialize direct peer-to-peer synchronization without central infrastructure. Peers discover each other via mDNS and authorize writes with a shared p2p key, so the two terminals below use the same demo key (a keyless LAN is read-only). You can
 test it locally with two terminals on the same machine:
@@ -278,7 +278,7 @@ cat /tmp/hsync-b/hello.txt   # → hello hsync
 
 > **Note:** For the full Server Mode walkthrough (dedicated accounts, bucket setup, production deployment), see [Server Mode](docs/server-mode.md) and the [Server Getting Started guide](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md).
 
-If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server-needed) instead.
+If you prefer to go serverless, use [Option A](#option-a--p2p-mode-no-server-needed) instead.
 
 ## Documentation
 
@@ -290,7 +290,7 @@ If you prefer to go serverless, use [Option A](#option-a--lan-p2p-mode-no-server
 - [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
-- [Examples](docs/examples.md) - Practical scenarios (server-based and LAN P2P)
+- [Examples](docs/examples.md) - Practical scenarios (server-based and p2p)
 - [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
 - [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
 - [Changelog](CHANGELOG.md) - Release notes and version history
