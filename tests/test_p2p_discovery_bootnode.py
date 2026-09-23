@@ -245,3 +245,12 @@ class TestStop:
         plan.stop()
         assert any(kind == "leave" for kind, _ in plan._client.calls)
         assert fake_upnp.unmapped is True
+
+
+def test_bootnode_default_port_matches_the_shared_ssot() -> None:
+    """The client's bare-host default is the shared boot/1 default (spec §Transport)."""
+    from hsync_common.constants import BOOT_DEFAULT_PORT
+
+    from hsync_client.constants import BOOTNODE_DEFAULT_PORT
+
+    assert BOOTNODE_DEFAULT_PORT == BOOT_DEFAULT_PORT == 443

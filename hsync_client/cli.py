@@ -748,7 +748,7 @@ BootnodePortOpt = Annotated[
     int | None,
     typer.Option(
         "--port",
-        help="UDP port of the remote bootnode (QUIC); default 443.",
+        help=f"UDP port of the remote bootnode (QUIC); default {BOOTNODE_DEFAULT_PORT}.",
         metavar="PORT",
         rich_help_panel="P2P Mode",
     ),

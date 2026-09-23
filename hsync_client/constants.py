@@ -16,6 +16,7 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 from typing import Final, Literal  # noqa: E402
 
+from hsync_common.constants import BOOT_DEFAULT_PORT as BOOTNODE_DEFAULT_PORT  # noqa: E402, F401
 from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME  # noqa: E402
 from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION  # noqa: E402
 from hsync_common.constants import (  # noqa: E402
@@ -26,7 +27,8 @@ from hsync_common.constants import (  # noqa: E402
 # module's public re-export API consumed across hsync_client (HSYNC_VERSION,
 # HSYNCKEEP_FILENAME, PARTIAL_DOWNLOAD_SUFFIX, WS_MAX_MESSAGE_BYTES); the
 # aliased header names are re-typed below as string literals because mypy
-# requires literal keys for TypedDicts.
+# requires literal keys for TypedDicts. BOOTNODE_DEFAULT_PORT (above) is the
+# boot/1 UDP default (QUIC, not HTTPS) — one SSOT with the bootnode's `--port`.
 from hsync_common.constants import (  # noqa: E402, F401
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
@@ -183,10 +185,6 @@ MASS_DELETE_PERCENT_DEFAULT = 50  # percentage of total local files (0 = disable
 # Default HTTPS port of the remote hsync server when `hsync server HOSTNAME`
 # runs without `--port`. Matches the hsync-server default (HSYNC_PORT).
 SERVER_DEFAULT_PORT = 9753
-
-# Default UDP port of the remote hsync-bootnode when `hsync p2p HOSTNAME` runs
-# without `--port` (the boot/1 channel is QUIC/UDP, not HTTPS/TCP).
-BOOTNODE_DEFAULT_PORT = 443
 
 # =============================================================================
 # CLI Validation Limits
