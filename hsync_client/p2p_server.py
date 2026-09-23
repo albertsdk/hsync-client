@@ -2154,7 +2154,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
             os.replace(tmp_path, dest_path)
             tmp_path = None
 
-            # Record the agreed version with the merged clock (D11).
+            # Record the agreed version with the merged clock (ADR-0022 §5).
             from hsync_common.models.tombstone import relpath_in_bucket
 
             rel = relpath_in_bucket(dest_path, str(CONFIG.get("LOCAL_BUCKET", "")))

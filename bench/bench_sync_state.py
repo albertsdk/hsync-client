@@ -15,7 +15,7 @@ against the recorded merge base, so these wrappers run per path per cycle:
 * ``upload_version_fields`` — the causal version advertisement sent with every
   upload, on the unchanged (no tick) and locally-edited (tick) branches;
 * ``record_base`` — recording the agreed base after a successful transfer;
-* ``merge_and_record`` — the convergence merge (D11) after an inbound sync;
+* ``merge_and_record`` — the convergence merge (ADR-0022 §5) after an inbound sync;
 * ``flush`` — the once-per-cycle SQLite persistence of the store.
 
 Isolation mirrors the test suite: a ``TemporaryDirectory`` bucket plus a

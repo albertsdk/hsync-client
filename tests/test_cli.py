@@ -708,7 +708,7 @@ class TestCapabilitiesJson:
 
 
 class TestBuildBootnode:
-    """The C2 bootnode CLI resolution rules (D15)."""
+    """The bootnode CLI resolution rules."""
 
     def test_no_bootnode_selects_the_mdns_plan(self):
         from hsync_client.cli import _build_bootnode

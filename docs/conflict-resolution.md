@@ -55,7 +55,7 @@ Comparing two clocks componentwise (`compare_vclocks`) yields `equal`,
 agreed clock is the componentwise maximum of the two sides (`merge_vclocks`):
 in dominance it equals the dominant clock; in a conflict it includes *both*
 histories, so third nodes recognise either side as an ancestor and no false
-conflict propagates downstream (convergence invariant D11).
+conflict propagates downstream (convergence invariant, ADR-0022 §5).
 
 ```
         ┌─────────────┐
@@ -218,7 +218,7 @@ installation **`syncstate.db`**, keyed by the `.hsyncfolder` UUID. Properties:
 The recorded clock after a sync is `merge(local_effective, remote_advertised)`
 (`merge_and_record`): in dominance it equals the dominant clock, in conflict it
 includes both histories so third nodes recognise either side as an ancestor
-(the convergence invariant D11).
+(the convergence invariant, ADR-0022 §5).
 
 A **dry-run/preview** (`get_sync_actions(persist_state=False)`) never mutates
 the store: the causal decisions are still accurate (the local clock is read

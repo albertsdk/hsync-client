@@ -131,7 +131,7 @@ built on `hsync_common` primitives + the local sync-state store). The
 `_handle_upload` endpoint arbitrate-then-commit: a stale upload is rejected
 (`409 superseded`), a tie-break loser is preserved as a conflicted copy
 (`409 conflict_lost`), and an accepted upload records the merged vclock
-(convergence D11). The `/files` listing and broadcast events attach the
+(convergence invariant, ADR-0022 §5). The `/files` listing and broadcast events attach the
 effective causal version to each `FileDict` so slaves run the same causal
 matrix on the wire data.
 

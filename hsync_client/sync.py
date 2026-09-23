@@ -1776,7 +1776,7 @@ def get_sync_actions(
             is_conflict = action == SyncActionName.download and timedelta == 0
 
             # Files already in sync: refresh the merge base with a merged clock
-            # so a later one-sided edit resolves cleanly (convergence D11).
+            # so a later one-sided edit resolves cleanly (convergence invariant, ADR-0022 §5).
             # Skipped in preview mode (persist_state=False) so a dry-run never
             # mutates the persisted installation store.
             if action == SyncActionName.nothing and local_file.sha256sum and persist_state:

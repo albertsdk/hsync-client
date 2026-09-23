@@ -330,7 +330,7 @@ def merge_and_record(
     remote_vclock: dict[str, int] | None,
     remote_corrected_mtime: int = 0,
 ) -> None:
-    """Record the agreed version with a merged clock (convergence invariant D11).
+    """Record the agreed version with a merged clock (convergence invariant, ADR-0022 §5).
 
     The recorded clock is ``merge(local_effective, remote_advertised)``: in
     dominance it equals the dominant clock, in conflict it includes both

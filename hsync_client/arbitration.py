@@ -48,7 +48,7 @@ class ArbitrationResult:
 
     ``record_vclock`` is the clock the master should record on accept
     (``merge_vclocks(incoming_vclock, stored_vclock)`` per the convergence
-    invariant D11).
+    invariant, ADR-0022 §5).
     ``record_corrected_mtime`` is the corrected mtime (ADR-0023) the master
     records alongside: the incoming value on accept, the stored value on
     reject, 0 when unknown.

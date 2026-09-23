@@ -1181,7 +1181,7 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         # Anti-aliasing invariant (§3.4.7): persist the self-record for a
         # *local* edit before broadcasting. Inbound edits (written on behalf
         # of a peer via the HTTP API) are skipped — their clock was already
-        # registered with the merged history at upload acceptance (D11), and a
+        # registered with the merged history at upload acceptance (ADR-0022 §5), and a
         # tick here would mis-attribute the edit to the master.
         try:
             if peek_inbound_origin(src_path) is None and file.sha256sum:

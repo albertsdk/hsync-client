@@ -42,8 +42,8 @@ from typing import Final
 
 CHUNK: Final[int] = 1 << 20
 
-# Plan §5: permission pools (never setuid/setgid/sticky — stripped on receipt).
-# 0o200 was dropped from the plan's original pool: the engine deliberately
+# Permission pools (never setuid/setgid/sticky — stripped on receipt).
+# 0o200 was dropped from the original pool: the engine deliberately
 # skips owner-unreadable files on upload (transfer.py logs "Permission denied
 # reading" and moves on), so a write-only file can never reach the replica and
 # would break the strict byte-for-byte contract by design, not by defect.

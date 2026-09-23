@@ -195,10 +195,10 @@ def _subprocess_run(live_server, bucket: str, local_path: str, *extra: str) -> _
 
     Enabled by ``HSYNC_BB_STRESS_SUBPROCESS=1``; ``run_sync_once`` stays the
     default so timings remain comparable. Unlike the in-process CliRunner this
-    pays the real process boot and API-key env path the plan asks for. Output is
+    pays the real process boot and API-key env path. Output is
     captured to a log **file** (never an undrained pipe) and returned so the
     caller's ``result.exit_code`` / ``result.output`` assertions keep working.
-    ``--no-autotune`` is forced per the plan and de-duplicated when the caller
+    ``--no-autotune`` is forced and de-duplicated when the caller
     already passes it (the concurrency sweep does).
     """
     base_url, api_key = live_server

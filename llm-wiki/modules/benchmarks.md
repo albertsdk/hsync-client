@@ -78,7 +78,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `record_base` | `sync_state.record_base` (`:78`) — includes `os.stat` corrected-mtime fallback |
 | `upload_version_fields(same\|ticked)` | `sync_state.upload_version_fields` (`:283`) → `local_version_for_compare` (`:164`) |
 | `local_version_and_base(same\|ticked)` | `sync_state.local_version_and_base` (`:175`) — effective version + stored base in one store read |
-| `merge_and_record` | `sync_state.merge_and_record` (`:317`) — convergence merge D11 |
+| `merge_and_record` | `sync_state.merge_and_record` (`:317`) — convergence merge (ADR-0022 §5) |
 | `flush` | `sync_state.flush` (`:145`) — once-per-cycle SQLite save |
 | `get_tombstone_store(cached)` / `get_payload` | `tombstones.get_tombstone_store` (`hsync_client/tombstones.py:53`), `get_payload` (`:174`) |
 | `record_deletion(persist)` | `tombstones.record_deletion` (`:74`) — realtime, flushes per deletion |

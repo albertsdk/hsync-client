@@ -1918,7 +1918,7 @@ class TestThreeWayMergeEndToEnd:
         """Mirror the sync loop's side effects for one decided action.
 
         Clocks follow the real convergence rules: an upload registers
-        ``merge_vclocks(incoming_vclock, stored_vclock)`` on the server (D11),
+        ``merge_vclocks(incoming_vclock, stored_vclock)`` on the server (ADR-0022 §5),
         a download records
         ``merge_and_record`` locally, and a conflicting download first
         preserves the losing bytes via ``_save_conflict_copy`` (exactly as
@@ -2010,7 +2010,7 @@ class TestThreeWayMergeEndToEnd:
         assert (peer_b / "doc.txt").read_text() == "v2"
 
         # Round 3 - concurrent divergence from the shared base v2. The winner is
-        # decided deterministically by highest SHA-256 (ADR-0022 D3), so pick the
+        # decided deterministically by highest SHA-256 (ADR-0022 §3), so pick the
         # two contents and compute which one wins up front.
         content_a, content_b = sorted(("vA", "vB"), key=_sha, reverse=True)
         # (reverse sort ⇒ content_a has the higher hash, i.e. would win a tie-break)
@@ -2118,7 +2118,7 @@ class TestThreeWayMergeEndToEnd:
             assert self._only(actions, SyncActionName.download).conflict is False
 
         # Decide the deterministic winner up front (highest SHA-256 wins,
-        # ADR-0022 D3) so assertions are stable regardless of content.
+        # ADR-0022 §3) so assertions are stable regardless of content.
         win_text, lose_text = sorted(
             ("offline-winner", "offline-loser"),
             key=_sha,

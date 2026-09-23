@@ -565,7 +565,7 @@ def run_sync(
     api_key_from_fd = _read_secret_from_fd(api_key_fd)
     p2p_key_from_fd = _read_secret_from_fd(p2p_key_fd)
 
-    # Install the structured event emitter (P0-B). No-op when the parent did
+    # Install the structured event emitter. No-op when the parent did
     # not pass --events-json-fd, so a plain CLI run is unaffected.
     init_emitter(events_json_fd)
 

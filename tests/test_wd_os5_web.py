@@ -38,7 +38,7 @@ def test_bucket_pattern_is_v_flag_safe() -> None:
     )
 
 
-# ── C2 bootnode / mode consistency ────────────────────────────────────────
+# ── bootnode / mode consistency ────────────────────────────────────────
 PKG = PROJECT_ROOT / "packaging" / "wd-os5"
 WEB = PKG / "Apkg" / "web"
 I18N = WEB / "i18n"

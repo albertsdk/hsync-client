@@ -154,7 +154,7 @@ def _record_synced_base(
     degrading every later reconciliation to the legacy mtime heuristic.
 
     ``vclock`` is the merged clock the receiver should record on accept
-    (convergence invariant D11). On download it is the remote-advertised clock;
+    (convergence invariant, ADR-0022 §5). On download it is the remote-advertised clock;
     on upload it is the local effective clock the client just pushed. When
     absent, ``merge_and_record`` falls back to merging the stored clock.
 
@@ -1689,7 +1689,7 @@ def _remote_vclock(file: File) -> dict[str, int] | None:
 
     A downloaded ``File`` carries the version metadata from the remote listing
     or event; recording it as the merge base keeps the clock honest on the
-    receiving side (convergence invariant D11).
+    receiving side (convergence invariant, ADR-0022 §5).
     """
     version = getattr(file, "version", None)
     if isinstance(version, dict):
@@ -1819,7 +1819,7 @@ def _record_201_upload(file: File, response) -> None:
 
     The server's 201 may carry a ``version`` field with the recorded causal
     version (merged vclock + ADR-0023 corrected mtime) to mirror locally
-    (convergence invariant D11); when absent, the local effective clock is
+    (convergence invariant, ADR-0022 §5); when absent, the local effective clock is
     recorded via ``merge_and_record``.
     """
     record_vclock: dict[str, int] | None = None
