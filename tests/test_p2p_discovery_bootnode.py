@@ -19,6 +19,7 @@ from hsync_common.protocol.bootnode import (
     validate_boot_response,
 )
 
+from hsync_client.boot_client import BootnodeUnreachable
 from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
 from hsync_client.p2p_peers import PeerManager
 from hsync_client.stun import ObservedAddress
@@ -218,6 +219,20 @@ class TestPeerFeed:
         plan._peer_manager = manager
         plan._query_peers()
         assert manager.get_alive_peers() == []
+
+
+class TestWaitForDiscoveryTolerance:
+    def test_unreachable_bootnode_does_not_abort_the_wait(self):
+        """A transient bootnode error must be tolerated, not crash the client."""
+        plan, _ = make_plan()
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+
+        def boom(frame):
+            raise BootnodeUnreachable("bootnode boot.example.net:443: ConnectionError")
+
+        plan._client.query = boom
+        # Must return on timeout instead of propagating the bootnode error.
+        plan.wait_for_discovery(timeout=0.05)
 
 
 class TestStop:

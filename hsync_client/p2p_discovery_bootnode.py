@@ -198,7 +198,13 @@ class BootnodeDiscovery:
                 return
             if timeout > 0 and time.monotonic() >= deadline:
                 return
-            self._query_peers()
+            try:
+                self._query_peers()
+            except BootnodeError as exc:
+                # A transient bootnode failure must not abort the wait: the
+                # background lease loop owns the user-visible warning and keeps
+                # retrying, so this path stays quiet.
+                log.debug(f"Bootnode query failed while waiting for discovery: {exc}")
             self._wake.wait(timeout=min(self._heartbeat_interval, 1.0))
             self._wake.clear()
 

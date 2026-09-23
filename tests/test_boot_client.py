@@ -28,6 +28,7 @@ from hsync_common.protocol.bootnode import (
 from hsync_client.boot_client import (
     BootnodeClient,
     BootnodeProtocolError,
+    BootnodeUnreachable,
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
@@ -103,6 +104,22 @@ class TestFailFast:
         client = BootnodeClient("127.0.0.1", 1)
         with pytest.raises(BootnodeProtocolError):
             client._exchange({"protocol_version": "boot/1", "type": "bogus"}, expect=None)
+
+
+class TestUnreachableError:
+    def test_textless_connection_error_yields_a_non_empty_message(self, monkeypatch):
+        """aioquic raises ``ConnectionError`` with no text; the message must still identify it."""
+        client = BootnodeClient("boot.example.net", 443)
+
+        async def boom(self, payload, *, expect):
+            raise ConnectionError()
+
+        monkeypatch.setattr(BootnodeClient, "_exchange_async", boom)
+        with pytest.raises(BootnodeUnreachable) as excinfo:
+            client.query(build_query_frame(bucket="shared"))
+        message = str(excinfo.value)
+        assert "boot.example.net:443" in message
+        assert message.rstrip().endswith("ConnectionError")
 
 
 class TestLeave:

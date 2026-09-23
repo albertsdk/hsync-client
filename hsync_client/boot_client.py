@@ -74,6 +74,12 @@ class BootnodeProtocolError(BootnodeError):
     """The bootnode answered with something that violates ``boot/1``."""
 
 
+def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachable:
+    """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
+    detail = str(exc) or type(exc).__name__
+    return BootnodeUnreachable(f"bootnode {host}:{port}: {detail}")
+
+
 @dataclass(frozen=True)
 class BootnodeClient:
     """Synchronous ``boot/1`` client for one bootnode.
@@ -130,10 +136,10 @@ class BootnodeClient:
             return asyncio.run(self._exchange_async(payload, expect=expect))
         except BootnodeError:
             raise
-        except (TimeoutError, OSError, ssl.SSLError) as exc:
-            raise BootnodeUnreachable(f"bootnode {self.host}:{self.port}: {exc}") from exc
-        except ConnectionError as exc:
-            raise BootnodeUnreachable(f"bootnode {self.host}:{self.port}: {exc}") from exc
+        except OSError as exc:
+            # ConnectionError/TimeoutError/ssl.SSLError are all OSError subclasses;
+            # aioquic's ConnectionError often carries no text, hence _unreachable.
+            raise _unreachable(self.host, self.port, exc) from exc
 
     async def _exchange_async(self, payload: bytes, *, expect: str | None) -> dict | None:
         configuration = self._quic_configuration()
