@@ -23,14 +23,29 @@ runner = CliRunner()
 class TestEntryPoints:
     """Tests for package and console entry points."""
 
-    def test_main_delegates_to_cli_run(self):
-        """hsync_client.main.main delegates to the Typer wrapper."""
+    def test_main_diverts_multiprocessing_before_running_cli(self):
+        """main diverts multiprocessing helpers, then delegates to the CLI.
+
+        Regression guard for the PyInstaller build: loguru's ``enqueue=True``
+        sinks start the stdlib multiprocessing resource tracker, which re-runs
+        ``sys.executable`` (the frozen ``hsync``) with ``-B -c ...``. The entry
+        point must call ``freeze_support()`` first so the PyInstaller runtime
+        hook diverts that helper instead of booting the Typer app, which failed
+        with ``No such option: -B``.
+        """
         from hsync_client.main import main
 
-        with patch("hsync_client.main.run") as mock_run:
+        events: list[str] = []
+        with (
+            patch(
+                "multiprocessing.freeze_support",
+                side_effect=lambda: events.append("freeze_support"),
+            ),
+            patch("hsync_client.cli.run", side_effect=lambda: events.append("run")),
+        ):
             main()
 
-        mock_run.assert_called_once_with()
+        assert events == ["freeze_support", "run"]
 
     def test_module_entrypoint_delegates_to_main(self):
         """python -m hsync_client invokes hsync_client.main.main."""

@@ -33,8 +33,10 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 ## Quick facts
 
 - Package root: `hsync_client/` (`hsync_client/__init__.py:1`).
-- Entry points: `main.main` (`main.py:25`) → Typer command `cli.main`
-  (`cli.py:750`); console script `cli.run` (`cli.py:1121`).
+- Entry points: `main.main` (`main.py:26`) → Typer command `cli.main`
+  (`cli.py:750`); console script `cli.run` (`cli.py:1121`). `main` calls
+  `multiprocessing.freeze_support()` first, then imports the CLI lazily (see
+  `decisions.md`: PyInstaller × loguru `enqueue=True` helper re-exec).
 - Orchestrator: `run_sync` (`main_logic.py:539`) — validates, branches to remote or
   LAN, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.

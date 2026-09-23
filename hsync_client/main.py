@@ -20,15 +20,27 @@ Environment Variables:
     HSYNC_API_KEY: API key for authentication
 """
 
-from hsync_client.cli import run
+import multiprocessing
 
 
 def main() -> None:
     """
     Main entry point for the HSYNC client.
 
-    Invokes the Typer CLI application.
+    Diverts ``multiprocessing`` helper re-executions before importing the CLI.
+    In a PyInstaller build, ``loguru``'s ``enqueue=True`` sinks make the stdlib
+    resource tracker re-run ``sys.executable`` (the frozen ``hsync``) with
+    ``-B -c "from multiprocessing.resource_tracker import main; ..."``; without
+    this call the child boots Typer and dies with ``No such option: -B``.
+    PyInstaller ships the ``pyi_rth_multiprocessing`` hook, which turns this call
+    into the helper diversion; outside a frozen build it is a no-op.
     """
+    multiprocessing.freeze_support()
+
+    # Imported here, after the helper diversion, so the diverted child never
+    # pays for the heavy CLI import.
+    from hsync_client.cli import run
+
     run()
 
 

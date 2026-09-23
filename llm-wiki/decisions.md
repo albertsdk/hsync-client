@@ -131,6 +131,17 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
   (`.venv/Scripts` vs `.venv/bin`, `compile.sh:92`) and `--strip` is omitted on
   Windows (`STRIP_FLAG`, `compile.sh:99`) since binutils is unavailable there.
+- **PyInstaller × multiprocessing (`freeze_support`)**: `main.main`
+  (`main.py:26`) calls `multiprocessing.freeze_support()` before importing the
+  CLI. The loguru sinks use `enqueue=True` (`logger.py:233`, `:251`), which makes
+  the stdlib start a `multiprocessing` helper (the resource tracker) by
+  re-executing `sys.executable` — the frozen `hsync` — with the interpreter flags
+  plus `-c 'from multiprocessing.resource_tracker import main; …'`. Without the
+  `freeze_support()` call that child booted the Typer app and died with
+  `No such option: -B` on stderr (confusing, and the tracker never ran);
+  PyInstaller's `pyi_rth_multiprocessing` runtime hook needs this call to divert
+  the helper. Outside a frozen build it is a no-op, so dev/`python -m` runs are
+  unaffected.
 
 > New decisions affecting multiple repos: add the ADR in `hsync-common` first,
 > then map it here.
