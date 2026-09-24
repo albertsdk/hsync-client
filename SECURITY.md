@@ -33,10 +33,17 @@ informed of remediation progress.
 - **p2p mode (P2P)** — HTTPS/WSS only, with a persistent self-signed identity and
   connection-level fingerprint pinning (TOFU); optional shared-secret
   authentication (`HSYNC_P2P_KEY`) and group isolation (`--group`).
+- **Bootnode discovery** — the `boot/1` QUIC/TLS channel authenticates the
+  bootstrap node by certificate fingerprint: pin it with
+  `--bootnode-fingerprint` (or `HSYNC_BOOTNODE_FINGERPRINT`), or trust the first
+  sighting with `--bootnode-tofu`. An unpinned self-signed node is refused;
+  `--insecure` skips verification and is for loopback/testing only.
 - **Integrity** — transfers are verified with SHA-256 checksums.
 
 ## Hardening Recommendations
 
 - Prefer HTTPS endpoints and avoid `--insecure` outside testing.
+- Pin the bootnode fingerprint (`--bootnode-fingerprint`) on every device instead
+  of relying on `--bootnode-tofu`.
 - Set `HSYNC_P2P_KEY` when using p2p mode on shared networks.
 - Keep your API key out of shell history and logs.

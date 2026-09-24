@@ -18,6 +18,9 @@ import asyncio
 import ssl
 
 import pytest
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from hsync_common import ssl_utils
 from hsync_common.protocol.bootnode import (
     BOOT_ALPN,
     CAPACITY_MAX,
@@ -27,6 +30,7 @@ from hsync_common.protocol.bootnode import (
 
 from hsync_client.boot_client import (
     BootnodeClient,
+    BootnodeFingerprintMismatch,
     BootnodeProtocolError,
     BootnodeUnreachable,
     build_leave_frame,
@@ -175,6 +179,107 @@ class TestQuicConfiguration:
     def test_verified_by_default(self):
         config = BootnodeClient("boot.example.net", 443)._quic_configuration()
         assert config.verify_mode == ssl.CERT_REQUIRED
+
+    def test_pin_and_tofu_disable_webpki(self):
+        # Trust comes from the fingerprint check, not the system CA store.
+        pinned = BootnodeClient("boot.example.net", 443, fingerprints=("a" * 64,))
+        assert pinned._quic_configuration().verify_mode == ssl.CERT_NONE
+        tofu = BootnodeClient("boot.example.net", 443, tofu=True)
+        assert tofu._quic_configuration().verify_mode == ssl.CERT_NONE
+
+
+def _fake_cert():
+    key = ssl_utils.generate_ed25519_private_key()
+    cert = ssl_utils.build_self_signed_certificate(
+        key,
+        subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "boot.local")],
+        san_list=[x509.DNSName("boot.local")],
+        validity_days=1,
+    )
+    return cert, ssl_utils.compute_cert_fingerprint(cert)
+
+
+class _FakeTls:
+    def __init__(self, cert):
+        self._peer_certificate = cert
+
+
+class _FakePeer:
+    def __init__(self, cert):
+        self._quic = type("_Quic", (), {"tls": _FakeTls(cert)})()
+
+
+class TestPinVerify:
+    def test_explicit_pin_match(self):
+        cert, fp = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, fingerprints=(fp,))
+        client._verify_peer(_FakePeer(cert))  # no raise
+
+    def test_explicit_pin_mismatch_raises(self):
+        cert, _ = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, fingerprints=("f" * 64,))
+        with pytest.raises(BootnodeFingerprintMismatch):
+            client._verify_peer(_FakePeer(cert))
+
+    def test_rotation_accepts_second_pin(self):
+        cert, fp = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, fingerprints=("0" * 64, fp))
+        client._verify_peer(_FakePeer(cert))  # second pin matches
+
+    def test_tofu_first_use_records(self, tmp_path, monkeypatch):
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        cert, fp = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, tofu=True)
+        client._verify_peer(_FakePeer(cert))  # first use: trusted
+        assert BootnodeTrustStore(tmp_path / "trust.json").get("boot.example.net", 443) == fp
+
+    def test_tofu_changed_raises(self, tmp_path, monkeypatch):
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        store = BootnodeTrustStore(tmp_path / "trust.json")
+        store.set("boot.example.net", 443, "0" * 64)
+        cert, _ = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, tofu=True)
+        with pytest.raises(BootnodeFingerprintMismatch):
+            client._verify_peer(_FakePeer(cert))
+
+    def test_missing_peer_certificate_fails_closed(self):
+        client = BootnodeClient("boot.example.net", 443, fingerprints=("a" * 64,))
+        peer = type(
+            "_NoCert", (), {"_quic": type("_Quic", (), {"tls": type("_Tls", (), {})()})()}
+        )()
+        with pytest.raises(BootnodeFingerprintMismatch):
+            client._verify_peer(peer)
+
+    def test_verify_runs_before_create_stream(self, monkeypatch):
+        """A fingerprint mismatch must close before any frame is written."""
+        cert, fp = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, fingerprints=("f" * 64,))
+        calls: dict[str, bool] = {}
+
+        class _Manager:
+            def __init__(self):
+                self._quic = type("_Quic", (), {"tls": _FakeTls(cert)})()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def create_stream(self):
+                calls["create_stream"] = True
+                raise AssertionError("create_stream must not be reached")
+
+        monkeypatch.setattr("hsync_client.boot_client.connect", lambda *_a, **_k: _Manager())
+        with pytest.raises(BootnodeFingerprintMismatch):
+            client.register(
+                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+            )
+        assert "create_stream" not in calls
 
 
 class TestStunEcho:

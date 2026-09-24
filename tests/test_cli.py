@@ -274,6 +274,62 @@ class TestTyperCli:
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["discovery_timeout"] == 0
 
+    @patch("hsync_client.main_logic.run_sync")
+    def test_bootnode_fingerprint_and_tofu_flow(self, mock_run_sync):
+        hex64 = "0" * 64
+        result = runner.invoke(
+            app,
+            [
+                "p2p",
+                "-b",
+                "test",
+                "boot.example.net",
+                "--bootnode-fingerprint",
+                hex64,
+                "--bootnode-tofu",
+            ],
+        )
+        assert result.exit_code == 0
+        kwargs = mock_run_sync.call_args.kwargs
+        assert kwargs["bootnode_fingerprints"] == (hex64,)
+        assert kwargs["bootnode_tofu"] is True
+
+    def test_bootnode_ca_cert_is_refused(self):
+        """--ca-cert has no bootnode-channel meaning: refuse it, not silently ignore."""
+        result = runner.invoke(
+            app, ["p2p", "-b", "test", "boot.example.net", "--ca-cert", "/tmp/ca.pem"]
+        )
+        assert result.exit_code != 0
+        assert "ca-cert" in result.output
+
+    def test_insecure_conflicts_with_bootnode_fingerprint(self):
+        result = runner.invoke(
+            app,
+            [
+                "p2p",
+                "-b",
+                "test",
+                "boot.example.net",
+                "--insecure",
+                "--bootnode-fingerprint",
+                "0" * 64,
+            ],
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_bootnode_fingerprint_requires_bootnode(self):
+        result = runner.invoke(app, ["p2p", "-b", "test", "--bootnode-fingerprint", "0" * 64])
+        assert result.exit_code != 0
+        assert "require a bootnode" in result.output
+
+    def test_bootnode_fingerprint_rejects_invalid(self):
+        result = runner.invoke(
+            app, ["p2p", "-b", "test", "boot.example.net", "--bootnode-fingerprint", "zzz"]
+        )
+        assert result.exit_code != 0
+        assert "invalid --bootnode-fingerprint" in result.output
+
     def test_help_documents_discovery_timeout_zero(self):
         """Help output documents the 0 = wait indefinitely convention."""
         # Force a wide terminal so Rich does not word-wrap the help text and

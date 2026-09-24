@@ -13,6 +13,8 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `BOOTNODE` (positional) | Bare bootnode hostname for cross-network discovery (optional; omit for mDNS only) | — |
 | `--port` | UDP (QUIC) port of the remote bootnode; refused without `BOOTNODE` | `443` |
 | `--no-upnp` | Do not map the master TCP port with UPnP when a bootnode is used | `false` (`UPnP` on with a bootnode) |
+| `--bootnode-fingerprint` | Pin the bootnode certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two for a rotation window; refused without `BOOTNODE` | — (fail-closed without a pin) |
+| `--bootnode-tofu` | Trust the bootnode certificate on first use; a later mismatch is refused | `false` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
 | `--force-master` | Force this device to be the master | `false` (CLI only) |
@@ -70,6 +72,8 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow p2p filesystem mutations with no shared key | `false` |
 | `HSYNC_P2P_LISTEN_PORT` | p2p master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
 | `HSYNC_BOOTNODE` | Bare bootnode host for cross-network discovery (QUIC/UDP, no scheme); unset = mDNS-only | — |
+| `HSYNC_BOOTNODE_FINGERPRINT` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |
+| `HSYNC_BOOTNODE_TOFU` | Trust the bootnode certificate on first use (`1` = on) | `false` |
 | `HSYNC_UPNP_ENABLED` | Map the master TCP port with UPnP (`true`/`false`); unset = on only when a bootnode is used | — |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_P2P_REQUIRE_PAIRING` | Require pairing confirmation | `false` |

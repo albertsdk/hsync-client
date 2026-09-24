@@ -120,6 +120,36 @@ class TestEnvSettings:
             with pytest.raises(ValueError):
                 EnvSettings()
 
+    def test_bootnode_fingerprint_parses_and_validates(self, monkeypatch):
+        from hsync_client.config import get_bootnode_fingerprints
+
+        hex64 = "0" * 64
+        other = "f" * 64
+        monkeypatch.setenv("HSYNC_BOOTNODE_FINGERPRINT", f"sha256:{hex64},{other}")
+        get_env_settings.cache_clear()
+        assert get_bootnode_fingerprints() == (hex64, other)
+
+    def test_bootnode_fingerprint_rejects_invalid(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE_FINGERPRINT", "not-a-pin")
+        get_env_settings.cache_clear()
+        with pytest.raises(ValueError):
+            EnvSettings()
+
+    def test_bootnode_fingerprint_rejects_more_than_two(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE_FINGERPRINT", ",".join("0" * 64 for _ in range(3)))
+        get_env_settings.cache_clear()
+        with pytest.raises(ValueError):
+            EnvSettings()
+
+    def test_bootnode_tofu_default_and_override(self, monkeypatch):
+        from hsync_client.config import get_bootnode_tofu
+
+        get_env_settings.cache_clear()
+        assert get_bootnode_tofu() is False
+        monkeypatch.setenv("HSYNC_BOOTNODE_TOFU", "1")
+        get_env_settings.cache_clear()
+        assert get_bootnode_tofu() is True
+
     def test_upnp_enabled_default_and_override(self, monkeypatch):
         """Unset = plan default; an explicit value overrides it."""
         get_env_settings.cache_clear()

@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-22" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-23" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -285,6 +285,20 @@ is refused rather than ignored.
 Do not try to map the master TCP port with UPnP. Without a bootnode the flag
 has no effect (mDNS discovery stays on the local network).
 .TP
+.BI \-\-bootnode\-fingerprint\fP= FINGERPRINT
+Pin the bootnode certificate fingerprint (canonical
+.I sha256:<hex>
+or bare hex); repeatable up to two values for a rotation window. Refused
+without a
+.BR BOOTNODE .
+Without a pin (or
+.BR \-\-bootnode\-tofu )
+an unpinned self-signed bootnode is refused.
+.TP
+.B \-\-bootnode\-tofu
+Trust the bootnode certificate on first use; a later mismatch is refused as a
+possible man-in-the-middle.
+.TP
 .BR \-\-discovery\-timeout =\fISEC\fP
 Time to wait for initial p2p peer discovery
 (default:
@@ -482,6 +496,19 @@ Periodic resync interval in seconds (default:
 .B HSYNC_BOOTNODE
 Bare bootnode hostname for cross-network discovery (no scheme, no port); unset
 keeps discovery on mDNS only.
+.TP
+.B HSYNC_BOOTNODE_FINGERPRINT
+Comma-separated bootnode certificate fingerprint(s) to pin (up to two,
+.I sha256:<hex>
+or bare hex).
+.TP
+.B HSYNC_BOOTNODE_TOFU
+Trust the bootnode certificate on first use (1 = on; default off).
+.TP
+.B HSYNC_BOOTNODE_TRUST_FILE
+File storing the TOFU-trusted bootnode fingerprints (default:
+.I ~/.local/state/hsync/bootnode_known_hosts.json
+).
 .TP
 .B HSYNC_UPNP_ENABLED
 Map the master TCP port with UPnP (true/false). Unset = on only when a bootnode
@@ -696,7 +723,7 @@ hsync p2p \-b shared boot.example.net
 Pin the bootnode certificate and map the master port:
 .PP
 .EX
-hsync p2p \-b shared boot.example.net \-\-ca\-cert /etc/hsync/boot.pem
+hsync p2p \-b shared boot.example.net \-\-bootnode\-fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 .EE
 .EE
 .RE

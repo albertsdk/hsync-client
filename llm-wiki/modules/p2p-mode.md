@@ -275,12 +275,12 @@ peer state:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `BootnodeClient` | `boot_client.py:78` | synchronous `boot/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-boot/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query` |
+| `BootnodeClient` | `boot_client.py:78` | synchronous `boot/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-boot/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
 | `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `boot_client.py:195`–`:269` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame) |
-| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` | `boot_client.py:65`–`:75` | transport failure vs contract violation |
+| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeFingerprintMismatch` | `boot_client.py:65`–`:75` | transport failure vs contract violation vs pin/TOFU mismatch (fatal) |
 | `observed_address` | `stun.py:35` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
-| `BootnodeDiscovery` | `p2p_discovery_bootnode.py:66` | the `DiscoveryPlan` implementation: lease loop (register → refresh), peer sample → `PeerManager`, `wait_for_discovery` |
+| `BootnodeDiscovery` | `p2p_discovery_bootnode.py:66` | the `DiscoveryPlan` implementation: lease loop (register → refresh), peer sample → `PeerManager`, `wait_for_discovery`. A `BootnodeFingerprintMismatch` stops the lease loop (never retried) |
 | `candidate_endpoints` | `nat_traversal.py:43` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]` (observed → UPnP → local) |
 | `UpnpMapper` / `discover_igd` | `upnp.py:275` / `:74` | best-effort TCP port mapping for the master; every failure degrades to "no UPnP" (node stays slave-only) |
 | `get_local_ip` | `net_utils.py:27` | shared local-source-IP probe (mDNS advertiser, UPnP mapper, bootnode candidates) |
@@ -316,8 +316,20 @@ the sibling bootnode is not built) spawns the real `hsync-bootnode` on loopback
 and drives register → ack/STUN-echo → query relay → refresh → leave over the
 public wire.
 
-TLS trust: `--ca-cert` pins the bootnode certificate; `--insecure` disables
-verification (tests/loopback only). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`.
-Config surface: `HSYNC_BOOTNODE` (bare host; `_validate_bootnode_host` rejects
-scheme/path/`host:port`), `HSYNC_UPNP_ENABLED`, `HSYNC_P2P_LISTEN_PORT`
+TLS trust (ADR-0034): the bootnode is authenticated **before any frame is
+written** — after the QUIC handshake the client reads the peer certificate
+(aioquic's private `tls._peer_certificate`, isolated in `_peer_certificate`
+`boot_client.py`) and checks it against the accepted set: explicit
+`--bootnode-fingerprint` pins (up to two for a rotation window) or the opt-in
+`--bootnode-tofu` store (`bootnode_trust.py`, a `{host:port} → current` map under
+`HSYNC_BOOTNODE_TRUST_FILE`). A mismatch raises `BootnodeFingerprintMismatch`
+and closes with zero bytes sent; the lease loop stops instead of retrying.
+`--insecure` disables verification (tests/loopback only, mutually exclusive with
+pin/TOFU); `--ca-cert` is **refused** in `hsync p2p` (it is a server-mode knob,
+and a self-signed bootnode has no usable CA/hostname). With no pin/TOFU the
+client keeps `verify_mode=CERT_REQUIRED` (fail-closed against a self-signed
+node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_BOOTNODE`
+(bare host; `_validate_bootnode_host` rejects scheme/path/`host:port`),
+`HSYNC_BOOTNODE_FINGERPRINT` (comma-separated pins), `HSYNC_BOOTNODE_TOFU`,
+`HSYNC_UPNP_ENABLED`, `HSYNC_P2P_LISTEN_PORT`
 (`constants.BOOTNODE_DEFAULT_PORT = 443`).

@@ -147,6 +147,8 @@ option to configure.
 | Group               | `--group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
 | Bootnode (optional) | `HSYNC_BOOTNODE` env var                       | _empty_ (discovery stays on the local network; set the same host on every device) |
+| Bootnode fingerprint | `HSYNC_BOOTNODE_FINGERPRINT` env var           | _empty_ (no pin; an unpinned self-signed bootnode is refused) |
+| Bootnode TOFU       | `HSYNC_BOOTNODE_TOFU` env var                  | `false` (trust the bootnode certificate on first use when `true`) |
 | UPnP port mapping   | `HSYNC_UPNP_ENABLED` env var                   | `true` (only effective with a bootnode) |
 | Server URL          | `HSYNC_SERVER` env var                         | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |

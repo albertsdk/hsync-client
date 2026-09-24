@@ -15,6 +15,8 @@
     "field.p2p_group": "Gruppo p2p (opzionale)",
     "field.discovery_timeout": "Timeout di scoperta (s)",
     "field.bootnode": "Bootnode (opzionale)",
+    "field.bootnode_fingerprint": "Fingerprint del bootnode (opzionale)",
+    "field.bootnode_tofu": "Fidati del bootnode al primo uso",
     "field.upnp": "Mappa la porta del master con UPnP",
     "field.server": "URL del server",
     "field.api_key": "Chiave API",

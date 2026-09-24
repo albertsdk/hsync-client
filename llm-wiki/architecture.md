@@ -136,7 +136,8 @@ the `--version` / `--help` fast paths keep the minimal import surface pinned by
 | Sync base versions | `sync_state.py` | `$HSYNC_STATE_DIR/syncstate.db` (folder UUID) | three-way merge base (§7) |
 | Tombstones | `tombstones.py` | same DB, `tombstones` table | deletion propagation |
 | Folder identity | `state_backend.py` | `.hsyncfolder` at bucket root | UUIDv4 re-anchor |
-| TOFU pins | `pinning.py:56` | pin store (0o600) | p2p master fingerprint trust |
+| TOFU pins | `pinning.py:62` | pin store (0o600) | p2p master fingerprint trust |
+| Bootnode trust | `bootnode_trust.py:68` | `$HSYNC_BOOTNODE_TRUST_FILE` (0o600) | bootnode fingerprint pin/TOFU (ADR-0034) |
 | p2p master identity | `ssl_utils.py:98` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
 `resolve_bucket_folder` (`state_backend.py:39`) memoizes the

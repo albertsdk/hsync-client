@@ -145,3 +145,13 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 
 > New decisions affecting multiple repos: add the ADR in `hsync-common` first,
 > then map it here.
+
+- **Bootnode TLS trust (ADR-0034, `hsync-common`)**: the `boot/1` node is
+  authenticated pre-write. `BootnodeClient` gained `fingerprints`/`tofu`
+  (replacing the unusable `ca_cert`); the pin/TOFU decision is the shared
+  `hsync_common.protocol.pairing` SSOT (`parse_fingerprint`/`fingerprint_matches`/
+  `FingerprintMismatch`). `bootnode_trust.py` is a `{host:port} → current` TOFU
+  store sharing the `_trust_store.JsonStore` lock/atomicity base with
+  `pinning.PinStore` (extracted on its second use — Rule of Three). A mismatch is
+  fatal (`BootnodeFingerprintMismatch`, lease loop stops); `--ca-cert` is refused
+  in `hsync p2p`.

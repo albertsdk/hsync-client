@@ -35,6 +35,7 @@ from loguru import logger as log
 from hsync_client.boot_client import (
     BootnodeClient,
     BootnodeError,
+    BootnodeFingerprintMismatch,
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
@@ -80,7 +81,8 @@ class BootnodeDiscovery:
         peer_timeout: float = PEER_TIMEOUT,
         heartbeat_interval: float = _DEFAULT_REFRESH_S,
         p2p_key: str | None = None,
-        ca_cert: str | None = None,
+        fingerprints: tuple[str, ...] = (),
+        tofu: bool = False,
         insecure: bool = False,
         upnp_enabled: bool = True,
         capacity: int = 0,
@@ -110,7 +112,8 @@ class BootnodeDiscovery:
         self._client: Any = client_factory(
             bootnode_host,
             bootnode_port,
-            ca_cert=ca_cert,
+            fingerprints=fingerprints,
+            tofu=tofu,
             insecure=insecure,
         )
         self._upnp_factory = upnp_factory
@@ -200,6 +203,11 @@ class BootnodeDiscovery:
                 return
             try:
                 self._query_peers()
+            except BootnodeFingerprintMismatch as exc:
+                log.error(
+                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} trust failed: {exc}"
+                )
+                return
             except BootnodeError as exc:
                 # A transient bootnode failure must not abort the wait: the
                 # background lease loop owns the user-visible warning and keeps
@@ -250,6 +258,13 @@ class BootnodeDiscovery:
                 elif self._server_ready or self._published_endpoints:
                     self._refresh()
                 self._query_peers()
+            except BootnodeFingerprintMismatch as exc:
+                # Fatal: the bootnode failed authentication. Never retry an
+                # unpinned/untrusted node (the token would leak to an attacker).
+                log.error(
+                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} trust failed: {exc}"
+                )
+                return
             except BootnodeError as exc:
                 log.warning(
                     f"Bootnode {self._bootnode_host}:{self._bootnode_port} unreachable: {exc}"

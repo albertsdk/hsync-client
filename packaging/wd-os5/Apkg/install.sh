@@ -116,6 +116,11 @@ HSYNC_DISCOVERY_TIMEOUT="0"
 # and no port; empty = discovery stays on the local network). Set the same host
 # on every device of the group.
 HSYNC_BOOTNODE=""
+# Pin the bootnode certificate fingerprint ('sha256:<hex>' or bare hex,
+# comma-separated up to two for a rotation window); empty = no pin (fail closed).
+HSYNC_BOOTNODE_FINGERPRINT=""
+# Trust the bootnode certificate on first use (TOFU).
+HSYNC_BOOTNODE_TOFU="false"
 # Map the master TCP port with UPnP so the bootnode can relay a dialable
 # endpoint. Only effective with HSYNC_BOOTNODE set; the client treats it as on
 # only with a bootnode by default.

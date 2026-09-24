@@ -10,20 +10,28 @@ they discover each other through a `boot/1` bootstrap node instead of mDNS.
 ## Before you start
 
 - A reachable bootnode (its host or IP, and its UDP port — default `443`).
-- The bootnode certificate fingerprint or its PEM, to pin the TLS trust:
-  `--ca-cert /etc/hsync/boot.pem`; `--insecure` disables verification and is
-  meant for loopback/tests only.
+- The bootnode certificate fingerprint, to pin the TLS trust:
+  `--bootnode-fingerprint sha256:<hex>` (or trust the first sighting with
+  `--bootnode-tofu`). `--insecure` disables verification and is meant for
+  loopback/tests only.
 - The **same bootnode** configured on every device of the group.
+
+The bootnode operator prints the fingerprint with `hsync-bootnode identity show`
+and distributes it out of band (it is never sent on the wire). Without a pin the
+client refuses an unpinned self-signed bootnode — pinning is what makes
+cross-network discovery secure.
 
 ## Run the plan
 
 ```bash
-# Bootstrap node as a positional host (the QUIC scheme is implied).
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync boot.example.net
+# Pin the bootnode fingerprint (read it from `hsync-bootnode identity show`).
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync \
+  boot.example.net --bootnode-fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 # Same thing through the environment (handy for services).
-HSYNC_BOOTNODE=boot.example.net HSYNC_P2P_KEY="shared-secret" \
-  hsync p2p -b mybucket -p /srv/hsync
+HSYNC_BOOTNODE=boot.example.net \
+  HSYNC_BOOTNODE_FINGERPRINT=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync
 ```
 
 `HSYNC_BOOTNODE` is a **bare hostname**: no scheme, no path, no `host:port`.
@@ -66,7 +74,8 @@ limit is negotiated on the authenticated session.
 |---|---|
 | `Discovery: mDNS …` although a bootnode was intended | `HSYNC_BOOTNODE`/positional not set, or an empty value. |
 | Client exits with `--port requires a bootnode hostname` | `--port` passed without a host: add the hostname or `HSYNC_BOOTNODE`. |
-| TLS handshake fails | Bootnode certificate not pinned: pass `--ca-cert` (or `--insecure` only on loopback). |
+| TLS handshake fails | Bootnode certificate not pinned: pass `--bootnode-fingerprint` (or `--bootnode-tofu`, or `--insecure` only on loopback). |
+| `fingerprint_changed` (bootnode) in the log | The bootnode certificate no longer matches the pin — possible man-in-the-middle, or the operator rotated the identity. Re-pin with the new fingerprint; during a rotation the operator publishes the new fingerprint and you pass both (old + new) once. |
 | Peer listed but connection fails | The advertised TCP endpoint is not reachable (UPnP disabled/failed and no public port): see "Let the node be reachable". |
 | Cross-network sync not needed | Go back to the [mDNS plan](p2p-lan.md) by unsetting `HSYNC_BOOTNODE`. |
 

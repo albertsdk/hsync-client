@@ -54,6 +54,7 @@ const KEYS = [
     'HSYNC_AUTOTUNE', 'HSYNC_HTTP_TIMEOUT', 'HSYNC_RECONNECT_DELAY',
     'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
     'HSYNC_BOOTNODE', 'HSYNC_UPNP_ENABLED',
+    'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU',
     'HSYNC_NTP_HOSTS',
 ];
 
@@ -75,6 +76,18 @@ foreach (KEYS as $key) {
             // valid and means "mDNS-only discovery".
             if ($val !== '' && !preg_match('/^[A-Za-z0-9.\-]+$/', $val)) $val = '';
             break;
+        case 'HSYNC_BOOTNODE_FINGERPRINT':
+            // Empty (no pin) or up to two 'sha256:<hex64>' / '<hex64>' pins,
+            // comma-separated. Anything else is dropped to '' (fail closed).
+            if ($val !== '') {
+                $parts = array_map('trim', explode(',', $val));
+                $valid = count($parts) <= 2;
+                foreach ($parts as $p) {
+                    if (!preg_match('/^(sha256:)?[0-9a-fA-F]{64}$/', $p)) $valid = false;
+                }
+                if (!$valid) $val = '';
+            }
+            break;
         case 'HSYNC_BUCKET':
             if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/', $val)) $val = 'hsync';
             break;
@@ -95,6 +108,7 @@ foreach (KEYS as $key) {
             if (!preg_match('/^[0-9]*\.?[0-9]*$/', $val)) $val = '';
             break;
         case 'HSYNC_UPNP_ENABLED':
+        case 'HSYNC_BOOTNODE_TOFU':
         case 'HSYNC_AUTOTUNE':
         case 'HSYNC_P2P_REQUIRE_PAIRING':
         case 'HSYNC_P2P_PEER_DOWNLOAD':

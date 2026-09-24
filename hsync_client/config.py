@@ -18,6 +18,7 @@ from typing import Any, TypedDict, cast
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
+from hsync_common.protocol.pairing import parse_fingerprint
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -117,6 +118,27 @@ class EnvSettings(BaseSettings):
             raise ValueError(f"Invalid bootnode host format: {v!r}")
         return host
 
+    @field_validator("bootnode_fingerprint", mode="before")
+    @classmethod
+    def _validate_bootnode_fingerprints(cls, v: object) -> str | None:
+        """Normalize the comma-separated pin list and reject invalid entries.
+
+        At most two fingerprints are accepted (a rotation window); each must be a
+        valid ``sha256:<hex>`` / bare-hex digest. Fail-fast keeps an operator from
+        silently pinning nothing.
+        """
+        if v is None:
+            return None
+        parts = [p.strip() for p in str(v).split(",") if p.strip()]
+        if not parts:
+            return None
+        if len(parts) > 2:
+            raise ValueError("at most two bootnode fingerprints are allowed (rotation window)")
+        for part in parts:
+            if parse_fingerprint(part) is None:
+                raise ValueError(f"invalid bootnode fingerprint: {part!r}")
+        return ",".join(parts)
+
     api_key: SecretStr = Field(default=SecretStr(""), description="API key for authentication")
 
     # Sync Settings
@@ -138,6 +160,20 @@ class EnvSettings(BaseSettings):
         description=(
             "Bare bootnode host for cross-network discovery (QUIC/UDP, no scheme). "
             "Unset = mDNS-only discovery"
+        ),
+    )
+    bootnode_fingerprint: str | None = Field(
+        default=None,
+        description=(
+            "Bootnode certificate fingerprint(s) to pin (comma-separated, up to two "
+            "for a rotation window); each accepts 'sha256:<hex>' or bare hex"
+        ),
+    )
+    bootnode_tofu: bool = Field(
+        default=False,
+        description=(
+            "Trust the bootnode certificate on first use (TOFU); a later mismatch "
+            "is refused as a possible man-in-the-middle"
         ),
     )
     upnp_enabled: bool | None = Field(
@@ -366,6 +402,24 @@ def get_p2p_listen_port() -> int | None:
 def get_bootnode() -> str | None:
     """Get the bare bootnode host from ``HSYNC_BOOTNODE`` (None = mDNS plan)."""
     return get_env_settings().bootnode
+
+
+def get_bootnode_fingerprints() -> tuple[str, ...]:
+    """Get the pinned bootnode fingerprints (validated, up to two, normalized)."""
+    raw = get_env_settings().bootnode_fingerprint
+    if not raw:
+        return ()
+    pins: list[str] = []
+    for part in raw.split(","):
+        normalized = parse_fingerprint(part.strip())
+        if normalized is not None:
+            pins.append(normalized)
+    return tuple(pins)
+
+
+def get_bootnode_tofu() -> bool:
+    """Get whether the bootnode certificate is trusted on first use."""
+    return get_env_settings().bootnode_tofu
 
 
 def get_upnp_enabled() -> bool | None:
@@ -615,6 +669,10 @@ class HsyncConfig(TypedDict):
     BOOTNODE: str | None
     # UDP (QUIC) port of the remote bootnode
     BOOTNODE_PORT: int
+    # Bootnode certificate fingerprint(s) to pin (up to two for a rotation window)
+    BOOTNODE_FINGERPRINT: tuple[str, ...]
+    # Trust the bootnode certificate on first use (TOFU)
+    BOOTNODE_TOFU: bool
     # Map the master TCP port with UPnP (plan default: on only with a bootnode)
     UPNP_ENABLED: bool
     # Dangerous explicit opt-in: permit keyless mutation requests

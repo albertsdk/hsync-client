@@ -44,10 +44,16 @@ from hsync_common.protocol.bootnode import (
     validate_boot_frame,
     validate_boot_response,
 )
+from hsync_common.protocol.pairing import fingerprint_matches
+from hsync_common.ssl_utils import compute_cert_fingerprint
+
+from hsync_client.bootnode_trust import default_bootnode_trust_store
+from hsync_client.events import UiEventName, emit_event
 
 __all__ = [
     "BootnodeClient",
     "BootnodeError",
+    "BootnodeFingerprintMismatch",
     "BootnodeProtocolError",
     "BootnodeUnreachable",
     "DEFAULT_QUIC_IDLE_TIMEOUT",
@@ -74,6 +80,14 @@ class BootnodeProtocolError(BootnodeError):
     """The bootnode answered with something that violates ``boot/1``."""
 
 
+class BootnodeFingerprintMismatch(BootnodeError):
+    """The bootnode certificate fingerprint did not match the accepted pin(s).
+
+    Fatal: the connection is closed before any frame is sent, and the discovery
+    lease loop must not retry it.
+    """
+
+
 def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
     detail = str(exc) or type(exc).__name__
@@ -84,16 +98,25 @@ def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachabl
 class BootnodeClient:
     """Synchronous ``boot/1`` client for one bootnode.
 
-    ``ca_cert`` pins the bootnode's TLS certificate (recommended); ``insecure``
-    disables verification entirely and is meant for tests/local loopback only.
+    Trust (ADR-0034): ``fingerprints`` pins one or two certificate fingerprints
+    (the second allows a rotation window); ``tofu`` trusts the first sighting
+    and records it in the bootnode trust store; ``insecure`` disables
+    verification entirely (tests/loopback only). With none of these set, the
+    client requires a publicly trusted certificate (fail-closed).
     """
 
     host: str
     port: int
-    ca_cert: str | None = None
     insecure: bool = False
+    fingerprints: tuple[str, ...] = ()
+    tofu: bool = False
     timeout: float = 10.0
     idle_timeout: float = DEFAULT_QUIC_IDLE_TIMEOUT
+
+    @property
+    def _pin_required(self) -> bool:
+        """True when trust comes from a pin/TOFU check (not WebPKI or insecure)."""
+        return bool(self.fingerprints) or self.tofu
 
     def register(self, frame: BootRegister) -> BootAck | None:
         """Send ``register``; return the ``ack`` (STUN-echo) or ``None`` if dropped."""
@@ -150,6 +173,10 @@ class BootnodeClient:
                 configuration=configuration,
                 wait_connected=True,
             ) as client:
+                # Verify the peer certificate *before* opening a stream: the
+                # bucket_token travels in the frame, so trust is decided pre-write.
+                if self._pin_required:
+                    self._verify_peer(client)
                 reader, writer = await client.create_stream()
                 writer.write(payload + b"\n")
                 await writer.drain()
@@ -184,14 +211,74 @@ class BootnodeClient:
             alpn_protocols=[BOOT_ALPN],
             idle_timeout=self.idle_timeout,
         )
-        if self.insecure:
+        if self.insecure or self._pin_required:
+            # ``insecure``: no verification at all. Pin/TOFU: the fingerprint
+            # check is the trust anchor, so the handshake must not reject the
+            # self-signed certificate before we can read it.
             configuration.verify_mode = ssl.CERT_NONE
-        elif self.ca_cert:
-            configuration.verify_mode = ssl.CERT_REQUIRED
-            configuration.load_verify_locations(self.ca_cert)
         else:
+            # Fail-closed default: require a publicly trusted certificate.
             configuration.verify_mode = ssl.CERT_REQUIRED
         return configuration
+
+    def _verify_peer(self, client: Any) -> None:
+        """Check the peer fingerprint against the pins / TOFU store, pre-write.
+
+        Raises :class:`BootnodeFingerprintMismatch` on a mismatch, closing the
+        connection with zero application bytes sent. A matched pin (or a first
+        TOFU sighting) is recorded in the trust store when ``tofu`` is enabled.
+        """
+        cert = _peer_certificate(client)
+        if cert is None:
+            raise BootnodeFingerprintMismatch(
+                f"bootnode {self.host}:{self.port}: could not read the peer "
+                "certificate to verify its fingerprint"
+            )
+        observed = compute_cert_fingerprint(cert)
+        store = default_bootnode_trust_store() if self.tofu else None
+        if self.fingerprints:
+            if fingerprint_matches(observed, list(self.fingerprints)):
+                if store is not None:
+                    store.set(self.host, self.port, observed)
+                return
+            raise self._mismatch(observed)
+        if self.tofu:
+            assert store is not None
+            stored = store.get(self.host, self.port)
+            if stored is None:
+                store.set(self.host, self.port, observed)
+                return
+            if fingerprint_matches(observed, [stored]):
+                return
+            raise self._mismatch(observed)
+        raise self._mismatch(observed)
+
+    def _mismatch(self, observed: str) -> BootnodeFingerprintMismatch:
+        emit_event(
+            UiEventName.fingerprint_changed,
+            scope="bootnode",
+            fingerprint=observed,
+            message=(
+                f"bootnode {self.host}:{self.port} presented a certificate that "
+                "does not match the pinned fingerprint (possible man-in-the-middle)"
+            ),
+        )
+        return BootnodeFingerprintMismatch(
+            f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+            "does not match the accepted pin"
+        )
+
+
+def _peer_certificate(protocol: Any) -> Any:
+    """Read the peer certificate from a connected aioquic client.
+
+    aioquic 1.3.0 keeps the verified peer certificate on the internal TLS state
+    and exposes no public accessor. Isolated here (R-01) so an aioquic upgrade
+    only requires changing this one spot; returns ``None`` when the certificate
+    is unavailable and the caller fails closed.
+    """
+    tls = getattr(protocol._quic, "tls", None)  # noqa: SLF001
+    return getattr(tls, "_peer_certificate", None)  # noqa: SLF001
 
 
 async def _read_line(reader: Any) -> bytes | None:

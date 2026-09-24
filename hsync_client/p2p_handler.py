@@ -656,6 +656,7 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
         )
         emit_event(
             UiEventName.fingerprint_changed,
+            scope="master",
             peer_cid=master.cid,
             peer_address=master.address,
             fingerprint=master.cert_fingerprint,

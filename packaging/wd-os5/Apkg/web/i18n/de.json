@@ -15,6 +15,8 @@
     "field.p2p_group": "LAN-Gruppe (optional)",
     "field.discovery_timeout": "Erkennungs-Zeitlimit (s)",
     "field.bootnode": "Bootnode (optional)",
+    "field.bootnode_fingerprint": "Bootnode-Fingerprint (optional)",
+    "field.bootnode_tofu": "Bootnode bei Erstnutzung vertrauen",
     "field.upnp": "Master-Port per UPnP freigeben",
     "field.server": "Server-URL",
     "field.api_key": "API-Schlüssel",

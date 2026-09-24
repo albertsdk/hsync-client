@@ -375,6 +375,14 @@
             <span data-i18n="field.bootnode">Bootnode (optional)</span>
             <input type="text" name="HSYNC_BOOTNODE" id="HSYNC_BOOTNODE" placeholder="boot.example.net">
         </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bootnode_fingerprint">Bootnode fingerprint (optional)</span>
+            <input type="text" name="HSYNC_BOOTNODE_FINGERPRINT" id="HSYNC_BOOTNODE_FINGERPRINT" placeholder="sha256:...">
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_BOOTNODE_TOFU" id="HSYNC_BOOTNODE_TOFU">
+            <span data-i18n="field.bootnode_tofu">Trust the bootnode on first use</span>
+        </label>
         <label class="hsync-label hsync-check">
             <input type="checkbox" name="HSYNC_UPNP_ENABLED" id="HSYNC_UPNP_ENABLED">
             <span data-i18n="field.upnp">Map the master port with UPnP</span>

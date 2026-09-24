@@ -20,6 +20,7 @@
     const CHECKBOX_KEYS = [
         'HSYNC_P2P_REQUIRE_PAIRING',
         'HSYNC_UPNP_ENABLED',
+        'HSYNC_BOOTNODE_TOFU',
         'HSYNC_P2P_PEER_DOWNLOAD', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES',
         'HSYNC_IGNORE_DELETE',
         'HSYNC_NO_COMPRESSION', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
@@ -28,7 +29,7 @@
 
     // Fields whose values are interpolated into the generated connect command;
     // editing any of them must re-render the section.
-    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_BOOTNODE'];
+    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_BOOTNODE', 'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU'];
 
     function isConnectField(id) {
         return CONNECT_FIELDS.includes(id);
@@ -191,10 +192,19 @@
         if (group) cmd += ' --group ' + shellQuote(group);
 
         // Cross-network discovery: the other device must use the same bootnode,
-        // so it travels as an env prefix (bare host; no scheme/port).
+        // so it travels as an env prefix (bare host; no scheme/port), together
+        // with the optional fingerprint pin / trust-on-first-use.
         const bootnodeEl = $('#HSYNC_BOOTNODE');
         const bootnode = bootnodeEl ? bootnodeEl.value.trim() : '';
-        if (bootnode) cmd = 'HSYNC_BOOTNODE=' + shellQuote(bootnode) + ' ' + cmd;
+        const fpEl = $('#HSYNC_BOOTNODE_FINGERPRINT');
+        const fp = fpEl ? fpEl.value.trim() : '';
+        const tofuEl = $('#HSYNC_BOOTNODE_TOFU');
+        const tofu = !!tofuEl && tofuEl.checked;
+        let envPrefix = '';
+        if (bootnode) envPrefix += 'HSYNC_BOOTNODE=' + shellQuote(bootnode) + ' ';
+        if (fp) envPrefix += 'HSYNC_BOOTNODE_FINGERPRINT=' + shellQuote(fp) + ' ';
+        if (tofu) envPrefix += 'HSYNC_BOOTNODE_TOFU=true ';
+        if (envPrefix) cmd = envPrefix + cmd;
 
         const showKey = key.length > 0;
         const masked = showKey ? ('HSYNC_P2P_KEY=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;

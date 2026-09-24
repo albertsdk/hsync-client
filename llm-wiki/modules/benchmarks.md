@@ -72,7 +72,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `get_backoff_delay(mixed)` | `event_queue.QueuedEvent.get_backoff_delay` (`hsync_client/event_queue.py:103`) |
 | `enqueue` | `event_queue.EventQueue.enqueue` (`:149`) |
 | `send_event(success\|failure\|unserializable)` | `event_queue.EventQueue._send_event` (`:160`) — `json.dumps` + awaited send; transient raise → held for retry (`False`); permanent drop → `True` without touching the socket |
-| `PinStore.get(hit\|miss)` / `check_and_record(match\|changed\|first_use)` / `set(repin)` | `pinning.PinStore` (`hsync_client/pinning.py:185`,`:200`,`:190`) |
+| `PinStore.get(hit\|miss)` / `check_and_record(match\|changed\|first_use)` / `set(repin)` | `pinning.PinStore` (`hsync_client/pinning.py:83`,`:98`,`:88`) |
 | `get_sync_state_store(cached)` | `sync_state.get_sync_state_store` (`hsync_client/sync_state.py:50`) |
 | `get_base_hash(hit)` | `sync_state.get_base_hash` (`:69`) |
 | `record_base` | `sync_state.record_base` (`:78`) — includes `os.stat` corrected-mtime fallback |

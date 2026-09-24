@@ -21,6 +21,7 @@ from typing import Annotated
 
 import typer
 import typer.main
+from hsync_common.protocol.pairing import parse_fingerprint
 
 from hsync_client.constants import (
     BANDWIDTH_MAX,
@@ -765,6 +766,30 @@ NoUpnpOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
+BootnodeFingerprintOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--bootnode-fingerprint",
+        help=(
+            "Pin the bootnode certificate fingerprint ('sha256:<hex>' or bare hex). "
+            "May be repeated (up to two) for a rotation window."
+        ),
+        metavar="FINGERPRINT",
+        rich_help_panel="P2P Mode",
+    ),
+]
+BootnodeTofuOpt = Annotated[
+    bool,
+    typer.Option(
+        "--bootnode-tofu",
+        help=(
+            "Trust the bootnode certificate on first use (TOFU); a later mismatch "
+            "is refused as a possible man-in-the-middle."
+        ),
+        show_default=False,
+        rich_help_panel="P2P Mode",
+    ),
+]
 DiscoveryTimeoutOpt = Annotated[
     int | None,
     typer.Option(
@@ -946,6 +971,8 @@ def p2p(
     no_upnp: NoUpnpOpt = False,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
+    bootnode_fingerprint: BootnodeFingerprintOpt = None,
+    bootnode_tofu: BootnodeTofuOpt = False,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
     once: OnceOpt = False,
@@ -1037,6 +1064,31 @@ def p2p(
 
     bootnode_host, bootnode_port, upnp_enabled = _build_bootnode(bootnode, port, no_upnp=no_upnp)
 
+    # Bootnode TLS trust (ADR-0034): --ca-cert is a server-mode knob, not a
+    # bootnode channel knob, so refuse it rather than silently ignore it.
+    if ca_cert:
+        raise typer.BadParameter(
+            "--ca-cert is not used for the bootnode channel; pin the node with "
+            "--bootnode-fingerprint (or use --bootnode-tofu) instead."
+        )
+
+    fingerprints = tuple(bootnode_fingerprint or ())
+    if len(fingerprints) > 2:
+        raise typer.BadParameter(
+            "at most two --bootnode-fingerprint values are allowed (rotation window)."
+        )
+    for fp in fingerprints:
+        if parse_fingerprint(fp) is None:
+            raise typer.BadParameter(f"invalid --bootnode-fingerprint value: {fp!r}")
+
+    if insecure and (fingerprints or bootnode_tofu):
+        raise typer.BadParameter(
+            "--insecure is mutually exclusive with --bootnode-fingerprint/--bootnode-tofu."
+        )
+
+    if (fingerprints or bootnode_tofu) and not bootnode_host:
+        raise typer.BadParameter("--bootnode-fingerprint/--bootnode-tofu require a bootnode host.")
+
     from hsync_client.main_logic import run_sync
 
     run_sync(
@@ -1070,6 +1122,8 @@ def p2p(
         p2p_bootnode=bootnode_host,
         p2p_bootnode_port=bootnode_port,
         p2p_upnp_enabled=upnp_enabled,
+        bootnode_fingerprints=fingerprints,
+        bootnode_tofu=bool(bootnode_tofu),
         discovery_timeout=discovery_timeout,
         p2p_group=p2p_group,
         force_master=force_master,

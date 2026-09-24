@@ -27,6 +27,8 @@ from hsync_client.config import (
     get_api_key,
     get_autotune_enabled,
     get_bootnode,
+    get_bootnode_fingerprints,
+    get_bootnode_tofu,
     get_compression_enabled,
     get_connectivity_retry_attempts,
     get_connectivity_retry_max_wait,
@@ -546,6 +548,8 @@ def run_sync(
     p2p_bootnode: str | None = None,
     p2p_bootnode_port: int | None = None,
     p2p_upnp_enabled: bool | None = None,
+    bootnode_fingerprints: tuple[str, ...] = (),
+    bootnode_tofu: bool = False,
 ) -> None:
     """
     Main synchronization logic.
@@ -837,6 +841,9 @@ def run_sync(
         "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
         "BOOTNODE": p2p_bootnode or get_bootnode(),
         "BOOTNODE_PORT": p2p_bootnode_port or BOOTNODE_DEFAULT_PORT,
+        # Bootnode TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
+        "BOOTNODE_FINGERPRINT": bootnode_fingerprints or get_bootnode_fingerprints(),
+        "BOOTNODE_TOFU": bootnode_tofu or get_bootnode_tofu(),
         "UPNP_ENABLED": (
             p2p_upnp_enabled
             if p2p_upnp_enabled is not None
