@@ -617,9 +617,10 @@ Two readings matter:
 Cross-mode reading (indicative, **not** an apples-to-apples comparison: the LAN
 run covers 3× the files and drives one WSS event plus one HTTP download per
 file, while server mode reconciles a listing with parallel uploads): server mode
-converges 2000 files in 9.3 s (214 files/s), the p2p burst 6000 files at 74–87
-files/s. The LAN path is markedly slower per file despite both peers being
-local, which is where the remaining LAN investigation should start.
+converges 2000 files in 9.3 s (214 files/s), the p2p burst 6000 files at
+120.7 files/s / t_sync 49.7 s (see the full-scale burst validation below). The
+LAN path is markedly slower per file despite both peers being local, which is
+where the remaining LAN investigation should start.
 
 #### Reconcile cycle cost: first vs quiescent
 
