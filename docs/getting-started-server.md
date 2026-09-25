@@ -65,8 +65,9 @@ export HSYNC_API_KEY="hs_<id>_<secret>"
 
 `HSYNC_API_KEY` holds the **full account token** (`hs_<id>_<secret>`) issued by
 the server — at bootstrap for the admin account, or with
-`hsync-server admin client add --role client` for dedicated accounts (see the
-server [Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)
+`hsync-server admin client add --name <client-name> --role client` for dedicated
+accounts (see the server
+[Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)
 guide). `HSYNC_ADMIN_KEY` is a server-side bootstrap secret and has no meaning
 on the client.
 

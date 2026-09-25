@@ -32,6 +32,20 @@ cycle** (absolute count or percentage of local files).
 Environment equivalents: `HSYNC_MASS_DELETE_GUARD`,
 `HSYNC_MASS_DELETE_THRESHOLD`, `HSYNC_MASS_DELETE_PERCENT`.
 
+## File Stability & Safety Limits
+
+| Option | Description | Default |
+|---|---|---|
+| `--stability-delay` | Seconds a file must stay unchanged before upload. Already-idle files (mtime older than this) skip the wait; after a writer close a 0.3 s re-check is used instead | `5` |
+| `--max-wait-timeout` | Maximum seconds to wait for a file to stabilize | `120` |
+| `--subdir` | Sync only files within this subdirectory path | — (sync everything) |
+| `--min-free-disk-space` | Minimum free disk space in MB before sync pauses (`0` = disabled) | `500` |
+| `--max-inbound-size` | Maximum size in MB of a single inbound file (download or received p2p upload), enforced as an absolute cap on top of the peer-declared size (`0` = disabled) | `10240` |
+
+Environment equivalent: `HSYNC_STABILITY_DELAY`. `--subdir`,
+`--max-wait-timeout`, `--min-free-disk-space` and `--max-inbound-size` are
+CLI-only (no environment variables).
+
 ## Output & Logging
 
 | Option | Description | Default |

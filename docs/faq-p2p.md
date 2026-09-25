@@ -139,7 +139,8 @@ at the same `boot/1` bootnode to sync across subnets/VLANs (see
 you prefer a central hub.
 
 **Q: What ports does p2p mode use?**
-Two consecutive ports, starting from `--listen-port` (default 9753):
+Two consecutive ports, starting from `--listen-port` (default `0` = auto, a free
+port is picked):
 - HTTP port: serves the REST API for file uploads/downloads
 - WebSocket port (HTTP port + 1): real-time event stream
 

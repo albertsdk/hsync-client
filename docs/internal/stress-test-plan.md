@@ -271,7 +271,7 @@ Compares a replica root against a manifest and returns
 
 ## 6. Verifier specification
 
-Inputs: replica root, manifest, mode (`"server"` / `"lan"`), engine-artefact
+Inputs: replica root, manifest, mode (`"server"` / `"p2p"`), engine-artefact
 whitelist.
 
 **Server-mode verification hierarchy**: the **primary** path is wire-level —
@@ -353,7 +353,7 @@ All durations from `time.perf_counter()`; measured **only around engine work**
 Per-run report (printed table + optional JSON at `HSYNC_BB_STRESS_REPORT` path):
 
 ```json
-{"mode": "server|lan", "seed": int, "n_files": int, "n_dirs": int,
+{"mode": "server|p2p", "seed": int, "n_files": int, "n_dirs": int,
  "total_bytes": int, "t_generate_s": float, "t_sync_s": float,
  "t_verify_s": float, "files_per_s": float, "mib_per_s": float,
  "max_concurrent_transfers": int, "iteration": int, "mismatches": []}
@@ -654,7 +654,7 @@ behaviour.
 | --- | --- |
 | BB server fixtures | `hsync-client/tests/conftest.py:541` (`live_server`), `:788` (`bb_bucket`), `:815` (`bb_server_upload`), `:843` (`bb_server_files`), `:863` (`bb_server_download`), `:884` (`local_dir`), `:1119` (`run_sync_once`), `:386` (`pytest_terminal_summary` — stress aggregate) |
 | BB LAN helpers | `hsync-client/tests/p2p_helpers.py` — `_p2p_env:123`, `_p2p_start:158`, `_terminate:226`, `_wait_for_file:277`, `_wait_for_text_in_stderr:287`, `_wait_for_slave_events:306` (`[READY]` marker), `_wait_for_master:462`; fixtures `p2p_master_dir:499`, `p2p_slave_dir:507`, `p2p_bucket:515` |
-| CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `lan`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
+| CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `p2p`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
 | Permissions apply (client) | `hsync-client/hsync_client/utils.py:616` (`set_permissions`), `:635` (`set_permissions_on_dir`); download `transfer.py:452,678`; dir converge `sync.py:1213-1282` |

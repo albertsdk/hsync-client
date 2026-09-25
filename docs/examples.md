@@ -35,7 +35,7 @@ hsync server --log-file /var/log/hsync.log -b mybucket -p ~/Sync
 ### 3.4 File stability tuning
 
 ```bash
-HSYNC_STABILITY_DELAY=2 HSYNC_MAX_WAIT_TIMEOUT=60 hsync server -b mybucket -p ~/Sync
+HSYNC_STABILITY_DELAY=2 hsync server -b mybucket -p ~/Sync --max-wait-timeout 60
 ```
 
 ### 3.5 CI/CD non-interactive sync

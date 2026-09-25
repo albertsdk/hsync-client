@@ -284,7 +284,7 @@ If you prefer to go serverless, use [Option A](#option-a--p2p-mode-no-server-nee
 
 - [Getting Started](docs/getting-started.md) - Build and run
 - [Configuration](docs/configuration.md) - Environment variables and CLI options (complete reference)
-- [Sync Modes](docs/sync-modes.md) - Single, Watch, p2p modes
+- [Sync Modes](docs/sync-modes.md) - Server and p2p modes (continuous / one-shot)
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [p2p Mode](docs/p2p-mode.md) - P2P synchronization details
 - [p2p across networks (bootnode)](docs/p2p-bootnode.md) - Cross-network discovery through a `boot/1` bootstrap node

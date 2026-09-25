@@ -29,14 +29,13 @@ graph LR
         constants[constants.py]
         sync[sync.py]
         transfer[transfer.py]
-        websocket[websocket_handler.py]
+        websocket[remote_websocket.py]
         logger[logger.py]
         event_queue[event_queue.py]
         compression[compression.py]
         stdin[stdin_commands.py]
 
-        subgraph "LAN/"
-            lan[p2p.py]
+        subgraph "p2p/"
             p2p_server[p2p_server.py]
             multipart[multipart.py]
             p2p_websocket[p2p_websocket.py]
@@ -60,10 +59,10 @@ graph LR
     sync --> constants
     websocket --> transfer
     cli --> logger
-    main --> lan
-    lan --> p2p_server
-    lan --> p2p_websocket
-    p2p_websocket --> p2p_handler
+    main --> p2p_handler
+    p2p_handler --> p2p_server
+    p2p_handler --> p2p_websocket
+    p2p_server --> multipart
     transfer --> compression
 ```
 
@@ -303,6 +302,6 @@ multiple untrusted devices share the same network.
 - [Conflict Resolution](../conflict-resolution.md) — three-way merge algorithm and conflict handling.
 - [Architecture](architecture.md) — high-level system overview and data flows.
 - [Sync Flow](../sync-flow.md) — client-side sync flow.
-- [p2p Internals](p2p-internals.md) — deep dive into the LAN protocol.
+- [p2p Internals](p2p-internals.md) — deep dive into the p2p protocol.
 - [Contributing](../../CONTRIBUTING.md) — development setup and guidelines.
 - [HSYNC Common docs](https://github.com/albertsdk/hsync-common/blob/main/docs/README.md) — shared models and protocol.
