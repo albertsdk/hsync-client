@@ -179,8 +179,23 @@ producing false positives. A scenario present in `before` but missing from
   the next cycle from the persisted sync-state. Pinned by
   `test_record_by_key_batched_flush_persists`.
 * **Arbitration branch-insensitive** — all four `arbitrate_upload` branches sit
-  around ~0.006 ms (after A): the store read + `resolve_three_way` cost
-  dominates, the outcome (accept/supersede/conflict) adds nothing measurable.
+  around ~0.0046 ms (after `ed050a3`, was ~0.006 ms): the store read +
+  `resolve_three_way` cost dominates, the outcome (accept/supersede/conflict)
+  adds nothing measurable.
+* **Client hot-path micro-opts (`ed050a3`, `bench_result.txt` 2026-09-23)** —
+  `conflicted_copy_name` parses the path once (`arbitration.py:182`)
+  (~0.0052→0.0028 ms, **~1.9x**); autotune drops the per-call constants import
+  and hoists the storage base-concurrency dict (`derive_profile` ~0.0023→0.0019 ms,
+  `derive_concurrency(ssd,mid)` ~0.0005→0.0003 ms); `get_sync_actions` reuses the
+  pre-computed `_direction` instead of re-reading CONFIG per file
+  (`get_sync_actions(100 in_sync)` ~2.19→1.38 ms, **~1.6x**).
+  `record_deletion(persist)` ~0.102→0.022 ms and `merge_payload(dominant)`
+  ~0.092→0.016 ms (**~5x**) ride the `hsync-common` store fast paths
+  (`dd73e09` + `6ba2c34`), not client code; `normalize_bucket_relpath(out/in)`
+  ~0.0012/0.0031→0.0009/0.0025 ms and `compare_files(conflict_*)` ~−25/−33%
+  follow the same shared `path_validation`/`models` opts. A/B re-runs isolated
+  (no concurrent bench): **0 regressions** over 69 ops (threshold 1.10, floor
+  0.001 ms).
 
 ## Reconcile core (`bench_reconcile.py`) — what the new coverage found
 
