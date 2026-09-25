@@ -189,7 +189,7 @@ class TestQuicConfiguration:
 
 
 def _fake_cert():
-    key = ssl_utils.generate_ed25519_private_key()
+    key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "boot.local")],
