@@ -40,7 +40,7 @@ flowchart TB
 |---------|-------------|
 | **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
-| **Automatic Master Election** | Priority: `force_master` > bidirectional preference > earliest startup > lowest CID |
+| **Automatic Master Election** | Priority: `server_ready` (incumbent) > `force_master` > bidirectional preference > earliest startup > lowest CID |
 | **Passive Peers** | `--never-master` keeps a peer out of the election; it syncs but never becomes master |
 | **Real-Time Sync** | WebSocket-based instant event propagation (implicit; continuous mode is the default) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
@@ -313,10 +313,11 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 
 | Priority | Criterion | Description |
 |----------|-----------|-------------|
-| 1 | `force_master` | If a peer has `--force-master`, it always wins |
-| 2 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
-| 3 | **Earliest startup** | Among equal peers, the one that started first wins |
-| 4 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
+| 1 | `server_ready` (incumbent) | An already-serving master keeps the role, so a newcomer never disrupts it |
+| 2 | `force_master` | An operator-pinned master wins over ordinary peers (but **not** over a serving incumbent) |
+| 3 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
+| 4 | **Earliest startup** | Among equal peers, the one that started first wins |
+| 5 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
 
 > **Note**: Peers running with `--never-master` are **excluded from the candidate pool** before any of the criteria above are applied. They never win the election, regardless of startup time or CID.
 
@@ -324,7 +325,8 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 > [p2p Internals → Master Election Algorithm](internal/p2p-internals.md#master-election-algorithm).
 
 **Rules:**
-- The `sync_direction` and `never_master` flag of each peer are shared via mDNS TXT records during discovery
+- The `sync_direction`, `never_master` and `server_ready` flags of each peer are shared via mDNS TXT records during discovery
+- A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--force-master`; the pin wins once both are at parity on readiness
 - `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
 - `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)
 - `--never-master` is **incompatible** with `--force-master` — the client will refuse to start

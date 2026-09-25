@@ -110,8 +110,7 @@ stateDiagram-v2
     }
 
     Connected --> Reconnecting: ⑥ Connection lost
-    Reconnecting --> Connected: ⑦ Reconnected
-    Reconnecting --> [*]: ⑧ Max retries exceeded
+    Reconnecting --> Connected: ⑦ Reconnected (full-jitter backoff, retries forever)
 ```
 
 ### Sync Direction Filtering

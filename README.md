@@ -138,8 +138,8 @@ flowchart TB
         CB["⚙️ HSYNC Client"]<-->|"read / write"| FSB["📂 File System"]
     end
 
-    CA <-.->|"① Discover (mDNS)"| CB
-    CB <-->|"② Upload / Download"| CA
+    CA <-.->|"①② Discover + elect master (mDNS)"| CB
+    CB <-->|"③ Upload / Download"| CA
 
     style DeviceA fill:#333333
     style DeviceB fill:#333333
