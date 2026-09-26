@@ -336,12 +336,12 @@ opt-in was used. TTY state and `--yes` do not authorize writes.
 
 ### WebSocket API
 
-The master also runs a WebSocket server (on port+1) for real-time event
-propagation:
+The master serves the real-time event stream on the **same TLS port** as the
+REST data plane (single HTTPS/WSS listener):
 
 | Endpoint | Description |
 |----------|-------------|
-| `ws[s]://master:port+1/` | Real-time file system events |
+| `ws[s]://master:port/api/v1/buckets/{bucket}/events/{cid}` | Real-time file system events |
 
 **Event Types:** `added`, `modified`, `renamed`, `deleted`, `symlink`.
 

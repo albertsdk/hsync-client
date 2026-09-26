@@ -30,7 +30,7 @@ import threading
 from copy import deepcopy
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from hsync_common.labels import ActionLabel, resolve_label
 from hsync_common.models.dir import Dir, is_hidden_dir
@@ -120,11 +120,11 @@ DEDUP_MAX_ENTRIES: int = 10_000
 class BaseFileEventHandler(FileSystemEventHandler):
     """Common watchdog handler shared by Remote sync and P2P master."""
 
-    # Cache of resolved ``(prefix, name) -> label`` pairs. ``resolve_label``
-    # is deterministic and the key space is tiny (both prefixes × a handful
-    # of event names), so a per-instance cache saves the enum lookup and
-    # bracket formatting on every watchdog event (the hottest path).
-    _label_cache: dict[tuple[str, str], str] = {}
+    # Shared cache of resolved ``(prefix, name) -> label`` pairs. ``resolve_label``
+    # is deterministic and the key space is tiny (both prefixes × a handful of
+    # event names), so one class-level cache saves the enum lookup and bracket
+    # formatting on every watchdog event (the hottest path).
+    _label_cache: ClassVar[dict[tuple[str, str], str]] = {}
 
     def _label(
         self,
@@ -295,7 +295,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         marker (tombstone); the Remote handler leaves it unimplemented because
         the central server records tombstones itself.
         """
-        return None
+        return
 
     def _is_covered_by_pending_delete(self, path: str) -> bool:
         """Return True when *path* equals or descends from a buffered dir delete,

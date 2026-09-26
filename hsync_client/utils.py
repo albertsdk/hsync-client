@@ -72,13 +72,10 @@ def _suppress_insecure_warning() -> None:
 
 def request_headers() -> dict[str, str]:
     """Return a str-only copy of ``CONFIG["REQUEST_HEADERS"]``."""
-    headers: dict[str, str] = {}
     req_headers = CONFIG.get("REQUEST_HEADERS")
-    if req_headers and isinstance(req_headers, dict):
-        for k, v in req_headers.items():
-            if isinstance(k, str) and isinstance(v, str):
-                headers[k] = v
-    return headers
+    if not isinstance(req_headers, dict):
+        return {}
+    return {k: v for k, v in req_headers.items() if isinstance(k, str) and isinstance(v, str)}
 
 
 def http_to_ws(url: str) -> str:
@@ -945,18 +942,16 @@ def get_throttle_delay(
 
     # Cap tokens at 2x bandwidth to allow burst
     max_tokens = bandwidth_limit * 2
-    if _bandwidth_tokens[transfer_key] > max_tokens:
-        _bandwidth_tokens[transfer_key] = max_tokens
+    _bandwidth_tokens[transfer_key] = min(_bandwidth_tokens[transfer_key], max_tokens)
 
     # Check if we have enough tokens
     if _bandwidth_tokens[transfer_key] >= bytes_transferred:
         # Consume tokens
         _bandwidth_tokens[transfer_key] -= bytes_transferred
         return 0.0
-    else:
-        # Calculate delay needed to regenerate tokens
-        tokens_needed = bytes_transferred - _bandwidth_tokens[transfer_key]
-        delay = tokens_needed / bandwidth_limit
-        # Consume all tokens (we'll wait)
-        _bandwidth_tokens[transfer_key] = 0.0
-        return delay
+    # Calculate delay needed to regenerate tokens
+    tokens_needed = bytes_transferred - _bandwidth_tokens[transfer_key]
+    delay = tokens_needed / bandwidth_limit
+    # Consume all tokens (we'll wait)
+    _bandwidth_tokens[transfer_key] = 0.0
+    return delay

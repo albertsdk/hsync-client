@@ -51,12 +51,12 @@ from hsync_client.bootnode_trust import default_bootnode_trust_store
 from hsync_client.events import UiEventName, emit_event
 
 __all__ = [
+    "DEFAULT_QUIC_IDLE_TIMEOUT",
     "BootnodeClient",
     "BootnodeError",
     "BootnodeFingerprintMismatch",
     "BootnodeProtocolError",
     "BootnodeUnreachable",
-    "DEFAULT_QUIC_IDLE_TIMEOUT",
     "build_leave_frame",
     "build_query_frame",
     "build_refresh_frame",
@@ -277,8 +277,8 @@ def _peer_certificate(protocol: Any) -> Any:
     only requires changing this one spot; returns ``None`` when the certificate
     is unavailable and the caller fails closed.
     """
-    tls = getattr(protocol._quic, "tls", None)  # noqa: SLF001
-    return getattr(tls, "_peer_certificate", None)  # noqa: SLF001
+    tls = getattr(protocol._quic, "tls", None)
+    return getattr(tls, "_peer_certificate", None)
 
 
 async def _read_line(reader: Any) -> bytes | None:

@@ -473,28 +473,56 @@ class TestRunAsMasterWatcherBackoff:
         p2p_sync.port = 9000
         existing_server = MagicMock()
         ws_instance = MagicMock()
+        # The control plane is installed on the unified listener; a bare
+        # MagicMock would look "running" and skip the watcher-start path.
+        ws_instance.running = False
         ws_instance.start.side_effect = WatcherStartError("inotify")
 
         sleep_calls: list[float] = []
-        with (
-            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=ws_instance),
-            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
-        ):
+        with patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)):
             result = _run_as_master(
                 config=config,
                 log=MagicMock(),
                 p2p_sync=p2p_sync,
-                cert_info=MagicMock(),
                 p2p_server=existing_server,
-                p2p_ws_server=None,
+                p2p_ws_server=ws_instance,
             )
 
-        assert result == (existing_server, None), (
-            "the half-started WSS server must not be handed back to the discovery loop"
+        assert result == (existing_server, ws_instance), (
+            "the control plane stays attached to the unified server, not restarted"
         )
         ws_instance.stop.assert_called_once()
+        existing_server.stop_serving.assert_any_call()
         assert sleep_calls == [WATCHER_START_RETRY_DELAY_S], (
             "the retry must use the dedicated slow backoff, not the discovery cadence"
+        )
+
+    def test_watcher_failure_retires_http_role_before_ws_stop(self, tmp_path):
+        """The HTTP role is retired before the control plane clears the registry."""
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _p2p_config(tmp_path)
+        p2p_sync = MagicMock()
+        p2p_sync.port = 9000
+        order: list[str] = []
+        server = MagicMock()
+        server.stop_serving.side_effect = lambda: order.append("http_off")
+        ws = MagicMock()
+        ws.running = False
+        ws.start.side_effect = WatcherStartError("inotify")
+        ws.stop.side_effect = lambda: order.append("ws_stop")
+
+        with patch("time.sleep"):
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=p2p_sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+
+        assert order == ["http_off", "ws_stop"], (
+            "the master HTTP role must stop BEFORE the control plane clears the CID registry"
         )
 
     def test_master_ready_signal_skipped_on_watcher_failure(self, tmp_path):
@@ -504,23 +532,45 @@ class TestRunAsMasterWatcherBackoff:
         config = _p2p_config(tmp_path)
         p2p_sync = MagicMock()
         p2p_sync.port = 9000
+        p2p_server = MagicMock()
         ws_instance = MagicMock()
+        ws_instance.running = False
         ws_instance.start.side_effect = WatcherStartError("inotify")
 
-        with (
-            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=ws_instance),
-            patch("time.sleep"),
-        ):
+        with patch("time.sleep"):
             _run_as_master(
                 config=config,
                 log=MagicMock(),
                 p2p_sync=p2p_sync,
-                cert_info=MagicMock(),
-                p2p_server=MagicMock(),
-                p2p_ws_server=None,
+                p2p_server=p2p_server,
+                p2p_ws_server=ws_instance,
             )
 
         p2p_sync.update_server_ready.assert_not_called()
+
+    def test_master_does_not_rebind_the_listener(self, tmp_path):
+        """The listener is bound once at startup; the master only installs its role."""
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _p2p_config(tmp_path)
+        p2p_sync = MagicMock()
+        p2p_sync.port = 9000
+        server = MagicMock()
+        ws = MagicMock()
+        ws.running = False
+        ws.start.side_effect = lambda **kwargs: setattr(ws, "running", True)
+
+        with patch("time.sleep"):
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=p2p_sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+
+        server.start.assert_not_called()
+        p2p_sync.update_server_ready.assert_called_once()
 
 
 class TestRunAsSlaveWatcherBackoff:

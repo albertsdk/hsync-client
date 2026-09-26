@@ -11,17 +11,20 @@ import contextlib
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiohttp import WSMsgType
 from hsync_common.models.file import File
-from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
+from hsync_common.protocol.handshake import build_p2p_hello
 from hsync_common.protocol.peer_download import (
     build_p2p_inventory_ack,
     build_p2p_inventory_frame,
 )
 
 from hsync_client.p2p_inventory import P2PInventoryPublisher, P2PInventoryStore
+from hsync_client.p2p_server import P2PServer
 from hsync_client.p2p_websocket import P2PWebSocketServer
 
 CID_A = "A" * 21
@@ -333,18 +336,9 @@ async def test_publisher_directory_rename_uses_component_prefix(tmp_path: Path) 
 async def test_master_wss_routes_inventory_to_store_and_returns_ack(tmp_path: Path) -> None:
     store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
     store.activate()
-    server = P2PWebSocketServer(port=9999, inventory_store=store)
-    websocket = AsyncMock()
-    websocket.remote_address = ("192.168.1.20", 5000)
-    websocket.recv.return_value = json.dumps(
-        {
-            "type": "hello",
-            "cid": CID_A,
-            "protocol_version": PROTOCOL_VERSION_P2P,
-            "capabilities": ["peer_download"],
-            "serve_slots": 2,
-        }
-    )
+    ws_server = P2PWebSocketServer(port=0, inventory_store=store)
+    server = P2PServer(port=0, use_https=False, websocket_server=ws_server)
+    server.start()
     frame = build_p2p_inventory_frame(
         gen=1,
         seq=0,
@@ -353,18 +347,36 @@ async def test_master_wss_routes_inventory_to_store_and_returns_ack(tmp_path: Pa
         entries=[{"path": "one.txt", "sha256": DIGEST_A, "size": 1}],
     )
 
-    async def _messages(_websocket):
-        yield json.dumps(frame)
+    import aiohttp
 
-    websocket.__aiter__ = _messages
-    with patch("hsync_client.p2p_websocket.CONFIG", {"P2P_KEY": None}):
-        await server._handle_client(websocket)
-
-    sent = [json.loads(call.args[0]) for call in websocket.send.call_args_list]
-    assert sent[0]["type"] == "hello"
-    assert sent[1] == {"type": "inventory_ack", "gen": 1, "seq": 0, "status": "ok"}
-    assert not store.has_session(CID_A)
-    store.close()
+    try:
+        with patch("hsync_client.p2p_websocket.CONFIG", {"P2P_KEY": None}):
+            async with aiohttp.ClientSession() as session:
+                url = f"http://127.0.0.1:{server.port}/api/v1/buckets/bucket/events/{CID_A}"
+                async with session.ws_connect(url) as ws:
+                    greeting = json.loads((await ws.receive()).data)
+                    assert greeting["type"] == "hello"
+                    await ws.send_str(
+                        json.dumps(
+                            build_p2p_hello(
+                                capabilities=["peer_download"],
+                                cid=CID_A,
+                                serve_slots=2,
+                            )
+                        )
+                    )
+                    await ws.send_str(json.dumps(frame))
+                    ack = json.loads((await asyncio.wait_for(ws.receive(), timeout=10)).data)
+                    assert ack == {"type": "inventory_ack", "gen": 1, "seq": 0, "status": "ok"}
+                    assert store.has_session(CID_A)
+            for _ in range(60):
+                if not store.has_session(CID_A):
+                    break
+                await asyncio.sleep(0.05)
+            assert not store.has_session(CID_A)
+    finally:
+        server.stop()
+        store.close()
 
 
 @pytest.mark.asyncio
@@ -412,22 +424,23 @@ async def test_wss_reconnect_installs_new_inventory_owner_before_closing_old(
 
 @pytest.mark.asyncio
 async def test_master_wss_configures_bounded_message_size() -> None:
-    server = P2PWebSocketServer(port=9999)
-    served = MagicMock()
-    served.close = MagicMock()
-    served.wait_closed = AsyncMock()
-
-    class ServeContext:
-        async def __aenter__(self):
-            return served
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-    server._running = False
-    with patch("websockets.serve", return_value=ServeContext()) as serve:
-        await server._run_server()
-
     from hsync_client.constants import WS_MAX_MESSAGE_BYTES
 
-    assert serve.call_args.kwargs["max_size"] == WS_MAX_MESSAGE_BYTES
+    server = P2PWebSocketServer(port=9999)
+    fake_ws = MagicMock()
+    fake_ws.prepare = AsyncMock()
+    fake_ws.send_str = AsyncMock()
+    fake_ws.close = AsyncMock()
+    fake_ws.receive = AsyncMock(return_value=SimpleNamespace(type=WSMsgType.CLOSE, data=None))
+
+    async def _empty_iter():
+        if False:  # pragma: no cover - never yields
+            yield None
+
+    fake_ws.__aiter__ = _empty_iter
+
+    request = SimpleNamespace(remote="192.168.1.20")
+    with patch("hsync_client.p2p_websocket.web.WebSocketResponse", return_value=fake_ws) as factory:
+        await server.handle(request)
+
+    assert factory.call_args.kwargs["max_msg_size"] == WS_MAX_MESSAGE_BYTES

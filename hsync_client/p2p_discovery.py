@@ -33,7 +33,7 @@ from hsync_client.p2p_peers import PeerManager
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
 
-__all__ = ["DiscoveryPlan", "build_discovery_plan"]
+__all__ = ["DiscoveryPlan", "DiscoveryPlanState", "build_discovery_plan"]
 
 
 @runtime_checkable
@@ -92,21 +92,63 @@ class DiscoveryPlan(Protocol):
         ...
 
 
-def build_discovery_plan(config: HsyncConfig, *, cert_fingerprint: str | None) -> DiscoveryPlan:
+class DiscoveryPlanState:
+    """Shared trivial state for the concrete discovery plans.
+
+    ``MdnsDiscovery`` and ``BootnodeDiscovery`` expose the same
+    :class:`DiscoveryPlan` surface and keep the same trivial state: the serving
+    port, the shared :class:`PeerManager` and the connected-client provider.
+    Holding that here keeps the two plans aligned on the interface without
+    merging their transport-specific logic (each keeps its own
+    ``start``/``stop``/refresh behavior).
+
+    Consumers: the two discovery plans only.
+    """
+
+    _port: int
+    _peer_manager: PeerManager | None
+    _connected_clients_provider: Callable[[], int] | None
+
+    @property
+    def port(self) -> int:
+        """TCP port this node serves on when it becomes master (0 = auto)."""
+        return self._port
+
+    @property
+    def peer_manager(self) -> PeerManager | None:
+        """Shared peer state, or ``None`` before :meth:`start`."""
+        return self._peer_manager
+
+    def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
+        """Install a callback that yields the live connected-client count."""
+        self._connected_clients_provider = provider
+
+
+def build_discovery_plan(
+    config: HsyncConfig,
+    *,
+    cert_fingerprint: str | None,
+    port: int | None = None,
+) -> DiscoveryPlan:
     """Select the discovery plan from ``CONFIG`` — the single decision point.
 
     No bootnode configured → the mDNS plan (historical behavior); a bootnode
     host set (CLI positional or ``HSYNC_BOOTNODE``) → the bootnode plan. The
     sync core (``p2p_handler.run_p2p_mode``) never branches on the plan: it
     receives the adapter here and only uses the :class:`DiscoveryPlan` surface.
+
+    ``port`` overrides ``CONFIG["P2P_LISTEN_PORT"]`` with the already-bound
+    serving port, so discovery advertises the real port instead of probing for
+    one (no probe/release race).
     """
     from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
     from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 
+    resolved_port = config["P2P_LISTEN_PORT"] if port is None else port
     shared: dict[str, object] = {
         "cid": config["CID"],
         "bucket": config["REMOTE_BUCKET"],
-        "port": config["P2P_LISTEN_PORT"],
+        "port": resolved_port,
         "group": config["P2P_GROUP"],
         "use_https": True,
         "cert_fingerprint": cert_fingerprint,

@@ -6,10 +6,10 @@
 
 """mDNS/Zeroconf discovery plan for ``hsync p2p`` (LAN, no bootnode).
 
-Behavior-preserving extraction from the former ``p2p.py``: the Zeroconf
-service listener/advertiser and the ``MdnsDiscovery`` coordinator that browses and
-advertises ``_hsync._tcp.local.``, stamps the TXT flags (``server_ready``,
-``connected``), runs the heartbeat and coalesces presence refreshes. Peer
+Owns the Zeroconf service listener/advertiser and the ``MdnsDiscovery``
+coordinator that browses and advertises ``_hsync._tcp.local.``, stamps the TXT
+flags (``server_ready``, ``connected``), runs the heartbeat and coalesces
+presence refreshes. Peer
 state and election live in ``p2p_peers``; this module is one of the two
 implementations of the ``p2p_discovery`` interface.
 
@@ -41,6 +41,7 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
 )
 from hsync_client.net_utils import get_local_ip
+from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
     Peer,
@@ -183,8 +184,7 @@ class HsyncServiceListener(ServiceListener):
                 connected = int(connected_bytes.decode("utf-8")) if connected_bytes else 0
             except ValueError:
                 connected = 0
-            if connected < 0:
-                connected = 0
+            connected = max(connected, 0)
 
             if not cid or not bucket:
                 log.debug(f"Incomplete service info: cid={cid}, bucket={bucket}")
@@ -269,7 +269,7 @@ class HsyncServiceListener(ServiceListener):
             log.debug(f"Error parsing service name on removal: {e}")
 
 
-class MdnsDiscovery:
+class MdnsDiscovery(DiscoveryPlanState):
     """
     Coordinates P2P-based peer-to-peer synchronization.
 
@@ -380,11 +380,6 @@ class MdnsDiscovery:
         self._record_lock = threading.Lock()
 
     @property
-    def port(self) -> int:
-        """Get the port being used (useful when random port was requested)."""
-        return self._port
-
-    @property
     def group(self) -> str | None:
         """Get the group name."""
         return self._group
@@ -398,11 +393,6 @@ class MdnsDiscovery:
     def cert_fingerprint(self) -> str | None:
         """Get the SSL certificate fingerprint."""
         return self._cert_fingerprint
-
-    @property
-    def peer_manager(self) -> PeerManager | None:
-        """Get the peer manager."""
-        return self._peer_manager
 
     def start(self, register_service: bool = True) -> PeerManager:
         """
@@ -562,8 +552,7 @@ class MdnsDiscovery:
         re-registers its record so peers observe the new value on their next
         mDNS heartbeat.
         """
-        if count < 0:
-            count = 0
+        count = max(count, 0)
         if count == self._connected_clients:
             return
         self._connected_clients = count
@@ -619,16 +608,6 @@ class MdnsDiscovery:
                 self._heartbeat()
             except Exception:
                 log.exception("Heartbeat re-announce failed")
-
-    def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
-        """Install (or clear) the callable that returns the live connected count.
-
-        The P2P handler installs the master WebSocket server's counter while
-        this node serves as master, and clears it when the role is lost, so
-        :meth:`wait_for_discovery` always reads the count from the correct
-        source for the current role.
-        """
-        self._connected_clients_provider = provider
 
     def stop(self) -> None:
         """Stop P2P discovery and unregister service."""

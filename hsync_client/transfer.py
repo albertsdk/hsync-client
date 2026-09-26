@@ -314,8 +314,7 @@ def _build_multipart_streaming(
         filename = Path(file_path).name
 
     file_size = Path(file_path).stat().st_size - offset
-    if file_size < 0:
-        file_size = 0
+    file_size = max(file_size, 0)
 
     # Pre-compute body parts so Content-Length is exact
     field_parts: list[bytes] = []

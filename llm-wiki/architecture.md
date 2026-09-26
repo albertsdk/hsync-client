@@ -19,8 +19,10 @@ starts the watcher loop. Console script: `cli.run` (`cli.py:1121`).
 | **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:98`) |
 | **LAN (P2P)** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`) |
 
-LAN sub-roles: `_run_as_master` (`p2p_handler.py:273`) starts `P2PServer`
-(`p2p_server.py:1626`) + `P2PWebSocketServer` (`p2p_websocket.py:185`); `_run_as_slave`
+LAN sub-roles: `_run_as_master` (`p2p_handler.py:273`) starts the **single**
+`P2PServer` (`p2p_server.py`) — one TLS listener serving the REST data plane and
+the WSS realtime control plane (`P2PWebSocketServer`, `p2p_websocket.py`) on the
+same port — plus the master watcher; `_run_as_slave`
 (`p2p_handler.py:418`) connects to the elected master. Role is chosen by election
 (see [p2p-mode.md](modules/p2p-mode.md)).
 

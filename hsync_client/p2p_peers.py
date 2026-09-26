@@ -544,18 +544,18 @@ class PeerManager:
                 never_master=self._never_master,
             )
         ]
-        for peer in self._peers.values():
-            if self._is_peer_alive(peer):
-                candidates.append(
-                    ElectionCandidate(
-                        cid=peer.cid,
-                        force_master=peer.force_master,
-                        startup_time=peer.startup_time,
-                        sync_direction=peer.sync_direction,
-                        server_ready=peer.server_ready,
-                        never_master=peer.never_master,
-                    )
-                )
+        candidates.extend(
+            ElectionCandidate(
+                cid=peer.cid,
+                force_master=peer.force_master,
+                startup_time=peer.startup_time,
+                sync_direction=peer.sync_direction,
+                server_ready=peer.server_ready,
+                never_master=peer.never_master,
+            )
+            for peer in self._peers.values()
+            if self._is_peer_alive(peer)
+        )
 
         ranked = rank_election_candidates(candidates)
         new_master_cid = ranked[0].cid if ranked else None

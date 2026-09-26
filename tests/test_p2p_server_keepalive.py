@@ -2,10 +2,9 @@
 
 The master previously answered HTTP/1.0 (connection closed after every
 response), so every per-file request paid a full TCP+TLS handshake. With
-``protocol_version = "HTTP/1.1"`` connections are reused — which requires
-every response to carry an exact ``Content-Length`` — and idle connections
-are reaped after ``P2P_HANDLER_IDLE_TIMEOUT_S`` so they do not pin master
-thread slots forever.
+HTTP/1.1 connections are reused — which requires every response to carry an
+exact ``Content-Length`` — and idle connections are reaped after
+``P2P_HANDLER_IDLE_TIMEOUT_S`` so they do not pin a worker slot forever.
 """
 
 import http.client
@@ -15,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from hsync_client.p2p_peers import get_free_port
-from hsync_client.p2p_server import P2PRequestHandler, P2PServer
+from hsync_client.p2p_server import P2PServer
 
 
 @pytest.fixture
@@ -24,8 +23,7 @@ def server():
     port = get_free_port()
     srv = P2PServer(port=port)
     srv.start()
-    time.sleep(0.1)
-    yield srv, port
+    yield srv, srv.port
     srv.stop()
 
 
@@ -99,17 +97,15 @@ class TestKeepAlive:
             conn.close()
 
     def test_idle_connection_is_reaped(self):
-        """An idle keep-alive connection is closed after the handler timeout.
+        """An idle keep-alive connection is closed after the idle timeout.
 
         Without the reap, connections parked in client pools would hold a
-        master thread + semaphore slot forever and eventually starve the
-        bounded backlog.
+        worker slot forever and eventually starve the bounded executor.
         """
         port = get_free_port()
-        with patch.object(P2PRequestHandler, "timeout", 0.3):
+        with patch("hsync_client.p2p_server.P2P_HANDLER_IDLE_TIMEOUT_S", 0.3):
             srv = P2PServer(port=port)
             srv.start()
-            time.sleep(0.1)
             try:
                 with patch(
                     "hsync_client.p2p_server.CONFIG",
@@ -120,7 +116,7 @@ class TestKeepAlive:
                     response.read()
                     assert response.status == 200
 
-                    time.sleep(0.8)  # > reap timeout (0.3s)
+                    time.sleep(1.2)  # > idle timeout (0.3s)
 
                     with pytest.raises(
                         (
@@ -140,9 +136,9 @@ class TestRoleHandover:
     """A retired role must never answer on a lingering keep-alive connection.
 
     Regression: the slave seeder and the master share the client's listen port.
-    On promotion the seeder stops and the master binds the same port, but an
-    established HTTP/1.1 keep-alive connection (pooled by the peer) used to keep
-    being served by the seeder handler — so a master-style download
+    On promotion the serving role is swapped on the same listener, but an
+    established HTTP/1.1 keep-alive connection (pooled by the peer) must not
+    keep being served by the retired role — so a master-style download
     (``filename``+``cid``, no ``sha256``) was rejected with 400 "Invalid seeder
     query" and the failover never resumed sync (black-box:
     ``test_master_death_reelects_successor``).
@@ -151,9 +147,9 @@ class TestRoleHandover:
     def test_handover_window_refuses_in_flight_requests(self, server):
         """While the role is being retired, a pooled request is refused (503).
 
-        The window is explicit here (``stopping`` is set by ``P2PServer.stop()``
-        before the listener is released and the live connections are closed), so
-        a request already in flight cannot be handled under the retired role.
+        ``stop_serving()`` is the yield: the listener stays up but
+        serves nothing, so a request already in flight cannot be handled under
+        the retired role (ADR-0027).
         """
         srv, port = server
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
@@ -166,9 +162,8 @@ class TestRoleHandover:
                 assert first.status == 200  # pooled connection
                 first.read()  # drain before reusing the connection
 
-                # Handover in progress: the owning server retired its role.
-                assert hasattr(srv._server, "stopping"), "the handover guard is missing"
-                srv._server.stopping = True
+                # Handover in progress: the listener retired its serving role.
+                srv.stop_serving()
 
                 conn.request("GET", "/api/v1/health")
                 response = conn.getresponse()

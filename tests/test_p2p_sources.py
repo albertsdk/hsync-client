@@ -219,8 +219,7 @@ def test_sources_endpoint_strict_validation_and_cid_ownership() -> None:
     )
     with patch("hsync_client.p2p_server.CONFIG", {"P2P_KEY": None}):
         server.start()
-        assert server._server is not None
-        port = int(server._server.server_address[1])
+        port = server.port
         path = "/api/v1/buckets/bucket/files/sources"
         body = json.dumps(
             {

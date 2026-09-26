@@ -20,7 +20,7 @@ from hsync_common.protocol.handshake import Capability
 
 from hsync_client.config import CONFIG
 
-__all__ = ["local_capabilities", "adopt_remote_capabilities"]
+__all__ = ["adopt_remote_capabilities", "local_capabilities"]
 
 
 def local_capabilities() -> set[Capability]:

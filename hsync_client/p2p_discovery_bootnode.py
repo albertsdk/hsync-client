@@ -49,6 +49,7 @@ from hsync_client.constants import (
 )
 from hsync_client.nat_traversal import candidate_endpoints
 from hsync_client.net_utils import get_local_ip
+from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_peers import HSYNC_P2P_LISTEN_PORT, Peer, PeerManager, get_free_port
 from hsync_client.stun import ObservedAddress, observed_address
 from hsync_client.upnp import UpnpMapper
@@ -60,7 +61,7 @@ __all__ = ["BootnodeDiscovery"]
 _DEFAULT_REFRESH_S = HEARTBEAT_INTERVAL
 
 
-class BootnodeDiscovery:
+class BootnodeDiscovery(DiscoveryPlanState):
     """``DiscoveryPlan`` backed by a ``boot/1`` bootstrap node."""
 
     def __init__(
@@ -133,21 +134,11 @@ class BootnodeDiscovery:
 
         self._server_ready = False
         self._connected_clients = 0
-        self._connected_provider: Callable[[], int] | None = None
+        self._connected_clients_provider: Callable[[], int] | None = None
 
         self._discovery_announced = False
 
     # -- DiscoveryPlan surface -------------------------------------------------
-
-    @property
-    def port(self) -> int:
-        """TCP port this node serves on when it becomes master."""
-        return self._port
-
-    @property
-    def peer_manager(self) -> PeerManager | None:
-        """Shared peer state (``None`` before :meth:`start`)."""
-        return self._peer_manager
 
     def start(self, register_service: bool = True) -> PeerManager:
         """Start the lease loop and return the shared :class:`PeerManager`."""
@@ -240,10 +231,6 @@ class BootnodeDiscovery:
         self._connected_clients = count
         self._wake.set()
 
-    def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
-        """Install a callback yielding the live connected-client count."""
-        self._connected_provider = provider
-
     # -- Lease loop ------------------------------------------------------------
 
     def _lease_loop(self) -> None:
@@ -270,16 +257,16 @@ class BootnodeDiscovery:
                     f"Bootnode {self._bootnode_host}:{self._bootnode_port} unreachable: {exc}"
                 )
                 first = True  # re-register once the node is reachable again
-            except Exception as exc:  # noqa: BLE001 - the loop must never die silently
+            except Exception as exc:
                 log.warning(f"Bootnode lease loop error: {exc}")
             self._wake.wait(timeout=self._heartbeat_interval)
             self._wake.clear()
 
     def _current_connected(self) -> int:
-        if self._connected_provider is not None:
+        if self._connected_clients_provider is not None:
             try:
-                return int(self._connected_provider())
-            except Exception:  # noqa: BLE001 - a provider must never break the lease
+                return int(self._connected_clients_provider())
+            except Exception:
                 return self._connected_clients
         return self._connected_clients
 

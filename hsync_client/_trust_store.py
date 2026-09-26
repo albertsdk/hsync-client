@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-__all__ = ["StoreError", "JsonStore", "TRUST_FILE_MODE"]
+__all__ = ["TRUST_FILE_MODE", "JsonStore", "StoreError"]
 
 # Owner-only permissions: the file records which peers this host trusts and must
 # not be world-readable/writable.

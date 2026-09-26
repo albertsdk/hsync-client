@@ -546,37 +546,25 @@ def _p2p_cid(tag: str) -> str:
     return base + "0" * (21 - len(base))
 
 
-def _p2p_ws_url(p2p_listen_port: int) -> str:
-    """The P2P master's WebSocket URL (it listens on ``p2p_listen_port + 1``)."""
-    return f"wss://127.0.0.1:{p2p_listen_port + 1}/"
+def _p2p_ws_url(p2p_listen_port: int, bucket: str, cid: str) -> str:
+    """The P2P master's realtime WebSocket URL (same port as HTTPS)."""
+    return f"wss://127.0.0.1:{p2p_listen_port}/api/v1/buckets/{bucket}/events/{cid}"
 
 
-def _reserve_port_pair() -> int:
-    """Find a free port *P* whose *P+1* (the P2P WebSocket port) is also free.
+def _reserve_port() -> int:
+    """Find a free TCP port for the unified P2P listener.
 
-    The P2P master serves HTTPS on *P* and WSS on *P+1*; reserving both avoids an
-    intermittent WebSocket bind failure when the adjacent port happens to be in
-    use. Probes by binding (not holding), which is sufficient for the sequential
-    P2P black-box runs.
+    The master serves HTTPS REST and WSS on ONE port; probing by binding (not
+    holding) is sufficient for the sequential P2P black-box runs.
     """
     import socket
 
-    for _ in range(50):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        finally:
-            sock.close()
-        nxt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            nxt.bind(("127.0.0.1", port + 1))
-        except OSError:
-            continue
-        finally:
-            nxt.close()
-        return port
-    raise RuntimeError("could not find a free consecutive HTTP/WebSocket port pair")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+    finally:
+        sock.close()
 
 
 @contextlib.contextmanager
@@ -590,14 +578,13 @@ def _p2p_serving_master(
 ):
     """Start a force-master + slave so the master elects and serves HTTPS.
 
-    The P2P master only starts its HTTP and WebSocket servers once it has won
-    an election, which requires at least one peer via mDNS. A never-master
-    slave is therefore kept connected for the duration of the block so the
-    master keeps serving. Yields the P2P HTTP port *P* (WebSocket is on *P+1*);
-    a verified-free consecutive port pair is allocated internally. Both
-    processes are terminated on exit.
+    The P2P master only starts serving once it has won an election, which
+    requires at least one peer via mDNS. A never-master slave is therefore kept
+    connected for the duration of the block so the master keeps serving. Yields
+    the unified P2P port (HTTPS REST and WSS share it); a verified-free port is
+    allocated internally. Both processes are terminated on exit.
     """
-    p2p_listen_port = _reserve_port_pair()
+    p2p_listen_port = _reserve_port()
     master = _p2p_start(
         master_dir,
         bucket,

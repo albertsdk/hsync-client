@@ -11,6 +11,7 @@ This module handles P2P synchronization including peer discovery,
 master election, and WebSocket communication.
 """
 
+import contextlib
 import os
 import time
 from typing import TYPE_CHECKING, Any, cast
@@ -70,84 +71,98 @@ NO_MASTER_WARNING_TIMEOUT = 60.0
 # the bound only guards a wedged lease loop.
 READINESS_ENDPOINT_TIMEOUT_S = 10.0
 
+# Bounded wait for live WebSocket clients to finish closing on a role yield,
+# before the shared inventory store is detached and closed (ADR-0027). A peer
+# that ignores the close frame must not stall the yield indefinitely.
+_WS_CLOSE_GRACE_S = 5.0
+
 
 def _start_slave_seeder(
     config: "HsyncConfig",
     p2p_sync: DiscoveryPlan,
-    cert_info,
     log,
-) -> tuple[P2PServer | None, P2PInventoryPublisher | None]:
-    """Bind a read-only slave seeder, degrading cleanly on port conflicts."""
+    p2p_server: P2PServer | None,
+) -> P2PInventoryPublisher | None:
+    """Serve this peer's shareable files read-only, degrading cleanly.
+
+    Reuses the process-wide unified listener: installing the seeder role swaps
+    the serving context in place (no rebind, no port conflict).
+    """
     if (
         config.get("ONE_SHOT", False)
         or config.get("DRYRUN", False)
         or not config.get("P2P_PEER_DOWNLOAD", True)
+        or p2p_server is None
     ):
-        return None, None
+        return None
     publisher = P2PInventoryPublisher(config["LOCAL_BUCKET"])
-    server = P2PServer(
-        port=p2p_sync.port,
-        use_https=True,
-        cert_file=cert_info.cert_file,
-        key_file=cert_info.key_file,
-        mode=P2PServerMode.seeder,
+    p2p_server.configure_role(
+        P2PServerMode.seeder,
         bucket=config["REMOTE_BUCKET"],
+        cid_guard=None,
+        source_service=None,
+        inventory_store=None,
         peer_read_cap=config.get("P2P_PEER_READ_CAP", 2),
     )
     try:
-        server.start()
-    except OSError as exc:
-        server.stop()
-        log.warning(
-            f"Peer seeder could not bind port {p2p_sync.port} ({exc}); continuing as requester-only"
-        )
-        return None, None
-    try:
         p2p_sync.update_endpoint_ready(True)
     except Exception as exc:
-        server.stop()
         try:
             p2p_sync.update_endpoint_ready(False)
         except Exception as cleanup_exc:
             log.warning(f"Peer seeder readiness cleanup failed: {cleanup_exc}")
+        p2p_server.stop_serving()
         log.warning(f"Peer seeder readiness could not be published ({exc}); disabling seeding")
-        return None, None
+        return None
     set_active_inventory_publisher(publisher)
-    return server, publisher
+    return publisher
 
 
 def _stop_slave_seeder(
-    server: P2PServer | None,
     p2p_sync: DiscoveryPlan,
     publisher: P2PInventoryPublisher | None = None,
 ) -> None:
-    """Stop accepting peer reads, withdraw TXT readiness, and detach inventory."""
-    if server is not None:
-        try:
-            server.stop()
-        except Exception as exc:
-            module_log.warning(f"Could not stop peer seeder: {exc}")
-        try:
-            p2p_sync.update_endpoint_ready(False)
-        except Exception as exc:
-            module_log.warning(f"Could not withdraw peer seeder readiness: {exc}")
-    if publisher is not None:
-        set_active_inventory_publisher(None)
+    """Withdraw read-only serving readiness and detach inventory.
+
+    Only withdraws when a seeder was actually active (``publisher`` is set):
+    the master loop calls this every iteration, and an unconditional
+    ``update_endpoint_ready(False)`` would re-register mDNS and clear the
+    master's own ``server_ready`` flag.
+    """
+    if publisher is None:
+        return
+    try:
+        p2p_sync.update_endpoint_ready(False)
+    except Exception as exc:
+        module_log.warning(f"Could not withdraw peer seeder readiness: {exc}")
+    set_active_inventory_publisher(None)
 
 
 def _stop_p2p_serving(ws_server: P2PWebSocketServer | None, http_server: P2PServer | None) -> None:
-    """Stop the P2P serving stack in the canonical order (ADR-0027).
+    """Retire the serving role, keeping the process-wide listener bound (ADR-0027).
 
-    The WebSocket server is stopped first so no new connection is accepted, then
-    the HTTP server is stopped and its inventory closed. The surrounding
-    provider/publisher resets are left to the callers because they differ
-    between the mastership-loss, role-transition and shutdown paths.
+    The role is cleared FIRST so new HTTP/WS work is refused, then the live
+    WebSocket clients are closed and awaited (bounded) before the shared
+    inventory store is detached and closed, so no consumer can still be using it
+    (ADR-0027). The listening socket stays up (it is swapped, not rebound, on the
+    next role). The surrounding provider/publisher resets are left to the
+    callers because they differ between the mastership-loss, role-transition and
+    shutdown paths.
     """
+    close_future = http_server.stop_serving() if http_server is not None else None
+    if close_future is not None:
+        # Wait for the live clients to be closed before detaching the store they
+        # still use to end their inventory sessions.
+        with contextlib.suppress(Exception):
+            close_future.result(timeout=_WS_CLOSE_GRACE_S)
     if ws_server is not None:
         ws_server.stop()
+        ws_server.set_inventory_store(None)
     if http_server is not None:
-        http_server.stop()
         http_server.close_inventory()
+        # Drop the retired role's parked delta payloads/tokens: the listener is
+        # reused, so they must not survive into the next role (ADR-0027).
+        http_server.reset_delta_state()
 
 
 def _refresh_p2p_network_tuning(master, config: "HsyncConfig", log) -> None:
@@ -189,7 +204,7 @@ def _refresh_p2p_network_tuning(master, config: "HsyncConfig", log) -> None:
     )
 
 
-def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
+def run_p2p_mode(config: "HsyncConfig", log) -> int:
     """
     Handle P2P mode synchronization.
 
@@ -237,9 +252,38 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     cert_info = load_or_create_device_identity().cert_info
     log.info(f"Certificate fingerprint: {cert_info.fingerprint[:32]}...")
 
+    # One shared duplicate-identity registry for both serving channels (HTTP
+    # write endpoints and WSS admissions): a clone refused on one is refused on
+    # the other too. It persists for the process lifetime and across mastership
+    # changes (the WSS stop clears the bindings).
+    cid_registry = SlaveCidRegistry(master_cid=config["CID"])
+
+    # The serving stack is bound ONCE for the process lifetime: the unified
+    # HTTPS/WSS listener reserves the port before discovery starts, so the
+    # advertised port is the real bound one (no probe/release race). The role
+    # (master / read-only seeder / off) is a context swapped in place.
+    p2p_ws_server = P2PWebSocketServer(
+        port=config["P2P_LISTEN_PORT"] or 0,
+        master_cid=config["CID"],
+        cid_registry=cid_registry,
+    )
+    p2p_server = P2PServer(
+        port=config["P2P_LISTEN_PORT"],
+        use_https=True,
+        cert_file=cert_info.cert_file,
+        key_file=cert_info.key_file,
+        cid_guard=cid_registry,
+        websocket_server=p2p_ws_server,
+    )
+    p2p_server.start()
+    p2p_server.stop_serving()
+
     # The discovery plan (mDNS or bootnode) is selected in one place; the core
     # only ever sees the DiscoveryPlan surface and never branches on the plan.
-    p2p_sync = build_discovery_plan(config, cert_fingerprint=cert_info.fingerprint)
+    # Discovery advertises the already-bound serving port.
+    p2p_sync = build_discovery_plan(
+        config, cert_fingerprint=cert_info.fingerprint, port=p2p_server.port
+    )
     bootnode = config.get("BOOTNODE")
     if bootnode:
         log.info(
@@ -257,17 +301,9 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
     # Start discovery and register service for peer discovery
     peer_manager = p2p_sync.start(register_service=True)
 
-    p2p_server = None
-    p2p_ws_server = None
-    seeder_server: P2PServer | None = None
     seeder_attempted = False
+    master_serving = False
     inventory_publisher: P2PInventoryPublisher | None = None
-
-    # One shared duplicate-identity registry for both serving channels (HTTP
-    # write endpoints and WSS admissions): a clone refused on one is refused on
-    # the other too. It persists across discovery-loop iterations and across
-    # mastership changes (the WSS stop clears the bindings).
-    cid_registry = SlaveCidRegistry(master_cid=config["CID"])
 
     last_exit = int(ExitCode.OK)
     discovery_deadline = (
@@ -313,43 +349,40 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
             if peer_manager.is_master():
                 no_master_since = None
                 no_master_warned = False
-                _stop_slave_seeder(seeder_server, p2p_sync, inventory_publisher)
-                seeder_server = None
-                seeder_attempted = False
+                _stop_slave_seeder(p2p_sync, inventory_publisher)
                 inventory_publisher = None
+                seeder_attempted = False
                 p2p_server, p2p_ws_server = _run_as_master(
                     config=config,
                     log=log,
                     p2p_sync=p2p_sync,
-                    cert_info=cert_info,
                     p2p_server=p2p_server,
                     p2p_ws_server=p2p_ws_server,
                     cid_registry=cid_registry,
                 )
+                # A watcher-failure return leaves the control plane not running:
+                # the flag must reflect whether the master is actually serving.
+                master_serving = p2p_ws_server.running
                 # Wire the master's live WebSocket client count into discovery
                 # presence: the provider feeds wait_for_discovery (the single
                 # owner of the peers event), and the callback refreshes this
                 # node's mDNS ``connected`` TXT value on every join/leave.
-                if p2p_ws_server is not None:
-                    ws_server = p2p_ws_server
+                ws_server = p2p_ws_server
 
-                    def ws_connected_count(server: P2PWebSocketServer = ws_server) -> int:
-                        return server.connected_clients
+                def ws_connected_count(server: P2PWebSocketServer = ws_server) -> int:
+                    return server.connected_clients
 
-                    p2p_sync.set_connected_clients_provider(ws_connected_count)
-                    p2p_ws_server.set_clients_changed_callback(p2p_sync.set_connected_clients)
-                else:
-                    p2p_sync.set_connected_clients_provider(None)
+                p2p_sync.set_connected_clients_provider(ws_connected_count)
+                p2p_ws_server.set_clients_changed_callback(p2p_sync.set_connected_clients)
                 # Check if we're still master after _run_as_master returns
                 if not peer_manager.is_master():
-                    # We lost mastership: stop serving, then revoke our
+                    # We lost mastership: retire the serving role, then revoke our
                     # incumbency (local flag + mDNS server_ready) so peers no
                     # longer rank us as an incumbent — a yielded node that left
                     # server_ready=true would be a "zombie incumbent" and could
                     # prolong a split-brain (ADR-0027 leadership lease).
                     _stop_p2p_serving(p2p_ws_server, p2p_server)
-                    p2p_ws_server = None
-                    p2p_server = None
+                    master_serving = False
                     inventory_publisher = None
                     p2p_sync.set_connected_clients_provider(None)
                     p2p_sync.update_server_not_ready()
@@ -364,13 +397,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                 # via KeyboardInterrupt or by losing the master role and
                 # being elected slave on a later iteration.
             else:
-                # A role transition must release the shared HTTP port before a
-                # slave can bind its read-only seeder.
-                had_p2p_server = p2p_server is not None
-                _stop_p2p_serving(p2p_ws_server, p2p_server)
-                p2p_ws_server = None
-                if had_p2p_server:
-                    p2p_server = None
+                # Retire any serving role before acting as a requester. The
+                # process-wide listener stays bound and is reconfigured.
+                if master_serving:
+                    _stop_p2p_serving(p2p_ws_server, p2p_server)
+                    master_serving = False
                     p2p_sync.set_connected_clients_provider(None)
                     p2p_sync.update_server_not_ready()
                 # Warn (once) if no master has been elected for a while: this
@@ -398,9 +429,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
                     no_master_warned = False
 
                 if not seeder_attempted and not one_shot:
-                    seeder_server, inventory_publisher = _start_slave_seeder(
-                        config, p2p_sync, cert_info, log
-                    )
+                    inventory_publisher = _start_slave_seeder(config, p2p_sync, log, p2p_server)
                     seeder_attempted = True
 
                 should_continue, exit_code = _run_as_slave(
@@ -419,7 +448,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901
         log.info("Shutting down P2P mode...")
     finally:
         _stop_p2p_serving(p2p_ws_server, p2p_server)
-        _stop_slave_seeder(seeder_server, p2p_sync, inventory_publisher)
+        _stop_slave_seeder(p2p_sync, inventory_publisher)
+        p2p_server.stop()
         p2p_sync.stop()
 
     return last_exit
@@ -429,113 +459,104 @@ def _run_as_master(
     config: "HsyncConfig",
     log,
     p2p_sync: DiscoveryPlan,
-    cert_info,
-    p2p_server,
-    p2p_ws_server,
+    p2p_server: P2PServer,
+    p2p_ws_server: P2PWebSocketServer,
     cid_registry: SlaveCidRegistry | None = None,
-) -> tuple[P2PServer | None, P2PWebSocketServer | None]:
+) -> tuple[P2PServer, P2PWebSocketServer]:
     """Run as master (sync coordinator).
 
-    The master role is inherently continuous: the master must stay
-    available to serve any peer that joins. The one-shot flag only affects
-    slave behaviour (one-shot vs. continuous sync); the master loop always
-    yields back to the outer discovery loop after a brief idle window so
-    master/peer election can be re-evaluated.
+    The master role is inherently continuous: the master must stay available to
+    serve any peer that joins. The one-shot flag only affects slave behaviour
+    (one-shot vs. continuous sync); the master loop always yields back to the
+    outer discovery loop after a brief idle window so master/peer election can
+    be re-evaluated.
 
-    Returns the (p2p_server, p2p_ws_server) tuple so the caller can persist
-    the running server instances across discovery loop iterations and avoid
-    re-binding the same port on subsequent iterations.
+    The process-wide listener is reused: installing the master role swaps the
+    serving context in place (no rebind). Returns the (p2p_server,
+    p2p_ws_server) tuple so the caller keeps the same instances across discovery
+    iterations.
     """
-    # The discovery loop re-enters this function on every iteration while we
-    # remain master. ``p2p_server is None`` is true only on the first call
-    # (or after we lost and re-won the role, which stops the servers), so it
-    # is the natural gate for the one-shot startup messages and avoids
-    # spamming the role/Ctrl+C notices once per second.
-    first_activation = p2p_server is None
+    # On every master activation the role context is (re)installed; the watcher
+    # is only started when it is not already running.
+    first_activation = not p2p_ws_server.running
 
     if first_activation:
         log.info("This client is the MASTER - acting as sync coordinator")
 
-    # Start HTTPS server if not already running (P2P transport is HTTPS-only)
-    if p2p_server is None:
-        if cid_registry is None:
-            # Direct/test callers that don't share a registry get a fresh one;
-            # the WSS server below reuses it so both channels stay in sync.
-            cid_registry = SlaveCidRegistry(master_cid=config["CID"])
-        peer_manager = p2p_sync.peer_manager
-        if peer_manager is None:
-            raise RuntimeError("P2P peer manager is unavailable")
-        inventory_store: P2PInventoryStore | None = None
-        try:
-            source_service = None
-            if config.get("P2P_PEER_DOWNLOAD", True):
-                inventory_store = P2PInventoryStore.for_bucket(config["REMOTE_BUCKET"])
-                inventory_store.activate()
-                source_service = P2PSourceService(
-                    bucket=config["REMOTE_BUCKET"],
-                    master_cid=config["CID"],
-                    inventory_store=inventory_store,
-                    peer_snapshot_provider=peer_manager.get_alive_peer_snapshots,
-                )
-            p2p_server = P2PServer(
-                port=p2p_sync.port,
-                use_https=True,
-                cert_file=cert_info.cert_file,
-                key_file=cert_info.key_file,
-                cid_guard=cid_registry,
-                inventory_store=inventory_store,
-                source_service=source_service,
-            )
-            p2p_server.start()
-        except Exception:
-            if inventory_store is not None:
-                inventory_store.close()
-            raise
-        log.info(f"Master HTTP server on port {p2p_sync.port} (HTTPS)")
+    peer_manager = p2p_sync.peer_manager
+    if peer_manager is None:
+        raise RuntimeError("P2P peer manager is unavailable")
 
-    # Start WebSocket server if not already running
-    if p2p_ws_server is None:
-        ws_port = p2p_sync.port + 1  # Use next port for WebSocket
-        p2p_ws_server = P2PWebSocketServer(
-            port=ws_port,
-            use_https=True,
-            cert_file=cert_info.cert_file,
-            key_file=cert_info.key_file,
-            master_cid=config["CID"],
-            # Reuse the registry the HTTP server holds (shared channel guard),
-            # also when this is a later iteration that only restarts the WSS.
-            cid_registry=cid_registry if cid_registry is not None else p2p_server.cid_guard,
-            inventory_store=p2p_server.inventory_store,
-        )
-        # Wire the WebSocket-authoritative liveness signal BEFORE the server
-        # starts accepting connections: a slave admitted before the listener
-        # is installed would emit its ``connected=True`` into the void and
-        # never enter ``_connected_cids``, leaving it falsely expirable later.
-        peer_manager = p2p_sync.peer_manager
-        if peer_manager is not None:
-            p2p_ws_server.set_peer_connection_callback(
-                lambda cid, connected: (
-                    peer_manager.mark_peer_connected(cid)
-                    if connected
-                    else peer_manager.mark_peer_disconnected(cid)
-                )
+    # The inventory store and source service live for the whole master stint:
+    # create them only on the first activation and reuse them on every re-entry
+    # (the discovery loop re-enters this function roughly once a second while the
+    # node stays master). Recreating them would leak a SQLite handle and wipe the
+    # live inventory sessions/holders with ``activate()``.
+    inventory_store: P2PInventoryStore | None
+    source_service: P2PSourceService | None
+    if first_activation:
+        inventory_store = None
+        if config.get("P2P_PEER_DOWNLOAD", True):
+            inventory_store = P2PInventoryStore.for_bucket(config["REMOTE_BUCKET"])
+            inventory_store.activate()
+        source_service = (
+            P2PSourceService(
+                bucket=config["REMOTE_BUCKET"],
+                master_cid=config["CID"],
+                inventory_store=inventory_store,
+                peer_snapshot_provider=peer_manager.get_alive_peer_snapshots,
             )
+            if inventory_store is not None
+            else None
+        )
+    else:
+        inventory_store = p2p_server.inventory_store
+        source_service = p2p_server.source_service
+
+    # Wire the WebSocket-authoritative liveness signal on every master start: a
+    # re-election may install a fresh PeerManager, so the callback must never
+    # stay bound to a stale one.
+    p2p_ws_server.set_peer_connection_callback(
+        lambda cid, connected: (
+            peer_manager.mark_peer_connected(cid)
+            if connected
+            else peer_manager.mark_peer_disconnected(cid)
+        )
+    )
+    p2p_ws_server.set_inventory_store(inventory_store)
+
+    # Install the master role on the process-wide listener.
+    p2p_server.configure_role(
+        P2PServerMode.master,
+        bucket=config["REMOTE_BUCKET"],
+        cid_guard=cid_registry if cid_registry is not None else p2p_server.registry,
+        source_service=source_service,
+        inventory_store=inventory_store,
+        peer_read_cap=config.get("P2P_PEER_READ_CAP", 2),
+    )
+
+    # Start the master watcher. A retry after a kernel-limit failure re-enters
+    # here on the next discovery iteration.
+    if not p2p_ws_server.running:
         try:
             p2p_ws_server.start(watch_path=config["LOCAL_BUCKET"])
         except WatcherStartError:
             # The master watcher could not start (inotify kernel limits). The
             # parsable [WATCHER ERROR] line was already logged at the watcher
-            # start site. Tear the half-started WSS server down (its thread is
-            # running) and back off: without the watcher the master cannot
-            # serve realtime events, but the retry must be slow because a
-            # kernel limit never clears at the discovery cadence. server_ready
-            # is NOT advertised, so slaves keep waiting instead of connecting
-            # to a master that cannot watch.
-            p2p_ws_server.stop()
-            p2p_ws_server = None
+            # start site. Back off: without the watcher the master cannot serve
+            # realtime events, but the retry must be slow because a kernel limit
+            # never clears at the discovery cadence. server_ready is NOT
+            # advertised, so slaves keep waiting instead of connecting to a
+            # master that cannot watch.
+            #
+            # Retire the role exactly like every other yield path (ADR-0027):
+            # clear the serving role, close live WebSocket clients, drop the
+            # duplicate-identity registry and any parked delta state — the
+            # listener is reused, so none of it may survive into the retry.
+            _stop_p2p_serving(p2p_ws_server, p2p_server)
             time.sleep(WATCHER_START_RETRY_DELAY_S)
-            return p2p_server, None
-        log.info(f"Master WebSocket server on port {ws_port} (WSS)")
+            return p2p_server, p2p_ws_server
+        log.info(f"Master realtime channel on port {p2p_sync.port} (WSS)")
 
         if config["P2P_KEY"]:
             log.info("Authentication enabled (HSYNC_P2P_KEY)")
@@ -558,7 +579,7 @@ def _run_as_master(
         # its endpoint has been published to the bootnode (UPnP ok or public IP
         # known). mDNS reports published immediately, so its readiness timing is
         # unchanged. The wait is bounded so a wedged lease loop degrades to the
-        # old timing instead of hanging.
+        # configured readiness timing instead of hanging.
         if not p2p_sync.endpoint_published():
             deadline = time.monotonic() + READINESS_ENDPOINT_TIMEOUT_S
             while not p2p_sync.endpoint_published() and time.monotonic() < deadline:
@@ -569,7 +590,7 @@ def _run_as_master(
 
         # Readiness threshold: HTTP + WebSocket servers are up and the master
         # watcher is running (started inside P2PWebSocketServer.start) — the
-        # master now serves peers in real time.
+        # master serves peers in real time.
         log.info(
             f"{ActionLabel.READY} Master ready — serving '{config['REMOTE_BUCKET']}' "
             f"on port {p2p_sync.port} (HTTPS), watching '{config['LOCAL_BUCKET']}'"
@@ -803,9 +824,10 @@ def _run_as_slave(
         if one_shot:
             return False, exit_code
 
-        # In continuous mode, connect via WebSocket for real-time events
+        # In continuous mode, connect via WebSocket for real-time events. The
+        # control plane shares the master's single HTTPS/WSS port.
         log.info("Initial sync complete, connecting to WebSocket for real-time events...")
-        ws_port = master.port + 1  # WebSocket is on next port
+        control_port = master.port
         # The master's mDNS record may be quiescent (its TXT only changes on
         # presence/server_ready flips), which would otherwise let this slave
         # falsely demote it while the WebSocket link is healthy. Mark the master
@@ -817,7 +839,7 @@ def _run_as_slave(
                     log,
                     p2p_websocket_client(
                         host=master.address,
-                        port=ws_port,
+                        port=control_port,
                         use_https=True,
                         inventory_publisher=inventory_publisher,
                         source_resolver=source_resolver,
@@ -855,11 +877,9 @@ def _run_as_slave(
         peer_manager.reconcile_stale_peers()
         log.info("WebSocket disconnected, re-entering discovery loop...")
         return True, int(ExitCode.OK)
-    else:
-        # No master and no peers
-        if (not one_shot) or wait_indefinitely_for_peer:
-            log.info("Waiting for peers to join...")
-            return True, int(ExitCode.OK)  # Continue the discovery loop
-        else:
-            log.warning("No master elected - this client is alone, nothing to sync")
-            return False, int(ExitCode.P2P_NO_PEER)
+    # No master and no peers
+    if (not one_shot) or wait_indefinitely_for_peer:
+        log.info("Waiting for peers to join...")
+        return True, int(ExitCode.OK)  # Continue the discovery loop
+    log.warning("No master elected - this client is alone, nothing to sync")
+    return False, int(ExitCode.P2P_NO_PEER)

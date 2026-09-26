@@ -61,6 +61,7 @@ from hsync_common.models.delta import (
 )
 from hsync_common.models.file import File
 from hsync_common.path_validation import resolve_within
+from hsync_common.protocol.rest import rest_delta_data_path
 from loguru import logger as log
 
 from hsync_client.compression import (
@@ -338,7 +339,7 @@ def handle_delta_signatures_post(handler) -> None:
                 "new_size": new_size,
                 "ops": [op.to_dict() for op in ops],
             },
-            "data_url": f"/api/v1/buckets/{bucket}/files/delta/data/{token}",
+            "data_url": rest_delta_data_path(bucket, token),
             "data_size": len(literals),
             "compressed": compressed,
         },

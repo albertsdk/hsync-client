@@ -422,11 +422,6 @@ def get_bootnode_tofu() -> bool:
     return get_env_settings().bootnode_tofu
 
 
-def get_upnp_enabled() -> bool | None:
-    """Explicit UPnP override from ``HSYNC_UPNP_ENABLED`` (None = plan default)."""
-    return get_env_settings().upnp_enabled
-
-
 def get_discovery_timeout() -> int | None:
     """Get discovery timeout from environment."""
     return get_env_settings().discovery_timeout

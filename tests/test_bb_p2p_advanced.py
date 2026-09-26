@@ -258,9 +258,9 @@ class TestP2PPortOverride:
                 assert _wait_for_text_in_stderr(master, "MASTER", timeout=30), (
                     "Master did not become ready"
                 )
-                # Then the master uses the specified port
+                # Then the master uses the specified port (single HTTPS/WSS listener)
                 stderr = _stderr_text(master)
-                assert f"Master HTTP server on port {port}" in stderr, (
+                assert f"P2P master server started on port {port}" in stderr, (
                     "Master did not use the specified port"
                 )
 

@@ -16,7 +16,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from errno import EACCES, EBUSY, EIO, ENOENT
@@ -27,7 +27,7 @@ from shutil import copy2
 from sys import exc_info
 from time import monotonic
 from traceback import print_tb
-from typing import cast
+from typing import Any, cast
 
 from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
 from hsync_common.models.dir import Dir, is_hidden_dir
@@ -894,7 +894,7 @@ async def _execute_parallel_transfers(
                         update_bw_ema(file_size, elapsed)
 
     # Create tasks for all transfers
-    tasks = []
+    tasks: list[Coroutine[Any, Any, None]] = []
 
     # Add download tasks
     from functools import partial
@@ -905,13 +905,13 @@ async def _execute_parallel_transfers(
         source_resolver=source_resolver,
         inventory_observer=inventory_observer,
     )
-    for file in downloads:
-        tasks.append(transfer_with_semaphore(observed_download, file, is_download=True))
+    tasks.extend(
+        transfer_with_semaphore(observed_download, file, is_download=True) for file in downloads
+    )
 
     # Add upload tasks
     observed_upload = partial(upload_file, inventory_observer=inventory_observer)
-    for file in uploads:
-        tasks.append(transfer_with_semaphore(observed_upload, file))
+    tasks.extend(transfer_with_semaphore(observed_upload, file) for file in uploads)
 
     # Permission-only uploads skip the content dedup on the peer (same-SHA
     # branch applies the new mode); they re-use the same upload machinery.
@@ -921,8 +921,7 @@ async def _execute_parallel_transfers(
             permissions_only=True,
             inventory_observer=inventory_observer,
         )
-        for file in permission_uploads:
-            tasks.append(transfer_with_semaphore(perm_upload, file))
+        tasks.extend(transfer_with_semaphore(perm_upload, file) for file in permission_uploads)
 
     # Execute all transfers concurrently
     if tasks:
@@ -952,7 +951,7 @@ def ensure_sentinel(dir_path: str, *, label: str | None = None) -> bool:
 
     Shared by :func:`ensure_hsynckeep_files` (walk-all at cycle start),
     ``p2p_websocket.P2PSlaveFileEventHandler`` (single dir on create) and
-    ``p2p_server.P2PRequestHandler`` (parent-of-deleted).
+    ``p2p_server.P2PEndpointMixin`` (parent-of-deleted).
     """
     try:
         entries = os.listdir(dir_path)
@@ -965,7 +964,7 @@ def ensure_sentinel(dir_path: str, *, label: str | None = None) -> bool:
         return False
     prefix = f"{label} " if label else ""
     try:
-        open(sentinel, "w").close()  # noqa: SIM115
+        open(sentinel, "w").close()
         log.debug(f'{prefix}Created sentinel "{sentinel}"')
         return True
     except OSError as e:

@@ -19,7 +19,7 @@ from .p2p_helpers import unauth_write_config
 
 
 class TestLANRequestHandler:
-    """Tests for P2PRequestHandler endpoints."""
+    """Tests for the P2P data-plane endpoints."""
 
     @pytest.fixture
     def server(self):

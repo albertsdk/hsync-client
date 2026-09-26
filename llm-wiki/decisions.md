@@ -39,17 +39,24 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   contract.
 
 - **A retired server role never answers a pooled connection (role handover)**:
-  the slave seeder and the master share the client's listen port, so on
-  promotion (`_start_slave_seeder` → master) `P2PServer.stop()` sets
-  `stopping` on the bounded server, releases the listener and calls
-  `close_active_connections()`; `P2PRequestHandler.parse_request` refuses any
-  request that lands on a `stopping` server with 503. Rationale: with
-  `daemon_threads` a keep-alive connection established while the process was a
-  seeder survives the handover and would otherwise be served by the retired
-  seeder handler — a master download (`filename`+`cid`, no `sha256`) was
-  rejected as an "Invalid seeder query" (400) and failover never resumed sync.
+  the slave seeder and the master share the client's single listener, so on a
+  role change `stop_serving()` retires the role — the listener refuses any
+  request (503) while no role is served and the publish gate closes — while
+  `P2PWebSocketServer.stop()` closes the live control-plane clients. Rationale: a
+  keep-alive connection established while the process was a seeder survives the
+  handover and would otherwise be served by the retired seeder handler — a
+  master download (`filename`+`cid`, no `sha256`) was rejected as an "Invalid
+  seeder query" (400) and failover never resumed sync.
   Regression: `tests/test_p2p_server_keepalive.py::TestRoleHandover` (unit) and
   `tests/test_bb_p2p_advanced.py::TestMasterFailover::test_master_death_reelects_successor` (black-box).
+
+- **The P2P transport is a single TLS port (HTTPS REST + WSS)**: the master runs
+  one `aiohttp` listener (`P2PServer`) with a bounded executor for the blocking
+  data plane, and the WSS control plane is the canonical
+  `/api/v1/buckets/{bucket}/events/{cid}` route on the same port. The realtime
+  channel is therefore bound atomically with the data plane, so a master never
+  advertises readiness without a live event channel. Regression:
+  `tests/test_p2p_single_port.py`.
 
 - **Guard abort diagnostics are synchronous**: the loguru sinks are
   `enqueue=True`, so a message written immediately before `raise SystemExit`

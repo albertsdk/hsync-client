@@ -73,7 +73,7 @@ def probe_server_clock_offset(server_url: str, logger: Any = log) -> None:
             verify=get_ssl_verify(),
             timeout=10,
         )
-    except Exception as exc:  # noqa: BLE001 — degraded mode, never fatal
+    except Exception as exc:
         logger.warning(f"Clock offset probe failed (degraded temporal mode): {exc}")
         offset_store.record(0.0)
         return
@@ -94,7 +94,7 @@ def _measure_ntp_offset(logger: Any) -> tuple[float, str | None]:
     targets = _ntp_targets()
     try:
         result = measure_clock_offset_ntp_multi(targets)
-    except Exception as exc:  # noqa: BLE001 — degraded mode, never fatal
+    except Exception as exc:
         logger.warning(f"NTP offset probe failed (degraded temporal mode): {exc}")
         result = None
     if result is None:

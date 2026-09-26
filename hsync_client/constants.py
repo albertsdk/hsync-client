@@ -14,12 +14,12 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 # Application Info
 # =============================================================================
-from typing import Final, Literal  # noqa: E402
+from typing import Final, Literal
 
-from hsync_common.constants import BOOT_DEFAULT_PORT as BOOTNODE_DEFAULT_PORT  # noqa: E402, F401
-from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME  # noqa: E402
-from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION  # noqa: E402
-from hsync_common.constants import (  # noqa: E402
+from hsync_common.constants import BOOT_DEFAULT_PORT as BOOTNODE_DEFAULT_PORT  # noqa: F401
+from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME
+from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION
+from hsync_common.constants import (
     HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
 )
 
@@ -29,7 +29,7 @@ from hsync_common.constants import (  # noqa: E402
 # aliased header names are re-typed below as string literals because mypy
 # requires literal keys for TypedDicts. BOOTNODE_DEFAULT_PORT (above) is the
 # boot/1 UDP default (QUIC, not HTTPS) — one SSOT with the bootnode's `--port`.
-from hsync_common.constants import (  # noqa: E402, F401
+from hsync_common.constants import (  # noqa: F401
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,
@@ -37,8 +37,8 @@ from hsync_common.constants import (  # noqa: E402, F401
 )
 
 # Re-export shared action labels from hsync-common
-from hsync_common.labels import ActionLabel  # noqa: E402, F401
-from hsync_common.permissions import OWNER_DIRECTORY_ACCESS  # noqa: E402, F401
+from hsync_common.labels import ActionLabel  # noqa: F401
+from hsync_common.permissions import OWNER_DIRECTORY_ACCESS  # noqa: F401
 
 # Application name sent as the X-Client-Name REST header. Identifies the
 # originating product (the CLI / sync daemon), never an internal module.
@@ -61,7 +61,7 @@ HEADER_PROTOCOL_VERSION: Final[Literal["X-Protocol-Version"]] = _HEADER_PROTOCOL
 # The sync-direction vocabulary lives in hsync_common.protocol.pairing (the wire
 # SSOT); importing it here keeps the client's CLI/preview validators from
 # drifting from the canonical set.
-from hsync_common.protocol.pairing import (  # noqa: E402
+from hsync_common.protocol.pairing import (
     SYNC_DIRECTION_BIDIRECTIONAL,
     SYNC_DIRECTION_DOWNLOAD_ONLY,
     SYNC_DIRECTION_UPLOAD_ONLY,

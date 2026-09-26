@@ -6,11 +6,11 @@
 
 """Black-box tests for the P2P WebSocket relay and handshake use case.
 
-Drives the *real* P2P master's public WebSocket surface (port ``p2p_listen_port + 1``)
-for the handshake negatives (protocol mismatch, bad token) — mirroring
-``hsync-server/tests/test_bb_websocket_relay.py`` — and drives real peer
-subprocesses for the observable relay semantics (echo suppression, fan-out that
-survives a subscriber disconnect).
+Drives the *real* P2P master's public WebSocket surface (the canonical events
+path on the same port as HTTPS) for the handshake negatives (protocol mismatch,
+bad token) — mirroring ``hsync-server/tests/test_bb_websocket_relay.py`` — and
+drives real peer subprocesses for the observable relay semantics (echo
+suppression, fan-out that survives a subscriber disconnect).
 
 Requires HSYNC_BB_P2P=1 to run.
 """
@@ -71,7 +71,9 @@ class TestP2PWsHandshakeNegative:
         with _p2p_serving_master(p2p_master_dir, p2p_slave_dir, p2p_bucket) as p2p_listen_port:
             # When authenticating with an incompatible protocol version
             ws = await websockets.connect(
-                _p2p_ws_url(p2p_listen_port), ssl=_p2p_ws_ssl_ctx(), max_size=None
+                _p2p_ws_url(p2p_listen_port, p2p_bucket, _p2p_cid("proto")),
+                ssl=_p2p_ws_ssl_ctx(),
+                max_size=None,
             )
             try:
                 # Consume the master's auth_required greeting first
@@ -100,7 +102,9 @@ class TestP2PWsHandshakeNegative:
         with _p2p_serving_master(p2p_master_dir, p2p_slave_dir, p2p_bucket) as p2p_listen_port:
             # When authenticating with a wrong token (valid protocol version)
             ws = await websockets.connect(
-                _p2p_ws_url(p2p_listen_port), ssl=_p2p_ws_ssl_ctx(), max_size=None
+                _p2p_ws_url(p2p_listen_port, p2p_bucket, _p2p_cid("badtok")),
+                ssl=_p2p_ws_ssl_ctx(),
+                max_size=None,
             )
             try:
                 # Consume the greeting, then send an auth frame with a wrong token

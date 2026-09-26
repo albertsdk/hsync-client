@@ -137,6 +137,9 @@ class TestRunLanMode:
 
         mock_p2p_server = MagicMock()
         mock_ws_server = MagicMock()
+        # The unified design gates the watcher start on the control plane not
+        # already running; a bare MagicMock would look "running" and skip it.
+        mock_ws_server.running = False
 
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
@@ -292,8 +295,16 @@ class TestRunLanMode:
         mock_cert_info = MagicMock()
         mock_cert_info.fingerprint = "abcdef1234567890" * 4
 
+        listener_server = MagicMock()
+        listener_server.port = 9000
+        listener_ws = MagicMock()
+        listener_ws.running = False
+        listener_server.websocket_server = listener_ws
+
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch(
                 "hsync_client.identity.load_or_create_device_identity",
                 return_value=DeviceIdentity(

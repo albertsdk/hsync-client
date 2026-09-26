@@ -30,10 +30,10 @@ from loguru import logger as log
 from hsync_client.net_utils import get_local_ip
 
 __all__ = [
+    "UPNP_SSDP_ADDR",
     "IgdService",
     "UpnpError",
     "UpnpMapper",
-    "UPNP_SSDP_ADDR",
     "add_port_mapping",
     "build_add_mapping_soap",
     "build_delete_mapping_soap",
@@ -127,7 +127,7 @@ def _parse_ssdp_response(data: bytes) -> str | None:
 def _igd_service_from_location(location: str, local_ip: str) -> IgdService | None:
     """Fetch the IGD description XML and locate a WAN connection control URL."""
     try:
-        with urllib.request.urlopen(location, timeout=3.0) as response:  # noqa: S310
+        with urllib.request.urlopen(location, timeout=3.0) as response:
             xml_bytes = response.read(65536)
     except OSError:
         return None
@@ -155,7 +155,7 @@ def _igd_service_from_location(location: str, local_ip: str) -> IgdService | Non
 
 
 def _soap_call(service: IgdService, action: str, body: bytes, timeout: float = 4.0) -> bool:
-    request = urllib.request.Request(  # noqa: S310
+    request = urllib.request.Request(
         service.control_url,
         data=body,
         method="POST",
@@ -165,7 +165,7 @@ def _soap_call(service: IgdService, action: str, body: bytes, timeout: float = 4
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return 200 <= response.status < 300
     except urllib.error.HTTPError as exc:
         log.debug(f"UPnP {action} refused: HTTP {exc.code}")

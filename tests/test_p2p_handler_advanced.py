@@ -55,105 +55,90 @@ def _make_cert_info(**overrides: Any) -> MagicMock:
     return cert_info
 
 
+def _patch_p2p_listener(port: int = 9000) -> tuple[MagicMock, MagicMock]:
+    """Build a mock process-wide listener for ``run_p2p_mode`` tests.
+
+    The discovery layer is still patched per test; this only stands in for the
+    unified listener that ``run_p2p_mode`` now constructs once at startup.
+    """
+    server = MagicMock()
+    server.port = port
+    server.cid_guard = MagicMock()
+    ws = MagicMock()
+    ws.running = False
+    server.websocket_server = ws
+    return server, ws
+
+
 class TestRunAsMaster:
     """Tests for _run_as_master function."""
 
-    def test_run_as_master_https(self, tmp_path):
-        """Master starts with HTTPS certificates."""
+    @staticmethod
+    def _mock_sync(port=9000):
+        sync = MagicMock()
+        sync.port = port
+        return sync
+
+    @staticmethod
+    def _mock_servers():
+        server = MagicMock()
+        ws = MagicMock()
+        ws.running = False
+        ws.start.side_effect = lambda **kwargs: setattr(ws, "running", True)
+        return server, ws
+
+    def test_run_as_master_configures_role_and_readiness(self, tmp_path):
+        """The master role is installed on the process-wide listener."""
         from hsync_client.p2p_handler import _run_as_master
+        from hsync_client.p2p_server import P2PServerMode
 
         config = _make_p2p_config(tmp_path)
-        mock_log = MagicMock()
+        sync = self._mock_sync()
+        server, ws = self._mock_servers()
 
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
+        with patch("time.sleep"):
+            result = _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
 
-        mock_cert_info = MagicMock()
-        mock_cert_info.cert_file = "/tmp/cert.pem"
-        mock_cert_info.key_file = "/tmp/key.pem"
-        mock_cert_info.fingerprint = "abc123"
-
-        mock_p2p_server = MagicMock()
-        mock_ws_server = MagicMock()
-
-        # Track sleep calls and raise KeyboardInterrupt after first call
-        sleep_count = [0]
-
-        def raise_after_sleep(seconds):
-            sleep_count[0] += 1
-            if sleep_count[0] >= 1:
-                raise KeyboardInterrupt()
-
-        # Test _run_as_master when p2p_server and p2p_ws_server are None
-        with (
-            patch(
-                "hsync_client.p2p_handler.P2PServer", return_value=mock_p2p_server
-            ) as mock_server_class,
-            patch(
-                "hsync_client.p2p_handler.P2PWebSocketServer", return_value=mock_ws_server
-            ) as mock_ws_class,
-            patch("time.sleep", side_effect=raise_after_sleep),
-        ):
-            try:
-                _run_as_master(
-                    config=config,
-                    log=mock_log,
-                    p2p_sync=mock_p2p_sync,
-                    cert_info=mock_cert_info,
-                    p2p_server=None,
-                    p2p_ws_server=None,
-                )
-            except KeyboardInterrupt:
-                pass
-
-        # Verify servers were created and started
-        mock_server_class.assert_called_once()
-        mock_ws_class.assert_called_once()
-        mock_p2p_server.start.assert_called_once()
-        mock_ws_server.start.assert_called_once_with(watch_path=str(tmp_path))
-        mock_p2p_sync.update_server_ready.assert_called_once()
+        assert result == (server, ws)
+        assert server.configure_role.call_args.args[0] is P2PServerMode.master
+        assert server.configure_role.call_args.kwargs["bucket"] == "test-bucket"
+        ws.set_inventory_store.assert_called_once()
+        ws.set_peer_connection_callback.assert_called_once()
+        ws.start.assert_called_once_with(watch_path=str(tmp_path))
+        sync.update_server_ready.assert_called_once()
 
     def test_run_as_master_loops_until_keyboard_interrupt(self, tmp_path):
         """Master runs indefinitely until keyboard interrupt."""
         from hsync_client.p2p_handler import _run_as_master
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=False)
-        mock_log = MagicMock()
+        sync = self._mock_sync()
+        server, ws = self._mock_servers()
 
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
-
-        mock_cert_info = _make_cert_info()
-
-        mock_p2p_server = MagicMock()
-        mock_ws_server = MagicMock()
-
-        # Track sleep calls
-        sleep_calls = []
+        sleep_calls: list[float] = []
 
         def track_sleep(seconds):
             sleep_calls.append(seconds)
-            if len(sleep_calls) > 2:
-                raise KeyboardInterrupt()
+            raise KeyboardInterrupt()
 
         try:
-            with (
-                patch("hsync_client.p2p_handler.P2PServer", return_value=mock_p2p_server),
-                patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=mock_ws_server),
-                patch("time.sleep", side_effect=track_sleep),
-            ):
+            with patch("time.sleep", side_effect=track_sleep):
                 _run_as_master(
                     config=config,
-                    log=mock_log,
-                    p2p_sync=mock_p2p_sync,
-                    cert_info=mock_cert_info,
-                    p2p_server=None,
-                    p2p_ws_server=None,
+                    log=MagicMock(),
+                    p2p_sync=sync,
+                    p2p_server=server,
+                    p2p_ws_server=ws,
                 )
         except KeyboardInterrupt:
             pass
 
-        # Verify sleep was called (continuous mode runs loop)
         assert len(sleep_calls) > 0
 
     def test_run_as_master_with_auth_key(self, tmp_path):
@@ -161,180 +146,24 @@ class TestRunAsMaster:
         from hsync_client.p2p_handler import _run_as_master
 
         config = _make_p2p_config(tmp_path, P2P_KEY="secret_key")
-        mock_log = MagicMock()
-
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
-
-        mock_cert_info = _make_cert_info()
-        mock_p2p_server = MagicMock()
-        mock_ws_server = MagicMock()
-
-        sleep_count = [0]
-
-        def raise_after_sleep(seconds):
-            sleep_count[0] += 1
-            if sleep_count[0] >= 1:
-                raise KeyboardInterrupt()
+        log = MagicMock()
+        sync = self._mock_sync()
+        server, ws = self._mock_servers()
 
         try:
-            with (
-                patch("hsync_client.p2p_handler.P2PServer", return_value=mock_p2p_server),
-                patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=mock_ws_server),
-                patch("time.sleep", side_effect=raise_after_sleep),
-            ):
+            with patch("time.sleep", side_effect=KeyboardInterrupt):
                 _run_as_master(
                     config=config,
-                    log=mock_log,
-                    p2p_sync=mock_p2p_sync,
-                    cert_info=mock_cert_info,
-                    p2p_server=None,
-                    p2p_ws_server=None,
+                    log=log,
+                    p2p_sync=sync,
+                    p2p_server=server,
+                    p2p_ws_server=ws,
                 )
         except KeyboardInterrupt:
             pass
 
-        # Verify auth-related log messages
-        log_calls = [str(c) for c in mock_log.info.call_args_list]
+        log_calls = [str(c) for c in log.info.call_args_list]
         assert any("Authentication enabled" in c or "HSYNC_P2P_KEY" in c for c in log_calls)
-
-    def test_run_as_master_reuses_existing_servers(self, tmp_path):
-        """Master reuses existing server instances instead of creating new ones."""
-        from hsync_client.p2p_handler import _run_as_master
-
-        config = _make_p2p_config(tmp_path)
-        mock_log = MagicMock()
-
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
-
-        mock_existing_server = MagicMock()
-        mock_existing_ws = MagicMock()
-
-        sleep_count = [0]
-
-        def raise_after_sleep(seconds):
-            sleep_count[0] += 1
-            if sleep_count[0] >= 1:
-                raise KeyboardInterrupt()
-
-        # Initialize mocks to avoid "possibly unbound" error
-        mock_server_class = MagicMock()
-        mock_ws_class = MagicMock()
-
-        try:
-            with (
-                patch("hsync_client.p2p_handler.P2PServer", return_value=mock_server_class),
-                patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=mock_ws_class),
-                patch("time.sleep", side_effect=raise_after_sleep),
-            ):
-                _run_as_master(
-                    config=config,
-                    log=mock_log,
-                    p2p_sync=mock_p2p_sync,
-                    cert_info=None,
-                    p2p_server=mock_existing_server,
-                    p2p_ws_server=mock_existing_ws,
-                )
-        except KeyboardInterrupt:
-            pass
-
-        # Servers should NOT be created since they already exist
-        mock_server_class.assert_not_called()
-        mock_ws_class.assert_not_called()
-
-    def test_run_as_master_returns_server_tuple(self, tmp_path):
-        """_run_as_master returns the (p2p_server, p2p_ws_server) tuple.
-
-        Regression test: previously the function returned None, so the caller
-        lost the references and the next discovery-loop iteration tried to
-        re-bind the same port, raising OSError(98) 'Address already in use'.
-        """
-        from hsync_client.p2p_handler import _run_as_master
-
-        config = _make_p2p_config(tmp_path)
-        mock_log = MagicMock()
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
-
-        mock_server_instance = MagicMock()
-        mock_ws_instance = MagicMock()
-
-        # In continuous mode the inner loop is `while True: sleep; break`,
-        # so the function returns after a single sleep call.
-        with (
-            patch(
-                "hsync_client.p2p_handler.P2PServer",
-                return_value=mock_server_instance,
-            ),
-            patch(
-                "hsync_client.p2p_handler.P2PWebSocketServer",
-                return_value=mock_ws_instance,
-            ),
-            patch("time.sleep"),
-        ):
-            result = _run_as_master(
-                config=config,
-                log=mock_log,
-                p2p_sync=mock_p2p_sync,
-                cert_info=_make_cert_info(),
-                p2p_server=None,
-                p2p_ws_server=None,
-            )
-
-        assert result == (mock_server_instance, mock_ws_instance), (
-            "_run_as_master must return the (p2p_server, p2p_ws_server) tuple "
-            "so the outer discovery loop can persist references and avoid "
-            "re-binding the same port on the next iteration"
-        )
-
-    def test_run_as_master_idempotent_across_iterations(self, tmp_path):
-        """Two consecutive calls in continuous mode must not re-create servers.
-
-        Simulates the discovery-loop behaviour: the tuple returned by the first
-        call is fed back into the second call; no new server instance must be
-        instantiated and therefore no second bind() on the same port.
-        """
-        from hsync_client.p2p_handler import _run_as_master
-
-        config = _make_p2p_config(tmp_path)
-        mock_log = MagicMock()
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
-
-        mock_server_instance = MagicMock()
-        mock_ws_instance = MagicMock()
-        server_factory = MagicMock(return_value=mock_server_instance)
-        ws_factory = MagicMock(return_value=mock_ws_instance)
-
-        with (
-            patch("hsync_client.p2p_handler.P2PServer", server_factory),
-            patch("hsync_client.p2p_handler.P2PWebSocketServer", ws_factory),
-            patch("time.sleep"),
-        ):
-            first = _run_as_master(
-                config=config,
-                log=mock_log,
-                p2p_sync=mock_p2p_sync,
-                cert_info=_make_cert_info(),
-                p2p_server=None,
-                p2p_ws_server=None,
-            )
-            # Feed the returned tuple back, as the discovery loop now does.
-            second = _run_as_master(
-                config=config,
-                log=mock_log,
-                p2p_sync=mock_p2p_sync,
-                cert_info=_make_cert_info(),
-                p2p_server=first[0],
-                p2p_ws_server=first[1],
-            )
-
-        # Factories were called exactly once (the first iteration).
-        assert server_factory.call_count == 1
-        assert ws_factory.call_count == 1
-        # The tuple identity is preserved across iterations.
-        assert second == first
 
     def test_run_as_master_startup_messages_logged_once(self, tmp_path):
         """Role and Ctrl+C notices are emitted only on the first activation.
@@ -345,33 +174,27 @@ class TestRunAsMaster:
         from hsync_client.p2p_handler import _run_as_master
 
         config = _make_p2p_config(tmp_path)
-        mock_log = MagicMock()
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
+        log = MagicMock()
+        sync = self._mock_sync()
+        server, ws = self._mock_servers()
 
-        with (
-            patch("hsync_client.p2p_handler.P2PServer", return_value=MagicMock()),
-            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=MagicMock()),
-            patch("time.sleep"),
-        ):
-            first = _run_as_master(
+        with patch("time.sleep"):
+            _run_as_master(
                 config=config,
-                log=mock_log,
-                p2p_sync=mock_p2p_sync,
-                cert_info=_make_cert_info(),
-                p2p_server=None,
-                p2p_ws_server=None,
+                log=log,
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
             )
             _run_as_master(
                 config=config,
-                log=mock_log,
-                p2p_sync=mock_p2p_sync,
-                cert_info=_make_cert_info(),
-                p2p_server=first[0],
-                p2p_ws_server=first[1],
+                log=log,
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
             )
 
-        infos = [str(c.args[0]) for c in mock_log.info.call_args_list if c.args]
+        infos = [str(c.args[0]) for c in log.info.call_args_list if c.args]
         role_msgs = [m for m in infos if "is the MASTER" in m]
         ctrlc_msgs = [m for m in infos if "Ctrl+C" in m]
         ready_msgs = [m for m in infos if "[READY]" in m]
@@ -380,6 +203,76 @@ class TestRunAsMaster:
         # The readiness threshold is one-shot too: it sits inside the
         # first-activation block and must never repeat across iterations.
         assert len(ready_msgs) == 1, f"[READY] must log once, got {ready_msgs!r}"
+        # The watcher is only started on the first activation.
+        ws.start.assert_called_once()
+
+    def test_run_as_master_reinstalls_role_each_iteration(self, tmp_path):
+        """The role context is (re)installed without re-creating any server."""
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _make_p2p_config(tmp_path)
+        sync = self._mock_sync()
+        server, ws = self._mock_servers()
+
+        with patch("time.sleep"):
+            first = _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+            second = _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=first[0],
+                p2p_ws_server=first[1],
+            )
+
+        # The same instances flow through; the role is re-installed each time.
+        assert second == first
+        assert server.configure_role.call_count == 2
+        ws.start.assert_called_once()
+
+    def test_run_as_master_reuses_inventory_store_across_iterations(self, tmp_path):
+        """The inventory store is created once per master stint, then reused.
+
+        The discovery loop re-enters ``_run_as_master`` roughly once a second
+        while the node stays master; recreating the store there would leak a
+        SQLite handle and wipe the live inventory sessions with ``activate()``.
+        """
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _make_p2p_config(tmp_path, P2P_PEER_DOWNLOAD=True)
+        sync = self._mock_sync()
+        server, ws = self._mock_servers()
+        server.inventory_store = MagicMock()
+        server.source_service = MagicMock()
+
+        with (
+            patch("hsync_client.p2p_handler.P2PInventoryStore") as store_cls,
+            patch("time.sleep"),
+        ):
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+
+        # Created + activated exactly once; the re-entry reuses the same store.
+        store_cls.for_bucket.assert_called_once()
+        store_cls.for_bucket.return_value.activate.assert_called_once()
+        store_cls.for_bucket.return_value.close.assert_not_called()
 
 
 class TestRunAsMasterContinuousSemantics:
@@ -400,32 +293,29 @@ class TestRunAsMasterContinuousSemantics:
         from hsync_client.p2p_handler import _run_as_master
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=True)
-        mock_log = MagicMock()
-        mock_p2p_sync = MagicMock()
-        mock_p2p_sync.port = 9000
+        sync = MagicMock()
+        sync.port = 9000
+        server = MagicMock()
+        ws = MagicMock()
+        ws.running = False
+        ws.start.side_effect = lambda **kwargs: setattr(ws, "running", True)
 
         sleep_calls: list[float] = []
 
-        with (
-            patch("hsync_client.p2p_handler.P2PServer", return_value=MagicMock()),
-            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=MagicMock()),
-            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
-        ):
+        with patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)):
             result = _run_as_master(
                 config=config,
-                log=mock_log,
-                p2p_sync=mock_p2p_sync,
-                cert_info=_make_cert_info(),
-                p2p_server=None,
-                p2p_ws_server=None,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
             )
 
         # Refactored behaviour: exactly one sleep, then return.
         assert len(sleep_calls) == 1, (
             f"Master must sleep exactly once and return; got {len(sleep_calls)} sleeps"
         )
-        assert result is not None
-        assert result[0] is not None and result[1] is not None
+        assert result == (server, ws)
 
 
 class TestRunLanModeOuterLoopMasterPath:
@@ -458,10 +348,11 @@ class TestRunLanModeOuterLoopMasterPath:
             if len(sleep_calls) >= 3:
                 raise KeyboardInterrupt
 
+        listener_server, listener_ws = _patch_p2p_listener()
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
-            patch("hsync_client.p2p_handler.P2PServer", return_value=MagicMock()),
-            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=MagicMock()),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch("time.sleep", side_effect=_sleep_then_interrupt_after_three),
         ):
             run_p2p_mode(config, mock_log)
@@ -510,8 +401,11 @@ class TestRunLanModeNoMasterWarning:
         # time.time advances past the warning threshold between iterations.
         times = iter([100.0, 100.0 + NO_MASTER_WARNING_TIMEOUT + 1.0])
 
+        listener_server, listener_ws = _patch_p2p_listener()
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch.object(p2p_handler, "_run_as_slave", side_effect=_slave),
             patch("time.time", side_effect=lambda: next(times)),
             # The startup NTP offset probe (ADR-0023) is orthogonal to the
@@ -549,7 +443,12 @@ class TestRunLanModeDiscoveryTimeout:
         mock_p2p_sync.port = 9000
         mock_p2p_sync.wait_for_discovery.side_effect = [None, KeyboardInterrupt]
 
-        with patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync):
+        listener_server, listener_ws = _patch_p2p_listener()
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
+        ):
             run_p2p_mode(config, mock_log)
 
         first_call = mock_p2p_sync.wait_for_discovery.call_args_list[0]
@@ -572,8 +471,11 @@ class TestRunLanModeDiscoveryTimeout:
         mock_p2p_sync.port = 9000
         monotonic = iter([100.0, 100.0, 101.0, 111.0, 111.0])
 
+        listener_server, listener_ws = _patch_p2p_listener()
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch.object(p2p_handler, "_run_as_slave", return_value=(False, 5)) as run_slave,
             patch("hsync_client.p2p_handler.time.monotonic", side_effect=lambda: next(monotonic)),
             patch("hsync_client.timesync.start_ntp_clock_offset_probe", return_value=None),
@@ -1138,7 +1040,7 @@ class TestStdinCommands:
 class TestSlaveSeederLifecycle:
     """The read-only seeder is owned strictly by a continuous slave role."""
 
-    def test_continuous_slave_starts_seeder_then_publishes_endpoint_ready(self, tmp_path):
+    def test_continuous_slave_configures_seeder_role_then_publishes_endpoint_ready(self, tmp_path):
         from hsync_client.p2p_handler import _start_slave_seeder
         from hsync_client.p2p_server import P2PServerMode
 
@@ -1152,26 +1054,24 @@ class TestSlaveSeederLifecycle:
         server = MagicMock()
         publisher = MagicMock()
         with (
-            patch("hsync_client.p2p_handler.P2PServer", return_value=server) as server_cls,
             patch(
                 "hsync_client.p2p_handler.P2PInventoryPublisher",
                 return_value=publisher,
             ) as publisher_cls,
             patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active,
         ):
-            result = _start_slave_seeder(config, p2p_sync, _make_cert_info(), MagicMock())
+            result = _start_slave_seeder(config, p2p_sync, MagicMock(), server)
 
-        assert result == (server, publisher)
-        server_cls.assert_called_once_with(
-            port=9443,
-            use_https=True,
-            cert_file="/tmp/cert.pem",
-            key_file="/tmp/key.pem",
-            mode=P2PServerMode.seeder,
+        # The seeder reuses the process-wide listener: it only installs the role.
+        assert result == publisher
+        server.configure_role.assert_called_once_with(
+            P2PServerMode.seeder,
             bucket="test-bucket",
+            cid_guard=None,
+            source_service=None,
+            inventory_store=None,
             peer_read_cap=3,
         )
-        server.start.assert_called_once_with()
         p2p_sync.update_endpoint_ready.assert_called_once_with(True)
         publisher_cls.assert_called_once_with(str(tmp_path))
         set_active.assert_called_once_with(publisher)
@@ -1181,77 +1081,51 @@ class TestSlaveSeederLifecycle:
 
         for overrides in ({"ONE_SHOT": True}, {"ONE_SHOT": False, "DRYRUN": True}):
             config = _make_p2p_config(tmp_path, **overrides)
-            with patch("hsync_client.p2p_handler.P2PServer") as server_cls:
-                assert _start_slave_seeder(
-                    config,
-                    MagicMock(port=9443),
-                    _make_cert_info(),
-                    MagicMock(),
-                ) == (None, None)
-            server_cls.assert_not_called()
+            server = MagicMock()
+            assert _start_slave_seeder(config, MagicMock(port=9443), MagicMock(), server) is None
+            server.configure_role.assert_not_called()
 
-    def test_bind_failure_degrades_to_requester_only(self, tmp_path):
-        from hsync_client.p2p_handler import _start_slave_seeder
-
-        config = _make_p2p_config(tmp_path, ONE_SHOT=False)
-        p2p_sync = MagicMock(port=9443)
-        server = MagicMock()
-        server.start.side_effect = OSError("address in use")
-        with patch("hsync_client.p2p_handler.P2PServer", return_value=server):
-            assert _start_slave_seeder(
-                config,
-                p2p_sync,
-                _make_cert_info(),
-                MagicMock(),
-            ) == (None, None)
-
-        server.stop.assert_called_once_with()
-        p2p_sync.update_endpoint_ready.assert_not_called()
-
-    def test_readiness_failure_stops_and_clears_endpoint_material(self, tmp_path):
-        """A partial publication is explicitly withdrawn before fallback."""
+    def test_readiness_publish_failure_yields_role(self, tmp_path):
+        """A failed publication withdraws the seeder role before fallback."""
         from hsync_client.p2p_handler import _start_slave_seeder
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=False)
         p2p_sync = MagicMock(port=9443)
         p2p_sync.update_endpoint_ready.side_effect = [RuntimeError("mdns failed"), None]
         server = MagicMock()
-        with patch("hsync_client.p2p_handler.P2PServer", return_value=server):
-            assert _start_slave_seeder(
-                config,
-                p2p_sync,
-                _make_cert_info(),
-                MagicMock(),
-            ) == (None, None)
 
-        server.stop.assert_called_once_with()
+        assert _start_slave_seeder(config, p2p_sync, MagicMock(), server) is None
+
+        server.stop_serving.assert_called_once_with()
         assert [call.args[0] for call in p2p_sync.update_endpoint_ready.call_args_list] == [
             True,
             False,
         ]
 
-    def test_stop_withdraws_txt_and_stops_even_if_withdraw_fails(self):
+    def test_stop_withdraws_txt_even_if_withdraw_fails(self):
         from hsync_client.p2p_handler import _stop_slave_seeder
 
         p2p_sync = MagicMock()
-        server = MagicMock()
         publisher = MagicMock()
-        order: list[str] = []
-        server.stop.side_effect = lambda: order.append("stop")
-
-        def fail_withdraw(_ready: bool) -> None:
-            order.append("withdraw")
-            raise RuntimeError("mdns unavailable")
-
-        p2p_sync.update_endpoint_ready.side_effect = fail_withdraw
+        p2p_sync.update_endpoint_ready.side_effect = RuntimeError("mdns unavailable")
 
         with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
-            _stop_slave_seeder(server, p2p_sync, publisher)
+            _stop_slave_seeder(p2p_sync, publisher)
 
         p2p_sync.update_endpoint_ready.assert_called_once_with(False)
-        server.stop.assert_called_once_with()
         set_active.assert_called_once_with(None)
-        assert order == ["stop", "withdraw"]
+
+    def test_stop_without_publisher_is_noop(self):
+        """The master calls this every iteration; without a seeder it must not
+        re-register mDNS and clear the master's own ``server_ready``."""
+        from hsync_client.p2p_handler import _stop_slave_seeder
+
+        p2p_sync = MagicMock()
+        with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
+            _stop_slave_seeder(p2p_sync, None)
+
+        p2p_sync.update_endpoint_ready.assert_not_called()
+        set_active.assert_not_called()
 
 
 class TestMasterElection:

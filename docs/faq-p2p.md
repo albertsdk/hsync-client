@@ -139,12 +139,11 @@ at the same `boot/1` bootnode to sync across subnets/VLANs (see
 you prefer a central hub.
 
 **Q: What ports does p2p mode use?**
-Two consecutive ports, starting from `--listen-port` (default `0` = auto, a free
-port is picked):
-- HTTP port: serves the REST API for file uploads/downloads
-- WebSocket port (HTTP port + 1): real-time event stream
+A single TLS port, `--listen-port` (default `0` = auto, a free port is picked):
+- it serves the REST API for file uploads/downloads **and** the real-time event
+  stream (WSS) on the same port.
 
-Both use TLS (HTTPS/WSS). There is no plaintext fallback.
+TLS is used for both HTTPS and WSS. There is no plaintext fallback.
 
 **Q: Can I restrict which devices can write to the master?**
 Yes. Set `HSYNC_P2P_KEY` on all devices. The master will refuse write

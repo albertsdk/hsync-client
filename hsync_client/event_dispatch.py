@@ -177,7 +177,6 @@ def _tag(name: str) -> str:
 def _confined_local(
     rel: object,
     event_name: object,
-    ctx: EventDispatchContext,
     *,
     resolve_final: bool = True,
 ) -> str | None:
@@ -463,8 +462,8 @@ async def _apply_rename(
         return
 
     if "path" in src:
-        src_local = _confined_local(src.get("path"), EventName.renamed.value, ctx)
-        dst_local = _confined_local(dst.get("path"), EventName.renamed.value, ctx)
+        src_local = _confined_local(src.get("path"), EventName.renamed.value)
+        dst_local = _confined_local(dst.get("path"), EventName.renamed.value)
         if src_local is None or dst_local is None:
             return
         await _rename_path(
@@ -477,9 +476,9 @@ async def _apply_rename(
         )
     elif "filepath" in src:
         src_local = _confined_local(
-            src.get("filepath"), EventName.renamed.value, ctx, resolve_final=False
+            src.get("filepath"), EventName.renamed.value, resolve_final=False
         )
-        dst_local = _confined_local(dst.get("filepath"), EventName.renamed.value, ctx)
+        dst_local = _confined_local(dst.get("filepath"), EventName.renamed.value)
         if src_local is None or dst_local is None:
             return
         dst_file = File.from_dict(dst, CONFIG["LOCAL_BUCKET"], False)
@@ -562,7 +561,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
         return
 
     if "path" in src:
-        local = _confined_local(src.get("path"), EventName.deleted.value, ctx)
+        local = _confined_local(src.get("path"), EventName.deleted.value)
         if local is None:
             return
         # A deleted directory must not stay in the dedup cache: re-creating it
@@ -601,9 +600,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
             _unmark(ctx, local)
         ctx.inventory_observer.remove_prefix(local)
     elif "filepath" in src:
-        local = _confined_local(
-            src.get("filepath"), EventName.deleted.value, ctx, resolve_final=False
-        )
+        local = _confined_local(src.get("filepath"), EventName.deleted.value, resolve_final=False)
         if local is None:
             return
         _mark(ctx, local)
@@ -642,7 +639,7 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     # could delete or clobber the target file instead. The target must also
     # stay inside the bucket, otherwise a hostile peer could plant a
     # symlink to arbitrary local files (e.g. /etc/passwd).
-    local = _confined_local(link.filepath, EventName.symlink.value, ctx, resolve_final=False)
+    local = _confined_local(link.filepath, EventName.symlink.value, resolve_final=False)
     if local is None:
         return
     target = link.target

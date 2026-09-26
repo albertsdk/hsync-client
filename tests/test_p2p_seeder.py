@@ -188,7 +188,6 @@ def test_unsupported_body_closes_connection_before_pipelined_bytes(seeder):
         socket.create_connection(("127.0.0.1", port), timeout=5) as connection,
     ):
         connection.sendall(request)
-        connection.shutdown(socket.SHUT_WR)
         response = bytearray()
         while chunk := connection.recv(4096):
             response.extend(chunk)

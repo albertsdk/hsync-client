@@ -28,7 +28,6 @@ import asyncio
 import contextlib
 import hmac
 import json
-import ssl
 import sys
 import threading
 from collections.abc import Callable, Mapping
@@ -38,6 +37,7 @@ from pathlib import Path
 from time import time
 from typing import Any, cast
 
+from aiohttp import web
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.event import Event, EventName, is_valid_cid
 from hsync_common.models.file import (
@@ -57,11 +57,18 @@ from hsync_common.protocol.handshake import (
     build_p2p_hello,
     decode_capabilities,
 )
+from hsync_common.protocol.p2p import p2p_ws_events_path
 from hsync_common.protocol.peer_download import (
     P2P_WIRE_INT_MAX,
     P2PInventoryAckFrame,
     build_p2p_inventory_ack,
     is_valid_serve_slots,
+)
+from hsync_common.protocol.rest import (
+    REST_DIRS_SUFFIX,
+    REST_FILES_PERMISSIONS_SUFFIX,
+    REST_FILES_SUFFIX,
+    rest_bucket_path,
 )
 from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
@@ -136,10 +143,10 @@ def _inventory_rejection(payload: Mapping[str, object], reason: str) -> P2PInven
 
 # Maximum concurrent realtime operations (uploads to the master, inbound
 # event downloads, deletes, renames) executed on behalf of the watcher.
-# Replaces the previous thread-per-event model: a bounded pool keeps worker
-# threads (and their per-thread keep-alive HTTP sessions) alive, so a burst
-# of events no longer opens a fresh TCP+TLS connection per file, and the
-# parallelism against the master stays predictable.
+# A bounded pool keeps worker threads (and their per-thread keep-alive HTTP
+# sessions) alive, so a burst of events reuses one TCP+TLS connection per
+# worker instead of opening one per file, and the parallelism against the
+# master stays predictable.
 REALTIME_MAX_WORKERS = 8
 
 _realtime_executor: ThreadPoolExecutor | None = None
@@ -378,16 +385,13 @@ class P2PWebSocketServer:
     """
     WebSocket server for P2P master mode.
 
-    Runs in a background thread and broadcasts file system events
-    to all connected client clients.
+    Broadcasts file system events to connected clients through the shared
+    listener's event loop (see :meth:`set_loop`).
     """
 
     def __init__(
         self,
         port: int,
-        use_https: bool = False,
-        cert_file: str | None = None,
-        key_file: str | None = None,
         master_cid: str | None = None,
         cid_registry: SlaveCidRegistry | None = None,
         inventory_store: P2PInventoryStore | None = None,
@@ -396,12 +400,8 @@ class P2PWebSocketServer:
         Initialize the WebSocket server.
 
         Args:
-            port: Port to listen on (different from HTTP port).
-            use_https: Whether to use WSS instead of WS.
-            cert_file: Path to SSL certificate file.
-            key_file: Path to SSL private key file. The persistent master key is
-                stored unencrypted and protected by filesystem permissions (see
-                ``load_or_create_master_cert``).
+            port: The master's single HTTPS/WSS port (this control plane shares
+                the :class:`P2PServer` listener; it opens no socket of its own).
             master_cid: This master's own CID. When set, a slave that declares
                 this CID (a duplicated device identity) is refused instead of
                 being admitted as a peer.
@@ -410,31 +410,56 @@ class P2PWebSocketServer:
                 omitted, so standalone/test usage keeps working.
         """
         self._port = port
-        self._use_https = use_https
-        self._cert_file = cert_file
-        self._key_file = key_file
         self._cid_registry = (
             cid_registry if cid_registry is not None else SlaveCidRegistry(master_cid)
         )
         self._inventory_store = inventory_store
         self._clients: set[Any] = set()  # WebSocket connections
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._server: Any | None = None
         self._running = False
+        # Role gate for event pushes: a yielded master stops publishing the
+        # instant its role is retired, before its clients are closed, so no
+        # event can slip out during the yield window (ADR-0027). The epoch is
+        # bumped on every gate close so a broadcast or handshake already in
+        # flight observes the retirement.
+        self._publishing = False
+        self._publish_epoch = 0
         self._watcher: WatcherManager | None = None
         self._event_handler: P2PMasterFileEventHandler | None = None
         self._clients_lock = threading.Lock()
         self._on_clients_changed: Callable[[int], None] | None = None
         self._on_peer_connection: Callable[[str, bool], None] | None = None
 
-        if use_https and (not cert_file or not key_file):
-            raise ValueError("cert_file and key_file are required when use_https=True")
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Adopt the unified listener's event loop.
+
+        The control plane runs as a route on the shared aiohttp listener; it
+        publishes events through the listener's loop (``broadcast_sync`` from the
+        watcher thread).
+        """
+        self._loop = loop
+
+    def set_port(self, port: int) -> None:
+        """Record the unified listener's actual bound port (``port=0`` resolved)."""
+        self._port = port
+
+    def set_inventory_store(self, store: P2PInventoryStore | None) -> None:
+        """Install the master role's inventory store (or clear it on yield).
+
+        The control plane is bound once for the process lifetime; a role change
+        installs the store used to acknowledge slave inventory frames.
+        """
+        self._inventory_store = store
 
     @property
     def port(self) -> int:
-        """Get the WebSocket server port."""
+        """The unified listener's port (HTTP and WebSocket share it)."""
         return self._port
+
+    @property
+    def running(self) -> bool:
+        """Whether the master realtime channel (watcher) is active."""
+        return self._running
 
     @property
     def connected_clients(self) -> int:
@@ -541,7 +566,9 @@ class P2PWebSocketServer:
                 self._log_duplicate_identity(client_addr, client_cid)
             if authenticated:
                 with contextlib.suppress(Exception):
-                    await websocket.send(json.dumps(build_p2p_auth_failed(reason="cid_conflict")))
+                    await websocket.send_str(
+                        json.dumps(build_p2p_auth_failed(reason="cid_conflict"))
+                    )
             await websocket.close()
             return False, None, None
 
@@ -551,7 +578,10 @@ class P2PWebSocketServer:
             try:
                 # Install the replacement owner before closing a superseded
                 # same-address WSS. Its later teardown is then an old-owner no-op.
-                inventory_token = self._inventory_store.begin_session(
+                # Off the event loop: the store is SQLite behind a lock shared
+                # with the HTTP worker pool.
+                inventory_token = await asyncio.to_thread(
+                    self._inventory_store.begin_session,
                     client_cid,
                     serve_slots=serve_slots,
                     remote_address=peer_ip,
@@ -568,7 +598,7 @@ class P2PWebSocketServer:
                 f"Slave {client_cid} reconnected from {peer_ip}: closing superseded connection"
             )
             with contextlib.suppress(Exception):
-                await stale_ws.close(code=4000, reason="Replaced by a newer connection")
+                await stale_ws.close(code=4000, message=b"Replaced by a newer connection")
         return True, inventory_token, inventory_rejection
 
     def _log_duplicate_identity(self, client_addr, client_cid: str) -> None:
@@ -588,7 +618,7 @@ class P2PWebSocketServer:
             ),
         )
 
-    def _release_failed_admission(
+    async def _release_failed_admission(
         self, client_cid: str, websocket: object, inventory_token: str | None
     ) -> None:
         """Release ownership when handshake setup fails after CID reservation."""
@@ -596,11 +626,29 @@ class P2PWebSocketServer:
             self._cid_registry.release(client_cid, websocket)
         if inventory_token is not None and self._inventory_store is not None:
             with contextlib.suppress(Exception):
-                self._inventory_store.end_session(client_cid, inventory_token)
+                await asyncio.to_thread(
+                    self._inventory_store.end_session, client_cid, inventory_token
+                )
 
-    async def _handle_client(self, websocket) -> None:
-        """Handle a single WebSocket client connection."""
-        client_addr = websocket.remote_address
+    async def _recv_text(self, websocket: web.WebSocketResponse, timeout: float) -> str:
+        """Await one text frame, or raise on timeout/close/non-text."""
+        msg = await asyncio.wait_for(websocket.receive(), timeout=timeout)
+        if msg.type is not web.WSMsgType.TEXT:
+            raise ConnectionError(f"expected a text frame, got {msg.type!r}")
+        return msg.data
+
+    async def handle(self, request: web.Request) -> web.WebSocketResponse:
+        """aiohttp route handler for one master WebSocket connection.
+
+        Greeting/auth/hello handshake and the inventory loop, served on the
+        single HTTPS/WSS listener alongside the REST data plane.
+        """
+        websocket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=WS_MAX_MESSAGE_BYTES)
+        await websocket.prepare(request)
+        # Capture the publish epoch: a yield landing during the (awaited)
+        # handshake retires the role, so the socket must not be registered.
+        publish_epoch = self._publish_epoch
+        client_addr = request.remote or ""
         client_cid = "unknown"
         inventory_token: str | None = None
         inventory_rejection: str | None = "unsupported"
@@ -614,10 +662,10 @@ class P2PWebSocketServer:
         master_caps = local_capabilities()
         p2p_key = CONFIG.get("P2P_KEY")
         if p2p_key:
-            await websocket.send(json.dumps(build_p2p_auth_required(capabilities=master_caps)))
+            await websocket.send_str(json.dumps(build_p2p_auth_required(capabilities=master_caps)))
             try:
                 # Wait for auth message
-                auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                auth_msg = await self._recv_text(websocket, 10.0)
                 auth_data = json.loads(auth_msg)
                 token = auth_data.get("token")
                 declared_cid = auth_data.get("cid")
@@ -626,9 +674,11 @@ class P2PWebSocketServer:
                         f"WebSocket auth rejected – invalid CID from {client_addr}: "
                         f"{declared_cid!r}"
                     )
-                    await websocket.send(json.dumps(build_p2p_auth_failed(reason="invalid_cid")))
+                    await websocket.send_str(
+                        json.dumps(build_p2p_auth_failed(reason="invalid_cid"))
+                    )
                     await websocket.close()
-                    return
+                    return websocket
                 client_cid = declared_cid
                 # Protocol is a hard gate inside the auth contract: a slave
                 # speaking a different P2P protocol must never authenticate.
@@ -638,18 +688,20 @@ class P2PWebSocketServer:
                         f"{client_addr} (CID: {client_cid}): "
                         f"{auth_data.get('protocol_version')!r}"
                     )
-                    await websocket.send(
+                    await websocket.send_str(
                         json.dumps(build_p2p_auth_failed(reason="protocol_incompatible"))
                     )
                     await websocket.close()
-                    return
+                    return websocket
                 if auth_data.get("type") != "auth" or not (
                     isinstance(token, str) and hmac.compare_digest(token, str(p2p_key))
                 ):
                     log.warning(f"WebSocket auth failed from {client_addr} (CID: {client_cid})")
-                    await websocket.send(json.dumps(build_p2p_auth_failed(reason="invalid_token")))
+                    await websocket.send_str(
+                        json.dumps(build_p2p_auth_failed(reason="invalid_token"))
+                    )
                     await websocket.close()
-                    return
+                    return websocket
                 # Reserve the slave's CID before admitting the connection: a
                 # duplicated device identity (the master's own CID, or a CID
                 # bound to a different host) must never reach the causal model.
@@ -662,9 +714,11 @@ class P2PWebSocketServer:
                         f"WebSocket auth rejected – invalid capacity advertisement from "
                         f"{client_addr} (CID: {client_cid}): {slot_rejection}"
                     )
-                    await websocket.send(json.dumps(build_p2p_auth_failed(reason=slot_rejection)))
+                    await websocket.send_str(
+                        json.dumps(build_p2p_auth_failed(reason=slot_rejection))
+                    )
                     await websocket.close()
-                    return
+                    return websocket
                 admitted, inventory_token, inventory_rejection = await self._admit_slave(
                     client_cid,
                     client_addr,
@@ -673,35 +727,35 @@ class P2PWebSocketServer:
                     serve_slots=serve_slots,
                 )
                 if not admitted:
-                    return
+                    return websocket
                 log.debug(
                     f"WebSocket slave {client_cid} capabilities: "
                     f"{sorted(c.value for c in slave_caps) or 'none'}"
                 )
-                await websocket.send(json.dumps(build_p2p_auth_ok(capabilities=master_caps)))
+                await websocket.send_str(json.dumps(build_p2p_auth_ok(capabilities=master_caps)))
                 log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
             except TimeoutError:
-                self._release_failed_admission(client_cid, websocket, inventory_token)
+                await self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket auth timeout from {client_addr} (CID: {client_cid})")
-                await websocket.send(json.dumps(build_p2p_auth_failed(reason="timeout")))
+                await websocket.send_str(json.dumps(build_p2p_auth_failed(reason="timeout")))
                 await websocket.close()
-                return
+                return websocket
             except Exception as e:
                 # The CID may already be reserved at this point (a failure after
                 # a successful admission, e.g. the auth-ok send): release it so
                 # a retrying same-address slave is not locked out. Idempotent.
-                self._release_failed_admission(client_cid, websocket, inventory_token)
+                await self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket auth error from {client_addr} (CID: {client_cid}): {e}")
                 await websocket.close()
-                return
+                return websocket
         else:
             # No shared secret: request the client's CID via a lightweight
             # hello handshake so the operator can distinguish peers in logs.
             # The CID is NOT authenticated (no P2P_KEY), so every log line
             # carries an explicit "(unauthenticated)" qualifier.
-            await websocket.send(json.dumps(build_p2p_hello(capabilities=master_caps)))
+            await websocket.send_str(json.dumps(build_p2p_hello(capabilities=master_caps)))
             try:
-                hello_msg = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                hello_msg = await self._recv_text(websocket, 5.0)
                 hello_data = json.loads(hello_msg)
                 declared_cid = hello_data.get("cid")
                 if (
@@ -721,7 +775,7 @@ class P2PWebSocketServer:
                     if slot_rejection is not None:
                         log.warning(f"WebSocket hello invalid from {client_addr}: {slot_rejection}")
                         await websocket.close()
-                        return
+                        return websocket
                     admitted, inventory_token, inventory_rejection = await self._admit_slave(
                         client_cid,
                         client_addr,
@@ -730,7 +784,7 @@ class P2PWebSocketServer:
                         serve_slots=serve_slots,
                     )
                     if not admitted:
-                        return
+                        return websocket
                     log.info(
                         f"WebSocket client connected (no auth): {client_addr} "
                         f"(CID: {client_cid}, unauthenticated, capabilities: "
@@ -743,52 +797,78 @@ class P2PWebSocketServer:
                         f"protocol={hello_data.get('protocol_version')!r}"
                     )
                     await websocket.close()
-                    return
+                    return websocket
             except TimeoutError:
-                self._release_failed_admission(client_cid, websocket, inventory_token)
+                await self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket hello timeout from {client_addr}")
                 await websocket.close()
-                return
+                return websocket
             except Exception as e:
-                self._release_failed_admission(client_cid, websocket, inventory_token)
+                await self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket hello error from {client_addr}: {e}")
                 await websocket.close()
-                return
+                return websocket
+
+        # A yield that raced this handshake must not admit the client: the epoch
+        # moves on every role retirement (the gate close), and the socket is only
+        # registered after the awaited handshake.
+        if publish_epoch != self._publish_epoch:
+            await self._release_failed_admission(client_cid, websocket, inventory_token)
+            await websocket.close()
+            return websocket
 
         # Add client to set (its CID is already reserved by _admit_slave)
-        self._clients.add(websocket)
+        with self._clients_lock:
+            self._clients.add(websocket)
         self._notify_clients_changed()
         if client_cid != "unknown":
             self._notify_peer_connection(client_cid, True)
 
         try:
             # Keep connection alive and handle incoming messages
-            async for message in websocket:
+            async for msg in websocket:
+                if msg.type is web.WSMsgType.TEXT:
+                    message: Any = msg.data
+                elif msg.type is web.WSMsgType.BINARY:
+                    message = msg.data
+                else:
+                    continue
                 try:
                     payload = json.loads(message)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     log.warning(f"Invalid JSON from slave {client_cid}")
                     continue
                 if isinstance(payload, Mapping) and payload.get("type") == "inventory":
                     if inventory_token is not None and self._inventory_store is not None:
-                        ack = self._inventory_store.apply_frame(
-                            client_cid, inventory_token, payload
+                        # The inventory store is SQLite behind a re-entrant lock
+                        # also taken by the HTTP worker pool; running it inline
+                        # would stall this shared loop (and every HTTP worker
+                        # bridged through it). Keep per-connection ordering by
+                        # awaiting the result before the ACK is sent.
+                        ack = await asyncio.to_thread(
+                            self._inventory_store.apply_frame,
+                            client_cid,
+                            inventory_token,
+                            payload,
                         )
                     else:
                         ack = _inventory_rejection(payload, inventory_rejection or "unsupported")
-                    await websocket.send(json.dumps(ack, separators=(",", ":")))
+                    await websocket.send_str(json.dumps(ack, separators=(",", ":")))
                     continue
                 log.debug(
                     f"Received from {client_addr} (CID: {client_cid}): "
-                    f"{escape_loguru_markup(message)}"
+                    f"{escape_loguru_markup(str(message))}"
                 )
         except Exception as e:
             log.debug(f"WebSocket client {client_addr} (CID: {client_cid}) disconnected: {e}")
         finally:
-            self._clients.discard(websocket)
+            with self._clients_lock:
+                self._clients.discard(websocket)
             if inventory_token is not None and self._inventory_store is not None:
                 with contextlib.suppress(Exception):
-                    self._inventory_store.end_session(client_cid, inventory_token)
+                    await asyncio.to_thread(
+                        self._inventory_store.end_session, client_cid, inventory_token
+                    )
             if client_cid != "unknown":
                 # Only the current owner of the binding may clear the liveness
                 # mark: a superseded connection (same-address reconnect) must
@@ -797,10 +877,12 @@ class P2PWebSocketServer:
                     self._notify_peer_connection(client_cid, False)
             self._notify_clients_changed()
             log.info(f"WebSocket client disconnected: {client_addr} (CID: {client_cid})")
+        return websocket
 
     async def broadcast(self, event_dict: dict) -> None:
         """Broadcast an event to all connected clients."""
-        if not self._clients:
+        epoch = self._publish_epoch
+        if not self._publishing or not self._clients:
             return
 
         message = json.dumps(event_dict)
@@ -810,84 +892,58 @@ class P2PWebSocketServer:
             f"Broadcasting to {len(self._clients)} clients: {event_dict.get('name')}{origin_info}"
         )
 
-        # Send to all clients, removing disconnected ones
+        # Send to all clients, removing disconnected ones. The epoch is
+        # re-checked before every send, so a retirement that lands mid-broadcast
+        # stops the remaining pushes instead of delivering to a retired role.
         disconnected = set()
-        for client in self._clients.copy():
+        with self._clients_lock:
+            clients = list(self._clients)
+        for client in clients:
+            if epoch != self._publish_epoch:
+                log.debug("Serving role retired mid-broadcast; stopping event push")
+                return
             try:
-                await client.send(message)
+                await client.send_str(message)
             except Exception:
                 disconnected.add(client)
 
-        self._clients -= disconnected
+        if disconnected:
+            with self._clients_lock:
+                self._clients.difference_update(disconnected)
 
     def broadcast_sync(self, event_dict: dict) -> None:
         """Broadcast an event synchronously (from file watcher thread)."""
-        if self._loop and self._running:
+        if self._loop and self._running and self._publishing:
             asyncio.run_coroutine_threadsafe(self.broadcast(event_dict), self._loop)
 
-    async def _run_server(self) -> None:
-        """Run the WebSocket server."""
-        import websockets
+    def set_publishing(self, enabled: bool) -> None:
+        """Gate event pushes on the current role.
 
-        ssl_context = None
-        if self._use_https:
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ssl_context.load_cert_chain(
-                self._cert_file,  # type: ignore[arg-type]
-                self._key_file,  # type: ignore[arg-type]
-            )
-
-        async with websockets.serve(
-            self._handle_client,
-            "0.0.0.0",
-            self._port,
-            ssl=ssl_context,
-            ping_interval=60,
-            ping_timeout=30,
-            max_size=WS_MAX_MESSAGE_BYTES,
-        ) as server:
-            self._server = server
-            protocol = "WSS" if self._use_https else "WS"
-            log.info(f"P2P WebSocket server started on port {self._port} ({protocol})")
-
-            # Wait until stopped
-            while self._running:
-                await asyncio.sleep(0.1)
-
-    def _run_loop(self) -> None:
-        """Run the asyncio event loop in the background thread."""
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-
-        try:
-            self._loop.run_until_complete(self._run_server())
-        except Exception as e:
-            log.error(f"WebSocket server error: {e}")
-        finally:
-            self._loop.close()
+        Called by the listener when the serving role is installed or retired: a
+        yielded master must stop pushing events *before* its clients are closed,
+        so nothing is delivered during the yield window (ADR-0027). Closing the
+        gate bumps the epoch, which an in-flight broadcast or handshake checks.
+        """
+        if not enabled:
+            self._publish_epoch += 1
+        self._publishing = enabled
 
     def start(self, watch_path: str | None = None) -> None:
-        """
-        Start the WebSocket server and file watcher.
+        """Start the master file watcher (the listener is the unified server).
 
-        Args:
-            watch_path: Path to watch for file changes. Defaults to LOCAL_BUCKET.
+        The WebSocket control plane opens no socket or thread of its own: the
+        :class:`P2PServer` listener routes the canonical WebSocket path here,
+        and this method only starts the filesystem watcher that broadcasts
+        through the shared loop. ``set_loop`` must have been called first.
         """
         if self._running:
             log.warning("P2P WebSocket server already running")
             return
+        if self._loop is None:
+            raise RuntimeError("P2PWebSocketServer.set_loop() must be called before start()")
 
         self._running = True
-
-        # Start WebSocket server in background thread
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-
-        # Wait for loop to be ready
-        for _ in range(50):  # 5 seconds max
-            if self._loop is not None:
-                break
-            threading.Event().wait(0.1)
+        self._publishing = True
 
         # Start file watcher
         if watch_path is None:
@@ -905,27 +961,42 @@ class P2PWebSocketServer:
         self._watcher = watcher
         log.info(f"File watcher started for: {watch_path}")
 
+    def close_clients(self) -> Future[None] | None:
+        """Close every live control-plane client (role yield).
+
+        Scheduled on the shared listener loop; idempotent and safe when the
+        control plane never served. The client set is validated/iterated on the
+        loop (where it is mutated), never read cross-thread here. Returns the
+        completion future so a caller can wait for the clients to be gone
+        (``None`` when the listener loop is not attached).
+        """
+        if self._loop is None:
+            return None
+        return asyncio.run_coroutine_threadsafe(self._close_all_clients(), self._loop)
+
+    async def _close_all_clients(self) -> None:
+        """Close all control-plane clients on the listener loop."""
+        with self._clients_lock:
+            clients = list(self._clients)
+        for client in clients:
+            with contextlib.suppress(Exception):
+                await client.close()
+
     def stop(self) -> None:
-        """Stop the WebSocket server and file watcher."""
+        """Stop the master file watcher and drop every connected client."""
         if not self._running:
             return
 
         self._running = False
+        self._publishing = False
 
         # Stop file watcher
         if self._watcher:
             self._watcher.stop()
             self._watcher = None
 
-        # Close all client connections
-        if self._loop and self._clients:
-
-            async def close_all():
-                for client in self._clients.copy():
-                    with contextlib.suppress(Exception):
-                        await client.close()
-
-            asyncio.run_coroutine_threadsafe(close_all(), self._loop)
+        # Close all client connections on the shared listener loop
+        self.close_clients()
 
         # Every admitted slave is gone: emit a disconnect for each so the
         # PeerManager clears its WebSocket liveness marks (the handlers' own
@@ -935,11 +1006,6 @@ class P2PWebSocketServer:
         for cid in self._cid_registry.connected_cids():
             self._notify_peer_connection(cid, False)
         self._cid_registry.clear()
-
-        # Wait for thread to finish
-        if self._thread:
-            self._thread.join(timeout=2.0)
-            self._thread = None
 
         log.info("P2P WebSocket server stopped")
 
@@ -1239,14 +1305,14 @@ async def p2p_websocket_client(
 
     Args:
         host: Master's IP address or hostname.
-        port: Master's WebSocket port (HTTP port is port - 1).
+        port: Master's unified HTTPS/WSS port (REST and WebSocket share it).
         use_https: Whether to use WSS instead of WS.
     """
     global _slave_event_handler
     import websockets
 
     protocol = "wss" if use_https else "ws"
-    uri = f"{protocol}://{host}:{port}"
+    uri = f"{protocol}://{host}:{port}{p2p_ws_events_path(CONFIG['REMOTE_BUCKET'], CONFIG['CID'])}"
 
     # A node that serves peer downloads announces its capacity on the handshake:
     # the master records it with the publisher session and echoes it to
@@ -1261,8 +1327,9 @@ async def p2p_websocket_client(
     log.info(f"Connecting to master WebSocket: {uri}")
 
     # Start local file watcher for bidirectional sync
-    # HTTP port is WebSocket port - 1
-    http_port = port - 1
+    # The master serves the REST data plane and the WebSocket control plane on
+    # the SAME port (unified listener).
+    http_port = port
     inventory_observer: InventoryObserver = inventory_publisher or NOOP_INVENTORY_OBSERVER
     if inventory_publisher is None:
         _slave_event_handler = P2PSlaveFileEventHandler(host, http_port, use_https)
@@ -1318,8 +1385,10 @@ async def p2p_websocket_client(
         ) as websocket:
             # Pin the master's identity on this live WSS connection: bind the
             # certificate actually presented during the handshake to the pinned
-            # fingerprint, refusing on mismatch. This closes the gap where the
-            # WebSocket previously trusted any certificate (CERT_NONE).
+            # fingerprint, refusing on mismatch. Chain validation is disabled on
+            # the WSS context by design (the self-signed master certificate is
+            # trusted by pin, not by a CA), so the check below is what
+            # establishes trust.
             if use_https and expected_fingerprint:
                 from hsync_client.ssl_utils import verify_peer_cert_fingerprint
 
@@ -1537,7 +1606,7 @@ def _build_p2p_dispatch_ctx(
     broadcast produces is re-logged as a fresh change.
 
     ``fan_out=True`` (the WSS receive loop) additionally arms the bounded
-    per-path file-download fan-out; the default keeps the legacy inline
+    per-path file-download fan-out; the default keeps the inline
     behavior for one-off callers (``_handle_p2p_event`` without a context).
     """
     return EventDispatchContext(
@@ -1655,7 +1724,8 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
         Args:
             master_host: Master's IP address or hostname.
-            master_port: Master's HTTP port (not WebSocket port).
+            master_port: The master's single HTTPS/WSS port (REST and the
+                realtime control plane share it).
             use_https: Whether to use HTTPS for uploads.
         """
         self._master_host = master_host
@@ -1832,11 +1902,10 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
     ) -> Future:
         """Schedule a background operation on the bounded realtime pool.
 
-        The pool (``REALTIME_MAX_WORKERS`` workers) replaces the previous
-        thread-per-event model: long-lived workers reuse their keep-alive
-        HTTP sessions to the master instead of opening a fresh TCP+TLS
-        connection per event, and bursts are queued instead of spawning
-        unbounded threads.
+        The pool (``REALTIME_MAX_WORKERS`` workers) keeps long-lived workers
+        that reuse their keep-alive HTTP sessions to the master instead of
+        opening a fresh TCP+TLS connection per event, and bursts are queued
+        instead of spawning unbounded threads.
 
         Args:
             target: Callable to run on the pool.
@@ -1952,7 +2021,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         protocol = "https" if self._use_https else "http"
         return (
             f"{protocol}://{self._master_host}:{self._master_port}"
-            f"/api/v1/buckets/{CONFIG['REMOTE_BUCKET']}{suffix}"
+            f"{rest_bucket_path(CONFIG['REMOTE_BUCKET'], suffix)}"
         )
 
     def _master_params(self, **extra: str) -> dict[str, str]:
@@ -1993,7 +2062,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             if permissions:
                 params["permissions"] = permissions
             log.info(f'{ActionLabel.LOCAL_CREATE} "{dir_path}" (dir)')
-            response = self._call_master(http_post, "/dirs", params)
+            response = self._call_master(http_post, REST_DIRS_SUFFIX, params)
             if response.status_code not in (200, 201, 204):
                 log.warning(f"Create dir request failed: {response.status_code}")
         except Exception as e:
@@ -2060,7 +2129,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 path=self._rel_in_bucket(filepath), is_dir=str(is_dir).lower()
             )
             log.info(f'{ActionLabel.LOCAL_DELETE} "{filepath}"')
-            response = self._call_master(http_delete, "/files", params)
+            response = self._call_master(http_delete, REST_FILES_SUFFIX, params)
             if response.status_code not in (200, 204, 404):
                 log.warning(f"Delete request failed: {response.status_code}")
         except Exception as e:
@@ -2075,7 +2144,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 src=self._rel_in_bucket(src_path), dst=self._rel_in_bucket(dst_path)
             )
             log.info(f'{ActionLabel.LOCAL_RENAME} "{src_path}" -> "{dst_path}"')
-            response = self._call_master(http_patch, "/files", params)
+            response = self._call_master(http_patch, REST_FILES_SUFFIX, params)
             if response.status_code not in (200, 204):
                 if response.status_code == 404 and (
                     self.is_inbound_rename_echo(src_path, dst_path)
@@ -2317,7 +2386,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             params["version_id"] = version_id
         self._start_operation(
             target=self._call_master,
-            args=(http_patch, "/files/permissions", params),
+            args=(http_patch, REST_FILES_PERMISSIONS_SUFFIX, params),
             name=f"metadata-{src_path}",
         )
 

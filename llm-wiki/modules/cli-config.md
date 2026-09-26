@@ -70,7 +70,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `set_config` | `:517` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
 | `set_debug` / `is_debug` | `:411` / `:432` | debug flag |
 | `load_env_file` | `:33` | dotenv loader |
-| typed getters | `:154`–`:300` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_upnp_enabled`), guard getters, delta getters, etc. |
+| typed getters | `:154`–`:300` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_bootnode_tofu`), guard getters, delta getters, etc. |
 
 The `p2p` subcommand takes an optional positional `BOOTNODE` (bare host) plus
 `--port` (bootnode UDP, default 443) and `--no-upnp`; `_build_bootnode`

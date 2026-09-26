@@ -35,8 +35,8 @@ __all__ = [
     "BOOTNODE_TRUST_FILE_ENV",
     "BootnodeTrustStore",
     "BootnodeTrustStoreError",
-    "default_bootnode_trust_store",
     "default_bootnode_trust_path",
+    "default_bootnode_trust_store",
 ]
 
 # Environment override for the bootnode trust store (tests, operators keeping

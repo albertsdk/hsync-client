@@ -23,8 +23,9 @@ election algorithm.
 
 ## 2. Master WebSocket Hub
 
-The master runs a WebSocket server that broadcasts file change events to all
-connected slaves.
+The master runs a WebSocket hub on the same TLS port as the REST data plane
+(`/api/v1/buckets/{bucket}/events/{cid}`) and broadcasts file change events to
+all connected slaves.
 
 ### Auth Flow (with P2P_KEY)
 

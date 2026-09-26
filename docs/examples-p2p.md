@@ -118,8 +118,8 @@ Devices in different groups are invisible to each other, even on the same Wi-Fi.
 HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared --listen-port 8080
 ```
 
-The client uses port 8080 for HTTPS and 8081 for WSS. Set firewall rules
-accordingly.
+The client serves the REST API (HTTPS) and the real-time event stream (WSS) on
+the same port 8080. Set firewall rules for that single port accordingly.
 
 ## 2.9 Cross-network group with a bootnode
 

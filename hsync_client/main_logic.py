@@ -599,7 +599,7 @@ def run_sync(
     # decompression entirely while keeping the ``requests`` code-path
     # happy (it will simply find no credentials and return ``None``).
     try:
-        import netrc as _netrc_test  # noqa: F401 – probe only
+        import netrc as _netrc_test  # noqa: F401 - probe only
     except Exception:
         from types import ModuleType
 

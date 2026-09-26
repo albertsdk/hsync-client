@@ -43,6 +43,7 @@ import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 from hsync_common.models.event import is_valid_cid
 from loguru import logger as log
@@ -198,8 +199,8 @@ class InstanceLock:
     existing lock (in-process runs, e.g. CliRunner tests).
     """
 
-    _held: dict[str, InstanceLock] = {}
-    _atexit_registered = False
+    _held: ClassVar[dict[str, InstanceLock]] = {}
+    _atexit_registered: ClassVar[bool] = False
 
     def __init__(self, path: str) -> None:
         self._key = os.path.realpath(path)

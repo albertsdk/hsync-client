@@ -24,6 +24,7 @@ from hsync_common.constants import CONTENT_TYPE_JSON
 from hsync_common.hashing import is_sha256_hex
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
+from hsync_common.protocol.p2p import P2P_FILES_SOURCES_SUFFIX
 from hsync_common.protocol.peer_download import (
     P2P_SOURCES_MAX_BODY_BYTES,
     P2P_SOURCES_MAX_CANDIDATES,
@@ -35,6 +36,11 @@ from hsync_common.protocol.peer_download import (
     build_p2p_sources_request,
     build_p2p_sources_response,
     validate_p2p_sources_response,
+)
+from hsync_common.protocol.rest import (
+    REST_FILES_DOWNLOAD_SUFFIX,
+    rest_bucket_path,
+    rest_bucket_template,
 )
 from hsync_common.text import compact_json_bytes
 from loguru import logger as log
@@ -87,7 +93,7 @@ class ShuffleRng(Protocol):
     def shuffle(self, values: list[PeerSourceSnapshot]) -> None: ...
 
 
-_FILES_DOWNLOAD_ROUTE = "/api/v1/buckets/{bucket}/files/download"
+_FILES_DOWNLOAD_ROUTE = rest_bucket_template(REST_FILES_DOWNLOAD_SUFFIX)
 
 
 def _download_url_matches_bucket(download_url: str, bucket: str) -> bool:
@@ -478,7 +484,7 @@ class P2PSourceResolver:
         telemetry: P2PSourceTelemetry | None = None,
         clock: Callable[[], float] = monotonic,
     ) -> None:
-        self._sources_url = f"{master_url}/api/v1/buckets/{bucket}/files/sources"
+        self._sources_url = f"{master_url}{rest_bucket_path(bucket, P2P_FILES_SOURCES_SUFFIX)}"
         self._master_cert_fingerprint = master_cert_fingerprint
         self._requester_cid = requester_cid
         self._bucket = bucket

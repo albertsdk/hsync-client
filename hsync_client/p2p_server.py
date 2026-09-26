@@ -22,29 +22,33 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import errno
 import hashlib
 import hmac
 import json
 import os
 import socket
+import ssl
 import stat as stat_module
 import tempfile
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from enum import StrEnum
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from os import walk
 from pathlib import Path
 from shutil import disk_usage
-from sys import exc_info
 from typing import IO, TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import zstandard as zstd
+from aiohttp import web
 from hsync_common.clock import clamp_incoming_corrected_mtime, uncorrect_mtime
 from hsync_common.compression import compression_level
 from hsync_common.constants import (
@@ -60,10 +64,24 @@ from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
 from hsync_common.path_validation import resolve_within, validate_remote_relpath
+from hsync_common.protocol.p2p import P2P_FILES_SOURCES_SUFFIX, P2P_WS_EVENTS_PATH
 from hsync_common.protocol.peer_download import (
     P2P_SOURCES_MAX_BODY_BYTES,
     build_p2p_sources_response,
     validate_p2p_sources_request,
+)
+from hsync_common.protocol.rest import (
+    REST_BUCKETS_PREFIX,
+    REST_DELTA_APPLY_SUFFIX,
+    REST_DELTA_DATA_SUFFIX,
+    REST_DELTA_SIGNATURES_SUFFIX,
+    REST_DIRS_SUFFIX,
+    REST_FILES_DOWNLOAD_SUFFIX,
+    REST_FILES_PERMISSIONS_SUFFIX,
+    REST_FILES_SUFFIX,
+    REST_FILES_UPLOAD_STATUS_SUFFIX,
+    REST_SYMLINKS_SUFFIX,
+    REST_TOMBSTONES_SUFFIX,
 )
 from hsync_common.text import compact_json_bytes
 from loguru import logger as log
@@ -106,10 +124,10 @@ P2P_SERVER_MAX_THREADS = 64
 SEEDER_RETRY_AFTER_S = 0.25
 
 # Seconds of socket-read silence after which an idle keep-alive connection is
-# reaped. With ``protocol_version = "HTTP/1.1"`` a connection holds one thread
-# and one ``BoundedThreadingHTTPServer`` slot until it closes: without this
-# reap timeout, connections parked idle in the clients' pools would pin master
-# slots forever and eventually starve the bounded backlog.
+# reaped. With HTTP/1.1 a connection is held open between requests, and a worker
+# slot is occupied only while a request is actually being served: without this
+# reap timeout, connections parked idle in the clients' pools would linger
+# forever instead of being released.
 # 300 s is deliberately large: the reap must NEVER fire on a connection that
 # is merely throttled. A maximally-throttled upload (``MAX_BANDWIDTH_UPLOAD``
 # at the 1 KB/s CLI floor) can legitimately sit silent between two 256 KiB
@@ -155,8 +173,8 @@ def _same_open_file(before: os.stat_result, after: os.stat_result) -> bool:
 class _ChecksumCache:
     """Bounded LRU of served-file checksums keyed by stat identity.
 
-    Every download used to re-hash the whole file before serving it, costing a
-    full extra disk pass per request on top of the (optional) compressed-staging
+    A download would otherwise re-hash the whole file before serving it, costing
+    a full extra disk pass per request on top of the (optional) compressed-staging
     read. The cache keys a checksum on the same ``(dev, ino, size, mtime_ns,
     ctime_ns)`` identity the engine already trusts for mid-serve consistency
     checks, so a served-unchanged file repeats its checksum for free and any
@@ -296,90 +314,41 @@ def _extract_multipart_boundary(content_type: str) -> bytes | None:
     return boundary
 
 
-class BoundedThreadingHTTPServer(ThreadingHTTPServer):
-    """Threading HTTP server with a hard cap on concurrent request threads.
+class _ServingContext:
+    """Immutable per-request view of what the listener is currently serving.
 
-    ``ThreadingHTTPServer`` spawns an unbounded thread per request: a flood of
-    peer connections (or slow clients holding sockets open) can exhaust file
-    descriptors and memory on the master. This subclass guards every
-    ``process_request`` with a :class:`threading.BoundedSemaphore` so at most
-    ``max_threads`` requests are served concurrently; excess connections wait
-    in the (bounded) socket backlog and are picked up as slots free up.
+    ``P2PServer`` swaps this atomically on a role transition; the endpoint
+    mixin reads ``mode``/``bucket``/``peer_read_slots``/``cid_guard``/
+    ``source_service``/``inventory_store`` through it. ``mode is None`` means
+    the listener is up but not serving (yielded master): every request is
+    refused with 503 before any endpoint logic runs (ADR-0027).
     """
 
-    # Shared duplicate-identity guard (SlaveCidRegistry), attached by
-    # P2PServer.start() and read by P2PRequestHandler._reject_duplicate_cid.
-    cid_guard: SlaveCidRegistry | None = None
-    source_service: P2PSourceService | None = None
-    mode: P2PServerMode = P2PServerMode.master
-    bucket: str = ""
-    peer_read_slots: threading.BoundedSemaphore | None = None
+    __slots__ = (
+        "mode",
+        "bucket",
+        "peer_read_slots",
+        "cid_guard",
+        "source_service",
+        "inventory_store",
+    )
 
-    def __init__(self, *args, max_threads: int = P2P_SERVER_MAX_THREADS, **kwargs):
-        self._thread_semaphore = threading.BoundedSemaphore(max_threads)
-        # Live request sockets, so a role handover can tear down keep-alive
-        # connections that would otherwise keep being served by the old role.
-        self._active_requests: set[socket.socket] = set()
-        self._active_lock = threading.Lock()
-        # Set before stopping: a request that slips in on an in-flight
-        # connection is refused instead of being handled under the old role.
-        self.stopping = False
-        super().__init__(*args, **kwargs)
-
-    def process_request(self, request, client_address) -> None:
-        # Acquire a slot before spawning a thread. If the cap is reached the
-        # call blocks until a running request finishes, keeping the backlog
-        # bounded by the socket's request_queue_size.
-        self._thread_semaphore.acquire()
-        try:
-            super().process_request(request, client_address)
-        except Exception:
-            # Release on failure so the slot is not leaked.
-            self._thread_semaphore.release()
-            raise
-
-    def process_request_thread(self, request, client_address) -> None:
-        # Track the live socket so a role handover can tear down keep-alive
-        # connections instead of leaving them to the retired role.
-        with self._active_lock:
-            self._active_requests.add(request)
-        try:
-            super().process_request_thread(request, client_address)
-        finally:
-            with self._active_lock:
-                self._active_requests.discard(request)
-            # Release the slot held for the duration of the request.
-            self._thread_semaphore.release()
-
-    def close_active_connections(self) -> None:
-        """Close every live request socket (keep-alive handover guard).
-
-        ``daemon_threads`` is set, so ``server_close()`` only releases the
-        listening socket: an established keep-alive connection would keep being
-        served by the old role's handler. Called on stop so a promoted master
-        never answers a request through the retired seeder.
-        """
-        with self._active_lock:
-            active = list(self._active_requests)
-            self._active_requests.clear()
-        for request in active:
-            try:
-                self.shutdown_request(request)
-            except OSError:
-                pass
-
-    def handle_error(self, request, client_address) -> None:
-        """Log client-connection teardown errors quietly.
-
-        With HTTP/1.1 keep-alive a peer resetting or closing an idle
-        connection is routine (client pools reap idle sockets); surface
-        those at debug level instead of the default stderr traceback.
-        """
-        exc = exc_info()[1]
-        if isinstance(exc, (ConnectionError, TimeoutError)):
-            log.debug(f"P2P peer connection {client_address} ended: {type(exc).__name__}")
-            return
-        super().handle_error(request, client_address)
+    def __init__(
+        self,
+        *,
+        mode: P2PServerMode | None,
+        bucket: str,
+        peer_read_slots: threading.BoundedSemaphore | None,
+        cid_guard: SlaveCidRegistry | None,
+        source_service: P2PSourceService | None,
+        inventory_store: P2PInventoryStore | None,
+    ) -> None:
+        self.mode = mode
+        self.bucket = bucket
+        self.peer_read_slots = peer_read_slots
+        self.cid_guard = cid_guard
+        self.source_service = source_service
+        self.inventory_store = inventory_store
 
 
 # API Configuration
@@ -389,18 +358,32 @@ API_PREFIX = f"/api/{API_VERSION}"
 # API endpoint paths
 ENDPOINT_HEALTH = f"{API_PREFIX}/health"
 ENDPOINT_TIME = f"{API_PREFIX}/time"
-ENDPOINT_BUCKETS_PREFIX = f"{API_PREFIX}/buckets"
-ENDPOINT_FILES_SUFFIX = "/files"
-ENDPOINT_FILES_DOWNLOAD_SUFFIX = "/files/download"
-ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX = "/files/upload-status"
-ENDPOINT_FILES_PERMISSIONS_SUFFIX = "/files/permissions"
-ENDPOINT_FILES_SOURCES_SUFFIX = "/files/sources"
-ENDPOINT_DIRS_SUFFIX = "/dirs"
-ENDPOINT_TOMBSTONES_SUFFIX = "/tombstones"
-ENDPOINT_SYMLINKS_SUFFIX = "/symlinks"
-ENDPOINT_DELTA_SIGNATURES_SUFFIX = "/files/delta/signatures"
-ENDPOINT_DELTA_APPLY_SUFFIX = "/files/delta/apply"
-ENDPOINT_DELTA_DATA_MARKER = "/files/delta/data/"
+# API endpoint paths. The peer-download suffixes are the shared SSOT
+# (``hsync_common.protocol.p2p``); the local names stay for readability.
+ENDPOINT_BUCKETS_PREFIX = REST_BUCKETS_PREFIX
+ENDPOINT_FILES_SUFFIX = REST_FILES_SUFFIX
+ENDPOINT_FILES_DOWNLOAD_SUFFIX = REST_FILES_DOWNLOAD_SUFFIX
+ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX = REST_FILES_UPLOAD_STATUS_SUFFIX
+ENDPOINT_FILES_PERMISSIONS_SUFFIX = REST_FILES_PERMISSIONS_SUFFIX
+ENDPOINT_FILES_SOURCES_SUFFIX = P2P_FILES_SOURCES_SUFFIX
+ENDPOINT_DIRS_SUFFIX = REST_DIRS_SUFFIX
+ENDPOINT_TOMBSTONES_SUFFIX = REST_TOMBSTONES_SUFFIX
+ENDPOINT_SYMLINKS_SUFFIX = REST_SYMLINKS_SUFFIX
+ENDPOINT_DELTA_SIGNATURES_SUFFIX = REST_DELTA_SIGNATURES_SUFFIX
+ENDPOINT_DELTA_APPLY_SUFFIX = REST_DELTA_APPLY_SUFFIX
+ENDPOINT_DELTA_DATA_MARKER = REST_DELTA_DATA_SUFFIX
+
+
+def _parse_request_query(request_path: str) -> dict[str, list[str]]:
+    """Parse a request-line query preserving blank values.
+
+    ``keep_blank_values=True`` keeps the Python master and the Android mirror
+    (``parseQueryParamLists``) in agreement: ``k=`` yields ``k -> ""`` on both
+    instead of silently disappearing. Handlers read a missing key through
+    ``query.get(key, [None])[0]``, so a blank is validated like any other value.
+    """
+    return parse_qs(urlparse(request_path).query, keep_blank_values=True)
+
 
 # HTTP Status Codes
 HTTP_OK = 200
@@ -429,12 +412,39 @@ MAX_TOMBSTONE_PAYLOAD_BYTES = TOMBSTONE_MAX_ENTRIES * 192
 # Request Handler
 # =============================================================================
 
+if TYPE_CHECKING:
+    # At type-check time the mixin is treated as a BaseHTTPRequestHandler so the
+    # transport surface (``wfile``/``rfile``/``send_response``/...) is known to
+    # mypy; at runtime it is a plain mixin so the concrete transport (the aiohttp
+    # adapter) supplies its own surface.
+    from http.server import BaseHTTPRequestHandler as _HTTPTransportBase
 
-class P2PRequestHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for P2P master server."""
+    from hsync_client.p2p_websocket import P2PWebSocketServer
+else:  # pragma: no cover - runtime shim, never instantiated on its own
+    _HTTPTransportBase = object
 
-    # Reference to the server instance for accessing config
-    server: BoundedThreadingHTTPServer  # type: ignore[assignment]
+
+# Canonical realtime-events WebSocket endpoint (SSOT in
+# ``hsync_common.protocol.p2p``), served by the unified listener on the same TLS
+# port as the REST data plane.
+WS_EVENTS_PATH = P2P_WS_EVENTS_PATH
+
+
+class P2PEndpointMixin(_HTTPTransportBase):
+    """Transport-agnostic P2P endpoint logic.
+
+    Every endpoint handler (and the request dispatchers ``do_GET``/``do_POST``/
+    ``do_DELETE``/``do_PATCH``/``do_PUT``/``do_HEAD``) lives here and depends
+    only on the low-level HTTP surface supplied by the concrete transport:
+    ``headers``, ``rfile``/``wfile``, ``send_response``/``send_header``/
+    ``end_headers``, ``client_address``, ``close_connection`` and a ``server``
+    object exposing ``mode``/``bucket``/``peer_read_slots``/``cid_guard``/
+    ``source_service``/``inventory_store``. This is what lets the data plane run
+    unchanged on the unified aiohttp listener.
+    """
+
+    # Reference to the serving context for accessing the active role config
+    server: _ServingContext  # type: ignore[assignment]
 
     # HTTP/1.1 keep-alive: connections are reused across requests instead of
     # paying a TCP+TLS handshake per request (the dominant per-file cost for
@@ -519,22 +529,6 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
             return None
         return local_bucket
 
-    def parse_request(self) -> bool:
-        """Refuse requests once the owning server retired its role.
-
-        A role handover (slave seeder -> master on the same port) closes the
-        listener, but an established keep-alive connection would otherwise keep
-        being served by the old role's handler. ``P2PServer.stop()`` sets
-        ``stopping`` and closes those connections; this guard is the belt to that
-        braces so a late request is refused explicitly instead of mis-handled.
-        """
-        if not super().parse_request():
-            return False
-        if getattr(self.server, "stopping", False):
-            self._send_error_response(HTTP_SERVICE_UNAVAILABLE, "Server is shutting down")
-            return False
-        return True
-
     def _check_auth(self) -> bool:
         """Check authentication if P2P_KEY is configured."""
         p2p_key = CONFIG.get("P2P_KEY")
@@ -593,7 +587,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query, keep_blank_values=True)
+        query = _parse_request_query(self.path)
 
         if self._is_seeder():
             if path == ENDPOINT_HEALTH:
@@ -737,7 +731,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
 
         # Symlink creation (slave -> master): /api/v1/buckets/{bucket}/symlinks
         if path.endswith(ENDPOINT_SYMLINKS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            self._handle_symlink(parse_qs(urlparse(self.path).query))
+            self._handle_symlink(_parse_request_query(self.path))
             return
 
         # Delta apply (upload delta): /api/v1/buckets/{bucket}/files/delta/apply
@@ -747,7 +741,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
 
         # Create directory: /api/v1/buckets/{bucket}/dirs
         if path.endswith(ENDPOINT_DIRS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            query = parse_qs(urlparse(self.path).query)
+            query = _parse_request_query(self.path)
             self._handle_create_dir(query)
             return
 
@@ -860,7 +854,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
+        query = _parse_request_query(self.path)
 
         # Delete file: /api/v1/buckets/{bucket}/files?path=...
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
@@ -879,7 +873,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
+        query = _parse_request_query(self.path)
 
         # Permission-only change: /api/v1/buckets/{bucket}/files/permissions
         if path.endswith(ENDPOINT_FILES_PERMISSIONS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
@@ -1592,8 +1586,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
             # Validate range
             if start < 0 or start >= file_size:
                 return None
-            if end > file_size:
-                end = file_size
+            end = min(end, file_size)
             if start >= end:
                 return None
 
@@ -2081,8 +2074,7 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
             raw_corrected = form_fields.get("corrected_mtime", "0")
             try:
                 incoming_corrected = int(raw_corrected)
-                if incoming_corrected < 0:
-                    incoming_corrected = 0
+                incoming_corrected = max(incoming_corrected, 0)
             except (ValueError, TypeError):
                 incoming_corrected = 0
             if incoming_corrected > 0:
@@ -2315,17 +2307,163 @@ class P2PRequestHandler(BaseHTTPRequestHandler):
             self._discard_temp_artifact(literal_path, raw_file)
 
 
+class _AiohttpTransport(P2PEndpointMixin):
+    """aiohttp transport for the P2P data plane.
+
+    Runs the endpoint mixin synchronously on a worker thread (the data plane is
+    blocking: file IO, sha256, zstd) and bridges its ``BaseHTTPRequestHandler``
+    surface to aiohttp: ``send_response``/``send_header``/``end_headers`` build
+    and prepare a :class:`aiohttp.web.StreamResponse`; ``wfile.write`` streams
+    the body; ``rfile.read`` pulls from the request body. Every bridge call
+    blocks the worker thread while the event loop performs the async operation,
+    so the endpoint bodies keep their exact per-request semantics.
+    """
+
+    server: _ServingContext  # type: ignore[assignment]
+
+    def __init__(
+        self, request: web.Request, loop: asyncio.AbstractEventLoop, context: _ServingContext
+    ) -> None:
+        self._request = request
+        self._loop = loop
+        self.server = context
+        self.path = request.rel_url.raw_path_qs
+        self.headers = request.headers  # type: ignore[assignment]
+        remote = request.remote or ""
+        self.client_address = (remote, 0)
+        self.close_connection = False
+        self._status = 0
+        self._out_headers: list[tuple[str, str]] = []
+        self._response: web.StreamResponse | None = None
+        self._prepared = False
+        self._written = 0
+        self._declared_length: int | None = None
+
+    # -- BaseHTTPRequestHandler surface ------------------------------------
+
+    def address_string(self) -> str:
+        return self.client_address[0]
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self._status = int(code)
+
+    def send_header(self, keyword: str, value: str) -> None:
+        self._out_headers.append((str(keyword), str(value)))
+        if str(keyword).lower() == "content-length":
+            with contextlib.suppress(ValueError):
+                self._declared_length = int(value)
+
+    def end_headers(self) -> None:
+        response = web.StreamResponse(status=self._status or HTTP_OK)
+        for name, value in self._out_headers:
+            response.headers[name] = value
+        if self.close_connection:
+            response.force_close()
+        self._loop_run(response.prepare(self._request))
+        self._response = response
+        self._prepared = True
+
+    @property
+    def wfile(self) -> _AiohttpTransport:  # type: ignore[override]
+        return self
+
+    def write(self, data: bytes) -> None:
+        if self._response is None:
+            raise RuntimeError("response body written before end_headers()")
+        self._loop_run(self._response.write(bytes(data)))
+        self._written += len(data)
+
+    def flush(self) -> None:
+        pass
+
+    @property
+    def rfile(self) -> _AiohttpTransport:  # type: ignore[override]
+        return self
+
+    def read(self, size: int = -1) -> bytes:
+        """Read exactly *size* bytes (or until EOF), like ``rfile.read``.
+
+        aiohttp's ``StreamReader.read(n)`` returns as soon as *some* data is
+        buffered, while the endpoint mixin is written against
+        ``BaseHTTPRequestHandler.rfile`` and relies on an exact read; looping
+        keeps the framing semantics identical and avoids spurious "incomplete
+        request body" failures on a segmented transfer.
+        """
+        if size is None or size < 0:
+            return self._loop_run(self._request.content.read())
+        chunks: list[bytes] = []
+        remaining = size
+        while remaining > 0:
+            chunk = self._loop_run(self._request.content.read(remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    # -- Driver -------------------------------------------------------------
+
+    def _loop_run(self, coro, timeout: float | None = None):
+        """Run *coro* on the event loop from this worker thread and block.
+
+        Bounded by ``P2P_HANDLER_IDLE_TIMEOUT_S`` (the shared per-request idle
+        timeout) so a peer that stalls mid-body or stops reading a response
+        cannot pin a worker slot forever (slowloris). On timeout the coroutine is
+        cancelled and ``TimeoutError`` propagates, aborting the request and
+        closing the connection.
+        """
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return future.result(
+                timeout=float(P2P_HANDLER_IDLE_TIMEOUT_S if timeout is None else timeout)
+            )
+        except FutureTimeoutError:
+            future.cancel()
+            raise TimeoutError("P2P request I/O timed out") from None
+
+    def dispatch(self) -> None:
+        """Run the mixin dispatcher for this request's method (worker thread)."""
+        handler = getattr(self, f"do_{self._request.method}", None)
+        if handler is None:
+            self._send_method_not_allowed()
+            return
+        handler()
+
+    async def finalize(self) -> web.StreamResponse:
+        """Complete the bridged response once the worker thread returned."""
+        if not self._prepared:
+            raise web.HTTPInternalServerError(text="P2P handler produced no response")
+        response = self._response
+        assert response is not None
+        # Use the length the handler actually declared: a response that framed
+        # itself with a length and wrote fewer bytes is a mid-stream truncation
+        # (e.g. the file changed while serving) and must close, never be left
+        # framed as if complete. A response without an explicit length is
+        # aiohttp-framed and finalized normally.
+        declared = self._declared_length
+        try:
+            if declared is not None and self._written != declared:
+                response.force_close()
+                return response
+            await response.write_eof()
+        except (ConnectionResetError, RuntimeError, TimeoutError):
+            response.force_close()
+        return response
+
+
 # =============================================================================
 # P2P Server
 # =============================================================================
 
 
 class P2PServer:
-    """
-    Embedded HTTP/HTTPS server for P2P master mode.
+    """Unified HTTPS/WSS listener for the P2P serving role.
 
-    Runs in a background thread and serves the hsync API to peer clients.
-    Supports both HTTP and HTTPS (with self-signed certificates).
+    One TLS listener serves the whole data plane: a single aiohttp application
+    runs the endpoint mixin on a bounded worker pool. The serving role
+    (``master``/``seeder``) is installed at runtime with :meth:`configure_role`
+    and retired with :meth:`stop_serving`, without closing or rebinding the
+    socket.
     """
 
     def __init__(
@@ -2340,12 +2478,14 @@ class P2PServer:
         mode: P2PServerMode = P2PServerMode.master,
         bucket: str | None = None,
         peer_read_cap: int = 2,
+        websocket_server: P2PWebSocketServer | None = None,
     ) -> None:
         """
         Initialize the P2P server.
 
         Args:
-            port: Port to listen on.
+            port: Port to listen on (``0`` = OS-assigned; read it back from
+                :attr:`port` after :meth:`start`).
             use_https: Whether to use HTTPS instead of HTTP.
             cert_file: Path to SSL certificate file (required if use_https=True).
             key_file: Path to SSL private key file (required if use_https=True).
@@ -2356,21 +2496,44 @@ class P2PServer:
                 test usage) disables the check.
         """
         self._port = port
+        self._actual_port = port
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
         self._cid_guard = cid_guard
+        # Stable reference kept across role changes: the seeder installs
+        # ``cid_guard=None`` in its context, but the shared registry must survive
+        # so a later master role still enforces duplicate-identity checks.
+        self._registry = cid_guard
         self._inventory_store = inventory_store
         self._source_service = source_service
         if peer_read_cap < 1:
             raise ValueError("peer_read_cap must be at least 1")
-        self._mode = mode
+        self._peer_read_cap = peer_read_cap
         self._bucket = bucket or str(CONFIG.get("REMOTE_BUCKET", ""))
+        self._websocket_server = websocket_server
         self._peer_read_slots = (
             threading.BoundedSemaphore(peer_read_cap) if mode is P2PServerMode.seeder else None
         )
-        self._server: BoundedThreadingHTTPServer | None = None
+        # The serving context is swapped as a single object, so a request always
+        # reads one coherent role (mode + its bucket/guard/service/semaphore).
+        self._serving_context: _ServingContext | None = _ServingContext(
+            mode=mode,
+            bucket=self._bucket,
+            peer_read_slots=self._peer_read_slots,
+            cid_guard=self._cid_guard,
+            source_service=self._source_service,
+            inventory_store=self._inventory_store,
+        )
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._runner: web.AppRunner | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        # In-flight request bound (created on the listener loop); see _serve.
+        self._dispatch_slots: asyncio.Semaphore | None = None
+        self._stop_event: asyncio.Event | None = None
         self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._start_error: BaseException | None = None
         self._running = False
 
         # Validate HTTPS configuration
@@ -2379,8 +2542,8 @@ class P2PServer:
 
     @property
     def port(self) -> int:
-        """Get the server port."""
-        return self._port
+        """The actual bound port (resolved from the OS when ``port=0``)."""
+        return self._actual_port
 
     @property
     def use_https(self) -> bool:
@@ -2393,6 +2556,11 @@ class P2PServer:
         return self._cid_guard
 
     @property
+    def registry(self) -> SlaveCidRegistry | None:
+        """The stable duplicate-identity registry, unchanged across roles."""
+        return self._registry
+
+    @property
     def inventory_store(self) -> P2PInventoryStore | None:
         """Role-owned inventory store shared with the WSS server."""
         return self._inventory_store
@@ -2403,8 +2571,87 @@ class P2PServer:
         return self._source_service
 
     @property
-    def mode(self) -> P2PServerMode:
-        return self._mode
+    def mode(self) -> P2PServerMode | None:
+        """The current serving role, or ``None`` when the listener is not serving.
+
+        Derived from the serving context so a yielded master can never report a
+        stale role (the context is the single source of truth, ADR-0027).
+        """
+        context = self._serving_context
+        return context.mode if context is not None else None
+
+    @property
+    def websocket_server(self) -> P2PWebSocketServer | None:
+        """The realtime control plane sharing this listener (``None`` if none)."""
+        return self._websocket_server
+
+    def configure_role(
+        self,
+        mode: P2PServerMode,
+        *,
+        bucket: str,
+        cid_guard: SlaveCidRegistry | None,
+        source_service: P2PSourceService | None,
+        inventory_store: P2PInventoryStore | None,
+        peer_read_cap: int,
+    ) -> None:
+        """Install a serving role and its context atomically.
+
+        The listener is bound once for the process lifetime; a role change only
+        swaps the serving context. The whole context (mode + fields) is built
+        first and installed with a single assignment, so a concurrent request
+        reads either the old role or the new one — never a torn mix (ADR-0027).
+        The seeder rebuilds its own bounded read semaphore; the master has none.
+        """
+        if peer_read_cap < 1:
+            raise ValueError("peer_read_cap must be at least 1")
+        self._bucket = bucket
+        self._cid_guard = cid_guard
+        self._source_service = source_service
+        self._inventory_store = inventory_store
+        self._peer_read_cap = peer_read_cap
+        self._peer_read_slots = (
+            threading.BoundedSemaphore(peer_read_cap) if mode is P2PServerMode.seeder else None
+        )
+        self._serving_context = _ServingContext(
+            mode=mode,
+            bucket=bucket,
+            peer_read_slots=self._peer_read_slots,
+            cid_guard=cid_guard,
+            source_service=source_service,
+            inventory_store=inventory_store,
+        )
+        # A role that serves events re-opens the control plane's push gate
+        # (symmetric with stop_serving): the hub may have been left gated by an
+        # earlier yield on this same reused listener.
+        if mode is P2PServerMode.master and self._websocket_server is not None:
+            self._websocket_server.set_publishing(True)
+
+    def stop_serving(self) -> Future[None] | None:
+        """Retire the serving role without touching the listening socket.
+
+        The listener stays bound but stops serving: the control plane's publish
+        gate closes **first** (no event slips out during the yield window), every
+        new request is refused with 503, and **live WebSocket clients are
+        closed** (ADR-0027). The swap is a single assignment of the serving
+        context, so a request either sees the old role or gets refused, never a
+        mix. Roles are installed with :meth:`configure_role`; this only retires
+        one. Returns the client-close completion future so a caller can wait for
+        the consumers to be gone before releasing shared state.
+        """
+        close_future: Future[None] | None = None
+        if self._websocket_server is not None:
+            # Close the push gate before retiring the role: a broadcast already
+            # queued by the watcher must not reach a live client.
+            self._websocket_server.set_publishing(False)
+        self._serving_context = None
+        if self._websocket_server is not None:
+            close_future = self._websocket_server.close_clients()
+        return close_future
+
+    def _context(self) -> _ServingContext | None:
+        """The current serving context, or ``None`` when the node is not serving."""
+        return self._serving_context
 
     def close_inventory(self) -> None:
         """Close SQLite after HTTP and WSS consumers have stopped."""
@@ -2413,80 +2660,213 @@ class P2PServer:
         if store is not None:
             store.close()
 
-    def start(self) -> None:
-        """Start the server in a background thread."""
-        import ssl
+    def reset_delta_state(self) -> None:
+        """Drop parked delta payloads/tokens (called on every role yield, ADR-0027).
 
+        The listener is reused across roles, so the previous role's delta tokens
+        and temporary payloads must not survive into the next one.
+        """
+        from hsync_client.p2p_delta import reset_delta_p2p_state
+
+        reset_delta_p2p_state()
+
+    # -- Lifecycle ----------------------------------------------------------
+
+    def start(self) -> None:
+        """Bind the TLS listener and start serving in a background thread.
+
+        Returns once the socket is bound: :attr:`port` is the real port. A bind
+        failure propagates synchronously instead of leaving a half-started
+        server (no silent degraded serving).
+        """
         if self._running:
             log.warning("P2P server already running")
             return
 
-        server = BoundedThreadingHTTPServer(
-            ("0.0.0.0", self._port), P2PRequestHandler, max_threads=P2P_SERVER_MAX_THREADS
-        )
-        self._server = server
-        # Expose the shared duplicate-identity guard to the request handlers.
-        self._server.cid_guard = self._cid_guard
-        self._server.source_service = self._source_service
-        self._server.mode = self._mode
-        self._server.bucket = self._bucket
-        self._server.peer_read_slots = self._peer_read_slots
-        # Daemonize per-request threads so they don't block process shutdown
-        self._server.daemon_threads = True
-        # Cap the socket backlog so excess connections queue (bounded) instead
-        # of being accepted immediately and consuming a thread slot.
-        self._server.request_queue_size = P2P_SERVER_MAX_THREADS
+        self._ready.clear()
+        self._start_error = None
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._ready.wait()
+        if self._start_error is not None:
+            error = self._start_error
+            self._thread.join(timeout=5)
+            self._loop = None
+            self._thread = None
+            raise error
 
+        self._running = True
+        protocol = "HTTPS" if self._use_https else "HTTP"
+        role = "seeder" if self.mode is P2PServerMode.seeder else "master server"
+        log.info(f"P2P {role} started on port {self._actual_port} ({protocol})")
+
+    def _run(self) -> None:
+        """Event-loop thread entry point."""
+        loop = self._loop
+        assert loop is not None
+        asyncio.set_event_loop(loop)
         try:
-            # Wrap socket with SSL if HTTPS is enabled
+            loop.run_until_complete(self._serve())
+        except BaseException as exc:  # bind/setup failure before readiness
+            if not self._ready.is_set():
+                self._start_error = exc
+                self._ready.set()
+        finally:
+            # The listener thread owns its loop: close it here, after _serve has
+            # drained the worker pool, and only then drop the reference.
+            with contextlib.suppress(Exception):
+                loop.close()
+            if self._loop is loop:
+                self._loop = None
+
+    async def _serve(self) -> None:
+        assert self._loop is not None
+        app = web.Application(client_max_size=0)
+        # Always register the canonical realtime route: when no control plane is
+        # attached (a read-only seeder) or the node is not serving, it answers
+        # 503 rather than falling through to the REST router as a 404.
+        app.router.add_get(WS_EVENTS_PATH, self._handle_websocket)
+        app.router.add_route("*", "/{tail:.*}", self._handle_http)
+        executor = ThreadPoolExecutor(
+            max_workers=P2P_SERVER_MAX_THREADS, thread_name_prefix="p2p-http"
+        )
+        self._executor = executor
+        # Bound in-flight requests, not just worker threads: aiohttp accepts
+        # connections eagerly while the executor's queue is unbounded, so excess
+        # requests wait here instead of growing memory and sockets without limit.
+        self._dispatch_slots = asyncio.Semaphore(P2P_SERVER_MAX_THREADS)
+        # Access logging stays off (the endpoint layer logs what matters) and the
+        # idle keep-alive timeout is the shared handler reap window.
+        self._runner = web.AppRunner(
+            app, access_log=None, keepalive_timeout=float(P2P_HANDLER_IDLE_TIMEOUT_S)
+        )
+        try:
+            await self._runner.setup()
+
+            ssl_context: ssl.SSLContext | None = None
             if self._use_https:
                 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                 ssl_context.load_cert_chain(
                     self._cert_file,  # type: ignore[arg-type]
                     self._key_file,  # type: ignore[arg-type]
                 )
-                self._server.socket = ssl_context.wrap_socket(
-                    self._server.socket,
-                    server_side=True,
-                )
-                protocol = "HTTPS"
-            else:
-                protocol = "HTTP"
+
+            # The WebSocket control plane shares this listener's loop.
+            if self._websocket_server is not None:
+                self._websocket_server.set_loop(self._loop)
+
+            # Bind first and read the port back: an OS-assigned (port 0) or a
+            # configured port is resolved from the real socket, never guessed.
+            sock = socket.create_server(("0.0.0.0", self._port))
+            self._actual_port = int(sock.getsockname()[1])
+            if self._websocket_server is not None:
+                self._websocket_server.set_port(self._actual_port)
+            site = web.SockSite(self._runner, sock, ssl_context=ssl_context)
+            await site.start()
         except BaseException:
-            server.server_close()
-            self._server = None
+            # Bind/setup failed before readiness: release the runner (which
+            # closes the site socket) and the worker pool so start() raising
+            # leaks nothing.
+            with contextlib.suppress(Exception):
+                await self._runner.cleanup()
+            self._runner = None
+            executor.shutdown(wait=False)
+            if self._executor is executor:
+                self._executor = None
+            self._dispatch_slots = None
             raise
 
-        self._thread = threading.Thread(target=self._serve, daemon=True)
-        self._thread.start()
-        self._running = True
-        role = "seeder" if self._mode is P2PServerMode.seeder else "master server"
-        log.info(f"P2P {role} started on port {self._port} ({protocol})")
-
-    def _serve(self) -> None:
-        """Server loop (runs in background thread)."""
-        if self._server:
-            self._server.serve_forever()
+        self._stop_event = asyncio.Event()
+        self._ready.set()
+        await self._stop_event.wait()
+        await self._runner.cleanup()
+        self._runner = None
+        # Drain in-flight workers WITHOUT parking the event loop: a worker
+        # blocked in ``_loop_run`` needs this same loop to run its coroutine, so
+        # a blocking ``shutdown(wait=True)`` here would stall it until its I/O
+        # timeout. The reference is cleared only once the drain completed.
+        await asyncio.to_thread(executor.shutdown, True)
+        if self._executor is executor:
+            self._executor = None
+        self._dispatch_slots = None
 
     def stop(self) -> None:
-        """Stop the server."""
+        """Stop serving and close the listener."""
         if not self._running:
             return
 
-        if self._server:
-            # Mark first: a request that slips in on an in-flight keep-alive
-            # connection must be refused, never handled under the retired role.
-            self._server.stopping = True
-            self._server.shutdown()
-            self._server.server_close()
-            self._server.close_active_connections()
+        # Retire the serving role first: new requests are refused (503) and live
+        # control-plane clients are closed, so nothing is served while the
+        # listener is torn down.
+        self.stop_serving()
 
-        if self._mode is P2PServerMode.master:
-            # Reap any parked delta literal payloads tied to the master lifetime.
-            from hsync_client.p2p_delta import reset_delta_p2p_state
+        if self._loop is not None and self._stop_event is not None:
+            self._loop.call_soon_threadsafe(self._stop_event.set)
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=10)
 
-            reset_delta_p2p_state()
+        # Reap any parked delta literal payloads tied to the listener lifetime
+        # (idempotent; also covers a node that yielded before stopping).
+        from hsync_client.p2p_delta import reset_delta_p2p_state
+
+        reset_delta_p2p_state()
 
         self._running = False
-        role = "seeder" if self._mode is P2PServerMode.seeder else "master server"
+        role = "seeder" if self.mode is P2PServerMode.seeder else "master server"
         log.info(f"P2P {role} stopped")
+
+        if thread is not None and thread.is_alive():
+            # The listener thread is still draining an in-flight worker and owns
+            # its loop/runner/executor: let it finish its own teardown instead of
+            # nulling the references it still needs.
+            log.warning("P2P server thread is still draining; teardown left to the listener")
+            return
+
+        self._loop = None
+        self._runner = None
+        self._executor = None
+        self._dispatch_slots = None
+        self._stop_event = None
+        self._thread = None
+
+    # -- Request handling ---------------------------------------------------
+
+    async def _handle_http(self, request: web.Request) -> web.StreamResponse:
+        """Bridge one aiohttp request onto the endpoint mixin (worker thread)."""
+        context = self._context()
+        executor = self._executor
+        slots = self._dispatch_slots
+        if context is None or executor is None or slots is None:
+            raise web.HTTPServiceUnavailable(text="P2P server is not serving")
+        loop = asyncio.get_running_loop()
+        transport = _AiohttpTransport(request, loop, context)
+        try:
+            # Wait for a dispatch slot before enqueuing: the executor's queue is
+            # unbounded, so this is what caps in-flight work under a peer flood.
+            async with slots:
+                await loop.run_in_executor(executor, transport.dispatch)
+        except (ConnectionError, TimeoutError) as exc:
+            # Routine peer teardown (reset/broken pipe) or an I/O timeout is not
+            # a handler crash: log it at debug and let finalize() end the request.
+            log.debug(f"P2P request ended early ({request.method} {request.path}): {exc}")
+        except Exception:
+            log.exception("P2P request handler crashed")
+        return await transport.finalize()
+
+    async def _handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
+        """Serve the canonical realtime-events channel on the unified listener.
+
+        Only the ``master`` serving state exposes the control plane; a yielded
+        master (or a seeder) refuses the upgrade so no peer can keep receiving
+        events through a retired role (ADR-0027).
+        """
+        context = self._context()
+        if (
+            context is None
+            or context.mode is not P2PServerMode.master
+            or self._websocket_server is None
+        ):
+            raise web.HTTPServiceUnavailable(text="P2P realtime channel is not available")
+        return await self._websocket_server.handle(request)

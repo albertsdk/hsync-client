@@ -208,9 +208,9 @@ class FingerprintHTTPAdapter(HTTPAdapter):
     """``requests`` adapter that pins the peer certificate by SHA-256 fingerprint.
 
     Binds the fingerprint check to the very connection that carries the request
-    via urllib3's ``assert_fingerprint``, eliminating the TOCTOU window of the
-    old "probe the cert on a separate connection, then request with
-    ``verify=False``" pattern. The certificate chain and hostname are
+    via urllib3's ``assert_fingerprint``, eliminating the TOCTOU window of
+    probing the cert on a separate connection and then requesting with
+    ``verify=False``. The certificate chain and hostname are
     intentionally not validated: trust is established solely by the pinned
     fingerprint (TOFU), which is the P2P identity model.
     """
