@@ -35,6 +35,16 @@ _BB_SERVER_REASON = "Black-box server-mode tests require HSYNC_BB_SERVER=1"
 
 pytestmark = pytest.mark.skipif(not _BB_SERVER_ENABLED, reason=_BB_SERVER_REASON)
 
+# A poll that re-downloads a file the client is concurrently *replacing* can
+# observe a truncated response: the server stats the file and then streams it,
+# so an upload landing in between leaves ``Content-Length`` and the sent bytes
+# disagreeing (``IncompleteRead`` → ``ChunkedEncodingError``). That is the same
+# transient GET failure the real client retries, so the poll must treat it as
+# "not yet" and keep using its own timeout instead of aborting the wait.
+_TRANSIENT_DOWNLOAD_ERRORS: tuple[type[BaseException], ...] = (
+    requests.exceptions.RequestException,
+)
+
 
 def _client_log_path(local_dir: str) -> str:
     """The log file path the client writes via ``--log-file`` (loguru sink)."""
@@ -316,6 +326,7 @@ class TestContinuousSync:
             assert _wait_for(
                 lambda: bb_server_download(bb_bucket, filename) == content_v2,
                 timeout=30,
+                ignore=_TRANSIENT_DOWNLOAD_ERRORS,
             ), (
                 "Modified local file was not re-uploaded to the server.\n"
                 f"{s.ctx}\n--- client log tail ---\n{_watch_client_log_tail(log_path)}"

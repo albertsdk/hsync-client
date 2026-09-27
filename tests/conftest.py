@@ -900,14 +900,34 @@ def _watch_client_log_tail(log_path: str, limit: int = 8192) -> str:
         return "<client log unavailable>"
 
 
-def _wait_for(predicate, timeout: float = 30.0, interval: float = 0.3) -> bool:
-    """Poll *predicate* until it returns truthy, or return False on timeout."""
+def _wait_for(
+    predicate,
+    timeout: float = 30.0,
+    interval: float = 0.3,
+    ignore: tuple[type[BaseException], ...] = (),
+) -> bool:
+    """Poll *predicate* until it returns truthy, or return False on timeout.
+
+    ``ignore`` lists exception types that mean "not yet" rather than "failed":
+    a predicate that observes the system *mid-transition* must keep polling
+    within its own timeout instead of aborting the test. The motivating case is
+    a download racing the upload that replaces the file it reads — the server
+    stats a file and then streams it, so a concurrent replace makes
+    ``Content-Length`` and the bytes sent disagree and the client sees a
+    truncated response (``IncompleteRead``). The client retries such a GET, so a
+    black-box poll must treat it the same way; the final assertion still fails
+    with its diagnostic when the timeout expires. An empty tuple (the default)
+    lets every exception propagate, preserving the original behaviour.
+    """
     import time
 
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if predicate():
-            return True
+        try:
+            if predicate():
+                return True
+        except ignore:
+            pass
         time.sleep(interval)
     return False
 
