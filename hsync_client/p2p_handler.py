@@ -574,6 +574,24 @@ def _run_as_master(
         ready_delay = float(os.environ.get("HSYNC_BB_MASTER_READY_DELAY", "0") or "0")
         if ready_delay > 0:
             time.sleep(ready_delay)
+        # A peer may have won the election while this node was starting up: a
+        # --force-master peer that joined after we self-elected but before we
+        # advertised server_ready (or an earlier-started peer that was only just
+        # announced). Advertising the incumbency now would out-rank that winner —
+        # server_ready beats force_master — and re-elect this node, so two nodes
+        # would serve the same bucket and a later crash-failover could never
+        # converge on a single successor. Yield instead of claiming readiness:
+        # returning here lets the caller's yield path retire the serving role and
+        # revoke the incumbency (ADR-0027). An already-serving incumbent never
+        # reaches this point (the block runs on the first activation only), so
+        # the "a serving incumbent keeps the role" rule is unchanged.
+        if not peer_manager.is_master():
+            log.info(
+                "Mastership changed while starting up (master: "
+                f"{peer_manager.get_master_cid() or 'no eligible peer'}); not "
+                "advertising server_ready so the winner keeps the role."
+            )
+            return p2p_server, p2p_ws_server
         p2p_sync.update_server_ready()
         # Bootnode plan only: the master is reachable across networks only once
         # its endpoint has been published to the bootnode (UPnP ok or public IP
