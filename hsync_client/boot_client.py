@@ -56,6 +56,7 @@ __all__ = [
     "BootnodeError",
     "BootnodeFingerprintMismatch",
     "BootnodeProtocolError",
+    "BootnodeRefused",
     "BootnodeUnreachable",
     "build_leave_frame",
     "build_query_frame",
@@ -78,6 +79,25 @@ class BootnodeUnreachable(BootnodeError):
 
 class BootnodeProtocolError(BootnodeError):
     """The bootnode answered with something that violates ``boot/1``."""
+
+
+class BootnodeRefused(BootnodeError):
+    """The node answered ``register``/``refresh`` with a uniform refusal frame.
+
+    ``boot/1`` replies to a rate-limited (or token-refused) ``register``/
+    ``refresh`` with the same ``response`` frame it uses for ``query`` refusals
+    (``{peers: [], count: 0, error: "rate_limited"|"token_required"}``). That is
+    a legitimate protocol outcome, not a contract violation and not a transport
+    failure: the lease loop must keep its state and retry at its normal cadence
+    instead of re-registering from scratch (which would only deepen the rate
+    limit). ``retry_after`` is the node's advisory backoff, in seconds.
+    """
+
+    def __init__(self, error: str, retry_after: int | None = None) -> None:
+        detail = f" (retry after {retry_after}s)" if retry_after else ""
+        super().__init__(f"{error}{detail}")
+        self.error = error
+        self.retry_after = retry_after
 
 
 class BootnodeFingerprintMismatch(BootnodeError):
@@ -141,28 +161,67 @@ class BootnodeClient:
         return parsed
 
     def _ack_exchange(self, frame: BootRegister | BootRefresh) -> BootAck | None:
-        raw = self._exchange(frame, expect="ack")
+        raw = self._exchange(frame, expect="ack", refusal=True)
         if raw is None:
             return None
+        if raw["type"] == "response":
+            # A uniform refusal (rate limit / token) is a valid boot/1 answer to
+            # register/refresh — surface it as such instead of a contract error.
+            raise BootnodeRefused(raw["error"], raw.get("retry_after"))
         parsed = validate_boot_ack(raw)
         if parsed is None:
             raise BootnodeProtocolError("malformed ack frame")
         return parsed
 
-    def _exchange(self, frame: Mapping[str, Any], *, expect: str | None) -> dict | None:
-        """Run one request/response session on a fresh QUIC stream."""
+    def _exchange(
+        self,
+        frame: Mapping[str, Any],
+        *,
+        expect: str | None,
+        refusal: bool = False,
+    ) -> dict | None:
+        """Run one request/response session on a fresh QUIC stream.
+
+        ``refusal`` accepts the uniform ``response`` refusal frame the node uses
+        for rate-limited / token-refused ``register``/``refresh`` (the caller
+        maps it to :class:`BootnodeRefused`); any other unexpected reply type is
+        still a contract violation.
+        """
         validated = validate_boot_frame(frame)
         if validated is None:
             raise BootnodeProtocolError(f"refusing to send an invalid {frame.get('type')!r} frame")
         payload = json.dumps(validated, separators=(",", ":")).encode("utf-8")
         try:
-            return asyncio.run(self._exchange_async(payload, expect=expect))
+            raw = asyncio.run(self._exchange_async(payload, expect=expect))
         except BootnodeError:
             raise
         except OSError as exc:
             # ConnectionError/TimeoutError/ssl.SSLError are all OSError subclasses;
             # aioquic's ConnectionError often carries no text, hence _unreachable.
             raise _unreachable(self.host, self.port, exc) from exc
+        return self._check_reply(raw, expect=expect, refusal=refusal)
+
+    @staticmethod
+    def _check_reply(raw: dict | None, *, expect: str | None, refusal: bool) -> dict | None:
+        """Enforce the reply contract of one exchange (pure, no network).
+
+        An unexpected reply type is a contract violation, with one exception: a
+        *validated* uniform refusal ``response``, which ``boot/1`` also uses to
+        answer a rate-limited / token-refused ``register``/``refresh`` (the
+        caller maps it to :class:`BootnodeRefused`). A malformed ``response`` is
+        still rejected.
+        """
+        if raw is None:
+            return None
+        reply_type = raw.get("type")
+        if reply_type != expect:
+            refusal_frame = (
+                validate_boot_response(raw) if refusal and reply_type == "response" else None
+            )
+            if refusal_frame is None or "error" not in refusal_frame:
+                raise BootnodeProtocolError(f"expected a {expect!r} frame, got {reply_type!r}")
+            return refusal_frame
+        return raw
 
     async def _exchange_async(self, payload: bytes, *, expect: str | None) -> dict | None:
         configuration = self._quic_configuration()
@@ -200,9 +259,6 @@ class BootnodeClient:
             raise BootnodeProtocolError("reply is not valid JSON") from exc
         if not isinstance(decoded, dict):
             raise BootnodeProtocolError("reply is not a JSON object")
-        reply_type = decoded.get("type")
-        if reply_type != expect:
-            raise BootnodeProtocolError(f"expected a {expect!r} frame, got {reply_type!r}")
         return decoded
 
     def _quic_configuration(self) -> QuicConfiguration:
@@ -300,8 +356,20 @@ def build_register_frame(
     capacity: int = 0,
     endpoints: list[dict[str, Any]] | None = None,
     connected: int | None = None,
+    server_ready: bool = False,
+    force_master: bool = False,
+    never_master: bool = False,
+    startup_time: float = 0.0,
+    sync_direction: str = "bidirectional",
 ) -> BootRegister:
-    """Build a ``register`` frame (validated against the mirror before send)."""
+    """Build a ``register`` frame (validated against the mirror before send).
+
+    ``server_ready``/``force_master``/``never_master``/``startup_time``/
+    ``sync_direction`` are the election advertisement the node relays verbatim
+    in its ``query`` peers (the same values the mDNS TXT record carries), so a
+    bootnode-discovered peer ranks in the master election exactly like a
+    LAN-discovered one.
+    """
     frame = BootRegister(
         protocol_version=PROTOCOL_VERSION_BOOT,
         type="register",
@@ -311,6 +379,11 @@ def build_register_frame(
         version=version,
         capacity=capacity,
         endpoints=list(endpoints or []),
+        server_ready=server_ready,
+        force_master=force_master,
+        never_master=never_master,
+        startup_time=startup_time,
+        sync_direction=sync_direction,
     )
     if group is not None:
         frame["group"] = group

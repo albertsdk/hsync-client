@@ -533,9 +533,20 @@ sequenceDiagram
 p2p mode uses mDNS (Multicast DNS) for peer discovery:
 
 - **Service Type**: `_hsync._tcp.local.`
-- **TXT Records**: `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
-  `never_master`, `group`, `delta`, `peer_download`
+- **TXT Records**: the canonical key set of the
+  [p2p protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md)
+  (`P2P_TXT_KEYS`) — `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
+  `server_ready`, `force_master`, `never_master`, `startup_time`, `group`,
+  `delta`, `peer_download`, `connected`, `compression`, `https` — boolean flags
+  only when true
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
+
+When the group uses a bootnode instead, the same election inputs (`server_ready`,
+`force_master`, `never_master`, `startup_time`, `sync_direction`) travel in the
+`register` frame and come back on every relayed peer of a `query`, so the master
+election is identical in both discovery plans. They are unauthenticated hints,
+exactly like the TXT flags: the data plane pins the peer certificate before any
+file is exchanged.
 
 The `delta` TXT record is advertised only when delta transfer is enabled
 (`HSYNC_DELTA_ENABLED=true`, the default). Peers parse this flag to determine

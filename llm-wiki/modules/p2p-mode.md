@@ -14,10 +14,10 @@ SSOT in `hsync-common`.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `run_p2p_mode` | `p2p_handler.py:109` | start discovery, elect, branch to role; kicks off the background SNTP clock-offset probe (`timesync.start_ntp_clock_offset_probe`) so discovery never waits on an external time source |
-| `_run_as_master` | `:273` | start the `P2PServer` (HTTPS REST + WSS on **one** port, with `P2PWebSocketServer` attached as the canonical `/api/v1/buckets/{bucket}/events/{cid}` route) + watcher; **readiness threshold**: after the listener is bound and `update_server_ready()` ran, it logs `[READY] Master ready — serving …`. On `WatcherStartError` (the watcher could not start even on the polling fallback, see [modules/sync-core.md](sync-core.md) "Watcher lifecycle") it does NOT advertise `server_ready` and backs off `WATCHER_START_RETRY_DELAY_S` before the discovery loop retries |
-| `_run_as_slave` | `:418` | TOFU-pin master, refresh tuning, then connect + sync; on `WatcherStartError` it backs off `WATCHER_START_RETRY_DELAY_S` before re-entering the discovery loop (a kernel limit never clears at the normal cadence) |
-| `_evaluate_master_pin` | `:377` | apply pin decision before slave connect |
-| `_refresh_p2p_network_tuning` | `:107` | re-derive autotune-managed keys from real master RTT (slave, post-discovery) |
+| `_run_as_master` | `:458` | start the `P2PServer` (HTTPS REST + WSS on **one** port, with `P2PWebSocketServer` attached as the canonical `/api/v1/buckets/{bucket}/events/{cid}` route) + watcher; **readiness threshold**: after the listener is bound, the watcher is running and `update_server_ready()` ran, it logs `[READY] Master ready — serving …`. It re-checks `peer_manager.is_master()` first and yields instead of advertising readiness when a peer won during the startup window (a loser that advertised `server_ready` would out-rank the winner and re-serve the same bucket — see [decisions.md](../decisions.md)). On `WatcherStartError` (the watcher could not start even on the polling fallback, see [modules/sync-core.md](sync-core.md) "Watcher lifecycle") it does NOT advertise `server_ready` and backs off `WATCHER_START_RETRY_DELAY_S` before the discovery loop retries |
+| `_run_as_slave` | `:710` | TOFU-pin master, refresh tuning, then connect + sync; on `WatcherStartError` it backs off `WATCHER_START_RETRY_DELAY_S` before re-entering the discovery loop (a kernel limit never clears at the normal cadence) |
+| `_evaluate_master_pin` | `:628` | apply pin decision before slave connect |
+| `_refresh_p2p_network_tuning` | `:168` | re-derive autotune-managed keys from real master RTT (slave, post-discovery) |
 | `NO_MASTER_WARNING_TIMEOUT` | `:50` | warn when no master appears |
 
 ## Discovery & election (`p2p_peers.py`, `p2p_discovery*.py`)
@@ -275,12 +275,12 @@ peer state:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `BootnodeClient` | `boot_client.py:78` | synchronous `boot/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-boot/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
-| `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `boot_client.py:195`–`:269` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame) |
-| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeFingerprintMismatch` | `boot_client.py:65`–`:75` | transport failure vs contract violation vs pin/TOFU mismatch (fatal) |
+| `BootnodeClient` | `boot_client.py:118` | synchronous `boot/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-boot/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
+| `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `boot_client.py:348`–`:458` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame). `build_register_frame` always emits the election advertisement |
+| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeRefused` / `BootnodeFingerprintMismatch` | `boot_client.py:72`–`:110` | transport failure vs contract violation vs **uniform refusal** (`rate_limited`/`token_required` answered to `register`/`refresh`) vs pin/TOFU mismatch (fatal) |
 | `observed_address` | `stun.py:35` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
-| `BootnodeDiscovery` | `p2p_discovery_bootnode.py:64` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh), peer sample → `PeerManager`, `wait_for_discovery`. A `BootnodeFingerprintMismatch` stops the lease loop (never retried) |
+| `BootnodeDiscovery` | `p2p_discovery_bootnode.py:65` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh), peer sample → `PeerManager`, `wait_for_discovery`. A `BootnodeFingerprintMismatch` stops the lease loop (never retried). Registration republishes the election advertisement on every role change (`_republish_advert`, `:311`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `:427`) |
 | `candidate_endpoints` | `nat_traversal.py:43` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]` (observed → UPnP → local) |
 | `UpnpMapper` / `discover_igd` | `upnp.py:275` / `:74` | best-effort TCP port mapping for the master; every failure degrades to "no UPnP" (node stays slave-only) |
 | `get_local_ip` | `net_utils.py:27` | shared local-source-IP probe (mDNS advertiser, UPnP mapper, bootnode candidates) |
@@ -308,6 +308,37 @@ port (UPnP, if enabled) and sends a **second `register`** publishing
 `refresh` renews TTL + `connected` only; if the node drops the lease, the loop
 falls back to a full `register`. Relayed peers are fed to `PeerManager` only
 when `reachable` is true and `proto == "tcp"`; the local CID is never re-added.
+
+Election advertisement: every `register` carries the local
+`server_ready`/`force_master`/`never_master`/`startup_time`/`sync_direction`
+(decision #31 in `hsync-bootnode`), the node echoes them verbatim on every
+`query` peer, and `_peer_from_wire` maps **those** values into the shared
+election — the old fabrication (`server_ready=True`, `startup_time=0.0`,
+`never_master=False` for every reachable peer) made a read-only seeder look like
+a serving master, so a `--force-master` node demoted itself, a `--never-master`
+seeder became electable and the roles flapped. Roles now reach the bootnode two
+ways: `update_server_ready`/`update_server_not_ready` mirror the incumbency into
+the shared `PeerManager` (`set_local_server_ready`, exactly like
+`MdnsDiscovery._refresh_service`, otherwise a freshly relayed peer demotes the
+local master) *and* bump an advertisement generation; the lease loop notices the
+unsent generation and re-`register`s (`_republish_advert`) until the node
+acknowledged the new value, so a promotion/yield is visible immediately and a
+failed re-register retries instead of stranding a stale role. `refresh` never
+carries or mutates the advertisement (a change requires a new `register`, like
+`capacity`/`endpoints`). A **uniform refusal** (`{error: "rate_limited"|
+"token_required"}` in a `response`) is a legitimate `boot/1` answer to
+`register`/`refresh`: `BootnodeClient` raises `BootnodeRefused` for it (a
+`response` without a valid `error` stays a `BootnodeProtocolError`), and the
+lease loop keeps its state instead of resetting to a full register — the first
+refusal per error is logged at WARNING, repeats at DEBUG.
+
+Known limitation (pre-existing, unchanged by the advertisement work):
+`update_endpoint_ready(False)` (the seeder role stopping) does not re-`register`
+without `endpoints[]`/`capacity`, so the relayed endpoint can linger on the
+bootnode record until the next full `register` or the 60 s TTL. The advertised
+`server_ready=false` still keeps it from being ranked as an incumbent master,
+and the lane is a candidate-only advertisement; a peer that dials it gets a
+refusal from the unified listener and retries.
 
 `leave` has **no response frame** (spec): the client writes it and closes the
 stream without waiting for a reply. A black-box integration test
@@ -340,7 +371,7 @@ the client derives from the **p2p shared key** — `derive_bucket_token(P2P_KEY,
 REMOTE_BUCKET)` (SSOT `hsync_common.protocol.bootnode`), fed from
 `config["P2P_KEY"]` (`main_logic.py`, env `HSYNC_P2P_KEY` or the hidden
 `--p2p-key-fd` pipe) into `p2p_discovery.py:168` → `BootnodeDiscovery`
-(`p2p_discovery_bootnode.py:121`), so a token exists only when a key is set. The
+(`p2p_discovery_bootnode.py:122`), so a token exists only when a key is set. The
 same key is the p2p data-plane credential (`Authorization: Bearer`): one key per
 client, which authenticates to any protected bucket whose group key equals it.
 Refusals stay uniform (`token_required` → `rate_limited`), so the client cannot

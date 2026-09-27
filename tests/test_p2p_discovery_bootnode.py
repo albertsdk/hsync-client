@@ -14,14 +14,18 @@ leave/unmap on stop) are verified deterministically.
 
 from __future__ import annotations
 
+import threading
+import time
+
+import pytest
 from hsync_common.protocol.bootnode import (
     validate_boot_frame,
     validate_boot_response,
 )
 
-from hsync_client.boot_client import BootnodeUnreachable
+from hsync_client.boot_client import BootnodeRefused, BootnodeUnreachable
 from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
-from hsync_client.p2p_peers import PeerManager
+from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.stun import ObservedAddress
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
@@ -34,46 +38,54 @@ ACK = {
     "ttl": 60,
     "server_time": "2026-01-01T00:00:00Z",
 }
+
+
+def relayed_peer(cid, *, ip, port, proto="tcp", capacity=0, reachable=True, **advert):
+    """A relayed ``peers[]`` entry: every field the bootnode always echoes.
+
+    The election advertisement keys are required on the wire (the node always
+    relays them); ``advert`` overrides the defaults for a test.
+    """
+    peer = {
+        "cid": cid,
+        "ip": ip,
+        "port": port,
+        "proto": proto,
+        "cert_fp": FP,
+        "bucket": "shared",
+        "group": "home",
+        "version": "1.0.0",
+        "capacity": capacity,
+        "reachable": reachable,
+        "server_ready": False,
+        "force_master": False,
+        "never_master": False,
+        "startup_time": 0.0,
+        "sync_direction": "bidirectional",
+    }
+    peer.update(advert)
+    return peer
+
+
 RESPONSE = {
     "protocol_version": "boot/1",
     "type": "response",
     "peers": [
-        {
-            "cid": OTHER,
-            "ip": "203.0.113.10",
-            "port": 8443,
-            "proto": "tcp",
-            "cert_fp": FP,
-            "bucket": "shared",
-            "group": "home",
-            "version": "1.0.0",
-            "capacity": 4,
-            "reachable": True,
-        },
-        {
-            "cid": "C3d4E5f6G7h8I9j0K1l2M",
-            "ip": "203.0.113.11",
-            "port": 60000,
-            "proto": "udp",
-            "cert_fp": FP,
-            "bucket": "shared",
-            "group": "home",
-            "version": "1.0.0",
-            "capacity": 0,
-            "reachable": True,
-        },
-        {
-            "cid": "D4e5F6g7H8i9J0k1L2m3N",
-            "ip": "203.0.113.12",
-            "port": 8443,
-            "proto": "tcp",
-            "cert_fp": FP,
-            "bucket": "shared",
-            "group": "home",
-            "version": "1.0.0",
-            "capacity": 0,
-            "reachable": False,
-        },
+        # A serving, force-master peer: every election input is relayed.
+        relayed_peer(
+            OTHER,
+            ip="203.0.113.10",
+            port=8443,
+            capacity=4,
+            server_ready=True,
+            force_master=True,
+            startup_time=1760000000.5,
+            sync_direction="download-only",
+        ),
+        # Not dialable over the p2p data plane (UDP): skipped.
+        relayed_peer("C3d4E5f6G7h8I9j0K1l2M", ip="203.0.113.11", port=60000, proto="udp"),
+        # No published endpoint yet (bootstrap-only register): skipped.
+        relayed_peer("D4e5F6g7H8i9J0k1L2m3N", ip="203.0.113.12", port=8443, reachable=False),
     ],
     "count": 3,
     "ttl": 60,
@@ -209,9 +221,15 @@ class TestPeerFeed:
         assert [p.cid for p in peers] == [OTHER]
         assert peers[0].address == "203.0.113.10"
         assert peers[0].port == 8443
-        # A relayed reachable TCP peer is a serving master: the slave must not
-        # wait for a TXT server_ready flag the boot/1 wire does not carry.
+        # The election advertisement is relayed verbatim: the peer enters the
+        # shared election with its real values, instead of the old fabricated
+        # "reachable ⇒ serving master" mapping that let a read-only seeder
+        # outrank a force-master node and made a never-master peer electable.
         assert peers[0].server_ready is True
+        assert peers[0].force_master is True
+        assert peers[0].never_master is False
+        assert peers[0].startup_time == 1760000000.5
+        assert peers[0].sync_direction == "download-only"
 
     def test_local_cid_is_never_added(self):
         plan, _ = make_plan(cid=OTHER)
@@ -219,6 +237,160 @@ class TestPeerFeed:
         plan._peer_manager = manager
         plan._query_peers()
         assert manager.get_alive_peers() == []
+
+
+class TestAdvertisement:
+    """The local election advertisement is published on ``register``."""
+
+    def test_register_carries_the_local_advertisement(self):
+        plan, _ = make_plan(
+            force_master=True,
+            startup_time=1760000001.0,
+            sync_direction="upload-only",
+        )
+        plan._register(publish_endpoint=False)
+        kind, frame = plan._client.calls[-1]
+        assert kind == "register"
+        assert frame["server_ready"] is False
+        assert frame["force_master"] is True
+        assert frame["never_master"] is False
+        assert frame["startup_time"] == 1760000001.0
+        assert frame["sync_direction"] == "upload-only"
+        assert validate_boot_frame(frame) is not None
+
+    def test_startup_time_defaults_to_the_process_start(self):
+        plan, _ = make_plan()
+        assert plan._startup_time > 0
+        plan._register(publish_endpoint=False)
+        assert plan._client.calls[-1][1]["startup_time"] == plan._startup_time
+
+    def test_update_server_ready_marks_the_local_incumbency(self):
+        """A serving master must win its own election (regression).
+
+        The mDNS plan publishes the incumbent flag into the shared
+        ``PeerManager`` (``_refresh_service``); the bootnode plan used to update
+        only its own lease state, so the next relayed ``server_ready`` peer
+        demoted the local master and the roles ping-ponged until the data plane
+        looped on the other node's read-only seeder endpoint.
+        """
+        plan, _ = make_plan(force_master=True)
+        manager = PeerManager(
+            local_cid=CID,
+            bucket="shared",
+            group="home",
+            force_master=True,
+            startup_time=plan._startup_time,
+        )
+        plan._peer_manager = manager
+        manager.add_peer(
+            Peer(
+                cid=OTHER,
+                bucket="shared",
+                group="home",
+                address="203.0.113.10",
+                port=8443,
+                use_https=True,
+                cert_fingerprint=FP,
+                server_ready=True,  # the peer is already serving
+                startup_time=plan._startup_time - 60,  # and started earlier
+            )
+        )
+        # Not serving yet: the incumbent peer outranks the local force_master.
+        assert manager.is_master() is False
+
+        plan.update_server_ready()
+        assert manager.is_master() is True
+
+        plan.update_server_not_ready()
+        assert manager.is_master() is False
+
+    def test_role_change_republishes_the_advertisement(self):
+        """A promotion/yield re-registers until the node acknowledged the value."""
+        plan, _ = make_plan()
+        plan._register(publish_endpoint=False)
+        assert plan._sent_advert_generation == plan._advert_generation
+
+        plan.update_server_ready()
+        assert plan._sent_advert_generation != plan._advert_generation
+        plan._republish_advert()
+        kind, frame = plan._client.calls[-1]
+        assert kind == "register"
+        assert frame["server_ready"] is True
+        assert frame["endpoints"], "a serving node republishes its endpoint"
+        assert plan._sent_advert_generation == plan._advert_generation
+
+        plan.update_server_not_ready()
+        plan._republish_advert()
+        assert plan._client.calls[-1][1]["server_ready"] is False
+
+    def test_a_refused_register_does_not_strand_a_stale_advertisement(self):
+        """A refusal leaves the generation unsent so the next wake retries."""
+        plan, _ = make_plan()
+
+        def refuse(frame):
+            raise BootnodeRefused("rate_limited", 30)
+
+        plan._client.register = refuse
+        plan.update_server_ready()
+        with pytest.raises(BootnodeRefused):
+            plan._republish_advert()
+        assert plan._sent_advert_generation != plan._advert_generation
+
+    def test_lease_loop_survives_a_uniform_refusal(self):
+        """A refusal is not a transport failure: the loop keeps its lease state.
+
+        Regression: the client used to raise ``BootnodeProtocolError`` ("expected
+        a 'ack' frame, got 'response'"), which the lease loop treated as an
+        unreachable node — resetting to a full first register on every wake and
+        deepening the node's rate limit instead of backing off.
+        """
+        plan, _ = make_plan(heartbeat_interval=1.0)
+        registrations = []
+
+        def refuse(frame):
+            registrations.append(frame)
+            raise BootnodeRefused("rate_limited", 30)
+
+        plan._client.register = refuse
+        plan._client.query = lambda frame: None
+        plan._running = True
+        thread = threading.Thread(target=plan._lease_loop, name="test-lease", daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while not registrations and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert registrations, "the lease loop never attempted a register"
+        finally:
+            plan._stop.set()
+            plan._wake.set()
+            thread.join(timeout=5.0)
+        # The loop kept running (no crash) and did not immediately re-register:
+        # the refusal is retried at the normal cadence, not as a fresh register.
+        assert not thread.is_alive()
+        assert len(registrations) == 1
+
+    def test_query_refusal_keeps_the_peers_already_known(self):
+        """A refused query yields an empty sample by contract, not an exception."""
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._query_peers()
+        known = [p.cid for p in manager.get_alive_peers()]
+        assert known == [OTHER]
+
+        refused = {
+            "protocol_version": "boot/1",
+            "type": "response",
+            "peers": [],
+            "count": 0,
+            "ttl": 60,
+            "error": "rate_limited",
+            "retry_after": 42,
+        }
+        plan._client.query = lambda frame: validate_boot_response(dict(refused))
+        plan._query_peers()  # must not raise
+        assert [p.cid for p in manager.get_alive_peers()] == known
 
 
 class TestWaitForDiscoveryTolerance:

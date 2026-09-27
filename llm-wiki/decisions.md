@@ -50,6 +50,23 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   Regression: `tests/test_p2p_server_keepalive.py::TestRoleHandover` (unit) and
   `tests/test_bb_p2p_advanced.py::TestMasterFailover::test_master_death_reelects_successor` (black-box).
 
+- **A node that lost the election while starting up yields instead of claiming
+  readiness**: `_run_as_master` advertises `server_ready` only after
+  re-checking `peer_manager.is_master()`; if a peer won during the startup
+  window (typically a `--force-master` peer that joined after this node
+  self-elected but before its watcher/WebSocket server were up) it returns
+  early and the outer loop's yield path retires the role and revokes the
+  incumbency. Rationale: `server_ready` out-ranks `force_master` in the shared
+  election, so an unconditional advertisement made the loser the incumbent
+  again — two nodes served the same bucket, and a later crash-failover could
+  never converge on a single successor because the survivor had never stopped
+  serving (and the double server broke the "exactly one successor" invariant).
+  A node that is *already* serving never re-enters that block, so the
+  "incumbent keeps the role" rule is unchanged.
+  Regression:
+  `tests/test_p2p_handler_advanced.py::TestRunAsMaster::test_master_lost_while_starting_up_does_not_advertise_readiness` (unit) and
+  `tests/test_bb_p2p_advanced.py::TestMasterFailover::test_quiescent_slaves_failover_to_one_successor` (black-box).
+
 - **The P2P transport is a single TLS port (HTTPS REST + WSS)**: the master runs
   one `aiohttp` listener (`P2PServer`) with a bounded executor for the blocking
   data plane, and the WSS control plane is the canonical

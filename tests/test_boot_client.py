@@ -32,6 +32,7 @@ from hsync_client.boot_client import (
     BootnodeClient,
     BootnodeFingerprintMismatch,
     BootnodeProtocolError,
+    BootnodeRefused,
     BootnodeUnreachable,
     build_leave_frame,
     build_query_frame,
@@ -66,6 +67,29 @@ class TestFrameBuilders:
         )
         assert validate_boot_frame(frame) is not None
         assert frame["capacity"] == 5
+        # The election advertisement is always part of the frame (defaults).
+        assert frame["server_ready"] is False
+        assert frame["force_master"] is False
+        assert frame["never_master"] is False
+        assert frame["startup_time"] == 0.0
+        assert frame["sync_direction"] == "bidirectional"
+
+    def test_register_frame_carries_the_election_advertisement(self):
+        frame = build_register_frame(
+            cid=CID,
+            bucket="shared",
+            cert_fp="AA:BB",
+            version="1.0.0",
+            server_ready=True,
+            never_master=True,
+            startup_time=1760000000.5,
+            sync_direction="upload-only",
+        )
+        assert validate_boot_frame(frame) is not None
+        assert frame["server_ready"] is True
+        assert frame["never_master"] is True
+        assert frame["startup_time"] == 1760000000.5
+        assert frame["sync_direction"] == "upload-only"
 
     def test_refresh_frame_validates(self):
         frame = build_refresh_frame(cid=CID, bucket="shared", group="home", connected=2)
@@ -280,6 +304,75 @@ class TestPinVerify:
                 build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
             )
         assert "create_stream" not in calls
+
+
+class TestRefusals:
+    """A uniform refusal is a valid boot/1 answer, not a contract violation.
+
+    The node replies to a rate-limited (or token-refused) ``register``/
+    ``refresh`` with the same ``response`` frame it uses for ``query`` refusals;
+    the client must surface it as :class:`BootnodeRefused` so the lease loop can
+    keep its state instead of resetting to a full register.
+    """
+
+    @staticmethod
+    def _refusal_frame(error: str, retry_after: int | None = None) -> dict:
+        frame = {
+            "protocol_version": "boot/1",
+            "type": "response",
+            "peers": [],
+            "count": 0,
+            "ttl": 60,
+            "error": error,
+        }
+        if retry_after is not None:
+            frame["retry_after"] = retry_after
+        return frame
+
+    def _client_returning(self, monkeypatch, reply: dict) -> BootnodeClient:
+        async def fake_exchange(self, payload, *, expect):
+            return reply
+
+        # ``BootnodeClient`` is a frozen dataclass: patch the class, not the
+        # instance (the network layer is what is being stubbed out).
+        monkeypatch.setattr(BootnodeClient, "_exchange_async", fake_exchange)
+        return BootnodeClient("127.0.0.1", 1)
+
+    def test_register_rate_limit_is_a_refusal(self, monkeypatch):
+        client = self._client_returning(monkeypatch, self._refusal_frame("rate_limited", 42))
+        with pytest.raises(BootnodeRefused) as excinfo:
+            client.register(
+                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+            )
+        assert excinfo.value.error == "rate_limited"
+        assert excinfo.value.retry_after == 42
+
+    def test_refresh_token_refusal_is_a_refusal(self, monkeypatch):
+        client = self._client_returning(monkeypatch, self._refusal_frame("token_required"))
+        with pytest.raises(BootnodeRefused) as excinfo:
+            client.refresh(build_refresh_frame(cid=CID, bucket="shared"))
+        assert excinfo.value.error == "token_required"
+        assert excinfo.value.retry_after is None
+
+    def test_response_without_an_error_is_still_a_protocol_error(self, monkeypatch):
+        """A ``response`` to ``register`` without ``error`` violates boot/1."""
+        malformed = {
+            "protocol_version": "boot/1",
+            "type": "response",
+            "peers": [],
+            "count": 0,
+            "ttl": 60,
+        }
+        client = self._client_returning(monkeypatch, malformed)
+        with pytest.raises(BootnodeProtocolError):
+            client.register(
+                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+            )
+
+    def test_another_frame_type_is_still_a_protocol_error(self, monkeypatch):
+        client = self._client_returning(monkeypatch, {"type": "leave"})
+        with pytest.raises(BootnodeProtocolError):
+            client.refresh(build_refresh_frame(cid=CID, bucket="shared"))
 
 
 class TestStunEcho:

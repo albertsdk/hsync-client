@@ -36,6 +36,7 @@ from hsync_client.boot_client import (
     BootnodeClient,
     BootnodeError,
     BootnodeFingerprintMismatch,
+    BootnodeRefused,
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
@@ -136,6 +137,18 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._connected_clients = 0
         self._connected_clients_provider: Callable[[], int] | None = None
 
+        # Advertisement publication: ``register`` is the only frame carrying the
+        # election advertisement (and the endpoint/capacity), so a role change
+        # bumps the generation and the lease loop re-registers until the node
+        # acknowledged the new value. A generation (not a boolean) cannot lose a
+        # flip that lands while a re-register is in flight.
+        self._advert_generation = 0
+        self._sent_advert_generation = 0
+        # Uniform refusals (rate limit / token) are legitimate boot/1 answers:
+        # log the first occurrence of each error at WARNING, repeats at DEBUG,
+        # so a persistent misconfiguration stays visible without spamming.
+        self._refusals_logged: set[str] = set()
+
         self._discovery_announced = False
 
     # -- DiscoveryPlan surface -------------------------------------------------
@@ -217,14 +230,37 @@ class BootnodeDiscovery(DiscoveryPlanState):
         return self._published_endpoints
 
     def update_server_ready(self) -> None:
-        """The local master server is ready to accept peers."""
+        """The local master server is ready to accept peers.
+
+        Publishes the incumbency twice: in the bootnode advertisement (so relayed
+        peers rank this node as the serving master, exactly like the mDNS
+        ``server_ready`` TXT flag) and in the shared :class:`PeerManager` (an
+        incumbent must also win its *own* election, otherwise the next relayed
+        seeder would demote it and the role would flap).
+        """
         self._server_ready = True
+        self._advert_generation += 1
         self._wake.set()
+        self._notify_local_server_ready(True)
 
     def update_server_not_ready(self) -> None:
-        """The local master server is no longer ready."""
+        """The local master server is no longer ready (mastership yielded).
+
+        Clears both the relayed advertisement and the local incumbent flag: a
+        yielded node left marked ``server_ready`` would be a *zombie incumbent*
+        — still ranked top of every peer's election while no longer serving
+        (ADR-0027).
+        """
         self._server_ready = False
+        self._advert_generation += 1
         self._wake.set()
+        self._notify_local_server_ready(False)
+
+    def _notify_local_server_ready(self, ready: bool) -> None:
+        """Mirror the local incumbency into the shared peer state (once started)."""
+        manager = self._peer_manager
+        if manager is not None:
+            manager.set_local_server_ready(ready)
 
     def set_connected_clients(self, count: int) -> None:
         """Publish the number of connected peer clients."""
@@ -240,6 +276,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 if first:
                     self._register(publish_endpoint=False)
                     first = False
+                elif self._sent_advert_generation != self._advert_generation:
+                    # The role changed (promotion or yield): re-register so the
+                    # node relays the fresh advertisement immediately instead of
+                    # advertising a stale role until the next full register.
+                    self._republish_advert()
                 elif (self._endpoint_ready or self._server_ready) and not self._published_endpoints:
                     self._publish_endpoint()
                 elif self._server_ready or self._published_endpoints:
@@ -252,6 +293,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
                     f"Bootnode {self._bootnode_host}:{self._bootnode_port} trust failed: {exc}"
                 )
                 return
+            except BootnodeRefused as exc:
+                # A uniform refusal (rate limit / token) is a valid boot/1 answer:
+                # keep the lease state and retry at the normal cadence instead of
+                # resetting to a full register (which would deepen the refusal).
+                self._log_refusal(exc)
             except BootnodeError as exc:
                 log.warning(
                     f"Bootnode {self._bootnode_host}:{self._bootnode_port} unreachable: {exc}"
@@ -262,6 +308,34 @@ class BootnodeDiscovery(DiscoveryPlanState):
             self._wake.wait(timeout=self._heartbeat_interval)
             self._wake.clear()
 
+    def _republish_advert(self) -> None:
+        """Re-``register`` with the current advertisement (role changed).
+
+        ``register`` is the only frame that carries the advertisement, so a
+        promotion/yield republishes through it (with the endpoint/capacity state
+        unchanged). The sent marker is updated by :meth:`_register` only after the
+        node acknowledged the frame, so a transient failure retries on the next
+        wake instead of stranding a stale role.
+        """
+        if self._endpoint_ready or self._server_ready or self._published_endpoints:
+            self._publish_endpoint()
+        else:
+            self._register(publish_endpoint=False)
+
+    def _log_refusal(self, exc: BootnodeRefused) -> None:
+        """Report a uniform boot/1 refusal once per error, then at DEBUG."""
+        message = (
+            f"Bootnode {self._bootnode_host}:{self._bootnode_port} refused the lease "
+            f"frame: {exc.error}"
+        )
+        if exc.retry_after:
+            message += f" (retry after {exc.retry_after}s)"
+        if exc.error in self._refusals_logged:
+            log.debug(message)
+        else:
+            self._refusals_logged.add(exc.error)
+            log.warning(message)
+
     def _current_connected(self) -> int:
         if self._connected_clients_provider is not None:
             try:
@@ -271,6 +345,14 @@ class BootnodeDiscovery(DiscoveryPlanState):
         return self._connected_clients
 
     def _register(self, *, publish_endpoint: bool) -> None:
+        """Send ``register`` with the current lease + election advertisement.
+
+        The advertisement is read once, before the frame is built, and recorded
+        as *sent* only after the node acknowledged it: a role flip landing
+        mid-exchange leaves the generation unsent, so the lease loop republishes
+        on the next wake instead of advertising a stale role indefinitely.
+        """
+        generation = self._advert_generation
         endpoints = self._endpoint_wire() if publish_endpoint else []
         ack = self._client.register(
             build_register_frame(
@@ -283,12 +365,18 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 capacity=self._capacity if publish_endpoint else 0,
                 endpoints=endpoints,
                 connected=self._current_connected() if self._server_ready else None,
+                server_ready=self._server_ready,
+                force_master=self._force_master,
+                never_master=self._never_master,
+                startup_time=self._startup_time,
+                sync_direction=self._sync_direction,
             )
         )
         if ack is not None:
             self._observed = observed_address(ack)
             if publish_endpoint:
                 self._published_endpoints = True
+            self._sent_advert_generation = generation
             log.debug(
                 "Bootnode register ok: observed "
                 f"{self._observed.host}:{self._observed.port}, "
@@ -323,13 +411,31 @@ class BootnodeDiscovery(DiscoveryPlanState):
         )
         if response is None:
             return
+        if response.get("error"):
+            # Uniform refusal (rate limit / token): the sample is empty by
+            # contract — keep the peers already known and retry at the next wake.
+            log.debug(
+                f"Bootnode {self._bootnode_host}:{self._bootnode_port} query refused: "
+                f"{response['error']}"
+            )
+            return
         for wire_peer in response["peers"]:
             peer = self._peer_from_wire(wire_peer)
             if peer is not None and peer.cid != self._cid:
                 self._peer_manager.add_peer(peer)
 
     def _peer_from_wire(self, wire: BootPeer) -> Peer | None:
-        """Map a relayed peer to the shared :class:`Peer`; skip unreachable ones."""
+        """Map a relayed peer to the shared :class:`Peer`; skip unreachable ones.
+
+        ``reachable=false`` entries carry no dialable data-plane endpoint (a
+        bootstrap-only register), so they are not peers yet. Every other field —
+        including the election advertisement (``server_ready``/``force_master``/
+        ``never_master``/``startup_time``/``sync_direction``) — is relayed
+        verbatim by the node, so a bootnode-discovered peer enters the shared
+        election with the same inputs as a mDNS-discovered one. They are
+        unauthenticated claims: the data plane pins the peer certificate before
+        any file is exchanged.
+        """
         if not wire.get("reachable", True):
             return None
         if wire["proto"] != "tcp":
@@ -344,16 +450,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
             use_https=True,
             cert_fingerprint=wire.get("cert_fp"),
             peer_download_enabled=False,
-            force_master=False,
-            never_master=False,
-            startup_time=0.0,
-            sync_direction="bidirectional",
-            # A relayed peer with a published TCP endpoint is a serving master:
-            # ``reachable`` is derived from ``bool(endpoints)`` at register time,
-            # and the master only publishes endpoints once its servers are up.
-            # Without this the slave would wait forever for a TXT ``server_ready``
-            # flag that the boot/1 wire does not carry.
-            server_ready=True,
+            server_ready=wire["server_ready"],
+            force_master=wire["force_master"],
+            never_master=wire["never_master"],
+            startup_time=wire["startup_time"],
+            sync_direction=wire["sync_direction"],
         )
 
     def _endpoint_wire(self) -> list[dict[str, object]]:

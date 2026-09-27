@@ -325,7 +325,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 > [p2p Internals → Master Election Algorithm](internal/p2p-internals.md#master-election-algorithm).
 
 **Rules:**
-- The `sync_direction`, `never_master` and `server_ready` flags of each peer are shared via mDNS TXT records during discovery
+- The `sync_direction`, `never_master`, `force_master`, `server_ready` and `startup_time` flags of each peer are shared during discovery — through mDNS TXT records on a local network, and through the bootnode when the group uses one — so the same election runs in both cases
 - A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--force-master`; the pin wins once both are at parity on readiness
 - `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
 - `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)

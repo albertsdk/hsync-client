@@ -77,6 +77,13 @@ The master additionally logs `[READY]` only once its endpoint has been
 published to the bootnode, so the readiness line means "reachable", not just
 "started".
 
+The **master election is the same one used on a local network**: each device
+publishes its role through the node, so a device that is already serving keeps
+the role, `--force-master` wins over an ordinary peer, `--never-master` devices
+are never elected, and ties fall back to the earliest start. Nothing extra to
+configure; the full priority order is in
+[p2p mode → Master Election](p2p-mode.md#master-election).
+
 ## Verify registration
 
 ```bash
