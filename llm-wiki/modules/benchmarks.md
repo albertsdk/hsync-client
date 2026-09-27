@@ -1,4 +1,4 @@
-# HSYNC Client — Benchmarks (L1 + L2 peer path)
+# HSYNC Client — Benchmarks (L1 + L2 peer path + soak)
 
 Internal micro-benchmark suite for the client-specific hot paths. Developer
 tooling: plain scripts under `bench/`, never collected by pytest, never run in
@@ -21,9 +21,10 @@ server REST). This directory ships:
   and the seeder read cap. Its cycle scenario is what admitted or rejected the
   admission designs and retired the size-threshold heuristic.
 
-The full-fleet load + soak tier (spawn the `hsync` binary as a multi-node fleet,
-wire-only) is still deferred, as are L4/L5. L4/L5 are added only when a concrete
-anomaly needs a cost breakdown / CPU saturation sweep.
+The L3 p2p soak (`bench/soak_p2p.py`) drives a real master+slave pair through
+mutation waves while both peers' RSS is sampled. The
+multi-node fleet load scenario is still deferred, as are L4/L5. L4/L5 are added
+only when a concrete anomaly needs a cost breakdown / CPU saturation sweep.
 
 Out of scope by design: `scripts/benchmark_p2p_transfers.py` (not in this
 directory) measures the master's *raw* HTTP overhead with `http.client`
@@ -48,6 +49,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `bench/bench_p2p_peer_transfer.py` | **L2** p2p peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback, cycle acceptance, and (`--latency`) the per-cycle TLS-handshake question behind an injected RTT |
 | `bench/bench_p2p_sources.py` | **L2** source-lookup scenarios: eligibility filter, batch splitting, wire `POST /files/sources`, telemetry rank/record |
 | `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.p2p_handler` / `import hsync_client.remote_websocket`), from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
+| `bench/soak_p2p.py` | **L3 soak** — real master+slave over loopback mDNS; mutation waves with quiet-poll convergence, RSS of both peers from `/proc`; PASS = 0 mismatches + RSS delta under `--max-rss-mb` |
 | `bench/p2p_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`P2PServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup`, `LatencyRelay` (unprivileged RTT injection that counts TLS handshakes) |
 | `bench/run_all.py` | Chained runner → `bench_result.txt` (committed baseline, **L1 scripts only**); `--json-out-dir` also dumps one `<script>.json` per scenario |
 | `bench/compare.py` | A/B comparator over two `--json-out` runs (file or dir); flags median regressions above a noise floor, `exit 1` on regression |

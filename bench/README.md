@@ -12,7 +12,7 @@ client adds on top:
 | Startup — process spawn cost | **implemented** (`bench_startup.py`) | Wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus the import-only cases, from source and from the packaged PyInstaller binary |
 | L1 — in-process micro-benchmark | **implemented** (this directory) | Measures the client wrappers the sync engine calls per path/per event |
 | L2 — transport load (peer-download path) | **implemented** (`bench_p2p_peer_transfer.py`, `bench_p2p_sources.py`) | The two full-download paths and the source lookup, end to end over loopback with real servers; measures what JSON-level fixtures cannot (TLS handshake, keep-alive reuse, seeder read cap) |
-| L2/L3 — full-fleet load + soak | deferred | Spawning the `hsync` binary as a multi-node fleet, wire-only; decided after this peer-download baseline |
+| L2/L3 — full-fleet load + soak | **L3 p2p soak implemented** (`soak_p2p.py`); multi-node fleet load deferred | The soak runs a real master+slave pair and measures per-wave convergence plus both peers' RSS; a multi-node fleet scenario is still a follow-on |
 | L4 — profiling diagnostic | n/a (yet) | Added only when a specific anomaly needs a cost breakdown |
 | L5 — CPU-saturation sweep | n/a | Multi-process LAN topology, not a single Python call — revisit with the fleet tier |
 
@@ -31,6 +31,7 @@ standalone (see below) and compare with `--json-out` + `compare.py`.
 | Script | Measures |
 |---|---|
 | `bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.p2p_handler` / `import hsync_client.remote_websocket`), from source (venv console script / `python -m hsync_client`) and from the packaged `--onefile`/`--onedir` binary |
+| `soak_p2p.py` | **L3 soak (manual, long)** — real master+slave over loopback mDNS (BB harness helpers); seeds a tree, applies mutation waves for `--duration`, measures per-wave convergence (quiet poll) and both peers' RSS from `/proc`; PASS = 0 mismatches + RSS delta under `--max-rss-mb` |
 | `bench_autotune.py` | `classify_network`, `classify_bandwidth`, `derive_timeout`, `derive_retry`, `derive_concurrency`, `derive_profile`, `profile_transfer_queue` (pure policy, no I/O) |
 | `bench_utils.py` | `http_to_ws`, `redact_headers`, `request_headers`, `inbound_size_cap`, `http_connect_timeout`, `upload_timeout`, `is_same_paths`, `ensure_str_path`, `normalize_bucket_relpath` (pure per-request/path helpers) |
 | `bench_event_queue.py` | `QueuedEvent.get_backoff_delay`, `EventQueue.enqueue`, `EventQueue._send_event(success/failure/unserializable)` (async, in-memory socket stub) |
@@ -74,6 +75,9 @@ cd hsync-client
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary
 .venv/bin/python bench/bench_startup.py --count 30 --binary dist/linux-amd64/hsync
 .venv/bin/python bench/bench_startup.py --count 30 --binary-dir /usr/lib/hsync --json-out /tmp/onedir.json
+
+# L3 p2p soak (standalone: spawns two real peers, long-running)
+.venv/bin/python bench/soak_p2p.py --duration 600
 
 # machine-readable results (one JSON array per run)
 .venv/bin/python bench/bench_autotune.py --count 2000 --json-out /tmp/autotune.json
