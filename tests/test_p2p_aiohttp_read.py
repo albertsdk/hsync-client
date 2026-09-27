@@ -10,6 +10,8 @@ body", truncated JSON) even though every byte arrives.
 import asyncio
 from types import SimpleNamespace
 
+from aiohttp import HttpVersion
+
 from hsync_client.p2p_server import _AiohttpTransport
 
 
@@ -37,6 +39,8 @@ def _build_transport(*chunks: bytes) -> tuple[_AiohttpTransport, asyncio.Abstrac
     loop = asyncio.new_event_loop()
     request = SimpleNamespace(
         content=_ChunkedContent(*chunks),
+        method="GET",
+        version=HttpVersion(1, 1),
         rel_url=SimpleNamespace(raw_path_qs="/"),
         headers={},
         remote="127.0.0.1",

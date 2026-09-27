@@ -41,6 +41,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from enum import StrEnum
+from http import HTTPStatus
 from os import walk
 from pathlib import Path
 from shutil import disk_usage
@@ -470,6 +471,18 @@ class P2PEndpointMixin(_HTTPTransportBase):
     def log_message(self, format: str, *args) -> None:
         """Override to use our logger instead of stderr."""
         log.debug(f"{self.address_string()} - {format % args}")
+
+    def log_request(self, code: int | HTTPStatus | str = "-", size: int | str = "-") -> None:
+        """Log one completed request line at DEBUG level.
+
+        Mirrors ``BaseHTTPRequestHandler.log_request`` so every transport
+        reports the request line (method, full path and query string) plus its
+        status identically. A transport whose ``send_response`` cannot inherit
+        the stdlib hook (the aiohttp bridge) calls this explicitly.
+        """
+        if isinstance(code, HTTPStatus):
+            code = code.value
+        self.log_message('"%s" %s %s', self.requestline, str(code), str(size))
 
     @staticmethod
     def _encode_json_response(data: dict | list) -> bytes:
@@ -2328,6 +2341,8 @@ class _AiohttpTransport(P2PEndpointMixin):
         self._loop = loop
         self.server = context
         self.path = request.rel_url.raw_path_qs
+        version = request.version
+        self.requestline = f"{request.method} {self.path} HTTP/{version.major}.{version.minor}"
         self.headers = request.headers  # type: ignore[assignment]
         remote = request.remote or ""
         self.client_address = (remote, 0)
@@ -2346,6 +2361,11 @@ class _AiohttpTransport(P2PEndpointMixin):
 
     def send_response(self, code: int, message: str | None = None) -> None:
         self._status = int(code)
+        # BaseHTTPRequestHandler.send_response() logs every response through
+        # log_request(); the aiohttp bridge must call it explicitly so the
+        # unified transport keeps the per-request DEBUG line (full path and
+        # query string) the former ThreadingHTTPServer emitted.
+        self.log_request(code)
 
     def send_header(self, keyword: str, value: str) -> None:
         self._out_headers.append((str(keyword), str(value)))
