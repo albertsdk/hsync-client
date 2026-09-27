@@ -15,17 +15,17 @@ then **run** a sync. The full walkthrough is in
 
 HSYNC runs in one of two mutually exclusive operating modes:
 
-```bash
+```text
 # Server Mode — connect to a central HSYNC server
-hsync server <hostname> [--port <port>] -b <bucket_name> [options]
+hsync server HOSTNAME [--port PORT] -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode — peer-to-peer, no server (implicit continuous mode).
 # Write-capable runs need a shared key: a keyless p2p is read-only.
-HSYNC_P2P_KEY=<shared-secret> hsync p2p -b <bucket_name> [options]
+HSYNC_P2P_KEY=SHARED_SECRET hsync p2p -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode across networks — discover peers through a boot/1 bootstrap node
 # instead of mDNS (see "Sync across networks").
-hsync p2p -b <bucket_name> [bootnode_host] [options]
+hsync p2p -b BUCKET_NAME [BOOTNODE_HOST] [OPTIONS]
 ```
 
 With no `BOOTNODE` hostname (positional) and no `HSYNC_BOOTNODE`, `hsync p2p`

@@ -112,7 +112,7 @@ You only need to do this once per downloaded binary.
 Native packages are provided for `amd64`, `arm64` and `armhf`:
 
 ```bash
-sudo dpkg -i hsync-client_<version>_amd64.deb
+sudo dpkg -i hsync-client_*_amd64.deb
 hsync --help
 ```
 

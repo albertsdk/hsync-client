@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-23" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-26" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -416,6 +416,15 @@ download-only or passes
 on both sides.
 .
 .P
+Cross-network discovery through a
+.B boot/1
+bootstrap node uses the same shared key when the node gates access: the client
+derives a bucket token from
+.B HSYNC_P2P_KEY
+and presents it to a protected bucket or a private node, so the key must match
+the key configured on the node.
+.
+.P
 Use
 .B \-\-group
 to isolate multiple independent sync groups on the same network.
@@ -439,7 +448,8 @@ Shared secret for p2p mode peer authentication, and the credential that
 authorizes writes: without it the group is read-only and a write-capable run
 is refused unless it is download-only or the dangerous
 .B \-\-allow\-unauthenticated\-writes
-opt-in is explicit.
+opt-in is explicit. With a bootnode it is also the group key the client derives
+its bucket token from, required by a protected bucket or a private node.
 .TP
 .B HSYNC_NTP_HOSTS
 Comma-separated list of SNTP servers, tried in order, used in p2p mode
@@ -712,21 +722,30 @@ p2p mode with a specific group:
 .RS
 .EX
 HSYNC_P2P_KEY=mysecret hsync p2p \-b shared \-\-group home
-
-.SS Bootnode discovery
-Discover peers across networks through a boot/1 bootstrap node:
-.PP
-.EX
-hsync p2p \-b shared boot.example.net
-.EE
-.PP
-Pin the bootnode certificate and map the master port:
-.PP
-.EX
-hsync p2p \-b shared boot.example.net \-\-bootnode\-fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-.EE
 .EE
 .RE
+.
+.SS Bootnode discovery
+Discover peers across networks through a boot/1 bootstrap node; a first contact
+trusts the certificate on first use:
+.PP
+.EX
+hsync p2p \-b shared boot.example.net \-\-bootnode\-tofu
+.EE
+.PP
+Pin the certificate once the operator has published its fingerprint:
+.PP
+.EX
+hsync p2p \-b shared boot.example.net \-\-bootnode\-fingerprint sha256:FINGERPRINT
+.EE
+.PP
+Authenticate to a private node or a protected bucket (the key must match the
+node's group-keys entry):
+.PP
+.EX
+HSYNC_P2P_KEY=mysecret hsync p2p \-b shared boot.example.net
+.EE
+.
 .TP
 Backup mode (upload only, never delete remote files):
 .RS

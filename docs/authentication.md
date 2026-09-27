@@ -190,7 +190,7 @@ Slave                                Master
 | Variable | Mode | Purpose |
 |---|---|---|
 | `HSYNC_API_KEY` | Server | Account token (`hs_<id>_<secret>`) for central server authentication |
-| `HSYNC_P2P_KEY` | p2p | Shared secret for p2p peer authentication — required by any write-capable run (a keyless p2p is read-only) |
+| `HSYNC_P2P_KEY` | p2p | Shared secret for p2p peer authentication — required by any write-capable run (a keyless p2p is read-only). With a bootnode it is also the group key: the client derives the `bucket_token` from it for protected buckets and private nodes |
 
 The `cid` carried in the LAN auth frames is derived from the local **device
 identity** — it is not configurable via environment.

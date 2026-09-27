@@ -141,7 +141,7 @@ suggested moment — a busy peer is never treated as a broken one.
 
 ### Example Flow
 
-```
+```console
 $ HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
 
 [INFO] p2p mode enabled

@@ -333,3 +333,15 @@ node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_BOOTNODE`
 `HSYNC_BOOTNODE_FINGERPRINT` (comma-separated pins), `HSYNC_BOOTNODE_TOFU`,
 `HSYNC_UPNP_ENABLED`, `HSYNC_P2P_LISTEN_PORT`
 (`constants.BOOTNODE_DEFAULT_PORT = 443`).
+
+Token authentication: a **protected bucket** or a **private node** gates
+`register`/`refresh`/`query` (and `leave` in private mode) on a `bucket_token`
+the client derives from the **p2p shared key** — `derive_bucket_token(P2P_KEY,
+REMOTE_BUCKET)` (SSOT `hsync_common.protocol.bootnode`), fed from
+`config["P2P_KEY"]` (`main_logic.py`, env `HSYNC_P2P_KEY` or the hidden
+`--p2p-key-fd` pipe) into `p2p_discovery.py:168` → `BootnodeDiscovery`
+(`p2p_discovery_bootnode.py:121`), so a token exists only when a key is set. The
+same key is the p2p data-plane credential (`Authorization: Bearer`): one key per
+client, which authenticates to any protected bucket whose group key equals it.
+Refusals stay uniform (`token_required` → `rate_limited`), so the client cannot
+detect which buckets exist.

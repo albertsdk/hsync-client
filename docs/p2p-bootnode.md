@@ -15,6 +15,11 @@ they discover each other through a `boot/1` bootstrap node instead of mDNS.
   `--bootnode-tofu`). `--insecure` disables verification and is meant for
   loopback/tests only.
 - The **same bootnode** configured on every device of the group.
+- A **group key** if the bootnode is private (`--private`) or the bucket is
+  protected: the client authenticates with the token derived from
+  `HSYNC_P2P_KEY` (`HMAC-SHA256(key, "boot/1" || bucket)[:32]`), so set it to the
+  same value the operator wrote in the bootnode's `bucket=<key>` line. An open
+  node with no protected buckets needs no key to discover peers.
 
 The bootnode operator prints the fingerprint with `hsync-bootnode identity show`
 and distributes it out of band (it is never sent on the wire). Without a pin the
@@ -23,15 +28,30 @@ cross-network discovery secure.
 
 ## Run the plan
 
-```bash
-# Pin the bootnode fingerprint (read it from `hsync-bootnode identity show`).
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync \
-  boot.example.net --bootnode-fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+First contact — trust the fingerprint on first use; the operator prints it with
+`hsync-bootnode identity show`:
 
-# Same thing through the environment (handy for services).
+```bash
+HSYNC_P2P_KEY="shared-secret" hsync p2p \
+  -b mybucket -p /srv/hsync boot.example.net --bootnode-tofu
+```
+
+Pinned — the hardened form, once the fingerprint is known. Replace
+`YOUR_BOOTNODE_FINGERPRINT` with the operator's `sha256:<hex>` value:
+
+```bash
+HSYNC_P2P_KEY="shared-secret" hsync p2p \
+  -b mybucket -p /srv/hsync boot.example.net \
+  --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
+```
+
+The same through the environment (handy for services):
+
+```bash
 HSYNC_BOOTNODE=boot.example.net \
-  HSYNC_BOOTNODE_FINGERPRINT=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync
+  HSYNC_BOOTNODE_FINGERPRINT=YOUR_BOOTNODE_FINGERPRINT \
+  HSYNC_P2P_KEY="shared-secret" \
+  hsync p2p -b mybucket -p /srv/hsync
 ```
 
 `HSYNC_BOOTNODE` is a **bare hostname**: no scheme, no path, no `host:port`.
@@ -61,8 +81,14 @@ published to the bootnode, so the readiness line means "reachable", not just
 
 ```bash
 # The other device should list this peer after a query round.
-HSYNC_BOOTNODE=boot.example.net hsync p2p -b mybucket -p /srv/hsync
+HSYNC_BOOTNODE=boot.example.net \
+  HSYNC_BOOTNODE_TOFU=1 \
+  HSYNC_P2P_KEY="shared-secret" \
+  hsync p2p -b mybucket -p /srv/hsync
 ```
+
+Each block carries its own pin or `HSYNC_BOOTNODE_TOFU=1`: an inline `VAR=…`
+prefix applies to that command only, so paste the whole block.
 
 Look for the discovery banner, then a peer with `reachable=true`; the advisory
 `capacity` hint a peer advertises is a pre-sizing hint only — the authoritative
@@ -80,4 +106,7 @@ limit is negotiated on the authenticated session.
 | Cross-network sync not needed | Go back to the [mDNS plan](p2p-lan.md) by unsetting `HSYNC_BOOTNODE`. |
 
 More: [Troubleshooting](troubleshooting.md) and [FAQ — p2p Mode](faq-p2p.md).
+On the operator side, the [private node](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/usage.md#private-node-authenticated-bootstrap)
+and the [privacy and anonymity model](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/usage.md#privacy-and-anonymity-model)
+explain what a closed, pseudonymous network requires.
 The wire contract is the [boot/1 bootstrap protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/bootnode-protocol.md).

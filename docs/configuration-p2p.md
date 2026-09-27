@@ -30,6 +30,12 @@ sync is refused unless the dangerous CLI or environment opt-in is explicit.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
 `--p2p-key-fd` flag.
 
+With a bootnode (see [Sync across networks](p2p-bootnode.md)) the same key is also
+the bootnode credential: the client derives the `bucket_token`
+(`HMAC-SHA256(key, "boot/1" || bucket)[:32]`) it must present to a **protected
+bucket** or a **private node**, so it has to match the operator's `bucket=<key>`
+entry.
+
 The `p2p` subcommand and `--force-master` have no environment-variable equivalents.
 
 ## Master Election Controls
@@ -65,7 +71,7 @@ seeders are selected through that master and receive their own persistent
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_P2P_GROUP` | p2p group name (alternative to `--group`) | — |
-| `HSYNC_P2P_KEY` | Shared secret for peer authentication | — (reads only unless explicitly opted into unauthenticated writes) |
+| `HSYNC_P2P_KEY` | Shared secret for peer authentication; with a bootnode, also the group key the `bucket_token` is derived from (must match the bootnode's key for protected/private buckets) | — (reads only unless explicitly opted into unauthenticated writes) |
 | `HSYNC_P2P_PEER_DOWNLOAD` | Ask the master for exact-hash sources and try eligible peers before master full-download fallback | `true` |
 | `HSYNC_P2P_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder (announced on the handshake so requesters stay within it) | `2` |
 | `HSYNC_P2P_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |

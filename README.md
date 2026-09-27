@@ -89,7 +89,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
 * **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
 
-> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode project itself is still **in development** (v1).
+> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode is a **stable v1** (Python).
 
 ## Quick Start
 
@@ -304,7 +304,7 @@ If you prefer to go serverless, use [Option A](#option-a--p2p-mode-no-server-nee
 - [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
 - [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
 - [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
-- [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode/blob/main/README.md) — Optional Internet discovery node for P2P topologies; consumed through `HSYNC_BOOTNODE` *(in development)*.
+- [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode/blob/main/README.md) — Optional Internet discovery node for P2P topologies; consumed through `HSYNC_BOOTNODE` *(v1 — stable)*.
 
 > **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
 > are still under active development and are not yet ready for production use.

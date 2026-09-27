@@ -124,14 +124,15 @@ the same port 8080. Set firewall rules for that single port accordingly.
 ## 2.9 Cross-network group with a bootnode
 
 Devices on different networks (different sites, home ↔ office) meet through a
-`boot/1` bootstrap node instead of mDNS. Pin the certificate fingerprint the
+`boot/1` bootstrap node instead of mDNS. Pin the `sha256:<hex>` fingerprint the
 operator printed with `hsync-bootnode identity show`, and let UPnP publish this
 device's master port when it serves:
 
 ```bash
 # Same command on every device of the group.
 HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --bootnode-fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  boot.example.net \
+  --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
 An unpinned self-signed bootnode is refused: use `--bootnode-tofu` to trust the
