@@ -4,12 +4,14 @@
 
 # HSYNC Client: Endpoint Synchronization Agent
 
-The **HSYNC Client** is the endpoint software agent deployed on individual devices (workstations, servers, or remote hardware) to manage **real-time**, **enterprise-grade** file synchronization across distributed environments using exclusively the standard **HTTP/HTTPS protocol**.
+**HSYNC Client is the synchronization engine of HSYNC**: you install it on each device and it keeps a folder identical with the same folder on your other devices — in real time, over standard HTTP/HTTPS. It ships as a single self-contained binary: no Python (or any other) runtime is required on the machine.
 
-It is engineered to operate in two distinct network topologies:
+Point it at a folder and choose how the devices meet:
 
-* **Centralized (Server Mode):** The agent authenticates and connects to a centralized hub ([HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md)).
-* **Decentralized (P2P Mode):** Agents autonomously discover peers via mDNS on the local network — or across networks through an optional bootnode — and dynamically elect a transport coordinator, operating entirely without central infrastructure.
+* **Server Mode** — every device syncs through your own [HSYNC Server](https://github.com/albertsdk/hsync-server), which keeps a central copy. Best when devices live on different networks, or when you want a hub that is always reachable.
+* **p2p Mode** — devices sync directly, peer-to-peer: on the same network they find each other automatically (mDNS); across networks an optional self-hosted bootnode introduces them. No server, no central copy.
+
+Files stay in their original format, directly browsable on disk, and there is no third-party account or service in the data path. The same client covers simple setups — one folder on two laptops — and advanced ones: one-way backups, read-only mirrors, scheduled one-shot runs, isolated groups with shared keys, bandwidth limits.
 
 > 👉 **Operational Advisory:** As with any automated filesystem mutation utility, administrators are strongly advised to maintain validated, independent backups prior to initial deployment in production environments.
 
@@ -23,11 +25,172 @@ It is engineered to operate in two distinct network topologies:
 
 **Quick navigation:**
 
+* **[What you can do](#what-you-can-do-with-hsync-client)**
+* **[Two ways to run it](#two-ways-to-run-it)**
+* **[Getting started](#getting-started)**
 * **[Why HSYNC?](#why-hsync)**
-* **[Getting Started](docs/getting-started.md)**
-* **[Deployment Guidelines](docs/installation.md)** — Prebuilt binaries, `.deb` packages, OS5 firmware, and source compilation.
-* **[Technical Documentation](docs/README.md)** — Comprehensive parameter reference and internal architecture.
-* **[Contribution Standards](CONTRIBUTING.md)** — Engineering workflow and coding guidelines.
+* **[Documentation](docs/README.md)** — Parameter reference and internal architecture.
+* **[Contributing](CONTRIBUTING.md)** — Engineering workflow and coding guidelines.
+
+## What you can do with HSYNC Client
+
+* **Sync a folder between your devices** — keep the same folder on laptop, desktop and server, updated in real time in both directions.
+* **Back up a folder** — push it one-way to your own server or NAS, optionally without propagating deletions, so the destination never loses data just because a source file was removed.
+* **Publish a read-only mirror** — other devices download the folder and never write back.
+* **Share files with a team** — a synced folder works as a drop box: drop a file in and it lands on the other machines.
+* **Sync without a server** — devices on the same network find each other and transfer directly, peer-to-peer.
+* **Sync across networks** — point p2p Mode at a bootnode to connect devices that are not on the same LAN.
+* **Automate** — one-shot runs from cron, systemd timers or CI, with a documented exit code; or keep the client running and react to changes instantly.
+* **Go advanced** — ignore patterns (`.hsyncignore`), block-level delta transfer, bandwidth limits, per-device sync directions, isolated groups with shared keys.
+
+## Two ways to run it
+
+HSYNC Client runs in one of two mutually exclusive modes; pick the one that fits each sync group.
+
+### Server Mode — sync through your own hub
+
+```mermaid
+flowchart LR
+    subgraph DeviceA["🖥️ Device A"]
+        FSA["📂 File System"]
+        CA["⚙️ HSYNC Client"]
+    end
+
+    subgraph Remote["☁️ Remote"]
+        SERVER["🗄️ HSYNC Server"]
+    end
+
+    subgraph DeviceB["💻 Device B"]
+        CB["⚙️ HSYNC Client"]
+        FSB["📂 File System"]
+    end
+
+    FSA -->|"① Detect"| CA
+    CA -->|"② Upload"| SERVER
+    SERVER -.->|"③ Notify"| CB
+    CB -->|"④ Download"| SERVER
+    SERVER -->|"⑤ Send"| CB
+    CB -->|"⑥ Write"| FSB
+
+    style DeviceA fill:#333333
+    style DeviceB fill:#333333
+    style FSA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style CA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style SERVER fill:#fff3e0,stroke:#e65100,color:#e65100
+    style FSB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
+```
+
+**Server Mode Flow (A → B):**
+1. **① Detect** — Client A detects file change via watchdog
+2. **② Upload** — Client A uploads file to server
+3. **③ Notify** — Server broadcasts event to Client B via WebSocket
+4. **④ Download** — Client B requests file from server
+5. **⑤ Send** — Server sends file content to Client B
+6. **⑥ Write** — Client B writes file to local disk
+
+The same flow applies in reverse (B → A) for bidirectional sync.
+
+A [HSYNC Server](https://github.com/albertsdk/hsync-server) stores the shared folders (**buckets**) and relays changes between all connected devices: they do not need to be online at the same time, they can live on different networks, and the server always holds a complete copy of the data.
+
+**Choose it when:** you sync across networks or over the Internet, you want a central copy on hardware you own, or you need a hub that is always reachable. Concepts and setup: [Server Mode](docs/server-mode.md).
+
+### p2p Mode — sync directly, no server
+
+```mermaid
+flowchart TB
+    subgraph DeviceA["💻 Device A (Master)"]
+        direction LR
+        FSA["📂 File System"]<-->|"read / write"| CA["⚙️ HSYNC Client"]
+    end
+
+    subgraph DeviceB["🖥️ Device B (Client)"]
+        direction LR
+        CB["⚙️ HSYNC Client"]<-->|"read / write"| FSB["📂 File System"]
+    end
+
+    CA <-.->|"①② Discover + elect master (mDNS)"| CB
+    CB <-->|"③ Upload / Download"| CA
+
+    style DeviceA fill:#333333
+    style DeviceB fill:#333333
+
+    style FSA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style CA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style FSB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
+```
+
+**p2p Mode Flow:**
+1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
+2. **② Elect Master** — One device becomes the master (a transport hub that
+   coordinates sync without ever deciding conflicts by role)
+3. **③ Upload / Download** — Clients upload files to the master and fetch
+   files from the master or directly from a peer that holds the exact content;
+   the master relays metadata to all connected peers
+
+Devices find each other automatically on the same network (mDNS) and sync directly, peer-to-peer: nothing passes through another machine. Across networks, an optional self-hosted [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode) introduces peers — discovery only, never your files — and writes are authorized by a shared key (a keyless LAN is read-only).
+
+**Choose it when:** a handful of devices share one network, or you prefer zero infrastructure. Concepts and setup: [p2p Mode](docs/p2p-mode.md) · [Across networks with a bootnode](docs/p2p-bootnode.md).
+
+Continuous mode is the default in both topologies: the client keeps running and reacts to changes immediately. Pass `--once` to run a single sync cycle and exit — ideal for cron, systemd timers and CI, with a documented exit code. See [Sync Modes](docs/sync-modes.md).
+
+## Getting started
+
+1. **Install the client** — one command on Linux or macOS (verified downloads, `.deb` packages, the WD My Cloud OS5 installer, Windows builds and source are in [Installation](docs/installation.md)):
+
+```bash
+curl -fsSL https://github.com/albertsdk/hsync-client/releases/latest/download/install.sh | bash
+```
+
+2. **Try it: two devices, no server (p2p)** — full walkthrough in [Getting Started — p2p Mode](docs/getting-started-p2p.md):
+
+```bash
+# Create two folders and a file in the first one
+mkdir -p /tmp/hsync-p2p-a /tmp/hsync-p2p-b
+echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
+
+# Terminal 1 — this peer already holds the data, so it starts as master
+HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-p2p-a-device \
+  hsync p2p -b demo-p2p -p /tmp/hsync-p2p-a --force-master
+
+# Terminal 2 — discovers the master via mDNS and receives the file
+HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-p2p-b-device \
+  hsync p2p -b demo-p2p -p /tmp/hsync-p2p-b
+
+# Verify
+cat /tmp/hsync-p2p-b/hello.txt   # → hello hsync p2p
+```
+
+Keep both terminals running and edit files in either folder to watch the sync in real time (`Ctrl+C` to stop). `HSYNC_DEVICE_DIR` is only needed to simulate two devices on one machine; on a real LAN omit `--force-master` and let master election happen automatically.
+
+**P2P Mode in action** — Device B discovers Device A via mDNS and receives `hello.txt` automatically:
+<p align="center">
+  <img src="docs/assets/demo-p2p.gif" alt="P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
+</p>
+
+3. **Try it: with a server** — with an [HSYNC Server](https://github.com/albertsdk/hsync-server) running locally and its account token exported as `HSYNC_API_KEY` (see the [server Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)), create the bucket once, then push a folder to the server and receive it in a second folder. Full walkthrough in [Getting Started — Server Mode](docs/getting-started-server.md):
+
+```bash
+# Create the bucket once (the creator becomes its owner)
+curl -k -X POST "https://localhost:9753/api/v1/buckets?bucket=demo" \
+  -H "Authorization: Bearer $HSYNC_API_KEY"
+
+# Two folders, one file
+mkdir -p /tmp/hsync-a /tmp/hsync-b
+echo "hello hsync" > /tmp/hsync-a/hello.txt
+
+# Folder A → server, then server → folder B (one-shot each)
+hsync server localhost --once -b demo -p /tmp/hsync-a --insecure
+hsync server localhost --once -b demo -p /tmp/hsync-b --insecure
+
+# Verify
+cat /tmp/hsync-b/hello.txt   # → hello hsync
+```
+
+`--insecure` accepts the self-signed certificate of this local demo only; in real deployments pin the server certificate with `--ca-cert` (see [Configuration — Server Mode](docs/configuration-server.md)). Omit `--once` to keep both clients running and syncing in real time.
+
+4. **Explore more** — [Examples](docs/examples.md) for backups, mirrors, multi-device setups, NAS and photos; [Scheduling & Automation](docs/scheduling.md) for cron, systemd timers and alerts.
 
 ## Why HSYNC?
 
@@ -90,195 +253,6 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
 
 > **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode is a **stable v1** (Python).
-
-## Quick Start
-
-**P2P Mode in action**: Device A (on top) is running and detect new file `hello.txt` in his bucket and Device B (on bottom) receives `hello.txt` automatically. See [Option A](#option-a--p2p-mode-no-server-needed) steps for details.
-<p align="center">
-  <img src="docs/assets/demo-p2p.gif" alt="P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
-</p>
-
-### Step 1 — Agent Installation
-
-Deploy the latest stable release across Linux or macOS infrastructure via the automated deployment script:
-
-```bash
-curl -fsSL https://github.com/albertsdk/hsync-client/releases/latest/download/install.sh | bash
-```
-
-> Prefer to verify checksums before running, or need a different format
-> (`.deb`, `.bin`, build from source)? See the
-> [full installation guide](docs/installation.md).
-
-### Step 2 — Choose Your Sync Mode
-
-HSYNC supports two sync topologies — pick the one that fits your environment:
-
-- **Option A — p2p Mode**: Peer-to-peer, no server needed. Peers discover each other via mDNS on the same local network (or across networks with a bootnode). Fastest to try: zero infrastructure, works with two terminals on the same machine. Writes are authorized by a shared p2p key — a keyless LAN is read-only.
-- **Option B — Server Mode**: Centralized hub. Requires a running [HSYNC Server](https://github.com/albertsdk/hsync-server). Best for multi-site sync over firewalled networks (HTTP/HTTPS only).
-
-Both options produce the same result: bidirectional file sync in real time. Choose one and follow the steps below.
-
-If you prefer the centralized approach, jump to [Option B](#option-b--server-mode-centralized).
-
-#### Option A — P2P Mode (no server needed)
-
-Initialize direct peer-to-peer synchronization without central infrastructure. Peers discover each other via mDNS and authorize writes with a shared p2p key, so the two terminals below use the same demo key (a keyless LAN is read-only). You can
-test it locally with two terminals on the same machine:
-
-```mermaid
-flowchart TB
-    subgraph DeviceA["💻 Device A (Master)"]
-        direction LR
-        FSA["📂 File System"]<-->|"read / write"| CA["⚙️ HSYNC Client"]
-    end
-
-    subgraph DeviceB["🖥️ Device B (Client)"]
-        direction LR
-        CB["⚙️ HSYNC Client"]<-->|"read / write"| FSB["📂 File System"]
-    end
-
-    CA <-.->|"①② Discover + elect master (mDNS)"| CB
-    CB <-->|"③ Upload / Download"| CA
-
-    style DeviceA fill:#333333
-    style DeviceB fill:#333333
-
-    style FSA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style CA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
-    style FSB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
-```
-
-**p2p Mode Flow:**
-1. **① Discover** — Clients discover each other via mDNS (Bonjour/Avahi)
-2. **② Elect Master** — One device becomes the master (a transport hub that
-   coordinates sync without ever deciding conflicts by role)
-3. **③ Upload / Download** — Clients upload files to the master and fetch
-   files from the master or directly from a peer that holds the exact content;
-   the master relays metadata to all connected peers
-
-```bash
-# 1. Create two folders to share files between them and simulate two distinct devices
-mkdir -p /tmp/hsync-a /tmp/hsync-b
-echo "hello hsync" > /tmp/hsync-a/hello.txt
-
-# 2. Terminal 1 — Initialize Node A (Authoritative Data Source)
-#    Utilizing --force-master prevents initial data reconciliation conflicts.
-#    HSYNC_P2P_KEY authorizes writes: a keyless LAN is read-only, and a
-#    write-capable run without a key is refused with [AUTH REQUIRED].
-HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
-  hsync p2p -b mybucket -p /tmp/hsync-a --force-master
-
-# 3. Terminal 2 — Initialize Node B (Receiver)
-# Automatically discovers Node A via mDNS and downloads hello.txt automatically.
-# Same key as Node A — every peer in the group must share it.
-HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
-  hsync p2p -b mybucket -p /tmp/hsync-b
-
-# 4. Verify the file arrived
-cat /tmp/hsync-b/hello.txt   # → hello hsync
-```
-
-Watch above animation to see what happens.
-
-**Implementation Note (Device Identity):** The `HSYNC_DEVICE_DIR` variable is used here exclusively to simulate two distinct hardware instances on the same host. In standard multi-device deployments, this variable is omitted, and the agent utilizes the default identity path (`~/.local/state/hsync/device/`). See [p2p Mode → Device Identity](docs/p2p-mode.md#device-identity).
-
-**Architectural Note (Conflict Resolution):** The `--force-master` flag establishes the initial file ledger. The master acts merely as a transport hub; logical conflicts are resolved deterministically across all nodes using vector clocks. Always assign the initial master role to the endpoint housing the authoritative data.
-
-> **Note:** `HSYNC_P2P_KEY` is required by every write-capable LAN run — a keyless LAN is read-only, and a keyless bidirectional run is refused with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key. For the full P2P setup (master election, pairing, group filtering with `--group`) see [p2p Mode](docs/p2p-mode.md) and [p2p Mode → Security & Pairing](docs/p2p-mode.md#security--pairing).
-
-#### Option B — Server Mode (centralized)
-
-Connect two clients on the same machine to a local server. You'll need
-[Docker](https://docs.docker.com/get-docker/) to run the server, but the
-clients run natively just like in Option A. The server enforces TLS — a
-self-signed certificate is generated on first start; `--insecure` accepts it
-for this local demo.
-
-```mermaid
-flowchart LR
-    subgraph DeviceA["🖥️ Device A"]
-        FSA["📂 File System"]
-        CA["⚙️ HSYNC Client"]
-    end
-
-    subgraph Remote["☁️ Remote"]
-        SERVER["🗄️ HSYNC Server"]
-    end
-
-    subgraph DeviceB["💻 Device B"]
-        CB["⚙️ HSYNC Client"]
-        FSB["📂 File System"]
-    end
-
-    FSA -->|"① Detect"| CA
-    CA -->|"② Upload"| SERVER
-    SERVER -.->|"③ Notify"| CB
-    CB -->|"④ Download"| SERVER
-    SERVER -->|"⑤ Send"| CB
-    CB -->|"⑥ Write"| FSB
-
-    style DeviceA fill:#333333
-    style DeviceB fill:#333333
-    style FSA fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style CA fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
-    style SERVER fill:#fff3e0,stroke:#e65100,color:#e65100
-    style FSB fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style CB fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2
-```
-
-**Server Mode Flow (A → B):**
-1. **① Detect** — Client A detects file change via watchdog
-2. **② Upload** — Client A uploads file to server
-3. **③ Notify** — Server broadcasts event to Client B via WebSocket
-4. **④ Download** — Client B requests file from server
-5. **⑤ Send** — Server sends file content to Client B
-6. **⑥ Write** — Client B writes file to local disk
-
-The same flow applies in reverse (B → A) for bidirectional sync.
-
-```bash
-# 1. Start the server (keep it running in the background)
-docker run -d --name hsync-server --rm \
-  -p 127.0.0.1:9753:9753 \
-  -e HSYNC_ADMIN_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
-  -e HSYNC_SSL_ENABLED=true \
-  -e HSYNC_SSL_KEYFILE_PASSWORD=local-demo-password \
-  -e HSYNC_SSL_CERT_DIR=/certs \
-  -v hsync-certs:/certs \
-  ghcr.io/albertsdk/hsync-server
-sleep 3
-
-# 2. Create two folders to share files between them and simulate two distinct devices
-mkdir -p /tmp/hsync-a /tmp/hsync-b
-echo "hello hsync" > /tmp/hsync-a/hello.txt
-
-# 3. Terminal 1 — Initialize Client A (uploads hello.txt to the server)
-#    The bootstrap admin token provides full access for this demo
-HSYNC_API_KEY="hs_HsyncAdminBootstrap01_0000000000000000000000000000000000000000000000000000000000000001" \
-  HSYNC_DEVICE_DIR=/tmp/hsync-a-device \
-  hsync server localhost --insecure -b mybucket -p /tmp/hsync-a
-
-# 4. Terminal 2 — Initialize Client B
-#    Receives events via WebSocket and downloads hello.txt automatically
-HSYNC_API_KEY="hs_HsyncAdminBootstrap01_0000000000000000000000000000000000000000000000000000000000000001" \
-  HSYNC_DEVICE_DIR=/tmp/hsync-b-device \
-  hsync server localhost --insecure -b mybucket -p /tmp/hsync-b
-
-# 5. Verify the file arrived
-cat /tmp/hsync-b/hello.txt   # → hello hsync
-```
-
-**Implementation Note (Device Identity):** The `HSYNC_DEVICE_DIR` variable is used here exclusively to simulate two distinct hardware instances on the same host. In standard multi-device deployments, this variable is omitted, and the agent utilizes the default identity path (`~/.local/state/hsync/device/`).
-
-**Quick-Start Note (Bootstrap Admin):** This demo uses the bootstrap admin account, which the server creates automatically on first start with the secret in `HSYNC_ADMIN_KEY`. For production, create a dedicated client account per device (see [Server Mode](docs/server-mode.md)).
-
-**Security Note:** `--insecure` skips certificate verification. Use it **only** for local testing against `localhost`. In production, export the server certificate and pass it with `--ca-cert` (see [Server → Connect your clients](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started-docker.md#connect-your-clients)).
-
-> **Note:** For the full Server Mode walkthrough (dedicated accounts, bucket setup, production deployment), see [Server Mode](docs/server-mode.md) and the [Server Getting Started guide](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md).
-
-If you prefer to go serverless, use [Option A](#option-a--p2p-mode-no-server-needed) instead.
 
 ## Documentation
 
