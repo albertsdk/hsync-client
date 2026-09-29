@@ -257,3 +257,15 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   slave looped on "Waiting for master … to start server" forever. Evaluating the
   local candidate up front makes a lone eligible node claim mastership
   immediately, so the slave discovers the ready master and connects.
+
+- **The master watcher propagates a plain ``touch`` (inotify)**: on Linux a
+  ``utime`` fires only ``IN_ATTRIB`` (no close), so the base
+  ``_process_permission_only`` (used by the P2P master and the server-mode client,
+  while the P2P slave has its own handler) now tracks the mtime alongside the mode
+  and dispatches ``_on_metadata_changed`` when the content hash is unchanged,
+  guarded so a mid-write ``IN_MODIFY`` burst is not mistaken for a touch. Without
+  it the master never detected an mtime-only edit and never broadcast it, so a
+  ``touch`` propagated only client→master (the slave's
+  ``_propagate_metadata_change``): the two directions are now symmetric
+  (``touch`` on either side converges the other's mtime without transferring
+  bytes).

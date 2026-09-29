@@ -182,6 +182,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         self._last_broadcast_hash.pop(path, None)
         self._last_broadcast_ts.pop(path, None)
         self._last_mode.pop(path, None)
+        self._last_mtime.pop(path, None)
 
     def _uses_polling_backend(self) -> bool:
         """Return whether the active watcher backend is the polling fallback.
@@ -232,6 +233,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # poisoned entry made on_closed skip the file as "unchanged" and the
         # upload was silently lost.
         self._last_mode: dict[str, int] = {}
+        # Per-path mtime baseline for the inotify ``IN_ATTRIB`` path: a plain
+        # ``touch`` changes only the mtime (no close), so it must be detected
+        # here and propagated as a metadata-only change. Kept beside ``_last_mode``
+        # (same lifecycle: recorded on first sight, invalidated on rename/delete).
+        self._last_mtime: dict[str, int] = {}
         # Optional watcher manager reference: when set, newly created directories
         # are watched recursively through it (with graceful degradation on a
         # kernel limit) instead of waiting for the next full sync cycle.
@@ -350,20 +356,27 @@ class BaseFileEventHandler(FileSystemEventHandler):
         return (st.st_mtime_ns, st.st_size, st.st_mode & 0o7777)
 
     def _process_permission_only(self, src_path: str) -> None:
-        """Handle a file event that may be a pure ``chmod`` on Linux.
+        """Handle a file event that may be a pure ``chmod`` or ``touch`` on Linux.
 
         On inotify platforms content changes propagate via ``on_closed``
-        (``IN_CLOSE_WRITE``); a ``chmod`` only fires ``IN_ATTRIB``, which
-        watchdog delivers as a file ``modified`` event with no close. This
-        path inspects the mode only:
-        - first observation of the path: just records the mode;
-        - mode unchanged: no-op;
+        (``IN_CLOSE_WRITE``); a ``chmod`` or a ``utime`` (``touch``) only fires
+        ``IN_ATTRIB``, which watchdog delivers as a file ``modified`` event with
+        no close. This path inspects the mode and the mtime only:
+        - first observation of the path: records both baselines;
+        - neither changed: no-op;
         - mode changed: re-reads the file and delegates to the
-          ``_on_permissions_changed`` transport hook.
-        Content is NEVER uploaded from here (a partial write would be unsafe).
+          ``_on_permissions_changed`` transport hook;
+        - only the mtime changed with identical content: delegates to the
+          ``_on_metadata_changed`` transport hook (a plain ``touch``; the master
+          broadcasts it, the server-mode client pushes it).
+        Content is NEVER uploaded from here (a partial write would be unsafe):
+        the mtime branch only fires when the content hash still equals the last
+        propagated one, so a mid-write ``IN_MODIFY`` burst is not mistaken for a
+        touch (``on_closed`` handles the real content change).
 
         The mode baseline lives in the dedicated ``_last_mode`` map — never in
-        ``_last_broadcast_stat`` (see the init comment for why).
+        ``_last_broadcast_stat`` (see the init comment for why); ``_last_mtime``
+        shares that lifecycle.
         """
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
@@ -374,20 +387,33 @@ class BaseFileEventHandler(FileSystemEventHandler):
         except OSError:
             return
         mode = st.st_mode & 0o7777
-        prev = self._last_mode.get(src_path)
+        mtime_ns = st.st_mtime_ns
+        prev_mode = self._last_mode.get(src_path)
+        prev_mtime = self._last_mtime.get(src_path)
         self._last_mode[src_path] = mode
-        if prev is None or prev == mode:
+        self._last_mtime[src_path] = mtime_ns
+        if prev_mode is None:
             # First observation (e.g. the watch just started, or the content
-            # write that preceded this event): record the mode so a later
-            # chmod is detected; content goes via on_closed. Mode unchanged:
-            # no-op.
+            # write that preceded this event): record the baselines so a later
+            # chmod/touch is detected; content goes via on_closed.
             return
-        invalidate_sha256_cache(src_path)
-        file_obj = File.get(src_path)
-        if file_obj is None:
+        if prev_mode != mode:
+            invalidate_sha256_cache(src_path)
+            file_obj = File.get(src_path)
+            if file_obj is None:
+                return
+            log.info(f'[PERMISSION] mode change: "{src_path}"{self._cid_suffix(src_path)}')
+            self._on_permissions_changed(file_obj, src_path)
             return
-        log.info(f'[PERMISSION] mode change: "{src_path}"{self._cid_suffix(src_path)}')
-        self._on_permissions_changed(file_obj, src_path)
+        if prev_mtime is not None and mtime_ns != prev_mtime:
+            # A newer mtime with no close: a plain ``touch``. Only propagate when
+            # the content is unchanged (a write's IN_MODIFY burst hashes
+            # differently and is handled by on_closed), so a partial read is
+            # never broadcast as a metadata-only change.
+            file_obj = File.get(src_path)
+            if file_obj and file_obj.sha256sum == self._last_broadcast_hash.get(src_path):
+                log.info(f'[TOUCH] mtime change: "{src_path}"{self._cid_suffix(src_path)}')
+                self._on_metadata_changed(file_obj, src_path)
 
     def _record_broadcast(self, src_path: str, stat: tuple[int, int, int], sha256: str) -> None:
         """Record a broadcast for content dedup, evicting oldest if at capacity.
@@ -415,6 +441,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # path, which always goes through _stat_key).
         if len(stat) >= 3:
             self._last_mode[src_path] = stat[2]
+            # Keep the mtime baseline in step with the propagated content so a
+            # later touch is detected against the propagated mtime, not a stale
+            # pre-upload observation.
+            self._last_mtime[src_path] = stat[0]
 
     # ----- watchdog event handlers -----
 

@@ -1583,7 +1583,10 @@ def _apply_local_mtime(abs_path: str, corrected_mtime: int) -> None:
     try:
         raw = uncorrect_mtime(corrected_mtime)
         os.utime(abs_path, (raw, raw))
-        log.debug(f'Metadata-only converge (mtime): "{abs_path}" ({corrected_mtime})')
+        # INFO (not DEBUG): the operator must see the replicated mtime change,
+        # mirroring the sender's ``[TOUCH]`` line. Log the raw value actually
+        # written, so the on-disk mtime can be compared with the peer's.
+        log.info(f'[TOUCH] metadata converge (mtime): "{abs_path}" ({raw})')
     except OSError as exc:
         log.debug(f'Could not apply mtime to "{abs_path}": {exc}')
 

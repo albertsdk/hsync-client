@@ -76,7 +76,11 @@ broadcasts the `File` with the corrected mtime in its `version`
 tracks the mtime alongside the mode and, on a content-identical touch, pushes a
 metadata-only PATCH to the master (`_propagate_metadata_change`); inbound
 adoptions hold the receiving mark so they never echo back. Either way a `touch`
-propagates without transferring bytes.
+propagates without transferring bytes. This applies to **files only**:
+directories sync their existence and permissions (`update_dir`), never their
+mtime — a directory's mtime changes on every child create/delete/rename, so
+replicating it would be pure churn (and would echo against the peer's own
+writes).
 
 The local vclock is resolved **purely** (no store mutation) via
 `sync_state.local_version_for_compare` (ticks the stored clock by this node's
@@ -420,18 +424,20 @@ preceding no-op close):
 
 - **Linux (inotify)**: a `chmod` fires only `IN_ATTRIB` (no `IN_CLOSE_WRITE`),
   so `on_modified` calls `_process_permission_only` (`file_event_handler.py`),
-  which refreshes the cached mode and, on a real change, invokes the transport
-  hook `_on_permissions_changed(file, path)`. A plain `touch` (content hash
-  unchanged, mtime changed) is detected in `_process_file_ready` stage 2 and
-  invokes `_on_metadata_changed(file, path)`. Content bytes are NEVER read from
-  this path (a concurrent partial write would be torn). The mode baseline lives
-  in the dedicated `_last_mode` map — deliberately SEPARATE from
-  `_last_broadcast_stat`: writing the first-observed stat there poisoned stage 1
-  of `_process_file_ready` (a fast single-syscall write reaches its final size
-  before the handler runs, so `on_closed` saw the same stat and skipped the
-  file as "unchanged", silently losing the upload); `_last_mode` is kept in
-  step with the last *propagated* content in `_record_broadcast` and
-  invalidated on rename/delete/eviction.
+  which tracks the mode **and** the mtime: on a real mode change it refreshes the
+  cached mode and invokes the transport hook `_on_permissions_changed(file,
+  path)`, and on a plain `touch` (content hash unchanged, mtime newer) it invokes
+  `_on_metadata_changed(file, path)`. The mtime branch only fires when the
+  content hash still equals the last propagated one, so a mid-write `IN_MODIFY`
+  burst is never mistaken for a touch. Content bytes are NEVER read from this
+  path (a concurrent partial write would be torn). The mode and mtime baselines
+  live in the dedicated `_last_mode`/`_last_mtime` maps — deliberately SEPARATE
+  from `_last_broadcast_stat`: writing the first-observed stat there poisoned
+  stage 1 of `_process_file_ready` (a fast single-syscall write reaches its final
+  size before the handler runs, so `on_closed` saw the same stat and skipped the
+  file as "unchanged", silently losing the upload); both are kept in step with
+  the last *propagated* content in `_record_broadcast` and invalidated on
+  rename/delete/eviction.
 - **Non-inotify platforms**: the same mode comparison lives in stage 2 of
   `_process_file_ready` — a hash match with a different mode triggers the hook
   instead of the skip.
