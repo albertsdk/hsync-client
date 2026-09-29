@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from hsync_common.protocol.bootnode_trust import TrustPolicy
 
 from hsync_client.boot_client import (
     BootnodeClient,
@@ -67,7 +68,7 @@ def bootnode_endpoint(tmp_path):
 def test_boot_1_roundtrip_against_real_bootnode(bootnode_endpoint):
     """register ack/STUN-echo, query relay, refresh and leave succeed."""
     host, port = bootnode_endpoint
-    client = BootnodeClient(host, port, insecure=True, timeout=10.0)
+    client = BootnodeClient(host, port, policy=TrustPolicy.none, timeout=10.0)
 
     ack = client.register(
         build_register_frame(

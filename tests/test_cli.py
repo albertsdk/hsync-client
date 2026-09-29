@@ -752,7 +752,7 @@ class TestCapabilitiesJson:
         from hsync_client.cli import collect_subcommand_options
 
         options = collect_subcommand_options(typer_app)
-        assert set(options) == {"p2p", "server"}
+        assert set(options) == {"bootnode", "p2p", "server"}
         for flags in options.values():
             assert flags == sorted(flags)
             assert all(f.startswith("--") for f in flags)
@@ -807,3 +807,45 @@ class TestBuildBootnode:
 
         with pytest.raises(typer.BadParameter):
             _build_bootnode("boot.example.net", 70000, no_upnp=False)
+
+
+class TestBootnodeTrustCommands:
+    """``hsync bootnode trust`` manages the known-hosts store (ADR-0035)."""
+
+    def test_add_list_show_remove(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
+        fingerprint = "a" * 64
+
+        empty = runner.invoke(app, ["bootnode", "trust", "list"])
+        assert empty.exit_code == 0
+        assert "No bootnodes" in empty.output
+
+        added = runner.invoke(
+            app, ["bootnode", "trust", "add", "boot.example.net", fingerprint, "--port", "1443"]
+        )
+        assert added.exit_code == 0, added.output
+
+        listed = runner.invoke(app, ["bootnode", "trust", "list"])
+        assert fingerprint in listed.output
+        assert "boot.example.net:1443" in listed.output
+
+        shown = runner.invoke(
+            app, ["bootnode", "trust", "show", "boot.example.net", "--port", "1443"]
+        )
+        assert shown.exit_code == 0
+        assert fingerprint in shown.output
+
+        removed = runner.invoke(
+            app, ["bootnode", "trust", "remove", "boot.example.net", "--port", "1443"]
+        )
+        assert removed.exit_code == 0
+
+        missing = runner.invoke(
+            app, ["bootnode", "trust", "show", "boot.example.net", "--port", "1443"]
+        )
+        assert missing.exit_code == 1
+
+    def test_add_rejects_an_invalid_fingerprint(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
+        result = runner.invoke(app, ["bootnode", "trust", "add", "boot.example.net", "nope"])
+        assert result.exit_code == 1

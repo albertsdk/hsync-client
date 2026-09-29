@@ -55,6 +55,7 @@ const KEYS = [
     'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
     'HSYNC_BOOTNODE', 'HSYNC_UPNP_ENABLED',
     'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU',
+    'HSYNC_BOOTNODE_TRUST',
     'HSYNC_NTP_HOSTS',
 ];
 
@@ -90,6 +91,10 @@ foreach (KEYS as $key) {
             break;
         case 'HSYNC_BUCKET':
             if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/', $val)) $val = 'hsync';
+            break;
+        case 'HSYNC_BOOTNODE_TRUST':
+            // Empty means "use the client default" (ask); otherwise a known policy.
+            if (!in_array($val, ['', 'ask', 'accept-new', 'strict', 'none'], true)) $val = '';
             break;
         case 'HSYNC_DISCOVERY_TIMEOUT':
         case 'HSYNC_INTERVAL':

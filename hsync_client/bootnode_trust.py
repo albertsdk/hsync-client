@@ -4,20 +4,22 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""Trust-On-First-Use store for bootnode certificate fingerprints (ADR-0034).
+"""Durable bootnode trust store (``bootnode_known_hosts.json``), SSH-style.
 
 A self-hosted bootnode authenticates its QUIC/TLS transport with a self-signed
-certificate. The fingerprint is only meaningful once it is *pinned*: with
-``--bootnode-tofu`` the first fingerprint seen for a ``host:port`` is remembered
-here, and a later mismatch is treated as a possible man-in-the-middle and
-refused. The decision itself is the shared source of truth in
-:mod:`hsync_common.protocol.pairing` (``fingerprint_matches``); this module only
+certificate, so the only trust anchor is the certificate fingerprint the operator
+pins. This store is the client's ``known_hosts``: it remembers the accepted
+fingerprint per ``host:port`` and is the persistence half of the shared policy
+:func:`hsync_common.protocol.bootnode_trust.evaluate_bootnode_trust`. The
+decision itself lives in ``hsync-common`` so the Python client, the desktop
+subprocess contract and the Android mirror cannot drift; this module only
 persists the pins, mirroring the P2P pin store's locking/atomicity contract.
 
-The store keeps a single ``current`` fingerprint per bootnode (no ``next``): a
-rotation window is expressed by passing two ``--bootnode-fingerprint`` values,
-and the store records whichever matched. State lives outside the synced bucket
-(overridable via ``HSYNC_BOOTNODE_TRUST_FILE``).
+Each record keeps a single ``current`` fingerprint (no ``next``: a rotation
+window is expressed by passing two ``--bootnode-fingerprint`` values, and the
+store records whichever matched) plus ``updated_at``, ``first_seen`` and the
+``source`` that trusted it. State lives outside the synced bucket (overridable
+via ``HSYNC_BOOTNODE_TRUST_FILE``).
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from hsync_client._trust_store import JsonStore, StoreError
 
 __all__ = [
     "BOOTNODE_TRUST_FILE_ENV",
+    "TRUST_SOURCES",
     "BootnodeTrustStore",
     "BootnodeTrustStoreError",
     "default_bootnode_trust_path",
@@ -45,6 +48,10 @@ BOOTNODE_TRUST_FILE_ENV = "HSYNC_BOOTNODE_TRUST_FILE"
 
 # On-disk schema version (bumped only when the file shape changes).
 _SCHEMA_VERSION = 1
+
+# Why a fingerprint was pinned: the interactive prompt, TOFU, or the
+# ``hsync bootnode trust add`` command.
+TRUST_SOURCES = frozenset({"prompt", "tofu", "cli"})
 
 
 class BootnodeTrustStoreError(StoreError):
@@ -68,8 +75,8 @@ def _bootnode_key(host: str, port: int) -> str:
 class BootnodeTrustStore(JsonStore):
     """Disk-backed map of ``host:port`` to a pinned bootnode certificate fingerprint.
 
-    A missing file is an empty store; corrupt state fails closed. The record
-    holds a single ``current`` fingerprint plus its ``updated_at`` timestamp.
+    A missing file is an empty store; any other shape (unknown version, a record
+    without ``current``/``updated_at``/``first_seen``/``source``) fails closed.
     """
 
     error_cls = BootnodeTrustStoreError
@@ -83,7 +90,8 @@ class BootnodeTrustStore(JsonStore):
         if not data:
             # Missing file or an empty object: an empty trust store.
             return {"version": _SCHEMA_VERSION, "bootnodes": {}}
-        if data.get("version") != _SCHEMA_VERSION:
+        version = data.get("version")
+        if version != _SCHEMA_VERSION:
             raise BootnodeTrustStoreError(f"{self.label} has an unsupported version")
         bootnodes = data.get("bootnodes")
         if not isinstance(bootnodes, dict):
@@ -94,6 +102,10 @@ class BootnodeTrustStore(JsonStore):
             if parse_fingerprint(record.get("current")) is None:
                 raise BootnodeTrustStoreError(f"{self.label} is corrupt")
             if not isinstance(record.get("updated_at"), str):
+                raise BootnodeTrustStoreError(f"{self.label} is corrupt")
+            if not isinstance(record.get("first_seen"), str):
+                raise BootnodeTrustStoreError(f"{self.label} is corrupt")
+            if record.get("source") not in TRUST_SOURCES:
                 raise BootnodeTrustStoreError(f"{self.label} is corrupt")
         return data
 
@@ -107,20 +119,63 @@ class BootnodeTrustStore(JsonStore):
             record = self._records().get(_bootnode_key(host, port))
             return record["current"] if record is not None else None
 
-    def set(self, host: str, port: int, fingerprint: str) -> None:
-        """Pin (or repin) ``fingerprint`` for ``host:port``."""
+    def entries(self) -> list[dict[str, Any]]:
+        """Return every pinned bootnode as ``host``/``port``/``fingerprint``/… dicts."""
+        with self._transaction():
+            records = self._records()
+            result: list[dict[str, Any]] = []
+            for key, record in records.items():
+                host, _, port = key.rpartition(":")
+                result.append(
+                    {
+                        "host": host,
+                        "port": int(port) if port.isdigit() else port,
+                        "fingerprint": record["current"],
+                        "updated_at": record.get("updated_at", ""),
+                        "first_seen": record.get("first_seen", ""),
+                        "source": record["source"],
+                    }
+                )
+            return sorted(result, key=lambda item: (item["host"], str(item["port"])))
+
+    def set(self, host: str, port: int, fingerprint: str, *, source: str) -> None:
+        """Pin (or repin) ``fingerprint`` for ``host:port``, recording *source*.
+
+        ``first_seen`` is preserved when the node was already present, so a
+        re-pin (a documented rotation) keeps the original trust date.
+        """
         normalized = parse_fingerprint(fingerprint)
         if normalized is None:
             raise ValueError("bootnode fingerprint is not a valid sha256:<hex> pin")
+        if source not in TRUST_SOURCES:
+            raise ValueError(f"unknown trust source: {source!r}")
+        now = utc_now_iso()
         with self._transaction():
             data = self._load_unlocked()
             data["version"] = _SCHEMA_VERSION
             bootnodes = data.setdefault("bootnodes", {})
+            existing = bootnodes.get(_bootnode_key(host, port))
+            first_seen = existing.get("first_seen") if existing else None
             bootnodes[_bootnode_key(host, port)] = {
                 "current": normalized,
-                "updated_at": utc_now_iso(),
+                "updated_at": now,
+                "first_seen": first_seen or now,
+                "source": source,
             }
             self._save_unlocked(data)
+
+    def remove(self, host: str, port: int) -> bool:
+        """Forget the pin for ``host:port``; return whether an entry was removed."""
+        with self._transaction():
+            data = self._load_unlocked()
+            bootnodes = data.setdefault("bootnodes", {})
+            key = _bootnode_key(host, port)
+            if key not in bootnodes:
+                return False
+            del bootnodes[key]
+            data["version"] = _SCHEMA_VERSION
+            self._save_unlocked(data)
+            return True
 
 
 def default_bootnode_trust_store() -> BootnodeTrustStore:

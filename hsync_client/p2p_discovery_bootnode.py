@@ -30,13 +30,16 @@ from collections.abc import Callable
 from typing import Any
 
 from hsync_common.protocol.bootnode import BootPeer, derive_bucket_token
+from hsync_common.protocol.bootnode_trust import TrustPolicy
 from loguru import logger as log
 
 from hsync_client.boot_client import (
     BootnodeClient,
     BootnodeError,
     BootnodeFingerprintMismatch,
+    BootnodeNotTrusted,
     BootnodeRefused,
+    TrustPrompt,
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
@@ -87,8 +90,8 @@ class BootnodeDiscovery(DiscoveryPlanState):
         refresh_interval: float = _DEFAULT_REFRESH_S,
         p2p_key: str | None = None,
         fingerprints: tuple[str, ...] = (),
-        tofu: bool = False,
-        insecure: bool = False,
+        policy: TrustPolicy = TrustPolicy.ask,
+        prompt: TrustPrompt | None = None,
         upnp_enabled: bool = True,
         capacity: int = 0,
         peer_download_enabled: bool = False,
@@ -122,8 +125,8 @@ class BootnodeDiscovery(DiscoveryPlanState):
             bootnode_host,
             bootnode_port,
             fingerprints=fingerprints,
-            tofu=tofu,
-            insecure=insecure,
+            policy=policy,
+            prompt=prompt,
         )
         self._upnp_factory = upnp_factory
         self._token = derive_bucket_token(p2p_key.encode("utf-8"), bucket) if p2p_key else None
@@ -212,10 +215,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
         The network cadence (register/refresh/query) belongs to the lease loop,
         which runs at :data:`BOOTNODE_REFRESH_INTERVAL` (spec: 30 s) to stay
         inside the bootnode's per-bucket rate limits. This wait therefore only
-        parks on the shared peer-change event; it must never poll ``query``
-        itself, or it would exhaust the 5/min per-(IP, bucket) query budget and
-        the node would answer ``rate_limited`` for the rest of the window
-        (regression: a 1 s poll loop turned discovery into a refusal storm).
+        parks on the shared peer-change event; it never polls ``query`` itself,
+        or it would exhaust the 5/min per-(IP, bucket) query budget and the node
+        would answer ``rate_limited`` for the rest of the window.
         """
         if self._fatal_error is not None:
             # Even before the peer manager exists: a trust failure is terminal.
@@ -323,6 +325,14 @@ class BootnodeDiscovery(DiscoveryPlanState):
                     action = "refresh"
                     self._refresh()
                 self._query_peers()
+            except BootnodeNotTrusted as exc:
+                # Policy ``ask`` could not establish trust (declined, or no
+                # terminal): fatal, and never re-prompt every cycle.
+                self._fatal_error = exc
+                log.error(
+                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} not trusted: {exc}"
+                )
+                return
             except BootnodeFingerprintMismatch as exc:
                 # Fatal: the bootnode failed authentication. Never retry an
                 # unpinned/untrusted node (the token would leak to an attacker).

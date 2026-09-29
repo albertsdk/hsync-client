@@ -78,6 +78,7 @@ fi
 : "${HSYNC_BOOTNODE:=}"
 : "${HSYNC_BOOTNODE_FINGERPRINT:=}"
 : "${HSYNC_BOOTNODE_TOFU:=false}"
+: "${HSYNC_BOOTNODE_TRUST:=}"
 : "${HSYNC_UPNP_ENABLED:=true}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
@@ -187,6 +188,7 @@ export HSYNC_NTP_HOSTS
 export HSYNC_BOOTNODE
 export HSYNC_BOOTNODE_FINGERPRINT
 export HSYNC_BOOTNODE_TOFU
+export HSYNC_BOOTNODE_TRUST
 export HSYNC_UPNP_ENABLED
 # Server-mode endpoint: exported like the keys above — the client reads it
 # from the environment (no CLI flag carries the URL anymore).

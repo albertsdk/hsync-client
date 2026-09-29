@@ -197,30 +197,30 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   fatal (`BootnodeFingerprintMismatch`, lease loop stops); `--ca-cert` is refused
   in `hsync p2p`.
 
-- **Bootnode discovery cadence has its own budget (refusal-storm fix)**: the
-  `boot/1` plan no longer reuses the mDNS `HEARTBEAT_INTERVAL` (5 s).
+- **Bootnode discovery cadence has its own budget**: the `boot/1` plan uses
   `BOOTNODE_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
   ``boot-1.md``: "client refresh every 30 s"; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`,
-  range 1–300) drives the lease loop's register/refresh/query, and
-  `BootnodeDiscovery.wait_for_discovery` is now event-based
-  (`PeerManager.wait_for_change`, like mDNS) instead of polling `query` every 1 s;
-  a refused `query` arms a `retry_after` backoff. Rationale: the node rate-limits
-  `query` to 5/min per (IP, bucket) and `register`/`refresh` to 10/min
-  (`handler.py:132`), so the old 1 s poll exhausted the burst, left the client
-  `rate_limited` for the rest of every window (repeating the same log lines) and
-  starved real discovery. `HSYNC_BOOTNODE_REFRESH_INTERVAL` is documented in
+  range 1–300) to drive the lease loop's register/refresh/query, distinct from the
+  mDNS `HEARTBEAT_INTERVAL` (5 s). `BootnodeDiscovery.wait_for_discovery` is
+  event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
+  itself; a refused `query` arms a `retry_after` backoff. Rationale: the node
+  rate-limits `query` to 5/min per (IP, bucket) and `register`/`refresh` to
+  10/min (`handler.py:132`), and this cadence keeps the client inside those
+  limits instead of burning the burst and being `rate_limited` for the rest of
+  the window, which would starve real discovery.
+  `HSYNC_BOOTNODE_REFRESH_INTERVAL` is documented in
   `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
   web config surface (which never exposed the heartbeat).
 
-- **A fatal discovery failure aborts `hsync p2p` (no more infinite wait)**: a
+- **A fatal discovery failure aborts `hsync p2p`**: a
   `BootnodeFingerprintMismatch` is terminal — the lease loop records it and
   `wait_for_discovery` raises the new plan-agnostic `DiscoveryFatalError`
-  (`p2p_discovery.py`), which `run_p2p_mode` maps to `ExitCode.FATAL` (exit 1).
-  Before, the loop stopped but the client kept printing "Waiting for peers to
-  join" forever. The mDNS plan never raises it; the core still does not branch on
-  the plan (it catches a discovery-layer error). See the new
-  `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md` for the operator/client
-  recovery steps (stable `--identity`, `--bootnode-fingerprint`, clearing the pin).
+  (`p2p_discovery.py`), which `run_p2p_mode` maps to `ExitCode.FATAL` (exit 1),
+  so the client never waits for peers that can never be discovered. The mDNS plan
+  never raises it; the core still does not branch on the plan (it catches a
+  discovery-layer error). See `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md`
+  for the operator/client recovery steps (stable `--identity`,
+  `--bootnode-fingerprint`, clearing the pin).
 
 - **One log line per boot/1 lease cycle**: aioquic's per-frame QUIC/TLS INFO
   records (`Retrying with token`, `Negotiated protocol version`, `ALPN
@@ -231,3 +231,19 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   lines per exchange, repeated every cycle, drowned the client's own output
   without adding actionable information; the library detail stays available with
   `--debug`.
+
+- **SSH-like bootnode trust (ADR-0035)**: the default policy is `ask` — on a
+  terminal the client prints the unknown bootnode fingerprint and confirms it
+  once (like `ssh`), remembering it in `bootnode_known_hosts.json`; without a
+  terminal it fails closed. The policy is the shared SSOT
+  `hsync_common.protocol.bootnode_trust` (`TrustPolicy` + `evaluate_bootnode_trust`),
+  consumed by `BootnodeClient` (`policy`/`prompt` fields; `BootnodeNotTrusted` is
+  fatal in the lease loop like a pin mismatch) and mirrored by the Android client
+  via the `p2p-bootnode-trust-scenarios` fixture. `--bootnode-trust
+  {ask,accept-new,strict}` and `HSYNC_BOOTNODE_TRUST` select the policy;
+  `--bootnode-tofu` maps to `accept-new`, `--bootnode-fingerprint` to `strict` and
+  `--insecure` to `none`. The store (`bootnode_known_hosts.json`) keeps
+  `{current, updated_at, first_seen, source}` and is managed with
+  `hsync bootnode trust {list,show,add,remove,fingerprint}` (`fingerprint` reads a
+  node's certificate without trusting it). The prompt is built by
+  `hsync_client/trust_prompt.py`: `--yes` auto-accepts, but only on a terminal.

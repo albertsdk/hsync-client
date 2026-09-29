@@ -27,6 +27,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from hsync_common.protocol.bootnode_trust import TrustPolicy
+
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
     BOOTNODE_REFRESH_INTERVAL,
@@ -34,6 +36,7 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
 )
 from hsync_client.p2p_peers import PeerManager
+from hsync_client.trust_prompt import build_trust_prompt
 
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
@@ -196,8 +199,8 @@ def build_discovery_plan(
         bootnode_port=config.get("BOOTNODE_PORT") or BOOTNODE_DEFAULT_PORT,
         p2p_key=config.get("P2P_KEY"),
         fingerprints=config.get("BOOTNODE_FINGERPRINT", ()),
-        tofu=bool(config.get("BOOTNODE_TOFU", False)),
-        insecure=bool(config.get("NO_VERIFY_SSL", False)),
+        policy=config.get("BOOTNODE_TRUST", TrustPolicy.ask),
+        prompt=build_trust_prompt(config),
         upnp_enabled=bool(config.get("UPNP_ENABLED", True)),
         capacity=config.get("P2P_PEER_READ_CAP", 0),
         peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),

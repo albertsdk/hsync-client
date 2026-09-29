@@ -13,11 +13,12 @@ and provides typed configuration structures for the application.
 
 import re
 from functools import lru_cache
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
+from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.pairing import parse_fingerprint
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -209,6 +210,10 @@ class EnvSettings(BaseSettings):
         ge=BOOTNODE_REFRESH_INTERVAL_MIN,
         le=BOOTNODE_REFRESH_INTERVAL_MAX,
         description="boot/1 lease/query cadence in seconds (default 30)",
+    )
+    bootnode_trust: Literal["ask", "accept-new", "strict", "none"] | None = Field(
+        default=None,
+        description="Bootnode TLS trust policy (default: ask)",
     )
     never_master: bool = Field(
         default=False,
@@ -450,6 +455,11 @@ def get_bootnode_refresh_interval() -> int | None:
     return get_env_settings().bootnode_refresh_interval
 
 
+def get_bootnode_trust() -> str | None:
+    """Get the bootnode TLS trust policy from the environment (see ADR-0035)."""
+    return get_env_settings().bootnode_trust
+
+
 def get_tombstone_ttl_days() -> int:
     """Get tombstone retention window in days from environment (late binding)."""
     return get_env_settings().tombstone_ttl_days
@@ -681,8 +691,10 @@ class HsyncConfig(TypedDict):
     BOOTNODE_PORT: int
     # Bootnode certificate fingerprint(s) to pin (up to two for a rotation window)
     BOOTNODE_FINGERPRINT: tuple[str, ...]
-    # Trust the bootnode certificate on first use (TOFU)
-    BOOTNODE_TOFU: bool
+    # Bootnode TLS trust policy (ADR-0035; default ask)
+    BOOTNODE_TRUST: TrustPolicy
+    # ``--yes``: answer a TTY trust prompt affirmatively (never on a non-TTY)
+    AUTO_CONFIRM: bool
     # Map the master TCP port with UPnP (plan default: on only with a bootnode)
     UPNP_ENABLED: bool
     # Dangerous explicit opt-in: permit keyless mutation requests

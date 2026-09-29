@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
 
@@ -30,6 +31,7 @@ from hsync_client.config import (
     get_bootnode_fingerprints,
     get_bootnode_refresh_interval,
     get_bootnode_tofu,
+    get_bootnode_trust,
     get_compression_enabled,
     get_connectivity_retry_attempts,
     get_connectivity_retry_max_wait,
@@ -499,6 +501,28 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
     return safe
 
 
+def _resolve_bootnode_trust(
+    policy: str | None,
+    fingerprints: tuple[str, ...],
+    tofu: bool,
+    verify_ssl: bool,
+) -> TrustPolicy:
+    """Resolve the bootnode trust policy from flags/env (ADR-0035).
+
+    Precedence: ``--insecure`` (``none``) > ``--bootnode-fingerprint``
+    (``strict``) > ``--bootnode-tofu`` (``accept-new``) > the flag value >
+    ``HSYNC_BOOTNODE_TRUST`` > the ``ask`` default.
+    """
+    if not verify_ssl:
+        return TrustPolicy.none
+    if fingerprints:
+        return TrustPolicy.strict
+    if tofu:
+        return TrustPolicy.accept_new
+    explicit = policy or get_bootnode_trust()
+    return TrustPolicy(explicit) if explicit else TrustPolicy.ask
+
+
 def run_sync(
     bucket: str,
     env_file: str | None,
@@ -552,6 +576,7 @@ def run_sync(
     p2p_upnp_enabled: bool | None = None,
     bootnode_fingerprints: tuple[str, ...] = (),
     bootnode_tofu: bool = False,
+    bootnode_trust: str | None = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -845,7 +870,13 @@ def run_sync(
         "BOOTNODE_PORT": p2p_bootnode_port or BOOTNODE_DEFAULT_PORT,
         # Bootnode TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
         "BOOTNODE_FINGERPRINT": bootnode_fingerprints or get_bootnode_fingerprints(),
-        "BOOTNODE_TOFU": bootnode_tofu or get_bootnode_tofu(),
+        "BOOTNODE_TRUST": _resolve_bootnode_trust(
+            bootnode_trust,
+            bootnode_fingerprints or get_bootnode_fingerprints(),
+            bootnode_tofu or get_bootnode_tofu(),
+            verify_ssl,
+        ),
+        "AUTO_CONFIRM": auto_confirm,
         "UPNP_ENABLED": (
             p2p_upnp_enabled
             if p2p_upnp_enabled is not None

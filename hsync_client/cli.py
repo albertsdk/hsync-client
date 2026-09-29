@@ -21,8 +21,10 @@ from typing import Annotated
 
 import typer
 import typer.main
+from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.pairing import parse_fingerprint
 
+from hsync_client.bootnode_trust import BootnodeTrustStore
 from hsync_client.constants import (
     BANDWIDTH_MAX,
     BANDWIDTH_MIN,
@@ -790,6 +792,21 @@ BootnodeTofuOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
+BootnodeTrustOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--bootnode-trust",
+        help=(
+            "Bootnode TLS trust policy: 'ask' (default: confirm an unknown "
+            "fingerprint on a terminal, fail closed without one), 'accept-new' "
+            "(pin the first sighting silently), 'strict' (require a pin) or "
+            "'none' (no verification; loopback/tests only)."
+        ),
+        metavar="POLICY",
+        show_default=False,
+        rich_help_panel="P2P Mode",
+    ),
+]
 DiscoveryTimeoutOpt = Annotated[
     int | None,
     typer.Option(
@@ -973,6 +990,7 @@ def p2p(
     ca_cert: CaCertOpt = None,
     bootnode_fingerprint: BootnodeFingerprintOpt = None,
     bootnode_tofu: BootnodeTofuOpt = False,
+    bootnode_trust: BootnodeTrustOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
     once: OnceOpt = False,
@@ -1124,6 +1142,7 @@ def p2p(
         p2p_upnp_enabled=upnp_enabled,
         bootnode_fingerprints=fingerprints,
         bootnode_tofu=bool(bootnode_tofu),
+        bootnode_trust=bootnode_trust,
         discovery_timeout=discovery_timeout,
         p2p_group=p2p_group,
         force_master=force_master,
@@ -1145,6 +1164,101 @@ def p2p(
         mass_delete_threshold=mass_delete_threshold,
         mass_delete_percent=mass_delete_percent,
     )
+
+
+# =============================================================================
+# bootnode trust (known_hosts) management
+# =============================================================================
+
+# ``hsync bootnode trust …`` mirrors OpenSSH's known-hosts workflow so an
+# operator can inspect, pre-pin and forget bootnode fingerprints without editing
+# the JSON store by hand (ADR-0035).
+_bootnode_app = typer.Typer(
+    help="Inspect and manage bootnode trust (the client's known hosts).",
+    no_args_is_help=True,
+)
+_trust_app = typer.Typer(
+    help="Manage the bootnode known-hosts store.",
+    no_args_is_help=True,
+)
+_bootnode_app.add_typer(_trust_app, name="trust")
+app.add_typer(_bootnode_app, name="bootnode")
+
+
+def _trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
+    """Resolve ``hostname``/``--port`` for the trust subcommands (host required)."""
+    if hostname is None:
+        raise typer.BadParameter("a bootnode hostname is required")
+    host, resolved_port, _ = _build_bootnode(hostname, port, no_upnp=False)
+    if host is None:  # ``_build_bootnode`` only returns None for an absent host
+        raise typer.BadParameter("a bootnode hostname is required")
+    return host, resolved_port
+
+
+@_trust_app.command("list")
+def bootnode_trust_list() -> None:
+    """List the pinned bootnode fingerprints (like ``known_hosts``)."""
+    entries = BootnodeTrustStore().entries()
+    if not entries:
+        typer.echo("No bootnodes are trusted yet.")
+        return
+    for entry in entries:
+        typer.echo(
+            f"{entry['host']}:{entry['port']} {entry['fingerprint']} "
+            f"(source={entry['source']}, first_seen={entry['first_seen']})"
+        )
+
+
+@_trust_app.command("show")
+def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None:
+    """Show the pinned fingerprint for one bootnode."""
+    host, resolved_port = _trust_host_port(hostname, port)
+    fingerprint = BootnodeTrustStore().get(host, resolved_port)
+    if fingerprint is None:
+        typer.echo(f"{host}:{resolved_port} is not in the known-hosts store.", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"{host}:{resolved_port} {fingerprint}")
+
+
+@_trust_app.command("add")
+def bootnode_trust_add(
+    hostname: HostArg,
+    fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
+    port: BootnodePortOpt = None,
+) -> None:
+    """Pin a bootnode fingerprint (verify it out of band first)."""
+    host, resolved_port = _trust_host_port(hostname, port)
+    normalized = parse_fingerprint(fingerprint)
+    if normalized is None:
+        typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
+        raise typer.Exit(code=1)
+    BootnodeTrustStore().set(host, resolved_port, normalized, source="cli")
+    typer.echo(f"Pinned {host}:{resolved_port} {normalized}.")
+
+
+@_trust_app.command("remove")
+def bootnode_trust_remove(hostname: HostArg, port: BootnodePortOpt = None) -> None:
+    """Forget a pinned bootnode (like ``ssh-keygen -R``)."""
+    host, resolved_port = _trust_host_port(hostname, port)
+    if BootnodeTrustStore().remove(host, resolved_port):
+        typer.echo(f"Removed {host}:{resolved_port} from the known-hosts store.")
+    else:
+        typer.echo(f"{host}:{resolved_port} was not in the known-hosts store.")
+
+
+@_trust_app.command("fingerprint")
+def bootnode_trust_fingerprint(hostname: HostArg, port: BootnodePortOpt = None) -> None:
+    """Print a bootnode's certificate fingerprint without trusting it."""
+    from hsync_client.boot_client import BootnodeClient, BootnodeError
+
+    host, resolved_port = _trust_host_port(hostname, port)
+    client = BootnodeClient(host, resolved_port, policy=TrustPolicy.none)
+    try:
+        observed = client.fetch_fingerprint()
+    except BootnodeError as exc:
+        typer.echo(f"Could not read the fingerprint: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(observed)
 
 
 @app.command()

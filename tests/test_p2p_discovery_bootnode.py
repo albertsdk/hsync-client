@@ -25,6 +25,7 @@ from hsync_common.protocol.bootnode import (
 
 from hsync_client.boot_client import (
     BootnodeFingerprintMismatch,
+    BootnodeNotTrusted,
     BootnodeRefused,
     BootnodeUnreachable,
 )
@@ -482,6 +483,22 @@ class TestFatalTrustFailure:
         thread.start()
         thread.join(timeout=5.0)
         assert not thread.is_alive(), "the lease loop must stop on a pin mismatch"
+        with pytest.raises(DiscoveryFatalError):
+            plan.wait_for_discovery(timeout=5.0)
+
+    def test_lease_loop_stops_on_a_refused_prompt(self):
+        """A declined/unpromptable trust is fatal too: never re-prompt each cycle."""
+        plan, _ = make_plan(refresh_interval=1.0)
+
+        def refuse(frame):
+            raise BootnodeNotTrusted("fingerprint not accepted")
+
+        plan._client.register = refuse
+        plan._running = True
+        thread = threading.Thread(target=plan._lease_loop, name="test-lease", daemon=True)
+        thread.start()
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "the lease loop must stop when trust is refused"
         with pytest.raises(DiscoveryFatalError):
             plan.wait_for_discovery(timeout=5.0)
 

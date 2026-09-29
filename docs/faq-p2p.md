@@ -108,7 +108,8 @@ with `--identity PATH`, so **a restart changes the fingerprint**.
 - Ask the operator to persist the node identity (`--identity`) and to publish the
   stable fingerprint for clients to pin.
 After a fatal trust failure the client **exits with a non-zero code** instead of
-waiting for peers forever. See [Sync across networks](p2p-bootnode.md) and the
+waiting for peers that can never be discovered. See
+[Sync across networks](p2p-bootnode.md) and the
 node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md).
 
 **Q: A second device fails with "hostname '…' doesn't match DNSPattern(pattern=b'hsync-bootnode')" — why?**

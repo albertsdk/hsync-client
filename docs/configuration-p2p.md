@@ -80,6 +80,7 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_BOOTNODE` | Bare bootnode host for cross-network discovery (QUIC/UDP, no scheme); unset = mDNS-only | — |
 | `HSYNC_BOOTNODE_FINGERPRINT` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |
 | `HSYNC_BOOTNODE_TOFU` | Trust the bootnode certificate on first use (`1` = on) | `false` |
+| `HSYNC_BOOTNODE_TRUST` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `HSYNC_UPNP_ENABLED` | Map the master TCP port with UPnP (`true`/`false`); unset = on only when a bootnode is used | — |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_P2P_REQUIRE_PAIRING` | Require pairing confirmation | `false` |

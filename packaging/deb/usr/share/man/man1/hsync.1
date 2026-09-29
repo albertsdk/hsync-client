@@ -291,13 +291,40 @@ Pin the bootnode certificate fingerprint (canonical
 or bare hex); repeatable up to two values for a rotation window. Refused
 without a
 .BR BOOTNODE .
-Without a pin (or
-.BR \-\-bootnode\-tofu )
-an unpinned self-signed bootnode is refused.
+Selects the
+.I strict
+trust policy.
 .TP
 .B \-\-bootnode\-tofu
-Trust the bootnode certificate on first use; a later mismatch is refused as a
-possible man-in-the-middle.
+Trust the bootnode certificate on first use (accept-new); a later mismatch is
+refused as a possible man-in-the-middle. Selects the
+.I accept-new
+trust policy.
+.TP
+.BI \-\-bootnode\-trust\fP= POLICY
+Bootnode TLS trust policy. One of:
+.RS
+.TP
+.I ask
+(default) Prompt on a terminal to accept an unknown fingerprint, then remember
+it; refuse a changed one. Without a terminal the client fails closed.
+.TP
+.I accept-new
+Pin the first sighting silently (same as
+.BR \-\-bootnode\-tofu ).
+.TP
+.I strict
+Require a pin (same as
+.BR \-\-bootnode\-fingerprint ).
+.TP
+.I none
+No verification (loopback/tests only; same as an unpinned insecure link).
+.RE
+.IP
+The decision is remembered in the known-hosts store (see
+.BR HSYNC_BOOTNODE_TRUST_FILE );
+manage it with
+.BR "hsync bootnode trust" .
 .TP
 .BR \-\-discovery\-timeout =\fISEC\fP
 Time to wait for initial p2p peer discovery
@@ -515,8 +542,14 @@ or bare hex).
 .B HSYNC_BOOTNODE_TOFU
 Trust the bootnode certificate on first use (1 = on; default off).
 .TP
+.B HSYNC_BOOTNODE_TRUST
+Bootnode TLS trust policy:
+.IR ask " (default), " accept-new ", " strict " or " none .
+Equivalent to
+.BR \-\-bootnode\-trust .
+.TP
 .B HSYNC_BOOTNODE_TRUST_FILE
-File storing the TOFU-trusted bootnode fingerprints (default:
+File storing the trusted bootnode fingerprints (default:
 .I ~/.local/state/hsync/bootnode_known_hosts.json
 ).
 .TP
@@ -666,6 +699,10 @@ Uses KEY=VALUE format.
 .I /var/log/hsync/hsync.log
 Log file written by the systemd service.
 .TP
+.I ~/.local/state/hsync/bootnode_known_hosts.json
+Known-hosts store for bootnode certificate fingerprints (override with
+.BR HSYNC_BOOTNODE_TRUST_FILE ).
+.TP
 .I .hsyncignore
 Per-directory ignore file (gitignore syntax).
 Placed in the root of the synced directory.
@@ -733,17 +770,34 @@ HSYNC_P2P_KEY=mysecret hsync p2p \-b shared \-\-group home
 .RE
 .
 .SS Bootnode discovery
-Discover peers across networks through a boot/1 bootstrap node; a first contact
-trusts the certificate on first use:
+Discover peers across networks through a boot/1 bootstrap node. The first
+contact shows the certificate fingerprint and asks for confirmation (like
+.BR ssh (1)),
+then remembers it:
+.PP
+.EX
+hsync p2p boot.example.net \-b shared
+.EE
+.PP
+Non-interactive deployments accept the first sighting explicitly, or pin a
+fingerprint the operator published out of band:
 .PP
 .EX
 hsync p2p boot.example.net \-b shared \-\-bootnode\-tofu
+hsync p2p boot.example.net \-b shared \-\-bootnode\-fingerprint sha256:FINGERPRINT
 .EE
 .PP
-Pin the certificate once the operator has published its fingerprint:
+Read a node's fingerprint without trusting it, pin it, and manage the known
+hosts (like
+.B ssh\-keyscan (1)
+and
+.BR ssh\-keygen \-R ):
 .PP
 .EX
-hsync p2p boot.example.net \-b shared \-\-bootnode\-fingerprint sha256:FINGERPRINT
+hsync bootnode trust fingerprint boot.example.net
+hsync bootnode trust add boot.example.net sha256:FINGERPRINT
+hsync bootnode trust list
+hsync bootnode trust remove boot.example.net
 .EE
 .PP
 Authenticate to a private node or a protected bucket (the key must match the

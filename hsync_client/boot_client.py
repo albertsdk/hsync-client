@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,10 +44,15 @@ from hsync_common.protocol.bootnode import (
     validate_boot_frame,
     validate_boot_response,
 )
+from hsync_common.protocol.bootnode_trust import (
+    TrustAction,
+    TrustPolicy,
+    evaluate_bootnode_trust,
+)
 from hsync_common.protocol.pairing import fingerprint_matches
 from hsync_common.ssl_utils import compute_cert_fingerprint
 
-from hsync_client.bootnode_trust import default_bootnode_trust_store
+from hsync_client.bootnode_trust import BootnodeTrustStore, default_bootnode_trust_store
 from hsync_client.events import UiEventName, emit_event
 
 __all__ = [
@@ -55,9 +60,11 @@ __all__ = [
     "BootnodeClient",
     "BootnodeError",
     "BootnodeFingerprintMismatch",
+    "BootnodeNotTrusted",
     "BootnodeProtocolError",
     "BootnodeRefused",
     "BootnodeUnreachable",
+    "TrustPrompt",
     "build_leave_frame",
     "build_query_frame",
     "build_refresh_frame",
@@ -67,6 +74,12 @@ __all__ = [
 # QUIC idle timeout: a single request/response exchange is well under a second
 # on any usable link; the timeout bounds a stalled handshake, not throughput.
 DEFAULT_QUIC_IDLE_TIMEOUT = 30.0
+
+# SSH-style trust prompt: ``(host, port, observed_fingerprint) -> accept?``.
+# Supplied by the front-end (terminal for the CLI; the desktop confirms with a
+# pre-flight instead). ``None`` means the caller cannot prompt (non-interactive),
+# so policy ``ask`` must fail closed.
+TrustPrompt = Callable[[str, int, str], bool]
 
 
 class BootnodeError(Exception):
@@ -108,6 +121,19 @@ class BootnodeFingerprintMismatch(BootnodeError):
     """
 
 
+class BootnodeNotTrusted(BootnodeError):
+    """Policy ``ask`` could not establish trust: the user declined or cannot prompt.
+
+    Fatal, like :class:`BootnodeFingerprintMismatch`: the node is not contacted,
+    the lease loop stops and the sync core exits non-zero. ``non_interactive``
+    distinguishes "no terminal to ask" (fail closed) from an explicit decline.
+    """
+
+    def __init__(self, message: str, *, non_interactive: bool = False) -> None:
+        super().__init__(message)
+        self.non_interactive = non_interactive
+
+
 def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
     detail = str(exc) or type(exc).__name__
@@ -118,25 +144,25 @@ def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachabl
 class BootnodeClient:
     """Synchronous ``boot/1`` client for one bootnode.
 
-    Trust (ADR-0034): ``fingerprints`` pins one or two certificate fingerprints
-    (the second allows a rotation window); ``tofu`` trusts the first sighting
-    and records it in the bootnode trust store; ``insecure`` disables
-    verification entirely (tests/loopback only). With none of these set, the
-    client requires a publicly trusted certificate (fail-closed).
+    Trust follows the shared policy in
+    :mod:`hsync_common.protocol.bootnode_trust` (ADR-0035): ``policy`` selects
+    ``ask`` (prompt on an unknown node, refuse a changed one; the default),
+    ``accept_new`` (silent first-sighting pin), ``strict`` (explicit pin
+    required) or ``none`` (no verification). ``fingerprints`` pins one or two
+    fingerprints (the second allows a rotation window) and is what ``strict``
+    matches against.
+
+    ``prompt`` answers policy ``ask`` on a terminal; ``None`` means the caller
+    cannot prompt (non-interactive), where ``ask`` fails closed (SSH ``BatchMode``).
     """
 
     host: str
     port: int
-    insecure: bool = False
     fingerprints: tuple[str, ...] = ()
-    tofu: bool = False
+    policy: TrustPolicy = TrustPolicy.ask
+    prompt: TrustPrompt | None = None
     timeout: float = 10.0
     idle_timeout: float = DEFAULT_QUIC_IDLE_TIMEOUT
-
-    @property
-    def _pin_required(self) -> bool:
-        """True when trust comes from a pin/TOFU check (not WebPKI or insecure)."""
-        return bool(self.fingerprints) or self.tofu
 
     def register(self, frame: BootRegister) -> BootAck | None:
         """Send ``register``; return the ``ack`` (STUN-echo) or ``None`` if dropped."""
@@ -159,6 +185,36 @@ class BootnodeClient:
         if parsed is None:
             raise BootnodeProtocolError("malformed response frame")
         return parsed
+
+    def fetch_fingerprint(self) -> str:
+        """Return the peer certificate fingerprint without trusting or writing.
+
+        Connects, reads the certificate during the handshake and closes without
+        sending any frame (like ``ssh-keyscan``). Used by
+        ``hsync bootnode trust fingerprint`` so an operator can verify a node out
+        of band before pinning it.
+        """
+        try:
+            return asyncio.run(self._fetch_fingerprint_async())
+        except BootnodeError:
+            raise
+        except OSError as exc:
+            raise _unreachable(self.host, self.port, exc) from exc
+
+    async def _fetch_fingerprint_async(self) -> str:
+        configuration = self._quic_configuration()
+        async with connect(
+            self.host,
+            self.port,
+            configuration=configuration,
+            wait_connected=True,
+        ) as client:
+            cert = _peer_certificate(client)
+            if cert is None:
+                raise BootnodeFingerprintMismatch(
+                    f"bootnode {self.host}:{self.port}: could not read the peer certificate"
+                )
+            return compute_cert_fingerprint(cert)
 
     def _ack_exchange(self, frame: BootRegister | BootRefresh) -> BootAck | None:
         raw = self._exchange(frame, expect="ack", refusal=True)
@@ -234,8 +290,7 @@ class BootnodeClient:
             ) as client:
                 # Verify the peer certificate *before* opening a stream: the
                 # bucket_token travels in the frame, so trust is decided pre-write.
-                if self._pin_required:
-                    self._verify_peer(client)
+                self._verify_peer(client)
                 reader, writer = await client.create_stream()
                 writer.write(payload + b"\n")
                 await writer.drain()
@@ -267,23 +322,25 @@ class BootnodeClient:
             alpn_protocols=[BOOT_ALPN],
             idle_timeout=self.idle_timeout,
         )
-        if self.insecure or self._pin_required:
-            # ``insecure``: no verification at all. Pin/TOFU: the fingerprint
-            # check is the trust anchor, so the handshake must not reject the
-            # self-signed certificate before we can read it.
-            configuration.verify_mode = ssl.CERT_NONE
-        else:
-            # Fail-closed default: require a publicly trusted certificate.
-            configuration.verify_mode = ssl.CERT_REQUIRED
+        # The bootnode is self-signed by contract, so WebPKI can never validate
+        # it: trust comes from the pinned/prompted fingerprint (or ``none``
+        # disables verification entirely). The handshake therefore never rejects
+        # the certificate before we can read it in ``_verify_peer``.
+        configuration.verify_mode = ssl.CERT_NONE
         return configuration
 
     def _verify_peer(self, client: Any) -> None:
-        """Check the peer fingerprint against the pins / TOFU store, pre-write.
+        """Apply the trust policy against the peer fingerprint, pre-write.
 
-        Raises :class:`BootnodeFingerprintMismatch` on a mismatch, closing the
-        connection with zero application bytes sent. A matched pin (or a first
-        TOFU sighting) is recorded in the trust store when ``tofu`` is enabled.
+        Runs after the handshake and before any frame, so a refusal closes the
+        connection with zero application bytes sent (the ``bucket_token`` never
+        leaves the host). ``accept_new`` records a first sighting; ``ask`` calls
+        ``prompt`` and records on acceptance; a changed fingerprint is always
+        fatal.
         """
+        policy = self.policy
+        if policy is TrustPolicy.none:
+            return
         cert = _peer_certificate(client)
         if cert is None:
             raise BootnodeFingerprintMismatch(
@@ -291,23 +348,41 @@ class BootnodeClient:
                 "certificate to verify its fingerprint"
             )
         observed = compute_cert_fingerprint(cert)
-        store = default_bootnode_trust_store() if self.tofu else None
-        if self.fingerprints:
-            if fingerprint_matches(observed, list(self.fingerprints)):
-                if store is not None:
-                    store.set(self.host, self.port, observed)
-                return
-            raise self._mismatch(observed)
-        if self.tofu:
-            assert store is not None
-            stored = store.get(self.host, self.port)
-            if stored is None:
-                store.set(self.host, self.port, observed)
-                return
-            if fingerprint_matches(observed, [stored]):
-                return
-            raise self._mismatch(observed)
+        store = default_bootnode_trust_store()
+
+        # Explicit pins (``--bootnode-fingerprint``) are accepted directly and are
+        # the source of truth for a ``strict`` run; a non-match falls through so
+        # ``strict`` refuses and ``ask`` prompts.
+        if self.fingerprints and fingerprint_matches(observed, list(self.fingerprints)):
+            return
+
+        action = evaluate_bootnode_trust(policy, store.get(self.host, self.port), observed)
+        if action is TrustAction.proceed:
+            return
+        if action is TrustAction.pin_and_proceed:
+            store.set(self.host, self.port, observed, source="tofu")
+            return
+        if action is TrustAction.prompt:
+            self._prompt_and_pin(store, observed)
+            return
+        # refuse: unknown under strict, or a changed fingerprint
         raise self._mismatch(observed)
+
+    def _prompt_and_pin(self, store: BootnodeTrustStore, observed: str) -> None:
+        """Run the interactive trust prompt; pin on acceptance, refuse otherwise."""
+        if self.prompt is None:
+            raise BootnodeNotTrusted(
+                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                "is not trusted and there is no terminal to confirm it; pass "
+                "--bootnode-tofu (accept new) or --bootnode-fingerprint <fp> to trust it",
+                non_interactive=True,
+            )
+        if self.prompt(self.host, self.port, observed):
+            store.set(self.host, self.port, observed, source="prompt")
+            return
+        raise BootnodeNotTrusted(
+            f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} was not accepted"
+        )
 
     def _mismatch(self, observed: str) -> BootnodeFingerprintMismatch:
         emit_event(
