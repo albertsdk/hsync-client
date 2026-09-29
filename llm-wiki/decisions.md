@@ -127,18 +127,18 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   synchronized `packaging/wd-os5` update (see `AGENTS.md`).
 - **Containerized mksapkg**: `mksapkg-OS5` runs inside the
   `hsync-wdos5-mksapkg` image (`packaging/wd-os5/Dockerfile.mksapkg`) via
-  `_wdos5_run_mksapkg` (`compile.sh:947`), not on the host — the prebuilt tool
+  `_wdos5_run_mksapkg` (`compile.sh:1020`), not on the host — the prebuilt tool
   needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts.
 - **Host-uid container builds**: containerized build steps drop to the host
   `uid:gid` so artifacts under `build/`/`dist/` stay caller-owned — otherwise
   root-owned output breaks the `rm -rf build` cleanup of a later native build
   (`cleanup_temp_files`). Covers WD OS5 (`_wdos5_run_mksapkg`; PyInstaller
-  `_run_pyinstaller_in_docker` (`compile.sh:1000`)) and `deb-all`'s in-container
-  PyInstaller (`compile.sh:742`, with `HOME=/tmp` for the poetry/PyInstaller
+  `_run_pyinstaller_in_docker` (`compile.sh:1074`)) and `deb-all`'s in-container
+  PyInstaller (`compile.sh:801`, with `HOME=/tmp` for the poetry/PyInstaller
   caches). The `deb-all` `dpkg-deb` step stays **root** (so the `.deb`'s
   internal `/usr`,`/etc` are owned `root:root`) and instead `chown`s the
   host-mounted stage + produced `.deb` back to the caller afterwards
-  (`compile.sh:849`); the archive's captured ownership is unaffected.
+  (`compile.sh:906`); the archive's captured ownership is unaffected.
 - **Tag-driven release** (`.github/workflows/release.yml`): pushing a `vX.Y.Z`
   tag gates on lint+test, then builds native binaries on per-OS matrix runners
   (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
@@ -153,8 +153,25 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   User docs point at `releases/latest/download/install.sh` so the bootstrap
   needs no version either.
 - **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
-  (`.venv/Scripts` vs `.venv/bin`, `compile.sh:92`) and `--strip` is omitted on
-  Windows (`STRIP_FLAG`, `compile.sh:99`) since binutils is unavailable there.
+  (`.venv/Scripts` vs `.venv/bin`, `compile.sh:106`) and `--strip` is omitted on
+  Windows (`STRIP_FLAG`, `compile.sh:112`) since binutils is unavailable there.
+- **Raspberry Pi target (`rpi`)**: `compile.sh --target rpi` cross-builds the
+  onefile executable for Raspberry Pi OS 32-bit (armhf/armv7) and 64-bit
+  (arm64/aarch64) via Docker + qemu, reusing `packaging/deb/Dockerfile.builder`
+  as the cross-build image (Python 3.12 + Poetry + the armhf Rust/OpenSSL
+  toolchain), and writing `dist/rpi/<arch>/hsync`. The onefile PyInstaller flags
+  are shared between the host build and the container build through
+  `_onefile_pyi_flags` (`compile.sh:348`) so the two cannot drift. The
+  cross-build images pin their build inputs: the `qemu-user-static` binfmt image
+  is referenced by digest (it runs `--privileged`) and the Rust toolchain is
+  installed from a SHA256-verified, version-pinned `rustup-init` instead of
+  piping the remote `https://sh.rustup.rs` script to a shell. The builder base
+  is the official multi-arch `python:3.12-bookworm` image (prebuilt CPython
+  built `--enable-shared`) rather than a CPython build from source: this keeps
+  the CPython build out of qemu-user emulation, where the host's
+  `qemu-aarch64` 7.2.0 crashed (`cc1` SIGSEGV) compiling `Modules/readline`.
+  The WD OS5 (Debian Buster) builder stays separate and still compiles Python
+  from source.
 - **PyInstaller × multiprocessing (`freeze_support`)**: `main.main`
   (`main.py:26`) calls `multiprocessing.freeze_support()` before importing the
   CLI. The loguru sinks use `enqueue=True` (`logger.py:233`, `:251`), which makes
@@ -179,3 +196,28 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `pinning.PinStore` (extracted on its second use — Rule of Three). A mismatch is
   fatal (`BootnodeFingerprintMismatch`, lease loop stops); `--ca-cert` is refused
   in `hsync p2p`.
+
+- **Bootnode discovery cadence has its own budget (refusal-storm fix)**: the
+  `boot/1` plan no longer reuses the mDNS `HEARTBEAT_INTERVAL` (5 s).
+  `BOOTNODE_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
+  ``boot-1.md``: "client refresh every 30 s"; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`,
+  range 1–300) drives the lease loop's register/refresh/query, and
+  `BootnodeDiscovery.wait_for_discovery` is now event-based
+  (`PeerManager.wait_for_change`, like mDNS) instead of polling `query` every 1 s;
+  a refused `query` arms a `retry_after` backoff. Rationale: the node rate-limits
+  `query` to 5/min per (IP, bucket) and `register`/`refresh` to 10/min
+  (`handler.py:132`), so the old 1 s poll exhausted the burst, left the client
+  `rate_limited` for the rest of every window (repeating the same log lines) and
+  starved real discovery. `HSYNC_BOOTNODE_REFRESH_INTERVAL` is documented in
+  `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
+  web config surface (which never exposed the heartbeat).
+
+- **A fatal discovery failure aborts `hsync p2p` (no more infinite wait)**: a
+  `BootnodeFingerprintMismatch` is terminal — the lease loop records it and
+  `wait_for_discovery` raises the new plan-agnostic `DiscoveryFatalError`
+  (`p2p_discovery.py`), which `run_p2p_mode` maps to `ExitCode.FATAL` (exit 1).
+  Before, the loop stopped but the client kept printing "Waiting for peers to
+  join" forever. The mDNS plan never raises it; the core still does not branch on
+  the plan (it catches a discovery-layer error). See the new
+  `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md` for the operator/client
+  recovery steps (stable `--identity`, `--bootnode-fingerprint`, clearing the pin).

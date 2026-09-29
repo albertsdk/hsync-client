@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-26" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-29" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -598,6 +598,13 @@ Heartbeat interval in seconds for p2p mode (default:
 .BR 5 ;
 range: 1\(en60). Governs how often a peer's mDNS presence is re-announced and how
 often the discovery loop re-evaluates peer liveness.
+.TP
+.B HSYNC_BOOTNODE_REFRESH_INTERVAL
+\fBboot/1\fR lease and query cadence in seconds (default:
+.BR 30 ;
+range: 1\(en300). Governs how often the client registers, refreshes its lease
+and queries the bootnode for peers. Keep it inside the node's rate limits
+(5 queries/min per IP and bucket; the protocol specifies a 30\(ens refresh).
 .TP
 .B HSYNC_PEER_TIMEOUT
 Peer timeout in seconds for p2p mode (default:

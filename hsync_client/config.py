@@ -23,6 +23,8 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hsync_client.constants import (
+    BOOTNODE_REFRESH_INTERVAL_MAX,
+    BOOTNODE_REFRESH_INTERVAL_MIN,
     HEARTBEAT_INTERVAL,
     HEARTBEAT_INTERVAL_MAX,
     HEARTBEAT_INTERVAL_MIN,
@@ -201,6 +203,12 @@ class EnvSettings(BaseSettings):
         ge=PEER_TIMEOUT_MIN,
         le=PEER_TIMEOUT_MAX,
         description="Peer timeout in seconds",
+    )
+    bootnode_refresh_interval: int | None = Field(
+        default=None,
+        ge=BOOTNODE_REFRESH_INTERVAL_MIN,
+        le=BOOTNODE_REFRESH_INTERVAL_MAX,
+        description="boot/1 lease/query cadence in seconds (default 30)",
     )
     never_master: bool = Field(
         default=False,
@@ -437,6 +445,11 @@ def get_peer_timeout() -> int | None:
     return get_env_settings().peer_timeout
 
 
+def get_bootnode_refresh_interval() -> int | None:
+    """Get the boot/1 lease/query cadence from the environment."""
+    return get_env_settings().bootnode_refresh_interval
+
+
 def get_tombstone_ttl_days() -> int:
     """Get tombstone retention window in days from environment (late binding)."""
     return get_env_settings().tombstone_ttl_days
@@ -642,6 +655,8 @@ class HsyncConfig(TypedDict):
     DISCOVERY_TIMEOUT: int
     # Heartbeat interval in seconds for P2P mode
     HEARTBEAT_INTERVAL: int
+    # boot/1 lease/query cadence in seconds (default 30; bootnode plan only)
+    BOOTNODE_REFRESH_INTERVAL: int
     # Peer timeout in seconds for P2P mode
     PEER_TIMEOUT: int
     # P2P shared secret key for authentication (None = no auth)

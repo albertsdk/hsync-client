@@ -44,22 +44,25 @@ from hsync_client.boot_client import (
 )
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
-    HEARTBEAT_INTERVAL,
+    BOOTNODE_REFRESH_INTERVAL,
+    BOOTNODE_REFRESH_INTERVAL_MIN,
     HSYNC_VERSION,
     PEER_TIMEOUT,
 )
 from hsync_client.nat_traversal import candidate_endpoints
 from hsync_client.net_utils import get_local_ip
-from hsync_client.p2p_discovery import DiscoveryPlanState
+from hsync_client.p2p_discovery import DiscoveryFatalError, DiscoveryPlanState
 from hsync_client.p2p_peers import HSYNC_P2P_LISTEN_PORT, Peer, PeerManager, get_free_port
 from hsync_client.stun import ObservedAddress, observed_address
 from hsync_client.upnp import UpnpMapper
 
 __all__ = ["BootnodeDiscovery"]
 
-# How often the lease loop wakes to refresh/query. Reuses the shared heartbeat
-# cadence (which the handler already keeps well below PEER_TIMEOUT).
-_DEFAULT_REFRESH_S = HEARTBEAT_INTERVAL
+# How often the lease loop wakes to register/refresh/query. The bootnode
+# rate-limits ``query`` to 5/min per (IP, bucket) and ``register``/``refresh`` to
+# 10/min (``boot-1.md``), so the client uses the spec's 30 s refresh window
+# instead of the mDNS heartbeat cadence.
+_DEFAULT_REFRESH_S = BOOTNODE_REFRESH_INTERVAL
 
 
 class BootnodeDiscovery(DiscoveryPlanState):
@@ -81,7 +84,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
         peer_timeout: float = PEER_TIMEOUT,
-        heartbeat_interval: float = _DEFAULT_REFRESH_S,
+        refresh_interval: float = _DEFAULT_REFRESH_S,
         p2p_key: str | None = None,
         fingerprints: tuple[str, ...] = (),
         tofu: bool = False,
@@ -105,7 +108,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
         self._peer_timeout = peer_timeout
-        self._heartbeat_interval = max(1.0, heartbeat_interval)
+        self._refresh_interval = max(float(BOOTNODE_REFRESH_INTERVAL_MIN), refresh_interval)
+        # Earliest monotonic time the next ``query`` may run: keeps the client
+        # inside the bootnode's 5/min per-(IP, bucket) query budget and honours a
+        # ``rate_limited`` ``retry_after`` instead of hammering the node.
+        self._next_query_at = 0.0
         self._upnp_enabled = upnp_enabled
         self._capacity = capacity if peer_download_enabled else 0
         self._local_ip = local_ip
@@ -150,6 +157,12 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._refusals_logged: set[str] = set()
 
         self._discovery_announced = False
+        # Alive-peer count at the previous discovery window, so the "found N
+        # peer(s)" line is emitted only when the count changes.
+        self._last_peer_count = 0
+        # Fatal failure that stopped the lease loop (today: a certificate pin
+        # mismatch); ``wait_for_discovery`` re-raises it so the sync core aborts.
+        self._fatal_error: BaseException | None = None
 
     # -- DiscoveryPlan surface -------------------------------------------------
 
@@ -185,40 +198,58 @@ class BootnodeDiscovery(DiscoveryPlanState):
         if self._thread is not None:
             self._thread.join(timeout=10.0)
             self._thread = None
-        self._send_leave()
+        # Never contact a node we declared untrusted: a pin mismatch stops the
+        # lease loop before any register, so there is no lease to release.
+        if self._fatal_error is None:
+            self._send_leave()
         if self._upnp is not None:
             self._upnp.unmap()
             self._upnp = None
 
     def wait_for_discovery(self, timeout: float) -> None:
-        """Block until at least one live peer is known, or ``timeout`` elapses."""
+        """Block until at least one live peer is known, or ``timeout`` elapses.
+
+        The network cadence (register/refresh/query) belongs to the lease loop,
+        which runs at :data:`BOOTNODE_REFRESH_INTERVAL` (spec: 30 s) to stay
+        inside the bootnode's per-bucket rate limits. This wait therefore only
+        parks on the shared peer-change event; it must never poll ``query``
+        itself, or it would exhaust the 5/min per-(IP, bucket) query budget and
+        the node would answer ``rate_limited`` for the rest of the window
+        (regression: a 1 s poll loop turned discovery into a refusal storm).
+        """
+        if self._fatal_error is not None:
+            # Even before the peer manager exists: a trust failure is terminal.
+            raise DiscoveryFatalError(str(self._fatal_error)) from self._fatal_error
         if self._peer_manager is None:
             return
-        deadline = time.monotonic() + timeout
+        if not self._discovery_announced:
+            log.info(f"Waiting {timeout}s for peer discovery...")
+            self._discovery_announced = True
+        else:
+            log.debug(f"Waiting {timeout}s for peer discovery...")
+
+        # Event-driven wait on the shared peer-change condition (no network), in
+        # short slices so a fatal trust failure recorded by the lease loop is
+        # observed within ~1 s instead of after the whole window.
+        deadline = time.monotonic() + max(0.0, timeout)
         while True:
+            if self._fatal_error is not None:
+                # The lease loop stopped on a trust failure: no peer can ever be
+                # discovered. Surface it so the sync core exits fatally instead
+                # of waiting for peers that will never arrive.
+                raise DiscoveryFatalError(str(self._fatal_error)) from self._fatal_error
             if self._peer_manager.get_alive_peers():
-                if not self._discovery_announced:
-                    self._discovery_announced = True
-                    log.info(
-                        f"Bootnode discovery: found {len(self._peer_manager.get_alive_peers())} peer(s)"
-                    )
-                return
-            if timeout > 0 and time.monotonic() >= deadline:
-                return
-            try:
-                self._query_peers()
-            except BootnodeFingerprintMismatch as exc:
-                log.error(
-                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} trust failed: {exc}"
-                )
-                return
-            except BootnodeError as exc:
-                # A transient bootnode failure must not abort the wait: the
-                # background lease loop owns the user-visible warning and keeps
-                # retrying, so this path stays quiet.
-                log.debug(f"Bootnode query failed while waiting for discovery: {exc}")
-            self._wake.wait(timeout=min(self._heartbeat_interval, 1.0))
-            self._wake.clear()
+                break
+            remaining = deadline - time.monotonic()
+            if timeout > 0 and remaining <= 0:
+                break
+            self._peer_manager.wait_for_change(1.0 if timeout <= 0 else min(remaining, 1.0))
+
+        peers = self._peer_manager.get_alive_peers()
+        if len(peers) != self._last_peer_count:
+            self._last_peer_count = len(peers)
+            if peers:
+                log.info(f"Bootnode discovery: found {len(peers)} peer(s)")
 
     def update_endpoint_ready(self, ready: bool) -> None:
         """Publish (or retract) this node's data-plane endpoint."""
@@ -272,6 +303,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
     def _lease_loop(self) -> None:
         first = True
         while self._running and not self._stop.is_set():
+            backoff = 0.0
             try:
                 if first:
                     self._register(publish_endpoint=False)
@@ -289,6 +321,8 @@ class BootnodeDiscovery(DiscoveryPlanState):
             except BootnodeFingerprintMismatch as exc:
                 # Fatal: the bootnode failed authentication. Never retry an
                 # unpinned/untrusted node (the token would leak to an attacker).
+                # Record it so the sync core aborts instead of waiting forever.
+                self._fatal_error = exc
                 log.error(
                     f"Bootnode {self._bootnode_host}:{self._bootnode_port} trust failed: {exc}"
                 )
@@ -297,7 +331,10 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 # A uniform refusal (rate limit / token) is a valid boot/1 answer:
                 # keep the lease state and retry at the normal cadence instead of
                 # resetting to a full register (which would deepen the refusal).
+                # Honour the node's ``retry_after`` so a rate-limited client waits
+                # at least as long as the node asked, never less.
                 self._log_refusal(exc)
+                backoff = float(exc.retry_after or 0)
             except BootnodeError as exc:
                 log.warning(
                     f"Bootnode {self._bootnode_host}:{self._bootnode_port} unreachable: {exc}"
@@ -305,7 +342,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 first = True  # re-register once the node is reachable again
             except Exception as exc:
                 log.warning(f"Bootnode lease loop error: {exc}")
-            self._wake.wait(timeout=self._heartbeat_interval)
+            self._wake.wait(timeout=max(self._refresh_interval, backoff))
             self._wake.clear()
 
     def _republish_advert(self) -> None:
@@ -406,6 +443,12 @@ class BootnodeDiscovery(DiscoveryPlanState):
     def _query_peers(self) -> None:
         if self._peer_manager is None:
             return
+        now = time.monotonic()
+        if now < self._next_query_at:
+            # Still inside the query budget window (or a node-imposed backoff):
+            # skip this tick instead of adding to the 5/min per-(IP, bucket)
+            # budget and getting ``rate_limited``.
+            return
         response = self._client.query(
             build_query_frame(bucket=self._bucket, group=self._group, bucket_token=self._token)
         )
@@ -413,12 +456,20 @@ class BootnodeDiscovery(DiscoveryPlanState):
             return
         if response.get("error"):
             # Uniform refusal (rate limit / token): the sample is empty by
-            # contract — keep the peers already known and retry at the next wake.
+            # contract — keep the peers already known and honour ``retry_after``
+            # (falling back to the normal cadence) so the client backs off
+            # instead of deepening the refusal.
+            retry_after = response.get("retry_after")
+            if isinstance(retry_after, int) and retry_after > 0:
+                self._next_query_at = now + float(retry_after)
+            else:
+                self._next_query_at = now + self._refresh_interval
             log.debug(
                 f"Bootnode {self._bootnode_host}:{self._bootnode_port} query refused: "
                 f"{response['error']}"
             )
             return
+        self._next_query_at = now + self._refresh_interval
         for wire_peer in response["peers"]:
             peer = self._peer_from_wire(wire_peer)
             if peer is not None and peer.cid != self._cid:

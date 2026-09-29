@@ -23,7 +23,12 @@ from hsync_common.protocol.bootnode import (
     validate_boot_response,
 )
 
-from hsync_client.boot_client import BootnodeRefused, BootnodeUnreachable
+from hsync_client.boot_client import (
+    BootnodeFingerprintMismatch,
+    BootnodeRefused,
+    BootnodeUnreachable,
+)
+from hsync_client.p2p_discovery import DiscoveryFatalError
 from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
 from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.stun import ObservedAddress
@@ -344,7 +349,7 @@ class TestAdvertisement:
         unreachable node — resetting to a full first register on every wake and
         deepening the node's rate limit instead of backing off.
         """
-        plan, _ = make_plan(heartbeat_interval=1.0)
+        plan, _ = make_plan(refresh_interval=1.0)
         registrations = []
 
         def refuse(frame):
@@ -388,14 +393,63 @@ class TestAdvertisement:
             "error": "rate_limited",
             "retry_after": 42,
         }
-        plan._client.query = lambda frame: validate_boot_response(dict(refused))
+        queries: list[dict] = []
+
+        def refused_query(frame):
+            queries.append(frame)
+            return validate_boot_response(dict(refused))
+
+        plan._client.query = refused_query
+        plan._next_query_at = 0.0  # bypass the cadence gate; exercise the refusal
         plan._query_peers()  # must not raise
         assert [p.cid for p in manager.get_alive_peers()] == known
+        assert plan._next_query_at > time.monotonic(), "retry_after must arm a backoff"
+        # A query inside the backoff window is skipped entirely (no network call).
+        plan._query_peers()
+        assert len(queries) == 1
 
 
-class TestWaitForDiscoveryTolerance:
+class TestQueryBudget:
+    def test_queries_respect_the_cadence(self):
+        """Steady-state queries are spaced by the refresh interval, not per tick."""
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._query_peers()
+        first = len([c for c in plan._client.calls if c[0] == "query"])
+        assert first == 1
+        plan._query_peers()  # still inside the window: skipped
+        assert len([c for c in plan._client.calls if c[0] == "query"]) == first
+        plan._next_query_at = 0.0  # window elapsed
+        plan._query_peers()
+        assert len([c for c in plan._client.calls if c[0] == "query"]) == first + 1
+
+
+class TestWaitForDiscovery:
+    def test_wait_never_queries_the_bootnode(self):
+        """Regression: the wait must not poll ``query`` (1 s poll → refusal storm).
+
+        The bootnode rate-limits ``query`` to 5/min per (IP, bucket); a discovery
+        wait that queries itself exhausts the budget and is refused for the rest
+        of the window. The lease loop owns the network cadence.
+        """
+        plan, _ = make_plan()
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan.wait_for_discovery(timeout=0.05)
+        assert [c for c in plan._client.calls if c[0] == "query"] == []
+
+    def test_wait_returns_as_soon_as_a_peer_is_known(self):
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        manager.add_peer(plan._peer_from_wire(RESPONSE["peers"][0]))
+        start = time.monotonic()
+        plan.wait_for_discovery(timeout=5.0)
+        assert time.monotonic() - start < 1.0, "must wake on the peer-change event"
+        assert [c for c in plan._client.calls if c[0] == "query"] == []
+
     def test_unreachable_bootnode_does_not_abort_the_wait(self):
-        """A transient bootnode error must be tolerated, not crash the client."""
+        """The wait never touches the network, so a dead bootnode cannot break it."""
         plan, _ = make_plan()
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
 
@@ -403,8 +457,33 @@ class TestWaitForDiscoveryTolerance:
             raise BootnodeUnreachable("bootnode boot.example.net:443: ConnectionError")
 
         plan._client.query = boom
-        # Must return on timeout instead of propagating the bootnode error.
         plan.wait_for_discovery(timeout=0.05)
+
+    def test_wait_raises_on_a_fatal_trust_failure(self):
+        """A pin mismatch stops discovery for good: the wait must surface it."""
+        plan, _ = make_plan()
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._fatal_error = BootnodeFingerprintMismatch("pin mismatch")
+        with pytest.raises(DiscoveryFatalError):
+            plan.wait_for_discovery(timeout=5.0)
+
+
+class TestFatalTrustFailure:
+    def test_lease_loop_records_a_pin_mismatch_and_stops(self):
+        """A ``BootnodeFingerprintMismatch`` is fatal: record it and stop the loop."""
+        plan, _ = make_plan(refresh_interval=1.0)
+
+        def mismatch(frame):
+            raise BootnodeFingerprintMismatch("pin mismatch")
+
+        plan._client.register = mismatch
+        plan._running = True
+        thread = threading.Thread(target=plan._lease_loop, name="test-lease", daemon=True)
+        thread.start()
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "the lease loop must stop on a pin mismatch"
+        with pytest.raises(DiscoveryFatalError):
+            plan.wait_for_discovery(timeout=5.0)
 
 
 class TestStop:
@@ -416,6 +495,18 @@ class TestStop:
         plan._thread = None
         plan.stop()
         assert any(kind == "leave" for kind, _ in plan._client.calls)
+        assert fake_upnp.unmapped is True
+
+    def test_stop_after_a_fatal_trust_failure_skips_leave(self):
+        """Never contact a node declared untrusted: no lease to release."""
+        plan, fake_upnp = make_plan()
+        plan._fatal_error = BootnodeFingerprintMismatch("pin mismatch")
+        plan._upnp = fake_upnp
+        plan._external_port = 8443
+        plan._running = True
+        plan._thread = None
+        plan.stop()
+        assert not any(kind == "leave" for kind, _ in plan._client.calls)
         assert fake_upnp.unmapped is True
 
 

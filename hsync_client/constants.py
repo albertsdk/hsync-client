@@ -226,6 +226,17 @@ HEARTBEAT_INTERVAL_MAX = 60
 PEER_TIMEOUT_MIN = 3
 PEER_TIMEOUT_MAX = 600
 
+# boot/1 lease cadence (spec ``boot-1.md``: TTL 60 s, client refresh every 30 s).
+# The bootnode rate-limits ``query`` to 5/min per (IP, bucket) and
+# ``register``/``refresh`` to 10/min, so the client must not poll faster than
+# ~12 s; 30 s matches the spec refresh and stays comfortably inside both.
+# Distinct from ``HEARTBEAT_INTERVAL`` (mDNS liveness, 5 s): the bootnode cadence
+# has its own rate-limit budget, overridable via
+# ``HSYNC_BOOTNODE_REFRESH_INTERVAL``.
+BOOTNODE_REFRESH_INTERVAL = 30
+BOOTNODE_REFRESH_INTERVAL_MIN = 1
+BOOTNODE_REFRESH_INTERVAL_MAX = 300
+
 # P2P discovery timeout (seconds). Default is 0 = "wait indefinitely",
 # mirroring the client-server behaviour (the client keeps retrying the
 # connection forever by default). A finite positive value bounds how long

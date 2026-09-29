@@ -28,6 +28,7 @@ from hsync_client.config import (
     get_autotune_enabled,
     get_bootnode,
     get_bootnode_fingerprints,
+    get_bootnode_refresh_interval,
     get_bootnode_tofu,
     get_compression_enabled,
     get_connectivity_retry_attempts,
@@ -61,6 +62,7 @@ from hsync_client.config import (
 )
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
+    BOOTNODE_REFRESH_INTERVAL,
     CLIENT_NAME,
     CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT,
     CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT,
@@ -851,6 +853,7 @@ def run_sync(
         ),
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
+        "BOOTNODE_REFRESH_INTERVAL": get_bootnode_refresh_interval() or BOOTNODE_REFRESH_INTERVAL,
         "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
         "P2P_KEY": resolved_p2p_key,
         "P2P_GROUP": p2p_group or get_p2p_group(),

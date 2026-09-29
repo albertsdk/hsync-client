@@ -42,7 +42,11 @@ from hsync_client.exceptions import (
     WatcherStartError,
 )
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
-from hsync_client.p2p_discovery import DiscoveryPlan, build_discovery_plan
+from hsync_client.p2p_discovery import (
+    DiscoveryFatalError,
+    DiscoveryPlan,
+    build_discovery_plan,
+)
 from hsync_client.p2p_inventory import (
     P2PInventoryPublisher,
     P2PInventoryStore,
@@ -444,6 +448,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 if not should_continue:
                     break
 
+    except DiscoveryFatalError as exc:
+        # The plan stopped for good (e.g. bootnode certificate pin mismatch):
+        # no peer can ever be discovered, so exit fatally instead of waiting.
+        log.error(f"P2P discovery stopped: {exc}")
+        last_exit = int(ExitCode.FATAL)
     except KeyboardInterrupt:
         log.info("Shutting down P2P mode...")
     finally:

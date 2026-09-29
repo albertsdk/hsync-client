@@ -493,6 +493,33 @@ class TestRunLanModeDiscoveryTimeout:
         assert first_call.kwargs["timeout"] == HEARTBEAT_INTERVAL
         assert any("Discovery timeout disabled" in str(c) for c in mock_log.info.call_args_list)
 
+    def test_fatal_discovery_error_exits_fatally(self, tmp_path):
+        """A fatal discovery error (bootnode pin mismatch) aborts with ExitCode.FATAL.
+
+        Regression: the client used to keep printing "Waiting for peers to join"
+        forever after the lease loop stopped on a trust failure.
+        """
+        from hsync_client.exitcodes import ExitCode
+        from hsync_client.p2p_discovery import DiscoveryFatalError
+        from hsync_client.p2p_handler import run_p2p_mode
+
+        config = _make_p2p_config(tmp_path, DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
+        mock_log = MagicMock()
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.is_master.return_value = False
+        mock_p2p_sync = MagicMock()
+        mock_p2p_sync.start.return_value = mock_peer_mgr
+        mock_p2p_sync.port = 9000
+        mock_p2p_sync.wait_for_discovery.side_effect = DiscoveryFatalError("pin mismatch")
+
+        listener_server, listener_ws = _patch_p2p_listener()
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
+        ):
+            assert run_p2p_mode(config, mock_log) == int(ExitCode.FATAL)
+
     def test_one_shot_ignores_early_ineligible_peer_until_deadline(self, tmp_path):
         """A seeder wakeup must not end discovery before a master appears."""
         from hsync_client import p2p_handler

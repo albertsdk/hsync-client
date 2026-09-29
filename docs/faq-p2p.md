@@ -94,6 +94,35 @@ at the same **boot/1 bootstrap node** (positional hostname or
 `HSYNC_BOOTNODE`). Election, transport and security are unchanged — only
 discovery differs. See [Sync across networks](p2p-bootnode.md).
 
+**Q: The client aborts with "certificate fingerprint … does not match the
+accepted pin" — what do I do?**
+The bootnode authenticates with a self-signed certificate that you **pin**: with
+`--bootnode-tofu` the first fingerprint seen for `host:port` is remembered, and
+any later difference is refused as a possible man-in-the-middle. A self-hosted
+node generates a fresh certificate at every start unless the operator runs it
+with `--identity PATH`, so **a restart changes the fingerprint**.
+- If the change is expected, accept the new fingerprint explicitly with
+  `--bootnode-fingerprint <new-fingerprint>`, or delete the stale `host:port`
+  entry from `bootnode_known_hosts.json` (`$XDG_STATE_HOME/hsync/`, or
+  `HSYNC_BOOTNODE_TRUST_FILE`) so TOFU trusts it again.
+- Ask the operator to persist the node identity (`--identity`) and to publish the
+  stable fingerprint for clients to pin.
+After a fatal trust failure the client **exits with a non-zero code** instead of
+waiting for peers forever. See [Sync across networks](p2p-bootnode.md) and the
+node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md).
+
+**Q: A second device fails with "hostname '…' doesn't match DNSPattern(pattern=b'hsync-bootnode')" — why?**
+That client is **not pinning** the node, so it falls back to standard TLS
+verification. A `hsync-bootnode` is self-signed, and when it binds `0.0.0.0`
+without `--public-host` its certificate SAN is the placeholder `hsync-bootnode`,
+which never matches the hostname you dial — so the handshake is rejected
+(aioquic `Error: 298`). The node itself is reachable; the client just will not
+trust an unvalidated certificate.
+Fix it on the client by pinning, exactly as for the TOFU case above:
+`--bootnode-tofu` or `--bootnode-fingerprint <fp>`. The operator can additionally
+start the node with `--public-host <host>` so the SAN matches, but pinning is
+still what authenticates a self-signed node.
+
 **Q: How does master election work?**
 A deterministic algorithm picks the master based on:
 1. Already-serving incumbent keeps the role

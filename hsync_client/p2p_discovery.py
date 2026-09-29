@@ -27,13 +27,31 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from hsync_client.constants import BOOTNODE_DEFAULT_PORT, HEARTBEAT_INTERVAL, PEER_TIMEOUT
+from hsync_client.constants import (
+    BOOTNODE_DEFAULT_PORT,
+    BOOTNODE_REFRESH_INTERVAL,
+    HEARTBEAT_INTERVAL,
+    PEER_TIMEOUT,
+)
 from hsync_client.p2p_peers import PeerManager
 
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
 
-__all__ = ["DiscoveryPlan", "DiscoveryPlanState", "build_discovery_plan"]
+
+class DiscoveryFatalError(RuntimeError):
+    """Discovery stopped permanently; retrying cannot help.
+
+    Raised by a plan's ``wait_for_discovery`` when discovery has stopped for
+    good — today the bootnode plan after a certificate pin mismatch
+    (:class:`~hsync_client.boot_client.BootnodeFingerprintMismatch`), where the
+    lease loop stops and no peer can ever be discovered. The sync core aborts
+    with a fatal exit code instead of waiting forever; the mDNS plan never
+    raises it.
+    """
+
+
+__all__ = ["DiscoveryFatalError", "DiscoveryPlan", "DiscoveryPlanState", "build_discovery_plan"]
 
 
 @runtime_checkable
@@ -59,7 +77,13 @@ class DiscoveryPlan(Protocol):
         ...
 
     def wait_for_discovery(self, timeout: float) -> None:
-        """Block until the discovery plan turns up peers (or ``timeout``)."""
+        """Block until the discovery plan turns up peers (or ``timeout``).
+
+        Raises :class:`DiscoveryFatalError` when discovery has permanently
+        stopped (e.g. a bootnode certificate pin mismatch); the sync core then
+        aborts fatally instead of waiting forever for peers that can never be
+        discovered.
+        """
         ...
 
     def update_endpoint_ready(self, ready: bool) -> None:
@@ -161,8 +185,13 @@ def build_discovery_plan(
     bootnode = config.get("BOOTNODE")
     if not bootnode:
         return MdnsDiscovery(**shared)  # type: ignore[arg-type]
+    # The bootnode plan has its own lease cadence (spec ``boot-1.md``: refresh
+    # every 30 s) sized against the node's query/register rate limits; it must
+    # not reuse the mDNS heartbeat, which is far faster.
+    bootnode_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
     return BootnodeDiscovery(
-        **shared,  # type: ignore[arg-type]
+        **bootnode_shared,  # type: ignore[arg-type]
+        refresh_interval=config.get("BOOTNODE_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL,
         bootnode_host=bootnode,
         bootnode_port=config.get("BOOTNODE_PORT") or BOOTNODE_DEFAULT_PORT,
         p2p_key=config.get("P2P_KEY"),
