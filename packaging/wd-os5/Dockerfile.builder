@@ -212,16 +212,38 @@ COPY --from=python-builder /opt/python3.12 /opt/python3.12
 
 # Rust toolchain — ``cryptography`` >= 35 uses pyo3 for its native modules.
 # Debian Buster ships rustc 1.41 in apt, which is too old; ``cryptography``
-# 48 in particular requires rustc >= 1.83. Use rustup with the ``minimal``
-# profile to keep the layer as small as possible (no docs, no rust-src, no
-# rustfmt). Pinned to a known version so the cached layer is reproducible.
+# 48 in particular requires rustc >= 1.83. rustup is pinned to 1.29.1 and the
+# toolchain to 1.84.0 (``minimal`` profile keeps the layer small); rustup-init
+# is fetched for the target arch and its SHA256 verified, instead of piping the
+# remote https://sh.rustup.rs script into a shell.
+ARG TARGETARCH
+ARG TARGETVARIANT
 ENV RUSTUP_HOME=/opt/rust/rustup \
     CARGO_HOME=/opt/rust/cargo \
     PATH=/opt/rust/cargo/bin:/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN set -eux; \
     update-ca-certificates --fresh; \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.84.0; \
+    case "${TARGETARCH}${TARGETVARIANT}" in \
+        amd64) rust_target=x86_64-unknown-linux-gnu;      rust_sha=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71 ;; \
+        arm64) rust_target=aarch64-unknown-linux-gnu;     rust_sha=15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433 ;; \
+        armv7) rust_target=armv7-unknown-linux-gnueabihf; rust_sha=6f34abb0d553273ce08306ea3adb758d0171f21090cc5ad5426f474ded5504d1 ;; \
+        *) echo "unsupported TARGETARCH/TARGETVARIANT: ${TARGETARCH}/${TARGETVARIANT}" >&2; exit 1 ;; \
+    esac; \
+    for attempt in 1 2 3 4 5; do \
+        curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 30 \
+            --speed-limit 1024 --speed-time 60 \
+            -o /tmp/rustup-init \
+            "https://static.rust-lang.org/rustup/archive/1.29.1/${rust_target}/rustup-init" \
+            && break; \
+        echo "rustup-init download attempt ${attempt}/5 failed, retrying in 5s..." >&2; \
+        rm -f /tmp/rustup-init; \
+        sleep 5; \
+    done; \
+    test -s /tmp/rustup-init; \
+    echo "${rust_sha}  /tmp/rustup-init" | sha256sum -c -; \
+    chmod +x /tmp/rustup-init; \
+    /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.84.0; \
+    rm -f /tmp/rustup-init; \
     rustc --version; \
     cargo --version
 

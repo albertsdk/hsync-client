@@ -23,6 +23,10 @@
 #                                                    (builds one binary per
 #                                                     arch, packages all 10
 #                                                     models in dist/wd-os5/)
+#                               rpi                  Standalone binaries for
+#                                                    Raspberry Pi OS 32-bit
+#                                                    (armhf) and 64-bit (arm64)
+#                                                    via Docker
 #   -v, --version VERSION   Override the version used for packages (default:
 #                           the pyproject.toml version). Also settable via the
 #                           HSYNC_VERSION environment variable. A prerelease
@@ -34,8 +38,9 @@
 #   - native target: Python virtual environment (.venv); run 'poetry install'
 #   - deb target: Python virtual environment (.venv) + dpkg-deb (available on
 #     any Debian/Ubuntu system via dpkg-dev)
-#   - deb-all / wd-ex2-ultra-os5 / wd-os5-all: Docker with qemu-user-static
-#     (binfmt) configured (used for cross-arch emulation on amd64 hosts).
+#   - deb-all / rpi / wd-ex2-ultra-os5 / wd-os5-all: Docker with
+#     qemu-user-static (binfmt) configured (used for cross-arch emulation on
+#     amd64 hosts).
 #
 # Output:
 #   native:
@@ -53,6 +58,9 @@
 #                                       Installable through the OS5 dashboard
 #   wd-os5-all:
 #     - dist/wd-os5/<MODEL>_hsync_<ver>.bin   one .bin per supported model
+#   rpi:
+#     - dist/rpi/armhf/hsync   Raspberry Pi OS 32-bit (armv7)
+#     - dist/rpi/arm64/hsync   Raspberry Pi OS 64-bit (aarch64)
 #
 # Author: Alberto Basso
 # =============================================================================
@@ -182,7 +190,10 @@ ensure_qemu_binfmt() {
     fi
 
     log_info "Registering qemu-user-static binfmt handlers..."
-    if ! docker run --rm --privileged multiarch/qemu-user-static --reset -p yes \
+    # Image pinned by digest: this runs --privileged, so it must not move.
+    if ! docker run --rm --privileged \
+        multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 \
+        --reset -p yes \
         >/dev/null 2>&1; then
         log_error "Failed to run multiarch/qemu-user-static (is the Docker daemon reachable?)."
         exit 1
@@ -212,7 +223,7 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Options:${RESET}
     -c, --clean             Clean build artifacts before building
     -t, --target TARGET     Build target (default: native)
-                            Supported: native, deb, deb-all,
+                            Supported: native, deb, deb-all, rpi,
                             wd-ex2-ultra-os5, wd-os5-all
     -v, --version VERSION   Override the package version (default:
                             pyproject.toml). Also settable via HSYNC_VERSION.
@@ -223,6 +234,7 @@ ${BOLD}Examples:${RESET}
     ./compile.sh --clean                        # Clean and rebuild
     ./compile.sh --target deb                   # .deb for host arch
     ./compile.sh --target deb-all               # .deb for amd64, arm64, armhf
+    ./compile.sh --target rpi                   # Raspberry Pi armhf + arm64
     ./compile.sh --target wd-ex2-ultra-os5      # ARMv7 .bin for WD OS5
     ./compile.sh --target wd-os5-all            # All 10 WD OS5 models
 
@@ -239,6 +251,9 @@ ${BOLD}Output:${RESET}
         dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_${APP_NAME}_<ver>.bin
     wd-os5-all:
         dist/wd-os5/<MODEL>_${APP_NAME}_<ver>.bin (one per model)
+    rpi:
+        dist/rpi/armhf/${APP_NAME}   Raspberry Pi OS 32-bit (armv7)
+        dist/rpi/arm64/${APP_NAME}   Raspberry Pi OS 64-bit (aarch64)
 EOF
 }
 
@@ -250,24 +265,24 @@ clean_artifacts() {
 
     if [[ -d "${BUILD_DIR}" ]]; then
         rm -rf "${BUILD_DIR}"
-        ((cleaned++))
+        ((cleaned++)) || true
     fi
 
     # Clean the whole dist/ tree so stale platform directories don't accumulate
     if [[ -d "${OUTPUT_BASE}" ]]; then
         rm -rf "${OUTPUT_BASE}"
-        ((cleaned++))
+        ((cleaned++)) || true
     fi
 
     if [[ -f "${APP_NAME}.spec" ]]; then
         rm -f "${APP_NAME}.spec"
-        ((cleaned++))
+        ((cleaned++)) || true
     fi
 
     # Clean PyInstaller cache
     if [[ -d "__pycache__" ]]; then
         find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-        ((cleaned++))
+        ((cleaned++)) || true
     fi
 
     if [[ ${cleaned} -gt 0 ]]; then
@@ -325,6 +340,39 @@ _semver_to_debian() {
     printf '%s' "$1" | sed 's/-/~/'
 }
 
+# PyInstaller flags shared by the native (host) and rpi (container) onefile
+# builds. --strip is added by the caller: omitted on Windows hosts, always used
+# inside the Linux build containers. --distpath is also added by the caller.
+# Backslash continuations (not embedded newlines) keep the expansion on a
+# single line so it is safe to interpolate inside a ``bash -c`` string.
+_onefile_pyi_flags() {
+    printf '%s' "--clean --onefile --noconfirm \
+        --name ${APP_NAME} \
+        --log-level ERROR \
+        --hidden-import websockets.legacy \
+        --hidden-import websockets.legacy.client \
+        --hidden-import websockets.client \
+        --hidden-import websockets.exceptions \
+        --hidden-import watchdog.observers \
+        --hidden-import watchdog.events \
+        --hidden-import rich._unicode_data \
+        --hidden-import rich._unicode_data.unicode17-0-0 \
+        --hidden-import rich._unicode_data.unicode16-0-0 \
+        --hidden-import rich._unicode_data.unicode15-1-0 \
+        --hidden-import rich._unicode_data.unicode15-0-0 \
+        --hidden-import rich._unicode_data.unicode14-0-0 \
+        --hidden-import rich._unicode_data.unicode13-0-0 \
+        --hidden-import rich._unicode_data.unicode12-1-0 \
+        --hidden-import rich._unicode_data.unicode12-0-0 \
+        --hidden-import rich._unicode_data._versions \
+        --exclude-module pytest --exclude-module pytest_asyncio \
+        --exclude-module pytest_cov --exclude-module tkinter \
+        --exclude-module unittest --exclude-module pdb \
+        --exclude-module doctest --exclude-module pip \
+        --exclude-module setuptools --exclude-module wheel \
+        --exclude-module pkg_resources --exclude-module rapidfuzz"
+}
+
 # Build the binary
 build_binary() {
     local version
@@ -341,48 +389,14 @@ build_binary() {
 
     # Run PyInstaller with optimized settings
     # --strip: Remove debug symbols to reduce binary size
-    # --hidden-import: Include modules not detected by static analysis
-    # --collect-data: Include data files from packages (e.g., Rich unicode data)
-    # --exclude-module: Exclude unnecessary modules to reduce size
-    # --distpath: Place the final binary under dist/<os>-<arch>/
+    # --hidden-import / --exclude-module: see _onefile_pyi_flags above
     #
     # LC_ALL=C: Force English locale to avoid ldconfig localization warnings
     # PYTHONWARNINGS=ignore: Suppress Python warnings during build
     LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" \
-        --clean \
-        --onefile \
-        ${STRIP_FLAG} \
-        --name "${APP_NAME}" \
         --distpath "${OUTPUT_DIR}" \
-        --log-level ERROR \
-        --hidden-import "websockets.legacy" \
-        --hidden-import "websockets.legacy.client" \
-        --hidden-import "websockets.client" \
-        --hidden-import "websockets.exceptions" \
-        --hidden-import "watchdog.observers" \
-        --hidden-import "watchdog.events" \
-        --hidden-import "rich._unicode_data" \
-        --hidden-import "rich._unicode_data.unicode17-0-0" \
-        --hidden-import "rich._unicode_data.unicode16-0-0" \
-        --hidden-import "rich._unicode_data.unicode15-1-0" \
-        --hidden-import "rich._unicode_data.unicode15-0-0" \
-        --hidden-import "rich._unicode_data.unicode14-0-0" \
-        --hidden-import "rich._unicode_data.unicode13-0-0" \
-        --hidden-import "rich._unicode_data.unicode12-1-0" \
-        --hidden-import "rich._unicode_data.unicode12-0-0" \
-        --hidden-import "rich._unicode_data._versions" \
-        --exclude-module "pytest" \
-        --exclude-module "pytest_asyncio" \
-        --exclude-module "pytest_cov" \
-        --exclude-module "tkinter" \
-        --exclude-module "unittest" \
-        --exclude-module "pdb" \
-        --exclude-module "doctest" \
-        --exclude-module "pip" \
-        --exclude-module "setuptools" \
-        --exclude-module "wheel" \
-        --exclude-module "pkg_resources" \
-        --exclude-module "rapidfuzz" \
+        ${STRIP_FLAG} \
+        $(_onefile_pyi_flags) \
         "${ENTRY_POINT}"
 
     # Verify output
@@ -675,11 +689,12 @@ readonly DEB_ALL_BUILDER_IMAGE_PREFIX="hsync-deb-builder"
 
 # Build .deb packages for all 3 Debian/Ubuntu architectures (amd64, arm64, armhf).
 #
-# Docker cross-compilation is used — one build per arch:
+# Docker cross-compilation is used — one build per arch (the builder base is
+# the multi-arch ``python:3.12-bookworm`` image, selected via --platform):
 #
-#   amd64 → amd64/debian:bookworm
-#   arm64 → arm64v8/debian:bookworm
-#   armhf → arm32v7/debian:bookworm
+#   amd64 → linux/amd64
+#   arm64 → linux/arm64
+#   armhf → linux/arm/v7
 #
 # Output: dist/deb/hsync-client_<ver>_<arch>.deb
 build_deb_all() {
@@ -737,15 +752,13 @@ build_deb_all() {
         --exclude-module pkg_resources --exclude-module rapidfuzz \
         ${ENTRY_POINT}"
 
-    # Architecture definitions: deb_arch  docker_platform  base_image
+    # Architecture definitions: deb_arch → docker_platform. The builder base
+    # image is the multi-arch ``python:3.12-bookworm`` (Dockerfile default), so
+    # ``--platform`` alone selects the architecture.
     local -A arch_docker_platform
-    local -A arch_base_image
     arch_docker_platform["amd64"]="linux/amd64"
-    arch_base_image["amd64"]="amd64/debian:bookworm"
     arch_docker_platform["arm64"]="linux/arm64"
-    arch_base_image["arm64"]="arm64v8/debian:bookworm"
     arch_docker_platform["armhf"]="linux/arm/v7"
-    arch_base_image["armhf"]="arm32v7/debian:bookworm"
 
     local -a deb_archs=("amd64" "arm64" "armhf")
     local out_abs
@@ -753,7 +766,6 @@ build_deb_all() {
 
     for deb_arch in "${deb_archs[@]}"; do
         local docker_platform="${arch_docker_platform[${deb_arch}]}"
-        local base_image="${arch_base_image[${deb_arch}]}"
         local builder_tag="${DEB_ALL_BUILDER_IMAGE_PREFIX}:${deb_arch}"
         local arch_build_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}"
         local bin_dir="${arch_build_dir}/pyinstaller"
@@ -766,9 +778,8 @@ build_deb_all() {
 
         # --- builder image ----------------------------------------------------
         log_step "Building Docker image ${builder_tag}..."
-        docker build \
+        DOCKER_BUILDKIT=1 docker build \
             --platform "${docker_platform}" \
-            --build-arg BASE_IMAGE="${base_image}" \
             --build-arg TARGET_PLATFORM="${docker_platform}" \
             -t "${builder_tag}" \
             -f "${DEB_ALL_DIR}/Dockerfile.builder" \
@@ -1393,6 +1404,121 @@ build_wd_os5_all() {
 }
 
 # -----------------------------------------------------------------------------
+# Raspberry Pi OS (armhf + arm64) — standalone executables via Docker
+# -----------------------------------------------------------------------------
+
+# Configuration for the rpi target. The Debian builder image already carries
+# Python 3.12 + Poetry + the armhf source-build toolchain (Rust, libssl-dev,
+# …) required by the project's native dependencies, so it doubles as the
+# Raspberry Pi cross-build image. Raspberry Pi OS Bookworm is Debian 12
+# (glibc 2.36), matching the bookworm base images.
+readonly RPI_OUTPUT_DIR="${OUTPUT_BASE}/rpi"
+readonly RPI_DOCKERFILE="${DEB_DIR}/Dockerfile.builder"
+readonly RPI_BUILDER_IMAGE_PREFIX="hsync-client-rpi-builder"
+
+# Build standalone executables for Raspberry Pi OS, one per supported
+# architecture: armhf (32-bit, armv7) and arm64 (64-bit, aarch64). PyInstaller
+# cannot cross-compile, so each binary is produced by running it inside an
+# emulated python:3.12-bookworm container for the target CPU family.
+#
+# Output: dist/rpi/<arch>/hsync
+build_rpi() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${APP_NAME} v${version} for Raspberry Pi OS (armhf, arm64)..."
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the rpi target."
+        exit 1
+    fi
+    if [[ ! -f "${RPI_DOCKERFILE}" ]]; then
+        log_error "Builder Dockerfile missing: ${RPI_DOCKERFILE}"
+        exit 1
+    fi
+
+    local repo_root
+    repo_root="$(cd .. && pwd)"
+
+    ensure_qemu_binfmt qemu-arm qemu-aarch64
+
+    local -A arch_docker_platform
+    arch_docker_platform["armhf"]="linux/arm/v7"
+    arch_docker_platform["arm64"]="linux/arm64"
+
+    local -a rpi_archs=("armhf" "arm64")
+    local deb_arch
+    for deb_arch in "${rpi_archs[@]}"; do
+        local docker_platform="${arch_docker_platform[${deb_arch}]}"
+        local builder_tag="${RPI_BUILDER_IMAGE_PREFIX}:${deb_arch}"
+        local out_dir="${RPI_OUTPUT_DIR}/${deb_arch}"
+        local out_abs
+        mkdir -p "${out_dir}"
+        out_abs="$(cd "${out_dir}" && pwd)"
+
+        echo
+        log_step "─── ${deb_arch} build ───────────────────────────────────────"
+
+        log_step "Building Docker image ${builder_tag}..."
+        DOCKER_BUILDKIT=1 docker build \
+            --platform "${docker_platform}" \
+            --build-arg TARGET_PLATFORM="${docker_platform}" \
+            -t "${builder_tag}" \
+            -f "${RPI_DOCKERFILE}" \
+            "${DEB_DIR}"
+
+        # Dependencies are installed into a container-local venv (HOME=/tmp) so
+        # the mounted source tree stays pristine; only the produced executable
+        # is written back to the host under /out.
+        log_step "Compiling ${deb_arch} binary inside container..."
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
+            -v "${repo_root}:/repo" \
+            -v "${out_abs}:/out" \
+            -w /repo/hsync-client \
+            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
+            -e POETRY_REQUESTS_TIMEOUT=300 \
+            "${builder_tag}" \
+            bash -c "
+                set -euo pipefail
+                poetry config virtualenvs.in-project false
+                poetry config installer.max-workers 4
+                poetry install --no-root --without dev
+                poetry run pyinstaller --strip \
+                    $(_onefile_pyi_flags) \
+                    --distpath /out \
+                    --workpath /tmp/work \
+                    --specpath /tmp/work \
+                    ${ENTRY_POINT}
+            "
+
+        local bin_path="${out_dir}/${APP_NAME}"
+        if [[ ! -f "${bin_path}" ]]; then
+            log_error "${deb_arch} binary not produced at ${bin_path}"
+            exit 1
+        fi
+        log_ok "  → ${RPI_OUTPUT_DIR}/${deb_arch}/${APP_NAME} ($(du -h "${bin_path}" | cut -f1))"
+    done
+
+    echo
+    log_ok "Raspberry Pi executables built!"
+    echo
+    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo -e "  ${BOLD}Output:${RESET}   ${RPI_OUTPUT_DIR}/<arch>/${APP_NAME}"
+    echo
+    local sep="────────────────────────────────────────────────────────────"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo -e "${GREEN}${BOLD}  Raspberry Pi executables:${RESET}"
+    for deb_arch in "${rpi_archs[@]}"; do
+        echo -e "${GREEN}${BOLD}      $(pwd)/${RPI_OUTPUT_DIR}/${deb_arch}/${APP_NAME}${RESET}"
+    done
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -1471,6 +1597,22 @@ main() {
             fi
             build_deb_all
             ;;
+        rpi)
+            # Only pyproject.toml is required (poetry runs inside the container).
+            if [[ ! -f "pyproject.toml" ]]; then
+                log_error "pyproject.toml not found. Run from the project root."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning rpi artifacts..."
+                rm -rf "${RPI_OUTPUT_DIR}"
+                docker image rm -f \
+                    "${RPI_BUILDER_IMAGE_PREFIX}:armhf" \
+                    "${RPI_BUILDER_IMAGE_PREFIX}:arm64" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_rpi
+            ;;
         wd-ex2-ultra-os5)
             # Only pyproject.toml is required (poetry runs inside the container).
             if [[ ! -f "pyproject.toml" ]]; then
@@ -1502,7 +1644,7 @@ main() {
             ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: native, deb, deb-all, wd-ex2-ultra-os5, wd-os5-all"
+            echo "Supported targets: native, deb, deb-all, rpi, wd-ex2-ultra-os5, wd-os5-all"
             exit 1
             ;;
     esac

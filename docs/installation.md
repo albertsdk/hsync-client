@@ -184,8 +184,9 @@ you want to modify the client.
 - [Poetry](https://python-poetry.org/) for dependency management
 - **`hsync-common` cloned as a sibling directory** — it is declared as a Poetry
   path dependency (`../hsync-common`) and `poetry install` will fail without it.
-- Additional targets (`.deb` cross-arch, WD OS5 `.bin`) require **Docker** with
-  `qemu-user-static` (binfmt) configured for cross-architecture emulation.
+- Additional targets (Raspberry Pi, `.deb` cross-arch, WD OS5 `.bin`) require
+  **Docker** with `qemu-user-static` (binfmt) configured for cross-architecture
+  emulation.
 
 ### Build the native binary
 
@@ -208,6 +209,7 @@ The compile script auto-detects the host platform. Additional cross-arch targets
 require Docker and run under QEMU emulation:
 
 ```bash
+./compile.sh --target rpi           # Raspberry Pi armhf + arm64 (Docker + qemu)
 ./compile.sh --target deb-all       # .deb for amd64, arm64, armhf (Docker + qemu)
 ./compile.sh --target wd-os5-all    # .bin for all WD OS5 models (Docker + qemu)
 ./compile.sh --help                 # all options

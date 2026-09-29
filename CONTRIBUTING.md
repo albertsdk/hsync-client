@@ -21,7 +21,8 @@ does. No Poetry installation is required.
 ```bash
 ./compile.sh            # build standalone binary (PyInstaller)
 ./compile.sh --clean    # clean artifacts and rebuild
-# output: dist/<os>-<arch>/hsync
+./compile.sh -t rpi     # Raspberry Pi OS binaries (armhf + arm64, Docker)
+# output: dist/<os>-<arch>/hsync, dist/rpi/<arch>/hsync
 ```
 
 ## Code Style
@@ -138,6 +139,7 @@ testing or for a non-release platform:
 ./compile.sh
 
 # Build all targets (requires Docker)
+./compile.sh --target rpi           # Raspberry Pi armhf + arm64 binaries
 ./compile.sh --target deb-all       # .deb for amd64, arm64, armhf
 ./compile.sh --target wd-os5-all    # .bin for all WD OS5 models
 ```
