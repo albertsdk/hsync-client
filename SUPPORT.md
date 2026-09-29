@@ -17,4 +17,4 @@
 
 ## 💚 Solo project
 
-HSYNC is developed entirely by a single person in their spare time. Feature requests, bug reports, and pull requests are reviewed as soon as possible, but response times may vary. The developer does their best to maintain and improve the project — thank you for your patience and support!
+HSYNC is a passion project maintained in spare time by volunteers. Feature requests, bug reports, and pull requests are reviewed as soon as possible, but response times may vary. Thank you for your patience and support!
