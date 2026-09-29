@@ -221,3 +221,13 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   the plan (it catches a discovery-layer error). See the new
   `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md` for the operator/client
   recovery steps (stable `--identity`, `--bootnode-fingerprint`, clearing the pin).
+
+- **One log line per boot/1 lease cycle**: aioquic's per-frame QUIC/TLS INFO
+  records (`Retrying with token`, `Negotiated protocol version`, `ALPN
+  negotiated protocol`, `Connection close sent`) are pinned to WARNING in
+  `logger.setup_logging` (DEBUG with `--debug`), and `_lease_loop` emits a single
+  INFO summary per successful cycle
+  (`Bootnode <host>:<port>: <action> ok (N peer(s))`). Rationale: four library
+  lines per exchange, repeated every cycle, drowned the client's own output
+  without adding actionable information; the library detail stays available with
+  `--debug`.

@@ -304,18 +304,23 @@ class BootnodeDiscovery(DiscoveryPlanState):
         first = True
         while self._running and not self._stop.is_set():
             backoff = 0.0
+            action = "query"
             try:
                 if first:
+                    action = "register"
                     self._register(publish_endpoint=False)
                     first = False
                 elif self._sent_advert_generation != self._advert_generation:
                     # The role changed (promotion or yield): re-register so the
                     # node relays the fresh advertisement immediately instead of
                     # advertising a stale role until the next full register.
+                    action = "republish"
                     self._republish_advert()
                 elif (self._endpoint_ready or self._server_ready) and not self._published_endpoints:
+                    action = "publish endpoint"
                     self._publish_endpoint()
                 elif self._server_ready or self._published_endpoints:
+                    action = "refresh"
                     self._refresh()
                 self._query_peers()
             except BootnodeFingerprintMismatch as exc:
@@ -342,6 +347,14 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 first = True  # re-register once the node is reachable again
             except Exception as exc:
                 log.warning(f"Bootnode lease loop error: {exc}")
+            else:
+                # One concise line per successful lease cycle instead of the
+                # per-frame QUIC/TLS chatter aioquic logs at INFO (now DEBUG).
+                peers = self._peer_manager.get_alive_peers() if self._peer_manager else []
+                log.info(
+                    f"Bootnode {self._bootnode_host}:{self._bootnode_port}: "
+                    f"{action} ok ({len(peers)} peer(s))"
+                )
             self._wake.wait(timeout=max(self._refresh_interval, backoff))
             self._wake.clear()
 

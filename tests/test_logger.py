@@ -264,6 +264,26 @@ class TestSetupLogging:
         assert logging.getLogger().level == logging.DEBUG
         assert logging.getLogger("urllib3").isEnabledFor(logging.DEBUG)
 
+    def test_aioquic_quic_logger_is_quiet_at_info(self):
+        """aioquic's per-frame QUIC/TLS chatter is hidden unless ``--debug``.
+
+        Regression: ``quic`` logs several INFO lines per boot/1 exchange
+        ("Retrying with token", "Negotiated protocol version", "ALPN negotiated
+        protocol", "Connection close sent"), drowning the client's own one-line
+        summary. Its level is pinned to WARNING; the boot/1 client logs the
+        concise per-cycle line instead.
+        """
+        setup_logging()
+        assert logging.getLogger("quic").level == logging.WARNING
+        assert not logging.getLogger("quic").isEnabledFor(logging.INFO)
+        assert not logging.getLogger("http3").isEnabledFor(logging.INFO)
+
+    def test_aioquic_quic_logger_is_debug_in_debug_mode(self):
+        """``--debug`` keeps the full aioquic diagnostics."""
+        setup_logging(debug=True)
+        assert logging.getLogger("quic").level == logging.DEBUG
+        assert logging.getLogger("quic").isEnabledFor(logging.INFO)
+
     def test_flush_logs_drains_the_async_sink(self):
         """``flush_logs`` delivers a record logged immediately before exit.
 

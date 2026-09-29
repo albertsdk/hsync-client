@@ -263,6 +263,16 @@ def setup_logging(
     # `--debug` the level is DEBUG and everything still flows.
     logging.basicConfig(handlers=[InterceptHandler()], level=level, force=True)
 
+    # aioquic logs every QUIC connection lifecycle at INFO ("Retrying with
+    # token", "Negotiated protocol version", "ALPN negotiated protocol",
+    # "Connection close sent") — several lines per boot/1 exchange. The bootnode
+    # client already logs one concise line per exchange, so keep the library at
+    # WARNING (still surfaced) unless the user asked for the full detail with
+    # ``--debug``, where its diagnostics remain useful.
+    aioquic_level = logging.DEBUG if debug else logging.WARNING
+    for noisy_logger in ("quic", "http3", "aioquic"):
+        logging.getLogger(noisy_logger).setLevel(aioquic_level)
+
     # Configure specific loggers to use intercept handler
     for logger_name in (
         "hsync",
