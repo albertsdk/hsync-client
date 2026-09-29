@@ -102,3 +102,35 @@ class TestInternalNameRejectsMarker:
     def test_hsyncfolder_is_internal(self):
         assert is_internal_name(".hsyncfolder") is True
         assert is_internal_name("sub/.hsyncfolder") is True
+
+
+class TestStateLayoutIsolation:
+    def test_per_device_db_paths(self, tmp_path):
+        """The same folder resolves to a DB under each client's own device dir."""
+        from hsync_common.models.sqlstore import reset_state_db_cache
+
+        from hsync_client.state_backend import reset_bucket_folder_cache
+
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        (bucket / "a.txt").write_text("x")
+
+        paths = set()
+        for device in ("dev-a", "dev-b"):
+            reset_bucket_folder_cache()
+            reset_state_db_cache()
+            with patch(
+                "hsync_client.state_backend.default_device_dir",
+                return_value=tmp_path / device,
+            ):
+                _folder_id, db_path = resolve_bucket_folder(str(bucket))
+                assert Path(db_path).parent == tmp_path / device / "syncstate"
+                paths.add(db_path)
+        assert len(paths) == 2
+
+    def test_state_db_override_forces_a_single_db(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_STATE_DB", str(tmp_path / "one.db"))
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        _folder_id, db_path = resolve_bucket_folder(str(bucket))
+        assert Path(db_path) == tmp_path / "one.db"

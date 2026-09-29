@@ -114,7 +114,7 @@ def _isolate_device_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Ge
     The isolation dirs live in a sibling of *tmp_path* (inside the pytest
     basetemp, so pytest cleans them up) rather than inside *tmp_path* itself:
     many tests use *tmp_path* as ``LOCAL_BUCKET``, and the installation
-    ``syncstate.db`` opened under ``HSYNC_STATE_DIR`` would otherwise be
+    ``state DB`` opened under ``HSYNC_STATE_DIR`` would otherwise be
     created inside the bucket — showing up as a syncable, listed file whose
     second-granularity mtime breaks listing-based assertions (it is created
     lazily at the first store access, so it sorts unpredictably against the
@@ -505,8 +505,8 @@ def _server_env(buckets_dir: str, state_dir: str) -> dict:
     Every pre-existing ``HSYNC_*`` variable is stripped so the developer's own
     configuration can never leak into the test server. ``HSYNC_BUCKETS`` and
     ``HSYNC_STATE_DIR`` are pointed at per-test temp dirs so neither bucket
-    content nor the shared ``syncstate.db`` account store is reused across
-    tests — a shared ``syncstate.db`` caused startup ``SQLITE_BUSY`` / stale
+    content nor the shared ``state DB`` account store is reused across
+    tests — a shared ``state DB`` caused startup ``SQLITE_BUSY`` / stale
     schema collisions when several server modules ran in one session. The
     scrypt cost is lowered to keep bootstrap fast.
     """

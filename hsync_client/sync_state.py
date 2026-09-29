@@ -8,7 +8,7 @@
 Per-peer sync-state (version) management for HSYNC Client.
 
 Wraps :class:`hsync_common.models.version.SyncStateStore` with one persisted
-store per local bucket, backed by the installation ``syncstate.db`` and keyed
+store per local bucket, backed by the installation ``state DB`` and keyed
 by the ``.hsyncfolder`` UUID (ADR-0025). The store records, per path, the
 content hash this peer last agreed on with the master (``base_hash``) plus its
 version lineage. Comparing local, remote and base lets reconciliation pick the

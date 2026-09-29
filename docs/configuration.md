@@ -60,8 +60,8 @@ There is no `--log-level` flag. Verbosity is `-v` / `-q` only.
 
 In verbose mode the startup log includes a `Local configuration` JSON dump of
 the effective settings plus a `PATHS` section (env file, device identity dir,
-state dir, `syncstate.db`, instance-lock dir). Secrets (`API_KEY`, `P2P_KEY`,
-`Authorization`) are masked.
+state dir, the `HSYNC_STATE_DB` override if set, instance-lock dir). Secrets
+(`API_KEY`, `P2P_KEY`, `Authorization`) are masked.
 
 ## General Options
 
@@ -170,13 +170,17 @@ records offset 0 (raw local time) and synchronisation proceeds normally.
 
 ## State directory
 
-Causal versions and deletion markers live in a single SQLite database
-**outside** the synced folder (`syncstate.db`). The folder itself only holds
-a small `.hsyncfolder` identity marker.
+Causal versions and deletion markers live in one SQLite database **per synced
+folder**, outside the synced directory, under the device dir
+(`<device_dir>/syncstate/<uuid>.db`, named by the `.hsyncfolder` UUID), plus a
+small per-device index. The folder itself only holds a small `.hsyncfolder`
+identity marker.
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_STATE_DIR` | Directory that holds `syncstate.db` | `$XDG_STATE_HOME/hsync` or `~/.local/state/hsync` |
+| `HSYNC_DEVICE_DIR` | Directory holding the device identity **and** the per-folder sync-state DBs | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
+| `HSYNC_STATE_DIR` | Installation state directory (server-side per-bucket state; also the default parent of the device dir) | `$XDG_STATE_HOME/hsync` or `~/.local/state/hsync` |
+| `HSYNC_STATE_DB` | Explicit single sync-state DB for this process (overrides the per-folder layout) | unset |
 
 ## Tuning for containers and VMs
 

@@ -135,7 +135,7 @@ the `--version` / `--help` fast paths keep the minimal import surface pinned by
 
 | Store | Module | File | Purpose |
 | ----- | ------ | ---- | ------- |
-| Sync base versions | `sync_state.py` | `$HSYNC_STATE_DIR/syncstate.db` (folder UUID) | three-way merge base (§7) |
+| Sync base versions | `sync_state.py` | `<device_dir>/syncstate/<uuid>.db` (folder UUID) | three-way merge base (§7) |
 | Tombstones | `tombstones.py` | same DB, `tombstones` table | deletion propagation |
 | Folder identity | `state_backend.py` | `.hsyncfolder` at bucket root | UUIDv4 re-anchor |
 | TOFU pins | `pinning.py:62` | pin store (0o600) | p2p master fingerprint trust |

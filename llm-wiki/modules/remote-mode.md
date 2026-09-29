@@ -77,7 +77,7 @@ server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
   minting in `sync()` (a merge-base entry whose file is no longer on disk →
   tombstone → `delete_remote`, no resurrection).
 - **Crash-safe merge base**: real-time transfers (watcher uploads / inbound
-  downloads) persist the merge base to `syncstate.db` immediately
+  downloads) persist the merge base to the state DB immediately
   (`_record_synced_base`, see [sync-core.md](sync-core.md)), so a process kill
   between a watcher upload and the next cycle flush cannot lose the base —
   otherwise a file deleted while the process was dead would be resurrected on

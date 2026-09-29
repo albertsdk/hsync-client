@@ -19,14 +19,16 @@ the *client-local* persisted state and how it wraps the common stores.
 
 ## Client-local persisted state (per folder UUID)
 
-Causal versions and tombstones live in the installation `syncstate.db`
-(`HSYNC_STATE_DIR` / XDG state dir), keyed by the `.hsyncfolder` UUID
-(ADR-0025). The marker is the only engine file at the bucket root.
+Causal versions and tombstones live in one SQLite DB **per folder**, under the
+device dir (`<device_dir>/syncstate/<uuid>.db`; `HSYNC_STATE_DB` collapses this
+to a single DB), keyed by the `.hsyncfolder` UUID (ADR-0025). A per-device
+`index.db` maps `canonical_path → UUID` for re-anchoring. The marker is the only
+engine file at the bucket root.
 
 | Store | Location | Wrapper | Purpose |
 | ----- | -------- | ------- | ------- |
-| Sync state | `syncstate.db` table `versions` | `sync_state.py` → `SyncStateStore` | per-path `base_hash` + vector-clock lineage for causal three-way merge (ADR-0022; no wall-clock trust) |
-| Tombstones | `syncstate.db` table `tombstones` | `tombstones.py` → `TombstoneStore` | per-peer deletion markers, gossiped across mastership changes |
+| Sync state | per-folder DB table `versions` | `sync_state.py` → `SyncStateStore` | per-path `base_hash` + vector-clock lineage for causal three-way merge (ADR-0022; no wall-clock trust) |
+| Tombstones | per-folder DB table `tombstones` | `tombstones.py` → `TombstoneStore` | per-peer deletion markers, gossiped across mastership changes |
 | Folder id | `.hsyncfolder` at bucket root | `state_backend.resolve_bucket_folder` | UUIDv4 that re-anchors state across rename/move |
 
 ### sync_state.py (merge base)

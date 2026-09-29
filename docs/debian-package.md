@@ -190,7 +190,7 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_P2P_GROUP` | *(empty)* | Restrict discovery to a group |
 | `HSYNC_P2P_KEY` | *(empty)* | Shared secret for peer authentication (also the bootnode group key for protected/private bootnodes) |
 | `HSYNC_DEVICE_DIR` | `/var/lib/hsync/device` | Directory for the persistent device identity (device ID + p2p keypair) |
-| `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Directory for `syncstate.db` (causal versions and tombstones) |
+| `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Directory for the per-folder sync-state DBs (causal versions and tombstones) |
 | `HSYNC_P2P_PIN_FILE` | `/var/lib/hsync/p2p_known_peers.json` | File storing pinned fingerprints of known p2p peers (TOFU) |
 | `HSYNC_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |

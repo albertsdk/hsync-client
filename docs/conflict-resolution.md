@@ -205,7 +205,7 @@ and the loser is preserved.
 ## The store (`SyncStateStore`)
 
 The store is an in-memory `dict[relpath, FileVersion]` persisted in the
-installation **`syncstate.db`**, keyed by the `.hsyncfolder` UUID. Properties:
+per-folder state DB, keyed by the `.hsyncfolder` UUID. Properties:
 
 - **Private to each peer** — never exchanged with the server or other peers
   (the wire form `VersionInfo` carries the clock inside the listing/event).
@@ -240,7 +240,7 @@ sequenceDiagram
     participant S as Server/Master
     participant FS as Local FS
 
-    C->>SS: ① load() from syncstate.db
+    C->>SS: ① load() from per-folder state DB
     C->>S: ② GET remote file list (with version/vclock)
     C->>FS: ③ Scan local files
 
@@ -262,7 +262,7 @@ sequenceDiagram
     end
 
     C->>SS: ⑨ retain(files still in bucket)
-    C->>SS: ⑩ flush() → syncstate.db
+    C->>SS: ⑩ flush() → per-folder state DB
 ```
 
 The same matrix also runs on the **real-time** path: an inbound WS "modified"

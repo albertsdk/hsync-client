@@ -678,11 +678,16 @@ the p2p keypair (default:
 ).
 .TP
 .B HSYNC_STATE_DIR
-Directory holding the installation causal-state database
-.I syncstate.db
-(default:
-.IR ~/.local/state/hsync
-).
+Installation state directory (default:
+.IR ~/.local/state/hsync ).
+Holds the server's per-bucket state subdir; the client keeps its sync state
+under the device dir instead (see
+.BR HSYNC_DEVICE_DIR ).
+.TP
+.B HSYNC_STATE_DB
+Explicit, process-wide sync-state database path. When set, the client opens
+this single SQLite file for every synced folder instead of the per-folder
+layout under the device dir. Useful for tests and manual isolation.
 .TP
 .B HSYNC_P2P_PIN_FILE
 File storing the pinned fingerprints of known p2p peers (default:
@@ -712,10 +717,10 @@ Marker file that forces a directory to be kept even if it would otherwise
 be empty after synchronization.
 .TP
 .I .hsyncfolder
-Folder-identity marker (UUIDv4). Causal versions and deletion markers live
-in
-.I $HSYNC_STATE_DIR/syncstate.db
-, not inside the synced directory.
+Folder-identity marker (UUIDv4). Causal versions and deletion markers live in
+a per-folder SQLite database under the device dir
+.RI ( $HSYNC_DEVICE_DIR/syncstate/<uuid>.db ),
+not inside the synced directory.
 .
 .\" ---------------------------------------------------------------------
 .SH EXAMPLES

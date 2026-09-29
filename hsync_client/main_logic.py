@@ -481,7 +481,7 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
     a ``PATHS`` section resolving the filesystem locations the client uses
     (env file, device identity dir, state dir, SQLite DB, instance-lock dir).
     """
-    from hsync_common.models.folder import default_state_dir, default_syncstate_db_path
+    from hsync_common.models.folder import default_state_dir, state_db_override
 
     from hsync_client.identity import default_device_dir, default_locks_dir
     from hsync_client.utils import redact_headers
@@ -491,11 +491,14 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
     safe["API_KEY"] = "****"
     if safe.get("P2P_KEY"):
         safe["P2P_KEY"] = "****"
+    override = state_db_override()
     safe["PATHS"] = {
         "ENV_FILE": env_file,
         "DEVICE_DIR": str(default_device_dir()),
         "STATE_DIR": str(default_state_dir()),
-        "STATE_DB": str(default_syncstate_db_path()),
+        # Explicit single-DB override only; the per-folder layout is resolved
+        # lazily per bucket and has no single path.
+        "STATE_DB": str(override) if override is not None else "",
         "LOCKS_DIR": str(default_locks_dir()),
     }
     return safe
@@ -1005,7 +1008,7 @@ def run_sync(
 
     # Cross-process instance lock: two hsync processes must never sync the
     # same local directory — they would race the same folder UUID in
-    # syncstate.db and echo each other's watcher events. The
+    # state DB and echo each other's watcher events. The
     # flock is held for the whole run (P2P or remote) and is released by the
     # kernel even on SIGKILL; see hsync_client.identity.InstanceLock.
     instance_lock = _acquire_instance_lock(local_path, log)
@@ -1093,7 +1096,7 @@ def run_sync(
         # calls that map the cycle verdict to an exit code), so the last
         # diagnostic line is never lost to the writer-thread race.
         flush_logs()
-        # Compact syncstate.db once at process exit (best-effort): the state
+        # Compact state DB once at process exit (best-effort): the state
         # stores are no longer writing here, so the VACUUM cannot race a flush.
         from hsync_client.state_maintenance import vacuum_on_shutdown
 

@@ -8,7 +8,7 @@
 Per-peer tombstone management for HSYNC Client (P2P mode).
 
 Every peer keeps its own persistent :class:`TombstoneStore`, backed by the
-installation ``syncstate.db`` and keyed by the ``.hsyncfolder`` UUID
+installation ``state DB`` and keyed by the ``.hsyncfolder`` UUID
 (ADR-0025). Because the P2P master is elected and can change over time,
 knowledge of deletions must not live only on the current master: each peer
 records the deletions it observes, merges the master's markers on every sync

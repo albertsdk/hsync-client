@@ -31,7 +31,7 @@ Consequences of the one-identity-per-installation model (same as Syncthing):
 
 The module also provides the per-directory **instance lock**: a cross-process
 ``flock`` that refuses to start two hsync processes on the same synced
-directory (they would race the same folder UUID in ``syncstate.db`` and
+directory (they would race the same folder UUID in ``state DB`` and
 echo each other's watcher events).
 """
 
@@ -188,7 +188,7 @@ class InstanceLock:
     """Cross-process advisory lock guarding one synced directory.
 
     Two hsync processes writing the same local directory corrupt each
-    other's folder state in ``syncstate.db`` and
+    other's folder state in ``state DB`` and
     echo each other's watcher events. The lock is an ``flock`` on a file in
     the locks dir keyed by the directory's canonical path — the kernel
     releases it when the holder dies (even on SIGKILL), so it can never go

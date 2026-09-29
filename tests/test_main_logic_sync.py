@@ -892,7 +892,8 @@ class TestSafeConfigForLog:
         assert safe["PATHS"]["ENV_FILE"] == "/tmp/.env"
         assert safe["PATHS"]["DEVICE_DIR"] == str(device)
         assert safe["PATHS"]["STATE_DIR"] == str(state)
-        assert safe["PATHS"]["STATE_DB"] == str(state / "syncstate.db")
+        # No HSYNC_STATE_DB override: the per-folder layout has no single path.
+        assert safe["PATHS"]["STATE_DB"] == ""
         assert safe["PATHS"]["LOCKS_DIR"] == str(locks)
 
     def test_env_file_none_when_omitted(self):

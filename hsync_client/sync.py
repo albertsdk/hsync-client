@@ -692,7 +692,7 @@ async def sync(
         # rewrites of the entire version map.
         sync_state.flush()
 
-        # Reclaim freed pages from syncstate.db (throttled; lightweight no-op
+        # Reclaim freed pages from state DB (throttled; lightweight no-op
         # when nothing was pruned this cycle or the interval has not elapsed).
         from hsync_client.state_maintenance import incremental_vacuum_if_due
 
@@ -1619,7 +1619,7 @@ def get_sync_actions(
             is removed instead of being re-uploaded (resurrection guard).
         persist_state: When False (preview/dry-run), the store is never
             mutated — ``merge_and_record`` on in-sync files is skipped so the
-            installation ``syncstate.db`` stays unchanged. Comparison is always pure
+            installation ``state DB`` stays unchanged. Comparison is always pure
             via ``local_version_for_compare``.
 
     Returns:

@@ -674,7 +674,7 @@ class TestConflictResolution:
         ), f"Filename {name!r} does not match the UTC ISO-8601 pattern"
 
     def test_preview_does_not_mutate_sync_state(self, tmp_path):
-        """get_sync_actions(persist_state=False) must not mutate syncstate.db.
+        """get_sync_actions(persist_state=False) must not mutate state DB.
 
         A dry-run/preview computes the same causal decisions but must never
         persist them: the merge base recorded before the preview must be
@@ -1869,7 +1869,7 @@ class TestThreeWayMergeEndToEnd:
     """Full two-peer round-trip exercising the lifecycle on real on-disk state.
 
     A shared in-memory ``server`` stands in for the master; two peers each own a
-    bucket directory and a persistent ``syncstate.db`` row. Every round runs
+    bucket directory and a persistent ``state DB`` row. Every round runs
     the real :func:`get_sync_actions` and then applies the decided transfers
     exactly as the sync loop does (writing content and recording the synced
     base), flushing and dropping the in-memory cache between rounds to simulate a
@@ -1963,7 +1963,7 @@ class TestThreeWayMergeEndToEnd:
             # which reads its own CONFIG.
             patch("hsync_client.transfer.CONFIG", cfg),
         ):
-            # fresh process: base is loaded from syncstate.db
+            # fresh process: base is loaded from state DB
             clear_sha256_cache()  # mtimes are pinned, so re-hash content each round
             actions = get_sync_actions(self._remote_list(server), get_files_local(), tombstones={})
             for action in actions:

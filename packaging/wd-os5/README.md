@@ -112,7 +112,7 @@ packaging/wd-os5/
 | `/mnt/HD/HD_a2/hsync/data/`                     | Default synced directory (user-configurable)  |
 | `/mnt/HD/HD_a2/hsync/config/hsync.env`          | Persistent configuration written by the UI    |
 | `/mnt/HD/HD_a2/hsync/log/hsync.log`             | Runtime log (rotated by the OS)               |
-| `/mnt/HD/HD_a2/hsync/state/syncstate.db`        | Causal versions and tombstones (outside the synced folder) |
+| `/mnt/HD/HD_a2/hsync/state/server/<bucket>.db` | Causal versions and tombstones, one per bucket (outside the synced folder) |
 | `/var/www/hsync/`                               | Symlinks to `Apkg/web/*` for the admin UI     |
 
 The config path lives on the data volume so it survives package re-installs

@@ -429,8 +429,8 @@ design).
   after the scrub.
 - The `hsync-server` subprocess gets its own `HSYNC_BUCKETS` and
   `HSYNC_STATE_DIR` temp dirs (`_server_env`), so neither bucket content nor
-  the shared `syncstate.db` account store is reused across tests — a shared
-  `syncstate.db` caused startup `SQLITE_BUSY`/schema collisions when several
+  the shared account store is reused across tests — a shared
+  the state DB caused startup `SQLITE_BUSY`/schema collisions when several
   server modules ran in one session.
 - The per-directory instance lock (`hsync_client.identity.InstanceLock`)
   makes two live clients on one synced directory impossible; its lock files
