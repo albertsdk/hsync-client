@@ -425,6 +425,10 @@ class MdnsDiscovery(DiscoveryPlanState):
             local_address=self._local_ip,
             peer_timeout=self._peer_timeout,
         )
+        # Resolve the local role before the first wait: a lone --force-master
+        # node must become master and serve immediately so a joining slave can
+        # connect (the election otherwise runs only on peer events).
+        self._peer_manager.elect()
 
         # Register our service (can be deferred if register_service=False)
         if register_service:

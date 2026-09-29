@@ -247,3 +247,13 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `hsync bootnode trust {list,show,add,remove,fingerprint}` (`fingerprint` reads a
   node's certificate without trusting it). The prompt is built by
   `hsync_client/trust_prompt.py`: `--yes` auto-accepts, but only on a terminal.
+
+- **Discovery elects the local role at start**: each plan calls
+  `PeerManager.elect()` (`p2p_peers.py`) once when discovery starts. The election
+  previously ran only on peer add/remove, a local readiness change and the stale
+  sweep, so a node with **no peers yet** never resolved its role: a lone
+  `--force-master` node (the documented single-device master,
+  `docs/getting-started-p2p.md`) never advertised `server_ready`, and a joining
+  slave looped on "Waiting for master … to start server" forever. Evaluating the
+  local candidate up front makes a lone eligible node claim mastership
+  immediately, so the slave discovers the ready master and connects.

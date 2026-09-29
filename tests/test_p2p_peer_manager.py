@@ -1256,3 +1256,32 @@ class TestRemoveServiceGoodbyeGrace:
         listener.remove_service(None, "_hsync._tcp.local.", self.SERVICE_NAME)
 
         assert pm.get_alive_peers() == []
+
+
+class TestInitialElection:
+    """Discovery elects once at start so a node resolves its role without peers.
+
+    Regression: the election only ran on peer events, so a lone
+    ``--force-master`` node never became master and never served, and a joining
+    slave waited forever for a master that never started its server.
+    """
+
+    def test_lone_force_master_serves_without_peers(self):
+        pm = PeerManager(local_cid="aaa111", bucket="photos", force_master=True)
+        assert pm.is_master() is False  # not evaluated before the initial election
+        pm.elect()
+        assert pm.is_master() is True
+        assert pm.get_master_cid() == "aaa111"
+
+    def test_lone_never_master_stays_slave(self):
+        pm = PeerManager(local_cid="aaa111", bucket="photos", never_master=True)
+        pm.elect()
+        assert pm.is_master() is False
+        assert pm.get_master_cid() is None
+
+    def test_lone_plain_node_becomes_master(self):
+        # The local node is the only candidate, so it serves; a joining slave
+        # then finds a master instead of waiting for one that never starts.
+        pm = PeerManager(local_cid="aaa111", bucket="photos")
+        pm.elect()
+        assert pm.is_master() is True

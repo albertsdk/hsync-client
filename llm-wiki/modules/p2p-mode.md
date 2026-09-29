@@ -40,7 +40,11 @@ which one is active:
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.p2p.elect_master`
-(bidirectional peers preferred; `--force-master`/`--never-master` honored). TXT
+(bidirectional peers preferred; `--force-master`/`--never-master` honored). Each
+discovery plan calls `PeerManager.elect()` once at start, so a node with no peers
+yet still resolves its role (a lone `--force-master` node serves immediately,
+which is what lets a joining slave connect) — the election otherwise runs only on
+peer add/remove, a local readiness change and the stale sweep. TXT
 records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
 `peer_download` means the node implements the contract; whether its HTTPS seeder
 is reachable *now* is not a discovery fact at all — it is carried by the

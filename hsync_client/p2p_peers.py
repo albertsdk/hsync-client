@@ -436,6 +436,21 @@ class PeerManager:
             self._signal_change()
             return True
 
+    def elect(self) -> None:
+        """Re-run the master election for the current candidate set.
+
+        Discovery calls this once when it starts. The election otherwise runs
+        only on a peer add/remove, a local readiness change or a stale sweep, so
+        a node with no peers yet never resolves its role: a lone
+        ``--force-master`` node (the documented single-device master) would never
+        serve and a joining slave would wait for a master that never starts its
+        server. Evaluating the local candidate up front lets a lone eligible node
+        claim mastership immediately, exactly like the peer-driven elections.
+        """
+        with self._lock:
+            self._elect_master()
+            self._signal_change()
+
     def mark_peer_connected(self, cid: str) -> None:
         """Mark *cid* as live via an out-of-band channel (WebSocket).
 

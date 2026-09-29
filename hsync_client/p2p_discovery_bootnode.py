@@ -184,6 +184,10 @@ class BootnodeDiscovery(DiscoveryPlanState):
             peer_timeout=self._peer_timeout,
         )
         self._peer_manager = manager
+        # Resolve the local role before the first wait: a lone --force-master
+        # node must become master and serve immediately so a joining slave can
+        # connect (the election otherwise runs only on peer events).
+        manager.elect()
         self._running = True
         self._thread = threading.Thread(
             target=self._lease_loop, name="p2p-bootnode-lease", daemon=True
