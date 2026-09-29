@@ -45,14 +45,10 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p \
   --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
-The same through the environment (handy for services):
-
-```bash
-HSYNC_BOOTNODE=boot.example.net \
-  HSYNC_BOOTNODE_FINGERPRINT=YOUR_BOOTNODE_FINGERPRINT \
-  HSYNC_P2P_KEY="shared-secret" \
-  hsync p2p -b mybucket -p /srv/hsync
-```
+Service units pass the same inputs as environment variables
+(`HSYNC_BOOTNODE`, `HSYNC_BOOTNODE_FINGERPRINT`, `HSYNC_BOOTNODE_TOFU`);
+the full reference is
+[Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options).
 
 `HSYNC_BOOTNODE` is a **bare hostname**: no scheme, no path, no `host:port`.
 Set the port with `--port` (UDP, default `443`); passing `--port` without a
@@ -88,14 +84,14 @@ configure; the full priority order is in
 
 ```bash
 # The other device should list this peer after a query round.
-HSYNC_BOOTNODE=boot.example.net \
-  HSYNC_BOOTNODE_TOFU=1 \
-  HSYNC_P2P_KEY="shared-secret" \
-  hsync p2p -b mybucket -p /srv/hsync
+HSYNC_P2P_KEY="shared-secret" hsync p2p \
+  -b mybucket -p /srv/hsync boot.example.net \
+  --bootnode-tofu
 ```
 
-Each block carries its own pin or `HSYNC_BOOTNODE_TOFU=1`: an inline `VAR=…`
-prefix applies to that command only, so paste the whole block.
+Each block is self-contained: the bootnode host, the pin (or
+`--bootnode-tofu`) and the group key all belong to that command, so paste the
+whole block.
 
 Look for the discovery banner, then a peer with `reachable=true`; the advisory
 `capacity` hint a peer advertises is a pre-sizing hint only — the authoritative
