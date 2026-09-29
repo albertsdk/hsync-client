@@ -500,6 +500,10 @@ _compute_shlib_depends() {
     local bin="${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
     command -v dpkg-shlibdeps >/dev/null 2>&1 || { echo ""; return 0; }
     [[ -f "${bin}" ]] || { echo ""; return 0; }
+    # Resolve the binary to an absolute path so it still exists after we cd
+    # into the temporary control dir.
+    local bin_abs
+    bin_abs="$(cd "$(dirname "${bin}")" && pwd)/${APP_NAME}"
     local tmp deps
     tmp="$(mktemp -d)"
     mkdir -p "${tmp}/debian"
@@ -510,7 +514,7 @@ _compute_shlib_depends() {
     # --ignore-missing-info skips PyInstaller's private libs (no shlibs info)
     # while still resolving system libraries such as libc6.
     deps="$(cd "${tmp}" && dpkg-shlibdeps -O --ignore-missing-info \
-        "${bin}" 2>/dev/null \
+        "${bin_abs}" 2>/dev/null \
         | sed -n 's/^shlibs:Depends=//p')"
     rm -rf "${tmp}"
     echo "${deps}"
