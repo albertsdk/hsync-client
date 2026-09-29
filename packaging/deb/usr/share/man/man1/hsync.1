@@ -730,20 +730,20 @@ Discover peers across networks through a boot/1 bootstrap node; a first contact
 trusts the certificate on first use:
 .PP
 .EX
-hsync p2p \-b shared boot.example.net \-\-bootnode\-tofu
+hsync p2p boot.example.net \-b shared \-\-bootnode\-tofu
 .EE
 .PP
 Pin the certificate once the operator has published its fingerprint:
 .PP
 .EX
-hsync p2p \-b shared boot.example.net \-\-bootnode\-fingerprint sha256:FINGERPRINT
+hsync p2p boot.example.net \-b shared \-\-bootnode\-fingerprint sha256:FINGERPRINT
 .EE
 .PP
 Authenticate to a private node or a protected bucket (the key must match the
 node's group-keys entry):
 .PP
 .EX
-HSYNC_P2P_KEY=mysecret hsync p2p \-b shared boot.example.net
+HSYNC_P2P_KEY=mysecret hsync p2p boot.example.net \-b shared
 .EE
 .
 .TP

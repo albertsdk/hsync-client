@@ -32,16 +32,16 @@ First contact — trust the fingerprint on first use; the operator prints it wit
 `hsync-bootnode identity show`:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p \
-  -b mybucket -p /srv/hsync boot.example.net --bootnode-tofu
+HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+  -b mybucket -p /srv/hsync --bootnode-tofu
 ```
 
 Pinned — the hardened form, once the fingerprint is known. Replace
 `YOUR_BOOTNODE_FINGERPRINT` with the operator's `sha256:<hex>` value:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p \
-  -b mybucket -p /srv/hsync boot.example.net \
+HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+  -b mybucket -p /srv/hsync \
   --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
@@ -84,9 +84,8 @@ configure; the full priority order is in
 
 ```bash
 # The other device should list this peer after a query round.
-HSYNC_P2P_KEY="shared-secret" hsync p2p \
-  -b mybucket -p /srv/hsync boot.example.net \
-  --bootnode-tofu
+HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+  -b mybucket -p /srv/hsync --bootnode-tofu
 ```
 
 Each block is self-contained: the bootnode host, the pin (or

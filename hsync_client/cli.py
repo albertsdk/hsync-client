@@ -211,7 +211,7 @@ def _build_bootnode(
     if "://" in host or "/" in host:
         raise typer.BadParameter(
             f"pass the bare bootnode hostname, not a URL ('{hostname}'): the QUIC "
-            "scheme is implied, e.g. 'hsync p2p -b shared boot.example.net'."
+            "scheme is implied, e.g. 'hsync p2p boot.example.net -b shared'."
         )
     if ":" in host and not (host.startswith("[") and host.endswith("]")):
         host = f"[{host}]"  # bare IPv6 literal
@@ -1024,7 +1024,7 @@ def p2p(
         $ HSYNC_P2P_KEY=mysecret hsync p2p -b shared --group home
 
         [dim]# Discover peers across networks through a bootnode[/dim]
-        $ hsync p2p -b shared boot.example.net
+        $ hsync p2p boot.example.net -b shared
     """
     parsed_bw_upload, parsed_bw_download = _validate_shared_options(
         http_timeout=http_timeout,
