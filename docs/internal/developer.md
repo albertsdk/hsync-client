@@ -271,7 +271,7 @@ sequenceDiagram
     M-->>A: ② 200 OK + TLS certificate
 
     Note over A: ③ Record fingerprint of M's cert
-    Note over A:    in HSYNC_P2P_PIN_FILE (default ~/.local/state/hsync/p2p_known_peers.json)
+    Note over A:    in HSYNC_P2P_PIN_FILE (default $XDG_STATE_HOME/hsync/p2p_known_peers.json)
 
     A->>M: ④ Subsequent connections: verify fingerprint
     alt Fingerprint matches
@@ -284,8 +284,9 @@ sequenceDiagram
 ### Fingerprint pinning
 
 The certificate's SHA-256 fingerprint is stored in a local JSON file
-(`HSYNC_P2P_PIN_FILE`, default `~/.local/state/hsync/p2p_known_peers.json`).
-On every subsequent connection, the presented certificate's fingerprint is
+(`HSYNC_P2P_PIN_FILE`, default `$XDG_STATE_HOME/hsync/p2p_known_peers.json`,
+or `~/.local/state/hsync/p2p_known_peers.json` when `XDG_STATE_HOME` is
+unset). On every subsequent connection, the presented certificate's fingerprint is
 checked against the pinned value. If it doesn't match, the connection is
 refused — this prevents man-in-the-middle attacks on the LAN.
 

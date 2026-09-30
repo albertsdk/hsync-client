@@ -61,7 +61,8 @@ both terminals to stop.
 > (see [p2p Mode → Master Election](p2p-mode.md#master-election)).
 >
 > **Why the `HSYNC_DEVICE_DIR` lines?** Every installation owns one persistent
-> device identity (a stable device ID) stored in `~/.local/state/hsync/device/`.
+> device identity (a stable device ID) stored in `$XDG_STATE_HOME/hsync/device/`
+> (or `~/.local/state/hsync/device/` when `XDG_STATE_HOME` is unset).
 > With two peers on the *same* machine, both terminals would otherwise share one
 > identity and ignore each other as "self" during mDNS discovery — so each
 > terminal gets its own device directory here. On real devices this is not

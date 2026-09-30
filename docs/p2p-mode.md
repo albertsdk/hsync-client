@@ -215,7 +215,10 @@ connection that carries the data.
 Every hsync installation owns **one persistent device identity** (the same
 model as Syncthing's device IDs): a stable 21-character **device ID** plus the
 TLS keypair used for the LAN transport. Both live in the device directory
-(`HSYNC_DEVICE_DIR`, default `~/.local/state/hsync/device/`):
+(`HSYNC_DEVICE_DIR`, default `$XDG_STATE_HOME/hsync/device/` or
+`~/.local/state/hsync/device/` when `XDG_STATE_HOME` is unset), together with
+the per-folder sync-state databases (`syncstate/<uuid>.db`,
+`syncstate/index.db`):
 
 > Frequently asked questions about the device ID and `HSYNC_DEVICE_DIR` are
 > answered in [FAQ — p2p Mode → Device Identity](faq-p2p.md#device-identity).
@@ -258,8 +261,8 @@ Consequences:
 Two hsync processes can never sync the **same local directory** at the same
 time (regardless of buckets): they would race the same folder UUID in
 the per-folder state DB. The client enforces this with a cross-process
-`flock` (per-directory, in `$XDG_RUNTIME_DIR/hsync/locks/` or
-`HSYNC_LOCKS_DIR`) and refuses to start with an error naming the conflicting
+`flock` (per-directory: `$HSYNC_LOCKS_DIR`, else `$XDG_RUNTIME_DIR/hsync/locks`,
+else `<device-dir>/locks`) and refuses to start with an error naming the conflicting
 directory and PID. The lock is released by the kernel even if the process is
 killed, so it can never go stale.
 

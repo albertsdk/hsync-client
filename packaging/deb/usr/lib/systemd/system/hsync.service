@@ -23,7 +23,7 @@ ProtectSystem=strict
 # If you change HSYNC_PATH to a path under /home, you must also add
 # that path to ReadWritePaths below (use: systemctl edit hsync.service).
 ProtectHome=read-only
-ReadWritePaths=/var/lib/hsync /var/lib/hsync/p2p_cert /var/log/hsync
+ReadWritePaths=/var/lib/hsync /var/log/hsync
 ReadOnlyPaths=/etc/hsync
 
 [Install]

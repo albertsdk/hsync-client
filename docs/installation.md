@@ -130,8 +130,11 @@ watch as the `_hsync` system user; see the comments in
 > `HSYNC_P2P_KEY` **must be set** in `/etc/hsync/hsync.conf` before enabling
 > it — otherwise the client aborts with `[AUTH REQUIRED]`. All peers in the
 > same p2p group must share the same key. The default config also sets
-> `HSYNC_DEVICE_DIR=/var/lib/hsync/device` because the `_hsync` system
-> user has no home directory.
+> `HSYNC_DEVICE_DIR=/var/lib/hsync/device`,
+> `HSYNC_LOCKS_DIR=/var/lib/hsync/locks`,
+> `HSYNC_P2P_PIN_FILE=/var/lib/hsync/p2p_known_peers.json` and
+> `HSYNC_BOOTNODE_TRUST_FILE=/var/lib/hsync/bootnode_known_hosts.json`
+> because the `_hsync` system user has no home directory.
 
 ```bash
 # 1. Edit the configuration (bucket, path, p2p key, …)

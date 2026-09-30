@@ -555,8 +555,12 @@ Equivalent to
 .TP
 .B HSYNC_BOOTNODE_TRUST_FILE
 File storing the trusted bootnode fingerprints (default:
-.I ~/.local/state/hsync/bootnode_known_hosts.json
-).
+.IR $XDG_STATE_HOME/hsync/bootnode_known_hosts.json ,
+or
+.IR ~/.local/state/hsync/bootnode_known_hosts.json
+when
+.I XDG_STATE_HOME
+is unset).
 .TP
 .B HSYNC_UPNP_ENABLED
 Map the master TCP port with UPnP (true/false). Unset = on only when a bootnode
@@ -677,16 +681,36 @@ Days to retain deletion markers before garbage collection (default:
 0 = forever). Tombstones are not a recycle bin.
 .TP
 .B HSYNC_DEVICE_DIR
-Directory holding the persistent device identity: the stable device ID and
-the p2p keypair (default:
+Directory holding the persistent device identity: the stable device ID
+.RI ( device_id ),
+the p2p keypair
+.RI ( p2p_master_cert.pem ,
+.IR p2p_master_key.pem ),
+and the per-folder sync-state databases
+.RI ( syncstate/<uuid>.db
+plus
+.IR syncstate/index.db ;
+see
+.BR HSYNC_STATE_DB ).
+Default:
+.IR $XDG_STATE_HOME/hsync/device ,
+or
 .IR ~/.local/state/hsync/device
-).
+when
+.I XDG_STATE_HOME
+is unset.
 .TP
 .B HSYNC_STATE_DIR
 Installation state directory (default:
-.IR ~/.local/state/hsync ).
-Holds the server's per-bucket state subdir; the client keeps its sync state
-under the device dir instead (see
+.IR $XDG_STATE_HOME/hsync ,
+or
+.IR ~/.local/state/hsync
+when
+.I XDG_STATE_HOME
+is unset).
+Used by the server for its per-bucket state; the client only shows the
+resolved value in its verbose startup log and keeps its sync state under
+the device dir instead (see
 .BR HSYNC_DEVICE_DIR ).
 .TP
 .B HSYNC_STATE_DB
@@ -694,24 +718,87 @@ Explicit, process-wide sync-state database path. When set, the client opens
 this single SQLite file for every synced folder instead of the per-folder
 layout under the device dir. Useful for tests and manual isolation.
 .TP
+.B HSYNC_LOCKS_DIR
+Directory holding the per-directory instance locks (one
+.IR <sha256>.lock
+file per synced directory). Resolution order:
+.IR $HSYNC_LOCKS_DIR ,
+then
+.IR $XDG_RUNTIME_DIR/hsync/locks ,
+then
+.IR <device-dir>/locks .
+.TP
 .B HSYNC_P2P_PIN_FILE
 File storing the pinned fingerprints of known p2p peers (default:
-.I ~/.local/state/hsync/p2p_known_peers.json
-).
+.IR $XDG_STATE_HOME/hsync/p2p_known_peers.json ,
+or
+.IR ~/.local/state/hsync/p2p_known_peers.json
+when
+.I XDG_STATE_HOME
+is unset).
 .
 .\" ---------------------------------------------------------------------
 .SH FILES
 .TP
 .I /etc/hsync/hsync.conf
-System-wide configuration file (read by the systemd service).
+System-wide configuration file (read by the systemd service via
+.IR EnvironmentFile ).
 Uses KEY=VALUE format.
 .TP
 .I /var/log/hsync/hsync.log
-Log file written by the systemd service.
+Log file written by the systemd service
+.RI ( StandardOutput / StandardError
+append). Interactive runs log to the terminal unless
+.B \-\-log\-file
+is given.
 .TP
-.I ~/.local/state/hsync/bootnode_known_hosts.json
-Known-hosts store for bootnode certificate fingerprints (override with
+.IR $XDG_STATE_HOME/hsync/device
+(or
+.IR ~/.local/state/hsync/device
+when
+.I XDG_STATE_HOME
+is unset; override with
+.BR HSYNC_DEVICE_DIR ).
+Persistent device identity:
+.I device_id
+(the stable device ID),
+.I p2p_master_cert.pem
+and
+.I p2p_master_key.pem
+(the p2p keypair),
+and
+.IR syncstate/
+(the per-folder SQLite databases
+.IR <uuid>.db
+plus the per-device
+.IR index.db ).
+.TP
+.IR $XDG_STATE_HOME/hsync/p2p_known_peers.json
+(or
+.IR ~/.local/state/hsync/p2p_known_peers.json
+when
+.I XDG_STATE_HOME
+is unset; override with
+.BR HSYNC_P2P_PIN_FILE ).
+Pinned fingerprints of known p2p peers (TOFU).
+.TP
+.IR $XDG_STATE_HOME/hsync/bootnode_known_hosts.json
+(or
+.IR ~/.local/state/hsync/bootnode_known_hosts.json
+when
+.I XDG_STATE_HOME
+is unset; override with
 .BR HSYNC_BOOTNODE_TRUST_FILE ).
+Known-hosts store for bootnode certificate fingerprints.
+.TP
+.IR $XDG_RUNTIME_DIR/hsync/locks
+(or
+.IR <device-dir>/locks
+without a runtime dir; override with
+.BR HSYNC_LOCKS_DIR ).
+Per-directory instance locks (one
+.IR <sha256>.lock
+file per synced directory).
 .TP
 .I .hsyncignore
 Per-directory ignore file (gitignore syntax).
@@ -878,8 +965,7 @@ LAN one-shot: no peer/master found within the discovery timeout.
 .
 .\" ---------------------------------------------------------------------
 .SH SEE ALSO
-.BR hsync.service (5),
-.BR hsync.conf (5)
+.BR systemd.exec (5)
 .P
 .RS
 Project homepage:

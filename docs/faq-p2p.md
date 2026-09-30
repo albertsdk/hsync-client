@@ -57,8 +57,10 @@ control ("out of band") and record that fingerprint as a pin. Two ways:
    spaces are ignored, but the hex digits must be identical).
 
 4. If they match, record the fingerprint as a pin on the slave. Add one entry to
-   the pin store `~/.local/state/hsync/p2p_known_peers.json` (override with
-   `HSYNC_P2P_PIN_FILE`), keyed by `<master-device-id>|<bucket>`:
+   the pin store `$XDG_STATE_HOME/hsync/p2p_known_peers.json` (or
+   `~/.local/state/hsync/p2p_known_peers.json` when `XDG_STATE_HOME` is
+   unset; override with `HSYNC_P2P_PIN_FILE`), keyed by
+   `<master-device-id>|<bucket>`:
 
    ```json
    {
@@ -197,7 +199,8 @@ with only the changed blocks.
 Every installation owns one persistent **device identity** (the same model as
 Syncthing's device IDs): a stable 21-character device ID plus the TLS keypair
 used for the LAN transport. Both live in the device directory, which defaults
-to `~/.local/state/hsync/device/` and can be overridden with
+to `$XDG_STATE_HOME/hsync/device/` (or `~/.local/state/hsync/device/` when
+`XDG_STATE_HOME` is unset) and can be overridden with
 `HSYNC_DEVICE_DIR`. The device ID is the anchor for TOFU fingerprint pins, so
 pins survive restarts, and a changed certificate for the same device ID is
 detected and refused. See

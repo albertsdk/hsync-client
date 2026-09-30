@@ -247,8 +247,9 @@ user-facing summary is in [p2p Mode → Security & Pairing](../p2p-mode.md#secur
 
 1. **Persistent identity** — every installation owns a device identity: a
    stable device ID (`device_id` file) plus a self-signed keypair, stored in
-   the device directory (`~/.local/state/hsync/device`, overridable via
-   `HSYNC_DEVICE_DIR`). Both are reused on every restart, so the device ID
+   the device directory (`$XDG_STATE_HOME/hsync/device`, or
+   `~/.local/state/hsync/device` when `XDG_STATE_HOME` is unset; overridable
+   via `HSYNC_DEVICE_DIR`). Both are reused on every restart, so the device ID
    peers pinned and the fingerprint stay stable.
 2. **Fingerprint sharing** — the certificate fingerprint (SHA-256) is shared via
    mDNS TXT records (`cert_fp`).
@@ -299,7 +300,7 @@ TOFU after source selection.
 
 | Aspect | Description |
 |--------|-------------|
-| **Identity** | Device ID + persistent keypair under `~/.local/state/hsync/device` (`HSYNC_DEVICE_DIR`) |
+| **Identity** | Device ID + persistent keypair under `$XDG_STATE_HOME/hsync/device` (or `~/.local/state/hsync/device`; `HSYNC_DEVICE_DIR`) |
 | **Certificate Validity** | ~10 years (trust comes from the pin, not the date) |
 | **Private Key** | Unencrypted PKCS#8, protected by filesystem permissions (`0o600`) |
 | **Key Size** | RSA 2048-bit |

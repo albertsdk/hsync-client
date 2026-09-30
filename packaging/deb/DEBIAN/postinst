@@ -28,7 +28,7 @@ if ! id "${HSYNC_USER}" >/dev/null 2>&1; then
 fi
 
 # ── Directories ──────────────────────────────────────────────────────────
-mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}" "${DATA_DIR}/device" "${DATA_DIR}/state"
+mkdir -p "${CONFIG_DIR}" "${LOG_DIR}" "${DATA_DIR}" "${DATA_DIR}/device" "${DATA_DIR}/state" "${DATA_DIR}/locks"
 chown root:root "${CONFIG_DIR}" 2>/dev/null || true
 chmod 0750 "${CONFIG_DIR}"
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${LOG_DIR}" 2>/dev/null || true
@@ -37,13 +37,21 @@ chmod 0750 "${LOG_DIR}"
 # service's ReadWritePaths, so it must exist and be writable by _hsync.
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}" 2>/dev/null || true
 chmod 0750 "${DATA_DIR}"
-# Device identity directory (HSYNC_DEVICE_DIR). The _hsync user has no
-# home directory, so the cert must live here under the data dir.
+# Device identity directory (HSYNC_DEVICE_DIR): device ID + p2p keypair plus
+# the per-folder sync-state databases (syncstate/<uuid>.db, syncstate/index.db).
+# The _hsync user has no home directory, so this must live here under the data dir.
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/device" 2>/dev/null || true
 chmod 0700 "${DATA_DIR}/device"
-# Causal-state database (HSYNC_STATE_DIR / syncstate.db).
+# Installation state directory (HSYNC_STATE_DIR). The client only shows the
+# resolved value in its verbose startup log; its sync state lives under the
+# device dir above. HSYNC_STATE_DIR is the server's per-bucket state dir.
 chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/state" 2>/dev/null || true
 chmod 0750 "${DATA_DIR}/state"
+# Instance-lock directory (HSYNC_LOCKS_DIR): per-directory <sha256>.lock files.
+# The _hsync user has no $XDG_RUNTIME_DIR, so locks cannot use the default
+# ($XDG_RUNTIME_DIR/hsync/locks) and must not fall back to the device dir.
+chown "${HSYNC_USER}:${HSYNC_GROUP}" "${DATA_DIR}/locks" 2>/dev/null || true
+chmod 0750 "${DATA_DIR}/locks"
 
 # ── Config file permissions (conffile) ────────────────────────────────────
 # dpkg marks /etc/hsync/hsync.conf as a conffile, so its contents are
