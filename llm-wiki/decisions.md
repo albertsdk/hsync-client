@@ -139,6 +139,14 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   internal `/usr`,`/etc` are owned `root:root`) and instead `chown`s the
   host-mounted stage + produced `.deb` back to the caller afterwards
   (`compile.sh:906`); the archive's captured ownership is unaffected.
+- **Container builds install the `build` group by exclusion**: `deb-all`/`rpi`
+  use `poetry install --no-root --without dev`, which keeps the `build` group
+  (PyInstaller) — correct as written, and now protected by
+  `tests/test_compile_script.py`. Switching to an `--only` list is a silent trap
+  under Poetry 2.x (2.3.2, pinned in the builder image): `--only` is exhaustive
+  and a co-present `--with` is ignored, so `--only main --with build` exits 0
+  while installing no PyInstaller. That form silently broke `rpi`/`deb-all` in
+  hsync-bootnode, hsync-server and hsync-desktop.
 - **Tag-driven release** (`.github/workflows/release.yml`): pushing a `vX.Y.Z`
   tag gates on lint+test, then builds native binaries on per-OS matrix runners
   (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
