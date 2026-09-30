@@ -240,7 +240,7 @@ Key server-mode specific options:
 
 | Option | Env var | Description | Default |
 |--------|---------|-------------|---------|
-| `HOSTNAME` + `--port` | `HSYNC_SERVER` | Server host (`https://` implied; `--port` default `9753`) | (required) |
+| `HOSTNAME` + `--port` | `HSYNC_SERVER` | Server host (`https://` implied; accepts `HOST[:PORT]`; `--port` default `9753`) | (required) |
 | `--ca-cert` | — | Path to CA certificate (self-signed servers) | — |
 | `--insecure` | — | Skip SSL certificate verification | `false` |
 | `--http-timeout` | `HSYNC_HTTP_TIMEOUT` | HTTP request timeout (seconds) | `30` |

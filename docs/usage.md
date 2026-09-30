@@ -17,7 +17,7 @@ HSYNC runs in one of two mutually exclusive operating modes:
 
 ```text
 # Server Mode — connect to a central HSYNC server
-hsync server HOSTNAME [--port PORT] -b BUCKET_NAME [OPTIONS]
+hsync server HOSTNAME[:PORT] [--port PORT] -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode — peer-to-peer, no server (implicit continuous mode).
 # Write-capable runs need a shared key: a keyless p2p is read-only.
@@ -25,7 +25,7 @@ HSYNC_P2P_KEY=SHARED_SECRET hsync p2p -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode across networks — discover peers through a boot/1 bootstrap node
 # instead of mDNS (see "Sync across networks").
-hsync p2p -b BUCKET_NAME [BOOTNODE_HOST] [OPTIONS]
+hsync p2p -b BUCKET_NAME [BOOTNODE_HOST[:PORT]] [OPTIONS]
 ```
 
 With no `BOOTNODE` hostname (positional) and no `HSYNC_BOOTNODE`, `hsync p2p`

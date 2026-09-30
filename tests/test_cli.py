@@ -680,13 +680,22 @@ class TestServerHostnameArgument:
         """A URL in the hostname slot is a usage error (the scheme is implied)."""
         result = runner.invoke(app, ["server", "-b", "test", "https://hsync.example.com"])
         assert result.exit_code != 0
-        assert "bare hostname" in result.output
+        assert "not a URL" in result.output
 
-    def test_rejects_host_port_shorthand(self):
-        """host:port is rejected: the port belongs to --port."""
+    @patch("hsync_client.main_logic.run_sync")
+    def test_accepts_host_port_shorthand(self, mock_run_sync):
+        """HOST:PORT assembles the https:// URL (mutually exclusive with --port)."""
         result = runner.invoke(app, ["server", "-b", "test", "hsync.example.com:9753"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:9753"
+
+    def test_rejects_port_supplied_twice(self):
+        """A port in HOST:PORT and in --port is a usage error, not a precedence."""
+        result = runner.invoke(
+            app, ["server", "-b", "test", "hsync.example.com:9753", "--port", "9753"]
+        )
         assert result.exit_code != 0
-        assert "--port" in result.output
+        assert "not both" in result.output
 
     def test_rejects_port_without_hostname(self):
         """--port alone cannot express the server."""
@@ -795,12 +804,27 @@ class TestBuildBootnode:
         with pytest.raises(typer.BadParameter):
             _build_bootnode(None, 8443, no_upnp=False)
 
-    def test_url_and_host_port_are_refused(self):
+    def test_url_and_path_are_refused(self):
         from hsync_client.cli import _build_bootnode
 
-        for bad in ("https://boot.example.net", "boot.example.net/path", "boot.example.net:8443"):
+        for bad in ("https://boot.example.net", "boot.example.net/path"):
             with pytest.raises(typer.BadParameter):
                 _build_bootnode(bad, None, no_upnp=False)
+
+    def test_host_port_shorthand_is_accepted(self):
+        from hsync_client.cli import _build_bootnode
+
+        assert _build_bootnode("boot.example.net:8443", None, no_upnp=False) == (
+            "boot.example.net",
+            8443,
+            True,
+        )
+
+    def test_host_port_and_port_flag_are_mutually_exclusive(self):
+        from hsync_client.cli import _build_bootnode
+
+        with pytest.raises(typer.BadParameter):
+            _build_bootnode("boot.example.net:8443", 8443, no_upnp=False)
 
     def test_out_of_range_port_is_refused(self):
         from hsync_client.cli import _build_bootnode

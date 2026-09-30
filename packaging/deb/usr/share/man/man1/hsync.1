@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-29" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-09-30" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -12,7 +12,7 @@ hsync \- file synchronization client (Server and P2P modes)
 .SY hsync
 .B server
 .OP \-b NAME
-.RB [ hostname ]
+.RB [ hostname [:PORT] ]
 .OP \-\-port PORT
 .OP \-p DIR
 .RI [ OPTIONS ]
@@ -22,7 +22,7 @@ hsync \- file synchronization client (Server and P2P modes)
 .B p2p
 .OP \-b NAME
 .OP \-p DIR
-.RI [ BOOTNODE ]
+.RI [ BOOTNODE [:PORT] ]
 .OP \-\-port PORT
 .RI [ OPTIONS ]
 .YS
@@ -95,9 +95,11 @@ This option is mandatory.
 .\" --- Server subcommand ---
 .SS Server subcommand
 .TP
-.B hostname
-Remote server hostname or IP
-.RI ( server\.example\.com ).
+.BI hostname [\fI:PORT\fP]
+Remote server host or IP
+.RI ( server\.example\.com ),
+optionally with a port
+.RI ( server\.example\.com\fI:443\fP ).
 HTTPS is always used; the port defaults to 9753 (the hsync\-server
 default) and a reverse proxy on 443 is selected with
 .BR \-\-port .
@@ -112,6 +114,8 @@ is set.
 .BR \-\-port =\fIPORT\fP
 Remote server port (default: 9753). Requires
 .BR hostname .
+Mutually exclusive with a port given in
+.BI hostname [\fI:PORT\fP] .
 .TP
 .B \-\-insecure
 Skip SSL/TLS certificate verification (not recommended).
@@ -265,11 +269,11 @@ Hidden option intended for GUI integration.
 .\" --- p2p subcommand ---
 .SS p2p subcommand
 .TP
-.BR BOOTNODE
-Optional bootnode hostname for cross-network peer discovery. A bare hostname
-(the QUIC scheme is implied; use
-.B \-\-port
-for the port, never host:port); omit it to stay on mDNS only.
+.BR BOOTNODE [\fI:PORT\fP]
+Optional bootnode host for cross-network peer discovery: a bare hostname/IPv4,
+a bracketed IPv6 literal, or a
+.IR HOST : PORT
+pair (the QUIC scheme is implied); omit it to stay on mDNS only.
 .TP
 .BR \-\-listen\-port =\fIPORT\fP
 Port to listen on when acting as p2p master (default: 0 = auto).
@@ -279,7 +283,8 @@ UDP (QUIC) port of the remote bootnode (default: 443). Only meaningful with
 .BR BOOTNODE ;
 without it,
 .B \-\-port
-is refused rather than ignored.
+is refused rather than ignored. Mutually exclusive with a port given in
+.BR BOOTNODE [\fI:PORT\fP] .
 .TP
 .B \-\-no\-upnp
 Do not try to map the master TCP port with UPnP. Without a bootnode the flag

@@ -8,12 +8,12 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | ------ | ---- | ---- |
 | `main` (parent callback) | `cli.py:750` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
 | `lan` | `cli.py` | p2p subcommand: shared + LAN-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
-| `server` | `cli.py` `server` | central-server subcommand: bare `HOSTNAME` positional + `--port` + shared flags, resolves the server URL eagerly (bare `HOSTNAME` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
+| `server` | `cli.py` `server` | central-server subcommand: `HOSTNAME[:PORT]` positional + `--port` + shared flags, resolves the server URL eagerly (`HOSTNAME`/`HOSTNAME:PORT` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
 | `run` | `:1121` | console-script entry |
 | `collect_subcommand_options` | `:89` | introspects each subcommand's long flags for the capabilities document |
 | `capabilities_json_callback` | `:109` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
 | `_validate_bucket` | `:126` | bucket flag validation |
-| `_build_server_url` | `:142` | bare-hostname form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when `--port` is omitted, IPv6 auto-bracketing; rejects URL-like and `host:port` inputs, refuses `--port` without a hostname); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
+| `_build_server_url` | `cli.py` | `HOSTNAME[:PORT]` form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when no port, IPv6 auto-bracketing via the shared `hsync_common.endpoint` parser; rejects URL-like input, refuses `--port` without a hostname, and a port in the host is mutually exclusive with `--port`); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
 | `_validate_shared_options` | `:185` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
 
 Startup note: `build_capabilities` (`hsync_common.protocol.capabilities`) and
@@ -28,7 +28,7 @@ Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_P2P_KEY`, or hidden
 parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `lan`/`server` subcommand
-selection/`--force-master`/the server `HOSTNAME`+`--port` stay CLI-only
+selection/`--force-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
 (the full-URL alternative is the `HSYNC_SERVER` env var; the CLI host wins
 when both are set). A server-mode run with neither a `HOSTNAME` nor a resolvable
 `HSYNC_SERVER` (shell env or `--env-file`) is rejected at parse time with a
@@ -72,10 +72,11 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `load_env_file` | `:33` | dotenv loader |
 | typed getters | `:154`–`:300` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_bootnode_tofu`), guard getters, delta getters, etc. |
 
-The `p2p` subcommand takes an optional positional `BOOTNODE` (bare host) plus
+The `p2p` subcommand takes an optional positional `BOOTNODE` (`HOST[:PORT]`) plus
 `--port` (bootnode UDP, default 443) and `--no-upnp`; `_build_bootnode`
-(`cli.py`) validates them and refuses `--port` without a host (never a silently
-ignored flag). The plan is selected in `p2p_discovery.build_discovery_plan`
+(`cli.py`) validates them, refuses `--port` without a host (never a silently
+ignored flag), and a port in `BOOTNODE` is mutually exclusive with `--port`.
+The plan is selected in `p2p_discovery.build_discovery_plan`
 (`config["BOOTNODE"]` unset → mDNS, set → bootnode), so `p2p_handler.run_p2p_mode`
 only sees the `DiscoveryPlan` surface.
 

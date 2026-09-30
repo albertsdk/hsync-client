@@ -21,6 +21,7 @@ from typing import Annotated
 
 import typer
 import typer.main
+from hsync_common.endpoint import HostPort, parse_host_port
 from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.pairing import parse_fingerprint
 
@@ -30,7 +31,6 @@ from hsync_client.constants import (
     BANDWIDTH_MIN,
     BOOTNODE_DEFAULT_PORT,
     DISCOVERY_TIMEOUT_DEFAULT,
-    HOSTNAME_PATTERN,
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
@@ -141,11 +141,30 @@ def _validate_bucket(value: str) -> str:
     return value
 
 
-# Bare hostname / IPv4 charset (SSOT: HOSTNAME_PATTERN in hsync_client.constants,
-# shared with the HSYNC_SERVER validator in config.py). IPv6 literals are
-# bracketed instead.
-_HOSTNAME_PATTERN = re.compile(rf"^{HOSTNAME_PATTERN}$")
-_IPV6_BRACKETED_PATTERN = re.compile(r"^\[[0-9A-Fa-f:.]+\]$")
+def _parse_host_port(raw: str) -> HostPort:
+    """Parse a ``HOST[:PORT]`` endpoint, surfacing errors as CLI errors.
+
+    Shared SSOT: ``hsync_common.endpoint.parse_host_port``.
+    """
+    try:
+        return parse_host_port(raw)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def _merge_port(raw_host: str, parsed_port: int | None, flag_port: int | None) -> int | None:
+    """Reject a port supplied twice; return the single effective port or ``None``.
+
+    ``parsed_port`` comes from the ``HOST[:PORT]`` form, ``flag_port`` from
+    ``--port``. Supplying both is a usage error (no silent precedence).
+    """
+    if parsed_port is not None and flag_port is not None:
+        raise typer.BadParameter(
+            f"specify the port either in {raw_host!r} (HOST:PORT) or with --port, not both"
+        )
+    if parsed_port is not None:
+        return parsed_port
+    return flag_port
 
 
 def _build_server_url(hostname: str | None, port: int | None) -> str | None:
@@ -155,12 +174,13 @@ def _build_server_url(hostname: str | None, port: int | None) -> str | None:
     an unencrypted channel), so the scheme is implied; the port defaults to
     ``SERVER_DEFAULT_PORT``, the hsync-server default. A ``None`` hostname
     (env-only usage, ``HSYNC_SERVER``) returns ``None`` so ``run_sync`` keeps
-    its documented env fallback. IPv6 literals are bracketed automatically — a
-    bare hostname never contains ``:``.
+    its documented env fallback. The host may be a bare hostname/IPv4, a
+    ``HOST[:PORT]`` pair or a (bracketed) IPv6 literal.
 
     Raises:
         typer.BadParameter: on URL-like input, an unparseable host, a port
-            outside 1-65535, or ``--port`` without a hostname.
+            outside 1-65535, ``--port`` without a hostname, or a port supplied
+            both in the host and via ``--port``.
     """
     if port is not None and not 1 <= port <= 65535:
         raise typer.BadParameter("--port must be between 1 and 65535.")
@@ -170,20 +190,9 @@ def _build_server_url(hostname: str | None, port: int | None) -> str | None:
                 "--port requires a hostname (or set the full URL via HSYNC_SERVER)."
             )
         return None
-    host = hostname.strip()
-    if "://" in host or "/" in host:
-        raise typer.BadParameter(
-            f"pass the bare hostname, not a URL ('{hostname}'): the https:// "
-            "scheme is implied, e.g. 'hsync server server.example.com'."
-        )
-    if ":" in host and not (host.startswith("[") and host.endswith("]")):
-        host = f"[{host}]"  # bare IPv6 literal
-    if not (_HOSTNAME_PATTERN.match(host) or _IPV6_BRACKETED_PATTERN.match(host)):
-        raise typer.BadParameter(
-            f"invalid hostname: {hostname!r} (a hostname, IPv4 or IPv6 literal "
-            "is expected; use --port for the port, not host:port)."
-        )
-    return f"https://{host}:{SERVER_DEFAULT_PORT if port is None else port}"
+    hp = _parse_host_port(hostname)
+    effective_port = _merge_port(hostname.strip(), hp.port, port)
+    return f"https://{hp.authority}:{SERVER_DEFAULT_PORT if effective_port is None else effective_port}"
 
 
 def _build_bootnode(
@@ -198,8 +207,9 @@ def _build_bootnode(
     irrelevant). ``--port`` without a bootnode is a hard error, never a
     silently ignored flag; ``HSYNC_BOOTNODE`` is a host-only fallback (no port
     is read from the environment — the QUIC port comes from ``--port`` or the
-    443 default). Raises ``typer.BadParameter`` on a URL-like or port-bearing
-    host, mirroring ``_build_server_url``.
+    443 default). The bootnode host may be a bare hostname/IPv4, a
+    ``HOST[:PORT]`` pair or a (bracketed) IPv6 literal; a port in the host is
+    mutually exclusive with ``--port``.
     """
     if port is not None and not 1 <= port <= 65535:
         raise typer.BadParameter("--port must be between 1 and 65535.")
@@ -209,20 +219,13 @@ def _build_bootnode(
                 "--port requires a bootnode hostname (or set the full host via HSYNC_BOOTNODE)."
             )
         return None, BOOTNODE_DEFAULT_PORT, False
-    host = hostname.strip()
-    if "://" in host or "/" in host:
-        raise typer.BadParameter(
-            f"pass the bare bootnode hostname, not a URL ('{hostname}'): the QUIC "
-            "scheme is implied, e.g. 'hsync p2p boot.example.net -b shared'."
-        )
-    if ":" in host and not (host.startswith("[") and host.endswith("]")):
-        host = f"[{host}]"  # bare IPv6 literal
-    if not (_HOSTNAME_PATTERN.match(host) or _IPV6_BRACKETED_PATTERN.match(host)):
-        raise typer.BadParameter(
-            f"invalid bootnode hostname: {hostname!r} (a hostname, IPv4 or IPv6 "
-            "literal is expected; use --port for the port, not host:port)."
-        )
-    return host, port if port is not None else BOOTNODE_DEFAULT_PORT, not no_upnp
+    hp = _parse_host_port(hostname)
+    effective_port = _merge_port(hostname.strip(), hp.port, port)
+    return (
+        hp.authority,
+        effective_port if effective_port is not None else BOOTNODE_DEFAULT_PORT,
+        not no_upnp,
+    )
 
 
 # =============================================================================
@@ -678,17 +681,20 @@ HostArg = Annotated[
     str | None,
     typer.Argument(
         help=(
-            "Remote server hostname or IP (https:// is always used; omit to "
-            "read the full URL from HSYNC_SERVER)."
+            "Remote server host or IP, optionally with a port (HOST[:PORT]); "
+            "https:// is always used. Omit to read the full URL from HSYNC_SERVER."
         ),
-        metavar="HOSTNAME",
+        metavar="HOST[:PORT]",
     ),
 ]
 ServerPortOpt = Annotated[
     int | None,
     typer.Option(
         "--port",
-        help=f"Remote server port (default: {SERVER_DEFAULT_PORT}).",
+        help=(
+            f"Remote server port (default: {SERVER_DEFAULT_PORT}). Mutually "
+            "exclusive with a port in the HOST[:PORT] argument."
+        ),
         metavar="PORT",
         rich_help_panel="Connection",
     ),
@@ -740,10 +746,10 @@ BootnodeArg = Annotated[
     str | None,
     typer.Argument(
         help=(
-            "Optional bootnode host for cross-network discovery (a bare hostname, "
-            "like `server HOSTNAME`); omit it to stay on mDNS only."
+            "Optional bootnode host for cross-network discovery, optionally "
+            "with a port (HOST[:PORT]); omit it to stay on mDNS only."
         ),
-        metavar="BOOTNODE",
+        metavar="BOOTNODE[:PORT]",
     ),
 ]
 
@@ -751,7 +757,10 @@ BootnodePortOpt = Annotated[
     int | None,
     typer.Option(
         "--port",
-        help=f"UDP port of the remote bootnode (QUIC); default {BOOTNODE_DEFAULT_PORT}.",
+        help=(
+            f"UDP port of the remote bootnode (QUIC); default {BOOTNODE_DEFAULT_PORT}. "
+            "Mutually exclusive with a port in the BOOTNODE[:PORT] argument."
+        ),
         metavar="PORT",
         rich_help_panel="P2P Mode",
     ),

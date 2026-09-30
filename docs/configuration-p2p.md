@@ -10,8 +10,8 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | Option | Description | Default |
 |---|---|---|
 | `p2p` subcommand | Enable p2p mode (selected with `hsync p2p`) | — (CLI only) |
-| `BOOTNODE` (positional) | Bare bootnode hostname for cross-network discovery (optional; omit for mDNS only) | — |
-| `--port` | UDP (QUIC) port of the remote bootnode; refused without `BOOTNODE` | `443` |
+| `BOOTNODE` (positional) | Bootnode host for cross-network discovery (optional; omit for mDNS only). Accepts `HOST[:PORT]` | — |
+| `--port` | UDP (QUIC) port of the remote bootnode; refused without `BOOTNODE`; mutually exclusive with a port in `BOOTNODE` | `443` |
 | `--no-upnp` | Do not map the master TCP port with UPnP when a bootnode is used | `false` (`UPnP` on with a bootnode) |
 | `--bootnode-fingerprint` | Pin the bootnode certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two for a rotation window; refused without `BOOTNODE` | — (fail-closed without a pin) |
 | `--bootnode-tofu` | Trust the bootnode certificate on first use; a later mismatch is refused | `false` |
@@ -83,6 +83,10 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_BOOTNODE_TRUST` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `HSYNC_UPNP_ENABLED` | Map the master TCP port with UPnP (`true`/`false`); unset = on only when a bootnode is used | — |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
+| `HSYNC_DEVICE_DIR` | Device identity dir (device ID + p2p keypair + per-folder sync-state DBs `syncstate/<uuid>.db`, `syncstate/index.db`) | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
+| `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |
+| `HSYNC_P2P_PIN_FILE` | Pinned fingerprints of known p2p peers (TOFU) | `$XDG_STATE_HOME/hsync/p2p_known_peers.json` or `~/.local/state/hsync/p2p_known_peers.json` |
+| `HSYNC_BOOTNODE_TRUST_FILE` | Trusted bootnode fingerprints (known-hosts store) | `$XDG_STATE_HOME/hsync/bootnode_known_hosts.json` or `~/.local/state/hsync/bootnode_known_hosts.json` |
 | `HSYNC_P2P_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
 | `HSYNC_DISCOVERY_TIMEOUT` | p2p peer discovery timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |

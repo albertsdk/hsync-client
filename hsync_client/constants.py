@@ -30,6 +30,7 @@ from hsync_common.constants import (
 # requires literal keys for TypedDicts. BOOTNODE_DEFAULT_PORT (above) is the
 # boot/1 UDP default (QUIC, not HTTPS) — one SSOT with the bootnode's `--port`.
 from hsync_common.constants import (  # noqa: F401
+    HOSTNAME_PATTERN,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,
@@ -78,12 +79,10 @@ SYNC_DIRECTIONS: tuple[str, ...] = (
 # Hostname Validation
 # =============================================================================
 
-# Bare-hostname charset shared by the CLI host parser (``cli.py``) and the
-# ``HSYNC_SERVER`` URL validator (``config.py``). A host is alphanumeric,
-# optionally dotted/hyphenated, but never starts or ends with ``-``/``.``.
-# Keep the anchors out so callers can embed it (bare ``^...$`` or inside the
-# full ``https://host[:port][/path]`` pattern).
-HOSTNAME_PATTERN = r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?"
+# Bare-hostname charset shared by the CLI host parser (``cli.py``), the
+# ``HSYNC_SERVER`` URL validator (``config.py``) and the shared endpoint parser
+# (``hsync_common.endpoint``). SSOT lives in ``hsync_common.constants``; the
+# name is re-exported from the import block above.
 
 
 # =============================================================================

@@ -9,7 +9,7 @@ Server-mode configuration for connecting to a central HSYNC Server.
 
 | Option | Description | Default |
 |---|---|---|
-| `HOSTNAME` (+ `--port`) | Server host (`https://` implied; `--port` default `9753`; required in server mode unless `HSYNC_SERVER` is set) | `HSYNC_SERVER` |
+| `HOSTNAME` (+ `--port`) | Server host (`https://` implied; accepts `HOST[:PORT]`; `--port` default `9753`; required in server mode unless `HSYNC_SERVER` is set) | `HSYNC_SERVER` |
 | `-b, --bucket` | Bucket name | (required; CLI only) |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
 | `--insecure` | Skip SSL certificate verification | `false` |

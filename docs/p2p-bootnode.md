@@ -58,9 +58,10 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
 
 ## Manage the known hosts
 
-The accepted fingerprints live in `~/.local/state/hsync/bootnode_known_hosts.json`
-and are managed like SSH's known hosts (`HSYNC_BOOTNODE_TRUST_FILE` overrides the
-path):
+The accepted fingerprints live in `$XDG_STATE_HOME/hsync/bootnode_known_hosts.json`
+(or `~/.local/state/hsync/bootnode_known_hosts.json` when `XDG_STATE_HOME`
+is unset) and are managed like SSH's known hosts
+(`HSYNC_BOOTNODE_TRUST_FILE` overrides the path):
 
 ```bash
 hsync bootnode trust fingerprint boot.example.net   # read the node's fingerprint (no trust)
@@ -81,8 +82,10 @@ the full reference is
 [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options).
 
 `HSYNC_BOOTNODE` is a **bare hostname**: no scheme, no path, no `host:port`.
-Set the port with `--port` (UDP, default `443`); passing `--port` without a
-bootnode is refused rather than silently ignored.
+The `BOOTNODE` positional argument accepts the same host with an optional port
+(`boot.example.net` or `boot.example.net:8443`); set the port with `--port`
+(UDP, default `443`), mutually exclusive with a port in `BOOTNODE`. Passing
+`--port` without a bootnode is refused rather than silently ignored.
 
 ## Let the node be reachable
 
