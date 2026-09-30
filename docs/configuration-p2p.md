@@ -13,8 +13,9 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `BOOTNODE` (positional) | Bootnode host for cross-network discovery (optional; omit for mDNS only). Accepts `HOST[:PORT]` | — |
 | `--port` | UDP (QUIC) port of the remote bootnode; refused without `BOOTNODE`; mutually exclusive with a port in `BOOTNODE` | `443` |
 | `--no-upnp` | Do not map the master TCP port with UPnP when a bootnode is used | `false` (`UPnP` on with a bootnode) |
-| `--bootnode-fingerprint` | Pin the bootnode certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two for a rotation window; refused without `BOOTNODE` | — (fail-closed without a pin) |
+| `--bootnode-fingerprint` | Pin the bootnode certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two for a rotation window; refused without `BOOTNODE` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
 | `--bootnode-tofu` | Trust the bootnode certificate on first use; a later mismatch is refused | `false` |
+| `--bootnode-trust` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
 | `--force-master` | Force this device to be the master | `false` (CLI only) |

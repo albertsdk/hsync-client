@@ -124,19 +124,38 @@ the same port 8080. Set firewall rules for that single port accordingly.
 ## 2.9 Cross-network group with a bootnode
 
 Devices on different networks (different sites, home ↔ office) meet through a
-`boot/1` bootstrap node instead of mDNS. Pin the `sha256:<hex>` fingerprint the
-operator printed with `hsync-bootnode identity show`, and let UPnP publish this
-device's master port when it serves:
+`boot/1` bootstrap node instead of mDNS. Point every device of the group at the
+same node and let UPnP publish this device's master port when it serves:
 
 ```bash
 # Same command on every device of the group.
 HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net \
-  --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
+  boot.example.net
 ```
 
-An unpinned self-signed bootnode is refused: use `--bootnode-tofu` to trust the
-first sighting instead, or `--insecure` on loopback only.
+On a terminal the first contact is SSH-like: the client prints the node's
+SHA-256 fingerprint and asks to confirm it once (answer `yes`), then remembers
+it and reconnects silently. Read the fingerprint without trusting it at any
+time with `hsync trust bootnode fingerprint boot.example.net`.
+
+A run with no terminal (cron, systemd, CI) cannot answer the prompt, so it must
+state the trust decision explicitly. Accept the first sighting:
+
+```bash
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
+  boot.example.net --bootnode-tofu
+```
+
+Once the operator has published the stable `sha256:<hex>` fingerprint
+(`hsync-bootnode identity show`), pin it — the hardened form:
+
+```bash
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
+  boot.example.net --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
+```
+
+`-y` answers the prompt only when a terminal exists, so it is not enough for a
+service run. `--insecure` skips verification and is for loopback tests only.
 
 A device that cannot map its port stays **slave-only** (it still syncs, it just
 never serves). Verify the plan in the log: `Discovery: bootnode
