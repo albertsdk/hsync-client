@@ -234,8 +234,10 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Concern | Code | Notes |
 | ------- | ---- | ----- |
-| Pin store | `pinning.py` (`PinStore`) | disk-backed `0o600` JSON keyed by `(CID, bucket)`. Every read-modify-write holds a sibling `.lock` file with POSIX `flock` or Windows `msvcrt.locking`, reloads inside the lock, writes a unique same-directory temp, fsyncs file + parent directory, and atomically replaces. Master and each selected seeder use independent persistent TOFU entries; `--require-pairing` applies to the master only |
+| Pin store | `pinning.py` (`PinStore`) | disk-backed `0o600` JSON keyed by `(CID, bucket)`. Every read-modify-write holds a sibling `.lock` file with POSIX `flock` or Windows `msvcrt.locking`, reloads inside the lock, writes a unique same-directory temp, fsyncs file + parent directory, and atomically replaces. `get`/`set`/`check_and_record`/`remove`/`entries` (sorted `(cid, bucket)` for the CLI). Master and each selected seeder use independent persistent TOFU entries; `--require-pairing` applies to the master only |
 | Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed`/`pairing_needed` |
+| Trust messages | `trust_messages.py` | shared SSH-style prose for all stores: `known_hosts_added_message`/`mismatch_guidance` (bootnode), `known_server_added_message`/`server_mismatch_guidance`/`server_pairing_needed_guidance` (server) and `known_peer_added_message`/`peer_mismatch_guidance`/`peer_pairing_needed_guidance`/`peer_source_changed_line` (mDNS). The peer/host blocks carry the normalized fingerprint and the exact `hsync trust …` commands |
+| Trust CLI | `cli.py` (`hsync trust {peer,bootnode,server} {list,show,add,remove,fingerprint}` + `list --json`) | one namespace for the three pinning transports; `list --json` uses `entries()` |
 | Device identity | `identity.py` (`load_or_create_device_identity`) | Syncthing-style: one identity per installation — stable device ID (`device_id` file, CID_PATTERN-valid) + keypair in `HSYNC_DEVICE_DIR` (`default_device_dir`); cached process-wide. The device ID **is** the LAN `cid` (resolved in `main_logic.run_sync`), so pins survive restarts and cert rotation (delete `*.pem`, keep `device_id`) is detected as `[FINGERPRINT CHANGED]`. Keypair itself: `ssl_utils.load_or_create_master_cert` (dir delegates to `identity.default_device_dir`) |
 | Instance lock | `identity.py` (`InstanceLock`) | cross-process `flock` per synced dir (key = sha256 of realpath) in `$HSYNC_LOCKS_DIR`, else `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks`; kernel-released on death (never stale); second process on the same dir is refused with the holder PID in the message. Acquired for the whole run in `main_logic.run_sync`; same-process re-entry is a no-op (CliRunner tests) |
 | mDNS name clash | `p2p_peers.py`/`p2p_discovery_mdns.py` (`_register_service`) | `NonUniqueNameException` → clear `RuntimeError`: same device identity + same bucket already announced on this host → use a separate `HSYNC_DEVICE_DIR` (different buckets on one host share the identity fine: service name is `{bucket}-{device_id}`) |
@@ -256,6 +258,19 @@ HTTPS/WSS is mandatory in p2p mode (no plaintext fallback). Write-capable no-key
 sync requires `--allow-unauthenticated-writes` or
 `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true`; TTY state and `--yes` never
 authorize it (`main_logic._check_p2p_write_policy`).
+
+The mDNS trust refusal is **not fatal** (unlike the bootnode lease loop): the
+discovery loop retries continuously, so `_evaluate_master_pin` dedupes both the
+log block and the structured event through `_mark_trust_notice` /
+`_clear_trust_notice` (`p2p_handler.py`) over a `notified` map keyed
+`(kind, cid)` → last fingerprint (created in `run_p2p_mode`, threaded through
+`_run_as_slave`). The entry is cleared once the connection proceeds, so a later
+flip re-notifies. TOFU logs
+`trust_messages.known_peer_added_message`; a changed pin logs
+`peer_mismatch_guidance` (`[FINGERPRINT CHANGED]`); strict pairing logs
+`peer_pairing_needed_guidance` (`[PAIRING NEEDED]`); a changed seeder source logs
+`peer_source_changed_line` in `p2p_sources.authorize` (per-session CID disabling
+already dedupes that one).
 
 > Human guide: `../../docs/p2p-mode.md`. Election/security rationale:
 > ADRs 0001/0002 + `p2p-protocol.md` (see [decisions.md](../decisions.md)).
@@ -351,14 +366,27 @@ the sibling bootnode is not built) spawns the real `hsync-bootnode` on loopback
 and drives register → ack/STUN-echo → query relay → refresh → leave over the
 public wire.
 
-TLS trust (ADR-0034): the bootnode is authenticated **before any frame is
+TLS trust (ADR-0034/0035): the bootnode is authenticated **before any frame is
 written** — after the QUIC handshake the client reads the peer certificate
 (aioquic's private `tls._peer_certificate`, isolated in `_peer_certificate`
-`boot_client.py`) and checks it against the accepted set: explicit
-`--bootnode-fingerprint` pins (up to two for a rotation window) or the opt-in
-`--bootnode-tofu` store (`bootnode_trust.py`, a `{host:port} → current` map under
-`HSYNC_BOOTNODE_TRUST_FILE`). A mismatch raises `BootnodeFingerprintMismatch`
-and closes with zero bytes sent; the lease loop stops instead of retrying.
+`boot_client.py`) and checks it against the accepted set: a terminal-confirmed
+`ask` prompt (the default policy), explicit `--bootnode-fingerprint` pins (up to
+two for a rotation window) or the opt-in `--bootnode-tofu` store
+(`bootnode_trust.py`, a `{host:port} → current` map under
+`HSYNC_BOOTNODE_TRUST_FILE`). A first pin (prompt accepted or TOFU) logs the
+SSH-style `Permanently added 'host:port' (SHA256) to the list of known hosts
+(<path>)` (`trust_messages.known_hosts_added_message`) so the operator learns
+where the pin lives. A refusal raises `BootnodeFingerprintMismatch`, whose `str`
+is the concise case-specific reason (changed pin, node not pinned under `strict`,
+no match against `--bootnode-fingerprint`) and whose `guidance` carries the
+SSH-style recovery block — presented fingerprint, store path and the exact
+`hsync trust bootnode add|remove` commands — logged once by `_lease_loop`
+(`p2p_discovery_bootnode.py`), while the fatal propagation line
+(`p2p_handler.py`) repeats only the concise reason. The same refusal emits a
+structured event: a strict-unknown node emits `pairing_needed`
+(`scope="bootnode"`), a changed pin / explicit-pin mismatch emits
+`fingerprint_changed`. The connection closes with
+zero bytes sent; the lease loop stops instead of retrying.
 `--insecure` disables verification (tests/loopback only, mutually exclusive with
 pin/TOFU); `--ca-cert` is **refused** in `hsync p2p` (it is a server-mode knob,
 and a self-signed bootnode has no usable CA/hostname). With no pin/TOFU the

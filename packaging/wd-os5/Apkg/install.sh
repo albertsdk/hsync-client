@@ -129,6 +129,15 @@ HSYNC_UPNP_ENABLED="true"
 # Server options (used only when HSYNC_MODE=server)
 HSYNC_SERVER=""
 HSYNC_API_KEY=""
+# Sync-server TLS trust policy (ADR-0036): chain (default, standard CA
+# validation) or the SSH-style ask/accept-new/strict/none for a self-signed
+# server. Empty = the client default (chain).
+HSYNC_SERVER_TRUST=""
+# Pin the sync-server certificate fingerprint ('sha256:<hex>' or bare hex,
+# comma-separated up to two for a rotation window); empty = no pin.
+HSYNC_SERVER_FINGERPRINT=""
+# Trust the sync-server certificate on first use (TOFU).
+HSYNC_SERVER_TOFU="false"
 
 # Sync behaviour (continuous/daemon mode is the client default)
 HSYNC_INTERVAL="0"

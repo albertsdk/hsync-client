@@ -22,8 +22,8 @@ from typing import Annotated
 import typer
 import typer.main
 from hsync_common.endpoint import HostPort, parse_host_port
-from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.pairing import parse_fingerprint
+from hsync_common.protocol.tls_trust import TrustPolicy
 
 from hsync_client.bootnode_trust import BootnodeTrustStore
 from hsync_client.constants import (
@@ -53,6 +53,8 @@ from hsync_client.constants import (
     STABILITY_DELAY_MIN,
     SYNC_DIRECTIONS,
 )
+from hsync_client.pinning import PinStore
+from hsync_client.server_trust import ServerTrustStore, fetch_server_fingerprint
 
 # =============================================================================
 # Typer Application
@@ -717,6 +719,45 @@ CaCertOpt = Annotated[
         rich_help_panel="Connection",
     ),
 ]
+ServerFingerprintOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--server-fingerprint",
+        help=(
+            "Pin the sync-server certificate fingerprint ('sha256:<hex>' or bare hex). "
+            "May be repeated (up to two) for a rotation window."
+        ),
+        metavar="FINGERPRINT",
+        rich_help_panel="Connection",
+    ),
+]
+ServerTofuOpt = Annotated[
+    bool,
+    typer.Option(
+        "--server-tofu",
+        help=(
+            "Trust the sync-server certificate on first use (TOFU); a later mismatch "
+            "is refused as a possible man-in-the-middle."
+        ),
+        show_default=False,
+        rich_help_panel="Connection",
+    ),
+]
+ServerTrustOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--server-trust",
+        help=(
+            "Sync-server TLS trust policy: 'chain' (default: standard CA validation), "
+            "'ask' (confirm an unknown fingerprint on a terminal, fail closed without "
+            "one), 'accept-new' (pin the first sighting silently), 'strict' (require a "
+            "pin) or 'none' (no verification; loopback/tests only)."
+        ),
+        metavar="POLICY",
+        show_default=False,
+        rich_help_panel="Connection",
+    ),
+]
 ApiKeyFdOpt = Annotated[
     int | None,
     typer.Option(
@@ -1176,22 +1217,35 @@ def p2p(
 
 
 # =============================================================================
-# bootnode trust (known_hosts) management
+# trust management (P2P peers, bootnode, server) — one ``hsync trust`` namespace
 # =============================================================================
 
-# ``hsync bootnode trust …`` mirrors OpenSSH's known-hosts workflow so an
-# operator can inspect, pre-pin and forget bootnode fingerprints without editing
-# the JSON store by hand (ADR-0035).
-_bootnode_app = typer.Typer(
-    help="Inspect and manage bootnode trust (the client's known hosts).",
+# ``hsync trust …`` mirrors OpenSSH's known-hosts workflow so an operator can
+# inspect, pre-pin and forget fingerprints without editing the JSON stores by
+# hand. One namespace covers the three certificate-pinning transports: the P2P
+# master/seeders (``known_peers``), the bootnode and the sync server
+# (``known_hosts``). ``hsync bootnode``/``hsync server`` stay actions, so the trust
+# surface lives here rather than under them (ADR-0036).
+_trust_root = typer.Typer(
+    help="Inspect and manage certificate trust for the P2P peers, bootnode and server.",
     no_args_is_help=True,
 )
-_trust_app = typer.Typer(
+_trust_bootnode_app = typer.Typer(
     help="Manage the bootnode known-hosts store.",
     no_args_is_help=True,
 )
-_bootnode_app.add_typer(_trust_app, name="trust")
-app.add_typer(_bootnode_app, name="bootnode")
+_trust_peer_app = typer.Typer(
+    help="Manage the P2P known-peers store.",
+    no_args_is_help=True,
+)
+_trust_server_app = typer.Typer(
+    help="Manage the sync-server known-hosts store.",
+    no_args_is_help=True,
+)
+app.add_typer(_trust_root, name="trust")
+_trust_root.add_typer(_trust_bootnode_app, name="bootnode")
+_trust_root.add_typer(_trust_peer_app, name="peer")
+_trust_root.add_typer(_trust_server_app, name="server")
 
 
 def _trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
@@ -1204,10 +1258,15 @@ def _trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
     return host, resolved_port
 
 
-@_trust_app.command("list")
-def bootnode_trust_list() -> None:
+@_trust_bootnode_app.command("list")
+def bootnode_trust_list(
+    as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
+) -> None:
     """List the pinned bootnode fingerprints (like ``known_hosts``)."""
     entries = BootnodeTrustStore().entries()
+    if as_json:
+        typer.echo(json.dumps(entries, indent=2, sort_keys=True))
+        return
     if not entries:
         typer.echo("No bootnodes are trusted yet.")
         return
@@ -1218,7 +1277,7 @@ def bootnode_trust_list() -> None:
         )
 
 
-@_trust_app.command("show")
+@_trust_bootnode_app.command("show")
 def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None:
     """Show the pinned fingerprint for one bootnode."""
     host, resolved_port = _trust_host_port(hostname, port)
@@ -1229,7 +1288,7 @@ def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None
     typer.echo(f"{host}:{resolved_port} {fingerprint}")
 
 
-@_trust_app.command("add")
+@_trust_bootnode_app.command("add")
 def bootnode_trust_add(
     hostname: HostArg,
     fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
@@ -1241,11 +1300,12 @@ def bootnode_trust_add(
     if normalized is None:
         typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
         raise typer.Exit(code=1)
-    BootnodeTrustStore().set(host, resolved_port, normalized, source="cli")
-    typer.echo(f"Pinned {host}:{resolved_port} {normalized}.")
+    store = BootnodeTrustStore()
+    store.set(host, resolved_port, normalized, source="cli")
+    typer.echo(f"Pinned {host}:{resolved_port} {normalized} in {store.path}.")
 
 
-@_trust_app.command("remove")
+@_trust_bootnode_app.command("remove")
 def bootnode_trust_remove(hostname: HostArg, port: BootnodePortOpt = None) -> None:
     """Forget a pinned bootnode (like ``ssh-keygen -R``)."""
     host, resolved_port = _trust_host_port(hostname, port)
@@ -1255,7 +1315,7 @@ def bootnode_trust_remove(hostname: HostArg, port: BootnodePortOpt = None) -> No
         typer.echo(f"{host}:{resolved_port} was not in the known-hosts store.")
 
 
-@_trust_app.command("fingerprint")
+@_trust_bootnode_app.command("fingerprint")
 def bootnode_trust_fingerprint(hostname: HostArg, port: BootnodePortOpt = None) -> None:
     """Print a bootnode's certificate fingerprint without trusting it."""
     from hsync_client.boot_client import BootnodeClient, BootnodeError
@@ -1270,6 +1330,142 @@ def bootnode_trust_fingerprint(hostname: HostArg, port: BootnodePortOpt = None) 
     typer.echo(observed)
 
 
+# =============================================================================
+# peer trust (known_peers) management
+# =============================================================================
+
+# ``hsync trust peer …`` manages the P2P known-peers store
+# (``p2p_known_peers.json``), keyed ``cid|bucket``.
+
+
+@_trust_peer_app.command("list")
+def peer_trust_list(
+    as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
+) -> None:
+    """List the pinned P2P peer fingerprints (like ``known_hosts``)."""
+    entries = PinStore().entries()
+    if as_json:
+        typer.echo(json.dumps(entries, indent=2, sort_keys=True))
+        return
+    if not entries:
+        typer.echo("No peers are trusted yet.")
+        return
+    for entry in entries:
+        typer.echo(f"{entry['cid']}|{entry['bucket']} {entry['fingerprint']}")
+
+
+@_trust_peer_app.command("add")
+def peer_trust_add(
+    bucket: BucketOpt,
+    cid: str = typer.Argument(..., metavar="CID"),
+    fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
+) -> None:
+    """Pin a P2P peer fingerprint (verify it out of band first)."""
+    normalized = parse_fingerprint(fingerprint)
+    if normalized is None:
+        typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
+        raise typer.Exit(code=1)
+    store = PinStore()
+    store.set(cid, bucket, normalized)
+    typer.echo(f"Pinned {cid}|{bucket} {normalized} in {store.path}.")
+
+
+@_trust_peer_app.command("remove")
+def peer_trust_remove(
+    bucket: BucketOpt,
+    cid: str = typer.Argument(..., metavar="CID"),
+) -> None:
+    """Forget a pinned P2P peer (like ``ssh-keygen -R``)."""
+    if PinStore().remove(cid, bucket):
+        typer.echo(f"Removed {cid}|{bucket} from the known-peers store.")
+    else:
+        typer.echo(f"{cid}|{bucket} was not in the known-peers store.")
+
+
+# =============================================================================
+# server trust (known_hosts) management
+# =============================================================================
+
+
+def _server_trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
+    """Resolve ``hostname``/``--port`` for the server trust subcommands."""
+    if hostname is None:
+        raise typer.BadParameter("a server hostname is required")
+    hp = _parse_host_port(hostname)
+    effective_port = _merge_port(hostname.strip(), hp.port, port)
+    return hp.host, SERVER_DEFAULT_PORT if effective_port is None else effective_port
+
+
+@_trust_server_app.command("list")
+def server_trust_list(
+    as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
+) -> None:
+    """List the pinned sync-server fingerprints (like ``known_hosts``)."""
+    entries = ServerTrustStore().entries()
+    if as_json:
+        typer.echo(json.dumps(entries, indent=2, sort_keys=True))
+        return
+    if not entries:
+        typer.echo("No servers are trusted yet.")
+        return
+    for entry in entries:
+        typer.echo(
+            f"{entry['host']}:{entry['port']} {entry['fingerprint']} "
+            f"(source={entry['source']}, first_seen={entry['first_seen']})"
+        )
+
+
+@_trust_server_app.command("show")
+def server_trust_show(hostname: HostArg, port: ServerPortOpt = None) -> None:
+    """Show the pinned fingerprint for one server."""
+    host, resolved_port = _server_trust_host_port(hostname, port)
+    fingerprint = ServerTrustStore().get(host, resolved_port)
+    if fingerprint is None:
+        typer.echo(f"{host}:{resolved_port} is not in the known-hosts store.", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"{host}:{resolved_port} {fingerprint}")
+
+
+@_trust_server_app.command("add")
+def server_trust_add(
+    hostname: HostArg,
+    fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
+    port: ServerPortOpt = None,
+) -> None:
+    """Pin a sync-server fingerprint (verify it out of band first)."""
+    host, resolved_port = _server_trust_host_port(hostname, port)
+    normalized = parse_fingerprint(fingerprint)
+    if normalized is None:
+        typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
+        raise typer.Exit(code=1)
+    store = ServerTrustStore()
+    store.set(host, resolved_port, normalized, source="cli")
+    typer.echo(f"Pinned {host}:{resolved_port} {normalized} in {store.path}.")
+
+
+@_trust_server_app.command("remove")
+def server_trust_remove(hostname: HostArg, port: ServerPortOpt = None) -> None:
+    """Forget a pinned sync server (like ``ssh-keygen -R``)."""
+    host, resolved_port = _server_trust_host_port(hostname, port)
+    if ServerTrustStore().remove(host, resolved_port):
+        typer.echo(f"Removed {host}:{resolved_port} from the known-hosts store.")
+    else:
+        typer.echo(f"{host}:{resolved_port} was not in the known-hosts store.")
+
+
+@_trust_server_app.command("fingerprint")
+def server_trust_fingerprint(hostname: HostArg, port: ServerPortOpt = None) -> None:
+    """Print a server's certificate fingerprint without trusting it."""
+    host, resolved_port = _server_trust_host_port(hostname, port)
+    observed = fetch_server_fingerprint(host, resolved_port)
+    if observed is None:
+        typer.echo(
+            f"Could not read a certificate fingerprint from {host}:{resolved_port}.", err=True
+        )
+        raise typer.Exit(code=1)
+    typer.echo(observed)
+
+
 @app.command()
 def server(
     bucket: BucketOpt,
@@ -1277,6 +1473,9 @@ def server(
     port: ServerPortOpt = None,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
+    server_fingerprint: ServerFingerprintOpt = None,
+    server_tofu: ServerTofuOpt = False,
+    server_trust: ServerTrustOpt = None,
     http_timeout: HttpTimeoutOpt = None,
     api_key_fd: ApiKeyFdOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
@@ -1378,6 +1577,20 @@ def server(
         delta_min_file_size_p2p=delta_min_file_size_p2p,
     )
 
+    # Server TLS trust (ADR-0036): validate the pin flags before running.
+    server_fingerprints = tuple(server_fingerprint or ())
+    if len(server_fingerprints) > 2:
+        raise typer.BadParameter(
+            "at most two --server-fingerprint values are allowed (rotation window)."
+        )
+    for fp in server_fingerprints:
+        if parse_fingerprint(fp) is None:
+            raise typer.BadParameter(f"invalid --server-fingerprint value: {fp!r}")
+    if insecure and (server_fingerprints or server_tofu):
+        raise typer.BadParameter(
+            "--insecure is mutually exclusive with --server-fingerprint/--server-tofu."
+        )
+
     from hsync_client.main_logic import run_sync
 
     run_sync(
@@ -1386,6 +1599,9 @@ def server(
         server_url=server_url,
         verify_ssl=not insecure,
         ca_cert=ca_cert,
+        server_fingerprints=server_fingerprints,
+        server_tofu=bool(server_tofu),
+        server_trust=server_trust,
         http_timeout=http_timeout,
         api_key_fd=api_key_fd,
         p2p_key_fd=None,

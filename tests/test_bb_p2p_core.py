@@ -94,9 +94,9 @@ class TestP2PTofuPinning:
             slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             try:
                 # Wait for the TOFU pin log line
-                assert _wait_for_text_in_stderr(
-                    slave, "Pinned P2P master certificate", timeout=30
-                ), "Slave did not TOFU-pin the master"
+                assert _wait_for_text_in_stderr(slave, "Permanently added", timeout=30), (
+                    "Slave did not TOFU-pin the master"
+                )
 
                 # Wait for the event channel before writing: a file created
                 # in the post-initial-sync blind spot (see _wait_for_slave_events)
@@ -133,7 +133,7 @@ class TestP2PTofuPinning:
 
             # First slave: trust the certificate (TOFU)
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
-            assert _wait_for_text_in_stderr(slave1, "Pinned P2P master certificate", timeout=30), (
+            assert _wait_for_text_in_stderr(slave1, "Permanently added", timeout=30), (
                 "First slave did not TOFU-pin the master"
             )
             _terminate(slave1)
@@ -246,9 +246,9 @@ class TestP2PResilience:
             # And a slave that has already TOFU-pinned the master (no --require-pairing)
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             try:
-                assert _wait_for_text_in_stderr(
-                    slave1, "Pinned P2P master certificate", timeout=30
-                ), "First slave did not TOFU-pin the master"
+                assert _wait_for_text_in_stderr(slave1, "Permanently added", timeout=30), (
+                    "First slave did not TOFU-pin the master"
+                )
             finally:
                 _terminate(slave1)
 

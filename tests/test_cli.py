@@ -761,7 +761,7 @@ class TestCapabilitiesJson:
         from hsync_client.cli import collect_subcommand_options
 
         options = collect_subcommand_options(typer_app)
-        assert set(options) == {"bootnode", "p2p", "server"}
+        assert set(options) == {"p2p", "server", "trust"}
         for flags in options.values():
             assert flags == sorted(flags)
             assert all(f.startswith("--") for f in flags)
@@ -834,42 +834,183 @@ class TestBuildBootnode:
 
 
 class TestBootnodeTrustCommands:
-    """``hsync bootnode trust`` manages the known-hosts store (ADR-0035)."""
+    """``hsync trust bootnode`` manages the known-hosts store (ADR-0035)."""
 
     def test_add_list_show_remove(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
         fingerprint = "a" * 64
 
-        empty = runner.invoke(app, ["bootnode", "trust", "list"])
+        empty = runner.invoke(app, ["trust", "bootnode", "list"])
         assert empty.exit_code == 0
         assert "No bootnodes" in empty.output
 
         added = runner.invoke(
-            app, ["bootnode", "trust", "add", "boot.example.net", fingerprint, "--port", "1443"]
+            app, ["trust", "bootnode", "add", "boot.example.net", fingerprint, "--port", "1443"]
         )
         assert added.exit_code == 0, added.output
+        assert str(tmp_path / "trust.json") in added.output
 
-        listed = runner.invoke(app, ["bootnode", "trust", "list"])
+        listed = runner.invoke(app, ["trust", "bootnode", "list"])
         assert fingerprint in listed.output
         assert "boot.example.net:1443" in listed.output
 
         shown = runner.invoke(
-            app, ["bootnode", "trust", "show", "boot.example.net", "--port", "1443"]
+            app, ["trust", "bootnode", "show", "boot.example.net", "--port", "1443"]
         )
         assert shown.exit_code == 0
         assert fingerprint in shown.output
 
         removed = runner.invoke(
-            app, ["bootnode", "trust", "remove", "boot.example.net", "--port", "1443"]
+            app, ["trust", "bootnode", "remove", "boot.example.net", "--port", "1443"]
         )
         assert removed.exit_code == 0
 
         missing = runner.invoke(
-            app, ["bootnode", "trust", "show", "boot.example.net", "--port", "1443"]
+            app, ["trust", "bootnode", "show", "boot.example.net", "--port", "1443"]
         )
         assert missing.exit_code == 1
 
     def test_add_rejects_an_invalid_fingerprint(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
-        result = runner.invoke(app, ["bootnode", "trust", "add", "boot.example.net", "nope"])
+        result = runner.invoke(app, ["trust", "bootnode", "add", "boot.example.net", "nope"])
         assert result.exit_code == 1
+
+    def test_list_json(self, tmp_path, monkeypatch):
+        import json
+
+        monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
+        result = runner.invoke(
+            app,
+            ["trust", "bootnode", "add", "boot.example.net", "a" * 64, "--port", "1443"],
+        )
+        assert result.exit_code == 0
+        listed = runner.invoke(app, ["trust", "bootnode", "list", "--json"])
+        assert listed.exit_code == 0
+        payload = json.loads(listed.output)
+        assert payload == [
+            {
+                "host": "boot.example.net",
+                "port": 1443,
+                "fingerprint": "a" * 64,
+                "updated_at": payload[0]["updated_at"],
+                "first_seen": payload[0]["first_seen"],
+                "source": "cli",
+            }
+        ]
+
+
+class TestPeerTrustCommands:
+    """``hsync trust peer`` manages the known-peers store (mirrors bootnode trust)."""
+
+    def test_list_add_remove(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(tmp_path / "pins.json"))
+        fingerprint = "b" * 64
+
+        empty = runner.invoke(app, ["trust", "peer", "list"])
+        assert empty.exit_code == 0
+        assert "No peers" in empty.output
+
+        added = runner.invoke(
+            app,
+            ["trust", "peer", "add", "--bucket", "photos", "master-1", f"sha256:{fingerprint}"],
+        )
+        assert added.exit_code == 0, added.output
+        assert str(tmp_path / "pins.json") in added.output
+
+        listed = runner.invoke(app, ["trust", "peer", "list"])
+        assert listed.exit_code == 0
+        assert "master-1|photos" in listed.output
+        assert fingerprint in listed.output
+
+        removed = runner.invoke(app, ["trust", "peer", "remove", "--bucket", "photos", "master-1"])
+        assert removed.exit_code == 0
+
+        missing = runner.invoke(app, ["trust", "peer", "remove", "--bucket", "photos", "master-1"])
+        assert missing.exit_code == 0
+        assert "was not in the known-peers store" in missing.output
+
+    def test_add_rejects_an_invalid_fingerprint(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(tmp_path / "pins.json"))
+        result = runner.invoke(
+            app, ["trust", "peer", "add", "--bucket", "photos", "master-1", "nope"]
+        )
+        assert result.exit_code == 1
+
+    def test_list_json(self, tmp_path, monkeypatch):
+        import json
+
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(tmp_path / "pins.json"))
+        runner.invoke(app, ["trust", "peer", "add", "--bucket", "photos", "master-1", "a" * 64])
+        listed = runner.invoke(app, ["trust", "peer", "list", "--json"])
+        assert listed.exit_code == 0
+        assert json.loads(listed.output) == [
+            {"cid": "master-1", "bucket": "photos", "fingerprint": "a" * 64}
+        ]
+
+
+class TestServerTrustCommands:
+    """``hsync trust server`` manages the sync-server known-hosts store (ADR-0036)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_SERVER_TRUST_FILE", str(tmp_path / "servers.json"))
+
+    def test_add_list_show_remove(self):
+        fingerprint = "b" * 64
+
+        empty = runner.invoke(app, ["trust", "server", "list"])
+        assert empty.exit_code == 0
+        assert "No servers" in empty.output
+
+        added = runner.invoke(
+            app,
+            [
+                "trust",
+                "server",
+                "add",
+                "server.example.com",
+                f"sha256:{fingerprint}",
+                "--port",
+                "9753",
+            ],
+        )
+        assert added.exit_code == 0, added.output
+        assert "server.example.com:9753" in added.output
+
+        listed = runner.invoke(app, ["trust", "server", "list"])
+        assert listed.exit_code == 0
+        assert "server.example.com:9753" in listed.output
+        assert fingerprint in listed.output
+
+        shown = runner.invoke(
+            app, ["trust", "server", "show", "server.example.com", "--port", "9753"]
+        )
+        assert shown.exit_code == 0
+        assert fingerprint in shown.output
+
+        removed = runner.invoke(
+            app, ["trust", "server", "remove", "server.example.com", "--port", "9753"]
+        )
+        assert removed.exit_code == 0
+        missing = runner.invoke(
+            app, ["trust", "server", "remove", "server.example.com", "--port", "9753"]
+        )
+        assert "was not in the known-hosts store" in missing.output
+
+    def test_show_unknown_server_exits_nonzero(self):
+        result = runner.invoke(app, ["trust", "server", "show", "unknown.example.com"])
+        assert result.exit_code == 1
+
+    def test_add_rejects_an_invalid_fingerprint(self):
+        result = runner.invoke(app, ["trust", "server", "add", "server.example.com", "nope"])
+        assert result.exit_code == 1
+
+    def test_list_json(self):
+        import json
+
+        runner.invoke(app, ["trust", "server", "add", "server.example.com", "a" * 64])
+        listed = runner.invoke(app, ["trust", "server", "list", "--json"])
+        assert listed.exit_code == 0
+        payload = json.loads(listed.output)
+        assert payload[0]["host"] == "server.example.com"
+        assert payload[0]["fingerprint"] == "a" * 64

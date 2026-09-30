@@ -56,21 +56,18 @@ control ("out of band") and record that fingerprint as a pin. Two ways:
 3. Compare the two fingerprints. They must match exactly (case, colons and
    spaces are ignored, but the hex digits must be identical).
 
-4. If they match, record the fingerprint as a pin on the slave. Add one entry to
-   the pin store `$XDG_STATE_HOME/hsync/p2p_known_peers.json` (or
-   `~/.local/state/hsync/p2p_known_peers.json` when `XDG_STATE_HOME` is
-   unset; override with `HSYNC_P2P_PIN_FILE`), keyed by
-   `<master-device-id>|<bucket>`:
+4. If they match, record the fingerprint as a pin on the slave:
 
-   ```json
-   {
-     "AbCdEfGhIjKlMnOpQrStU|photos": "a1b2c3d4e5f6…"
-   }
+   ```bash
+   hsync trust peer add AbCdEfGhIjKlMnOpQrStU sha256:a1b2c3d4e5f6… --bucket photos
    ```
 
    `AbCdEfGhIjKlMnOpQrStU` is the master's device ID from the `[PAIRING NEEDED]`
-   line, `photos` is your bucket, and the value is the verified 64-character
-   fingerprint.
+   line, `photos` is your bucket, and `a1b2c3d4e5f6…` is the verified
+   64-character fingerprint. The pin is stored in the known-peers store
+   (`$XDG_STATE_HOME/hsync/p2p_known_peers.json`, or
+   `~/.local/state/hsync/p2p_known_peers.json` when `XDG_STATE_HOME` is unset;
+   override with `HSYNC_P2P_PIN_FILE`) — you never edit the JSON by hand.
 
 5. Start the sync again — the now-pinned master is accepted.
 
@@ -79,6 +76,28 @@ control ("out of band") and record that fingerprint as a pin. Two ways:
 Run the slave once *without* `--require-pairing`: it pins the master on first
 use. Then restart it *with* `--require-pairing` — the already-pinned master is
 accepted, and from then on only a changed fingerprint is refused.
+
+**Q: The master's certificate fingerprint changed (`[FINGERPRINT CHANGED]`) — what do I do?**
+
+The master re-generated its certificate (for example its `p2p_master_cert.pem`
+was deleted) while keeping the same device ID. Its peers refuse it as a possible
+man-in-the-middle and log the presented fingerprint, the known-peers store and
+the exact recovery commands. If you can verify the new fingerprint out of band,
+re-pin it:
+
+```bash
+hsync trust peer add MASTER_DEVICE_ID sha256:NEW_FINGERPRINT --bucket BUCKET_NAME
+```
+
+To forget the pin and be prompted again at the next connection (like
+`ssh-keygen -R`):
+
+```bash
+hsync trust peer remove MASTER_DEVICE_ID --bucket BUCKET_NAME
+```
+
+You can list the current pins with `hsync trust peer list` (add `--json` for a
+machine-readable form).
 
 **Q: What happens if two devices modify the same file?**
 No device is authoritative: HSYNC resolves concurrent edits with a causal
@@ -96,35 +115,28 @@ at the same **boot/1 bootstrap node** (positional hostname or
 `HSYNC_BOOTNODE`). Election, transport and security are unchanged — only
 discovery differs. See [Sync across networks](p2p-bootnode.md).
 
-**Q: The client aborts with "certificate fingerprint … does not match the
-accepted pin" — what do I do?**
+**Q: The client aborts with "Bootnode '…' trust failed: the certificate
+fingerprint does not match the accepted pin" — what do I do?**
 The bootnode authenticates with a self-signed certificate that you **pin**: with
 `--bootnode-tofu` the first fingerprint seen for `host:port` is remembered, and
 any later difference is refused as a possible man-in-the-middle. A self-hosted
 node generates a fresh certificate at every start unless the operator runs it
 with `--identity PATH`, so **a restart changes the fingerprint**.
-- If the change is expected, accept the new fingerprint explicitly with
-  `--bootnode-fingerprint <new-fingerprint>`, or delete the stale `host:port`
-  entry from `bootnode_known_hosts.json` (`$XDG_STATE_HOME/hsync/`, or
-  `HSYNC_BOOTNODE_TRUST_FILE`) so TOFU trusts it again.
+
+The client prints the presented fingerprint, the known-hosts file that holds the
+accepted pin and the commands that unblock the situation:
+- If the change is expected, verify the new fingerprint out of band and re-pin it
+  with `hsync trust bootnode add HOSTNAME sha256:NEW_FINGERPRINT` (or pass
+  `--bootnode-fingerprint NEW_FINGERPRINT` on this run).
+- To forget the pin and be prompted again at the next connection, run
+  `hsync trust bootnode remove HOSTNAME` (like `ssh-keygen -R`).
 - Ask the operator to persist the node identity (`--identity`) and to publish the
   stable fingerprint for clients to pin.
+
 After a fatal trust failure the client **exits with a non-zero code** instead of
 waiting for peers that can never be discovered. See
 [Sync across networks](p2p-bootnode.md) and the
 node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md).
-
-**Q: A second device fails with "hostname '…' doesn't match DNSPattern(pattern=b'hsync-bootnode')" — why?**
-That client is **not pinning** the node, so it falls back to standard TLS
-verification. A `hsync-bootnode` is self-signed, and when it binds `0.0.0.0`
-without `--public-host` its certificate SAN is the placeholder `hsync-bootnode`,
-which never matches the hostname you dial — so the handshake is rejected
-(aioquic `Error: 298`). The node itself is reachable; the client just will not
-trust an unvalidated certificate.
-Fix it on the client by pinning, exactly as for the TOFU case above:
-`--bootnode-tofu` or `--bootnode-fingerprint <fp>`. The operator can additionally
-start the node with `--public-host <host>` so the SAN matches, but pinning is
-still what authenticates a self-signed node.
 
 **Q: How does master election work?**
 A deterministic algorithm picks the master based on:

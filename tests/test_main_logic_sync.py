@@ -900,3 +900,160 @@ class TestSafeConfigForLog:
         """ENV_FILE is None when no --env-file was passed."""
         safe = _safe_config_for_log(self._make_config(), None)
         assert safe["PATHS"]["ENV_FILE"] is None
+
+
+class TestEvaluateServerTrust:
+    """Server TLS trust resolution at connect time (ADR-0036)."""
+
+    @staticmethod
+    def _config(policy, *, fingerprints=()):
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        assert isinstance(policy, TrustPolicy)
+        return {
+            "SERVER_TRUST": policy,
+            "SERVER_FINGERPRINT": tuple(fingerprints),
+            "HTTP_TIMEOUT": 5,
+        }
+
+    def test_chain_returns_no_pin_without_probing(self, monkeypatch):
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        import hsync_client.main_logic as ml
+
+        monkeypatch.setattr(
+            ml, "fetch_server_fingerprint", lambda *a, **k: pytest.fail("must not probe")
+        )
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.chain), MagicMock(), "h", 443)
+            is None
+        )
+
+    def test_accept_new_pins_the_first_sighting(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.accept_new), MagicMock(), "h", 443)
+            == "a" * 64
+        )
+        assert store.get("h", 443) == "a" * 64
+
+    def test_matched_pin_proceeds(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        store.set("h", 443, "a" * 64, source="cli")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.ask), MagicMock(), "h", 443)
+            == "a" * 64
+        )
+
+    def test_changed_pin_is_refused_and_emits_fingerprint_changed(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        store.set("h", 443, "b" * 64, source="cli")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        emitted: list[dict] = []
+        monkeypatch.setattr(
+            ml, "emit_event", lambda name, **kw: emitted.append({"name": name, **kw})
+        )
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        with pytest.raises(ml.ServerTrustError):
+            ml._evaluate_server_trust(self._config(TrustPolicy.ask), MagicMock(), "h", 443)
+        assert emitted and emitted[0]["scope"] == "server"
+        assert emitted[0]["name"] == "fingerprint_changed"
+
+    def test_strict_unknown_is_refused_and_emits_pairing_needed(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        monkeypatch.setattr(
+            ml, "default_server_trust_store", lambda: ServerTrustStore(tmp_path / "s.json")
+        )
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        emitted: list[dict] = []
+        monkeypatch.setattr(
+            ml, "emit_event", lambda name, **kw: emitted.append({"name": name, **kw})
+        )
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        with pytest.raises(ml.ServerTrustError):
+            ml._evaluate_server_trust(self._config(TrustPolicy.strict), MagicMock(), "h", 443)
+        assert emitted[0]["name"] == "pairing_needed"
+
+    def test_ask_without_a_terminal_fails_closed(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        monkeypatch.setattr(
+            ml, "default_server_trust_store", lambda: ServerTrustStore(tmp_path / "s.json")
+        )
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        monkeypatch.setattr(ml, "build_trust_prompt", lambda *a, **k: None)
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        with pytest.raises(ml.ServerTrustError):
+            ml._evaluate_server_trust(self._config(TrustPolicy.ask), MagicMock(), "h", 443)
+
+    def test_ask_prompt_acceptance_pins(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        monkeypatch.setattr(ml, "build_trust_prompt", lambda *a, **k: lambda h, p, f: True)
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.ask), MagicMock(), "h", 443)
+            == "a" * 64
+        )
+        assert store.entries()[0]["source"] == "prompt"
+
+    def test_explicit_pin_match_is_recorded(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        assert (
+            ml._evaluate_server_trust(
+                self._config(TrustPolicy.strict, fingerprints=("a" * 64,)), MagicMock(), "h", 443
+            )
+            == "a" * 64
+        )
+        assert store.get("h", 443) == "a" * 64
+
+    def test_explicit_pin_mismatch_is_refused(self, tmp_path, monkeypatch):
+        import hsync_client.main_logic as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        monkeypatch.setattr(
+            ml, "default_server_trust_store", lambda: ServerTrustStore(tmp_path / "s.json")
+        )
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        with pytest.raises(ml.ServerTrustError):
+            ml._evaluate_server_trust(
+                self._config(TrustPolicy.strict, fingerprints=("b" * 64,)), MagicMock(), "h", 443
+            )

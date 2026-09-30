@@ -64,6 +64,27 @@ class TestPinStore:
         PinStore(path).set("cid-1", "bucket", "deadbeef")
         assert PinStore(path).get("cid-1", "bucket") == "deadbeef"
 
+    def test_entries_are_sorted_by_cid_then_bucket(self, tmp_path):
+        store = PinStore(tmp_path / "pins.json")
+        store.set("cid-b", "bucket", "b" * 64)
+        store.set("cid-a", "bucket", "a" * 64)
+        store.set("cid-a", "alpha", "c" * 64)
+        assert store.entries() == [
+            {"cid": "cid-a", "bucket": "alpha", "fingerprint": "c" * 64},
+            {"cid": "cid-a", "bucket": "bucket", "fingerprint": "a" * 64},
+            {"cid": "cid-b", "bucket": "bucket", "fingerprint": "b" * 64},
+        ]
+
+    def test_entries_empty(self, tmp_path):
+        assert PinStore(tmp_path / "pins.json").entries() == []
+
+    def test_remove_reports_whether_an_entry_existed(self, tmp_path):
+        store = PinStore(tmp_path / "pins.json")
+        store.set("cid-1", "bucket", "a" * 64)
+        assert store.remove("cid-1", "bucket") is True
+        assert store.remove("cid-1", "bucket") is False
+        assert store.entries() == []
+
     def test_pin_file_is_owner_only(self, tmp_path):
         path = tmp_path / "pins.json"
         PinStore(path).set("cid-1", "bucket", "deadbeef")

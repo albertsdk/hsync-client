@@ -28,6 +28,10 @@ your use case.
   recorded so offline peers do not resurrect the file (retention of the
   marker, default 90 days). Tombstones are not a recycle bin.
 - SHA-256 verification ensures files are not corrupted in transit.
+- By default the server certificate is validated against the standard CA chain
+  (`chain`); for a self-signed server you can pin its SHA-256 fingerprint with
+  the SSH-style policies (`--server-trust ask|accept-new|strict`, or
+  `--server-fingerprint`). See [Configuration — Server Mode](configuration-server.md#server-certificate-trust).
 
 **Q: What happens if two clients modify the same file simultaneously?**
 The server is a transport hub, not an authority. Concurrent edits are

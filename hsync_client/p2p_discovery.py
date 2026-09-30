@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from hsync_common.protocol.bootnode_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy
 
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,

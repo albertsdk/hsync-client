@@ -115,15 +115,27 @@ def redact_headers[T: Mapping[str, object]](headers: T) -> T:
     return cast(T, out)
 
 
+def _config_cert_fingerprint() -> str | None:
+    """The pinned peer fingerprint for this run, or ``None``.
+
+    The P2P master and the sync server are mutually exclusive by mode, so at most
+    one of ``MASTER_CERT_FINGERPRINT`` / ``SERVER_CERT_FINGERPRINT`` is set; the
+    pinned value *is* the trust anchor and standard verification is disabled for it.
+    """
+    return CONFIG.get("MASTER_CERT_FINGERPRINT") or CONFIG.get("SERVER_CERT_FINGERPRINT")
+
+
 def get_ssl_verify() -> bool | str:
     """
     Get the SSL verification setting for requests library.
 
-    For P2P mode with MASTER_CERT_FINGERPRINT, returns False to disable
-    standard SSL verification (fingerprint verification is done separately).
+    For P2P mode with MASTER_CERT_FINGERPRINT, or server mode with
+    SERVER_CERT_FINGERPRINT, returns False to disable standard SSL verification
+    (fingerprint verification is done separately, bound to the request's own TLS
+    connection).
 
     Returns:
-        - False if SSL verification is disabled (--insecure or P2P fingerprint mode)
+        - False if SSL verification is disabled (--insecure or fingerprint mode)
         - Path to CA certificate if --ca-cert is provided
         - True for default SSL verification
     """
@@ -132,9 +144,9 @@ def get_ssl_verify() -> bool | str:
         # urllib3 warning so it does not flood the logs on every transfer.
         _suppress_insecure_warning()
         return False
-    # In P2P mode with fingerprint, we disable standard SSL verification
-    # and verify the fingerprint manually before each request
-    if CONFIG.get("MASTER_CERT_FINGERPRINT"):
+    # With a pinned fingerprint, standard verification is replaced by the
+    # per-connection fingerprint check (mounted on the session below).
+    if _config_cert_fingerprint():
         # Suppress the InsecureRequestWarning since we verify via fingerprint
         _suppress_insecure_warning()
         return False
@@ -149,14 +161,15 @@ _CONFIG_FINGERPRINT = object()
 def get_http_session(
     cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
 ) -> "Session":
-    """Build a ``requests.Session`` that pins the P2P master cert when required.
+    """Build a ``requests.Session`` that pins the peer cert when required.
 
-    When ``MASTER_CERT_FINGERPRINT`` is set the session mounts a
+    When ``MASTER_CERT_FINGERPRINT`` (P2P) or ``SERVER_CERT_FINGERPRINT`` (server)
+    is set the session mounts a
     :class:`~hsync_client.ssl_utils.FingerprintHTTPAdapter`, which binds the
     SHA-256 fingerprint check to the very TLS connection that carries the
     request. This eliminates the previous TOCTOU gap where the certificate was
     probed on a separate connection and the real request ran with
-    ``verify=False``. Outside P2P fingerprint mode the session behaves like a
+    ``verify=False``. Outside fingerprint mode the session behaves like a
     plain one; per-request ``verify`` (from :func:`get_ssl_verify`) still
     governs chain validation for remote mode.
 
@@ -164,9 +177,7 @@ def get_http_session(
         A configured :class:`requests.Session`.
     """
     fingerprint = (
-        CONFIG.get("MASTER_CERT_FINGERPRINT")
-        if cert_fingerprint is _CONFIG_FINGERPRINT
-        else cert_fingerprint
+        _config_cert_fingerprint() if cert_fingerprint is _CONFIG_FINGERPRINT else cert_fingerprint
     )
     cache_key = str(fingerprint) if fingerprint else ""
 

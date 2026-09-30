@@ -18,8 +18,8 @@ from typing import Any, Literal, TypedDict, cast
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
-from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.pairing import parse_fingerprint
+from hsync_common.protocol.tls_trust import TrustPolicy
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -62,6 +62,27 @@ def load_env_file(file_path: str) -> None:
 # =============================================================================
 # Pydantic Settings for Environment Variables
 # =============================================================================
+
+
+def _normalize_fingerprint_list(value: object, subject: str) -> str | None:
+    """Normalize a comma-separated pin list (up to two) and reject invalid entries.
+
+    Shared by the bootnode and server ``*_FINGERPRINT`` fields: at most two
+    fingerprints are accepted (a rotation window); each must be a valid
+    ``sha256:<hex>`` / bare-hex digest. Fail-fast keeps an operator from silently
+    pinning nothing.
+    """
+    if value is None:
+        return None
+    parts = [p.strip() for p in str(value).split(",") if p.strip()]
+    if not parts:
+        return None
+    if len(parts) > 2:
+        raise ValueError(f"at most two {subject} fingerprints are allowed (rotation window)")
+    for part in parts:
+        if parse_fingerprint(part) is None:
+            raise ValueError(f"invalid {subject} fingerprint: {part!r}")
+    return ",".join(parts)
 
 
 class EnvSettings(BaseSettings):
@@ -124,23 +145,14 @@ class EnvSettings(BaseSettings):
     @field_validator("bootnode_fingerprint", mode="before")
     @classmethod
     def _validate_bootnode_fingerprints(cls, v: object) -> str | None:
-        """Normalize the comma-separated pin list and reject invalid entries.
+        """Normalize the bootnode comma-separated pin list (see ADR-0034)."""
+        return _normalize_fingerprint_list(v, "bootnode")
 
-        At most two fingerprints are accepted (a rotation window); each must be a
-        valid ``sha256:<hex>`` / bare-hex digest. Fail-fast keeps an operator from
-        silently pinning nothing.
-        """
-        if v is None:
-            return None
-        parts = [p.strip() for p in str(v).split(",") if p.strip()]
-        if not parts:
-            return None
-        if len(parts) > 2:
-            raise ValueError("at most two bootnode fingerprints are allowed (rotation window)")
-        for part in parts:
-            if parse_fingerprint(part) is None:
-                raise ValueError(f"invalid bootnode fingerprint: {part!r}")
-        return ",".join(parts)
+    @field_validator("server_fingerprint", mode="before")
+    @classmethod
+    def _validate_server_fingerprints(cls, v: object) -> str | None:
+        """Normalize the server comma-separated pin list (see ADR-0036)."""
+        return _normalize_fingerprint_list(v, "server")
 
     api_key: SecretStr = Field(default=SecretStr(""), description="API key for authentication")
 
@@ -184,6 +196,26 @@ class EnvSettings(BaseSettings):
         description=(
             "Map the master TCP port with UPnP. Unset = plan default (on only with "
             "a bootnode); set explicitly to override"
+        ),
+    )
+
+    # Server TLS Trust (ADR-0036): chain (default) or SSH-style pinning policies
+    server_trust: Literal["chain", "ask", "accept-new", "strict", "none"] | None = Field(
+        default=None,
+        description="Sync-server TLS trust policy (default: chain)",
+    )
+    server_fingerprint: str | None = Field(
+        default=None,
+        description=(
+            "Sync-server certificate fingerprint(s) to pin (comma-separated, up to two "
+            "for a rotation window); each accepts 'sha256:<hex>' or bare hex"
+        ),
+    )
+    server_tofu: bool = Field(
+        default=False,
+        description=(
+            "Trust the sync-server certificate on first use (TOFU); a later mismatch "
+            "is refused as a possible man-in-the-middle"
         ),
     )
 
@@ -460,6 +492,29 @@ def get_bootnode_trust() -> str | None:
     return get_env_settings().bootnode_trust
 
 
+def get_server_trust() -> str | None:
+    """Get the sync-server TLS trust policy from the environment (see ADR-0036)."""
+    return get_env_settings().server_trust
+
+
+def get_server_fingerprints() -> tuple[str, ...]:
+    """Get the pinned server fingerprints (validated, up to two, normalized)."""
+    raw = get_env_settings().server_fingerprint
+    if not raw:
+        return ()
+    pins: list[str] = []
+    for part in raw.split(","):
+        normalized = parse_fingerprint(part.strip())
+        if normalized is not None:
+            pins.append(normalized)
+    return tuple(pins)
+
+
+def get_server_tofu() -> bool:
+    """Get whether the server certificate is trusted on first use."""
+    return get_env_settings().server_tofu
+
+
 def get_tombstone_ttl_days() -> int:
     """Get tombstone retention window in days from environment (late binding)."""
     return get_env_settings().tombstone_ttl_days
@@ -701,6 +756,11 @@ class HsyncConfig(TypedDict):
     P2P_ALLOW_UNAUTHENTICATED_WRITES: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
+    # Server TLS trust policy (ADR-0036; default chain) and explicit pins
+    SERVER_TRUST: TrustPolicy
+    SERVER_FINGERPRINT: tuple[str, ...]
+    # Server certificate fingerprint for HTTPS verification (set at runtime)
+    SERVER_CERT_FINGERPRINT: str | None
     # Ignore file deletion events (backup mode)
     IGNORE_DELETE: bool
     # Enable zstd compression for file transfers

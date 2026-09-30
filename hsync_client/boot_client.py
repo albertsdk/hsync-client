@@ -44,16 +44,18 @@ from hsync_common.protocol.bootnode import (
     validate_boot_frame,
     validate_boot_response,
 )
-from hsync_common.protocol.bootnode_trust import (
+from hsync_common.protocol.pairing import fingerprint_matches
+from hsync_common.protocol.tls_trust import (
     TrustAction,
     TrustPolicy,
-    evaluate_bootnode_trust,
+    evaluate_tls_trust,
 )
-from hsync_common.protocol.pairing import fingerprint_matches
 from hsync_common.ssl_utils import compute_cert_fingerprint
+from loguru import logger as log
 
 from hsync_client.bootnode_trust import BootnodeTrustStore, default_bootnode_trust_store
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.trust_messages import known_hosts_added_message, mismatch_guidance
 
 __all__ = [
     "DEFAULT_QUIC_IDLE_TIMEOUT",
@@ -117,8 +119,16 @@ class BootnodeFingerprintMismatch(BootnodeError):
     """The bootnode certificate fingerprint did not match the accepted pin(s).
 
     Fatal: the connection is closed before any frame is sent, and the discovery
-    lease loop must not retry it.
+    lease loop must not retry it. ``str`` keeps the concise case-specific reason
+    (changed pin, node not pinned under ``strict``, no explicit-pin match), while
+    ``guidance`` carries the SSH-style recovery block the front-end logs once:
+    the presented fingerprint, the known-hosts file and the exact
+    ``hsync trust bootnode`` commands that unblock the situation.
     """
+
+    def __init__(self, message: str, *, guidance: str | None = None) -> None:
+        super().__init__(message)
+        self.guidance = guidance
 
 
 class BootnodeNotTrusted(BootnodeError):
@@ -145,7 +155,7 @@ class BootnodeClient:
     """Synchronous ``boot/1`` client for one bootnode.
 
     Trust follows the shared policy in
-    :mod:`hsync_common.protocol.bootnode_trust` (ADR-0035): ``policy`` selects
+    :mod:`hsync_common.protocol.tls_trust` (ADR-0035): ``policy`` selects
     ``ask`` (prompt on an unknown node, refuse a changed one; the default),
     ``accept_new`` (silent first-sighting pin), ``strict`` (explicit pin
     required) or ``none`` (no verification). ``fingerprints`` pins one or two
@@ -191,7 +201,7 @@ class BootnodeClient:
 
         Connects, reads the certificate during the handshake and closes without
         sending any frame (like ``ssh-keyscan``). Used by
-        ``hsync bootnode trust fingerprint`` so an operator can verify a node out
+        ``hsync trust bootnode fingerprint`` so an operator can verify a node out
         of band before pinning it.
         """
         try:
@@ -356,17 +366,19 @@ class BootnodeClient:
         if self.fingerprints and fingerprint_matches(observed, list(self.fingerprints)):
             return
 
-        action = evaluate_bootnode_trust(policy, store.get(self.host, self.port), observed)
+        stored = store.get(self.host, self.port)
+        action = evaluate_tls_trust(policy, stored, observed)
         if action is TrustAction.proceed:
             return
         if action is TrustAction.pin_and_proceed:
             store.set(self.host, self.port, observed, source="tofu")
+            self._announce_known_host(store)
             return
         if action is TrustAction.prompt:
             self._prompt_and_pin(store, observed)
             return
         # refuse: unknown under strict, or a changed fingerprint
-        raise self._mismatch(observed)
+        raise self._mismatch(observed, stored=stored, store=store)
 
     def _prompt_and_pin(self, store: BootnodeTrustStore, observed: str) -> None:
         """Run the interactive trust prompt; pin on acceptance, refuse otherwise."""
@@ -379,24 +391,73 @@ class BootnodeClient:
             )
         if self.prompt(self.host, self.port, observed):
             store.set(self.host, self.port, observed, source="prompt")
+            self._announce_known_host(store)
             return
         raise BootnodeNotTrusted(
-            f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} was not accepted"
+            f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+            "was not accepted; nothing was saved. Pass --bootnode-tofu to trust the "
+            "first sighting or --bootnode-fingerprint <fp> to pin it"
         )
 
-    def _mismatch(self, observed: str) -> BootnodeFingerprintMismatch:
-        emit_event(
-            UiEventName.fingerprint_changed,
-            scope="bootnode",
-            fingerprint=observed,
-            message=(
-                f"bootnode {self.host}:{self.port} presented a certificate that "
+    def _announce_known_host(self, store: BootnodeTrustStore) -> None:
+        """Report a just-pinned fingerprint together with the store that holds it."""
+        log.info(known_hosts_added_message(self.host, self.port, store.path))
+
+    def _mismatch(
+        self,
+        observed: str,
+        *,
+        stored: str | None,
+        store: BootnodeTrustStore,
+    ) -> BootnodeFingerprintMismatch:
+        """Build the fatal refusal: concise reason plus SSH-style recovery guidance.
+
+        The structured event mirrors the master path: a node that is not pinned
+        under ``strict`` emits ``pairing_needed`` (an explicit trust confirmation
+        is required), while a changed pin or an explicit-pin mismatch emits
+        ``fingerprint_changed``.
+        """
+        if stored is not None:
+            reason = (
+                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
                 "does not match the pinned fingerprint (possible man-in-the-middle)"
-            ),
-        )
+            )
+        elif self.fingerprints:
+            reason = (
+                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                "does not match any fingerprint passed with --bootnode-fingerprint"
+            )
+        else:
+            reason = (
+                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                "is not pinned and the trust policy is 'strict'"
+            )
+        if stored is None and not self.fingerprints:
+            emit_event(
+                UiEventName.pairing_needed,
+                scope="bootnode",
+                peer_address=f"{self.host}:{self.port}",
+                fingerprint=observed,
+                message=reason,
+            )
+        else:
+            emit_event(
+                UiEventName.fingerprint_changed,
+                scope="bootnode",
+                peer_address=f"{self.host}:{self.port}",
+                fingerprint=observed,
+                message=reason,
+            )
         return BootnodeFingerprintMismatch(
-            f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
-            "does not match the accepted pin"
+            reason,
+            guidance=mismatch_guidance(
+                self.host,
+                self.port,
+                observed,
+                stored=stored,
+                store_path=store.path,
+                explicit_pins=bool(self.fingerprints),
+            ),
         )
 
 

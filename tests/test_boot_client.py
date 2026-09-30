@@ -27,7 +27,7 @@ from hsync_common.protocol.bootnode import (
     validate_boot_ack,
     validate_boot_frame,
 )
-from hsync_common.protocol.bootnode_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy
 
 from hsync_client.boot_client import (
     BootnodeClient,
@@ -379,6 +379,127 @@ class TestPinVerify:
                 build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
             )
         assert "create_stream" not in calls
+
+
+class TestTrustFailureGuidance:
+    """A refused fingerprint tells the operator how to unblock (SSH-style).
+
+    ``str`` is the concise case-specific reason used by the fatal propagation
+    line; ``guidance`` is the recovery block the lease loop logs once, with the
+    presented fingerprint, the known-hosts file and the exact recovery commands.
+    """
+
+    def test_changed_pin_names_store_and_recovery_commands(self, tmp_path, monkeypatch):
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+
+        trust_file = tmp_path / "trust.json"
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(trust_file))
+        BootnodeTrustStore(trust_file).set("boot.example.net", 443, "f" * 64, source="cli")
+        cert, fp = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
+            client._verify_peer(_FakePeer(cert))
+        message = str(excinfo.value)
+        guidance = excinfo.value.guidance
+        assert "does not match the pinned fingerprint (possible man-in-the-middle)" in message
+        assert guidance is not None
+        assert guidance.startswith(
+            "Bootnode 'boot.example.net:443' trust failed: the certificate fingerprint "
+            "does not match the accepted pin (possible man-in-the-middle)."
+        )
+        assert f"sha256:{fp}" in guidance
+        assert str(trust_file) in guidance
+        assert f"hsync trust bootnode add boot.example.net sha256:{fp} --port 443" in guidance
+        assert "hsync trust bootnode remove boot.example.net --port 443" in guidance
+        assert "ssh-keygen -R" in guidance
+
+    def test_strict_unknown_node_offers_pinning_and_tofu(self, tmp_path, monkeypatch):
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        cert, fp = _fake_cert()
+        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.strict)
+        with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
+            client._verify_peer(_FakePeer(cert))
+        assert "is not pinned and the trust policy is 'strict'" in str(excinfo.value)
+        guidance = excinfo.value.guidance or ""
+        assert f"hsync trust bootnode add boot.example.net sha256:{fp} --port 443" in guidance
+        assert "--bootnode-tofu" in guidance
+
+    def test_explicit_pin_mismatch_points_at_the_flag(self, tmp_path, monkeypatch):
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        cert, _ = _fake_cert()
+        client = BootnodeClient(
+            "boot.example.net", 443, fingerprints=("0" * 64,), policy=TrustPolicy.strict
+        )
+        with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
+            client._verify_peer(_FakePeer(cert))
+        assert "--bootnode-fingerprint" in str(excinfo.value)
+        guidance = excinfo.value.guidance or ""
+        assert "hsync trust bootnode fingerprint boot.example.net --port 443" in guidance
+        assert "--bootnode-fingerprint" in guidance
+
+    def test_prompt_accept_reports_where_the_pin_was_saved(self, tmp_path, monkeypatch):
+        from loguru import logger as log
+
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+
+        trust_file = tmp_path / "trust.json"
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(trust_file))
+        cert, fp = _fake_cert()
+        messages: list[str] = []
+        sink_id = log.add(messages.append, level="INFO", format="{message}")
+        try:
+            client = BootnodeClient(
+                "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: True
+            )
+            client._verify_peer(_FakePeer(cert))
+        finally:
+            log.remove(sink_id)
+        assert BootnodeTrustStore(trust_file).get("boot.example.net", 443) == fp
+        assert any(
+            "Permanently added 'boot.example.net:443' (SHA256) to the list of known "
+            f"hosts ({trust_file})." in message
+            for message in messages
+        )
+
+    def test_tofu_reports_where_the_pin_was_saved(self, tmp_path, monkeypatch):
+        from loguru import logger as log
+
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+
+        trust_file = tmp_path / "trust.json"
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(trust_file))
+        cert, _ = _fake_cert()
+        messages: list[str] = []
+        sink_id = log.add(messages.append, level="INFO", format="{message}")
+        try:
+            client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+            client._verify_peer(_FakePeer(cert))
+        finally:
+            log.remove(sink_id)
+        assert any(
+            "Permanently added 'boot.example.net:443' (SHA256) to the list of known "
+            f"hosts ({trust_file})." in message
+            for message in messages
+        )
+
+    def test_declined_prompt_says_nothing_was_saved(self, tmp_path, monkeypatch):
+        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+
+        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        cert, _ = _fake_cert()
+        client = BootnodeClient(
+            "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
+        )
+        with pytest.raises(BootnodeNotTrusted) as excinfo:
+            client._verify_peer(_FakePeer(cert))
+        message = str(excinfo.value)
+        assert "nothing was saved" in message
+        assert "--bootnode-tofu" in message
+        assert "--bootnode-fingerprint" in message
 
 
 class TestRefusals:

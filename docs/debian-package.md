@@ -194,6 +194,8 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_LOCKS_DIR` | `/var/lib/hsync/locks` | Directory for the per-directory instance locks (`<sha256>.lock` per synced directory) |
 | `HSYNC_P2P_PIN_FILE` | `/var/lib/hsync/p2p_known_peers.json` | File storing pinned fingerprints of known p2p peers (TOFU) |
 | `HSYNC_BOOTNODE_TRUST_FILE` | `/var/lib/hsync/bootnode_known_hosts.json` | File storing trusted bootnode fingerprints (known-hosts store) |
+| `HSYNC_SERVER_TRUST_FILE` | `/var/lib/hsync/server_known_hosts.json` | File storing trusted server fingerprints (known-hosts store) |
+| `HSYNC_SERVER_TRUST` | `chain` | Server TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) |
 | `HSYNC_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |
 | `HSYNC_SERVER` | *(empty)* | Server URL (for server mode) |

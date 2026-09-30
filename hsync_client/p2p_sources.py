@@ -48,6 +48,7 @@ from requests import RequestException, Response
 
 from hsync_client.p2p_inventory import P2PInventoryStore
 from hsync_client.pinning import PinStore, PinStoreError, default_pin_store
+from hsync_client.trust_messages import peer_source_changed_line
 from hsync_client.utils import http_post, normalize_bucket_relpath
 
 P2P_SOURCE_CACHE_TTL_S = 10 * 60.0
@@ -799,6 +800,7 @@ class P2PSourceResolver:
             self.invalidate(source.cid)
             return False
         if decision.value == "changed":
+            log.warning(peer_source_changed_line(source.cid, self._bucket))
             self.record_failure(source, PeerFailureKind.pin_changed)
             return False
         return True

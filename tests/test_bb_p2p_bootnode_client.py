@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from hsync_common.protocol.bootnode_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy
 
 from hsync_client.boot_client import (
     BootnodeClient,

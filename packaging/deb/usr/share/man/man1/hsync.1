@@ -28,6 +28,12 @@ hsync \- file synchronization client (Server and P2P modes)
 .YS
 .
 .SY hsync
+.B trust
+.BI peer | bootnode | server
+.RI [ OPTIONS ]
+.YS
+.
+.SY hsync
 .B \-\-help
 .YS
 .
@@ -122,6 +128,28 @@ Skip SSL/TLS certificate verification (not recommended).
 .TP
 .BR \-\-ca\-cert =\fIFILE\fP
 Path to a custom CA certificate file for self-signed server certificates.
+.TP
+.BR \-\-server\-fingerprint =\fIFINGERPRINT\fP
+Pin the sync\-server certificate fingerprint
+.RI ( sha256:<hex> " or bare hex)."
+May be repeated (up to two) for a rotation window; implies
+.BR strict .
+.TP
+.B \-\-server\-tofu
+Trust the sync\-server certificate on first use (TOFU); a later mismatch is
+refused. Implies
+.BR accept\-new .
+.TP
+.BR \-\-server\-trust =\fIPOLICY\fP
+Sync\-server TLS trust policy:
+.BR chain
+(default: standard CA validation),
+.BR ask
+(confirm an unknown fingerprint on a terminal, fail closed without one),
+.BR accept\-new ,
+.B strict
+or
+.BR none .
 .TP
 .BR \-\-api\-key\-fd =\fIFD\fP
 Read the API key from the given file descriptor. This is a hidden option
@@ -329,7 +357,7 @@ No verification (loopback/tests only; same as an unpinned insecure link).
 The decision is remembered in the known-hosts store (see
 .BR HSYNC_BOOTNODE_TRUST_FILE );
 manage it with
-.BR "hsync bootnode trust" .
+.BR "hsync trust bootnode" .
 .TP
 .BR \-\-discovery\-timeout =\fISEC\fP
 Time to wait for initial p2p peer discovery
@@ -401,6 +429,51 @@ Print the binary's capabilities document as JSON and exit.
 .TP
 .B \-\-help\-symbols
 Show a legend of the output symbols.
+.
+.\" --- Trust management ---
+.SS Trust management (known peers / known hosts / known servers)
+The client pins self-signed certificate fingerprints in three SSH-style stores:
+the p2p known-peers store (keyed by
+.IR device-id|bucket ),
+the bootnode known-hosts store (keyed by
+.IR host:port )
+and the sync-server known-hosts store (keyed by
+.IR host:port ).
+All three are managed through one
+.B hsync trust
+namespace; verify a fingerprint out of band before pinning it.
+.TP
+.B "hsync trust peer {list,add,remove} [\-\-json]"
+Manage the p2p known-peers store (identities are
+.IR device-id|bucket ).
+.TP
+.B "hsync trust bootnode {list,show,add,remove,fingerprint} [\-\-json]"
+Manage the bootnode known-hosts store.
+.B fingerprint
+prints a node's certificate fingerprint without trusting it.
+.TP
+.B "hsync trust server {list,show,add,remove,fingerprint} [\-\-json]"
+Manage the sync-server known-hosts store.
+.B fingerprint
+prints a server's certificate fingerprint without trusting it.
+.TP
+.BR "hsync trust \fISTORE\fP add \fIid fingerprint\fP [\-\-port PORT] [\-\-bucket NAME]"
+Pin a fingerprint (accepts
+.I sha256:<hex>
+or bare hex; exits non-zero on an invalid fingerprint).
+.TP
+.BR "hsync trust \fISTORE\fP remove \fIid\fP [\-\-port PORT] [\-\-bucket NAME]"
+Forget a pin (like
+.BR "ssh\-keygen \-R" ).
+.PP
+.B list
+prints one entry per line;
+.B \-\-json
+emits objects with
+.IR host ", " port ", " fingerprint ", " source ", " first_seen " and " updated_at
+(or
+.IR cid ", " bucket " and " fingerprint
+for peers).
 .
 .\" ---------------------------------------------------------------------
 .SH SYNCHRONISATION DIRECTIONS
@@ -474,6 +547,32 @@ argument of
 .TP
 .B HSYNC_API_KEY
 API key for authenticating with the server.
+.TP
+.B HSYNC_SERVER_TRUST
+Sync\-server TLS trust policy:
+.IR chain " (default), " ask ", " accept-new ", " strict " or " none .
+Equivalent to
+.BR \-\-server\-trust .
+.TP
+.B HSYNC_SERVER_FINGERPRINT
+Comma-separated sync\-server certificate fingerprint(s) to pin (up to two,
+.I sha256:<hex>
+or bare hex). Equivalent to
+.BR \-\-server\-fingerprint .
+.TP
+.B HSYNC_SERVER_TOFU
+Trust the sync\-server certificate on first use (1 = on; default off).
+Equivalent to
+.BR \-\-server\-tofu .
+.TP
+.B HSYNC_SERVER_TRUST_FILE
+File storing the trusted sync\-server fingerprints (default:
+.IR $XDG_STATE_HOME/hsync/server_known_hosts.json ,
+or
+.IR ~/.local/state/hsync/server_known_hosts.json
+when
+.I XDG_STATE_HOME
+is unset).
 .TP
 .B HSYNC_P2P_KEY
 Shared secret for p2p mode peer authentication, and the credential that
@@ -791,6 +890,15 @@ is unset; override with
 .BR HSYNC_BOOTNODE_TRUST_FILE ).
 Known-hosts store for bootnode certificate fingerprints.
 .TP
+.IR $XDG_STATE_HOME/hsync/server_known_hosts.json
+(or
+.IR ~/.local/state/hsync/server_known_hosts.json
+when
+.I XDG_STATE_HOME
+is unset; override with
+.BR HSYNC_SERVER_TRUST_FILE ).
+Known-hosts store for sync\-server certificate fingerprints.
+.TP
 .IR $XDG_RUNTIME_DIR/hsync/locks
 (or
 .IR <device-dir>/locks
@@ -891,10 +999,10 @@ and
 .BR ssh\-keygen \-R ):
 .PP
 .EX
-hsync bootnode trust fingerprint boot.example.net
-hsync bootnode trust add boot.example.net sha256:FINGERPRINT
-hsync bootnode trust list
-hsync bootnode trust remove boot.example.net
+hsync trust bootnode fingerprint boot.example.net
+hsync trust bootnode add boot.example.net sha256:FINGERPRINT
+hsync trust bootnode list
+hsync trust bootnode remove boot.example.net
 .EE
 .PP
 Authenticate to a private node or a protected bucket (the key must match the
@@ -902,6 +1010,27 @@ node's group-keys entry):
 .PP
 .EX
 HSYNC_P2P_KEY=mysecret hsync p2p boot.example.net \-b shared
+.EE
+.PP
+Manage the p2p known-peers store (like
+.B ssh\-keyscan (1)
+and
+.BR ssh\-keygen \-R ):
+.PP
+.EX
+hsync trust peer add AbCdEfGhIjKlMnOpQrStU sha256:FINGERPRINT \-\-bucket photos
+hsync trust peer list
+hsync trust peer remove AbCdEfGhIjKlMnOpQrStU \-\-bucket photos
+.EE
+.PP
+Pin a self-signed sync\-server certificate (verify the fingerprint out of band
+first), or accept the first sighting non\-interactively:
+.PP
+.EX
+hsync trust server fingerprint server.example.com
+hsync trust server add server.example.com sha256:FINGERPRINT \-\-port 9753
+hsync server server.example.com \-b photos \-\-server\-trust strict
+hsync server server.example.com \-b photos \-\-server\-tofu
 .EE
 .
 .TP

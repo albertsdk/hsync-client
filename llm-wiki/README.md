@@ -21,8 +21,8 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | --- | ----- |
 | [architecture.md](architecture.md) | Entry points, the two run modes, config flow, layering, watcher/transfer core |
 | [modules/sync-core.md](modules/sync-core.md) | `watcher.py`, `sync.py`, `transfer.py`, `event_dispatch.py`, `file_event_handler.py`, `event_queue.py` |
-| [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, reconnect |
-| [modules/p2p-mode.md](modules/p2p-mode.md) | `p2p_peers.py` + `p2p_discovery.py` interface + `p2p_discovery_mdns.py` / `boot_client.py` + `stun.py` (bootnode plan) discovery/election, `p2p_server.py`, `p2p_websocket.py`, `p2p_handler.py`, `pinning.py`, `ssl_utils.py`, `identity.py` (device identity + instance lock) |
+| [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, `server_trust.py` server TLS trust, reconnect |
+| [modules/p2p-mode.md](modules/p2p-mode.md) | `p2p_peers.py` + `p2p_discovery.py` interface + `p2p_discovery_mdns.py` / `boot_client.py` + `stun.py` (bootnode plan) discovery/election, `p2p_server.py`, `p2p_websocket.py`, `p2p_handler.py`, `pinning.py`, `known_hosts.py` + `bootnode_trust.py` + `server_trust.py` (trust stores), `trust_messages.py` (shared SSH-style trust prose), `ssl_utils.py`, `identity.py` (device identity + instance lock) |
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |
 | [modules/wd-os5-web.md](modules/wd-os5-web.md) | WD My Cloud OS5 web UI (`packaging/wd-os5/Apkg/web`) + connect-command generator |
 | [modules/autotune.md](modules/autotune.md) | `autotune.py` — adaptive tuning of timeout, retry & concurrency |

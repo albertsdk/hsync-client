@@ -82,6 +82,9 @@ fi
 : "${HSYNC_UPNP_ENABLED:=true}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
+: "${HSYNC_SERVER_TRUST:=}"
+: "${HSYNC_SERVER_FINGERPRINT:=}"
+: "${HSYNC_SERVER_TOFU:=false}"
 : "${HSYNC_INTERVAL:=0}"
 : "${HSYNC_IGNORE_DELETE:=true}"
 : "${HSYNC_NO_COMPRESSION:=false}"
@@ -193,6 +196,10 @@ export HSYNC_UPNP_ENABLED
 # Server-mode endpoint: exported like the keys above — the client reads it
 # from the environment (no CLI flag carries the URL anymore).
 export HSYNC_SERVER
+# Server TLS trust (ADR-0036): the pin/tofu/policy are env-driven too.
+export HSYNC_SERVER_TRUST
+export HSYNC_SERVER_FINGERPRINT
+export HSYNC_SERVER_TOFU
 # Per-file retry waits have no CLI flags; EnvSettings reads them from the
 # process environment. Empty values stay unset so autotune/defaults apply.
 [ -n "${HSYNC_TRANSFER_RETRY_MIN_WAIT}" ] && export HSYNC_TRANSFER_RETRY_MIN_WAIT

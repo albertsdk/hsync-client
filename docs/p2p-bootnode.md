@@ -10,13 +10,13 @@ they discover each other through a `boot/1` bootstrap node instead of mDNS.
 ## Before you start
 
 - A reachable bootnode (its host or IP, and its UDP port — default `443`).
-- The bootnode certificate fingerprint, to pin the TLS trust. On a terminal the
-  client shows it on first contact and asks for confirmation (the default `ask`
-  policy); non-interactive runs pin it explicitly with
-  `--bootnode-fingerprint sha256:<hex>` or accept the first sighting with
-  `--bootnode-tofu`. Read it without trusting with
-  `hsync bootnode trust fingerprint <host>`. `--insecure` disables verification
-  and is meant for loopback/tests only.
+- On a terminal, no further preparation: the client shows the node's SHA-256
+  fingerprint on first contact and asks you to confirm it once (the default
+  `ask` policy, like `ssh`). A run without a terminal has no prompt, so it must
+  decide the trust explicitly: pin `--bootnode-fingerprint sha256:<hex>`, or
+  accept the first sighting with `--bootnode-tofu`. Read a fingerprint without
+  trusting it with `hsync trust bootnode fingerprint <host>`. `--insecure`
+  disables verification and is meant for loopback/tests only.
 - The **same bootnode** configured on every device of the group.
 - A **group key** if the bootnode is private (`--private`) or the bucket is
   protected: the client authenticates with the token derived from
@@ -25,14 +25,16 @@ they discover each other through a `boot/1` bootstrap node instead of mDNS.
   node with no protected buckets needs no key to discover peers.
 
 The bootnode operator prints the fingerprint with `hsync-bootnode identity show`
-and distributes it out of band (it is never sent on the wire). Without a pin the
-client refuses an unpinned self-signed bootnode — pinning is what makes
-cross-network discovery secure.
+and distributes it out of band (it is never sent on the wire), for the devices
+that pin it; on a terminal the `ask` prompt confirms the node instead. Either
+way the fingerprint is what authenticates the self-signed node, so pin it for an
+unattended or security-sensitive setup.
 
 ## Run the plan
 
 First contact on a terminal — the client prints the certificate fingerprint and
-asks you to confirm it (like `ssh`); answer `yes` once and it is remembered:
+asks you to confirm it (like `ssh`); answer `yes` once and it is remembered (the
+client reports where the pin was saved):
 
 ```bash
 HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
@@ -64,11 +66,19 @@ is unset) and are managed like SSH's known hosts
 (`HSYNC_BOOTNODE_TRUST_FILE` overrides the path):
 
 ```bash
-hsync bootnode trust fingerprint boot.example.net   # read the node's fingerprint (no trust)
-hsync bootnode trust add boot.example.net sha256:FINGERPRINT
-hsync bootnode trust list                            # show pinned nodes
-hsync bootnode trust show boot.example.net
-hsync bootnode trust remove boot.example.net         # like ssh-keygen -R
+hsync trust bootnode fingerprint boot.example.net   # read the node's fingerprint (no trust)
+hsync trust bootnode add boot.example.net sha256:FINGERPRINT
+hsync trust bootnode list                            # show pinned nodes
+hsync trust bootnode list --json                     # machine-readable
+hsync trust bootnode show boot.example.net
+hsync trust bootnode remove boot.example.net         # like ssh-keygen -R
+```
+
+Every pinned fingerprint — confirmed at the prompt or accepted on first use — is
+announced with the file that stores it, for example:
+
+```text
+Permanently added 'boot.example.net:443' (SHA256) to the list of known hosts (~/.local/state/hsync/bootnode_known_hosts.json).
 ```
 
 `--bootnode-trust` selects the policy explicitly (`ask`, `accept-new`, `strict`,
@@ -77,8 +87,8 @@ hsync bootnode trust remove boot.example.net         # like ssh-keygen -R
 must opt in explicitly.
 
 Service units pass the same inputs as environment variables
-(`HSYNC_BOOTNODE`, `HSYNC_BOOTNODE_FINGERPRINT`, `HSYNC_BOOTNODE_TOFU`);
-the full reference is
+(`HSYNC_BOOTNODE`, `HSYNC_BOOTNODE_FINGERPRINT`, `HSYNC_BOOTNODE_TOFU`,
+`HSYNC_BOOTNODE_TRUST`); the full reference is
 [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options).
 
 `HSYNC_BOOTNODE` is a **bare hostname**: no scheme, no path, no `host:port`.
@@ -118,12 +128,12 @@ configure; the full priority order is in
 ```bash
 # The other device should list this peer after a query round.
 HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
-  -b mybucket -p /srv/hsync --bootnode-tofu
+  -b mybucket -p /srv/hsync
 ```
 
-Each block is self-contained: the bootnode host, the pin (or
-`--bootnode-tofu`) and the group key all belong to that command, so paste the
-whole block.
+Each block is self-contained: the bootnode host and the group key belong to that
+command, so paste the whole block. On a terminal the `ask` prompt already
+remembers the node; add `--bootnode-tofu` (or a pin) only for a run without one.
 
 Look for the discovery banner, then a peer with `reachable=true`; the advisory
 `capacity` hint a peer advertises is a pre-sizing hint only — the authoritative
@@ -135,9 +145,8 @@ limit is negotiated on the authenticated session.
 |---|---|
 | `Discovery: mDNS …` although a bootnode was intended | `HSYNC_BOOTNODE`/positional not set, or an empty value. |
 | Client exits with `--port requires a bootnode hostname` | `--port` passed without a host: add the hostname or `HSYNC_BOOTNODE`. |
-| TLS handshake fails | Bootnode certificate not pinned. On a terminal the default `ask` prompt confirms it; with no terminal the client fails closed — pass `--bootnode-fingerprint` (or `--bootnode-tofu`, or `--insecure` only on loopback). |
-| `Error: 298 … hostname '<host>' doesn't match DNSPattern(pattern=b'hsync-bootnode')` | The client is verifying the certificate *normally* (no pin was given). The node is self-signed and its SAN is the placeholder `hsync-bootnode` (it binds `0.0.0.0` without `--public-host`), so standard TLS rejects it. Pin the node — `--bootnode-tofu` or `--bootnode-fingerprint <fp>` — which is the supported trust model for a self-signed node; the operator can also start it with `--public-host <host>` to get a matching SAN. See [FAQ — p2p Mode](faq-p2p.md). |
-| `fingerprint_changed` (bootnode), or `ERROR: … certificate fingerprint … does not match the accepted pin` | The bootnode certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. Re-pin with the new fingerprint (`--bootnode-fingerprint`) or clear the stale entry; during a rotation the operator publishes the new fingerprint and you pass both (old + new) once. The client **exits with a non-zero code**: see [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md). |
+| The client stops with a bootnode trust error before any sync | Bootnode certificate not trusted yet. On a terminal the default `ask` prompt confirms it; with no terminal the client fails closed — pass `--bootnode-fingerprint` (or `--bootnode-tofu`, or `--insecure` only on loopback). |
+| `fingerprint_changed` (bootnode), or `ERROR: Bootnode '…' trust failed: the certificate fingerprint does not match the accepted pin` | The bootnode certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. The client prints the presented fingerprint, the known-hosts file and the exact commands that unblock the situation: re-pin the new fingerprint after verifying it out of band (`hsync trust bootnode add …`) or forget the pin with `hsync trust bootnode remove …` (like `ssh-keygen -R`) to be prompted again; during a planned rotation pass both fingerprints (old + new) once. The client **exits with a non-zero code**: see [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md). |
 | Peer listed but connection fails | The advertised TCP endpoint is not reachable (UPnP disabled/failed and no public port): see "Let the node be reachable". |
 | Cross-network sync not needed | Go back to the [mDNS plan](p2p-lan.md) by unsetting `HSYNC_BOOTNODE`. |
 

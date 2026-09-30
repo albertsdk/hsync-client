@@ -85,6 +85,19 @@ class PinStore(JsonStore):
         with self._transaction():
             return self._load_unlocked().get(_pin_key(cid, bucket))
 
+    def entries(self) -> list[dict[str, str]]:
+        """Return every pinned peer as ``cid``/``bucket``/``fingerprint`` dicts.
+
+        Sorted by ``(cid, bucket)`` so ``hsync peer trust list`` output is stable.
+        """
+        with self._transaction():
+            data = self._load_unlocked()
+            result: list[dict[str, str]] = []
+            for key, fingerprint in data.items():
+                cid, _, bucket = key.partition("|")
+                result.append({"cid": cid, "bucket": bucket, "fingerprint": fingerprint})
+            return sorted(result, key=lambda item: (item["cid"], item["bucket"]))
+
     def set(self, cid: str, bucket: str, fingerprint: str) -> None:
         """Pin (or repin) ``fingerprint`` for ``(cid, bucket)``."""
         normalized = normalize_fingerprint(fingerprint)
@@ -94,6 +107,17 @@ class PinStore(JsonStore):
             data = self._load_unlocked()
             data[_pin_key(cid, bucket)] = normalized
             self._save_unlocked(data)
+
+    def remove(self, cid: str, bucket: str) -> bool:
+        """Forget the pin for ``(cid, bucket)``; return whether an entry was removed."""
+        with self._transaction():
+            data = self._load_unlocked()
+            key = _pin_key(cid, bucket)
+            if key not in data:
+                return False
+            del data[key]
+            self._save_unlocked(data)
+            return True
 
     def check_and_record(self, cid: str, bucket: str, observed_fp: str | None) -> PinDecision:
         """Classify ``observed_fp`` against the stored pin, pinning on first use.

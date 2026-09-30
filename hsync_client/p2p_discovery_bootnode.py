@@ -30,7 +30,7 @@ from collections.abc import Callable
 from typing import Any
 
 from hsync_common.protocol.bootnode import BootPeer, derive_bucket_token
-from hsync_common.protocol.bootnode_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
 
 from hsync_client.boot_client import (
@@ -340,11 +340,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
             except BootnodeFingerprintMismatch as exc:
                 # Fatal: the bootnode failed authentication. Never retry an
                 # unpinned/untrusted node (the token would leak to an attacker).
-                # Record it so the sync core aborts instead of waiting forever.
+                # Record it so the sync core aborts instead of waiting forever,
+                # and log the full SSH-style recovery block here, once: the fatal
+                # propagation line repeats only the concise reason.
                 self._fatal_error = exc
-                log.error(
-                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} trust failed: {exc}"
-                )
+                log.error(exc.guidance or str(exc))
                 return
             except BootnodeRefused as exc:
                 # A uniform refusal (rate limit / token) is a valid boot/1 answer:

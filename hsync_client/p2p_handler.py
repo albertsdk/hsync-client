@@ -58,6 +58,11 @@ from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry, p2p
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
+from hsync_client.trust_messages import (
+    known_peer_added_message,
+    peer_mismatch_guidance,
+    peer_pairing_needed_guidance,
+)
 from hsync_client.utils import http_to_ws
 
 if TYPE_CHECKING:
@@ -321,6 +326,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     no_master_since: float | None = None
     no_master_warned = False
 
+    # Per-(kind, cid) dedupe of the trust refusal blocks/events: the discovery
+    # loop retries continuously, so a repeating refusal must not spam the log or
+    # the front-end.
+    notified: dict[tuple[str, str], str] = {}
+
     try:
         while True:
             # Wait for peer discovery
@@ -443,6 +453,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     peer_manager=peer_manager,
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
                     inventory_publisher=inventory_publisher,
+                    notified=notified,
                 )
                 last_exit = exit_code
                 if not should_continue:
@@ -634,7 +645,46 @@ def _run_as_master(
     return p2p_server, p2p_ws_server
 
 
-def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
+def _mark_trust_notice(
+    notified: dict[tuple[str, str], str] | None,
+    kind: str,
+    cid: str,
+    fingerprint: str,
+) -> bool:
+    """Dedupe a trust refusal; return True when it was already notified.
+
+    ``notified`` maps ``(kind, cid)`` to the last fingerprint notified. The first
+    time a given fingerprint is seen for a ``(kind, cid)`` pair it is recorded and
+    the call returns ``False`` (the caller logs/emits); a repeat of the same
+    fingerprint returns ``True`` (suppress). With ``notified`` None every call
+    returns ``False`` and nothing is recorded (direct/test callers).
+    """
+    if notified is None:
+        return False
+    key = (kind, cid)
+    if notified.get(key) == fingerprint:
+        return True
+    notified[key] = fingerprint
+    return False
+
+
+def _clear_trust_notice(
+    notified: dict[tuple[str, str], str] | None,
+    cid: str,
+) -> None:
+    """Forget the recorded refusals for *cid* once its connection proceeds."""
+    if notified is None:
+        return
+    notified.pop(("pairing_needed", cid), None)
+    notified.pop(("fingerprint_changed", cid), None)
+
+
+def _evaluate_master_pin(
+    config: "HsyncConfig",
+    master,
+    log,
+    notified: dict[tuple[str, str], str] | None = None,
+) -> bool:
     """TOFU-pin the master's certificate; return whether the connection may proceed.
 
     The trust decisions are the shared ones in
@@ -648,8 +698,13 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
       not auto-pinned. We emit ``pairing_needed`` and refuse until the operator
       confirms the peer out of band (by pinning it or disabling strict pairing).
     * **Fingerprint changed**: the certificate no longer matches the pin. We log
-      a parsable ``[FINGERPRINT CHANGED]`` line, emit ``fingerprint_changed`` and
+      a parsable ``[FINGERPRINT CHANGED]`` block, emit ``fingerprint_changed`` and
       refuse (possible man-in-the-middle).
+
+    ``notified`` (see :func:`_mark_trust_notice`) dedupes the refusal blocks and
+    their events: the discovery loop retries continuously, so without it the
+    guidance would repeat every iteration. The entry is cleared once the
+    connection proceeds (:func:`_clear_trust_notice`), so a later flip re-notifies.
     """
     from hsync_client.pinning import PinStoreError
 
@@ -674,19 +729,20 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
         if config.get("P2P_REQUIRE_PAIRING", False):
             first_seen = evaluate_pin(store.get(master.cid, bucket), fingerprint)
             if requires_pairing_confirmation(first_seen, require_pairing=True):
-                log.error(
-                    f"{ActionLabel.PAIRING_NEEDED} master {master.cid} at "
-                    f"{master.address} presented an unpinned certificate and strict pairing is "
-                    "enabled. Refusing to connect; confirm this peer out of band (pin it) to "
-                    "trust it."
-                )
-                emit_event(
-                    UiEventName.pairing_needed,
-                    peer_cid=master.cid,
-                    peer_address=master.address,
-                    fingerprint=master.cert_fingerprint,
-                    message="P2P master requires explicit pairing confirmation",
-                )
+                if not _mark_trust_notice(notified, "pairing_needed", master.cid, fingerprint):
+                    log.error(
+                        peer_pairing_needed_guidance(
+                            master.cid, bucket, master.address, fingerprint
+                        )
+                    )
+                    emit_event(
+                        UiEventName.pairing_needed,
+                        scope="master",
+                        peer_cid=master.cid,
+                        peer_address=master.address,
+                        fingerprint=fingerprint,
+                        message="P2P master requires explicit pairing confirmation",
+                    )
                 return False
 
         decision = store.check_and_record(master.cid, bucket, fingerprint)
@@ -697,22 +753,22 @@ def _evaluate_master_pin(config: "HsyncConfig", master, log) -> bool:
         )
         return False
     if decision is PinDecision.changed:
-        log.error(
-            f"{ActionLabel.FINGERPRINT_CHANGED} master {master.cid} at {master.address} presented a "
-            f"certificate that does not match the pinned one. Refusing to connect "
-            f"(possible man-in-the-middle). Remove the stale pin to re-trust this peer."
-        )
-        emit_event(
-            UiEventName.fingerprint_changed,
-            scope="master",
-            peer_cid=master.cid,
-            peer_address=master.address,
-            fingerprint=master.cert_fingerprint,
-            message="P2P master certificate fingerprint changed",
-        )
+        if not _mark_trust_notice(notified, "fingerprint_changed", master.cid, fingerprint):
+            log.error(
+                peer_mismatch_guidance(master.cid, bucket, master.address, fingerprint, store.path)
+            )
+            emit_event(
+                UiEventName.fingerprint_changed,
+                scope="master",
+                peer_cid=master.cid,
+                peer_address=master.address,
+                fingerprint=fingerprint,
+                message="P2P master certificate fingerprint changed",
+            )
         return False
+    _clear_trust_notice(notified, master.cid)
     if decision is PinDecision.trusted:
-        log.info(f"Pinned P2P master certificate for {master.cid} (trust on first use)")
+        log.info(known_peer_added_message(master.cid, bucket, store.path))
     return True
 
 
@@ -723,6 +779,7 @@ def _run_as_slave(
     peer_manager,
     wait_indefinitely_for_peer: bool = False,
     inventory_publisher: P2PInventoryPublisher | None = None,
+    notified: dict[tuple[str, str], str] | None = None,
 ) -> tuple[bool, int]:
     """Run as client (connect to master).
 
@@ -756,7 +813,7 @@ def _run_as_slave(
         log.info(f"Connecting to master: {master.cid} at {master_url}")
         emit_event(UiEventName.server, url=master_url)
 
-        if not _evaluate_master_pin(config, master, log):
+        if not _evaluate_master_pin(config, master, log, notified=notified):
             # Stay in the discovery loop (continuous) rather than connecting to
             # a master whose identity can no longer be verified or which has not
             # yet been paired out of band.

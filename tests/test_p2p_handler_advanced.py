@@ -1247,3 +1247,99 @@ class TestMasterElection:
         # (since master takes over)
         # Servers may be stopped on transition — verified by test_master_transition_from_slave
         # which only checks that the outer loop completes without error
+
+
+class TestMasterPinMessaging:
+    """SSH-style mDNS trust messages and the per-key refusal dedupe."""
+
+    @staticmethod
+    def _config(tmp_path: Any, **overrides: Any) -> dict[str, Any]:
+        return {"REMOTE_BUCKET": "test-bucket", "P2P_REQUIRE_PAIRING": False, **overrides}
+
+    def test_tofu_announcement_names_the_store_path(self, tmp_path, monkeypatch):
+        """The first-sighting pin reports the effective known-peers store."""
+        from hsync_client.p2p_handler import _evaluate_master_pin
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(pin_file))
+        master = _make_master(cert_fingerprint="a" * 64)
+        log = MagicMock()
+
+        assert _evaluate_master_pin(self._config(tmp_path), master, log) is True
+
+        expected = (
+            f"Permanently added 'master-1|test-bucket' (SHA256) to the list of "
+            f"known peers ({pin_file})."
+        )
+        assert any(expected in str(c) for c in log.info.call_args_list)
+
+    def test_changed_block_has_store_path_commands_and_normalized_fp(self, tmp_path, monkeypatch):
+        """A changed pin logs the SSH-style recovery block with a copy-paste command."""
+        from hsync_client.p2p_handler import _evaluate_master_pin
+        from hsync_client.pinning import PinStore
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(pin_file))
+        PinStore(pin_file).set("master-1", "test-bucket", "b" * 64)
+        master = _make_master(cert_fingerprint="A" * 64)  # normalized to lowercase
+        log = MagicMock()
+
+        assert _evaluate_master_pin(self._config(tmp_path), master, log) is False
+
+        block = "\n".join(str(c) for c in log.error.call_args_list)
+        assert "[FINGERPRINT CHANGED] peer 'master-1|test-bucket' (at 192.168.1.1)" in block
+        assert f"sha256:{'a' * 64}" in block  # normalized, copy-pasteable
+        assert str(pin_file) in block
+        assert f"hsync trust peer add master-1 sha256:{'a' * 64} --bucket test-bucket" in block
+        assert "hsync trust peer remove master-1 --bucket test-bucket" in block
+
+    def test_strict_pairing_block_has_the_pin_command(self, tmp_path, monkeypatch):
+        """Strict pairing logs the pairing block with the out-of-band pin command."""
+        from hsync_client.p2p_handler import _evaluate_master_pin
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(pin_file))
+        master = _make_master(cert_fingerprint="a" * 64)
+        log = MagicMock()
+
+        assert (
+            _evaluate_master_pin(self._config(tmp_path, P2P_REQUIRE_PAIRING=True), master, log)
+            is False
+        )
+
+        block = "\n".join(str(c) for c in log.error.call_args_list)
+        assert "[PAIRING NEEDED] peer 'master-1|test-bucket' (at 192.168.1.1)" in block
+        assert f"hsync trust peer add master-1 sha256:{'a' * 64} --bucket test-bucket" in block
+        assert "Until then the connection is refused." in block
+
+    def test_refusal_is_deduped_and_reset_on_connect(self, tmp_path, monkeypatch):
+        """The block and event fire once per fingerprint, and reset after connecting."""
+        from hsync_client.p2p_handler import _evaluate_master_pin
+        from hsync_client.pinning import PinStore
+
+        pin_file = tmp_path / "pins.json"
+        monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(pin_file))
+        PinStore(pin_file).set("master-1", "test-bucket", "b" * 64)
+        master = _make_master(cert_fingerprint="a" * 64)
+        log = MagicMock()
+        notified: dict[tuple[str, str], str] = {}
+
+        with patch("hsync_client.p2p_handler.emit_event") as emit:
+            assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
+            assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
+
+        assert len(log.error.call_args_list) == 1
+        assert emit.call_count == 1
+        assert emit.call_args.kwargs["scope"] == "master"
+        assert emit.call_args.kwargs["fingerprint"] == "a" * 64
+
+        # The connection proceeds once the fingerprint matches, clearing the entry.
+        PinStore(pin_file).set("master-1", "test-bucket", "a" * 64)
+        assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is True
+
+        # A later flip re-notifies.
+        PinStore(pin_file).set("master-1", "test-bucket", "b" * 64)
+        with patch("hsync_client.p2p_handler.emit_event") as emit2:
+            assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
+        assert emit2.call_count == 1
+        assert len(log.error.call_args_list) == 2

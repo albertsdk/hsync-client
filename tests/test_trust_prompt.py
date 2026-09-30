@@ -7,7 +7,7 @@
 """Tests for the terminal trust-prompt selection (ADR-0035)."""
 
 import pytest
-from hsync_common.protocol.bootnode_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy
 
 from hsync_client import trust_prompt
 
@@ -43,5 +43,24 @@ def test_yes_auto_accepts_only_with_a_terminal(tty):
     tty["isatty"] = False
     assert (
         trust_prompt.build_trust_prompt({"BOOTNODE_TRUST": TrustPolicy.ask, "AUTO_CONFIRM": True})
+        is None
+    )
+
+
+def test_server_policy_key_and_prompt(tty):
+    """The server policy uses its own key and the server subject prompt."""
+    prompt = trust_prompt.build_trust_prompt(
+        {"SERVER_TRUST": TrustPolicy.ask},
+        policy_key="SERVER_TRUST",
+        prompt=trust_prompt.server_terminal_trust_prompt,
+    )
+    assert prompt is trust_prompt.server_terminal_trust_prompt
+    # The bootnode policy key is not consulted when the server key is selected.
+    assert (
+        trust_prompt.build_trust_prompt(
+            {"BOOTNODE_TRUST": TrustPolicy.ask},
+            policy_key="SERVER_TRUST",
+            prompt=trust_prompt.server_terminal_trust_prompt,
+        )
         is None
     )

@@ -15,11 +15,13 @@ import sys
 from asyncio import run
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
-from hsync_common.protocol.bootnode_trust import TrustPolicy
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
+from hsync_common.protocol.pairing import fingerprint_matches
+from hsync_common.protocol.tls_trust import TrustAction, TrustPolicy, evaluate_tls_trust
 from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
 
 from hsync_client.config import (
@@ -56,6 +58,9 @@ from hsync_client.config import (
     get_p2p_require_pairing,
     get_peer_timeout,
     get_resync,
+    get_server_fingerprints,
+    get_server_tofu,
+    get_server_trust,
     get_server_url,
     get_stability_delay,
     load_env_file,
@@ -88,10 +93,21 @@ from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.logger import flush_logs, set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
+from hsync_client.server_trust import (
+    default_server_trust_store,
+    fetch_server_fingerprint,
+    resolve_server_trust,
+)
 from hsync_client.sync import (
     log_initial_sync_start,
     sync,
 )
+from hsync_client.trust_messages import (
+    known_server_added_message,
+    server_mismatch_guidance,
+    server_pairing_needed_guidance,
+)
+from hsync_client.trust_prompt import build_trust_prompt, server_terminal_trust_prompt
 from hsync_client.utils import (
     _suppress_insecure_warning,
     diagnose_connection_error,
@@ -526,6 +542,132 @@ def _resolve_bootnode_trust(
     return TrustPolicy(explicit) if explicit else TrustPolicy.ask
 
 
+class ServerTrustError(RuntimeError):
+    """The sync-server certificate could not be trusted (fail closed, ADR-0036)."""
+
+
+def _resolve_server_trust(
+    policy: str | None,
+    fingerprints: tuple[str, ...],
+    tofu: bool,
+    verify_ssl: bool,
+) -> TrustPolicy:
+    """Resolve the server trust policy from flags/env (ADR-0036).
+
+    Precedence: ``--insecure`` (``none``) > ``--server-fingerprint`` (``strict``) >
+    ``--server-tofu`` (``accept-new``) > the flag value > ``HSYNC_SERVER_TRUST`` >
+    the ``chain`` default.
+    """
+    return resolve_server_trust(
+        policy, fingerprints, tofu, verify_ssl, env_default=get_server_trust()
+    )
+
+
+def _log_and_emit_server_refusal(
+    log,
+    host: str,
+    port: int,
+    observed: str | None,
+    *,
+    stored: str | None,
+    explicit: bool,
+    store_path: Path,
+) -> None:
+    """Log the SSH-style guidance and emit the structured server trust event.
+
+    An unpinned host (or an explicit-pin policy with no match) is a
+    ``pairing_needed`` prompt; a changed pin is ``fingerprint_changed``. The
+    event carries ``peer_address=host:port`` so a GUI can route it without parsing.
+    """
+    observed = observed or ""
+    if stored is None and not explicit:
+        log.error(server_pairing_needed_guidance(host, port, observed))
+        emit_event(
+            UiEventName.pairing_needed,
+            scope="server",
+            peer_address=f"{host}:{port}",
+            fingerprint=observed,
+            message="Sync server requires explicit trust confirmation",
+        )
+    else:
+        log.error(
+            server_mismatch_guidance(
+                host,
+                port,
+                observed,
+                stored=stored,
+                store_path=store_path,
+                explicit_pins=explicit,
+            )
+        )
+        emit_event(
+            UiEventName.fingerprint_changed,
+            scope="server",
+            peer_address=f"{host}:{port}",
+            fingerprint=observed,
+            message="Sync server certificate fingerprint changed",
+        )
+
+
+def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> str | None:
+    """Resolve the pinned server fingerprint for this run.
+
+    Returns the fingerprint to pin, or ``None`` when the policy is ``chain``/
+    ``none`` (standard verification, no pinning). Fail-closed on every refusal
+    (changed/mismatched fingerprint, unpinned under ``strict``, ``ask`` without a
+    terminal): it logs the SSH-style guidance, emits the structured trust event
+    and raises :class:`ServerTrustError` so the caller stops the run.
+    """
+    policy = config["SERVER_TRUST"]
+    if policy is TrustPolicy.chain or policy is TrustPolicy.none:
+        return None
+
+    observed = fetch_server_fingerprint(host, port, float(config.get("HTTP_TIMEOUT", 10)))
+    store = default_server_trust_store()
+    stored = store.get(host, port)
+    explicit = tuple(config.get("SERVER_FINGERPRINT") or ())
+
+    if explicit:
+        if observed is not None and fingerprint_matches(observed, explicit):
+            store.set(host, port, observed, source="flag")
+            log.info(known_server_added_message(host, port, store.path))
+            return observed
+        _log_and_emit_server_refusal(
+            log, host, port, observed, stored=stored, explicit=True, store_path=store.path
+        )
+        raise ServerTrustError("server fingerprint does not match --server-fingerprint")
+
+    action = evaluate_tls_trust(policy, stored, observed)
+    if action is TrustAction.proceed:
+        return stored
+    if action is TrustAction.pin_and_proceed:
+        if observed is None:  # pragma: no cover - evaluate_tls_trust guarantees it
+            raise ServerTrustError("server presented no certificate")
+        store.set(host, port, observed, source="tofu")
+        log.info(known_server_added_message(host, port, store.path))
+        return observed
+    if action is TrustAction.prompt:
+        prompt = build_trust_prompt(
+            config, policy_key="SERVER_TRUST", prompt=server_terminal_trust_prompt
+        )
+        if prompt is None:
+            _log_and_emit_server_refusal(
+                log, host, port, observed, stored=None, explicit=False, store_path=store.path
+            )
+            raise ServerTrustError("no terminal to confirm the server certificate")
+        if observed is not None and prompt(host, port, observed):
+            store.set(host, port, observed, source="prompt")
+            log.info(known_server_added_message(host, port, store.path))
+            return observed
+        log.error("Server certificate not accepted; refusing to connect.")
+        raise ServerTrustError("server certificate rejected by the operator")
+
+    _log_and_emit_server_refusal(
+        log, host, port, observed, stored=stored, explicit=False, store_path=store.path
+    )
+    raise ServerTrustError("server certificate could not be trusted")
+
+
 def run_sync(
     bucket: str,
     env_file: str | None,
@@ -580,6 +722,9 @@ def run_sync(
     bootnode_fingerprints: tuple[str, ...] = (),
     bootnode_tofu: bool = False,
     bootnode_trust: str | None = None,
+    server_fingerprints: tuple[str, ...] = (),
+    server_tofu: bool = False,
+    server_trust: str | None = None,
 ) -> None:
     """
     Main synchronization logic.
@@ -902,6 +1047,16 @@ def run_sync(
         "P2P_PEER_SOURCES_MAX": get_p2p_peer_sources_max(),
         "P2P_ALLOW_UNAUTHENTICATED_WRITES": allow_unauthenticated_p2p_writes,
         "MASTER_CERT_FINGERPRINT": None,
+        # Server TLS trust (ADR-0036): resolved from flags/env; the pin itself is
+        # set at connect time by _evaluate_server_trust.
+        "SERVER_TRUST": _resolve_server_trust(
+            server_trust,
+            server_fingerprints or get_server_fingerprints(),
+            server_tofu or get_server_tofu(),
+            verify_ssl,
+        ),
+        "SERVER_FINGERPRINT": server_fingerprints or get_server_fingerprints(),
+        "SERVER_CERT_FINGERPRINT": None,
         "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
@@ -1020,6 +1175,20 @@ def run_sync(
             _warn_if_p2p_in_container(log)
             sys.exit(run_p2p_mode(config, log))
 
+        # Server TLS trust (ADR-0036): resolve the pin BEFORE the connectivity
+        # probe so chain validation and the pinned fingerprint stay consistent.
+        # chain/none -> no pin; a refusal is fatal (fail closed).
+        _server_parts = urlsplit(effective_server_url)
+        server_host = _server_parts.hostname or ""
+        server_port = _server_parts.port or (443 if _server_parts.scheme == "https" else 80)
+        try:
+            server_pin = _evaluate_server_trust(config, log, server_host, server_port)
+        except ServerTrustError:
+            flush_logs()
+            sys.exit(1)
+        if server_pin:
+            CONFIG["SERVER_CERT_FINGERPRINT"] = server_pin
+
         # Server Connectivity Check with retry. In one-shot mode an
         # unreachable server is a failed run: exit non-zero instead of
         # returning silently with a success exit code. In continuous mode
@@ -1028,7 +1197,7 @@ def run_sync(
         if not _check_server_connectivity(
             server_url=effective_server_url,
             timeout=min(config["HTTP_TIMEOUT"], 10),
-            verify_ssl=not config["NO_VERIFY_SSL"],
+            verify_ssl=not config["NO_VERIFY_SSL"] and not server_pin,
             logger=log,
         ):
             if not continuous:

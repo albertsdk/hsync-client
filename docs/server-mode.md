@@ -191,7 +191,7 @@ over the encrypted channel and is **required**.
 | **API Key** | Set `HSYNC_API_KEY` (env var only — no CLI flag). Missing key → client aborts before connecting |
 | **HTTPS/WSS** | Always on; the client refuses to send the API key over plain HTTP. Works through reverse proxies that terminate TLS |
 | **Custom CA** | Trust a self-signed server certificate with `--ca-cert server.crt` |
-| **Server cert fingerprint** | The desktop GUI pins the server's SHA-256 fingerprint on first connect (TOFU), like p2p mode does for peer certificates |
+| **Server cert fingerprint** | By default the client validates the certificate chain (`chain`); for a self-signed server pin the SHA-256 fingerprint (`--server-fingerprint`, `--server-tofu`, or `--server-trust ask`) — the SSH-style policies and the `hsync trust server` store are shared with the CLI and the desktop GUI |
 | **Skip verification** | `--insecure` disables all certificate checks — **development only** |
 
 > Complete SSL/TLS documentation, including certificate pinning,

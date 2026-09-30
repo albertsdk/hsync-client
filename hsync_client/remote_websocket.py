@@ -95,6 +95,37 @@ def _get_remote_upload_executor() -> ThreadPoolExecutor:
 # =============================================================================
 
 
+def _verify_server_wss_fingerprint(websocket: Any, expected_fingerprint: str) -> bool:
+    """Pin the server's WSS certificate to *expected_fingerprint* on the live socket.
+
+    The pinned WSS context disables chain validation (trust is the pin), so this
+    check is what establishes trust for the event stream. On a mismatch it logs,
+    emits a ``fingerprint_changed`` event (scope ``server``) so a GUI can prompt,
+    and returns ``False`` — the caller then refuses the connection.
+    """
+    from hsync_common.ssl_utils import fingerprint_from_der
+
+    from hsync_client.ssl_utils import verify_peer_cert_fingerprint
+
+    transport = getattr(websocket, "transport", None)
+    ssl_object = transport.get_extra_info("ssl_object") if transport is not None else None
+    if verify_peer_cert_fingerprint(ssl_object, expected_fingerprint):
+        return True
+    observed = ""
+    if ssl_object is not None:
+        der = ssl_object.getpeercert(binary_form=True)
+        if der:
+            observed = fingerprint_from_der(der)
+    log.error("Server WSS certificate fingerprint mismatch; refusing connection")
+    emit_event(
+        UiEventName.fingerprint_changed,
+        scope="server",
+        fingerprint=observed,
+        message="Server WSS certificate fingerprint changed",
+    )
+    return False
+
+
 async def remote_events() -> None:
     """
     Handle continuous synchronization via WebSocket events.
@@ -114,17 +145,25 @@ async def remote_events() -> None:
     bucket = CONFIG["REMOTE_BUCKET"]
     uri = f"{api_base}/{bucket}/events/{cid}"
 
-    # Configure SSL context for secure WebSocket connections
+    # Configure SSL context for secure WebSocket connections. With a pinned
+    # server fingerprint (ADR-0036) the chain is not validated here: trust is the
+    # pin, verified on the live connection below.
     ssl_context = None
+    expected_fingerprint = CONFIG.get("SERVER_CERT_FINGERPRINT")
     if str(api_base).startswith("wss"):
-        ssl_context = create_default_context(Purpose.SERVER_AUTH)
-        if CONFIG["NO_VERIFY_SSL"]:
-            # Disable SSL verification (insecure mode)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = CERT_NONE
-        elif CONFIG.get("CA_CERT"):
-            # Load custom CA certificate for self-signed server certs
-            ssl_context.load_verify_locations(cafile=CONFIG["CA_CERT"])
+        if expected_fingerprint:
+            from hsync_client.ssl_utils import create_fingerprint_ssl_context
+
+            ssl_context = create_fingerprint_ssl_context(str(expected_fingerprint))
+        else:
+            ssl_context = create_default_context(Purpose.SERVER_AUTH)
+            if CONFIG["NO_VERIFY_SSL"]:
+                # Disable SSL verification (insecure mode)
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = CERT_NONE
+            elif CONFIG.get("CA_CERT"):
+                # Load custom CA certificate for self-signed server certs
+                ssl_context.load_verify_locations(cafile=CONFIG["CA_CERT"])
 
     # Connect to WebSocket endpoint with heartbeat. ``max_size`` is set
     # explicitly (events carry file metadata, never bulk content) instead of
@@ -137,6 +176,14 @@ async def remote_events() -> None:
         close_timeout=5,
         max_size=WS_MAX_MESSAGE_BYTES,
     ) as websocket:
+        # Bind the certificate actually presented during the handshake to the
+        # pinned fingerprint, refusing on mismatch (chain validation is disabled
+        # on the pinned context by design).
+        if expected_fingerprint and not _verify_server_wss_fingerprint(
+            websocket, str(expected_fingerprint)
+        ):
+            return
+
         log.info(f"WebSocket connected to {uri}")
         emit_event(UiEventName.status, status="connected")
 

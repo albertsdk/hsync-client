@@ -502,6 +502,35 @@ class TestFatalTrustFailure:
         with pytest.raises(DiscoveryFatalError):
             plan.wait_for_discovery(timeout=5.0)
 
+    def test_lease_loop_logs_the_recovery_guidance_once(self):
+        """The recovery block is logged where trust failed; the fatal line stays concise."""
+        from loguru import logger as log
+
+        plan, _ = make_plan(refresh_interval=1.0)
+        reason = "bootnode boot.example.net:443: certificate fingerprint does not match"
+
+        def mismatch(_frame):
+            raise BootnodeFingerprintMismatch(
+                reason,
+                guidance="Bootnode 'boot.example.net:443' trust failed: GUIDANCE",
+            )
+
+        plan._client.register = mismatch
+        messages: list[str] = []
+        sink_id = log.add(messages.append, level="ERROR", format="{message}")
+        plan._running = True
+        thread = threading.Thread(target=plan._lease_loop, name="test-lease-guidance", daemon=True)
+        try:
+            thread.start()
+            thread.join(timeout=5.0)
+        finally:
+            log.remove(sink_id)
+        assert not thread.is_alive()
+        assert any("GUIDANCE" in message for message in messages)
+        with pytest.raises(DiscoveryFatalError) as excinfo:
+            plan.wait_for_discovery(timeout=5.0)
+        assert str(excinfo.value) == reason, "the fatal line repeats only the concise reason"
+
 
 class TestStop:
     def test_stop_sends_leave_and_unmaps(self):

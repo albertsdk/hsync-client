@@ -236,7 +236,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   terminal the client prints the unknown bootnode fingerprint and confirms it
   once (like `ssh`), remembering it in `bootnode_known_hosts.json`; without a
   terminal it fails closed. The policy is the shared SSOT
-  `hsync_common.protocol.bootnode_trust` (`TrustPolicy` + `evaluate_bootnode_trust`),
+  `hsync_common.protocol.tls_trust` (`TrustPolicy` + `evaluate_tls_trust`),
   consumed by `BootnodeClient` (`policy`/`prompt` fields; `BootnodeNotTrusted` is
   fatal in the lease loop like a pin mismatch) and mirrored by the Android client
   via the `p2p-bootnode-trust-scenarios` fixture. `--bootnode-trust
@@ -244,7 +244,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `--bootnode-tofu` maps to `accept-new`, `--bootnode-fingerprint` to `strict` and
   `--insecure` to `none`. The store (`bootnode_known_hosts.json`) keeps
   `{current, updated_at, first_seen, source}` and is managed with
-  `hsync bootnode trust {list,show,add,remove,fingerprint}` (`fingerprint` reads a
+  `hsync trust bootnode {list,show,add,remove,fingerprint}` (`fingerprint` reads a
   node's certificate without trusting it). The prompt is built by
   `hsync_client/trust_prompt.py`: `--yes` auto-accepts, but only on a terminal.
 

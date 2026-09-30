@@ -204,8 +204,25 @@ connection that carries the data.
 - **Strict pairing (`--require-pairing`)** — disables TOFU for the elected
   master: a first-seen certificate is refused (logged as `[PAIRING NEEDED]`)
   instead of being silently trusted. To accept it you confirm its fingerprint
-  through a channel you control ("out of band") and pin it. The exact steps are
-  in [FAQ — p2p Mode → Security & Safety](faq-p2p.md#security--safety).
+  through a channel you control ("out of band") and pin it with
+  `hsync trust peer add MASTER_DEVICE_ID sha256:FINGERPRINT --bucket BUCKET_NAME`.
+  The exact steps are in
+  [FAQ — p2p Mode → Security & Safety](faq-p2p.md#security--safety).
+- **Managing trust from the command line** — both trust stores are managed with
+  the `hsync` CLI; verify a fingerprint out of band before pinning it:
+
+  ```bash
+  hsync trust peer list                                              # device-id|bucket fingerprint
+  hsync trust peer list --json                                       # machine-readable
+  hsync trust peer add DEVICE_ID sha256:FINGERPRINT --bucket BUCKET_NAME
+  hsync trust peer remove DEVICE_ID --bucket BUCKET_NAME             # like ssh-keygen -R
+  ```
+
+  `hsync trust peer add` accepts a `sha256:<hex>` or bare-hex fingerprint and
+  refuses anything else; `remove` forgets the pin so the peer is prompted again
+  at the next connection. The bootnode known-hosts store has its own parallel
+  group, `hsync trust bootnode {list,show,add,remove,fingerprint}`, documented in
+  [Sync across networks](p2p-bootnode.md).
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
 > [p2p Internals → Transport Security](internal/p2p-internals.md#transport-security-internals).
@@ -235,7 +252,9 @@ Consequences:
   silently.
 - **Key rotation is detectable** — deleting only the `*.pem` files regenerates
   the keypair while the device ID stays; peers then see a changed fingerprint
-  for a known device and refuse the connection (`[FINGERPRINT CHANGED]`).
+  for a known device and refuse the connection (`[FINGERPRINT CHANGED]`). Re-pin
+  with `hsync trust peer add`, or forget the pin with `hsync trust peer remove`
+  to be prompted again at the next connection.
 - **Copying the device directory clones the device** — keep it private. If a
   clone appears on the network, hsync detects the duplicated identity at
   runtime, refuses to sync with it (`[SECURITY] Duplicate device identity`)

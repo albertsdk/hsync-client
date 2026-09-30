@@ -508,9 +508,18 @@ def test_requester_tofu_pins_each_source_and_refuses_rotation(tmp_path: Path) ->
         compression=True,
         serve_slots=2,
     )
-    assert resolver.authorize(rotated) is False
+    with patch("hsync_client.p2p_sources.log") as mock_log:
+        assert resolver.authorize(rotated) is False
     file = File(filepath="docs/file.bin", sha256sum=DIGEST, size=1)
     assert resolver.candidates_for(file, {("docs/file.bin", DIGEST): (rotated,)}) == ()
+
+    # The refusal logs the SSH-style source line with the exact forget command.
+    expected = (
+        f"[FINGERPRINT CHANGED] peer source {PEER_B} presented a certificate that "
+        "does not match the pinned one (possible man-in-the-middle). Forget the pin "
+        f"with 'hsync trust peer remove {PEER_B} --bucket bucket' and reconnect."
+    )
+    mock_log.warning.assert_called_once_with(expected)
 
 
 def test_source_request_headers_never_leak_master_session_state(tmp_path: Path) -> None:

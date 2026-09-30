@@ -147,12 +147,15 @@ option to configure.
 | Group               | `--group`                                  | _empty_                          |
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
 | Bootnode (optional) | `HSYNC_BOOTNODE` env var                       | _empty_ (discovery stays on the local network; set the same host on every device) |
-| Bootnode fingerprint | `HSYNC_BOOTNODE_FINGERPRINT` env var           | _empty_ (no pin; an unpinned self-signed bootnode is refused) |
+| Bootnode fingerprint | `HSYNC_BOOTNODE_FINGERPRINT` env var           | _empty_ (no pin; the NAS has no terminal, so set a policy or a pin explicitly) |
 | Bootnode TOFU       | `HSYNC_BOOTNODE_TOFU` env var                  | `false` (trust the bootnode certificate on first use when `true`) |
 | Bootnode trust policy | `HSYNC_BOOTNODE_TRUST` env var               | empty = client default (`ask`); one of `ask`, `accept-new`, `strict`, `none` |
 | UPnP port mapping   | `HSYNC_UPNP_ENABLED` env var                   | `true` (only effective with a bootnode) |
 | Server URL          | `HSYNC_SERVER` env var                         | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
+| Server fingerprint  | `HSYNC_SERVER_FINGERPRINT` env var             | _empty_ (no pin; standard CA validation) |
+| Server TOFU         | `HSYNC_SERVER_TOFU` env var                    | `false` (trust the server certificate on first use when `true`) |
+| Server trust policy | `HSYNC_SERVER_TRUST` env var                   | empty = client default (`chain`); one of `chain`, `ask`, `accept-new`, `strict`, `none` |
 | Resync interval     | `-i / --interval`                              | `0` (off)                        |
 | Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |
 | Bandwidth limits    | `--limit-upload` / `--limit-download`         | unlimited                        |

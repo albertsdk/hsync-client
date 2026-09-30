@@ -37,6 +37,25 @@ hard-fails 426 on mismatch (server `middleware.py:111`). Endpoints mirror the
 server API prefix `/api/v1` and are exercised by `sync.py` (list/tombstones) and
 `transfer.py` (upload/download).
 
+## Server certificate trust (ADR-0036)
+
+The sync server authenticates with built-in TLS (self-signed) or a public-CA
+certificate behind a reverse proxy, so the standard chain is the default anchor
+(`chain`); the SSH-style pinning policies (`ask`/`accept-new`/`strict`/`none`)
+are opt-in. The policy SSOT is `hsync_common.protocol.tls_trust`
+(`evaluate_tls_trust`, also `chain`/`none` → proceed); the store is
+`server_trust.py` (`ServerTrustStore`, `server_known_hosts.json`,
+`HSYNC_SERVER_TRUST_FILE`) over the shared `known_hosts.py` base; the probe is
+`fetch_server_fingerprint` (raw TLS, never trusts). At connect time
+`main_logic._evaluate_server_trust` resolves the pin (flags `--server-trust` /
+`--server-fingerprint` / `--server-tofu` / `--insecure`) and sets
+`CONFIG["SERVER_CERT_FINGERPRINT"]`; `utils.get_ssl_verify` returns `False` when
+it is set and `utils.get_http_session` mounts the same `FingerprintHTTPAdapter`;
+the WSS event stream pins the live connection via
+`remote_websocket._verify_server_wss_fingerprint`. A refusal logs the SSH-style
+`trust_messages.server_*` guidance and emits
+`pairing_needed`/`fingerprint_changed` (`scope="server"`).
+
 ## Reconnect & resilience
 
 - `remote_connect` (`remote_websocket.py:411`) is an infinite loop: each

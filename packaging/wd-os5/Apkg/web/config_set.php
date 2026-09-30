@@ -47,6 +47,7 @@ const KEYS = [
     'HSYNC_P2P_PEER_SOURCES_MAX',
     'HSYNC_P2P_GROUP', 'HSYNC_DISCOVERY_TIMEOUT',
     'HSYNC_SERVER', 'HSYNC_API_KEY',
+    'HSYNC_SERVER_TRUST', 'HSYNC_SERVER_FINGERPRINT', 'HSYNC_SERVER_TOFU',
     'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_NO_COMPRESSION',
     'HSYNC_DELTA_ENABLED', 'HSYNC_DELTA_MIN_FILE_SIZE', 'HSYNC_DELTA_MIN_FILE_SIZE_P2P',
     'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB',
@@ -89,12 +90,27 @@ foreach (KEYS as $key) {
                 if (!$valid) $val = '';
             }
             break;
+        case 'HSYNC_SERVER_FINGERPRINT':
+            // Same grammar as the bootnode pins: empty or up to two sha256 pins.
+            if ($val !== '') {
+                $parts = array_map('trim', explode(',', $val));
+                $valid = count($parts) <= 2;
+                foreach ($parts as $p) {
+                    if (!preg_match('/^(sha256:)?[0-9a-fA-F]{64}$/', $p)) $valid = false;
+                }
+                if (!$valid) $val = '';
+            }
+            break;
         case 'HSYNC_BUCKET':
             if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/', $val)) $val = 'hsync';
             break;
         case 'HSYNC_BOOTNODE_TRUST':
             // Empty means "use the client default" (ask); otherwise a known policy.
             if (!in_array($val, ['', 'ask', 'accept-new', 'strict', 'none'], true)) $val = '';
+            break;
+        case 'HSYNC_SERVER_TRUST':
+            // Empty means "use the client default" (chain); otherwise a known policy.
+            if (!in_array($val, ['', 'chain', 'ask', 'accept-new', 'strict', 'none'], true)) $val = '';
             break;
         case 'HSYNC_DISCOVERY_TIMEOUT':
         case 'HSYNC_INTERVAL':
@@ -114,6 +130,7 @@ foreach (KEYS as $key) {
             break;
         case 'HSYNC_UPNP_ENABLED':
         case 'HSYNC_BOOTNODE_TOFU':
+        case 'HSYNC_SERVER_TOFU':
         case 'HSYNC_AUTOTUNE':
         case 'HSYNC_P2P_REQUIRE_PAIRING':
         case 'HSYNC_P2P_PEER_DOWNLOAD':

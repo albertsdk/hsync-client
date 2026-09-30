@@ -235,7 +235,7 @@ class TestSlaveTuningRefreshOrdering:
             patch("hsync_client.p2p_handler.set_config"),
             patch(
                 "hsync_client.p2p_handler._evaluate_master_pin",
-                side_effect=lambda *_a: calls.append("pin") or True,
+                side_effect=lambda *_a, **_k: calls.append("pin") or True,
             ),
             patch(
                 "hsync_client.p2p_handler._refresh_p2p_network_tuning",
