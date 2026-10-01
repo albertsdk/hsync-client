@@ -457,15 +457,12 @@ class _ClientGlobalsGuard:
         return False
 
 
-BB_SSL_KEY_PASSWORD = "test-bb-ssl-key-password"
-
-
 def _self_signed_cert(cert_dir):
-    """Generate a self-signed cert + password-encrypted key for loopback HTTPS.
+    """Generate a self-signed cert + unencrypted key for loopback HTTPS.
 
-    The server requires the SSL private key to be stored encrypted on disk, so
-    the key is encrypted with ``BB_SSL_KEY_PASSWORD`` (passed to the server
-    subprocess via ``HSYNC_SSL_KEYFILE_PASSWORD``).
+    The server TLS identity follows the shared service-identity model
+    (ADR-0037): the private key is stored unencrypted (PKCS#8) and protected by
+    filesystem permissions, so no password is passed to the server subprocess.
     """
     import datetime
 
@@ -492,8 +489,8 @@ def _self_signed_cert(cert_dir):
     key_path.write_bytes(
         key.private_bytes(
             serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.BestAvailableEncryption(BB_SSL_KEY_PASSWORD.encode()),
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
         )
     )
     return str(cert_path), str(key_path)
@@ -531,7 +528,6 @@ def _server_env(buckets_dir: str, state_dir: str) -> dict:
             "HSYNC_WS_HEARTBEAT_TIMEOUT": "3",
             "HSYNC_MIN_FREE_DISK_SPACE": "0",
             "HSYNC_ENABLE_DOCS": "false",
-            "HSYNC_SSL_KEYFILE_PASSWORD": BB_SSL_KEY_PASSWORD,
         }
     )
     return env
