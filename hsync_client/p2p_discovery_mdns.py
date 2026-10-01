@@ -192,10 +192,21 @@ class HsyncServiceListener(ServiceListener):
 
             # Enforce the wire-protocol version: peers on a different protocol
             # are ignored outright (capabilities never bridge protocol versions).
+            # The usual cause is an older client still advertising the retired
+            # ``lan/1``; name the peer, its version and source address, and say
+            # what to do, so the operator can find and update that device.
             if protocol != PROTOCOL_VERSION_P2P:
+                mismatch_addresses = info.parsed_addresses()
+                location = (
+                    f"{mismatch_addresses[0]}:{info.port}"
+                    if mismatch_addresses and info.port
+                    else (mismatch_addresses[0] if mismatch_addresses else "unknown address")
+                )
                 log.warning(
-                    f"Ignoring peer {cid} with incompatible protocol "
-                    f"{protocol or 'missing'} (local: {PROTOCOL_VERSION_P2P})"
+                    f"Ignoring peer {cid} (hsync {version}, at {location}) with "
+                    f"incompatible protocol {protocol or 'missing'} "
+                    f"(local: {PROTOCOL_VERSION_P2P}); update and restart the hsync "
+                    "client on that device"
                 )
                 return
 

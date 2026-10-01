@@ -58,6 +58,17 @@ def _listener_with_pm(
     return HsyncServiceListener(pm, goodbye_grace_s=goodbye_grace_s), pm
 
 
+def _capture_warnings(monkeypatch) -> list[str]:
+    """Collect ``p2p_discovery_mdns`` WARNING messages via the module logger."""
+    import hsync_client.p2p_discovery_mdns as mod
+
+    mock_log = MagicMock()
+    messages: list[str] = []
+    mock_log.warning.side_effect = lambda message, *args, **kwargs: messages.append(str(message))
+    monkeypatch.setattr(mod, "log", mock_log)
+    return messages
+
+
 class TestRegisterPeerFromInfo:
     def test_full_properties_parsed(self):
         listener, pm = _listener_with_pm(group="team-a")
@@ -114,18 +125,37 @@ class TestRegisterPeerFromInfo:
         listener._register_peer_from_info(_make_info(props))
         assert pm._peers == {}
 
-    def test_wrong_protocol_is_ignored(self):
+    def test_wrong_protocol_is_ignored(self, monkeypatch):
         listener, pm = _listener_with_pm(group="team-a")
-        props = _full_props({b"protocol": b"hsync-lan/0"})
-        listener._register_peer_from_info(_make_info(props))
+        warnings = _capture_warnings(monkeypatch)
+        props = _full_props({b"protocol": b"lan/1"})
+        listener._register_peer_from_info(_make_info(props, port=37429))
         assert pm._peers == {}
+        # The warning is actionable: peer, its version, its address and the fix.
+        message = warnings[0]
+        assert "Ignoring peer peer-cid-1" in message
+        assert "hsync 1.2.3" in message
+        assert "at 192.168.1.50:37429" in message
+        assert "incompatible protocol lan/1 (local: p2p/1)" in message
+        assert "update and restart the hsync client on that device" in message
 
-    def test_missing_protocol_is_ignored(self):
+    def test_missing_protocol_is_ignored(self, monkeypatch):
         listener, pm = _listener_with_pm(group="team-a")
+        warnings = _capture_warnings(monkeypatch)
         props = _full_props()
         del props[b"protocol"]
-        listener._register_peer_from_info(_make_info(props))
+        listener._register_peer_from_info(_make_info(props, port=37429))
         assert pm._peers == {}
+        assert "incompatible protocol missing (local: p2p/1)" in warnings[0]
+
+    def test_wrong_protocol_without_address_still_actionable(self, monkeypatch):
+        listener, pm = _listener_with_pm(group="team-a")
+        warnings = _capture_warnings(monkeypatch)
+        info = _make_info(_full_props({b"protocol": b"lan/1"}))
+        info.parsed_addresses.return_value = []
+        listener._register_peer_from_info(info)
+        assert pm._peers == {}
+        assert "at unknown address" in warnings[0]
 
     def test_no_addresses_is_ignored(self):
         listener, pm = _listener_with_pm(group="team-a")
