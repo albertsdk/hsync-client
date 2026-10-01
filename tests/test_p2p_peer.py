@@ -36,9 +36,9 @@ class TestPeer:
             bucket="photos",
             address="192.168.1.100",
             port=9753,
-            version="0.1.0",
+            version="1.0.0",
         )
-        assert peer.version == "0.1.0"
+        assert peer.version == "1.0.0"
 
     def test_peer_is_alive_when_recently_seen(self):
         """Test that a recently seen peer is considered alive."""
