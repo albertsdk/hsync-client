@@ -137,60 +137,19 @@ Continuous mode is the default in both topologies: the client keeps running and 
 
 ## Getting started
 
-1. **Install the client** — one command on Linux or macOS (verified downloads, `.deb` packages, the WD My Cloud OS5 installer, Windows builds and source are in [Installation](docs/installation.md)):
+1. **Install the client** — pick a method in the [Getting Started](docs/getting-started.md) chooser (installer script, standalone binary, `.deb`, WD My Cloud OS5, or from source); verified downloads and asset names are in [Installation](docs/installation.md).
 
-```bash
-curl -fsSL https://github.com/albertsdk/hsync-client/releases/latest/download/install.sh | bash
-```
+2. **Choose a mode and run your first sync** — each mode has a complete, copy-paste walkthrough:
 
-2. **Try it: two devices, no server (p2p)** — full walkthrough in [Getting Started — p2p Mode](docs/getting-started-p2p.md):
+   - [Getting Started — p2p Mode](docs/getting-started-p2p.md) — two devices, no server
+   - [Getting Started — Server Mode](docs/getting-started-server.md) — through your own hub
 
-```bash
-# Create two folders and a file in the first one
-mkdir -p /tmp/hsync-p2p-a /tmp/hsync-p2p-b
-echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
-
-# Terminal 1 — this peer already holds the data, so it starts as master
-HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-p2p-a-device \
-  hsync p2p -b demo-p2p -p /tmp/hsync-p2p-a --force-master
-
-# Terminal 2 — discovers the master via mDNS and receives the file
-HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-p2p-b-device \
-  hsync p2p -b demo-p2p -p /tmp/hsync-p2p-b
-
-# Verify
-cat /tmp/hsync-p2p-b/hello.txt   # → hello hsync p2p
-```
-
-Keep both terminals running and edit files in either folder to watch the sync in real time (`Ctrl+C` to stop). `HSYNC_DEVICE_DIR` is only needed to simulate two devices on one machine; on a real LAN omit `--force-master` and let master election happen automatically.
-
-**P2P Mode in action** — Device B discovers Device A via mDNS and receives `hello.txt` automatically:
+**p2p Mode in action** — Device B discovers Device A via mDNS and receives `hello.txt` automatically:
 <p align="center">
   <img src="docs/assets/demo-p2p.gif" alt="P2P Mode live demo: Device B discovers Device A via mDNS and receives hello.txt in real time — no server needed" />
 </p>
 
-3. **Try it: with a server** — with an [HSYNC Server](https://github.com/albertsdk/hsync-server) running locally and its account token exported as `HSYNC_API_KEY` (see the [server Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)), create the bucket once, then push a folder to the server and receive it in a second folder. Full walkthrough in [Getting Started — Server Mode](docs/getting-started-server.md):
-
-```bash
-# Create the bucket once (the creator becomes its owner)
-curl -k -X POST "https://localhost:9753/api/v1/buckets?bucket=demo" \
-  -H "Authorization: Bearer $HSYNC_API_KEY"
-
-# Two folders, one file
-mkdir -p /tmp/hsync-a /tmp/hsync-b
-echo "hello hsync" > /tmp/hsync-a/hello.txt
-
-# Folder A → server, then server → folder B (one-shot each)
-hsync server localhost --once -b demo -p /tmp/hsync-a --insecure
-hsync server localhost --once -b demo -p /tmp/hsync-b --insecure
-
-# Verify
-cat /tmp/hsync-b/hello.txt   # → hello hsync
-```
-
-`--insecure` accepts the self-signed certificate of this local demo only; in real deployments pin the server certificate with `--ca-cert` (see [Configuration — Server Mode](docs/configuration-server.md)). Omit `--once` to keep both clients running and syncing in real time.
-
-4. **Explore more** — [Examples](docs/examples.md) for backups, mirrors, multi-device setups, NAS and photos; [Scheduling & Automation](docs/scheduling.md) for cron, systemd timers and alerts.
+3. **Explore more** — [Examples](docs/examples.md) for backups, mirrors, multi-device setups, NAS and photos; [Scheduling & Automation](docs/scheduling.md) for cron, systemd timers and alerts.
 
 ## Why HSYNC?
 
@@ -256,7 +215,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) - Build and run
+- [Getting Started](docs/getting-started.md) - Choose an install method and an operating mode
 - [Configuration](docs/configuration.md) - Environment variables and CLI options (complete reference)
 - [Sync Modes](docs/sync-modes.md) - Server and p2p modes (continuous / one-shot)
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details

@@ -13,9 +13,9 @@ you are.
 
 ### 1. Install
 
-Download the installer script, a prebuilt binary, `.deb`, or WD OS5 `.bin` from
-the [Releases page](https://github.com/albertsdk/hsync-client/releases), or
-build it from source — full instructions are in [Installation](installation.md).
+Pick a method in the [Getting Started](getting-started.md) chooser (installer
+script, standalone binary, `.deb`, WD My Cloud OS5, or from source); the asset
+names and checksums are in [Installation](installation.md).
 
 - [`.deb` package guide](debian-package.md) — systemd service, custom paths, ACLs.
 - [Migration Guide](migration.md) — coming from rsync, Syncthing, or manual copies.
@@ -40,7 +40,7 @@ see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
 - [Configuration — p2p Mode](configuration-p2p.md) — discovery, master election, `HSYNC_P2P_KEY`, stability.
 - [Sync Modes](sync-modes.md) — server vs p2p topologies and how to combine flags.
 
-### 3b. Choose the p2p discovery scope
+### 4. Choose the p2p discovery scope
 
 mDNS discovery on the local network is **always on**; a bootnode only adds
 cross-network discovery on top of it.
@@ -50,7 +50,7 @@ cross-network discovery on top of it.
 | Sync devices on the **same network** (mDNS only, no bootnode) | [Sync on the local network](p2p-lan.md) |
 | Sync across networks through a **bootnode** (mDNS stays on) | [Sync across networks](p2p-bootnode.md) |
 
-### 4. Operate
+### 5. Operate
 
 | Task | Guide |
 |------|-------|
@@ -59,13 +59,13 @@ cross-network discovery on top of it.
 | Read the client logs | [Log Labels](log-labels.md) |
 | Troubleshooting | [Troubleshooting](troubleshooting.md) — [FAQ](faq.md) → `faq-server.md` / `faq-p2p.md` |
 
-### 5. Understand
+### 6. Understand
 
 - [Authentication](authentication.md) — API key, P2P_KEY, hello handshake.
 - [Sync Flow](sync-flow.md) — client-side flow, split by mode.
 - [Conflict Resolution](conflict-resolution.md) — causal model and decision trees.
 
-### 6. Reference & internals
+### 7. Reference & internals
 
 - [Usage](usage.md) — CLI syntax and behaviour (symlinks, error handling, auto-tuning).
 - [Performance](performance.md) — measured throughput by mode, workload and phase.

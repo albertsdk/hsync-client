@@ -115,7 +115,7 @@ native binaries on per-OS matrix runners (`linux-amd64`, `linux-arm64`,
 `darwin-amd64`, `darwin-arm64`, `windows-amd64`) plus the Linux-only
 `deb-all`/`wd-os5-all` packages, and publishes them with `SHA256SUMS` to the
 GitHub Release. macOS binaries are unsigned (documented `xattr` workaround in
-`docs/installation.md`).
+`docs/getting-started-binary.md`).
 
 ### Version bump
 

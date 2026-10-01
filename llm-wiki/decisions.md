@@ -158,7 +158,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
   — PyInstaller cannot cross-compile) plus the Linux-only `deb-all`/`wd-os5-all`
   packages, and publishes them with `SHA256SUMS` to the GitHub Release. macOS
-  binaries are unsigned (documented `xattr` workaround in `docs/installation.md`).
+  binaries are unsigned (documented `xattr` workaround in `docs/getting-started-binary.md`).
 - **`install.sh --version latest`**: the installer resolves the latest stable
   release by following the `github.com/<repo>/releases/latest` redirect with
   `curl -fsSIL -w %{url_effective}` (no GitHub API, no rate limit; drafts and

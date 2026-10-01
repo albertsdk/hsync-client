@@ -4,8 +4,8 @@ The HSYNC client is available as a `.deb` package for Debian / Ubuntu (amd64,
 arm64, armhf). This guide covers installation, the systemd service, and how to
 customise it for your environment.
 
-> See [Installation](installation.md#debian--ubuntu-deb) for basic install
-> instructions.
+> See [Getting Started — Debian package](getting-started-deb.md) for the basic
+> install and service-enable steps.
 
 ## Table of Contents
 
@@ -209,6 +209,6 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 
 ## See also
 
-- [Installation](installation.md) — basic install instructions.
+- [Getting Started — Debian package](getting-started-deb.md) — basic install and service setup.
 - [Configuration](configuration.md) — every CLI option and environment variable.
 - [FAQ](faq.md) — frequently asked questions.

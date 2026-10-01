@@ -1,16 +1,34 @@
 # Getting Started
 
-This page helps you pick the right path and points to the complete walkthrough
-for each mode. No procedures are embedded here — follow exactly one link and
-copy the commands from that page.
+HSYNC Client keeps a local folder identical with the same folder on your other
+devices, in real time: either through your own **HSYNC server** (Server Mode) or
+directly device-to-device (p2p Mode). It ships as a single self-contained binary —
+no Python runtime is required to run it.
 
-## Requirements
+Pick **one** installation method below, follow it to a running client, then
+choose the operating mode you want. The methods are ordered from the simplest
+and most immediate to the most involved.
 
-To **run** HSYNC you only need the compiled binary — no Python runtime is
-required. To **build** it from source, see the prerequisites in
-[Installation → Build from source](installation.md#build-from-source).
+| # | Method | Best for | Guide |
+| - | ------ | -------- | ----- |
+| 1 | **Installer script** (`install.sh` via `curl`) | Least setup on Linux or macOS: one command, verified download | [Installer script](getting-started-script.md) |
+| 2 | **Standalone binary** (archive) | You manage the binary and `PATH` yourself (Linux/macOS/Windows) | [Standalone binary](getting-started-binary.md) |
+| 3 | **Debian/Ubuntu package** (`.deb`) | A Debian/Ubuntu host managed by systemd | [Debian package](getting-started-deb.md) |
+| 4 | **WD My Cloud OS5** (`.bin`) | A supported WD My Cloud OS5 NAS | [WD OS5 packaging](../packaging/wd-os5/README.md) |
+| 5 | **From source** (clone and build) | Development, or a platform with no prebuilt asset | [Build from source](getting-started-source.md) |
 
-## Choose an operating mode
+All methods produce the same `hsync` executable; only the toolchain differs. The
+asset names for every platform and the checksum file are in
+[Installation](installation.md).
+
+## Requirements (all methods)
+
+- To **run** HSYNC you only need the compiled binary — no Python runtime.
+- To **build from source** you need Python, Poetry and a sibling `hsync-common`
+  clone (and Docker for the cross-arch targets) — see
+  [Build from source](getting-started-source.md).
+
+## Then choose an operating mode
 
 HSYNC runs in two mutually exclusive modes, selected per invocation:
 
