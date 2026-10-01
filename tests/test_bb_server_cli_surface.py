@@ -75,7 +75,7 @@ class TestCliSurface:
         # CLI rejects the URL-like hostname with a usage error instead
         assert result.exit_code != 0
         assert "must be alphanumeric" not in result.output
-        assert "bare hostname" in result.output
+        assert "not a URL" in result.output
 
     def test_full_url_hostname_rejected(self):
         # Given a full URL in the hostname slot (the https:// scheme is implied)
@@ -84,7 +84,7 @@ class TestCliSurface:
 
         # Then the CLI reports a usage error and no sync starts
         assert result.exit_code != 0
-        assert "bare hostname" in result.output
+        assert "not a URL" in result.output
 
     def test_port_requires_hostname(self):
         # Given --port without a hostname
