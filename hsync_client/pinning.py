@@ -88,7 +88,7 @@ class PinStore(JsonStore):
     def entries(self) -> list[dict[str, str]]:
         """Return every pinned peer as ``cid``/``bucket``/``fingerprint`` dicts.
 
-        Sorted by ``(cid, bucket)`` so ``hsync peer trust list`` output is stable.
+        Sorted by ``(cid, bucket)`` so ``hsync trust peer list`` output is stable.
         """
         with self._transaction():
             data = self._load_unlocked()
