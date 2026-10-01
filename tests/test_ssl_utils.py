@@ -91,6 +91,48 @@ class TestLoadOrCreateMasterCert:
         key = serialization.load_pem_private_key(info.key_pem, password=None)
         assert key is not None
 
+    def test_generates_ecdsa_p256_identity(self, cert_dir):
+        """The identity is ECDSA P-256 (shared service-identity model)."""
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        info = load_or_create_master_cert()
+        key = serialization.load_pem_private_key(info.key_pem, password=None)
+        cert = x509.load_pem_x509_certificate(info.cert_pem)
+        assert isinstance(key, ec.EllipticCurvePrivateKey)
+        assert isinstance(key.curve, ec.SECP256R1)
+        assert isinstance(cert.public_key(), ec.EllipticCurvePublicKey)
+
+    def test_validity_is_twenty_years(self, cert_dir):
+        """Validity is the shared 20-year service-identity lifetime + backdate."""
+        from datetime import timedelta
+
+        info = load_or_create_master_cert()
+        cert = x509.load_pem_x509_certificate(info.cert_pem)
+        span = cert.not_valid_after_utc - cert.not_valid_before_utc
+        assert span >= timedelta(days=365 * 19)
+
+    def test_rejects_non_ecdsa_identity(self, cert_dir):
+        """A pre-existing non-ECDSA keypair is refused, not silently reused."""
+        from hsync_common.ssl_utils import (
+            build_self_signed_certificate,
+            generate_rsa_private_key,
+            serialize_cert_pem,
+            serialize_private_key_unencrypted,
+        )
+
+        rsa_key = generate_rsa_private_key()
+        cert = build_self_signed_certificate(
+            rsa_key,
+            subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-lan")],
+            san_list=[x509.DNSName("localhost")],
+            validity_days=365,
+        )
+        (cert_dir / "p2p_master_cert.pem").write_bytes(serialize_cert_pem(cert))
+        (cert_dir / "p2p_master_key.pem").write_bytes(serialize_private_key_unencrypted(rsa_key))
+
+        with pytest.raises(ValueError, match="ECDSA P-256"):
+            load_or_create_master_cert()
+
     def test_fingerprint_is_hex_sha256(self, cert_dir):
         """Fingerprint is a 64-char hex SHA-256 digest."""
         info = load_or_create_master_cert()

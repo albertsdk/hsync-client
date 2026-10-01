@@ -10,6 +10,12 @@ SSL Certificate Utilities for P2P Mode.
 This module provides functions to generate self-signed SSL certificates
 for secure communication in P2P mode, and utilities for fingerprint-based
 certificate verification.
+
+The P2P master identity follows the shared service-identity model (ADR-0037):
+ECDSA P-256, an unencrypted PKCS#8 key guarded by ``0o600``/``0o700``
+filesystem permissions, and a 20-year validity — the same model as the
+``hsync-bootnode`` node key and the ``hsync-server`` TLS certificate. The
+certificate is authenticated by pinning its fingerprint, not by WebPKI.
 """
 
 from __future__ import annotations
@@ -21,12 +27,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from hsync_common.ssl_utils import (
-    DEFAULT_KEY_SIZE,
+    SERVICE_CERT_VALIDITY_DAYS,
     build_self_signed_certificate,
     compute_cert_fingerprint,
-    generate_rsa_private_key,
+    generate_ecdsa_private_key,
     serialize_cert_pem,
     serialize_private_key_unencrypted,
     verify_cert_fingerprint,
@@ -35,13 +43,11 @@ from loguru import logger as log
 from requests.adapters import DEFAULT_POOLBLOCK, HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 
-# RSA key size
-RSA_KEY_SIZE = DEFAULT_KEY_SIZE
-
-# Persistent P2P master certificate validity. Identity is established by
-# fingerprint pinning (TOFU), not by chain/date validation, so a long validity
-# only avoids the operational nuisance of regenerating an expired identity.
-MASTER_CERT_VALIDITY_DAYS = 3650  # ~10 years
+# Persistent P2P master certificate validity: the shared service-identity
+# lifetime (20 years, ADR-0037). Identity is established by fingerprint pinning
+# (TOFU), not by chain/date validation, so a long validity only avoids the
+# operational nuisance of regenerating an expired identity.
+MASTER_CERT_VALIDITY_DAYS = SERVICE_CERT_VALIDITY_DAYS
 
 # The keypair lives in the device identity directory; see
 # :func:`hsync_client.identity.default_device_dir` (``HSYNC_DEVICE_DIR``).
@@ -51,7 +57,6 @@ _MASTER_KEY_FILENAME = "p2p_master_key.pem"
 
 __all__ = [
     "MASTER_CERT_VALIDITY_DAYS",
-    "RSA_KEY_SIZE",
     "CertificateInfo",
     "FingerprintHTTPAdapter",
     "create_fingerprint_ssl_context",
@@ -120,7 +125,14 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
     if cert_path.exists() and key_path.exists():
         cert_pem = cert_path.read_bytes()
         key_pem = key_path.read_bytes()
-        fingerprint = compute_cert_fingerprint(x509.load_pem_x509_certificate(cert_pem))
+        cert = x509.load_pem_x509_certificate(cert_pem)
+        key = serialization.load_pem_private_key(key_pem, password=None)
+        if not isinstance(key, ec.EllipticCurvePrivateKey):
+            raise ValueError(
+                f"P2P master identity {key_path} must hold an ECDSA P-256 private "
+                "key; delete the keypair to regenerate it under the current model."
+            )
+        fingerprint = compute_cert_fingerprint(cert)
         log.info(f"Loaded persistent P2P master certificate: {fingerprint[:16]}...")
         return CertificateInfo(
             cert_pem=cert_pem,
@@ -130,7 +142,7 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
             key_file=str(key_path),
         )
 
-    private_key = generate_rsa_private_key(RSA_KEY_SIZE)
+    private_key = generate_ecdsa_private_key()
     cert = build_self_signed_certificate(
         private_key,
         subject_attrs=[

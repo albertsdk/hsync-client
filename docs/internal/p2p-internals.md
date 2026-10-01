@@ -301,9 +301,9 @@ TOFU after source selection.
 | Aspect | Description |
 |--------|-------------|
 | **Identity** | Device ID + persistent keypair under `$XDG_STATE_HOME/hsync/device` (or `~/.local/state/hsync/device`; `HSYNC_DEVICE_DIR`) |
-| **Certificate Validity** | ~10 years (trust comes from the pin, not the date) |
+| **Certificate Validity** | 20 years (trust comes from the pin, not the date) |
 | **Private Key** | Unencrypted PKCS#8, protected by filesystem permissions (`0o600`) |
-| **Key Size** | RSA 2048-bit |
+| **Key Type** | ECDSA P-256 |
 | **Fingerprint** | SHA-256 (64 hex characters) |
 | **Trust Model** | Trust-on-first-use (TOFU), pinned at the connection level |
 
