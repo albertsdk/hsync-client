@@ -35,18 +35,20 @@ continuous role; `DISCOVERY_TIMEOUT=0` explicitly waits forever
 ## Discovery & election (`p2p_peers.py`, `p2p_discovery*.py`)
 
 The former single `p2p_peers.py`/`p2p_discovery_mdns.py` is split by responsibility so peer state can be fed
-by **two** discovery plans (mDNS and bootnode), with the sync core unaware of
-which one is active:
+by **two** discovery sources (mDNS and bootnode), with the sync core unaware of
+which is active. With no bootnode the mDNS plan runs alone; with a bootnode
+configured `HybridDiscovery` runs **both** over one shared `PeerManager`:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `DiscoveryPlan` | `p2p_discovery.py:40` | minimal interface both plans implement (`start`/`stop`/`wait_for_discovery`, `update_endpoint_ready`/`update_server_ready`/`update_server_not_ready`, `set_connected_clients*`, `port`, `peer_manager`) |
-| `DiscoveryPlanState` | `p2p_discovery.py:95` | shared trivial state for the two plans (`port`, `peer_manager`, `set_connected_clients_provider`); keeps the interface from drifting without merging transport-specific logic |
-| `PeerManager` | `p2p_peers.py:123` | tracks peers, runs election, liveness (shared) |
-| `Peer` | `p2p_peers.py:68` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
-| `PeerSnapshot` | `p2p_peers.py:111` | immutable projection for the handler |
+| `DiscoveryPlan` | `p2p_discovery.py:40` | minimal interface every plan implements (`start`/`stop`/`wait_for_discovery`, `update_endpoint_ready`/`update_server_ready`/`update_server_not_ready`, `set_connected_clients*`, `port`, `peer_manager`) |
+| `DiscoveryPlanState` | `p2p_discovery.py:122` | shared trivial state and the single `create_peer_manager()` builder (`port`, `peer_manager`, `set_connected_clients_provider`) |
+| `PeerManager` | `p2p_peers.py:128` | tracks peers, runs election, liveness (shared) |
+| `Peer` | `p2p_peers.py:111` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
+| `PeerSnapshot` | `p2p_peers.py:176` | immutable projection for the handler |
 | `get_free_port` / `HSYNC_P2P_LISTEN_PORT` | `p2p_peers.py:51` / `:48` | bind an ephemeral serving port |
-| `MdnsDiscovery` | `p2p_discovery_mdns.py:271` | mDNS/Zeroconf discovery plan (browse + advertise) |
+| `MdnsDiscovery` | `p2p_discovery_mdns.py:272` | mDNS/Zeroconf plan (browse + advertise); always active |
+| `HybridDiscovery` | `p2p_discovery_hybrid.py:38` | runs mDNS + bootnode over one shared `PeerManager` when a bootnode is configured |
 | `HsyncServiceListener` | `p2p_discovery_mdns.py:79` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value) |
 | `HSYNC_SERVICE_TYPE` | `p2p_discovery_mdns.py:51` | `_hsync._tcp.local.` mDNS type |
 
@@ -62,6 +64,25 @@ records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
 is reachable *now* is not a discovery fact at all — it is carried by the
 authenticated WSS session and its capacity advertisement (ADR-0030).
 Protocol-mismatched peers are ignored.
+
+**Combined mDNS + bootnode (`HybridDiscovery`).** With a bootnode configured
+both sources run against one `PeerManager` (built once via
+`DiscoveryPlanState.create_peer_manager` and injected into both plans at
+`start`). Consequences handled by that shared state:
+
+- **Presence once**: `wait_for_discovery` blocks on the shared condition; the
+  mDNS child owns the presence pair (`emit_discovery_status`), the bootnode child
+  contributes the discovery log (`log_peer_count`) and the fatal check
+  (`check_fatal`, which re-raises a trust failure so the run aborts).
+- **Readiness is the AND**: `endpoint_published()` requires the bootnode's
+  endpoint register (mDNS has no separate step), bounded by
+  `READINESS_ENDPOINT_TIMEOUT_S`.
+- **One peer entry per CID**: `add_peer` merges a peer seen by both sources —
+  the non-empty candidate list wins (`endpoints`, richer than mDNS's single
+  address) and `Peer.capabilities_known` stops the bootnode relay, which carries
+  no capability flags, from clearing the TXT capabilities (`compression`,
+  `delta`, `peer_download`) that mDNS advertised. Both sources relay the same
+  election advertisement, so the election sees one candidate set.
 
 `MdnsDiscovery.wait_for_discovery` is the single owner of the display-ready presence
 pair (`hsync_client/presence.py`): `total = 1 + alive mDNS peers`, `connected =
@@ -329,10 +350,11 @@ timing is unchanged. The wait is bounded by `READINESS_ENDPOINT_TIMEOUT_S`
 (10 s) so a wedged lease loop degrades to the old timing instead of hanging.
 
 The same startup also emits the **`discovery` UI event** (`UiEventName.discovery`,
-added to `hsync-common/protocol/events.py`) with `plan` (`mdns` | `bootnode`) and,
-with a bootnode, its host — so a front-end can surface the active plan instead of
-silently degrading to mDNS. The desktop maps it to the `discovery_changed`
-signal; the payload stays a flat optional-field object (no events-schema bump).
+in `hsync-common/protocol/events.py`) with `plan` (`mdns` when no bootnode,
+`mdns+bootnode` when one is configured) and, with a bootnode, its host — so a
+front-end can surface the active source(s) instead of silently degrading. The
+desktop maps it to the `discovery_changed` signal; the payload stays a flat
+optional-field object (no events-schema bump).
 
 Lease semantics: the **first** `register` has no endpoint (public address not
 known yet) and capacity 0; the `ack` carries the observed endpoint (STUN-echo);

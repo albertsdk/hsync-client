@@ -175,20 +175,16 @@ class BootnodeDiscovery(DiscoveryPlanState):
 
     # -- DiscoveryPlan surface -------------------------------------------------
 
-    def start(self, register_service: bool = True) -> PeerManager:
-        """Start the lease loop and return the shared :class:`PeerManager`."""
-        manager = PeerManager(
-            local_cid=self._cid,
-            bucket=self._bucket,
-            group=self._group,
-            force_master=self._force_master,
-            never_master=self._never_master,
-            startup_time=self._startup_time,
-            sync_direction=self._sync_direction,
-            local_cert_fingerprint=self._cert_fingerprint,
-            local_address=self._local_ip,
-            peer_timeout=self._peer_timeout,
-        )
+    def start(
+        self, register_service: bool = True, peer_manager: PeerManager | None = None
+    ) -> PeerManager:
+        """Start the lease loop and return the shared :class:`PeerManager`.
+
+        ``peer_manager`` lets a combined plan share one manager across both
+        discovery sources (mDNS + bootnode); it is built from this plan's
+        configuration when omitted.
+        """
+        manager = peer_manager or self.create_peer_manager()
         self._peer_manager = manager
         # Resolve the local role before the first wait: a lone --force-master
         # node must become master and serve immediately so a joining slave can
@@ -229,9 +225,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         or it would exhaust the 5/min per-(IP, bucket) query budget and the node
         would answer ``rate_limited`` for the rest of the window.
         """
-        if self._fatal_error is not None:
-            # Even before the peer manager exists: a trust failure is terminal.
-            raise DiscoveryFatalError(str(self._fatal_error)) from self._fatal_error
+        self.check_fatal()
         if self._peer_manager is None:
             return
         if not self._discovery_announced:
@@ -245,11 +239,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         # observed within ~1 s instead of after the whole window.
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
-            if self._fatal_error is not None:
-                # The lease loop stopped on a trust failure: no peer can ever be
-                # discovered. Surface it so the sync core exits fatally instead
-                # of waiting for peers that will never arrive.
-                raise DiscoveryFatalError(str(self._fatal_error)) from self._fatal_error
+            self.check_fatal()
             if self._peer_manager.get_alive_peers():
                 break
             remaining = deadline - time.monotonic()
@@ -257,7 +247,21 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 break
             self._peer_manager.wait_for_change(1.0 if timeout <= 0 else min(remaining, 1.0))
 
-        peers = self._peer_manager.get_alive_peers()
+        self.log_peer_count()
+
+    def check_fatal(self) -> None:
+        """Raise :class:`DiscoveryFatalError` if discovery has permanently stopped.
+
+        The combined discovery plan calls this around its own wait so a bootnode
+        trust failure still aborts the run instead of waiting forever.
+        """
+        if self._fatal_error is not None:
+            # A trust failure is terminal: no peer can ever be discovered.
+            raise DiscoveryFatalError(str(self._fatal_error)) from self._fatal_error
+
+    def log_peer_count(self) -> None:
+        """Log the bootnode discovery result when the alive-peer count changes."""
+        peers = self._peer_manager.get_alive_peers() if self._peer_manager else []
         if len(peers) != self._last_peer_count:
             self._last_peer_count = len(peers)
             if peers:

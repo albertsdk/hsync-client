@@ -1,9 +1,11 @@
 # HSYNC p2p Mode (P2P Synchronization)
 
 p2p Mode lets devices synchronize files directly, peer-to-peer, without a
-centralized HSYNC server. There are two **discovery plans**: devices on the
-same local network find each other over mDNS, and devices on different networks
-find each other through an optional `boot/1` bootstrap node.
+centralized HSYNC server. Discovery uses **mDNS on the local network always**,
+plus an optional `boot/1` bootstrap node for devices on different networks:
+with no bootnode configured only mDNS runs; with a bootnode configured both run
+together, so a node next to you is still found locally without a round trip
+through the node.
 
 > **Quick links**
 > - Full option & environment-variable reference → [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options)
@@ -16,9 +18,10 @@ find each other through an optional `boot/1` bootstrap node.
 ## Overview
 
 p2p Mode enables direct peer-to-peer file synchronization between devices on the
-same network, without requiring a centralized HSYNC server. Cross-network
-groups add a bootnode to the same mode; everything below (election, transport,
-security) is identical in both plans.
+same network, without requiring a centralized HSYNC server. Discovery always uses
+mDNS on the local network; cross-network groups add a bootnode, which runs
+alongside mDNS on the same client. Everything below (election, transport,
+security) is identical whether mDNS runs alone or alongside the bootnode.
 
 ```mermaid
 flowchart TB

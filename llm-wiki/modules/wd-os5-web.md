@@ -19,7 +19,8 @@ The p2p section exposes the bootnode field (`HSYNC_BOOTNODE`, bare host) and the
 UPnP toggle (`HSYNC_UPNP_ENABLED`); both are whitelisted in `config_get.php` /
 `config_set.php` (with host/boolean validation) and carried by `install.sh` /
 exported by `start.sh`. The connect-command builder prefixes
-`HSYNC_BOOTNODE='<host>'` so the other device joins the same discovery plan. The
+`HSYNC_BOOTNODE='<host>'` so the other device joins the same group through the
+bootnode (mDNS stays active on the same client). The
 `HSYNC_MODE` value is `p2p` (not `lan`): `start.sh` maps it to the `p2p`
 subcommand, and UI + PHP validation agree.
 | `Apkg/web/service.php` | start/stop/restart/status of the daemon |

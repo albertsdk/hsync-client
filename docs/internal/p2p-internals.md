@@ -545,9 +545,9 @@ p2p mode uses mDNS (Multicast DNS) for peer discovery:
 When the group uses a bootnode instead, the same election inputs (`server_ready`,
 `force_master`, `never_master`, `startup_time`, `sync_direction`) travel in the
 `register` frame and come back on every relayed peer of a `query`, so the master
-election is identical in both discovery plans. They are unauthenticated hints,
-exactly like the TXT flags: the data plane pins the peer certificate before any
-file is exchanged.
+election is identical whether mDNS runs alone or alongside the bootnode. They are
+unauthenticated hints, exactly like the TXT flags: the data plane pins the peer
+certificate before any file is exchanged.
 
 The `delta` TXT record is advertised only when delta transfer is enabled
 (`HSYNC_DELTA_ENABLED=true`, the default). Peers parse this flag to determine

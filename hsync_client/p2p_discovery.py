@@ -6,18 +6,24 @@
 
 """Minimal discovery-plan interface for ``hsync p2p``.
 
-``hsync p2p`` can discover peers over two orthogonal plans:
+``hsync p2p`` discovers peers over two orthogonal sources:
 
 * the **mDNS plan** (``p2p_discovery_mdns.MdnsDiscovery``) — Zeroconf browse +
-  advertise on the local network, the historical behavior;
+  advertise on the local network, always active;
 * the **bootnode plan** (``p2p_discovery_bootnode.BootnodeDiscovery``) —
   registration/query against a ``boot/1`` bootstrap node for cross-network
-  discovery.
+  discovery, added when a bootnode is configured.
 
-Both feed the same discovery-agnostic peer state in ``p2p_peers`` and must
-expose the same surface to the sync core (``p2p_handler.run_p2p_mode``). The
-core receives a plan instance already built — it never branches on which plan
-is active, so the two implementations are interchangeable by construction.
+With no bootnode the mDNS plan runs alone. With a bootnode configured both run
+together (``p2p_discovery_hybrid.HybridDiscovery``) over **one shared**
+:class:`~hsync_client.p2p_peers.PeerManager`, so a node is reachable both on the
+local network and across networks and the two sources never double-count peers
+or split the election.
+
+Every source feeds the same discovery-agnostic peer state in ``p2p_peers`` and
+exposes the same surface to the sync core (``p2p_handler.run_p2p_mode``). The
+core receives a plan instance already built — it never branches on which plan is
+active, so the implementations are interchangeable by construction.
 
 Consumers: ``hsync-client`` (p2p handler, the two discovery plans, tests).
 """
@@ -35,6 +41,7 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     PEER_TIMEOUT,
 )
+from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_peers import PeerManager
 from hsync_client.trust_prompt import build_trust_prompt
 
@@ -135,6 +142,18 @@ class DiscoveryPlanState:
     _port: int
     _peer_manager: PeerManager | None
     _connected_clients_provider: Callable[[], int] | None
+    # Shared configuration every plan holds (identical values across plans), so
+    # one PeerManager can be built for either plan or for a combined plan.
+    _cid: str
+    _bucket: str
+    _group: str | None
+    _force_master: bool
+    _never_master: bool
+    _startup_time: float
+    _sync_direction: str
+    _cert_fingerprint: str | None
+    _local_ip: str | None
+    _peer_timeout: float
 
     @property
     def port(self) -> int:
@@ -149,6 +168,26 @@ class DiscoveryPlanState:
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install a callback that yields the live connected-client count."""
         self._connected_clients_provider = provider
+
+    def create_peer_manager(self) -> PeerManager:
+        """Build the :class:`PeerManager` from this plan's shared configuration.
+
+        The single construction point for both plans and for the combined plan,
+        which builds one manager and injects it into both so peer state and the
+        election are shared rather than duplicated.
+        """
+        return PeerManager(
+            local_cid=self._cid,
+            bucket=self._bucket,
+            group=self._group,
+            force_master=self._force_master,
+            never_master=self._never_master,
+            startup_time=self._startup_time,
+            sync_direction=self._sync_direction,
+            local_cert_fingerprint=self._cert_fingerprint,
+            local_address=self._local_ip or get_local_ip(),
+            peer_timeout=self._peer_timeout,
+        )
 
 
 def build_discovery_plan(
@@ -192,7 +231,7 @@ def build_discovery_plan(
     # every 30 s) sized against the node's query/register rate limits; it must
     # not reuse the mDNS heartbeat, which is far faster.
     bootnode_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
-    return BootnodeDiscovery(
+    bootnode_plan = BootnodeDiscovery(
         **bootnode_shared,  # type: ignore[arg-type]
         refresh_interval=config.get("BOOTNODE_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL,
         bootnode_host=bootnode,
@@ -205,3 +244,9 @@ def build_discovery_plan(
         capacity=config.get("P2P_PEER_READ_CAP", 0),
         peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),
     )
+    # mDNS stays active alongside the bootnode: a node next to us on the local
+    # network is found without a round trip through the node, and the two
+    # sources share one PeerManager so the election stays single.
+    from hsync_client.p2p_discovery_hybrid import HybridDiscovery
+
+    return HybridDiscovery(mdns=MdnsDiscovery(**shared), bootnode=bootnode_plan)  # type: ignore[arg-type]

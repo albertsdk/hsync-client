@@ -1,7 +1,9 @@
 # Sync across networks (bootnode)
 
 How to run `hsync p2p` when the devices are **not** on the same local network:
-they discover each other through a `boot/1` bootstrap node instead of mDNS.
+they discover each other through a `boot/1` bootstrap node. mDNS stays active on
+the same client, so a device next to you is still found directly on the local
+network without a round trip through the node.
 
 > Local network, no bootnode? Use the [mDNS plan](p2p-lan.md).
 > The server-side reference (flags, environment variables, defaults):
@@ -155,7 +157,7 @@ limit is negotiated on the authenticated session.
 | The client stops with a bootnode trust error before any sync | Bootnode certificate not trusted yet. On a terminal the default `ask` prompt confirms it; with no terminal the client fails closed — pass `--bootnode-fingerprint` (or `--bootnode-tofu`, or `--insecure` only on loopback). |
 | `fingerprint_changed` (bootnode), or `ERROR: Bootnode '…' trust failed: the certificate fingerprint does not match the accepted pin` | The bootnode certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. The client prints the presented fingerprint, the known-hosts file and the exact commands that unblock the situation: re-pin the new fingerprint after verifying it out of band (`hsync trust bootnode add …`) or forget the pin with `hsync trust bootnode remove …` (like `ssh-keygen -R`) to be prompted again; during a planned rotation pass both fingerprints (old + new) once. The client **exits with a non-zero code**: see [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md). |
 | Peer listed but connection fails | The advertised TCP endpoint is not reachable (UPnP disabled/failed and no public port): see "Let the node be reachable". The client retries the other candidates, then discovery. |
-| Two peers on the same network (or same host) never connect | Some routers block NAT loopback (hairpinning), so the public endpoint is unreachable from inside the LAN. The client prefers the host/LAN candidate; on one host the LAN candidate is used directly. Two peers on *different* networks still need a routable public endpoint (UPnP/public port) and are not hole-punched. |
+| Two peers on the same network (or same host) never connect | mDNS already runs alongside the bootnode, so same-network peers are normally found directly; this symptom is for peers behind the **same NAT on different networks**, where some routers block NAT loopback (hairpinning) and the public endpoint is unreachable from inside. The client prefers the host/LAN candidate and falls back to the public one. Two peers on different networks still need a routable public endpoint (UPnP/public port) and are not hole-punched. |
 | Cross-network sync not needed | Go back to the [mDNS plan](p2p-lan.md) by unsetting `HSYNC_BOOTNODE`. |
 
 More: [Troubleshooting](troubleshooting.md) and [FAQ — p2p Mode](faq-p2p.md).

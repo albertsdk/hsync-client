@@ -40,12 +40,15 @@ see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
 - [Configuration — p2p Mode](configuration-p2p.md) — discovery, master election, `HSYNC_P2P_KEY`, stability.
 - [Sync Modes](sync-modes.md) — server vs p2p topologies and how to combine flags.
 
-### 3b. Choose the p2p discovery plan
+### 3b. Choose the p2p discovery scope
+
+mDNS discovery on the local network is **always on**; a bootnode only adds
+cross-network discovery on top of it.
 
 | Task | Guide |
 |------|-------|
-| Sync devices on the **same network** (mDNS, no bootnode) | [Sync on the local network](p2p-lan.md) |
-| Sync across networks through a **bootnode** | [Sync across networks](p2p-bootnode.md) |
+| Sync devices on the **same network** (mDNS only, no bootnode) | [Sync on the local network](p2p-lan.md) |
+| Sync across networks through a **bootnode** (mDNS stays on) | [Sync across networks](p2p-bootnode.md) |
 
 ### 4. Operate
 

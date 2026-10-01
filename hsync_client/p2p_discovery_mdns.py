@@ -223,6 +223,7 @@ class HsyncServiceListener(ServiceListener):
                 compression_enabled=compression_enabled,
                 delta_enabled=delta_enabled,
                 peer_download_enabled=peer_download_enabled,
+                capabilities_known=True,
                 server_ready=server_ready,
                 connected=connected,
                 force_master=force_master,
@@ -394,7 +395,9 @@ class MdnsDiscovery(DiscoveryPlanState):
         """Get the SSL certificate fingerprint."""
         return self._cert_fingerprint
 
-    def start(self, register_service: bool = True) -> PeerManager:
+    def start(
+        self, register_service: bool = True, peer_manager: PeerManager | None = None
+    ) -> PeerManager:
         """
         Start P2P discovery and optionally register service.
 
@@ -402,6 +405,9 @@ class MdnsDiscovery(DiscoveryPlanState):
             register_service: If True, register mDNS service immediately.
                 If False, call register_service() later (e.g., after starting
                 the HTTP server when becoming master).
+            peer_manager: A pre-built :class:`PeerManager` to share with another
+                plan (the combined mDNS + bootnode discovery). Built from this
+                plan's configuration when omitted.
 
         Returns:
             PeerManager for monitoring discovered peers and master election.
@@ -412,19 +418,8 @@ class MdnsDiscovery(DiscoveryPlanState):
         # Initialize Zeroconf
         self._zeroconf = Zeroconf()
 
-        # Initialize peer manager
-        self._peer_manager = PeerManager(
-            self._cid,
-            self._bucket,
-            self._group,
-            force_master=self._force_master,
-            never_master=self._never_master,
-            startup_time=self._startup_time,
-            sync_direction=self._sync_direction,
-            local_cert_fingerprint=self._cert_fingerprint,
-            local_address=self._local_ip,
-            peer_timeout=self._peer_timeout,
-        )
+        # Initialize (or adopt the shared) peer manager
+        self._peer_manager = peer_manager or self.create_peer_manager()
         # Resolve the local role before the first wait: a lone --force-master
         # node must become master and serve immediately so a joining slave can
         # connect (the election otherwise runs only on peer events).
@@ -695,7 +690,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         """
         # Get local IP address (computed once in __init__ so discovery's
         # self-check compares against the exact address this record advertises)
-        local_ip = self._local_ip
+        local_ip = self._local_ip or get_local_ip()
 
         # Create service name: bucket-cid
         service_name = f"{self._bucket}-{self._cid}.{HSYNC_SERVICE_TYPE}"
@@ -784,39 +779,49 @@ class MdnsDiscovery(DiscoveryPlanState):
         else:
             time.sleep(timeout)
 
-        if self._peer_manager:
-            peers = self._peer_manager.get_alive_peers()
-            total = 1 + len(peers)
+        self.emit_discovery_status()
 
-            # Connected count: while this node serves as master, the provider
-            # installed by the P2P handler gives the live WebSocket client
-            # count. As a slave, the master's published count (or the local
-            # snapshot) is the shared group value.
-            if self._connected_clients_provider is not None:
-                self._connected_clients = max(self._connected_clients_provider(), 0)
-            elif self._peer_manager.get_master_cid() != self._cid:
-                master_peer = self._peer_manager.get_master()
-                if master_peer is not None:
-                    self._connected_clients = master_peer.connected
-            connected = 1 + self._connected_clients
-            # Guard the display invariant: a stale mDNS count can exceed the
-            # currently-known total, so connected is clamped to total.
-            connected = min(connected, total)
+    def emit_discovery_status(self) -> None:
+        """Emit the presence pair and the peer-count log for the last window.
 
-            changed = (self._connected_clients, total) != self._last_discovery_state
-            self._last_discovery_state = (self._connected_clients, total)
+        Called from :meth:`wait_for_discovery`, and by the combined discovery
+        plan after it waits on the shared peer manager, so the presence pair is
+        reported exactly once.
+        """
+        if not self._peer_manager:
+            return
+        peers = self._peer_manager.get_alive_peers()
+        total = 1 + len(peers)
 
-            record_presence(connected, total)
+        # Connected count: while this node serves as master, the provider
+        # installed by the P2P handler gives the live WebSocket client
+        # count. As a slave, the master's published count (or the local
+        # snapshot) is the shared group value.
+        if self._connected_clients_provider is not None:
+            self._connected_clients = max(self._connected_clients_provider(), 0)
+        elif self._peer_manager.get_master_cid() != self._cid:
+            master_peer = self._peer_manager.get_master()
+            if master_peer is not None:
+                self._connected_clients = master_peer.connected
+        connected = 1 + self._connected_clients
+        # Guard the display invariant: a stale mDNS count can exceed the
+        # currently-known total, so connected is clamped to total.
+        connected = min(connected, total)
 
-            if peers:
-                if changed:
-                    log.info(f"Discovered {len(peers)} peer(s)")
-                for peer in peers:
-                    log.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
-            elif changed:
-                if self._connected_clients > 0:
-                    log.info(
-                        f"No other peers discovered - {self._connected_clients} client(s) connected"
-                    )
-                else:
-                    log.info("No other peers discovered - this client is alone")
+        changed = (self._connected_clients, total) != self._last_discovery_state
+        self._last_discovery_state = (self._connected_clients, total)
+
+        record_presence(connected, total)
+
+        if peers:
+            if changed:
+                log.info(f"Discovered {len(peers)} peer(s)")
+            for peer in peers:
+                log.debug(f"  - {peer.cid} at {peer.address}:{peer.port}")
+        elif changed:
+            if self._connected_clients > 0:
+                log.info(
+                    f"No other peers discovered - {self._connected_clients} client(s) connected"
+                )
+            else:
+                log.info("No other peers discovered - this client is alone")

@@ -76,8 +76,9 @@ The `p2p` subcommand takes an optional positional `BOOTNODE` (`HOST[:PORT]`) plu
 `--port` (bootnode UDP, default 443) and `--no-upnp`; `_build_bootnode`
 (`cli.py`) validates them, refuses `--port` without a host (never a silently
 ignored flag), and a port in `BOOTNODE` is mutually exclusive with `--port`.
-The plan is selected in `p2p_discovery.build_discovery_plan`
-(`config["BOOTNODE"]` unset → mDNS, set → bootnode), so `p2p_handler.run_p2p_mode`
+The source(s) are selected in `p2p_discovery.build_discovery_plan`
+(`config["BOOTNODE"]` unset → mDNS only, set → `HybridDiscovery` running mDNS
+**and** bootnode over one shared `PeerManager`), so `p2p_handler.run_p2p_mode`
 only sees the `DiscoveryPlan` surface.
 
 The bootnode host is `HSYNC_BOOTNODE` (a **bare** host: the `_validate_bootnode_host`

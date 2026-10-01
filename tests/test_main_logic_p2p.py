@@ -80,6 +80,10 @@ class TestRunLanMode:
                 "hsync_client.p2p_discovery_bootnode.BootnodeDiscovery",
                 return_value=mock_p2p_sync,
             ),
+            patch(
+                "hsync_client.p2p_discovery_hybrid.HybridDiscovery",
+                return_value=mock_p2p_sync,
+            ),
             patch("hsync_client.p2p_handler.emit_event") as emit,
         ):
             run_p2p_mode(config, mock_log)
@@ -90,10 +94,13 @@ class TestRunLanMode:
             if call.args and call.args[0] == UiEventName.discovery
         ]
         assert len(discovery_calls) == 1
-        assert discovery_calls[0].kwargs == {"plan": "bootnode", "bootnode": "boot.example.net"}
+        assert discovery_calls[0].kwargs == {
+            "plan": "mdns+bootnode",
+            "bootnode": "boot.example.net",
+        }
 
     def test_bootnode_banner_and_plan_selection(self, tmp_path):
-        """A configured bootnode selects the bootnode plan and logs it."""
+        """A configured bootnode selects the combined mDNS + bootnode plan."""
         config = _make_p2p_config(tmp_path, BOOTNODE="boot.example.net", BOOTNODE_PORT=443)
         mock_log = MagicMock()
 
@@ -107,9 +114,16 @@ class TestRunLanMode:
         mock_p2p_sync.port = 9000
         mock_p2p_sync.endpoint_published.return_value = True
 
-        with patch(
-            "hsync_client.p2p_discovery_bootnode.BootnodeDiscovery", return_value=mock_p2p_sync
-        ) as mock_plan:
+        with (
+            patch(
+                "hsync_client.p2p_discovery_bootnode.BootnodeDiscovery",
+                return_value=mock_p2p_sync,
+            ) as mock_plan,
+            patch(
+                "hsync_client.p2p_discovery_hybrid.HybridDiscovery",
+                return_value=mock_p2p_sync,
+            ),
+        ):
             run_p2p_mode(config, mock_log)
 
         mock_plan.assert_called_once()
@@ -117,7 +131,7 @@ class TestRunLanMode:
         assert kwargs["bootnode_host"] == "boot.example.net"
         assert kwargs["bootnode_port"] == 443
         assert any(
-            "Discovery: bootnode boot.example.net:443" in str(c)
+            "Discovery: mDNS on the local network + bootnode boot.example.net:443" in str(c)
             for c in mock_log.info.call_args_list
         )
 

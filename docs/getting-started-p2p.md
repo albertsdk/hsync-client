@@ -1,7 +1,7 @@
 # Getting Started — p2p Mode
 
-Sync files directly between devices — on the same local network (mDNS), or
-across networks through a bootnode — with no server needed.
+Sync files directly between devices — on the same local network (mDNS, always
+active) and, across networks, through a bootnode — with no server needed.
 
 > Back to [Getting Started](getting-started.md).
 
@@ -121,8 +121,9 @@ See [Configuration — p2p Mode](configuration-p2p.md) for all p2p-mode options.
 
 ## Crossing networks
 
-Devices that are **not** on the same local network cannot see each other over
-mDNS. Point every device of the group at the same bootstrap node instead:
+Devices on different networks cannot see each other over mDNS, so point every
+device of the group at the same bootstrap node. mDNS stays active on the same
+client, so same-network peers are still found locally:
 [Sync across networks (bootnode)](p2p-bootnode.md).
 
 ## Next Steps

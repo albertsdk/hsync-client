@@ -321,12 +321,12 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     bootnode = config.get("BOOTNODE")
     if bootnode:
         log.info(
-            "Discovery: bootnode "
+            "Discovery: mDNS on the local network + bootnode "
             f"{bootnode}:{config.get('BOOTNODE_PORT', BOOTNODE_DEFAULT_PORT)} "
             "(cross-network; UPnP "
             f"{'on' if config.get('UPNP_ENABLED', True) else 'off'})"
         )
-        emit_event(UiEventName.discovery, plan="bootnode", bootnode=bootnode)
+        emit_event(UiEventName.discovery, plan="mdns+bootnode", bootnode=bootnode)
     else:
         log.info("Discovery: mDNS on the local network (no bootnode configured)")
         emit_event(UiEventName.discovery, plan="mdns")

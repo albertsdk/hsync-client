@@ -1,7 +1,8 @@
 # Sync on the local network (mDNS)
 
-How to run `hsync p2p` with its **default discovery plan**: peers find each other
-over mDNS on the same local network, with no server and no bootnode.
+How to run `hsync p2p` with **mDNS only**: peers find each other over mDNS on the
+same local network, with no server and no bootnode. mDNS is always active, so
+this page covers running without a bootnode configured.
 
 > First sync with two devices? Start from
 > [Getting Started — p2p Mode](getting-started-p2p.md); this page covers

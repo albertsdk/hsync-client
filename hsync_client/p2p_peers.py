@@ -121,6 +121,11 @@ class Peer:
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
     peer_download_enabled: bool = False
+    # Whether the three capability flags above were advertised by the source
+    # (the mDNS TXT record carries them; the bootnode relay does not). When two
+    # plans feed one PeerManager, an update that does not know the capabilities
+    # must not clear the ones another source advertised.
+    capabilities_known: bool = False
     server_ready: bool = False  # True when HTTP server is listening
     connected: int = 0  # slaves currently connected to the master's WebSocket
     last_seen: float = field(default_factory=time.time)
@@ -353,16 +358,31 @@ class PeerManager:
                     or existing.startup_time != peer.startup_time
                     or existing.sync_direction != peer.sync_direction
                 )
+                # The bootnode relay carries no capability flags, so a
+                # bootnode-sourced update must not clear capabilities learned
+                # from the mDNS TXT record: when one PeerManager is fed by both
+                # plans, only an update that knows the capabilities (or the
+                # first one) may set them.
+                take_capabilities = peer.capabilities_known or not existing.capabilities_known
+                # Keep the richer candidate list: mDNS supplies one address, the
+                # bootnode relays the full list. An empty list must not clear a
+                # known one.
+                take_endpoints = bool(peer.endpoints)
                 discovery_changed = election_changed or (
                     existing.address != peer.address
                     or existing.port != peer.port
                     or existing.use_https != peer.use_https
                     or existing.cert_fingerprint != peer.cert_fingerprint
                     or existing.connected != peer.connected
-                    or existing.compression_enabled != peer.compression_enabled
-                    or existing.delta_enabled != peer.delta_enabled
-                    or existing.peer_download_enabled != peer.peer_download_enabled
-                    or existing.endpoints != peer.endpoints
+                    or (
+                        take_capabilities
+                        and (
+                            existing.compression_enabled != peer.compression_enabled
+                            or existing.delta_enabled != peer.delta_enabled
+                            or existing.peer_download_enabled != peer.peer_download_enabled
+                        )
+                    )
+                    or (take_endpoints and existing.endpoints != peer.endpoints)
                 )
                 # Update all properties from the new peer object
                 existing.address = peer.address
@@ -371,10 +391,13 @@ class PeerManager:
                 existing.group = peer.group
                 existing.use_https = peer.use_https
                 existing.cert_fingerprint = peer.cert_fingerprint
-                existing.compression_enabled = peer.compression_enabled
-                existing.delta_enabled = peer.delta_enabled
-                existing.peer_download_enabled = peer.peer_download_enabled
-                existing.endpoints = peer.endpoints
+                if take_capabilities:
+                    existing.compression_enabled = peer.compression_enabled
+                    existing.delta_enabled = peer.delta_enabled
+                    existing.peer_download_enabled = peer.peer_download_enabled
+                    existing.capabilities_known = peer.capabilities_known
+                if take_endpoints:
+                    existing.endpoints = peer.endpoints
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
