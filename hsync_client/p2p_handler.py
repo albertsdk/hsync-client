@@ -13,6 +13,7 @@ master election, and WebSocket communication.
 
 import contextlib
 import os
+import socket
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -42,6 +43,7 @@ from hsync_client.exceptions import (
     WatcherStartError,
 )
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
+from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_discovery import (
     DiscoveryFatalError,
     DiscoveryPlan,
@@ -52,11 +54,13 @@ from hsync_client.p2p_inventory import (
     P2PInventoryStore,
     set_active_inventory_publisher,
 )
+from hsync_client.p2p_peers import dial_candidates, server_url
 from hsync_client.p2p_server import P2PServer, P2PServerMode
 from hsync_client.p2p_sources import P2PSourceResolver, P2PSourceService
 from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry, p2p_websocket_client
 from hsync_client.pinning import default_pin_store
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
+from hsync_client.ssl_utils import create_fingerprint_ssl_context, verify_peer_cert_fingerprint
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
 from hsync_client.trust_messages import (
     known_peer_added_message,
@@ -84,6 +88,12 @@ READINESS_ENDPOINT_TIMEOUT_S = 10.0
 # before the shared inventory store is detached and closed (ADR-0027). A peer
 # that ignores the close frame must not stall the yield indefinitely.
 _WS_CLOSE_GRACE_S = 5.0
+
+# Per-candidate reachability budget when a master advertises several data-plane
+# endpoints (bootnode discovery). An unreachable candidate must not stall the
+# connection for the full request timeout before the next one is tried; a
+# same-subnet candidate that fails fast falls back to the public endpoint.
+MASTER_CANDIDATE_PROBE_TIMEOUT_S = 3.0
 
 
 def _start_slave_seeder(
@@ -174,7 +184,14 @@ def _stop_p2p_serving(ws_server: P2PWebSocketServer | None, http_server: P2PServ
         http_server.reset_delta_state()
 
 
-def _refresh_p2p_network_tuning(master, config: "HsyncConfig", log) -> None:
+def _refresh_p2p_network_tuning(
+    master,
+    config: "HsyncConfig",
+    log,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+) -> None:
     """Re-derive autotune-managed network tuning from the real master RTT.
 
     In P2P mode with the placeholder URL the startup RTT probe is skipped (no
@@ -182,6 +199,11 @@ def _refresh_p2p_network_tuning(master, config: "HsyncConfig", log) -> None:
     the master is discovered there is a real endpoint to measure. Only keys in
     ``AUTOTUNE_MANAGED_KEYS`` (no CLI/env override) are re-derived, preserving
     the CLI > env > autotune precedence.
+
+    ``host``/``port`` override the peer's primary endpoint with the actually
+    selected dial candidate (a bootnode peer may serve on a different candidate
+    than its first advertised one); they default to ``master.address`` /
+    ``master.port``.
 
     Updates are applied to both the global ``CONFIG`` and the local *config*
     dict: they are distinct objects (``set_config`` copies values) so callers
@@ -195,7 +217,10 @@ def _refresh_p2p_network_tuning(master, config: "HsyncConfig", log) -> None:
         log.debug("autotune (P2P): no autotune-managed keys (all overridden via CLI/env)")
         return
 
-    rtt_ms = measure_rtt(master.address, master.port)
+    rtt_ms = measure_rtt(
+        host if host is not None else master.address,
+        port if port is not None else master.port,
+    )
     if rtt_ms is None:
         log.debug("autotune (P2P): RTT to master not measurable; keeping startup tuning")
         return
@@ -792,6 +817,54 @@ def _evaluate_master_pin(
     return True
 
 
+def _probe_master_endpoint(host: str, port: int, fingerprint: str, timeout: float) -> bool:
+    """Whether *host:port* completes a fingerprint-pinned TLS handshake.
+
+    The check is the handshake itself: any completed handshake whose peer
+    certificate matches the pin proves the endpoint is dialable, independent of
+    the HTTP status a keyed master would answer an unauthenticated request with
+    (``401``). The certificate is verified on the live connection, never on a
+    separate probe, so there is no TOCTOU window.
+    """
+    try:
+        context = create_fingerprint_ssl_context(fingerprint)
+        with socket.create_connection((host, port), timeout=timeout) as connection:
+            with context.wrap_socket(connection, server_hostname=None) as tls:
+                return verify_peer_cert_fingerprint(tls, fingerprint)
+    except (OSError, ValueError):
+        return False
+
+
+def _select_master_endpoint(master, log) -> tuple[str, int] | None:
+    """Pick the first reachable master candidate, host/LAN candidates first.
+
+    A single-candidate peer (mDNS, or a bootnode peer that advertised one
+    address) is returned as-is: the data-plane connection is its own
+    reachability check, so no extra probe is spent. A peer that advertised
+    several candidates is probed in host/LAN-first order with a bounded
+    per-candidate timeout; the first candidate whose pinned handshake succeeds
+    wins. This is what lets two peers behind the same NAT use the local path
+    while a remote peer still falls back to its public endpoint. Returns ``None``
+    when no candidate is reachable now.
+    """
+    candidates = dial_candidates(
+        getattr(master, "endpoints", ()),
+        master.address,
+        master.port,
+        get_local_ip(),
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    for host, port in candidates:
+        if _probe_master_endpoint(
+            host, port, master.cert_fingerprint, MASTER_CANDIDATE_PROBE_TIMEOUT_S
+        ):
+            if (host, port) != (master.address, master.port):
+                log.info(f"Selected master endpoint {host}:{port} of {len(candidates)}")
+            return host, port
+    return None
+
+
 def _run_as_slave(
     config: "HsyncConfig",
     log,
@@ -829,10 +902,6 @@ def _run_as_slave(
             )
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
 
-        master_url = master.get_server_url()
-        log.info(f"Connecting to master: {master.cid} at {master_url}")
-        emit_event(UiEventName.server, url=master_url)
-
         if not _evaluate_master_pin(config, master, log, notified=notified):
             # Stay in the discovery loop (continuous) rather than connecting to
             # a master whose identity can no longer be verified or which has not
@@ -840,6 +909,19 @@ def _run_as_slave(
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
         config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
+
+        # Pick the reachable data-plane endpoint: a bootnode peer advertises
+        # several candidates, so the local one is preferred over the NATed
+        # public one. A single-candidate peer keeps its endpoint unchanged.
+        endpoint = _select_master_endpoint(master, log)
+        if endpoint is None:
+            log.warning(f"No reachable endpoint for master {master.cid}; retrying discovery.")
+            return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
+        master_host, master_port = endpoint
+
+        master_url = server_url(master_host, master_port, use_https=master.use_https)
+        log.info(f"Connecting to master: {master.cid} at {master_url}")
+        emit_event(UiEventName.server, url=master_url)
 
         config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
         ws_master_url = http_to_ws(master_url)
@@ -868,7 +950,7 @@ def _run_as_slave(
 
         # Re-derive autotune-managed tuning from the real master RTT (the P2P
         # startup probe is skipped when only the placeholder URL is known)
-        _refresh_p2p_network_tuning(master, config, log)
+        _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
 
         # Check if dry-run mode is enabled
         exit_code = int(ExitCode.OK)
@@ -931,7 +1013,6 @@ def _run_as_slave(
         # In continuous mode, connect via WebSocket for real-time events. The
         # control plane shares the master's single HTTPS/WSS port.
         log.info("Initial sync complete, connecting to WebSocket for real-time events...")
-        control_port = master.port
         # The master's mDNS record may be quiescent (its TXT only changes on
         # presence/server_ready flips), which would otherwise let this slave
         # falsely demote it while the WebSocket link is healthy. Mark the master
@@ -942,8 +1023,8 @@ def _run_as_slave(
                 _with_stdin_commands(
                     log,
                     p2p_websocket_client(
-                        host=master.address,
-                        port=control_port,
+                        host=master_host,
+                        port=master_port,
                         use_https=True,
                         inventory_publisher=inventory_publisher,
                         source_resolver=source_resolver,

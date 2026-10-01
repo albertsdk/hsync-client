@@ -18,6 +18,7 @@ import pytest
 from hsync_client.config import CONFIG, HsyncConfig
 from hsync_client.events import UiEventName
 from hsync_client.main_logic import run_sync
+from hsync_client.p2p_peers import Peer
 from tests.test_main_logic_sync import _default_run_sync_kwargs
 
 _ALL_TUNING_KEYS = [
@@ -239,7 +240,7 @@ class TestSlaveTuningRefreshOrdering:
             ),
             patch(
                 "hsync_client.p2p_handler._refresh_p2p_network_tuning",
-                side_effect=lambda *_a: calls.append("refresh"),
+                side_effect=lambda *_a, **_k: calls.append("refresh"),
             ),
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
@@ -399,3 +400,58 @@ class TestRunSyncLanPlaceholder:
         assert config_arg["HTTP_TIMEOUT"] == 45
         assert "HTTP_TIMEOUT" not in config_arg["AUTOTUNE_MANAGED_KEYS"]
         assert set(config_arg["AUTOTUNE_MANAGED_KEYS"]) == set(_ALL_TUNING_KEYS) - {"HTTP_TIMEOUT"}
+
+
+def _master_with_endpoints(endpoints):
+    return Peer(
+        cid="abc123",
+        bucket="shared",
+        address=endpoints[0][0],
+        port=endpoints[0][1],
+        use_https=True,
+        cert_fingerprint="a" * 64,
+        endpoints=tuple(endpoints),
+    )
+
+
+class TestSelectMasterEndpoint:
+    """The slave picks the first reachable candidate, host/LAN first (ICE-lite)."""
+
+    def test_single_candidate_skips_the_probe(self):
+        from hsync_client.p2p_handler import _select_master_endpoint
+
+        master = _master_with_endpoints([("192.168.1.1", 9000)])
+        with (
+            patch("hsync_client.p2p_handler.get_local_ip", return_value="10.0.0.5"),
+            patch("hsync_client.p2p_handler._probe_master_endpoint") as probe,
+        ):
+            assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.1", 9000)
+        probe.assert_not_called()
+
+    def test_same_subnet_candidate_is_probed_first_and_selected(self):
+        from hsync_client.p2p_handler import _select_master_endpoint
+
+        master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
+        probed: list[tuple[str, int]] = []
+
+        def reachable(host, port, fingerprint, timeout):
+            probed.append((host, port))
+            return host == "192.168.1.42"
+
+        with (
+            patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
+            patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=reachable),
+        ):
+            assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
+        # The LAN candidate is tried before the public one.
+        assert probed[0] == ("192.168.1.42", 9000)
+
+    def test_no_reachable_candidate_returns_none(self):
+        from hsync_client.p2p_handler import _select_master_endpoint
+
+        master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
+        with (
+            patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
+            patch("hsync_client.p2p_handler._probe_master_endpoint", return_value=False),
+        ):
+            assert _select_master_endpoint(master, MagicMock()) is None

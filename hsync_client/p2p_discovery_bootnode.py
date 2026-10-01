@@ -55,7 +55,13 @@ from hsync_client.constants import (
 from hsync_client.nat_traversal import candidate_endpoints
 from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_discovery import DiscoveryFatalError, DiscoveryPlanState
-from hsync_client.p2p_peers import HSYNC_P2P_LISTEN_PORT, Peer, PeerManager, get_free_port
+from hsync_client.p2p_peers import (
+    HSYNC_P2P_LISTEN_PORT,
+    Peer,
+    PeerManager,
+    dial_candidates,
+    get_free_port,
+)
 from hsync_client.stun import ObservedAddress, observed_address
 from hsync_client.upnp import UpnpMapper
 
@@ -513,16 +519,32 @@ class BootnodeDiscovery(DiscoveryPlanState):
         election with the same inputs as a mDNS-discovered one. They are
         unauthenticated claims: the data plane pins the peer certificate before
         any file is exchanged.
+
+        The full ``endpoints`` candidate list is kept on the peer and a
+        same-subnet candidate is promoted to the primary address, so two peers
+        behind the same NAT dial the local path instead of the public endpoint
+        (which has no hairpin route on most home routers).
         """
         if not wire.get("reachable", True):
             return None
-        if wire["proto"] != "tcp":
+        candidates = tuple(
+            (endpoint["host"], endpoint["port"])
+            for endpoint in wire["endpoints"]
+            if endpoint["proto"] == "tcp"
+        )
+        if not candidates:
             return None
+        # Promote a same-subnet/loopback candidate to the primary address (the
+        # ordering policy lives once, in dial_candidates), so a same-NAT peer
+        # dials the local path; the full list is kept for connect-time fallback.
+        primary_host, primary_port = dial_candidates(
+            candidates, candidates[0][0], candidates[0][1], get_local_ip()
+        )[0]
         return Peer(
             cid=wire["cid"],
             bucket=wire["bucket"],
-            address=wire["ip"],
-            port=wire["port"],
+            address=primary_host,
+            port=primary_port,
             version=wire.get("version", "0.0.0"),
             group=wire.get("group"),
             use_https=True,
@@ -533,6 +555,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             never_master=wire["never_master"],
             startup_time=wire["startup_time"],
             sync_direction=wire["sync_direction"],
+            endpoints=candidates,
         )
 
     def _endpoint_wire(self) -> list[dict[str, object]]:

@@ -46,17 +46,20 @@ ACK = {
 }
 
 
-def relayed_peer(cid, *, ip, port, proto="tcp", capacity=0, reachable=True, **advert):
+def relayed_peer(
+    cid, *, ip, port, proto="tcp", capacity=0, reachable=True, endpoints=None, **advert
+):
     """A relayed ``peers[]`` entry: every field the bootnode always echoes.
 
     The election advertisement keys are required on the wire (the node always
-    relays them); ``advert`` overrides the defaults for a test.
+    relays them); ``advert`` overrides the defaults for a test. ``endpoints``
+    replaces the default single-element candidate list.
     """
+    if endpoints is None:
+        endpoints = [{"proto": proto, "host": ip, "port": port}]
     peer = {
         "cid": cid,
-        "ip": ip,
-        "port": port,
-        "proto": proto,
+        "endpoints": endpoints,
         "cert_fp": FP,
         "bucket": "shared",
         "group": "home",
@@ -243,6 +246,56 @@ class TestPeerFeed:
         plan._peer_manager = manager
         plan._query_peers()
         assert manager.get_alive_peers() == []
+
+    def test_same_subnet_candidate_is_promoted(self, monkeypatch):
+        """A LAN candidate must become the primary dial address.
+
+        Regression for the NAT-hairpin failure: two peers behind one NAT cannot
+        reach each other's public endpoint (no NAT loopback), so the bootnode
+        relays the full candidate list and the requester must dial the
+        same-subnet candidate instead of the publicly advertised one.
+        """
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.get_local_ip",
+            lambda: "192.168.1.50",
+        )
+        plan, _ = make_plan()
+        public_first = relayed_peer(
+            OTHER,
+            ip="203.0.113.10",
+            port=8443,
+            endpoints=[
+                {"proto": "tcp", "host": "203.0.113.10", "port": 8443},
+                {"proto": "tcp", "host": "192.168.1.42", "port": 8443},
+            ],
+        )
+        peer = plan._peer_from_wire(public_first)
+        assert peer is not None
+        assert (peer.address, peer.port) == ("192.168.1.42", 8443)
+        assert peer.endpoints == (
+            ("203.0.113.10", 8443),
+            ("192.168.1.42", 8443),
+        )
+
+    def test_remote_candidate_keeps_the_advertised_order(self, monkeypatch):
+        """With no same-subnet candidate the first advertised endpoint stays primary."""
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.get_local_ip",
+            lambda: "10.0.0.5",
+        )
+        plan, _ = make_plan()
+        remote = relayed_peer(
+            OTHER,
+            ip="203.0.113.10",
+            port=8443,
+            endpoints=[
+                {"proto": "tcp", "host": "203.0.113.10", "port": 8443},
+                {"proto": "tcp", "host": "192.168.1.42", "port": 8443},
+            ],
+        )
+        peer = plan._peer_from_wire(remote)
+        assert peer is not None
+        assert (peer.address, peer.port) == ("203.0.113.10", 8443)
 
 
 class TestAdvertisement:

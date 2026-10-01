@@ -14,7 +14,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from ipaddress import ip_address, ip_network
+from ipaddress import ip_address
 from time import monotonic
 from types import MappingProxyType
 from typing import Protocol
@@ -46,6 +46,7 @@ from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 from requests import RequestException, Response
 
+from hsync_client.net_utils import same_subnet
 from hsync_client.p2p_inventory import P2PInventoryStore
 from hsync_client.pinning import PinStore, PinStoreError, default_pin_store
 from hsync_client.trust_messages import peer_source_changed_line
@@ -117,18 +118,6 @@ def build_peer_download_url(bucket: str, address: str, port: int) -> str:
     return f"https://{host}:{port}" + _FILES_DOWNLOAD_ROUTE.format(bucket=bucket)
 
 
-def _same_subnet(requester_address: str, peer_address: str) -> bool:
-    try:
-        requester = ip_address(requester_address)
-        peer = ip_address(peer_address)
-    except ValueError:
-        return False
-    if requester.version != peer.version:
-        return False
-    prefix = 24 if requester.version == 4 else 64
-    return peer in ip_network(f"{requester}/{prefix}", strict=False)
-
-
 def _read_bounded_response(response: Response) -> bytes:
     """Read one source response without buffering beyond the wire limit."""
     raw_length = response.headers.get("Content-Length")
@@ -191,8 +180,8 @@ class P2PSourceService:
             except ValueError:
                 continue
             unique.setdefault(peer.cid, peer)
-        same = [p for p in unique.values() if _same_subnet(requester_address, p.address)]
-        other = [p for p in unique.values() if not _same_subnet(requester_address, p.address)]
+        same = [p for p in unique.values() if same_subnet(requester_address, p.address)]
+        other = [p for p in unique.values() if not same_subnet(requester_address, p.address)]
         with self._rng_lock:
             self._rng.shuffle(same)
             self._rng.shuffle(other)

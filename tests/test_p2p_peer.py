@@ -9,7 +9,7 @@
 import time
 
 from hsync_client.constants import PEER_TIMEOUT
-from hsync_client.p2p_peers import Peer
+from hsync_client.p2p_peers import Peer, dial_candidates
 
 
 class TestPeer:
@@ -153,3 +153,46 @@ class TestPeer:
             sync_direction="upload-only",
         )
         assert peer.sync_direction == "upload-only"
+
+
+class TestDialCandidates:
+    """The dial-time endpoint ordering (NAT-hairpin avoidance, ADR boot/1)."""
+
+    def test_same_subnet_candidate_is_tried_first(self):
+        """A LAN candidate must outrank the public one for a same-NAT peer."""
+        candidates = dial_candidates(
+            (("203.0.113.10", 8443), ("192.168.1.42", 8443)),
+            address="203.0.113.10",
+            port=8443,
+            local_ip="192.168.1.50",
+        )
+        assert candidates == (("192.168.1.42", 8443), ("203.0.113.10", 8443))
+
+    def test_remote_candidates_keep_the_advertised_order(self):
+        """With no same-subnet candidate the order is the peer's preference."""
+        candidates = dial_candidates(
+            (("203.0.113.10", 8443), ("192.168.1.42", 8443)),
+            address="203.0.113.10",
+            port=8443,
+            local_ip="10.0.0.5",
+        )
+        assert candidates == (("203.0.113.10", 8443), ("192.168.1.42", 8443))
+
+    def test_loopback_candidate_is_treated_as_local(self):
+        candidates = dial_candidates(
+            (("203.0.113.10", 8443), ("127.0.0.1", 8443)),
+            address="203.0.113.10",
+            port=8443,
+            local_ip="10.0.0.5",
+        )
+        assert candidates == (("127.0.0.1", 8443), ("203.0.113.10", 8443))
+
+    def test_missing_candidate_list_degrades_to_the_primary(self):
+        """The mDNS plan has no candidate list: the primary endpoint is used."""
+        assert dial_candidates((), address="192.168.1.100", port=9753, local_ip="10.0.0.5") == (
+            ("192.168.1.100", 9753),
+        )
+        # A non-iterable value (a test double) must not raise.
+        assert dial_candidates(object(), address="192.168.1.100", port=9753) == (
+            ("192.168.1.100", 9753),
+        )

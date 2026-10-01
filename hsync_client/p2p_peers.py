@@ -23,7 +23,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 from hsync_common.protocol.p2p import (
@@ -38,6 +38,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.net_utils import same_subnet
 
 # mDNS service type for hsync (used for the TXT-flag helpers shared with the
 # mDNS plan); the bootnode plan does not use it.
@@ -64,6 +65,47 @@ def get_free_port() -> int:
     return port
 
 
+def server_url(address: str, port: int, *, use_https: bool) -> str:
+    """Build the base HTTP(S) URL for a peer data-plane endpoint."""
+    protocol = "https" if use_https else "http"
+    return f"{protocol}://{address}:{port}"
+
+
+def dial_candidates(
+    endpoints: Iterable[tuple[str, int]] | None,
+    address: str,
+    port: int,
+    local_ip: str | None = None,
+) -> tuple[tuple[str, int], ...]:
+    """Order a peer's dial candidates, host/LAN candidates first.
+
+    Same-subnet candidates (and loopback) are tried before the externally
+    advertised ones, so two peers behind the same NAT connect over the local
+    path — the public endpoint has no hairpin route on most home routers.
+    Candidates not known to be local keep their advertised order. Falls back to
+    the primary ``(address, port)`` when no candidate list is available (the
+    mDNS plan, or a caller that only knows one endpoint).
+
+    ``endpoints`` is typed loosely because callers may pass any iterable of
+    ``(host, port)`` pairs (including an untyped test double); a missing or
+    non-iterable value degrades to the primary pair.
+    """
+    candidates: tuple[tuple[str, int], ...] = ()
+    if isinstance(endpoints, Iterable):
+        candidates = tuple(endpoints)
+    if not candidates:
+        candidates = ((address, port),)
+    if not local_ip:
+        return candidates
+    local = [
+        (host, candidate_port)
+        for host, candidate_port in candidates
+        if host in ("127.0.0.1", "::1") or same_subnet(local_ip, host)
+    ]
+    remote = [candidate for candidate in candidates if candidate not in local]
+    return tuple(local) + tuple(remote)
+
+
 @dataclass
 class Peer:
     """Represents a discovered peer on the P2P."""
@@ -86,6 +128,11 @@ class Peer:
     never_master: bool = False  # True if peer refuses to ever be master
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
+    # Every dialable (host, port) candidate the peer advertised for its data
+    # plane, in advertised order (bootnode discovery relays the full list; mDNS
+    # supplies a single address and leaves this empty). ``address``/``port``
+    # remain the primary endpoint for callers that need one URL.
+    endpoints: tuple[tuple[str, int], ...] = ()
 
     def is_alive(self, timeout: float = PEER_TIMEOUT) -> bool:
         """Check if peer is still considered alive based on last_seen time.
@@ -102,9 +149,8 @@ class Peer:
         self.last_seen = time.time()
 
     def get_server_url(self) -> str:
-        """Get the HTTP/HTTPS server URL for this peer."""
-        protocol = "https" if self.use_https else "http"
-        return f"{protocol}://{self.address}:{self.port}"
+        """Get the HTTP/HTTPS server URL for this peer's primary endpoint."""
+        return server_url(self.address, self.port, use_https=self.use_https)
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +362,7 @@ class PeerManager:
                     or existing.compression_enabled != peer.compression_enabled
                     or existing.delta_enabled != peer.delta_enabled
                     or existing.peer_download_enabled != peer.peer_download_enabled
+                    or existing.endpoints != peer.endpoints
                 )
                 # Update all properties from the new peer object
                 existing.address = peer.address
@@ -327,6 +374,7 @@ class PeerManager:
                 existing.compression_enabled = peer.compression_enabled
                 existing.delta_enabled = peer.delta_enabled
                 existing.peer_download_enabled = peer.peer_download_enabled
+                existing.endpoints = peer.endpoints
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
