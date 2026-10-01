@@ -5,9 +5,9 @@
 ## General
 
 **Q: What is HSYNC p2p Mode?**
-p2p Mode lets devices sync files directly over the local network without
-a central server. One device is elected **master** and serves files to all
-other devices (**slaves**).
+p2p Mode lets devices sync files directly without a central server — over the
+local network (mDNS) or, across networks, through an optional bootnode. One
+device is elected **master** and serves files to all other devices (**slaves**).
 
 **Q: Is the server required for HSYNC to work?**
 No. p2p Mode works without a server. The server is only needed if you
@@ -210,7 +210,7 @@ with only the changed blocks.
 **Q: What is the device ID and what is `HSYNC_DEVICE_DIR` for?**
 Every installation owns one persistent **device identity** (the same model as
 Syncthing's device IDs): a stable 21-character device ID plus the TLS keypair
-used for the LAN transport. Both live in the device directory, which defaults
+used for the p2p transport. Both live in the device directory, which defaults
 to `$XDG_STATE_HOME/hsync/device/` (or `~/.local/state/hsync/device/` when
 `XDG_STATE_HOME` is unset) and can be overridden with
 `HSYNC_DEVICE_DIR`. The device ID is the anchor for TOFU fingerprint pins, so
@@ -255,14 +255,14 @@ HSYNC_P2P_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-
   hsync p2p -b photos -p ~/Photos
 ```
 
-> **Trust-LAN note (no `HSYNC_P2P_KEY`):** on an unauthenticated LAN the device
+> **Trusted-network note (no `HSYNC_P2P_KEY`):** on an unauthenticated network the device
 > ID a peer declares is not verified, so a malicious peer could squat another
 > peer's ID and get it refused while it holds the connection. This is a marginal
 > availability risk in a mode where reads are open but writes are refused by
-> default (a no-key LAN is read-only unless the dangerous
+> default (a no-key p2p run is read-only unless the dangerous
 > `--allow-unauthenticated-writes` opt-in is enabled on both sides); the far more
 > common case the check protects against is the *accidental* clone (a copied
-> configuration on a home LAN).
+> configuration on a home network).
 
 ## Files & Performance
 

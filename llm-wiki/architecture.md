@@ -6,20 +6,20 @@ framework; asyncio event loop + watchdog observer + a thread pool for transfers.
 ## Entry & orchestration
 
 `main.main` (`main.py:25`) invokes the Typer app (`cli.py`): a parent callback
-`cli.main` (`cli.py:750`) carrying the global options, plus two mutually
-exclusive subcommands `cli.lan` (`cli.py:837`) and `cli.server` (`cli.py:985`).
-Each subcommand validates its options and calls `run_sync` (`main_logic.py:539`),
+`cli.main` (`cli.py:938`) carrying the global options, plus two mutually
+exclusive subcommands `cli.p2p` (`cli.py:1025`) and `cli.server` (`cli.py:1470`).
+Each subcommand validates its options and calls `run_sync` (`main_logic.py:671`),
 which validates inputs, runs pre-sync safety checks, then branches by mode and
-starts the watcher loop. Console script: `cli.run` (`cli.py:1121`).
+starts the watcher loop. Console script: `cli.run` (`cli.py:1650`).
 
 ## The two run modes
 
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
 | **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:98`) |
-| **LAN (P2P)** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`) |
+| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or bootnode discovery + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`) |
 
-LAN sub-roles: `_run_as_master` (`p2p_handler.py:273`) starts the **single**
+p2p sub-roles: `_run_as_master` (`p2p_handler.py:273`) starts the **single**
 `P2PServer` (`p2p_server.py`) — one TLS listener serving the REST data plane and
 the WSS realtime control plane (`P2PWebSocketServer`, `p2p_websocket.py`) on the
 same port — plus the master watcher; `_run_as_slave`
@@ -40,7 +40,7 @@ getters (`config.py:154`–`:265`). Input validation is inline in `cli.py`
 - `_check_deletion_risk` (`main_logic.py:285`) — warns/prompts when settings could
   delete local data (gated by `--yes`).
 - `_check_p2p_write_policy` (`main_logic.py:379`) — requires a p2p key for
-  write-capable LAN sync in non-interactive mode.
+  write-capable p2p sync in non-interactive mode.
 - `_check_disk_space` (`main_logic.py:441`), `_check_server_connectivity`
   (`main_logic.py:1142`).
 - Runtime mass-deletion guard during sync: `_mass_deletion_blocked` (`sync.py:94`).

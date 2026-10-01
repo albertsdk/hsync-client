@@ -127,7 +127,7 @@ transport hub, not a conflict authority) and **ignores client-side
 deletions**, so the backup never loses files because a source host removed
 them. Adjust from the UI for other use cases.
 
-The LAN transport is **HTTPS/WSS-only** (protocol `p2p/1`): the master serves
+The p2p transport is **HTTPS/WSS-only** (protocol `p2p/1`): the master serves
 over TLS with a persistent self-signed identity and advertises its certificate
 fingerprint, which slaves pin (Trust-On-First-Use). There is no plain-HTTP
 option to configure.
@@ -195,7 +195,7 @@ assembling the flags by hand.
 
 The command is built client-side from the current form values and contains
 only the connection-matching fields. It is recomputed whenever the bucket,
-group or LAN-key fields change, and after pressing **Save** it is rebuilt from
+group or p2p-key fields change, and after pressing **Save** it is rebuilt from
 the configuration actually persisted by the backend (which normalizes inputs
 such as an invalid bucket or boolean fields), so the command always matches
 what the NAS runs with:

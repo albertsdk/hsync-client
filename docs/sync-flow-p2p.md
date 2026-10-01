@@ -7,8 +7,9 @@ peer-to-peer p2p mode.
 
 ## 1. Discovery & Master Election
 
-1. **mDNS Announcement**: Each peer announces itself on the LAN via mDNS,
-   advertising its CID, bucket, group, and capabilities.
+1. **Announcement**: Each peer announces itself — via mDNS on the LAN (default),
+   or by registering with the configured `boot/1` bootnode for a group spread
+   across networks — advertising its CID, bucket, group, and capabilities.
 2. **Peer Discovery**: `Peermanager` collects all visible peers in the same group.
 3. **Master Election**: A deterministic algorithm selects the master:
    - `server_ready` (incumbent) beats newcomers
@@ -18,7 +19,7 @@ peer-to-peer p2p mode.
    - Lowest `cid` lexicographically breaks ties
 4. **Role Assignment**: The winner becomes **master**, all others become **slaves**.
 
-See [LAN Protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) for the complete
+See [p2p protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) for the complete
 election algorithm.
 
 ## 2. Master WebSocket Hub

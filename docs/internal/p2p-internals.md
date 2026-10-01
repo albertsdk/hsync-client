@@ -14,7 +14,7 @@ echo-suppression machinery.
 
 ```mermaid
 flowchart TB
-    subgraph "LAN Network"
+    subgraph "Local network (mDNS)"
         subgraph "Master (elected)"
             M_DISC[mDNS Service]
             M_HTTP[HTTP Server]

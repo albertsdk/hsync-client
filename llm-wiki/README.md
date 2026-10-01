@@ -2,7 +2,8 @@
 
 Agent-optimized knowledge base for `hsync-client`, the sync daemon/CLI. It runs in
 two mutually exclusive modes — **remote** (talks to an `hsync-server` over
-REST+WS) and **LAN** (peer-to-peer master/slave over mDNS + HTTPS/WSS) — sharing
+REST+WS) and **p2p** (peer-to-peer master/slave; mDNS or bootnode discovery over
+HTTPS/WSS) — sharing
 one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
 > End-user / human docs live in [`../docs/`](../docs/README.md)
@@ -38,10 +39,10 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
   `multiprocessing.freeze_support()` first, then imports the CLI lazily (see
   `decisions.md`: PyInstaller × loguru `enqueue=True` helper re-exec).
 - Orchestrator: `run_sync` (`main_logic.py:539`) — validates, branches to remote or
-  LAN, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
+  p2p, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.
 - Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py:98`);
-  LAN → `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`).
+  p2p → `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`).
 - Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
   (`constants.py:21`); `CLIENT_NAME = "hsync-client"` (`:32`) feeds the
   `X-Client-Name` REST header build in `main_logic.py`.

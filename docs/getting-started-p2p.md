@@ -1,6 +1,7 @@
 # Getting Started — p2p Mode
 
-Sync files directly between devices on your local network — no server needed.
+Sync files directly between devices — on the same local network (mDNS), or
+across networks through a bootnode — with no server needed.
 
 > Back to [Getting Started](getting-started.md).
 
@@ -107,8 +108,8 @@ See [Authentication — Client-Side](authentication.md) for diagrams of both flo
 
 ## Environment Configuration
 
-Set the shared secret in the shell (required for writes) and enable LAN on the
-CLI. `HSYNC_P2P_MODE` is not read.
+Set the shared secret in the shell (required for writes) and enable p2p mode on
+the CLI. `HSYNC_P2P_MODE` is not read.
 
 ```bash
 export HSYNC_P2P_KEY="shared-secret"   # required for writes (read-only without it)

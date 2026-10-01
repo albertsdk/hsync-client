@@ -184,15 +184,16 @@ drives), HSYNC automates the entire process:
 3. **Run in continuous mode** (the default) on each device. HSYNC will detect changes in
    real time and propagate them automatically.
 
-4. **For LAN-only sync**, use the `p2p` subcommand without a server — devices
-   discover each other via mDNS and sync directly.
+4. **For serverless sync**, use the `p2p` subcommand without a server — devices
+   discover each other via mDNS on the same network, or through a bootnode
+   across networks, and sync directly.
 
 ---
 
 ## General migration checklist
 
-- [ ] HSYNC Server is deployed and reachable (Server Mode) or devices are on
-  the same LAN (p2p Mode)
+- [ ] HSYNC Server is deployed and reachable (Server Mode) or the devices can
+  reach each other (p2p Mode, via mDNS on a LAN or a bootnode across networks)
 - [ ] Source-of-truth device has been identified
 - [ ] Source device has uploaded all files to the bucket
 - [ ] Additional devices have downloaded to **empty** directories

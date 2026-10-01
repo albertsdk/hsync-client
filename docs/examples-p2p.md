@@ -8,7 +8,9 @@ Real-world usage examples for the `hsync` binary in **p2p peer-to-peer** deploym
 
 All examples assume the binary has been built (`./compile.sh`) and the
 `hsync` executable is on your `$PATH`. No server and no API key is needed —
-peers discover each other automatically via mDNS on the local network.
+peers discover each other automatically via mDNS on a local network, or by
+registering with a bootnode for a group spread across networks (see
+[Sync across networks](p2p-bootnode.md)).
 
 > **Write policy:** a keyless p2p is **read-only**. Every write-capable run
 > (the default bidirectional mode, and `upload-only`) must authorize writes with

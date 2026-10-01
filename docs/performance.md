@@ -7,6 +7,11 @@ methodology, measurement pitfalls), see the
 [Stress Test Plan](internal/stress-test-plan.md) and the
 [Test Suite Guide](internal/testing.md).
 
+> **Terminology:** in this page **LAN** denotes the p2p lane measured over mDNS
+> on the reference host. p2p mode also supports the bootnode discovery plan,
+> which reuses the same data plane (its cost is discovery/relay, not the transfer
+> path measured below).
+
 > Figures are medians over the runs noted in each table, on the reference host
 > described below.
 > They are reproducible with the stress harness, but absolute numbers are
@@ -104,6 +109,6 @@ per-file Python work and, in p2p mode, by the single-core GIL ceiling.
 | Peer offloading on the burst path | costs ~44 % of burst throughput when enabled (188 vs 130 files/s, same-session A/B) |
 | TLS/hashing | release the GIL partially; contribute but are not the bottleneck |
 
-Changes to the LAN trust model or sync engine may move these numbers.
+Changes to the p2p trust model or sync engine may move these numbers.
 To re-run the stress see
 [Stress Test Plan](internal/stress-test-plan.md) for the exact commands.

@@ -49,7 +49,7 @@ In p2p mode, the **slave**'s sync direction controls what it sends to the master
 
 ### Continuous Mode
 
-Continuous operation is the **default** in both LAN and server mode. In LAN
+Continuous operation is the **default** in both p2p and server mode. In p2p
 mode it is also implicit: peers monitor the local folder and the master's
 event stream without any extra flag.
 
@@ -64,7 +64,7 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync --once
 ```
 
 This compares local and remote files, syncs changes, and shuts down — useful
-for cron jobs or manual "sync now" operations on a LAN.
+for cron jobs or manual "sync now" operations in a p2p group.
 
 ### Dry Run
 
@@ -92,5 +92,5 @@ See [Conflict Resolution](conflict-resolution.md) for the full algorithm.
 
 - [p2p Mode Guide](p2p-mode.md) — detailed walkthrough
 - [Configuration — p2p Mode](configuration-p2p.md) — all p2p-mode CLI options
-- [Authentication — Client-Side](authentication.md) — auth flow diagrams (LAN with/without key)
-- [LAN Protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) — authoritative election + security reference
+- [Authentication — Client-Side](authentication.md) — auth flow diagrams (p2p with/without key)
+- [p2p protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) — authoritative election + security reference

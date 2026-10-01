@@ -3,6 +3,11 @@
 This guide covers the test suite for the HSYNC Client: structure, how to run
 tests, how to write new tests, and cross-project testing with `hsync-common`.
 
+> **Terminology:** in this guide **LAN** denotes the p2p test lane (the black-box
+> `test_bb_p2p_*` suite, which runs the **mDNS** discovery plan on loopback). p2p
+> mode also supports the **bootnode** discovery plan; those tests do not exercise
+> it.
+
 > For development setup, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Table of Contents

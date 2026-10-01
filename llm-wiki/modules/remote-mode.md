@@ -27,7 +27,7 @@ All REST calls go through a single pinned/configured `requests.Session`:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `get_http_session` | `utils.py:152` | shared session (keep-alive, TLS verify); honours the environment proxies — unlike the fingerprint-pinned LAN session, which sets `trust_env = False` |
+| `get_http_session` | `utils.py:152` | shared session (keep-alive, TLS verify); honours the environment proxies — unlike the fingerprint-pinned p2p session, which sets `trust_env = False` |
 | `http_get/post/delete/patch` | `utils.py:219`–`:290` | thin verbs over the session |
 | `get_ssl_verify` | `utils.py:121` | TLS verification policy |
 | `diagnose_connection_error` | `utils.py:260` | classify TLS/plaintext mismatches for clear errors |
@@ -83,7 +83,7 @@ the WSS event stream pins the live connection via
   the attempt number (e.g. "attempt 2/5") so users can gauge progress. On
   failure **one-shot mode exits non-zero**; **continuous mode (the default)**
   logs a warning, keeps the client alive and delegates the infinite retry to
-  `remote_connect` — a startup outage never terminates the daemon (LAN parity).
+  `remote_connect` — a startup outage never terminates the daemon (p2p parity).
 - Per-file transfers also use exponential backoff (`retry.py`);
   outbound WS events use `EventQueue` (see [sync-core.md](sync-core.md)).
 - Transfers retry on transient errors (`retry.py:105`) and emit `transfer_failed`

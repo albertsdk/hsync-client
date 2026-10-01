@@ -20,7 +20,7 @@ implements it, plus client-only operational rules.
 | [0025 sqlite-external-state-store](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + per-folder DB under the device dir); `HSYNC_STATE_DIR` / `HSYNC_STATE_DB` |
 | [0030 p2p-seeder-capacity-advertisement](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0030-p2p-seeder-capacity-advertisement.md) | Seeder advertisement (`p2p_websocket.py` `p2p_websocket_client` handshake), master session storage (`p2p_inventory.py` `begin_session(serve_slots=…)`/`session_serve_slots`), candidate echo (`p2p_sources.py` `P2PSourceService`), requester admission + busy-as-scheduling (`p2p_sources.py` `acquire_slot`/`release_slot`, `transfer.py` `_parse_retry_after`), seeder `Retry-After` (`p2p_server.py`) |
 
-LAN transport/security rationale (TOFU pinning, LAN-key policy, threat model) is
+p2p transport/security rationale (TOFU pinning, p2p-key policy, threat model) is
 in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) and maps to
 `pinning.py` + `ssl_utils.py` ([p2p-mode.md](modules/p2p-mode.md)).
 
@@ -114,7 +114,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   sync never blocks.
 - **Mandatory TLS in p2p mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
-- **Write-policy gate**: non-interactive write-capable LAN sync requires a p2p key
+- **Write-policy gate**: non-interactive write-capable p2p sync requires a p2p key
   (`_check_p2p_write_policy`, `main_logic.py:379`).
 - **Mass-deletion guard (§12)**: bulk deletes pause the cycle
   (`_mass_deletion_blocked`, `sync.py:94`) unless explicitly allowed.

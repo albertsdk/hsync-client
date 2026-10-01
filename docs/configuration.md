@@ -195,7 +195,7 @@ The client does **not** load `./.env` automatically. Use `--env-file PATH`,
 or `export` / `source` variables in the shell before launching `hsync`.
 
 `--env-file` only applies keys recognised by the settings model (the
-`HSYNC_*` variables listed in this page and the server/LAN guides). It does
+`HSYNC_*` variables listed in this page and the server/p2p guides). It does
 **not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `--once`,
 `--sync-direction`, or `--force-master`.
 

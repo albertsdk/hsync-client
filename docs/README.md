@@ -2,7 +2,8 @@
 
 HSYNC is a file-synchronization client. It keeps a local directory in sync in
 real-time either with a central **HSYNC server** (Server Mode) or directly with
-other devices on the same network (peer-to-peer **p2p Mode**). It ships as a
+other devices (peer-to-peer **p2p Mode**) — on the same local network via mDNS,
+or across networks through an optional bootnode. It ships as a
 single self-contained binary — no Python runtime is required to run it.
 
 ## Start here
@@ -27,7 +28,7 @@ chooser picks the right path; each path is a complete, copy-paste walkthrough:
 | Mode | Walkthrough | Best for |
 |------|-------------|----------|
 | **Server Mode** (central server) | [Getting Started — Server Mode](getting-started-server.md) | remote / internet sync, multiple sites |
-| **p2p Mode** (peer-to-peer) | [Getting Started — p2p Mode](getting-started-p2p.md) | devices on the same network, no server |
+| **p2p Mode** (peer-to-peer) | [Getting Started — p2p Mode](getting-started-p2p.md) | devices on the same network (mDNS) or across networks via a bootnode; no server |
 
 For the concepts behind each mode (how they work, security, master election),
 see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
@@ -66,7 +67,7 @@ see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
 - [Usage](usage.md) — CLI syntax and behaviour (symlinks, error handling, auto-tuning).
 - [Performance](performance.md) — measured throughput by mode, workload and phase.
 - [Internal architecture](internal/architecture.md) — how the client is structured.
-- [LAN protocol internals](internal/p2p-internals.md) — deep P2P details.
+- [p2p protocol internals](internal/p2p-internals.md) — deep P2P details.
 - [Auto-tuning internals](internal/autotune.md) — environment-adaptive defaults.
 - [Developer Guide](internal/developer.md) — for contributors.
 - [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.

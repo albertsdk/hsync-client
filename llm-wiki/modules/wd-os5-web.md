@@ -52,8 +52,8 @@ Scope: **p2p mode only**. In server mode the NAS is a client of a central
 
 Only connection-matching fields are emitted — bucket, mode, group, p2p key.
 Per-device sync behaviour and the NAS role are omitted: continuous mode is
-the default in both LAN and server mode, and master election resolves the
-remote role automatically. The LAN
+the default in both p2p and server mode, and master election resolves the
+remote role automatically. The p2p
 shared key is rendered masked (`KEY_MASK`, fixed length) with a reveal toggle
 (`keyRevealed`); the Copy button copies the unmasked command via
 `navigator.clipboard` with an `execCommand` fallback. Every interpolated value

@@ -7,8 +7,8 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `main` (parent callback) | `cli.py:750` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
-| `lan` | `cli.py` | p2p subcommand: shared + LAN-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
-| `server` | `cli.py` `server` | central-server subcommand: `HOSTNAME[:PORT]` positional + `--port` + shared flags, resolves the server URL eagerly (`HOSTNAME`/`HOSTNAME:PORT` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
+| `p2p` | `cli.py:1025` | p2p subcommand: shared + p2p-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
+| `server` | `cli.py:1470` | central-server subcommand: `HOSTNAME[:PORT]` positional + `--port` + shared flags, resolves the server URL eagerly (`HOSTNAME`/`HOSTNAME:PORT` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
 | `run` | `:1121` | console-script entry |
 | `collect_subcommand_options` | `:89` | introspects each subcommand's long flags for the capabilities document |
 | `capabilities_json_callback` | `:109` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
@@ -24,10 +24,10 @@ level, so the fast paths `--version` / `--help` / `--help-symbols` do not pay th
 needs. Pinned by `tests/test_startup_imports.py`.
 
 Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_P2P_KEY`, or hidden
-`--api-key-fd` (server subcommand) / `--p2p-key-fd` (lan subcommand) for a
+`--api-key-fd` (server subcommand) / `--p2p-key-fd` (p2p subcommand) for a
 parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
-`EnvSettings` fields; bucket/path/direction/the `lan`/`server` subcommand
+`EnvSettings` fields; bucket/path/direction/the `p2p`/`server` subcommand
 selection/`--force-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
 (the full-URL alternative is the `HSYNC_SERVER` env var; the CLI host wins
 when both are set). A server-mode run with neither a `HOSTNAME` nor a resolvable
@@ -41,7 +41,7 @@ built from `hsync_common.protocol.capabilities.build_capabilities` (schema v2:
 `subcommands` + per-subcommand `cli_options`) so the desktop can gate UI (§8).
 
 `--once` is the single one-shot selector: it maps to `continuous=False`,
-which also feeds the LAN `ONE_SHOT` config key, so the semantics are uniform
+which also feeds the p2p `ONE_SHOT` config key, so the semantics are uniform
 across topologies. Continuous is the default and `--once` is the only run-mode knob.
 
 ## Orchestration (`main_logic.py`)
@@ -50,10 +50,10 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | ------ | ---- | ---- |
 | `run_sync` | `main_logic.py:539` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: p2p mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
 | `_check_deletion_risk` | `:285` | warn/prompt on risky delete settings (`--yes` bypass; fails fast with exit 1 when no interactive TTY) |
-| `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key LAN run, independent of TTY/`--yes`; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
+| `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key p2p run, independent of TTY/`--yes`; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
 | `_warn_if_p2p_in_container` | `:424` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `:441` | min-free-disk guard |
-| `_check_server_connectivity` | `:1142` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (LAN parity) |
+| `_check_server_connectivity` | `:1142` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |
 | `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `:116` / `:130` / `:147` | resolve CLI > env > default |
 | `_start_hsyncignore_watcher` | `:474` | hot-reload `.hsyncignore` matcher |
 | `_safe_config_for_log` | `:512` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`P2P_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
@@ -118,7 +118,7 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
   `_validate_shared_options` (`cli.py:185`); bucket naming
-  via `_validate_bucket` (`cli.py:126`); LAN-only checks (discovery timeout,
+  via `_validate_bucket` (`cli.py:126`); p2p-only checks (discovery timeout,
   `--force-master` exclusivity) live in the `p2p` subcommand. There is no
   separate validators module.
 

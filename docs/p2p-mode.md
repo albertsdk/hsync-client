@@ -168,7 +168,7 @@ in the single reference:
 > - `--force-master` cannot be combined with `--sync-direction upload-only`/`download-only` — the master must stay bidirectional.
 > - `--force-master` and `--never-master` are mutually exclusive.
 >
-> The LAN authentication key is only ever supplied via the `HSYNC_P2P_KEY`
+> The p2p authentication key is only ever supplied via the `HSYNC_P2P_KEY`
 > environment variable, never as a CLI flag. That key is what authorizes writes:
 > a keyless p2p is read-only, and a write-capable run without a key is refused
 > with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key.
@@ -197,7 +197,7 @@ connection that carries the data.
   write-capable sync is refused and mutating HTTP endpoints return `403`.
 - **Dangerous explicit opt-in** — `--allow-unauthenticated-writes` or
   `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` permits no-key mutations on a
-  fully trusted LAN. A TTY or `--yes` does not grant this permission.
+  fully trusted network. A TTY or `--yes` does not grant this permission.
 - **Per-source trust** — each selected seeder is pinned independently by device
   ID and bucket before connecting. `--require-pairing` remains specific to the
   elected master; seeder trust uses persistent TOFU.
@@ -231,7 +231,7 @@ connection that carries the data.
 
 Every hsync installation owns **one persistent device identity** (the same
 model as Syncthing's device IDs): a stable 21-character **device ID** plus the
-TLS keypair used for the LAN transport. Both live in the device directory
+TLS keypair used for the p2p transport. Both live in the device directory
 (`HSYNC_DEVICE_DIR`, default `$XDG_STATE_HOME/hsync/device/` or
 `~/.local/state/hsync/device/` when `XDG_STATE_HOME` is unset), together with
 the per-folder sync-state databases (`syncstate/<uuid>.db`,

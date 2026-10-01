@@ -96,7 +96,7 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_P2P` | Min file size for delta transfer in p2p mode | `1048576` (1 MB) |
 
-`HSYNC_P2P_MODE` and `HSYNC_P2P_FORCE_MASTER` are **not** read. Enable LAN
+`HSYNC_P2P_MODE` and `HSYNC_P2P_FORCE_MASTER` are **not** read. Enable p2p mode
 with the `p2p` subcommand; pin a master with `--force-master`.
 
 `--no-peer-download` is a final opt-out: when present, peer downloading stays
@@ -121,4 +121,4 @@ bucket, and path remain CLI arguments.
 
 - [p2p Mode Guide](p2p-mode.md) — detailed walkthrough
 - [Authentication — Client-Side](authentication.md) — hello handshake + auth diagrams
-- [LAN Protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) — election + security reference
+- [p2p protocol spec](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) — election + security reference
