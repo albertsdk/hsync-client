@@ -95,7 +95,6 @@ class EnvSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HSYNC_",
         env_file_encoding="utf-8",
-        extra="ignore",
     )
 
     # Server Connection
