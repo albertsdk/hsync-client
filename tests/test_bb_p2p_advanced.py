@@ -474,6 +474,13 @@ class TestNoSplitBrainOnQuiescentPeer:
                 # links stay up (the quiescence window that used to split-brain).
                 time.sleep(5)
 
+                # peer_a resolves its local role at discovery start, before it
+                # can know about the forced master, so its log legitimately
+                # carries one self-election line followed by a [MASTER YIELD].
+                # The split-brain guard is about a *new* election once peer_b
+                # joins, so snapshot the startup one first.
+                elections_before = _stderr_text(a).count("This client elected as MASTER")
+
                 b = _p2p_start(peer_b, p2p_bucket, extra_env=fast_env)
                 try:
                     assert _wait_for_text_in_stderr(b, "[READY]", timeout=30), (
@@ -483,7 +490,7 @@ class TestNoSplitBrainOnQuiescentPeer:
                     time.sleep(3)
 
                     a_log = _stderr_text(a)
-                    assert "This client elected as MASTER" not in a_log, (
+                    assert a_log.count("This client elected as MASTER") == elections_before, (
                         "peer_a self-elected after peer_b joined (split-brain):\n" + a_log
                     )
                     assert "Master changed" not in _stderr_text(master), (

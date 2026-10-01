@@ -20,16 +20,21 @@ Without `--once` the client keeps running and retries an unreachable server
 forever, so schedulers must always pass `--once`.
 
 In **p2p Mode** the same `--once` flag runs one slave sync cycle and
-exits. Schedulers run non-interactively, so a write-capable LAN run must carry
-the shared key (a keyless p2p is read-only):
+exits. The discovery timeout is the run's whole budget: a client that is still
+alone when it expires exits with code `5`, even though a lone eligible peer
+resolves its own role as master at discovery start — the finite window, not
+the role, ends a one-shot run. Schedulers run non-interactively, so a
+write-capable p2p run must carry the shared key (a keyless p2p is read-only):
 
 ```bash
 HSYNC_P2P_KEY="shared-secret" hsync p2p -b docs -p ~/Sync --once
 ```
 
-> **Note:** the p2p master role is inherently continuous (it must stay
-> available to serve peers). One-shot LAN runs apply to the slave side:
+> **Note:** a p2p master that is serving live peers is inherently continuous
+> (it must stay available to serve them). One-shot p2p runs are the slave side:
 > keep the master running and start the slave with `--once`.
+> `--discovery-timeout 0` is the explicit opt-in to wait for the first peer
+> forever.
 
 Flags that make a run non-interactive and safe for schedulers:
 
@@ -52,7 +57,7 @@ schedulers must rely on it rather than parsing log output.
 | `2` | The cycle completed but **some transfers failed**. Those files are retried on the next run. | Re-run; alert if it persists. |
 | `3` | The **mass-deletion guard** tripped: some unconfirmed deletions were skipped this cycle. | Review before they can proceed. |
 | `4` | **Causal conflicts** were resolved by preserving `*_conflicted_copy_*` files. | Review the preserved copies. |
-| `5` | **LAN one-shot only**: no peer/master was found within the discovery timeout; nothing was synchronized. | Verify the master is reachable. |
+| `5` | **p2p one-shot only**: no peer/master was found within the discovery timeout (a lone client exits instead of serving as master); nothing was synchronized. | Verify the master is reachable. |
 
 When several conditions co-exist, priority is:
 failed transfers (`2`) > deletion guard (`3`) > conflicts (`4`).
@@ -132,11 +137,12 @@ Notes:
       --env-file /etc/hsync/hsync.env --dry-run
   ```
 
-### LAN one-shot via cron
+### p2p one-shot via cron
 
 Schedules a slave that syncs against the p2p master and exits (exit `5`
 means "no peer found"). A finite `--discovery-timeout` bounds the wait for
-the first peer (the default is to wait indefinitely):
+the first peer and is what ends the run when no peer shows up (the default
+waits indefinitely, so a one-shot run never exits):
 
 ```cron
 0 2 * * * hsyncuser HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared \

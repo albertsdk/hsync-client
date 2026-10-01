@@ -349,6 +349,26 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
             # further event arrives (e.g. a two-node group whose master died).
             peer_manager.reconcile_stale_peers()
 
+            # A one-shot run must terminate: its discovery window is its whole
+            # lifetime budget. Once that window expired without a single live
+            # peer there is nothing to sync and nobody to serve, yet the local
+            # role may be MASTER — a lone eligible node claims mastership at
+            # discovery start so a joining slave finds a serving master. Without
+            # this gate that self-conferred role would keep the continuous
+            # master loop alive forever, so `--once` would never honour the
+            # documented no-peer exit code. A master that does have live peers
+            # (or any continuous run, which has no deadline) stays continuous.
+            # A single clock read feeds both gates below so mocked and real
+            # clocks advance one step per iteration.
+            now_after_discovery = time.monotonic()
+            if (
+                discovery_deadline is not None
+                and now_after_discovery >= discovery_deadline
+                and not peer_manager.get_alive_peers()
+            ):
+                log.warning("No master elected - this client is alone, nothing to sync")
+                return int(ExitCode.P2P_NO_PEER)
+
             # A finite one-shot window must not end merely because an
             # ineligible seeder wakes discovery before the serving master is
             # announced. Keep consuming mDNS changes until a master is elected
@@ -356,7 +376,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
             if (
                 discovery_deadline is not None
                 and peer_manager.get_master_cid() is None
-                and time.monotonic() < discovery_deadline
+                and now_after_discovery < discovery_deadline
             ):
                 continue
 

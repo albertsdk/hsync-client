@@ -78,7 +78,14 @@ class TestBootnodeDiscovery:
                     content = b"bootnode-origin\n"
                     (Path(p2p_master_dir) / "boot.txt").write_bytes(content)
 
-                    assert _wait_for_file(str(Path(p2p_slave_dir) / "boot.txt"), timeout=30), (
+                    # The bootnode plan paces register/refresh/query on the
+                    # spec's 30 s window (``boot-1.md``): each peer spends its
+                    # first lease cycle publishing its endpoint, so mutual
+                    # discovery lands in the *next* window (~40 s after the
+                    # peers start). 30 s was a one-window budget and lost that
+                    # race systematically; two windows plus the sync itself
+                    # keep the assertion about the wire path, not the clock.
+                    assert _wait_for_file(str(Path(p2p_slave_dir) / "boot.txt"), timeout=90), (
                         "File did not sync from master to slave through the bootnode"
                     )
                     assert (Path(p2p_slave_dir) / "boot.txt").read_bytes() == content

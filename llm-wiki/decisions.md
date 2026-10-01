@@ -33,7 +33,13 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   (`DISCOVERY_TIMEOUT_DEFAULT = 0`).
   Continuous is the default and `--once` is the single
   one-shot selector in both topologies (in p2p mode it runs one slave sync
-  cycle and exits; the master role stays continuous). Rationale: sync
+  cycle and exits; the master role stays continuous **while it has live
+  peers**). The finite discovery window ends a one-shot run even when the
+  local role was resolved as MASTER at discovery start: with no live peer the
+  discovery loop exits with `ExitCode.P2P_NO_PEER` (5)
+  (`p2p_handler.py:364`) instead of serving as a peer-less master, so a
+  scheduled `--once` run always terminates unless `--discovery-timeout 0`
+  explicitly waits forever. Rationale: sync
   daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
   connectivity loss; schedulers want the explicit one-shot + exit-code
   contract.

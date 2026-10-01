@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-09-30" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-01" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -167,7 +167,12 @@ Run a single sync cycle and exit. Without
 the client runs continuously (daemon mode, the default): it keeps the
 connection open, syncs changes in real time, and retries an unreachable
 server indefinitely instead of exiting. In p2p mode it runs one slave sync
-cycle and exits (the master role stays continuous regardless).
+cycle and exits, and a run that is still alone when
+.B \-\-discovery\-timeout
+expires exits with code
+.B 5
+instead of serving as a lone master; a master that is serving live peers
+stays continuous regardless.
 .TP
 .BR \-i ", " \-\-interval =\fISEC\fP
 Force a full re-scan every
@@ -364,7 +369,12 @@ Time to wait for initial p2p peer discovery
 (default:
 .BR 0 ;
 wait indefinitely, matching the server-mode default of retrying an
-unreachable server forever).
+unreachable server forever). In a one-shot run
+.RB ( \-\-once )
+this wait is the run's whole budget: a client that is still alone when it
+expires exits with code
+.B 5
+instead of acting as a peer-less master.
 .TP
 .BR \-\-group =\fIGROUP\fP
 Group name for p2p peer filtering. Only peers with the same group
@@ -1090,7 +1100,8 @@ Causal conflicts were resolved by preserving
 files.
 .TP
 .B 5
-LAN one-shot: no peer/master found within the discovery timeout.
+P2P one-shot: no peer/master found within the discovery timeout (a lone
+client exits instead of serving as master).
 .
 .\" ---------------------------------------------------------------------
 .SH SEE ALSO

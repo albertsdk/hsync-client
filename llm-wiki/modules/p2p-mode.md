@@ -20,6 +20,17 @@ SSOT in `hsync-common`.
 | `_refresh_p2p_network_tuning` | `:168` | re-derive autotune-managed keys from real master RTT (slave, post-discovery) |
 | `NO_MASTER_WARNING_TIMEOUT` | `:50` | warn when no master appears |
 
+The outer discovery loop also owns the **one-shot window**: with `ONE_SHOT` and
+a finite `DISCOVERY_TIMEOUT` it arms `discovery_deadline` (`p2p_handler.py:318`)
+and, once that deadline has passed with no live peer, logs `No master elected -
+this client is alone, nothing to sync` and returns `ExitCode.P2P_NO_PEER` (5)
+(`p2p_handler.py:364`). The gate exists because a lone eligible node is already
+MASTER at discovery start (see the election section below), so without it the
+continuous master role would turn `--once` into a run that never ends. A master
+that has live peers — and any continuous run, which has no deadline — keeps the
+continuous role; `DISCOVERY_TIMEOUT=0` explicitly waits forever
+(`docs/scheduling.md` is the user-facing SSOT for the code table).
+
 ## Discovery & election (`p2p_peers.py`, `p2p_discovery*.py`)
 
 The former single `p2p_peers.py`/`p2p_discovery_mdns.py` is split by responsibility so peer state can be fed

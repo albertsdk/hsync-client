@@ -374,6 +374,9 @@ class TestRunLanModeOuterLoopMasterPath:
         mock_peer_mgr = MagicMock()
         # Stay master across iterations until KeyboardInterrupt is raised.
         mock_peer_mgr.is_master.return_value = True
+        # A live peer is what keeps the continuous master loop alive: with
+        # somebody to serve the role must never be dropped, one-shot or not.
+        mock_peer_mgr.get_alive_peers.return_value = [MagicMock()]
 
         mock_p2p_sync = MagicMock()
         mock_p2p_sync.start.return_value = mock_peer_mgr
@@ -403,6 +406,47 @@ class TestRunLanModeOuterLoopMasterPath:
             "Outer loop must keep calling _run_as_master while the master role "
             "is held, regardless of ONE_SHOT"
         )
+
+    def test_master_loop_exits_one_shot_when_alone(self, tmp_path):
+        """A one-shot master that stayed alone exits with P2P_NO_PEER.
+
+        The local role is resolved at discovery start, so a lone eligible node
+        is already MASTER before any peer exists (that is what lets a joining
+        slave find a serving master). The continuous master loop must still
+        honour the finite one-shot window: with no live peer there is nobody to
+        serve, so `--once` exits with the documented no-peer code instead of
+        serving forever.
+        """
+        from hsync_client import p2p_handler
+        from hsync_client.exitcodes import ExitCode
+
+        config = _make_p2p_config(tmp_path, DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
+        mock_log = MagicMock()
+
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.is_master.return_value = True
+        mock_peer_mgr.get_alive_peers.return_value = []
+
+        mock_p2p_sync = MagicMock()
+        mock_p2p_sync.start.return_value = mock_peer_mgr
+        mock_p2p_sync.port = 9000
+        # The deadline is armed at 100.0 + 10s; every later clock read is past
+        # it, so the first iteration sees an expired window.
+        monotonic = iter([100.0, 111.0, 111.0, 111.0])
+
+        listener_server, listener_ws = _patch_p2p_listener()
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
+            patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
+            patch("hsync_client.p2p_handler.time.monotonic", side_effect=lambda: next(monotonic)),
+            patch("hsync_client.timesync.start_ntp_clock_offset_probe", return_value=None),
+        ):
+            exit_code = p2p_handler.run_p2p_mode(config, mock_log)
+
+        assert exit_code == int(ExitCode.P2P_NO_PEER)
+        assert mock_p2p_sync.wait_for_discovery.call_count == 1
+        assert any("this client is alone" in str(c) for c in mock_log.warning.call_args_list)
 
 
 class TestRunLanModeNoMasterWarning:
