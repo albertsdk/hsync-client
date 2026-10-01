@@ -78,10 +78,5 @@ cross-network discovery on top of it.
 
 ## Associated Ecosystem Components
 
-- [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
-- [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
-- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
-- [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
-
-> **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
-> are still under active development and are not yet ready for production use.
+> The other HSYNC ecosystem components are listed in the
+> [project README](../README.md#associated-ecosystem-components).

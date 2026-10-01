@@ -272,16 +272,16 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 - [Roadmap](ROADMAP.md) - Planned features and project direction
 - [Security Policy](SECURITY.md) - Supported versions and how to report vulnerabilities
 
-### Associated Ecosystem Components
+## Associated Ecosystem Components
 
-- [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) - Shared models, constants, and utilities used by the client
-- [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) - Central synchronization server (Server Mode)
-- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end *(in development)*.
-- [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/docs/README.md) — Android client app *(in development)*.
-- [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode/blob/main/README.md) — Optional Internet discovery node for P2P topologies; consumed through `HSYNC_BOOTNODE` *(v1 — stable)*.
+The other components of the HSYNC ecosystem:
 
-> **Note:** The desktop GUI (`HSYNC Desktop`) and the Android app (`HSYNC Android`)
-> are still under active development and are not yet ready for production use.
+- [HSYNC Main](https://github.com/albertsdk/hsync/blob/main/README.md) — Umbrella repository and project overview.
+- [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library: data models, protocol, delta transfer, hashing.
+- [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) — Central sync hub: REST API, WebSocket relay, file storage.
+- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/README.md) — Desktop GUI front-end. *(in development)*
+- [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/README.md) — Android client app. *(in development)*
+- [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode/blob/main/README.md) — Optional Internet discovery node for P2P (`boot/1`, no-log, RAM-only).
 
 ## Security & Vulnerability Reporting
 
