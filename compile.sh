@@ -17,6 +17,11 @@
 #                                                    package for host arch
 #                               deb-all              .deb for amd64, arm64,
 #                                                    and armhf (via Docker)
+#                               rpm                  RHEL-family .rpm package
+#                                                    for the host arch
+#                               rpm-all              .rpm for x86_64 and
+#                                                    aarch64 (via Docker,
+#                                                    Rocky Linux 9 baseline)
 #                               wd-ex2-ultra-os5     WD My Cloud EX2 Ultra OS5
 #                                                    (ARMv7, packaged as .bin)
 #                               wd-os5-all           Every WD OS5 model
@@ -38,7 +43,9 @@
 #   - native target: Python virtual environment (.venv); run 'poetry install'
 #   - deb target: Python virtual environment (.venv) + dpkg-deb (available on
 #     any Debian/Ubuntu system via dpkg-dev)
-#   - deb-all / rpi / wd-ex2-ultra-os5 / wd-os5-all: Docker with
+#   - rpm target: Python virtual environment (.venv) + rpmbuild (available on
+#     any RHEL/Rocky/Fedora system via rpm-build)
+#   - deb-all / rpm-all / rpi / wd-ex2-ultra-os5 / wd-os5-all: Docker with
 #     qemu-user-static (binfmt) configured (used for cross-arch emulation on
 #     amd64 hosts).
 #
@@ -53,6 +60,11 @@
 #     - dist/deb/hsync-client_<ver>_amd64.deb
 #     - dist/deb/hsync-client_<ver>_arm64.deb
 #     - dist/deb/hsync-client_<ver>_armhf.deb
+#   rpm:
+#     - dist/rpm/hsync-client-<ver>-1.<dist>.<arch>.rpm   Installable with dnf
+#   rpm-all:
+#     - dist/rpm/hsync-client-<ver>-1.el9.x86_64.rpm
+#     - dist/rpm/hsync-client-<ver>-1.el9.aarch64.rpm
 #   wd-ex2-ultra-os5:
 #     - dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_hsync_<ver>.bin
 #                                       Installable through the OS5 dashboard
@@ -223,7 +235,7 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Options:${RESET}
     -c, --clean             Clean build artifacts before building
     -t, --target TARGET     Build target (default: native)
-                            Supported: native, deb, deb-all, rpi,
+                            Supported: native, deb, deb-all, rpm, rpm-all, rpi,
                             wd-ex2-ultra-os5, wd-os5-all
     -v, --version VERSION   Override the package version (default:
                             pyproject.toml). Also settable via HSYNC_VERSION.
@@ -234,6 +246,8 @@ ${BOLD}Examples:${RESET}
     ./compile.sh --clean                        # Clean and rebuild
     ./compile.sh --target deb                   # .deb for host arch
     ./compile.sh --target deb-all               # .deb for amd64, arm64, armhf
+    ./compile.sh --target rpm                   # .rpm for host arch (RHEL-family)
+    ./compile.sh --target rpm-all               # .rpm for x86_64 + aarch64
     ./compile.sh --target rpi                   # Raspberry Pi armhf + arm64
     ./compile.sh --target wd-ex2-ultra-os5      # ARMv7 .bin for WD OS5
     ./compile.sh --target wd-os5-all            # All 10 WD OS5 models
@@ -247,6 +261,11 @@ ${BOLD}Output:${RESET}
         ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_amd64.deb
         ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_arm64.deb
         ${OUTPUT_BASE}/deb/${DEB_PKG_NAME}_<ver>_armhf.deb
+    rpm:
+        ${OUTPUT_BASE}/rpm/${DEB_PKG_NAME}-<ver>-1.<dist>.<arch>.rpm
+    rpm-all:
+        ${OUTPUT_BASE}/rpm/${DEB_PKG_NAME}-<ver>-1.el9.x86_64.rpm
+        ${OUTPUT_BASE}/rpm/${DEB_PKG_NAME}-<ver>-1.el9.aarch64.rpm
     wd-ex2-ultra-os5:
         dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_${APP_NAME}_<ver>.bin
     wd-os5-all:
@@ -338,6 +357,15 @@ get_version() {
 # metadata ('+') is left untouched (Debian uses '+' too).
 _semver_to_debian() {
     printf '%s' "$1" | sed 's/-/~/'
+}
+
+# Translate a SemVer version into an RPM Version: field. RPM (>= 4.10) also uses
+# '~' as the "sorts before everything" separator, so the mapping is the same as
+# Debian: the first '-' (SemVer prerelease separator) becomes '~'
+# (1.2.0-alpha.1 -> 1.2.0~alpha.1). The Release: field stays a plain number
+# (`1%{?dist}`), so the prerelease marker must live in Version, not Release.
+_semver_to_rpm() {
+    _semver_to_debian "$1"
 }
 
 # PyInstaller flags shared by the native (host) and rpi (container) onefile
@@ -452,6 +480,16 @@ _arch_to_deb() {
         x86_64|amd64)   echo "amd64" ;;
         aarch64|arm64)  echo "arm64" ;;
         armv7l|armv7)   echo "armhf" ;;
+        *)              echo "$1" ;;
+    esac
+}
+
+# Map uname -m to RPM architecture name. RHEL/Rocky is 64-bit only, so only
+# x86_64 and aarch64 are supported (no armv7hl); anything else is echoed as-is.
+_arch_to_rpm() {
+    case "$1" in
+        x86_64|amd64)   echo "x86_64" ;;
+        aarch64|arm64)  echo "aarch64" ;;
         *)              echo "$1" ;;
     esac
 }
@@ -935,6 +973,293 @@ build_deb_all() {
     echo -e "${GREEN}${BOLD}${sep}${RESET}"
     echo
     echo -e "${DIM}Install with:  sudo dpkg -i ${out_abs}/${DEB_PKG_NAME}_${version}_<arch>.deb${RESET}"
+}
+
+# -----------------------------------------------------------------------------
+# RPM package build (RHEL/Rocky/Alma/Fedora)
+# -----------------------------------------------------------------------------
+
+# Configuration for the rpm / rpm-all targets. The .spec is rendered from
+# packaging/rpm/hsync-client.spec (__VERSION__ replaced); the payload reuses the
+# Debian source tree (man page, systemd unit, /etc conffile) but the binary is a
+# separate PyInstaller build on the Rocky 9 baseline (glibc 2.34), never the
+# Debian-built binary.
+readonly RPM_DIR="packaging/rpm"
+readonly RPM_SPEC="${RPM_DIR}/hsync-client.spec"
+readonly RPM_PKG_NAME="hsync-client"
+readonly RPM_OUTPUT_DIR="${OUTPUT_BASE}/rpm"
+readonly RPM_BUILD_DIR="${BUILD_DIR}/rpm"
+readonly RPM_ALL_BUILD_DIR="${BUILD_DIR}/rpm-all"
+readonly RPM_BUILDER_IMAGE_PREFIX="hsync-rpm-builder"
+
+# Stage a buildroot for rpmbuild: Debian payload (etc/, usr/) + the PyInstaller
+# --onedir bundle under /usr/lib/hsync + a /usr/bin symlink + a gzipped man
+# page, with permissions normalised. Shared by build_rpm (host) and
+# build_rpm_all (container).
+# $1 = stage_dir (absolute)   $2 = built onedir dir (absolute)
+_stage_rpm_buildroot() {
+    local stage_dir="$1" built_dir="$2"
+    rm -rf "${stage_dir}"
+    mkdir -p "${stage_dir}"
+
+    # Debian payload (etc/, usr/) minus DEBIAN/ and the Dockerfile.
+    local item
+    for item in "${DEB_SRC_DATA}"/*; do
+        local bn
+        bn="$(basename "${item}")"
+        if [[ "${bn}" == "DEBIAN" || "${bn}" == "Dockerfile.builder" ]]; then
+            continue
+        fi
+        cp -a "${item}" "${stage_dir}/"
+    done
+
+    # Place the PyInstaller --onedir output under /usr/lib/hsync/.
+    mkdir -p "${stage_dir}/usr/lib"
+    cp -a "${built_dir}" "${stage_dir}/usr/lib/${APP_NAME}"
+    chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+
+    # Relative symlink: /usr/bin/hsync -> ../lib/hsync/hsync
+    mkdir -p "${stage_dir}/usr/bin"
+    ln -sf "../lib/${APP_NAME}/${APP_NAME}" "${stage_dir}/usr/bin/${APP_NAME}"
+
+    # Normalise permissions, gzip the man page, restrict the conffile.
+    find "${stage_dir}/etc" "${stage_dir}/usr" -type d -exec chmod 0755 {} + 2>/dev/null || true
+    find "${stage_dir}/etc" "${stage_dir}/usr" -type f -exec chmod 0644 {} + 2>/dev/null || true
+    chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+    local man="${stage_dir}/usr/share/man/man1/${APP_NAME}.1"
+    [[ -f "${man}" ]] && gzip -n -9 -f "${man}"
+    chmod 0750 "${stage_dir}/etc/hsync" 2>/dev/null || true
+    [[ -f "${stage_dir}/etc/hsync/hsync.conf" ]] && chmod 0600 "${stage_dir}/etc/hsync/hsync.conf"
+}
+
+# Render the spec with the resolved RPM version and echo its absolute path.
+# $1 = version (SemVer)   $2 = work dir
+_render_rpm_spec() {
+    local version="$1" work_dir="$2"
+    local rpm_version rendered
+    rpm_version="$(_semver_to_rpm "${version}")"
+    rendered="${work_dir}/hsync-client.spec"
+    sed "s/__VERSION__/${rpm_version}/g" "${RPM_SPEC}" > "${rendered}"
+    printf '%s' "${rendered}"
+}
+
+# Build a .rpm package for the host architecture (native build, no Docker).
+# Only meaningful on a RHEL-family host with rpmbuild installed.
+build_rpm() {
+    local version rpm_version rpm_arch
+    version="$(get_version)"
+    rpm_arch="$(_arch_to_rpm "${ARCH_NAME}")"
+
+    log_step "Building ${RPM_PKG_NAME} v${version} for ${rpm_arch} (host build)..."
+
+    check_prerequisites
+    if ! command -v rpmbuild >/dev/null 2>&1; then
+        log_error "rpmbuild is required for the rpm target."
+        log_info "Install it with: dnf install rpm-build (RHEL/Rocky/Fedora)."
+        exit 1
+    fi
+    mkdir -p "${RPM_OUTPUT_DIR}" "${RPM_BUILD_DIR}"
+
+    # --- PyInstaller --onedir on host ------------------------------------
+    local onedir_dist="${RPM_BUILD_DIR}/pyinstaller"
+    mkdir -p "${onedir_dist}"
+    log_step "Compiling ${APP_NAME} with PyInstaller (--onedir)..."
+    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" \
+        --clean --onedir --noconfirm --strip \
+        --name "${APP_NAME}" \
+        --distpath "${onedir_dist}" \
+        --workpath "${RPM_BUILD_DIR}/work" \
+        --specpath "${RPM_BUILD_DIR}/work" \
+        --log-level ERROR \
+        --hidden-import "websockets.legacy" \
+        --hidden-import "websockets.legacy.client" \
+        --hidden-import "websockets.client" \
+        --hidden-import "websockets.exceptions" \
+        --hidden-import "watchdog.observers" \
+        --hidden-import "watchdog.observers.inotify" \
+        --hidden-import "watchdog.observers.inotify_buffer" \
+        --hidden-import "watchdog.events" \
+        --hidden-import "rich._unicode_data" \
+        --hidden-import "rich._unicode_data._versions" \
+        --collect-submodules pathspec \
+        --collect-submodules hsync_common \
+        --exclude-module "pytest" --exclude-module "pytest_asyncio" \
+        --exclude-module "pytest_cov" --exclude-module "tkinter" \
+        --exclude-module "unittest" --exclude-module "pdb" \
+        --exclude-module "doctest" --exclude-module "pip" \
+        --exclude-module "setuptools" --exclude-module "wheel" \
+        --exclude-module "pkg_resources" --exclude-module "rapidfuzz" \
+        "${ENTRY_POINT}"
+
+    local built_dir="${onedir_dist}/${APP_NAME}"
+    [[ -d "${built_dir}" ]] || { log_error "PyInstaller --onedir output not found at ${built_dir}"; exit 1; }
+
+    # --- stage buildroot + render spec -----------------------------------
+    _stage_rpm_buildroot "${RPM_BUILD_DIR}/pkg" "${built_dir}"
+    local stage_dir
+    stage_dir="$(cd "${RPM_BUILD_DIR}/pkg" && pwd)"
+    local spec_path
+    spec_path="$(_render_rpm_spec "${version}" "${RPM_BUILD_DIR}")"
+
+    # --- rpmbuild --------------------------------------------------------
+    log_step "Building .rpm with rpmbuild..."
+    rpmbuild -bb "${spec_path}" \
+        --define "pkgdir ${stage_dir}" \
+        --define "_topdir ${RPM_BUILD_DIR}/rpmbuild"
+
+    local rpm_glob="${RPM_BUILD_DIR}/rpmbuild/RPMS/*/*.rpm"
+    local rpm_file
+    rpm_file="$(ls ${rpm_glob} 2>/dev/null | head -1)"
+    [[ -n "${rpm_file}" ]] || { log_error "rpmbuild produced no package"; exit 1; }
+    mv -f "${rpm_file}" "${RPM_OUTPUT_DIR}/"
+
+    rm -rf "${RPM_BUILD_DIR}/work" "${RPM_BUILD_DIR}/pyinstaller" "${APP_NAME}.spec" 2>/dev/null || true
+
+    local rpm_name rpm_path size
+    rpm_name="$(basename "$(ls "${RPM_OUTPUT_DIR}"/*.rpm 2>/dev/null | head -1)")"
+    rpm_path="${RPM_OUTPUT_DIR}/${rpm_name}"
+    size="$(du -h "${rpm_path}" | cut -f1)"
+    echo
+    log_ok "RPM package built!"
+    echo
+    echo -e "  ${BOLD}Package:${RESET}  ${rpm_name}"
+    echo -e "  ${BOLD}Arch:${RESET}     ${rpm_arch}"
+    echo -e "  ${BOLD}Size:${RESET}     ${size}"
+    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo
+    echo -e "${DIM}Install with:${RESET}"
+    echo -e "${DIM}  sudo dnf install ${rpm_path}${RESET}"
+}
+
+# Build .rpm packages for x86_64 and aarch64 via Docker + qemu, on the Rocky 9
+# baseline. Separate from the Debian build: the binary is compiled inside the
+# Rocky 9 image so its glibc requirement is <= 2.34 (RHEL 9 compatible).
+build_rpm_all() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${RPM_PKG_NAME} v${version} for x86_64 and aarch64..."
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the rpm-all target."
+        exit 1
+    fi
+    mkdir -p "${RPM_OUTPUT_DIR}"
+
+    local repo_root
+    repo_root="$(cd .. && pwd)"
+    local out_abs
+    out_abs="$(cd "${RPM_OUTPUT_DIR}" && pwd)"
+
+    ensure_qemu_binfmt qemu-aarch64
+
+    local -A arch_docker_platform
+    arch_docker_platform["x86_64"]="linux/amd64"
+    arch_docker_platform["aarch64"]="linux/arm64"
+
+    local -a rpm_archs=("x86_64" "aarch64")
+
+    for rpm_arch in "${rpm_archs[@]}"; do
+        local docker_platform="${arch_docker_platform[${rpm_arch}]}"
+        local builder_tag="${RPM_BUILDER_IMAGE_PREFIX}:${rpm_arch}"
+        local arch_build_dir="${RPM_ALL_BUILD_DIR}/${rpm_arch}"
+        local bin_dir="${arch_build_dir}/pyinstaller"
+        local work_dir="${arch_build_dir}/work"
+        mkdir -p "${bin_dir}" "${work_dir}"
+
+        echo
+        log_step "─── ${rpm_arch} build ───────────────────────────────────────"
+
+        # --- builder image ----------------------------------------------------
+        log_step "Building Docker image ${builder_tag}..."
+        DOCKER_BUILDKIT=1 docker build \
+            --platform "${docker_platform}" \
+            --build-arg TARGET_PLATFORM="${docker_platform}" \
+            -t "${builder_tag}" \
+            -f "${RPM_DIR}/Dockerfile.builder" \
+            "${RPM_DIR}"
+
+        # --- PyInstaller in container ----------------------------------------
+        log_step "Compiling ${rpm_arch} binary inside container..."
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
+            -v "${repo_root}:/repo" \
+            -w /repo/hsync-client \
+            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
+            -e POETRY_REQUESTS_TIMEOUT=300 \
+            "${builder_tag}" \
+            bash -c "
+                set -euo pipefail
+                poetry config virtualenvs.in-project true
+                poetry config installer.max-workers 4
+                install_ok=0
+                for attempt in 1 2 3; do
+                    if poetry install --no-root --without dev; then install_ok=1; break; fi
+                    echo \"poetry install attempt \${attempt}/3 failed, retrying in 10s...\" >&2
+                    sleep 10
+                done
+                [ \"\${install_ok}\" -eq 1 ] || { echo 'poetry install failed after 3 attempts' >&2; exit 1; }
+                poetry run pyinstaller \
+                    ${PYINSTALLER_COMMON_FLAGS} \
+                    --distpath ${bin_dir} \
+                    --workpath ${work_dir} \
+                    --specpath ${work_dir}
+            "
+
+        local built_dir="${bin_dir}/${APP_NAME}"
+        [[ -d "${built_dir}" ]] || { log_error "${rpm_arch} build directory not produced at ${built_dir}"; exit 1; }
+        log_ok "${rpm_arch} binary ready ($(du -sh "${built_dir}" | cut -f1))"
+
+        # --- stage buildroot + render spec -----------------------------------
+        local stage_dir="${arch_build_dir}/pkg"
+        local spec_path
+        spec_path="$(_render_rpm_spec "${version}" "${arch_build_dir}")"
+        _stage_rpm_buildroot "${stage_dir}" "${built_dir}"
+        stage_dir="$(cd "${stage_dir}" && pwd)"
+        local spec_abs
+        spec_abs="$(cd "$(dirname "${spec_path}")" && pwd)/$(basename "${spec_path}")"
+
+        # --- rpmbuild in container -------------------------------------------
+        log_step "Building .rpm for ${rpm_arch}..."
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -v "${stage_dir}:/pkg:ro" \
+            -v "${spec_abs}:/hsync.spec:ro" \
+            -v "${out_abs}:/out" \
+            -w /tmp \
+            "${builder_tag}" \
+            bash -c "
+                set -euo pipefail
+                topdir=/tmp/rpmbuild-\$\$
+                rpmbuild -bb /hsync.spec \
+                    --define 'pkgdir /pkg' \
+                    --define \"_topdir \${topdir}\"
+                out_rpm=\$(ls \${topdir}/RPMS/*/*.rpm | head -1)
+                cp \"\${out_rpm}\" /out/
+                chmod 0644 \"/out/\$(basename \"\${out_rpm}\")\"
+                chown \"\${HOST_UID}:\${HOST_GID}\" \"/out/\$(basename \"\${out_rpm}\")\"
+                rm -rf \"\${topdir}\"
+            "
+
+        local rpm_glob="${out_abs}/${RPM_PKG_NAME}-"*".${rpm_arch}.rpm"
+        local rpm_file
+        rpm_file="$(ls ${rpm_glob} 2>/dev/null | head -1)"
+        [[ -n "${rpm_file}" ]] || { log_error ".rpm not produced for ${rpm_arch}"; exit 1; }
+        log_ok "  → $(basename "${rpm_file}") ($(du -h "${rpm_file}" | cut -f1))"
+    done
+
+    echo
+    log_ok "RPM packages built!"
+    echo
+    echo -e "  ${BOLD}Version:${RESET}   ${version}"
+    echo -e "  ${BOLD}Output:${RESET}    ${out_abs}/"
+    echo
+    echo -e "${DIM}Install with:  sudo dnf install ${out_abs}/${RPM_PKG_NAME}-${version}-1.el9.<arch>.rpm${RESET}"
 }
 
 # -----------------------------------------------------------------------------
@@ -1646,9 +1971,33 @@ main() {
             fi
             build_wd_os5_all
             ;;
+        rpm)
+            check_prerequisites
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning rpm artifacts..."
+                rm -rf "${RPM_OUTPUT_DIR}" "${RPM_BUILD_DIR}"
+                echo
+            fi
+            build_rpm
+            ;;
+        rpm-all)
+            if [[ ! -f "pyproject.toml" ]]; then
+                log_error "pyproject.toml not found. Run from the project root."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning rpm-all artifacts..."
+                rm -rf "${RPM_OUTPUT_DIR}" "${RPM_ALL_BUILD_DIR}"
+                docker image rm -f \
+                    "${RPM_BUILDER_IMAGE_PREFIX}:x86_64" \
+                    "${RPM_BUILDER_IMAGE_PREFIX}:aarch64" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_rpm_all
+            ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: native, deb, deb-all, rpi, wd-ex2-ultra-os5, wd-os5-all"
+            echo "Supported targets: native, deb, deb-all, rpm, rpm-all, rpi, wd-ex2-ultra-os5, wd-os5-all"
             exit 1
             ;;
     esac

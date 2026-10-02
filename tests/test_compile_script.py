@@ -72,3 +72,32 @@ def test_container_workdir_is_the_poetry_project_root() -> None:
     """
     assert "-w /repo/hsync-client" in _script()
     assert (COMPILE_SH.parent / "pyproject.toml").is_file()
+
+
+def test_rpm_version_mapping_is_registered() -> None:
+    """The RPM targets must carry the SemVer -> RPM Version: mapping.
+
+    RPM >= 4.10 uses ``~`` for "sorts before everything", so the mapping is the
+    same as the Debian one (first ``-`` becomes ``~``). ``_semver_to_rpm`` must
+    therefore exist and delegate to ``_semver_to_debian`` rather than re-encode
+    the rule.
+    """
+    script = _script()
+    assert "_semver_to_rpm()" in script
+    assert '_semver_to_debian "$1"' in script
+
+
+def test_rpm_arch_mapping_is_64_bit_only() -> None:
+    """RHEL/Rocky is 64-bit only, so only x86_64 and aarch64 are mapped."""
+    script = _script()
+    assert 'x86_64|amd64)   echo "x86_64"' in script
+    assert 'aarch64|arm64)  echo "aarch64"' in script
+
+
+def test_rpm_targets_are_registered_in_dispatch() -> None:
+    """``rpm`` and ``rpm-all`` must be wired into the main() dispatch and help."""
+    script = _script()
+    assert "rpm)" in script
+    assert "rpm-all)" in script
+    assert "Supported targets:" in script
+    assert "rpm-all" in script

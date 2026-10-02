@@ -25,6 +25,8 @@ procedure.
 | Debian package | Debian/Ubuntu | amd64 | `hsync-client_<version>_amd64.deb` | [Debian package](getting-started-deb.md) |
 | Debian package | Debian/Ubuntu | arm64 | `hsync-client_<version>_arm64.deb` | [Debian package](getting-started-deb.md) |
 | Debian package | Debian/Ubuntu | armhf | `hsync-client_<version>_armhf.deb` | [Debian package](getting-started-deb.md) |
+| RPM package | RHEL/Rocky/Alma/Fedora | x86_64 | `hsync-client-<version>-1.el9.x86_64.rpm` | [RPM package](getting-started-rpm.md) |
+| RPM package | RHEL/Rocky/Alma/Fedora | aarch64 | `hsync-client-<version>-1.el9.aarch64.rpm` | [RPM package](getting-started-rpm.md) |
 | WD OS5 installer | WD My Cloud OS5 | model-specific | `<MODEL>_hsync_<version>.bin` | [WD OS5 packaging](../packaging/wd-os5/README.md) |
 | Checksums | all | all | `SHA256SUMS` | [Verify the download](#verify-the-download) |
 

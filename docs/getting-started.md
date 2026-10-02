@@ -14,8 +14,9 @@ and most immediate to the most involved.
 | 1 | **Installer script** (`install.sh` via `curl`) | Least setup on Linux or macOS: one command, verified download | [Installer script](getting-started-script.md) |
 | 2 | **Standalone binary** (archive) | You manage the binary and `PATH` yourself (Linux/macOS/Windows) | [Standalone binary](getting-started-binary.md) |
 | 3 | **Debian/Ubuntu package** (`.deb`) | A Debian/Ubuntu host managed by systemd | [Debian package](getting-started-deb.md) |
-| 4 | **WD My Cloud OS5** (`.bin`) | A supported WD My Cloud OS5 NAS | [WD OS5 packaging](../packaging/wd-os5/README.md) |
-| 5 | **From source** (clone and build) | Development, or a platform with no prebuilt asset | [Build from source](getting-started-source.md) |
+| 4 | **RPM package** (`.rpm`) | A RHEL/Rocky/Alma/Fedora host managed by systemd | [RPM package](getting-started-rpm.md) |
+| 5 | **WD My Cloud OS5** (`.bin`) | A supported WD My Cloud OS5 NAS | [WD OS5 packaging](../packaging/wd-os5/README.md) |
+| 6 | **From source** (clone and build) | Development, or a platform with no prebuilt asset | [Build from source](getting-started-source.md) |
 
 All methods produce the same `hsync` executable; only the toolchain differs. The
 asset names for every platform and the checksum file are in
