@@ -26,7 +26,7 @@ file watching, compression, and bandwidth control.
 
 %prep
 # No source archive: the payload is a staged buildroot supplied by compile.sh
-# and copied verbatim in %install.
+# and copied verbatim below.
 exit 0
 
 %install
