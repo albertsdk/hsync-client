@@ -1102,10 +1102,20 @@ build_rpm() {
     spec_path="$(_render_rpm_spec "${version}" "${RPM_BUILD_DIR}")"
 
     # --- rpmbuild --------------------------------------------------------
+    # rpmbuild must receive an ABSOLUTE _topdir: it chdir()s into the build
+    # directory, so a relative _topdir makes %{buildroot} resolve against the
+    # wrong CWD and every %files entry is reported missing. _dbpath points at a
+    # writable directory so a non-root rpmbuild does not touch /var/lib/rpm.
     log_step "Building .rpm with rpmbuild..."
-    rpmbuild -bb "${spec_path}" \
+    local spec_abs topdir_abs dbpath_abs
+    spec_abs="$(cd "$(dirname "${spec_path}")" && pwd)/$(basename "${spec_path}")"
+    mkdir -p "${RPM_BUILD_DIR}/rpmbuild" "${RPM_BUILD_DIR}/rpmdb"
+    topdir_abs="$(cd "${RPM_BUILD_DIR}/rpmbuild" && pwd)"
+    dbpath_abs="$(cd "${RPM_BUILD_DIR}/rpmdb" && pwd)"
+    rpmbuild -bb "${spec_abs}" \
         --define "pkgdir ${stage_dir}" \
-        --define "_topdir ${RPM_BUILD_DIR}/rpmbuild"
+        --define "_topdir ${topdir_abs}" \
+        --define "_dbpath ${dbpath_abs}"
 
     local rpm_glob="${RPM_BUILD_DIR}/rpmbuild/RPMS/*/*.rpm"
     local rpm_file
@@ -1236,9 +1246,11 @@ build_rpm_all() {
             bash -c "
                 set -euo pipefail
                 topdir=/tmp/rpmbuild-\$\$
+                mkdir -p \"\${topdir}/db\"
                 rpmbuild -bb /hsync.spec \
                     --define 'pkgdir /pkg' \
-                    --define \"_topdir \${topdir}\"
+                    --define \"_topdir \${topdir}\" \
+                    --define \"_dbpath \${topdir}/db\"
                 out_rpm=\$(ls \${topdir}/RPMS/*/*.rpm | head -1)
                 cp \"\${out_rpm}\" /out/
                 chmod 0644 \"/out/\$(basename \"\${out_rpm}\")\"
