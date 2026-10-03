@@ -156,8 +156,9 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Tag-driven release** (`.github/workflows/release.yml`): pushing a `vX.Y.Z`
   tag gates on lint+test, then builds native binaries on per-OS matrix runners
   (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
-  — PyInstaller cannot cross-compile) plus the Linux-only `deb-all`/`wd-os5-all`
-  packages, and publishes them with `SHA256SUMS` to the GitHub Release. macOS
+  — PyInstaller cannot cross-compile) plus the Linux-only
+  `deb-all`/`rpm-all`/`wd-os5-all` packages, and publishes them with
+  `SHA256SUMS` to the GitHub Release. macOS
   binaries are unsigned (documented `xattr` workaround in `docs/getting-started-binary.md`).
 - **`install.sh --version latest`**: the installer resolves the latest stable
   release by following the `github.com/<repo>/releases/latest` redirect with
@@ -166,6 +167,14 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   exactly as for a pinned version (`install.sh`, `resolve_latest_version`).
   User docs point at `releases/latest/download/install.sh` so the bootstrap
   needs no version either.
+- **RPM packaging (`rpm`/`rpm-all`)**: `compile.sh --target rpm` (host, needs
+  `rpmbuild`) and `rpm-all` (Docker: x86_64 + aarch64,
+  `packaging/rpm/Dockerfile.builder` on Rocky Linux 9) build a `.rpm` from the
+  same onedir payload as the `.deb`, reusing `packaging/deb/` (man page, unit,
+  conffile) via `packaging/rpm/` (`.spec`). `_semver_to_rpm` shares the Debian
+  `-`→`~` mapping (RPM ≥ 4.10 also sorts `~` before everything), and `rpmbuild`
+  runs with an absolute `_topdir` plus a writable `_dbpath`. An RPM erase keeps
+  the data and the `_hsync` user (there is no `purge` equivalent).
 - **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
   (`.venv/Scripts` vs `.venv/bin`, `compile.sh:106`) and `--strip` is omitted on
   Windows (`STRIP_FLAG`, `compile.sh:112`) since binutils is unavailable there.
