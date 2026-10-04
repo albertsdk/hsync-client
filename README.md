@@ -21,7 +21,7 @@ Files stay in their original format, directly browsable on disk, and there is no
 [![CI](https://github.com/albertsdk/hsync-client/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertsdk/hsync-client/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/albertsdk/hsync-client)](https://github.com/albertsdk/hsync-client/releases/latest)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_WD_My_Cloud-lightgrey.svg)](docs/installation.md)
+[![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_Windows_|_WD_My_Cloud-lightgrey.svg)](docs/installation.md)
 
 **Quick navigation:**
 

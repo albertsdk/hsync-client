@@ -13,6 +13,12 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+; Numeric file version (up to four dot-separated numbers). The workflow passes
+; the SemVer stripped of its prerelease/build suffix; the fallback keeps the
+; script compilable standalone.
+#ifndef VersionInfoVersion
+  #define VersionInfoVersion "0.0.0.0"
+#endif
 #ifndef SourceExe
   #define SourceExe "hsync.exe"
 #endif
@@ -25,6 +31,7 @@ AppId={{5C0E9A11-2B1E-4E2A-9F31-7A0C1D2E3F40}
 AppName=HSYNC Client
 AppVersion={#AppVersion}
 AppVerName=HSYNC Client {#AppVersion}
+VersionInfoVersion={#VersionInfoVersion}
 AppPublisher=HSYNC
 AppPublisherURL=https://github.com/albertsdk/hsync-client
 DefaultDirName={localappdata}\Programs\HSYNC

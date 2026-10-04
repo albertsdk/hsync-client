@@ -123,7 +123,9 @@ jobs:
           $magick = "C:\ProgramData\chocolatey\bin\magick.exe"
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $magick "packaging/wd-os5/Apkg/web/hsync.png" -define icon:auto-resize=256,128,64,48,32,16 "packaging/windows/icon.ico"
+          $vi = "${{ steps.version.outputs.version }}" -replace '-.*$','' -replace '\+.*$',''
           & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
+                  "/DVersionInfoVersion=$vi" `
                   "/DSourceExe=$((Resolve-Path 'dist/windows-amd64/hsync.exe').Path)" `
                   "/DOutDir=$((Resolve-Path 'release-out').Path)" `
                   "/DIconPath=$((Resolve-Path 'packaging/windows/icon.ico').Path)" `
