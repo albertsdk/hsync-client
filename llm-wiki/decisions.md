@@ -160,6 +160,12 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `deb-all`/`rpm-all`/`wd-os5-all` packages, and publishes them with
   `SHA256SUMS` to the GitHub Release. macOS
   binaries are unsigned (documented `xattr` workaround in `docs/getting-started-binary.md`).
+- **Fixed-name `latest` aliases**: the `release` job copies each versioned asset
+  to a stable name (`hsync-client-linux-amd64.tar.gz`, `hsync-client-amd64.deb`,
+  `hsync-client-x86_64.rpm`, `hsync-client-windows-amd64-setup.exe`, …) so the
+  docs link `releases/latest/download/<name>` without a version (`RELEASES.md`
+  §5.8); pinned URLs keep the version. Guarded by
+  `tests/test_compile_script.py` (docs ↔ workflow consistency).
 - **`install.sh --version latest`**: the installer resolves the latest stable
   release by following the `github.com/<repo>/releases/latest` redirect with
   `curl -fsSIL -w %{url_effective}` (no GitHub API, no rate limit; drafts and

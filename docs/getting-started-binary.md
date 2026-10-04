@@ -23,6 +23,14 @@ Download it from the [Releases page](https://github.com/albertsdk/hsync-client/r
 and verify it against `SHA256SUMS` — see
 [Installation → Verify the download](installation.md#verify-the-download).
 
+The **latest stable** archive of each target is also available at a stable URL,
+without knowing the version — replace `linux-amd64` with your target
+(`linux-arm64`, `darwin-arm64`, `darwin-amd64`, `windows-amd64`):
+
+```bash
+curl -fLO "https://github.com/albertsdk/hsync-client/releases/latest/download/hsync-client-linux-amd64.tar.gz"
+```
+
 ## Extract and install
 
 ```bash

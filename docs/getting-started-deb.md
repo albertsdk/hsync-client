@@ -12,11 +12,15 @@ it at boot.
 ## Install
 
 ```bash
-sudo dpkg -i hsync-client_*_amd64.deb
+curl -fLO "https://github.com/albertsdk/hsync-client/releases/latest/download/hsync-client-amd64.deb"
+sudo dpkg -i hsync-client-amd64.deb
 hsync --help
 ```
 
-Replace `amd64` with your architecture (`arm64` / `armhf`).
+Replace `amd64` with your architecture (`arm64` / `armhf`). The URL always points
+to the **latest stable** release; to pin a version, use
+`https://github.com/albertsdk/hsync-client/releases/download/vX.Y.Z/hsync-client_<version>_<arch>.deb`
+(see [Installation](installation.md) for the exact names).
 
 ## Run as a boot service (systemd)
 

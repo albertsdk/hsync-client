@@ -10,14 +10,19 @@ terminal.
 
 ## Install
 
-1. Download `hsync-client-VERSION-windows-amd64-setup.exe` from the release page
-   (replace `VERSION` with the release you want).
-2. Run it and follow the wizard.
-3. Open a **new** terminal (so the updated `PATH` is loaded) and check:
+Download the latest installer:
 
-   ```bash
-   hsync --help
-   ```
+[Download hsync-client-windows-amd64-setup.exe](https://github.com/albertsdk/hsync-client/releases/latest/download/hsync-client-windows-amd64-setup.exe)
+
+Run it and follow the wizard, then open a **new** terminal (so the updated
+`PATH` is loaded) and verify:
+
+```bash
+hsync --help
+```
+
+The link always points to the **latest stable** release; to pin a version, use
+the [Releases page](https://github.com/albertsdk/hsync-client/releases).
 
 ## Update and remove
 
@@ -26,8 +31,8 @@ Download and run the newer installer; it upgrades in place. To remove it, go to
 
 ## Prefer no installer?
 
-The portable `hsync-client-VERSION-windows-amd64.zip` contains the same
-`hsync.exe`; unzip it anywhere and run it directly (add the folder to `PATH`
+The fixed-name `hsync-client-windows-amd64.zip` (or a versioned copy) contains the
+same `hsync.exe`; unzip it anywhere and run it directly (add the folder to `PATH`
 yourself if you want the bare `hsync` command).
 
 ## Next
