@@ -175,6 +175,11 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `-`→`~` mapping (RPM ≥ 4.10 also sorts `~` before everything), and `rpmbuild`
   runs with an absolute `_topdir` plus a writable `_dbpath`. An RPM erase keeps
   the data and the `_hsync` user (there is no `purge` equivalent).
+- **Windows installer (Inno Setup)**: `packaging/windows/hsync-client.iss`, built
+  in CI on `windows-latest` (`choco install innosetup imagemagick`; the app PNG
+  is converted to a multi-size `.ico`). Per-user install (no admin) under
+  `%LOCALAPPDATA%\Programs\HSYNC`; appends `{app}` to the user `PATH` and removes
+  it on uninstall. The portable `.zip` remains the no-install alternative.
 - **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
   (`.venv/Scripts` vs `.venv/bin`, `compile.sh:106`) and `--strip` is omitted on
   Windows (`STRIP_FLAG`, `compile.sh:112`) since binutils is unavailable there.

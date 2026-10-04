@@ -22,6 +22,7 @@ procedure.
 | Standalone binary | macOS | Apple Silicon | `hsync-client-<version>-darwin-arm64.tar.gz` | [Standalone binary](getting-started-binary.md) |
 | Standalone binary | macOS | Intel | `hsync-client-<version>-darwin-amd64.tar.gz` | [Standalone binary](getting-started-binary.md) |
 | Standalone binary | Windows | x86-64 | `hsync-client-<version>-windows-amd64.zip` | [Standalone binary](getting-started-binary.md) |
+| Windows installer | Windows | x86-64 | `hsync-client-<version>-windows-amd64-setup.exe` | [Windows installer](getting-started-windows.md) |
 | Debian package | Debian/Ubuntu | amd64 | `hsync-client_<version>_amd64.deb` | [Debian package](getting-started-deb.md) |
 | Debian package | Debian/Ubuntu | arm64 | `hsync-client_<version>_arm64.deb` | [Debian package](getting-started-deb.md) |
 | Debian package | Debian/Ubuntu | armhf | `hsync-client_<version>_armhf.deb` | [Debian package](getting-started-deb.md) |

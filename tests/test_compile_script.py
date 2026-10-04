@@ -101,3 +101,12 @@ def test_rpm_targets_are_registered_in_dispatch() -> None:
     assert "rpm-all)" in script
     assert "Supported targets:" in script
     assert "rpm-all" in script
+
+
+def test_windows_installer_is_wired() -> None:
+    """The Inno Setup installer must exist and be built by the release workflow."""
+    repo = COMPILE_SH.parent
+    assert (repo / "packaging" / "windows" / "hsync-client.iss").is_file()
+    workflow = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "hsync-client.iss" in workflow
+    assert "innosetup" in workflow

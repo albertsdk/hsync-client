@@ -1,7 +1,7 @@
 name: Release
 
-# Publish prebuilt client binaries, .deb/.rpm packages and WD OS5 .bin
-# installers as GitHub Release assets. Two triggers:
+# Publish prebuilt client binaries, .deb/.rpm packages, the Windows installer
+# and WD OS5 .bin installers as GitHub Release assets. Two triggers:
 #
 # 1. vX.Y.Z tag pushed  →  create a formal Release (bumped version).
 # 2. workflow_dispatch  →  build artifacts without a tag (useful for testing;
@@ -112,6 +112,22 @@ jobs:
           else
             tar czf "../../release-out/hsync-client-${version}-${{ matrix.target }}.tar.gz" hsync
           fi
+      - name: Build the Windows installer (Inno Setup)
+        # Per-user installer (no admin): installs hsync.exe and appends its dir
+        # to the user PATH. ImageMagick converts the app PNG to a multi-size .ico.
+        if: runner.os == 'Windows'
+        working-directory: hsync-client
+        shell: pwsh
+        run: |
+          choco install innosetup imagemagick -y --no-progress
+          $magick = "C:\ProgramData\chocolatey\bin\magick.exe"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $magick "packaging/wd-os5/Apkg/web/hsync.png" -define icon:auto-resize=256,128,64,48,32,16 "packaging/windows/icon.ico"
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
+                  "/DSourceExe=$((Resolve-Path 'dist/windows-amd64/hsync.exe').Path)" `
+                  "/DOutDir=$((Resolve-Path 'release-out').Path)" `
+                  "/DIconPath=$((Resolve-Path 'packaging/windows/icon.ico').Path)" `
+                  "packaging/windows/hsync-client.iss"
       - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}

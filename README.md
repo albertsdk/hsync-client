@@ -137,7 +137,7 @@ Continuous mode is the default in both topologies: the client keeps running and 
 
 ## Getting started
 
-1. **Install the client** — pick a method in the [Getting Started](docs/getting-started.md) chooser (installer script, standalone binary, `.deb`, WD My Cloud OS5, or from source); verified downloads and asset names are in [Installation](docs/installation.md).
+1. **Install the client** — pick a method in the [Getting Started](docs/getting-started.md) chooser (installer script, standalone binary, Windows installer, `.deb`, `.rpm`, WD My Cloud OS5, or from source); verified downloads and asset names are in [Installation](docs/installation.md).
 
 2. **Choose a mode and run your first sync** — each mode has a complete, copy-paste walkthrough:
 
