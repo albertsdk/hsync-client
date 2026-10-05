@@ -113,8 +113,7 @@ the CLI. `HSYNC_P2P_MODE` is not read.
 
 ```bash
 export HSYNC_P2P_KEY="shared-secret"   # required for writes (read-only without it)
-export HSYNC_P2P_GROUP="mygroup"       # optional, isolates peer groups
-hsync p2p -b documents -p ~/Documents
+hsync p2p -b documents -p ~/Documents --group mygroup  # --group is optional
 ```
 
 See [Configuration — p2p Mode](configuration-p2p.md) for all p2p-mode options.

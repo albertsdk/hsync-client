@@ -54,7 +54,10 @@ hsync server -y -b artifacts -p ./build
 
 ```bash
 # Exclude temporary, log and build files from the sync
-HSYNC_IGNORE_PATTERNS="*.tmp,*.log,/build/" hsync server -b mybucket -p ~/Sync
+hsync server -b mybucket -p ~/Sync \
+  --ignore-pattern "*.tmp" \
+  --ignore-pattern "*.log" \
+  --ignore-pattern "/build/"
 ```
 
 Or create a `.hsyncignore` file in the bucket root.
