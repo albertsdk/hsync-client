@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from hsync_common.endpoint import format_authority
 from hsync_common.protocol.bootnode import BootPeer, derive_bucket_token
 from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
@@ -346,7 +347,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 # terminal): fatal, and never re-prompt every cycle.
                 self._fatal_error = exc
                 log.error(
-                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} not trusted: {exc}"
+                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} not trusted: {exc}"
                 )
                 return
             except BootnodeFingerprintMismatch as exc:
@@ -368,7 +369,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 backoff = float(exc.retry_after or 0)
             except BootnodeError as exc:
                 log.warning(
-                    f"Bootnode {self._bootnode_host}:{self._bootnode_port} unreachable: {exc}"
+                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} unreachable: {exc}"
                 )
                 first = True  # re-register once the node is reachable again
             except Exception as exc:
@@ -378,7 +379,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 # per-frame QUIC/TLS chatter aioquic logs at INFO (now DEBUG).
                 peers = self._peer_manager.get_alive_peers() if self._peer_manager else []
                 log.info(
-                    f"Bootnode {self._bootnode_host}:{self._bootnode_port}: "
+                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)}: "
                     f"{action} ok ({len(peers)} peer(s))"
                 )
             self._wake.wait(timeout=max(self._refresh_interval, backoff))
@@ -401,7 +402,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
     def _log_refusal(self, exc: BootnodeRefused) -> None:
         """Report a uniform boot/1 refusal once per error, then at DEBUG."""
         message = (
-            f"Bootnode {self._bootnode_host}:{self._bootnode_port} refused the lease "
+            f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} refused the lease "
             f"frame: {exc.error}"
         )
         if exc.retry_after:
@@ -455,7 +456,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             self._sent_advert_generation = generation
             log.debug(
                 "Bootnode register ok: observed "
-                f"{self._observed.host}:{self._observed.port}, "
+                f"{format_authority(self._observed.host, self._observed.port)}, "
                 f"ttl {ack['ttl']}s"
             )
 
@@ -504,7 +505,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             else:
                 self._next_query_at = now + self._refresh_interval
             log.debug(
-                f"Bootnode {self._bootnode_host}:{self._bootnode_port} query refused: "
+                f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} query refused: "
                 f"{response['error']}"
             )
             return

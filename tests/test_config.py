@@ -108,17 +108,32 @@ class TestEnvSettings:
         get_env_settings.cache_clear()
         assert EnvSettings().bootnode == "boot.example.net"
 
-    def test_bootnode_rejects_scheme_path_and_port(self, monkeypatch):
-        """The bootnode is a bare host: no scheme, no path, no host:port."""
+    def test_bootnode_rejects_scheme_and_path(self, monkeypatch):
+        """The bootnode channel is QUIC/UDP: no scheme, no path."""
         for bad in (
             "https://boot.example.net",
             "boot.example.net/path",
-            "boot.example.net:8443",
         ):
             monkeypatch.setenv("HSYNC_BOOTNODE", bad)
             get_env_settings.cache_clear()
             with pytest.raises(ValueError):
                 EnvSettings()
+
+    def test_bootnode_accepts_host_port(self, monkeypatch):
+        """``HSYNC_BOOTNODE`` accepts ``HOST[:PORT]``; the host is unbracketed."""
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
+        get_env_settings.cache_clear()
+        assert EnvSettings().bootnode == "boot.example.net:8443"
+
+    def test_bootnode_ipv6_bracketed_with_port(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE", "[::1]:8443")
+        get_env_settings.cache_clear()
+        assert EnvSettings().bootnode == "[::1]:8443"
+
+    def test_bootnode_bare_ipv6_is_normalized_unbracketed(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_BOOTNODE", "[::1]")
+        get_env_settings.cache_clear()
+        assert EnvSettings().bootnode == "::1"
 
     def test_bootnode_fingerprint_parses_and_validates(self, monkeypatch):
         from hsync_client.config import get_bootnode_fingerprints
@@ -183,6 +198,35 @@ class TestEnvSettings:
         try:
             settings = EnvSettings()
             assert settings.server == "https://test.example.com:8000"
+        finally:
+            del os.environ["HSYNC_SERVER"]
+            get_env_settings.cache_clear()
+
+    def test_server_url_normalizes_bare_host(self):
+        """A bare host (Option A) normalizes to the canonical HTTPS URL."""
+        get_env_settings.cache_clear()
+        os.environ["HSYNC_SERVER"] = "test.example.com"
+        try:
+            assert EnvSettings().server == "https://test.example.com:9753"
+        finally:
+            del os.environ["HSYNC_SERVER"]
+            get_env_settings.cache_clear()
+
+    def test_server_url_ipv6_bracketed_with_port(self):
+        get_env_settings.cache_clear()
+        os.environ["HSYNC_SERVER"] = "[::1]:8443"
+        try:
+            assert EnvSettings().server == "https://[::1]:8443"
+        finally:
+            del os.environ["HSYNC_SERVER"]
+            get_env_settings.cache_clear()
+
+    def test_server_url_rejects_http(self):
+        get_env_settings.cache_clear()
+        os.environ["HSYNC_SERVER"] = "http://test.example.com"
+        try:
+            with pytest.raises(ValueError):
+                EnvSettings()
         finally:
             del os.environ["HSYNC_SERVER"]
             get_env_settings.cache_clear()

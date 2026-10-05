@@ -226,7 +226,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   (replacing the unusable `ca_cert`); the pin/TOFU decision is the shared
   `hsync_common.protocol.pairing` SSOT (`parse_fingerprint`/`fingerprint_matches`/
   `FingerprintMismatch`). `bootnode_trust.py` is a `{host:port} → current` TOFU
-  store sharing the `_trust_store.JsonStore` lock/atomicity base with
+  store (keys are the bracketed `[IPv6]:port` composite from
+  `hsync_common.endpoint.format_authority`) sharing the `_trust_store.JsonStore` lock/atomicity base with
   `pinning.PinStore` (extracted on its second use — Rule of Three). A mismatch is
   fatal (`BootnodeFingerprintMismatch`, lease loop stops); `--ca-cert` is refused
   in `hsync p2p`.

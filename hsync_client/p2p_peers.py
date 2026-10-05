@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
+from hsync_common.endpoint import build_url
 from hsync_common.protocol.p2p import (
     SYNC_DIRECTION_BIDIRECTIONAL,
     ElectionCandidate,
@@ -68,7 +69,7 @@ def get_free_port() -> int:
 def server_url(address: str, port: int, *, use_https: bool) -> str:
     """Build the base HTTP(S) URL for a peer data-plane endpoint."""
     protocol = "https" if use_https else "http"
-    return f"{protocol}://{address}:{port}"
+    return build_url(protocol, address, port)
 
 
 def dial_candidates(

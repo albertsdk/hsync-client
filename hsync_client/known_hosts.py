@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hsync_common.endpoint import format_authority, parse_host_port
 from hsync_common.protocol.pairing import parse_fingerprint
 from hsync_common.time_utils import utc_now_iso
 
@@ -43,8 +44,12 @@ TRUST_SOURCES = frozenset({"prompt", "tofu", "flag", "cli"})
 
 
 def host_port_key(host: str, port: int) -> str:
-    """Composite key for a host pin (host + port identify one endpoint)."""
-    return f"{host}:{port}"
+    """Composite key for a host pin (host + port identify one endpoint).
+
+    IPv6 hosts are bracketed (``[::1]:443``) so the key is unambiguous and
+    re-parseable by the shared ``parse_host_port`` grammar.
+    """
+    return format_authority(host, port)
 
 
 class KnownHostsStore(JsonStore):
@@ -99,11 +104,16 @@ class KnownHostsStore(JsonStore):
             records = self._records()
             result: list[dict[str, Any]] = []
             for key, record in records.items():
-                host, _, port = key.rpartition(":")
+                try:
+                    endpoint = parse_host_port(key)
+                except ValueError:
+                    continue  # a key this grammar no longer understands
+                if endpoint.port is None:
+                    continue
                 result.append(
                     {
-                        "host": host,
-                        "port": int(port) if port.isdigit() else port,
+                        "host": endpoint.host,
+                        "port": endpoint.port,
                         "fingerprint": record["current"],
                         "updated_at": record.get("updated_at", ""),
                         "first_seen": record.get("first_seen", ""),

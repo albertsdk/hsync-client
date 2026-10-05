@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
+from hsync_common.endpoint import format_authority
 from hsync_common.protocol.tls_trust import TrustPolicy
 from hsync_common.runtime import is_tty_interactive
 
@@ -41,7 +42,7 @@ def _render_trust_prompt(subject: str, host: str, port: int, fingerprint: str) -
 
     console = Console()
     console.print(
-        f"The authenticity of {subject} [bold]'{host}:{port}'[/bold] can't be established.\n"
+        f"The authenticity of {subject} [bold]'{format_authority(host, port)}'[/bold] can't be established.\n"
         f"SHA256 fingerprint is [bold]{fingerprint}[/bold]."
     )
     return Confirm.ask(

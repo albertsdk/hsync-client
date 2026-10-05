@@ -24,7 +24,7 @@
     "field.bootnode_trust_strict": "Exigir un pin",
     "field.bootnode_trust_none": "Sin verificación",
     "field.upnp": "Asignar el puerto del maestro con UPnP",
-    "field.server": "URL del servidor",
+    "field.server": "Host o URL del servidor",
     "field.api_key": "Clave API",
     "field.server_fingerprint": "Huella del servidor (opcional)",
     "field.server_tofu": "Confiar en el servidor la primera vez",

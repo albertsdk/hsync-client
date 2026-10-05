@@ -832,6 +832,61 @@ class TestBuildBootnode:
         with pytest.raises(typer.BadParameter):
             _build_bootnode("boot.example.net", 70000, no_upnp=False)
 
+    def test_ipv6_bracketed_is_returned_unbracketed(self):
+        from hsync_client.cli import _build_bootnode
+
+        assert _build_bootnode("[::1]", None, no_upnp=False) == ("::1", 443, True)
+
+    def test_ipv6_bracketed_with_port_is_returned_unbracketed(self):
+        from hsync_client.cli import _build_bootnode
+
+        assert _build_bootnode("[::1]:8443", None, no_upnp=False) == ("::1", 8443, True)
+
+    def test_env_bootnode_is_resolved_when_use_env(self, monkeypatch):
+        from hsync_client.cli import _build_bootnode
+        from hsync_client.config import get_env_settings
+
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        get_env_settings.cache_clear()
+        assert _build_bootnode(None, None, no_upnp=False, use_env=True) == (
+            "boot.example.net",
+            443,
+            True,
+        )
+
+    def test_env_bootnode_port_and_flag_port(self, monkeypatch):
+        """An explicit --port overrides a port embedded in HSYNC_BOOTNODE (CLI > env)."""
+        from hsync_client.cli import _build_bootnode
+        from hsync_client.config import get_env_settings
+
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
+        get_env_settings.cache_clear()
+        assert _build_bootnode(None, 9000, no_upnp=False, use_env=True) == (
+            "boot.example.net",
+            9000,
+            True,
+        )
+
+    def test_env_bootnode_port_without_flag(self, monkeypatch):
+        from hsync_client.cli import _build_bootnode
+        from hsync_client.config import get_env_settings
+
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
+        get_env_settings.cache_clear()
+        assert _build_bootnode(None, None, no_upnp=False, use_env=True) == (
+            "boot.example.net",
+            8443,
+            True,
+        )
+
+    def test_env_is_not_used_without_use_env(self, monkeypatch):
+        from hsync_client.cli import _build_bootnode
+        from hsync_client.config import get_env_settings
+
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        get_env_settings.cache_clear()
+        assert _build_bootnode(None, None, no_upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
+
 
 class TestBootnodeTrustCommands:
     """``hsync trust bootnode`` manages the known-hosts store (ADR-0035)."""

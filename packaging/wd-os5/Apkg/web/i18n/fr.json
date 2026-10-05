@@ -24,7 +24,7 @@
     "field.bootnode_trust_strict": "Exiger un pin",
     "field.bootnode_trust_none": "Aucune vérification",
     "field.upnp": "Mapper le port du maître via UPnP",
-    "field.server": "URL du serveur",
+    "field.server": "Hôte ou URL du serveur",
     "field.api_key": "Clé API",
     "field.server_fingerprint": "Empreinte du serveur (facultatif)",
     "field.server_tofu": "Faire confiance au serveur au premier usage",

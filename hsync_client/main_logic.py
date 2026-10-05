@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
@@ -29,7 +30,6 @@ from hsync_client.config import (
     HsyncConfig,
     get_api_key,
     get_autotune_enabled,
-    get_bootnode,
     get_bootnode_fingerprints,
     get_bootnode_refresh_interval,
     get_bootnode_tofu,
@@ -585,7 +585,7 @@ def _log_and_emit_server_refusal(
         emit_event(
             UiEventName.pairing_needed,
             scope="server",
-            peer_address=f"{host}:{port}",
+            peer_address=format_authority(host, port),
             fingerprint=observed,
             message="Sync server requires explicit trust confirmation",
         )
@@ -603,7 +603,7 @@ def _log_and_emit_server_refusal(
         emit_event(
             UiEventName.fingerprint_changed,
             scope="server",
-            peer_address=f"{host}:{port}",
+            peer_address=format_authority(host, port),
             fingerprint=observed,
             message="Sync server certificate fingerprint changed",
         )
@@ -1008,7 +1008,7 @@ def run_sync(
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
         "P2P_MODE": p2p_mode,
         "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
-        "BOOTNODE": p2p_bootnode or get_bootnode(),
+        "BOOTNODE": p2p_bootnode,
         "BOOTNODE_PORT": p2p_bootnode_port or BOOTNODE_DEFAULT_PORT,
         # Bootnode TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
         "BOOTNODE_FINGERPRINT": bootnode_fingerprints or get_bootnode_fingerprints(),
@@ -1019,11 +1019,7 @@ def run_sync(
             verify_ssl,
         ),
         "AUTO_CONFIRM": auto_confirm,
-        "UPNP_ENABLED": (
-            p2p_upnp_enabled
-            if p2p_upnp_enabled is not None
-            else bool(p2p_bootnode or get_bootnode())
-        ),
+        "UPNP_ENABLED": (p2p_upnp_enabled if p2p_upnp_enabled is not None else bool(p2p_bootnode)),
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
         "BOOTNODE_REFRESH_INTERVAL": get_bootnode_refresh_interval() or BOOTNODE_REFRESH_INTERVAL,

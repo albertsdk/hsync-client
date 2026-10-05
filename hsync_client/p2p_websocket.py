@@ -38,6 +38,7 @@ from time import time
 from typing import Any, cast
 
 from aiohttp import web
+from hsync_common.endpoint import build_url, format_authority
 from hsync_common.models.dir import is_hidden_dir
 from hsync_common.models.event import Event, EventName, is_valid_cid
 from hsync_common.models.file import (
@@ -1311,7 +1312,9 @@ async def p2p_websocket_client(
     import websockets
 
     protocol = "wss" if use_https else "ws"
-    uri = f"{protocol}://{host}:{port}{p2p_ws_events_path(CONFIG['REMOTE_BUCKET'], CONFIG['CID'])}"
+    uri = build_url(
+        protocol, host, port, p2p_ws_events_path(CONFIG["REMOTE_BUCKET"], CONFIG["CID"])
+    )
 
     # A node that serves peer downloads announces its capacity on the handshake:
     # the master records it with the publisher session and echoes it to
@@ -1504,7 +1507,7 @@ async def p2p_websocket_client(
             # directions.
             log.info(
                 f"{ActionLabel.READY} Client ready for sync — watching "
-                f"'{CONFIG['LOCAL_BUCKET']}', master at {host}:{port}"
+                f"'{CONFIG['LOCAL_BUCKET']}', master at {format_authority(host, port)}"
             )
 
             # One dispatch context per connection: the inbound directory
@@ -2015,9 +2018,11 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
     def _master_url(self, suffix: str) -> str:
         protocol = "https" if self._use_https else "http"
-        return (
-            f"{protocol}://{self._master_host}:{self._master_port}"
-            f"{rest_bucket_path(CONFIG['REMOTE_BUCKET'], suffix)}"
+        return build_url(
+            protocol,
+            self._master_host,
+            self._master_port,
+            rest_bucket_path(CONFIG["REMOTE_BUCKET"], suffix),
         )
 
     def _master_params(self, **extra: str) -> dict[str, str]:

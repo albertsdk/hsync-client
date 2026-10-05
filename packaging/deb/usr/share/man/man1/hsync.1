@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-01" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-05" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -548,9 +548,14 @@ to isolate multiple independent sync groups on the same network.
 .SH ENVIRONMENT
 .TP
 .B HSYNC_SERVER
-Full server URL
-.RI ( https://host:port )
-— alternative to the
+Sync-server endpoint: a bare
+.RI host ,
+.RI host : port ,
+a bracketed IPv6 literal or
+.RI [ IPv6 ]: port
+(the HTTPS scheme and the default port 9753 are implied), or a full
+.RI https://host[:port][/path]
+URL (a base path is allowed only in this form). Alternative to the
 .B hostname
 argument of
 .BR "hsync server" .
@@ -645,8 +650,14 @@ Periodic resync interval in seconds (default:
 0 = disabled).
 .TP
 .B HSYNC_BOOTNODE
-Bare bootnode hostname for cross-network discovery (no scheme, no port); unset
-keeps discovery on mDNS only.
+Optional bootnode endpoint for cross-network discovery: a bare hostname/IPv4, a
+.RI HOST : PORT
+pair, or a bracketed IPv6 literal (optionally
+.RI [ IPv6 ]: port ).
+No scheme or path. Unset keeps discovery on mDNS only. The QUIC port defaults to
+443; an explicit
+.B \-\-port
+overrides a port embedded here.
 .TP
 .B HSYNC_BOOTNODE_FINGERPRINT
 Comma-separated bootnode certificate fingerprint(s) to pin (up to two,

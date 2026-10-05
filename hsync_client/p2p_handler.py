@@ -17,6 +17,7 @@ import socket
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+from hsync_common.endpoint import format_authority
 from hsync_common.hashing import is_sha256_hex
 from hsync_common.protocol.pairing import (
     PinDecision,
@@ -859,7 +860,9 @@ def _select_master_endpoint(master, log) -> tuple[str, int] | None:
             host, port, master.cert_fingerprint, MASTER_CANDIDATE_PROBE_TIMEOUT_S
         ):
             if (host, port) != (master.address, master.port):
-                log.info(f"Selected master endpoint {host}:{port} of {len(candidates)}")
+                log.info(
+                    f"Selected master endpoint {format_authority(host, port)} of {len(candidates)}"
+                )
             return host, port
     return None
 

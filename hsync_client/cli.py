@@ -21,7 +21,7 @@ from typing import Annotated
 
 import typer
 import typer.main
-from hsync_common.endpoint import HostPort, parse_host_port
+from hsync_common.endpoint import HostPort, build_https_url, format_authority, parse_host_port
 from hsync_common.protocol.pairing import parse_fingerprint
 from hsync_common.protocol.tls_trust import TrustPolicy
 
@@ -194,7 +194,7 @@ def _build_server_url(hostname: str | None, port: int | None) -> str | None:
         return None
     hp = _parse_host_port(hostname)
     effective_port = _merge_port(hostname.strip(), hp.port, port)
-    return f"https://{hp.authority}:{SERVER_DEFAULT_PORT if effective_port is None else effective_port}"
+    return build_https_url(HostPort(host=hp.host, port=effective_port), SERVER_DEFAULT_PORT)
 
 
 def _build_bootnode(
@@ -202,19 +202,28 @@ def _build_bootnode(
     port: int | None,
     *,
     no_upnp: bool,
+    use_env: bool = False,
 ) -> tuple[str | None, int, bool]:
     """Resolve the bootnode plan inputs; return ``(host, port, upnp_enabled)``.
 
     A ``None`` host selects the mDNS plan (``port``/``upnp`` are then
-    irrelevant). ``--port`` without a bootnode is a hard error, never a
-    silently ignored flag; ``HSYNC_BOOTNODE`` is a host-only fallback (no port
-    is read from the environment — the QUIC port comes from ``--port`` or the
-    443 default). The bootnode host may be a bare hostname/IPv4, a
-    ``HOST[:PORT]`` pair or a (bracketed) IPv6 literal; a port in the host is
-    mutually exclusive with ``--port``.
+    irrelevant). When ``use_env`` is set (the ``p2p`` command) a missing CLI
+    hostname falls back to ``HSYNC_BOOTNODE``; an explicit ``--port`` overrides
+    a port embedded in the environment value (CLI > env), while a port supplied
+    both in the CLI ``HOST[:PORT]`` and via ``--port`` is a usage error. The
+    bootnode host may be a bare hostname/IPv4, a ``HOST[:PORT]`` pair or a
+    (bracketed) IPv6 literal; the returned host is always unbracketed.
     """
     if port is not None and not 1 <= port <= 65535:
         raise typer.BadParameter("--port must be between 1 and 65535.")
+    if hostname is None and use_env:
+        from hsync_client.config import get_bootnode_endpoint
+
+        endpoint = get_bootnode_endpoint()
+        if endpoint is not None:
+            hostname = endpoint.host
+            if endpoint.port is not None and port is None:
+                port = endpoint.port
     if hostname is None:
         if port is not None:
             raise typer.BadParameter(
@@ -224,7 +233,7 @@ def _build_bootnode(
     hp = _parse_host_port(hostname)
     effective_port = _merge_port(hostname.strip(), hp.port, port)
     return (
-        hp.authority,
+        hp.host,
         effective_port if effective_port is not None else BOOTNODE_DEFAULT_PORT,
         not no_upnp,
     )
@@ -1125,7 +1134,21 @@ def p2p(
             "cannot be forced to be master and forbidden from being master at once."
         )
 
-    bootnode_host, bootnode_port, upnp_enabled = _build_bootnode(bootnode, port, no_upnp=no_upnp)
+    # Resolve the bootnode endpoint from the CLI positional, then the env
+    # (loaded here so an --env-file bootnode is visible before run_sync loads it
+    # again later). An explicit --port overrides a port embedded in the env.
+    if env_file:
+        from hsync_client.config import load_env_file
+
+        try:
+            load_env_file(env_file)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise typer.Exit(1)
+
+    bootnode_host, bootnode_port, upnp_enabled = _build_bootnode(
+        bootnode, port, no_upnp=no_upnp, use_env=True
+    )
 
     # Bootnode TLS trust (ADR-0034): --ca-cert is a server-mode knob, not a
     # bootnode channel knob, so refuse it rather than silently ignore it.
@@ -1267,7 +1290,7 @@ def bootnode_trust_list(
         return
     for entry in entries:
         typer.echo(
-            f"{entry['host']}:{entry['port']} {entry['fingerprint']} "
+            f"{format_authority(entry['host'], entry['port'])} {entry['fingerprint']} "
             f"(source={entry['source']}, first_seen={entry['first_seen']})"
         )
 
@@ -1278,9 +1301,11 @@ def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None
     host, resolved_port = _trust_host_port(hostname, port)
     fingerprint = BootnodeTrustStore().get(host, resolved_port)
     if fingerprint is None:
-        typer.echo(f"{host}:{resolved_port} is not in the known-hosts store.", err=True)
+        typer.echo(
+            f"{format_authority(host, resolved_port)} is not in the known-hosts store.", err=True
+        )
         raise typer.Exit(code=1)
-    typer.echo(f"{host}:{resolved_port} {fingerprint}")
+    typer.echo(f"{format_authority(host, resolved_port)} {fingerprint}")
 
 
 @_trust_bootnode_app.command("add")
@@ -1297,7 +1322,7 @@ def bootnode_trust_add(
         raise typer.Exit(code=1)
     store = BootnodeTrustStore()
     store.set(host, resolved_port, normalized, source="cli")
-    typer.echo(f"Pinned {host}:{resolved_port} {normalized} in {store.path}.")
+    typer.echo(f"Pinned {format_authority(host, resolved_port)} {normalized} in {store.path}.")
 
 
 @_trust_bootnode_app.command("remove")
@@ -1305,9 +1330,9 @@ def bootnode_trust_remove(hostname: HostArg, port: BootnodePortOpt = None) -> No
     """Forget a pinned bootnode (like ``ssh-keygen -R``)."""
     host, resolved_port = _trust_host_port(hostname, port)
     if BootnodeTrustStore().remove(host, resolved_port):
-        typer.echo(f"Removed {host}:{resolved_port} from the known-hosts store.")
+        typer.echo(f"Removed {format_authority(host, resolved_port)} from the known-hosts store.")
     else:
-        typer.echo(f"{host}:{resolved_port} was not in the known-hosts store.")
+        typer.echo(f"{format_authority(host, resolved_port)} was not in the known-hosts store.")
 
 
 @_trust_bootnode_app.command("fingerprint")
@@ -1405,7 +1430,7 @@ def server_trust_list(
         return
     for entry in entries:
         typer.echo(
-            f"{entry['host']}:{entry['port']} {entry['fingerprint']} "
+            f"{format_authority(entry['host'], entry['port'])} {entry['fingerprint']} "
             f"(source={entry['source']}, first_seen={entry['first_seen']})"
         )
 
@@ -1416,9 +1441,11 @@ def server_trust_show(hostname: HostArg, port: ServerPortOpt = None) -> None:
     host, resolved_port = _server_trust_host_port(hostname, port)
     fingerprint = ServerTrustStore().get(host, resolved_port)
     if fingerprint is None:
-        typer.echo(f"{host}:{resolved_port} is not in the known-hosts store.", err=True)
+        typer.echo(
+            f"{format_authority(host, resolved_port)} is not in the known-hosts store.", err=True
+        )
         raise typer.Exit(code=1)
-    typer.echo(f"{host}:{resolved_port} {fingerprint}")
+    typer.echo(f"{format_authority(host, resolved_port)} {fingerprint}")
 
 
 @_trust_server_app.command("add")
@@ -1435,7 +1462,7 @@ def server_trust_add(
         raise typer.Exit(code=1)
     store = ServerTrustStore()
     store.set(host, resolved_port, normalized, source="cli")
-    typer.echo(f"Pinned {host}:{resolved_port} {normalized} in {store.path}.")
+    typer.echo(f"Pinned {format_authority(host, resolved_port)} {normalized} in {store.path}.")
 
 
 @_trust_server_app.command("remove")
@@ -1443,9 +1470,9 @@ def server_trust_remove(hostname: HostArg, port: ServerPortOpt = None) -> None:
     """Forget a pinned sync server (like ``ssh-keygen -R``)."""
     host, resolved_port = _server_trust_host_port(hostname, port)
     if ServerTrustStore().remove(host, resolved_port):
-        typer.echo(f"Removed {host}:{resolved_port} from the known-hosts store.")
+        typer.echo(f"Removed {format_authority(host, resolved_port)} from the known-hosts store.")
     else:
-        typer.echo(f"{host}:{resolved_port} was not in the known-hosts store.")
+        typer.echo(f"{format_authority(host, resolved_port)} was not in the known-hosts store.")
 
 
 @_trust_server_app.command("fingerprint")
@@ -1455,7 +1482,8 @@ def server_trust_fingerprint(hostname: HostArg, port: ServerPortOpt = None) -> N
     observed = fetch_server_fingerprint(host, resolved_port)
     if observed is None:
         typer.echo(
-            f"Could not read a certificate fingerprint from {host}:{resolved_port}.", err=True
+            f"Could not read a certificate fingerprint from {format_authority(host, resolved_port)}.",
+            err=True,
         )
         raise typer.Exit(code=1)
     typer.echo(observed)

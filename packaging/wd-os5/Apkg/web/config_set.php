@@ -62,6 +62,10 @@ const KEYS = [
 
 $lines = ['# HSYNC configuration — written by config_set.php on ' . gmdate('Y-m-d\TH:i:s\Z')];
 
+// Shared endpoint grammar (validate-only: the client normalizes on load).
+// `host`, `host:port`, `[IPv6]`, `[IPv6]:port` — no scheme, no path.
+$endpoint_re = '/^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$/';
+
 foreach (KEYS as $key) {
     $val = (string)($post[$key] ?? '');
 
@@ -74,9 +78,16 @@ foreach (KEYS as $key) {
             if (!in_array($val, ['auto', 'master', 'slave', 'never-master'], true)) $val = 'auto';
             break;
         case 'HSYNC_BOOTNODE':
-            // Bare hostname only (no scheme, no path, no host:port); empty is
-            // valid and means "mDNS-only discovery".
-            if ($val !== '' && !preg_match('/^[A-Za-z0-9.\-]+$/', $val)) $val = '';
+            // HOST[:PORT] endpoint (hostname/IPv4 or bracketed IPv6); empty is
+            // valid and means "mDNS-only discovery". No scheme, no path.
+            if ($val !== '' && !preg_match($endpoint_re, $val)) $val = '';
+            break;
+        case 'HSYNC_SERVER':
+            // A bare HOST[:PORT] endpoint or a full https:// URL; empty means
+            // server mode is not configured. The client normalizes both forms.
+            if ($val !== ''
+                && !preg_match($endpoint_re, $val)
+                && !preg_match('/^https:\/\//', $val)) $val = '';
             break;
         case 'HSYNC_BOOTNODE_FINGERPRINT':
             // Empty (no pin) or up to two 'sha256:<hex64>' / '<hex64>' pins,

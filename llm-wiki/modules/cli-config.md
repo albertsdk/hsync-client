@@ -29,8 +29,9 @@ parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `p2p`/`server` subcommand
 selection/`--force-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
-(the full-URL alternative is the `HSYNC_SERVER` env var; the CLI host wins
-when both are set). A server-mode run with neither a `HOSTNAME` nor a resolvable
+(the `HSYNC_SERVER` env var accepts a bare `HOST[:PORT]`/`[IPv6]` or a full
+`https://…[/path]` URL; the CLI host wins when both are set). A server-mode run
+with neither a `HOSTNAME` nor a resolvable
 `HSYNC_SERVER` (shell env or `--env-file`) is rejected at parse time with a
 `typer.BadParameter` usage error, before the banner/logging or `run_sync`
 starts — so the missing server never reaches the deep, late validation inside
@@ -81,11 +82,15 @@ The source(s) are selected in `p2p_discovery.build_discovery_plan`
 **and** bootnode over one shared `PeerManager`), so `p2p_handler.run_p2p_mode`
 only sees the `DiscoveryPlan` surface.
 
-The bootnode host is `HSYNC_BOOTNODE` (a **bare** host: the `_validate_bootnode_host`
-validator rejects a scheme, a path or `host:port`; the QUIC port is `--port`), and
-UPnP is `HSYNC_UPNP_ENABLED` (`None` = plan default: on only with a bootnode).
-`HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the `p2p_listen_port`
-field; `BOOTNODE_DEFAULT_PORT = 443` in `constants.py`).
+The bootnode endpoint is `HSYNC_BOOTNODE` (the `_validate_bootnode_host`
+validator accepts `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via the shared
+`parse_host_port` grammar and normalizes to the unbracketed host; no scheme or
+path), and UPnP is `HSYNC_UPNP_ENABLED` (`None` = plan default: on only with a
+bootnode). The p2p command resolves the bootnode CLI > env (`_build_bootnode`,
+`use_env=True`): a CLI `BOOTNODE[:PORT]` positional replaces the whole env
+endpoint, and an explicit `--port` overrides a port embedded in the env.
+`HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the
+`p2p_listen_port` field; `BOOTNODE_DEFAULT_PORT = 443` in `constants.py`).
 
 Peer-download settings are `HSYNC_P2P_PEER_DOWNLOAD=true` and
 `HSYNC_P2P_PEER_READ_CAP=2`. `--no-peer-download` is applied as

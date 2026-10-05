@@ -193,7 +193,7 @@
         if (group) cmd += ' --group ' + shellQuote(group);
 
         // Cross-network discovery: the other device must use the same bootnode,
-        // so it travels as an env prefix (bare host; no scheme/port), together
+        // so it travels as an env prefix (HOST[:PORT], no scheme), together
         // with the optional fingerprint pin / trust-on-first-use.
         const bootnodeEl = $('#HSYNC_BOOTNODE');
         const bootnode = bootnodeEl ? bootnodeEl.value.trim() : '';

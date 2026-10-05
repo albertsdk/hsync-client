@@ -429,9 +429,8 @@ pin/TOFU); `--ca-cert` is **refused** in `hsync p2p` (it is a server-mode knob,
 and a self-signed bootnode has no usable CA/hostname). With no pin/TOFU the
 client keeps `verify_mode=CERT_REQUIRED` (fail-closed against a self-signed
 node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_BOOTNODE`
-(bare host; `_validate_bootnode_host` rejects scheme/path/`host:port` — the env
-stays host-only, while the `BOOTNODE` positional additionally accepts
-`HOST[:PORT]` via `hsync_common.endpoint`),
+(a `HOST[:PORT]` endpoint: `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via
+`hsync_common.endpoint.parse_host_port`; no scheme/path),
 `HSYNC_BOOTNODE_FINGERPRINT` (comma-separated pins), `HSYNC_BOOTNODE_TOFU`,
 `HSYNC_UPNP_ENABLED`, `HSYNC_P2P_LISTEN_PORT`
 (`constants.BOOTNODE_DEFAULT_PORT = 443`).

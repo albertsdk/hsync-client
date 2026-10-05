@@ -31,6 +31,7 @@ from typing import Any
 
 from aioquic.asyncio.client import connect
 from aioquic.quic.configuration import QuicConfiguration
+from hsync_common.endpoint import format_authority
 from hsync_common.protocol.bootnode import (
     BOOT_ALPN,
     PROTOCOL_VERSION_BOOT,
@@ -147,7 +148,7 @@ class BootnodeNotTrusted(BootnodeError):
 def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
     detail = str(exc) or type(exc).__name__
-    return BootnodeUnreachable(f"bootnode {host}:{port}: {detail}")
+    return BootnodeUnreachable(f"bootnode {format_authority(host, port)}: {detail}")
 
 
 @dataclass(frozen=True)
@@ -222,7 +223,7 @@ class BootnodeClient:
             cert = _peer_certificate(client)
             if cert is None:
                 raise BootnodeFingerprintMismatch(
-                    f"bootnode {self.host}:{self.port}: could not read the peer certificate"
+                    f"bootnode {format_authority(self.host, self.port)}: could not read the peer certificate"
                 )
             return compute_cert_fingerprint(cert)
 
@@ -314,7 +315,7 @@ class BootnodeClient:
                 writer.close()
         except TimeoutError as exc:
             raise BootnodeUnreachable(
-                f"bootnode {self.host}:{self.port}: timed out waiting for a {expect or 'reply'}"
+                f"bootnode {format_authority(self.host, self.port)}: timed out waiting for a {expect or 'reply'}"
             ) from exc
         if line is None:
             return None
@@ -354,7 +355,7 @@ class BootnodeClient:
         cert = _peer_certificate(client)
         if cert is None:
             raise BootnodeFingerprintMismatch(
-                f"bootnode {self.host}:{self.port}: could not read the peer "
+                f"bootnode {format_authority(self.host, self.port)}: could not read the peer "
                 "certificate to verify its fingerprint"
             )
         observed = compute_cert_fingerprint(cert)
@@ -384,7 +385,7 @@ class BootnodeClient:
         """Run the interactive trust prompt; pin on acceptance, refuse otherwise."""
         if self.prompt is None:
             raise BootnodeNotTrusted(
-                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "is not trusted and there is no terminal to confirm it; pass "
                 "--bootnode-tofu (accept new) or --bootnode-fingerprint <fp> to trust it",
                 non_interactive=True,
@@ -394,7 +395,7 @@ class BootnodeClient:
             self._announce_known_host(store)
             return
         raise BootnodeNotTrusted(
-            f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+            f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
             "was not accepted; nothing was saved. Pass --bootnode-tofu to trust the "
             "first sighting or --bootnode-fingerprint <fp> to pin it"
         )
@@ -419,24 +420,24 @@ class BootnodeClient:
         """
         if stored is not None:
             reason = (
-                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "does not match the pinned fingerprint (possible man-in-the-middle)"
             )
         elif self.fingerprints:
             reason = (
-                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "does not match any fingerprint passed with --bootnode-fingerprint"
             )
         else:
             reason = (
-                f"bootnode {self.host}:{self.port}: certificate fingerprint {observed} "
+                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "is not pinned and the trust policy is 'strict'"
             )
         if stored is None and not self.fingerprints:
             emit_event(
                 UiEventName.pairing_needed,
                 scope="bootnode",
-                peer_address=f"{self.host}:{self.port}",
+                peer_address=f"{format_authority(self.host, self.port)}",
                 fingerprint=observed,
                 message=reason,
             )
@@ -444,7 +445,7 @@ class BootnodeClient:
             emit_event(
                 UiEventName.fingerprint_changed,
                 scope="bootnode",
-                peer_address=f"{self.host}:{self.port}",
+                peer_address=f"{format_authority(self.host, self.port)}",
                 fingerprint=observed,
                 message=reason,
             )

@@ -24,7 +24,7 @@
     "field.bootnode_trust_strict": "Richiedi un pin",
     "field.bootnode_trust_none": "Nessuna verifica",
     "field.upnp": "Mappa la porta del master con UPnP",
-    "field.server": "URL del server",
+    "field.server": "Host o URL del server",
     "field.api_key": "Chiave API",
     "field.server_fingerprint": "Fingerprint del server (opzionale)",
     "field.server_tofu": "Fidati del server al primo utilizzo",

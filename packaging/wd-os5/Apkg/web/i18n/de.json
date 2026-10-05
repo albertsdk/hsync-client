@@ -24,7 +24,7 @@
     "field.bootnode_trust_strict": "Pin erforderlich",
     "field.bootnode_trust_none": "Keine Prüfung",
     "field.upnp": "Master-Port per UPnP freigeben",
-    "field.server": "Server-URL",
+    "field.server": "Server-Host oder -URL",
     "field.api_key": "API-Schlüssel",
     "field.server_fingerprint": "Server-Fingerabdruck (optional)",
     "field.server_tofu": "Dem Server beim ersten Mal vertrauen",

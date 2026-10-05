@@ -85,3 +85,31 @@ def test_mode_value_is_p2p_everywhere() -> None:
     assert "['p2p', 'server']" in php
     start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
     assert "p2p)    SUBCOMMAND=" in start
+
+
+def test_config_set_accepts_endpoint_grammar() -> None:
+    """``config_set.php`` validates the HOST[:PORT] grammar, not a bare hostname."""
+    php = (WEB / "config_set.php").read_text(encoding="utf-8")
+    assert "$endpoint_re" in php
+    assert r"\[" in php  # bracketed IPv6 literal in the endpoint regex
+
+
+def test_config_set_whitelists_server() -> None:
+    """``config_set.php`` validates ``HSYNC_SERVER`` (bare host or https:// URL)."""
+    php = (WEB / "config_set.php").read_text(encoding="utf-8")
+    assert "case 'HSYNC_SERVER':" in php
+
+
+def test_server_input_is_text_not_url() -> None:
+    """A bare ``HOST[:PORT]`` must be accepted by the browser (type=url blocks it)."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="HSYNC_SERVER" type="text"' in html or 'type="text" name="HSYNC_SERVER"' in html
+    assert 'type="url" name="HSYNC_SERVER"' not in html
+
+
+def test_i18n_has_server_field_in_all_locales() -> None:
+    import json
+
+    for locale in ("en", "it", "de", "es", "fr"):
+        data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
+        assert data.get("field.server"), locale

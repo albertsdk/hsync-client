@@ -54,7 +54,7 @@ out-of-band step.
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_SERVER` | Full server URL `https://…` (alternative to the `HOSTNAME` argument) | (required or pass `HOSTNAME`) |
+| `HSYNC_SERVER` | Sync-server endpoint: bare `host`, `host:port`, `[IPv6]`, `[IPv6]:port`, or a full `https://…` URL (alternative to the `HOSTNAME` argument) | (required or pass `HOSTNAME`) |
 | `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
 | `HSYNC_SERVER_TRUST` | TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) | `chain` |
 | `HSYNC_SERVER_FINGERPRINT` | Certificate fingerprint(s) to pin (up to two) | — |

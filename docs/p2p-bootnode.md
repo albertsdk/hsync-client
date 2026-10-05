@@ -93,11 +93,11 @@ Service units pass the same inputs as environment variables
 `HSYNC_BOOTNODE_TRUST`); the full reference is
 [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options).
 
-`HSYNC_BOOTNODE` is a **bare hostname**: no scheme, no path, no `host:port`.
-The `BOOTNODE` positional argument accepts the same host with an optional port
-(`boot.example.net` or `boot.example.net:8443`); set the port with `--port`
-(UDP, default `443`), mutually exclusive with a port in `BOOTNODE`. Passing
-`--port` without a bootnode is refused rather than silently ignored.
+`HSYNC_BOOTNODE` accepts the same endpoint forms as the `BOOTNODE` positional:
+`boot.example.net`, `boot.example.net:8443`, `[2001:db8::1]` or
+`[2001:db8::1]:8443` — no scheme, no path. A port in the value selects the QUIC
+port (UDP, default `443`); an explicit `--port` overrides it, while `--port`
+without any bootnode is refused rather than silently ignored.
 
 ## Let the node be reachable
 

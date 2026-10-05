@@ -11,11 +11,17 @@ This module uses pydantic-settings for type-safe environment variable handling
 and provides typed configuration structures for the application.
 """
 
-import re
 from functools import lru_cache
 from typing import Any, Literal, TypedDict, cast
 
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
+from hsync_common.endpoint import (
+    HostPort,
+    build_https_url,
+    format_authority,
+    parse_host_port,
+    parse_https_url,
+)
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
 from hsync_common.protocol.pairing import parse_fingerprint
@@ -29,7 +35,6 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     HEARTBEAT_INTERVAL_MAX,
     HEARTBEAT_INTERVAL_MIN,
-    HOSTNAME_PATTERN,
     MASS_DELETE_GUARD_DEFAULT,
     MASS_DELETE_PERCENT_DEFAULT,
     MASS_DELETE_THRESHOLD_DEFAULT,
@@ -43,6 +48,7 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
     PEER_TIMEOUT_MAX,
     PEER_TIMEOUT_MIN,
+    SERVER_DEFAULT_PORT,
 )
 
 # =============================================================================
@@ -105,41 +111,36 @@ class EnvSettings(BaseSettings):
     def _validate_server_url(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        v = str(v).strip()
-        if not v:
+        raw = str(v).strip()
+        if not raw:
             return None
-        if not v.startswith("https://"):
-            raise ValueError("Server URL must start with 'https://'")
-        if not re.match(rf"^https://{HOSTNAME_PATTERN}(\:\d+)?(/.*)?$", v):
-            raise ValueError(f"Invalid server URL format: {v!r}")
-        return v
+        if raw.lower().startswith("https://"):
+            return parse_https_url(raw)
+        if "://" in raw or raw.lower().startswith("http://"):
+            raise ValueError("Server URL must use HTTPS")
+        endpoint = parse_host_port(raw)
+        return build_https_url(endpoint, SERVER_DEFAULT_PORT)
 
     @field_validator("bootnode", mode="before")
     @classmethod
     def _validate_bootnode_host(cls, v: str | None) -> str | None:
-        """Accept only a bare host: no scheme, no path, no ``host:port``.
+        """Accept a ``HOST[:PORT]`` endpoint: no scheme, no path.
 
         The bootnode channel is QUIC/UDP (not HTTPS), so the ``https://``
-        validator used for ``HSYNC_SERVER`` does not apply; the port is a
-        separate CLI flag (``--port``), never part of the host.
+        validator used for ``HSYNC_SERVER`` does not apply; the host may be a
+        bare hostname/IPv4, a ``HOST[:PORT]`` pair or a bracketed IPv6 literal.
+        The value is normalized to the unbracketed host, with the composite
+        ``[IPv6]:port`` when a port is present.
         """
         if v is None:
             return None
-        host = str(v).strip()
-        if not host:
+        raw = str(v).strip()
+        if not raw:
             return None
-        if "://" in host or "/" in host:
-            raise ValueError(
-                "HSYNC_BOOTNODE must be a bare hostname (the QUIC scheme is implied), "
-                "e.g. 'HSYNC_BOOTNODE=boot.example.net'"
-            )
-        if ":" in host and not (host.startswith("[") and host.endswith("]")):
-            raise ValueError("HSYNC_BOOTNODE must be a bare hostname; pass the port with --port.")
-        if not (
-            re.match(rf"^{HOSTNAME_PATTERN}$", host) or re.match(r"^\[[0-9A-Fa-f:.]+\]$", host)
-        ):
-            raise ValueError(f"Invalid bootnode host format: {v!r}")
-        return host
+        endpoint = parse_host_port(raw)
+        if endpoint.port is None:
+            return endpoint.host
+        return format_authority(endpoint.host, endpoint.port)
 
     @field_validator("bootnode_fingerprint", mode="before")
     @classmethod
@@ -443,9 +444,12 @@ def get_p2p_listen_port() -> int | None:
     return get_env_settings().p2p_listen_port
 
 
-def get_bootnode() -> str | None:
-    """Get the bare bootnode host from ``HSYNC_BOOTNODE`` (None = mDNS plan)."""
-    return get_env_settings().bootnode
+def get_bootnode_endpoint() -> HostPort | None:
+    """Get the parsed bootnode endpoint from ``HSYNC_BOOTNODE`` (None = mDNS plan)."""
+    raw = get_env_settings().bootnode
+    if not raw:
+        return None
+    return parse_host_port(raw)
 
 
 def _parse_fingerprint_list(raw: str | None) -> tuple[str, ...]:

@@ -198,7 +198,7 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_SERVER_TRUST` | `chain` | Server TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) |
 | `HSYNC_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |
-| `HSYNC_SERVER` | *(empty)* | Server URL (for server mode) |
+| `HSYNC_SERVER` | *(empty)* | Server endpoint: `host`/`host:port`/`[IPv6]`/`[IPv6]:port` or full `https://` URL (for server mode) |
 | `HSYNC_API_KEY` | *(empty)* | API key (for server mode) |
 | `HSYNC_IGNORE_DELETE` | `false` | Do not propagate file deletions (backup mode) |
 | `HSYNC_COMPRESSION_ENABLED` | `true` | Enable zstd compression for file transfers |

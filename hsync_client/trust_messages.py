@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from hsync_common.endpoint import format_authority
 from hsync_common.labels import ActionLabel
 
 __all__ = [
@@ -64,7 +65,7 @@ def known_hosts_added_message(host: str, port: int, store_path: Path) -> str:
 
     Consumers: ``hsync-client`` (bootnode connect path: prompt acceptance and TOFU).
     """
-    return _permanently_added_line(f"{host}:{port}", "hosts", store_path)
+    return _permanently_added_line(format_authority(host, port), "hosts", store_path)
 
 
 def known_server_added_message(host: str, port: int, store_path: Path) -> str:
@@ -72,7 +73,7 @@ def known_server_added_message(host: str, port: int, store_path: Path) -> str:
 
     Consumers: ``hsync-client`` (server connect path: prompt acceptance and TOFU).
     """
-    return _permanently_added_line(f"{host}:{port}", "servers", store_path)
+    return _permanently_added_line(format_authority(host, port), "servers", store_path)
 
 
 def known_peer_added_message(cid: str, bucket: str, store_path: Path) -> str:
@@ -116,7 +117,7 @@ def _host_mismatch_guidance(
     else:
         headline = f"the {kind} is not pinned and the trust policy is 'strict'."
     lines = [
-        f"{label} '{host}:{port}' trust failed: {headline}",
+        f"{label} '{format_authority(host, port)}' trust failed: {headline}",
         *_presented_fingerprint_lines(kind, observed),
     ]
     if stored is not None:
@@ -147,7 +148,7 @@ def _host_mismatch_guidance(
 def _host_pairing_needed_guidance(kind: str, host: str, port: int, observed: str) -> str:
     """SSH-style recovery block for an unpinned ``host:port`` requiring confirmation."""
     lines = [
-        f"{ActionLabel.PAIRING_NEEDED} {kind} '{host}:{port}' is not pinned and "
+        f"{ActionLabel.PAIRING_NEEDED} {kind} '{format_authority(host, port)}' is not pinned and "
         "requires explicit trust confirmation.",
         *_presented_fingerprint_lines(kind, observed),
         "Verify it out of band and pin it with:",
