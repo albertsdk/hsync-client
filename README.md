@@ -29,6 +29,7 @@ Files stay in their original format, directly browsable on disk, and there is no
 * **[Two ways to run it](#two-ways-to-run-it)**
 * **[Getting started](#getting-started)**
 * **[Why HSYNC?](#why-hsync)**
+* **[Privacy, security & openness](#privacy-security--openness)**
 * **[Documentation](docs/README.md)** — Parameter reference and internal architecture.
 * **[Contributing](CONTRIBUTING.md)** — Engineering workflow and coding guidelines.
 
@@ -184,6 +185,14 @@ opaque internal formats.
 - ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets. After the system closes the file, the upload starts in a fraction of a second — not after a 5–10s quiet window (the default in tools like Syncthing). Already-idle files (full resync, atomic moves) skip the wait.
 - 🕸️ **Your own private sync network** — no vendor account and no third-party service in the data path: on a single network, devices sync directly peer-to-peer (`hsync p2p`), optionally isolated with `--group` and authenticated with `HSYNC_P2P_KEY`; across networks you host the HSYNC Server yourself.
 
+## Privacy, security & openness
+
+- 🔐 **Private** — no vendor account and no third-party service in the data path: `hsync p2p` transfers directly between your devices, and Server Mode stores your data only on the hub you run yourself.
+- 🪪 **Authenticated** — every installation has a stable **device ID** with its own ECDSA P-256 keypair; peers are trusted on first use and pinned by certificate fingerprint, so a changed identity is refused. See [p2p Mode → Device Identity](docs/p2p-mode.md#device-identity).
+- 🧾 **Encrypted** — TLS on every transport (REST/WebSocket in Server Mode, HTTPS/WSS in p2p Mode), with no plaintext payload path.
+- 📖 **Open** — the wire protocol and file model are an open, versioned specification with shared schemas and fixtures (see the [protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/protocol.md) and [p2p protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) references).
+- 📡 **No telemetry** — HSYNC sends no usage data or analytics anywhere.
+
 ## Technical Capabilities
 
 The HSYNC Client provides robust, enterprise-grade capabilities tailored for resilient data transfer.
@@ -200,7 +209,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 
 **🛰️ Centralized Connectivity (Server Mode)**
 
-* **Persistent Telemetry:** Maintains WebSocket connections for sub-second remote event notifications and heartbeat monitoring.
+* **Live event channel:** Maintains WebSocket connections for sub-second remote event notifications and heartbeat monitoring.
 * **Secure Authentication:** Validates endpoints via API Key (Bearer token for REST operations, first-frame verification for WebSockets).
 * **TLS Enforcement:** Requires SSL/TLS encryption for all payload transmissions.
 
@@ -210,6 +219,8 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
 * **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
+* **NAT traversal:** Maps the master port with UPnP and uses the bootnode's STUN-style endpoint echo for cross-network reachability — no manual port forwarding in the common case.
+* **Stable device identity:** A persistent device ID and keypair anchor trust pins across restarts; a rotated key is detected as a changed fingerprint.
 
 > **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode is a **stable v1** (Python).
 
@@ -223,10 +234,12 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 - [p2p across networks (bootnode)](docs/p2p-bootnode.md) - Cross-network discovery through a `boot/1` bootstrap node
 - [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
+- [Protocol specification](https://github.com/albertsdk/hsync-common/blob/main/docs/protocol.md) - Shared, versioned wire protocol (schemas and fixtures)
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and p2p)
 - [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
 - [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
+- [Report an issue](https://github.com/albertsdk/hsync-client/issues) - Open development and bug tracking
 - [Changelog](CHANGELOG.md) - Release notes and version history
 - [Roadmap](ROADMAP.md) - Planned features and project direction
 - [Security Policy](SECURITY.md) - Supported versions and how to report vulnerabilities
