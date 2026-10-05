@@ -1548,7 +1548,7 @@ def converge_directory_permissions(remote_dirs: list[dict]) -> None:
             continue
         try:
             set_permissions_on_dir(local_dir.path, sanitized)
-            log.debug(f'Permission-only converge (remote): "{local_dir.path}" ({sanitized})')
+            log.debug('Permission-only converge (remote): "{}" ({})', local_dir.path, sanitized)
         except OSError as e:
             log.warning(f'Could not set directory permissions for "{local_dir.path}": {e}')
 
@@ -1732,8 +1732,9 @@ def get_sync_actions(
                         if local_file.filepath:
                             set_permissions(local_file.filepath, remote_perms)
                             log.debug(
-                                f'Permission-only converge (remote): "{local_file.filepath}" '
-                                f"({remote_perms})"
+                                'Permission-only converge (remote): "{}" ({})',
+                                local_file.filepath,
+                                remote_perms,
                             )
                     else:
                         action = SyncActionName.upload
@@ -1928,8 +1929,9 @@ def _compare_files(
         return SyncActionName.upload, 1
     # conflict_download: remote wins tie-break, preserve local + download.
     log.debug(
-        f'Causal conflict for "{remote_file.filepath}": '
-        "both local and remote changed since the last sync (tie-break: remote wins)"
+        'Causal conflict for "{}": both local and remote changed since the '
+        "last sync (tie-break: remote wins)",
+        remote_file.filepath,
     )
     return SyncActionName.download, 0
 
@@ -2115,8 +2117,9 @@ def update_file(
             # is saved (the local version is the winner).
             if decision is SyncDecision.conflict_upload:
                 log.debug(
-                    f'Causal conflict for "{file_data.filepath}": '
-                    "local wins tie-break, skipping download (will upload on next reconcile)"
+                    'Causal conflict for "{}": local wins tie-break, skipping '
+                    "download (will upload on next reconcile)",
+                    file_data.filepath,
                 )
                 inventory_observer.upsert(file)
                 return
@@ -2129,7 +2132,7 @@ def update_file(
             # Skip if this exact file already failed permanently in this
             # cycle (realtime event re-queuing while the full sync runs).
             if _is_permanently_failed(file_data):
-                log.debug(f'Skipping permanently-failed download: "{file_data.filepath}"')
+                log.debug('Skipping permanently-failed download: "{}"', file_data.filepath)
                 return
             try:
                 download_file(
@@ -2171,14 +2174,14 @@ def update_file(
                 if file_data.permissions:
                     set_permissions(file_data.filepath, file_data.permissions)
             else:
-                log.debug(f'File not changed: "{file_data.filepath}"')
+                log.debug('File not changed: "{}"', file_data.filepath)
             inventory_observer.upsert(file)
     else:
         # File doesn't exist locally - download it
         file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
         # Skip if this exact file already failed permanently in this cycle.
         if _is_permanently_failed(file):
-            log.debug(f'Skipping permanently-failed download: "{file.filepath}"')
+            log.debug('Skipping permanently-failed download: "{}"', file.filepath)
             return
         try:
             download_file(

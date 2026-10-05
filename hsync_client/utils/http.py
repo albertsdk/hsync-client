@@ -43,10 +43,16 @@ def http_to_ws(url: str) -> str:
 
     Replaces the ``http``/``https`` scheme with ``ws``/``wss``. Both run
     modes use this to derive the events endpoint from the REST base URL.
-    """
-    from re import sub
 
-    return sub(r"^https:", "wss:", sub(r"^http:", "ws:", url))
+    Prefix slicing instead of ``re.sub(r"^http:", …)``: ``^`` without
+    ``MULTILINE`` anchors at the string start, so ``startswith`` + a slice is
+    exactly equivalent and avoids the regex engine on every URL derivation.
+    """
+    if url.startswith("https:"):
+        return "wss:" + url[6:]
+    if url.startswith("http:"):
+        return "ws:" + url[5:]
+    return url
 
 
 def http_connect_timeout() -> float:

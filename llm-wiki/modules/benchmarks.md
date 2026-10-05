@@ -195,9 +195,25 @@ producing false positives. A scenario present in `before` but missing from
   ~0.092→0.016 ms (**~5x**) ride the `hsync-common` store fast paths
   (`dd73e09` + `6ba2c34`), not client code; `normalize_bucket_relpath(out/in)`
   ~0.0012/0.0031→0.0009/0.0025 ms and `compare_files(conflict_*)` ~−25/−33%
-  follow the same shared `path_validation`/`models` opts. A/B re-runs isolated
+  follow the same shared `path_validation`/`models` opts.   A/B re-runs isolated
   (no concurrent bench): **0 regressions** over 69 ops (threshold 1.10, floor
   0.001 ms).
+* **Client hot-path micro-opts (`perf` pass, current revision)** —
+  `utils.http_to_ws` derived the events URL with two `re.sub(r"^http:", …)`
+  calls; an anchored `^` without `MULTILINE` is exactly a prefix test, so it now
+  uses `startswith` + a slice and never enters the regex engine
+  (`bench_utils`: `http_to_ws(http|https)` 0.0011 → 0.0001 ms, **~11x**). The
+  eager `log.debug(f"…")` f-strings on the reconcile decision and download-loop
+  paths (`sync._compare_files` conflict branch, plus the per-file
+  skip/unchanged/conflict branches) became lazy loguru `{}` args, so a
+  DEBUG-off run no longer formats a message it then drops
+  (`bench_reconcile`: `compare_files(conflict_download)` 0.0015 → 0.0010 ms,
+  **~1.7x**). Same-session A/B (`run_all.py` → `compare.py`, stash/restore): the
+  only flagged ops are in modules not touched — `mint_*`, `record_deletion`,
+  `merge_payload` are fsync/temp-SQLite bound and `get_base_hash` /
+  `local_version_and_base` sit at the 1 µs floor (re-runs span 0.0018–0.0028 ms)
+  — **no real regression**. Rendered messages are byte-identical (lazy loguru
+  produces the same string), covered by the sync suite.
 
 ## Reconcile core (`bench_reconcile.py`) — what the new coverage found
 
