@@ -102,6 +102,38 @@ def split_stale_deletes(
     return valid, stale
 
 
+def classify_stat_change(
+    target: str, last_mode: dict[str, int], last_mtime: dict[str, int]
+) -> str | None:
+    """Update the mode/mtime baselines for *target* and classify the change.
+
+    Shared by ``BaseFileEventHandler._process_permission_only`` (master/remote)
+    and ``P2PSlaveFileEventHandler.on_modified`` (slave): a chmod or touch fires
+    only IN_ATTRIB with no close, so both inspect mode then mtime against the
+    recorded baselines. Returns ``"first"`` (first observation), ``"mode"``
+    (mode changed), ``"mtime"`` (content-identical touch) or ``None`` (no change
+    / stat failed); the caller decides the transport-specific action. Content is
+    never uploaded from here (a partial write would be unsafe).
+    """
+    try:
+        st = Path(target).stat()
+    except OSError:
+        return None
+    mode = st.st_mode & 0o7777
+    mtime_ns = st.st_mtime_ns
+    prev_mode = last_mode.get(target)
+    prev_mtime = last_mtime.get(target)
+    last_mode[target] = mode
+    last_mtime[target] = mtime_ns
+    if prev_mode is None:
+        return "first"
+    if prev_mode != mode:
+        return "mode"
+    if prev_mtime is not None and mtime_ns != prev_mtime:
+        return "mtime"
+    return None
+
+
 # Minimum quiet window for directory MODIFY events. inotify fires IN_ATTRIB on
 # a directory once per child create/write/rename/remove, so a single recursive
 # operation (rmtree of an inbound delete, a deep download, a mkdir burst) emits
@@ -382,22 +414,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
         if is_hidden_file(src_path) or Path(src_path).is_symlink():
             return
-        try:
-            st = Path(src_path).stat()
-        except OSError:
-            return
-        mode = st.st_mode & 0o7777
-        mtime_ns = st.st_mtime_ns
-        prev_mode = self._last_mode.get(src_path)
-        prev_mtime = self._last_mtime.get(src_path)
-        self._last_mode[src_path] = mode
-        self._last_mtime[src_path] = mtime_ns
-        if prev_mode is None:
-            # First observation (e.g. the watch just started, or the content
-            # write that preceded this event): record the baselines so a later
-            # chmod/touch is detected; content goes via on_closed.
-            return
-        if prev_mode != mode:
+        change = classify_stat_change(src_path, self._last_mode, self._last_mtime)
+        if change == "mode":
             invalidate_sha256_cache(src_path)
             file_obj = File.get(src_path)
             if file_obj is None:
@@ -405,7 +423,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             log.info(f'[PERMISSION] mode change: "{src_path}"{self._cid_suffix(src_path)}')
             self._on_permissions_changed(file_obj, src_path)
             return
-        if prev_mtime is not None and mtime_ns != prev_mtime:
+        if change == "mtime":
             # A newer mtime with no close: a plain ``touch``. Only propagate when
             # the content is unchanged (a write's IN_MODIFY burst hashes
             # differently and is handled by on_closed), so a partial read is

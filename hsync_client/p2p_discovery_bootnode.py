@@ -105,18 +105,20 @@ class BootnodeDiscovery(DiscoveryPlanState):
         upnp_factory: Callable[[], UpnpMapper] = UpnpMapper,
         local_ip: str | None = None,
     ) -> None:
-        self._cid = cid
-        self._bucket = bucket
-        self._group = group
         self._bootnode_host = bootnode_host
         self._bootnode_port = bootnode_port
-        self._use_https = use_https
-        self._cert_fingerprint = cert_fingerprint
-        self._force_master = force_master
-        self._never_master = never_master
-        self._startup_time = startup_time if startup_time > 0 else time.time()
-        self._sync_direction = sync_direction
-        self._peer_timeout = peer_timeout
+        self._init_common_fields(
+            cid=cid,
+            bucket=bucket,
+            group=group,
+            use_https=use_https,
+            cert_fingerprint=cert_fingerprint,
+            force_master=force_master,
+            never_master=never_master,
+            startup_time=startup_time,
+            sync_direction=sync_direction,
+            peer_timeout=peer_timeout,
+        )
         self._refresh_interval = max(float(BOOTNODE_REFRESH_INTERVAL_MIN), refresh_interval)
         # Earliest monotonic time the next ``query`` may run: keeps the client
         # inside the bootnode's 5/min per-(IP, bucket) query budget and honours a

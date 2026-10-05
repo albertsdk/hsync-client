@@ -93,6 +93,7 @@ from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
+    classify_stat_change,
 )
 from hsync_client.p2p_inventory import (
     NOOP_INVENTORY_OBSERVER,
@@ -2278,23 +2279,12 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             # first (chmod -> permission-only upload), then the mtime (a
             # content-identical touch -> metadata-only PATCH); the master's
             # watcher then broadcasts the change to the other slaves.
-            try:
-                file_stat = Path(src_path).stat()
-            except OSError:
-                return
-            mode = file_stat.st_mode & 0o7777
-            mtime_ns = file_stat.st_mtime_ns
-            prev_mode = self._last_mode.get(src_path)
-            prev_mtime = self._last_mtime.get(src_path)
-            self._last_mode[src_path] = mode
-            self._last_mtime[src_path] = mtime_ns
-            if prev_mode is None:
-                return
-            if prev_mode != mode:
+            change = classify_stat_change(src_path, self._last_mode, self._last_mtime)
+            if change == "mode":
                 log.info(f'[PERMISSION] mode change: "{src_path}"')
                 self._handle_file_upload(src_path)
                 return
-            if prev_mtime is not None and mtime_ns != prev_mtime:
+            if change == "mtime":
                 log.info(f'[TOUCH] mtime change: "{src_path}"')
                 self._propagate_metadata_change(src_path)
             return
@@ -2518,16 +2508,25 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
         ensure_sentinel(dir_path, label=ActionLabel.LOCAL_KEEP)
 
+    def _reset_path_tracking(self, path: str) -> None:
+        """Cancel a deferred create-upload and drop cached mode/mtime for *path*.
+
+        Shared by ``on_deleted``/``on_moved``: a path that disappears or moves
+        away must not leave a stale deferred-upload timer or a stale mode/mtime
+        baseline behind.
+        """
+        self._cancel_create_upload(path)
+        self._last_mode.pop(path, None)
+        self._last_mtime.pop(path, None)
+        self._last_dir_mode.pop(path, None)
+
     def on_deleted(self, event) -> None:
         """Handle file/directory deletion events."""
         src_path = ensure_str_path(event.src_path)
 
         # The file no longer exists: cancel any on_created-deferred upload so
         # a stale timer does not try to upload a deleted file.
-        self._cancel_create_upload(src_path)
-        self._last_mode.pop(src_path, None)
-        self._last_mtime.pop(src_path, None)
-        self._last_dir_mode.pop(src_path, None)
+        self._reset_path_tracking(src_path)
 
         # Skip temp files (.part files used during downloads)
         if self._is_temp_file(src_path):
@@ -2602,16 +2601,11 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
         # The file moved away from src_path: cancel any on_created-deferred
         # upload for it so a stale timer does not upload a moved file.
-        self._cancel_create_upload(src_path)
-        self._last_mode.pop(src_path, None)
-        self._last_mtime.pop(src_path, None)
-        self._last_dir_mode.pop(src_path, None)
+        self._reset_path_tracking(src_path)
         # The destination is a fresh path: reset any mode tracking so the
         # first event for it records the current mode instead of comparing
         # against the stale one from the source.
-        self._last_mode.pop(dest_path, None)
-        self._last_mtime.pop(dest_path, None)
-        self._last_dir_mode.pop(dest_path, None)
+        self._reset_path_tracking(dest_path)
 
         # Skip temp files (.part files used during downloads)
         if self._is_temp_file(src_path) or self._is_temp_file(dest_path):

@@ -42,7 +42,7 @@ configured `HybridDiscovery` runs **both** over one shared `PeerManager`:
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `DiscoveryPlan` | `p2p_discovery.py:40` | minimal interface every plan implements (`start`/`stop`/`wait_for_discovery`, `update_endpoint_ready`/`update_server_ready`/`update_server_not_ready`, `set_connected_clients*`, `port`, `peer_manager`) |
-| `DiscoveryPlanState` | `p2p_discovery.py:122` | shared trivial state and the single `create_peer_manager()` builder (`port`, `peer_manager`, `set_connected_clients_provider`) |
+| `DiscoveryPlanState` | `p2p_discovery.py:131` | shared trivial state and the single `create_peer_manager()` builder (`port`, `peer_manager`, `set_connected_clients_provider`), plus `_init_common_fields()` — the election-advertisement fields both plans set identically |
 | `PeerManager` | `p2p_peers.py:128` | tracks peers, runs election, liveness (shared) |
 | `Peer` | `p2p_peers.py:111` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
 | `PeerSnapshot` | `p2p_peers.py:176` | immutable projection for the handler |

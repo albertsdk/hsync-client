@@ -30,6 +30,7 @@ Consumers: ``hsync-client`` (p2p handler, the two discovery plans, tests).
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -153,8 +154,39 @@ class DiscoveryPlanState:
     _startup_time: float
     _sync_direction: str
     _cert_fingerprint: str | None
+    _use_https: bool
     _local_ip: str | None
     _peer_timeout: float
+
+    def _init_common_fields(
+        self,
+        *,
+        cid: str,
+        bucket: str,
+        group: str | None,
+        use_https: bool,
+        cert_fingerprint: str | None,
+        force_master: bool,
+        never_master: bool,
+        startup_time: float,
+        sync_direction: str,
+        peer_timeout: float,
+    ) -> None:
+        """Set the election-advertisement fields shared by every discovery plan.
+
+        Single definition of the values both plans carry identically (also the
+        ones :meth:`create_peer_manager` reads), so they cannot drift.
+        """
+        self._cid = cid
+        self._bucket = bucket
+        self._group = group
+        self._use_https = use_https
+        self._cert_fingerprint = cert_fingerprint
+        self._force_master = force_master
+        self._never_master = never_master
+        self._startup_time = startup_time if startup_time > 0 else time.time()
+        self._sync_direction = sync_direction
+        self._peer_timeout = peer_timeout
 
     @property
     def port(self) -> int:

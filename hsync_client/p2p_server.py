@@ -45,7 +45,7 @@ from http import HTTPStatus
 from os import walk
 from pathlib import Path
 from shutil import disk_usage
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, overload
 from urllib.parse import parse_qs, urlparse
 
 import zstandard as zstd
@@ -381,9 +381,23 @@ def _parse_request_query(request_path: str) -> dict[str, list[str]]:
     ``keep_blank_values=True`` keeps the Python master and the Android mirror
     (``parseQueryParamLists``) in agreement: ``k=`` yields ``k -> ""`` on both
     instead of silently disappearing. Handlers read a missing key through
-    ``query.get(key, [None])[0]``, so a blank is validated like any other value.
+    ``_first(query, key)``, so a blank is validated like any other value.
     """
     return parse_qs(urlparse(request_path).query, keep_blank_values=True)
+
+
+@overload
+def _first(query: dict[str, list[str]], key: str) -> str | None: ...
+@overload
+def _first(query: dict[str, list[str]], key: str, default: str) -> str: ...
+def _first(query: dict[str, list[str]], key: str, default: str | None = None) -> str | None:
+    """First value of a parsed query parameter, or *default* when absent.
+
+    ``_parse_request_query`` returns ``parse_qs`` lists; handlers used to inline
+    ``query.get(key, [default])[0]`` at every read site.
+    """
+    values = query.get(key)
+    return values[0] if values else default
 
 
 # HTTP Status Codes
@@ -942,6 +956,26 @@ class P2PEndpointMixin(_HTTPTransportBase):
         self._send_error_response(HTTP_CONFLICT, "Duplicate device identity")
         return True
 
+    def _resolve_confined_path(
+        self, rel_path: str, *, resolve_final: bool = True
+    ) -> tuple[str, str] | None:
+        """Bucket-confine a peer-supplied relative path; ``(full_path, bucket)`` or None.
+
+        Single definition of the require-bucket + ``resolve_within`` +
+        invalid-path response shared by the mutation handlers. Sends the error
+        response and returns ``None`` on failure. ``resolve_final=False`` keeps
+        a final symlink as the LINK entry (delete/symlink); the default full
+        resolve is used where the target content is meant (create-dir).
+        """
+        local_bucket = self._require_bucket()
+        if not local_bucket:
+            return None
+        full_path = resolve_within(local_bucket, rel_path, resolve_final=resolve_final)
+        if not full_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return None
+        return full_path, local_bucket
+
     def _handle_patch_permissions(self, query: dict) -> None:
         """Apply a content-unchanged metadata change (chmod / touch) from a slave.
 
@@ -955,12 +989,12 @@ class P2PEndpointMixin(_HTTPTransportBase):
         IN_ATTRIB change and broadcasts the ``modified`` event to the other
         slaves, exactly like the central server's same-SHA branch.
         """
-        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+        if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
-        rel_path = query.get("filename", [None])[0]
-        permissions = query.get("permissions", [None])[0]
-        mtime_raw = query.get("mtime", [None])[0]
+        rel_path = _first(query, "filename")
+        permissions = _first(query, "permissions")
+        mtime_raw = _first(query, "mtime")
         mtime = 0
         if mtime_raw is not None:
             try:
@@ -985,14 +1019,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
             return
 
-        local_bucket = self._require_bucket()
-        if not local_bucket:
+        resolved = self._resolve_confined_path(rel_path, resolve_final=False)
+        if resolved is None:
             return
-
-        full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
-        if not full_path:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
-            return
+        full_path, _ = resolved
 
         target = Path(full_path)
         if target.is_symlink() or not target.is_file():
@@ -1001,7 +1031,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
 
-        origin_cid = query.get("cid", [None])[0]
+        origin_cid = _first(query, "cid")
         valid_origin_cid = (
             origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
         )
@@ -1040,13 +1070,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
     def _handle_rename(self, query: dict) -> None:
         """Handle file/directory rename from client."""
-        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+        if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
         from os import rename
 
-        src_rel = query.get("src", [None])[0]
-        dst_rel = query.get("dst", [None])[0]
+        src_rel = _first(query, "src")
+        dst_rel = _first(query, "dst")
 
         if not src_rel or not dst_rel:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'src' or 'dst' parameter")
@@ -1086,7 +1116,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # CID, allowing the sender to discard its own echo.  The CID is
             # only honoured on authenticated requests: without P2P_KEY any P2P
             # peer could spoof another peer's CID and suppress its events.
-            origin_cid = query.get("cid", [None])[0]
+            origin_cid = _first(query, "cid")
             if origin_cid and is_valid_cid(origin_cid):
                 from hsync_client.p2p_websocket import mark_inbound_origin
 
@@ -1104,32 +1134,26 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
     def _handle_delete(self, query: dict) -> None:
         """Handle file/directory deletion from client."""
-        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+        if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
         from shutil import rmtree
 
-        rel_path = query.get("path", [None])[0]
-        is_dir = query.get("is_dir", ["false"])[0].lower() == "true"
+        rel_path = _first(query, "path")
+        is_dir = _first(query, "is_dir", "false").lower() == "true"
 
         if not rel_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
             return
 
-        local_bucket = self._require_bucket()
-        if not local_bucket:
-            return
-
-        # Peer-supplied path is untrusted: validate and confine to the bucket
+        # Peer-supplied path is untrusted: validated and confined to the bucket
         # (rejects traversal, absolute paths and sibling-prefix confusion).
-        # resolve_final=False: a symlink AT this path must be deleted as the
-        # LINK entry — the default full resolve dereferences it and turns
-        # "delete the link" into "delete the target file" (data loss that
-        # propagates to every peer).
-        full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
-        if not full_path:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+        # resolve_final=False keeps a symlink AT this path as the LINK entry, so
+        # "delete the link" never dereferences and deletes the target file.
+        resolved = self._resolve_confined_path(rel_path, resolve_final=False)
+        if resolved is None:
             return
+        full_path, _ = resolved
 
         if not (Path(full_path).is_symlink() or Path(full_path).exists()):
             # Already deleted, return success. No mark_inbound_origin is
@@ -1138,7 +1162,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # master CID (echo not suppressed on the originator).
             log.debug(
                 f"[DELETE-API] already-deleted branch: path={full_path} is_dir={is_dir} "
-                f"origin_cid={query.get('cid', [None])[0]}"
+                f"origin_cid={_first(query, 'cid')}"
             )
             self._send_json_response(HTTP_OK, {"info": "File already deleted"})
             return
@@ -1147,7 +1171,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # filesystem watcher is broadcast with the originator's CID.
         # The CID is always recorded for accurate logging; only authenticated
         # CIDs are used for echo suppression (consume_inbound_origin gate).
-        origin_cid = query.get("cid", [None])[0]
+        origin_cid = _first(query, "cid")
         marked = False
         if origin_cid and is_valid_cid(origin_cid):
             from hsync_client.p2p_websocket import mark_inbound_origin
@@ -1221,26 +1245,22 @@ class P2PEndpointMixin(_HTTPTransportBase):
         echo suppression, and creates a ``.hsynckeep`` sentinel if the new
         directory is empty so the sync engine preserves it.
         """
-        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+        if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
-        rel_path = query.get("path", [None])[0]
+        rel_path = _first(query, "path")
         if not rel_path:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' parameter")
             return
 
-        local_bucket = self._require_bucket()
-        if not local_bucket:
-            return
-
-        # Peer-supplied path is untrusted: validate and confine to the bucket
+        # Peer-supplied path is untrusted: validated and confined to the bucket
         # (rejects traversal, absolute paths and sibling-prefix confusion).
-        full_path = resolve_within(local_bucket, rel_path)
-        if not full_path:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+        resolved = self._resolve_confined_path(rel_path)
+        if resolved is None:
             return
+        full_path, local_bucket = resolved
 
-        origin_cid = query.get("cid", [None])[0]
+        origin_cid = _first(query, "cid")
         valid_origin_cid = (
             origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
         )
@@ -1287,7 +1307,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # Apply optional permissions if provided. The directory-specific
             # setter keeps the owner rwx floor so a peer-supplied mode like
             # ``000`` can never lock the master out of its own storage.
-            permissions = query.get("permissions", [None])[0]
+            permissions = _first(query, "permissions")
             if permissions:
                 from hsync_client.utils import set_permissions_on_dir
 
@@ -1308,31 +1328,27 @@ class P2PEndpointMixin(_HTTPTransportBase):
         Mirrors the central server's ``POST /symlinks`` semantics so remote
         mode and P2P mode behave identically.
         """
-        if self._reject_duplicate_cid(query.get("cid", [None])[0]):
+        if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
         from os import symlink as os_symlink
 
         from hsync_common.path_validation import is_safe_symlink_target
 
-        rel_path = query.get("path", [None])[0]
-        target = query.get("target", [None])[0]
+        rel_path = _first(query, "path")
+        target = _first(query, "target")
 
         if not rel_path or not target:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'path' or 'target' parameter")
             return
 
-        local_bucket = self._require_bucket()
-        if not local_bucket:
-            return
-
-        # Peer-supplied link path is untrusted: validate and confine to the
+        # Peer-supplied link path is untrusted: validated and confined to the
         # bucket WITHOUT dereferencing the final component — an existing link
         # at the destination must be replaced as the LINK, never its target.
-        full_path = resolve_within(local_bucket, rel_path, resolve_final=False)
-        if not full_path:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+        resolved = self._resolve_confined_path(rel_path, resolve_final=False)
+        if resolved is None:
             return
+        full_path, local_bucket = resolved
 
         # The target must stay inside the bucket (an escaping target would
         # plant a symlink to arbitrary local files on the master).
@@ -1363,7 +1379,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             # Mark the path as inbound so the master's watcher rebroadcasts
             # the symlink event with the originator CID (echo suppression).
-            origin_cid = query.get("cid", [None])[0]
+            origin_cid = _first(query, "cid")
             if origin_cid and is_valid_cid(origin_cid):
                 from hsync_client.p2p_websocket import mark_inbound_origin
 
@@ -1438,7 +1454,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
     def _handle_list_files(self, query: dict) -> None:
         """Handle list files endpoint."""
-        filter_path = query.get("path", [None])[0]
+        filter_path = _first(query, "path")
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         if not local_bucket or not Path(local_bucket).exists():
@@ -1609,11 +1625,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
     def _handle_download(self, query: dict, expected_sha256: str | None = None) -> None:
         """Serve one safely-opened regular file, optionally bound to an expected hash."""
-        filename = query.get("filename", [None])[0]
+        filename = _first(query, "filename")
         if not filename:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing filename parameter")
             return
-        origin_cid = query.get("cid", [None])[0]
+        origin_cid = _first(query, "cid")
         log.info(f'{ActionLabel.REMOTE_DOWNLOAD} "{filename}"{cid_suffix(origin_cid)}')
 
         local_bucket = self._require_bucket()
@@ -1773,14 +1789,14 @@ class P2PEndpointMixin(_HTTPTransportBase):
             sha256sum: Expected SHA-256 of the complete file (optional).
             size:      Expected total size in bytes (optional).
         """
-        filename = query.get("filename", [""])[0]
+        filename = _first(query, "filename", "")
         if not filename:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' parameter")
             return
 
-        sha256sum = query.get("sha256sum", [""])[0]
+        sha256sum = _first(query, "sha256sum", "")
         try:
-            size = int(query.get("size", ["0"])[0])
+            size = int(_first(query, "size", "0"))
         except (TypeError, ValueError):
             size = 0
 

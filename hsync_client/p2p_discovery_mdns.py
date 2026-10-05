@@ -329,16 +329,18 @@ class MdnsDiscovery(DiscoveryPlanState):
                 shorter than ``peer_timeout`` so a single missed heartbeat never
                 expires a live peer.
         """
-        self._cid = cid
-        self._bucket = bucket
-        self._group = group
-        self._use_https = use_https
-        self._cert_fingerprint = cert_fingerprint
-        self._force_master = force_master
-        self._never_master = never_master
-        self._startup_time = startup_time if startup_time > 0 else time.time()
-        self._sync_direction = sync_direction
-        self._peer_timeout = peer_timeout
+        self._init_common_fields(
+            cid=cid,
+            bucket=bucket,
+            group=group,
+            use_https=use_https,
+            cert_fingerprint=cert_fingerprint,
+            force_master=force_master,
+            never_master=never_master,
+            startup_time=startup_time,
+            sync_direction=sync_direction,
+            peer_timeout=peer_timeout,
+        )
         self._heartbeat_interval = heartbeat_interval
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
