@@ -505,7 +505,7 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
    `SYNC_DIRECTION == "download-only"` (`sync.py:362-367`,
    `converge_directory_permissions:1247`). Permissions ARE applied from inbound
    directory events in LAN continuous mode (event handler → `set_permissions_on_dir`,
-   `utils.py:635`). → server-mode dir assertion = **floor-only**; LAN dir
+   `utils/permissions.py:64`). → server-mode dir assertion = **floor-only**; LAN dir
    assertion = **strict** and generation must happen **after** the slave is
    `[READY]` (§14 LAN flow).
 4. **mtime is rounded/clamped, never asserted exactly.** Receiver applies
@@ -657,7 +657,7 @@ behaviour.
 | CLI flags | `hsync-client/hsync_client/cli.py` — subcommands `p2p`/`server`, `--once`, `--insecure`, `--no-autotune`, `--max-concurrent-transfers`, `--min-free-disk-space`, `--force-master`, `--never-master`, `--sync-direction` |
 | Concurrency resolution | `hsync-client/hsync_client/main_logic.py:165` (`_get_max_concurrent_transfers_value`) |
 | Permissions SSOT | `hsync-common/hsync_common/permissions.py` (`mode_to_octal`, `sanitize_remote_permissions:85`, `REMOTE_PERMISSION_MASK`, `OWNER_DIRECTORY_ACCESS`) |
-| Permissions apply (client) | `hsync-client/hsync_client/utils.py:616` (`set_permissions`), `:635` (`set_permissions_on_dir`); download `transfer.py:452,678`; dir converge `sync.py:1213-1282` |
+| Permissions apply (client) | `hsync-client/hsync_client/utils/permissions.py:45` (`set_permissions`), `:64` (`set_permissions_on_dir`); download `transfer.py:452,678`; dir converge `sync.py:1213-1282` |
 | mtime | `transfer.py:452,674` (`utime`); `hsync-common/hsync_common/clock.py:448` (`clamp_incoming_corrected_mtime`); `hsync-common/models/version.py` |
 | Wire file model | `hsync-common/hsync_common/models/file.py` (`FileDict`, `to_dict`) |
 | Server listing | `hsync-server/hsync_server/api/files/list.py:162` (`GET /dirs`), `:220` (`GET /files`) |

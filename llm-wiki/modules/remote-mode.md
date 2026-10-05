@@ -21,16 +21,16 @@ The WS auth frame is built from `hsync_common.protocol.handshake`
 `app_version`, `capabilities`, `token`. A `protocol_version` mismatch is a hard
 fail (disconnect). Server side: [websocket.md](https://github.com/albertsdk/hsync-server/blob/main/llm-wiki/modules/websocket.md).
 
-## REST transport (`utils.py`)
+## REST transport (`utils/http.py`)
 
 All REST calls go through a single pinned/configured `requests.Session`:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `get_http_session` | `utils.py:152` | shared session (keep-alive, TLS verify); honours the environment proxies — unlike the fingerprint-pinned p2p session, which sets `trust_env = False` |
-| `http_get/post/delete/patch` | `utils.py:219`–`:290` | thin verbs over the session |
-| `get_ssl_verify` | `utils.py:121` | TLS verification policy |
-| `diagnose_connection_error` | `utils.py:260` | classify TLS/plaintext mismatches for clear errors |
+| `get_http_session` | `utils/http.py:121` | shared session (keep-alive, TLS verify); honours the environment proxies — unlike the fingerprint-pinned p2p session, which sets `trust_env = False` |
+| `http_get/post/delete/patch` | `utils/http.py:187`–`:258` | thin verbs over the session |
+| `get_ssl_verify` | `utils/http.py:88` | TLS verification policy |
+| `diagnose_connection_error` | `utils/http.py:228` | classify TLS/plaintext mismatches for clear errors |
 
 REST requests carry `X-Protocol-Version` (`PROTOCOL_VERSION_REST`); the server
 hard-fails 426 on mismatch (server `middleware.py:111`). Endpoints mirror the

@@ -653,7 +653,7 @@ is why it does not scale with bytes.
   `sync_state._lock`) never executes its `finally`, so the coordination flag
   stays set and every later resync is skipped **forever** — with no signal that
   the only recovery mechanism for events missed by the watcher (`IN_Q_OVERFLOW`
-  is not surfaced by watchdog, per `utils.py`) had stopped working. The skip now
+  is not surfaced by watchdog, per `utils/resources.py`) had stopped working. The skip now
   escalates to **WARNING** once the running cycle outlives the RESYNC interval
   (a cycle older than its own period means the safety net has already missed a
   scheduled recovery), and the age of the active cycle is part of the message.

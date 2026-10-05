@@ -39,7 +39,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `bench/README.md` | Tier table, per-script scope, run commands, methodology |
 | `bench/common.py` | Stdlib-only measurement core (mean/p50/p99/stdev/min/max) + deterministic CIDs; never imports `hsync_client` |
 | `bench/bench_autotune.py` | `hsync_client/autotune.py` policy scenarios |
-| `bench/bench_utils.py` | `hsync_client/utils.py` per-request/path helper scenarios |
+| `bench/bench_utils.py` | the `hsync_client/utils/` package per-request/path helper scenarios |
 | `bench/bench_event_queue.py` | `hsync_client/event_queue.py` outbound-event scenarios |
 | `bench/bench_pinning.py` | `hsync_client/pinning.py` TOFU store scenarios |
 | `bench/bench_sync_state.py` | `hsync_client/sync_state.py` wrapper scenarios |
@@ -64,7 +64,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `derive_concurrency(ssd,mid)` | `autotune.derive_concurrency` (`:493`) |
 | `derive_profile` | `autotune.derive_profile` (`:383`) |
 | `profile_queue(many_small\|few_large\|mixed)` | `autotune.profile_transfer_queue` (`:347`) |
-| `http_to_ws(http\|https)` | `utils.http_to_ws` (`hsync_client/utils.py:84`) |
+| `http_to_ws(http\|https)` | `utils.http_to_ws` (`hsync_client/utils/http.py:41`) |
 | `redact_headers(auth\|plain)` | `utils.redact_headers` (`:105`) — log-secret masking gate |
 | `request_headers` | `utils.request_headers` (`:73`) |
 | `inbound_size_cap(declared\|capped\|unknown)` | `utils.inbound_size_cap` (`:550`) — decompression-bomb bound |

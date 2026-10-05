@@ -138,8 +138,8 @@ caller falls back to a full transfer.
 | `_upload_version_fields` / `_resolve_local_vclock` | `transfer.py` | resolve the effective local `vclock`/`version_id` for the upload form and merge-base recording (delegates to `sync_state.upload_version_fields`) |
 | `_emit_transfer_failed` | `transfer.py:93` | emit `transfer_failed` UI event on exhaustion |
 | `_local_dest_path` | `transfer.py:265` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
-| `_open_partial_no_follow` | `utils.py:379` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
-| `register_inflight_partial` / `unregister_inflight_partial` / `is_inflight_partial` | `utils.py:560` | lock-guarded set of artifacts a live transfer is writing (`<final>.part`, `<final>.delta.part`, `<final>.delta.part.lit`); the read side is `sync._cleanup_partial_files`, so the per-cycle leftover sweep never deletes an in-flight stream. **Boundary**: the p2p master's inbound-upload `.part` (`p2p_server._handle_upload`) is deliberately *not* registered — no code path runs a reconcile on a master's bucket (`p2p.py` never calls `sync()`; the periodic resync is slave-only), and the master keeps that artifact on purpose for a resumable `202`. If a master ever gains a sync cycle, register it there too or the sweep will delete uploads mid-stream |
+| `_open_partial_no_follow` | `utils/paths.py:234` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
+| `register_inflight_partial` / `unregister_inflight_partial` / `is_inflight_partial` | `utils/paths.py:211` | lock-guarded set of artifacts a live transfer is writing (`<final>.part`, `<final>.delta.part`, `<final>.delta.part.lit`); the read side is `sync._cleanup_partial_files`, so the per-cycle leftover sweep never deletes an in-flight stream. **Boundary**: the p2p master's inbound-upload `.part` (`p2p_server._handle_upload`) is deliberately *not* registered — no code path runs a reconcile on a master's bucket (`p2p.py` never calls `sync()`; the periodic resync is slave-only), and the master keeps that artifact on purpose for a resumable `202`. If a master ever gains a sync cycle, register it there too or the sweep will delete uploads mid-stream |
 | escaping-symlink upload guard | `upload_file` `transfer.py` | refuses (before any hashing/read) a symlink whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (realtime watch/LAN path; the reconcile routes links structurally instead — see symlink replication below). Emits `security_rejected` |
 | `upload_symlink` / `download_symlink` / `materialize_symlink_local` | `transfer.py` (symlink section) | **Structural replication**: `upload_symlink` POSTs `(path, target)` to `/symlinks` (central server AND p2p master — same surface, transport-agnostic); an ABSOLUTE local target is relativized against the link's parent via `hsync_common.wire_symlink_target` (rsync `munge` semantics: the sender's absolute paths must never reach peers; escaping targets → security_rejected). `download_symlink` → `materialize_symlink_local` recreates the LINK locally (confined `resolve_within(..., resolve_final=False)`, target validated `is_safe_symlink_target`), replacing an existing file/link but refusing a non-empty directory. `upload_file` is never used for links in the reconcile path |
 
@@ -168,10 +168,10 @@ The same cap also bounds uncompressed bodies, so an over-cap download (hostile
 or simply larger than the configured maximum) is aborted and the `.part`
 dropped. `MAX_INBOUND_SIZE` defaults to 10 GB (`--max-inbound-size`,
 mirroring the server's `max_upload_size`; `0` = declared size only). Wire-supplied permissions go through
-`utils.set_permissions` (`utils.py:492`) which strips setuid/setgid/sticky bits
+`utils.set_permissions` (`utils/permissions.py:45`) which strips setuid/setgid/sticky bits
 (`sanitize_remote_permissions`).
 
-Transfers are serialized per local path via `utils.path_lock` (`utils.py:411`, §14).
+Transfers are serialized per local path via `utils.path_lock` (`utils/paths.py:279`, §14).
 Retry policy: `retry.retry_on_transient_transfer_error` (`retry.py:105`); params
 from `constants.py:99`–`:101`.
 
@@ -478,7 +478,7 @@ appear in the `/files` listing):
   the master applies the mode (owner rwx floor) and its watcher re-broadcasts
   the change.
 - **Inbound events**: `update_dir` (`sync.py`) applies the remote mode with
-  the owner rwx floor via `set_permissions_on_dir` (`utils.py`) — a peer mode
+  the owner rwx floor via `set_permissions_on_dir` (`utils/permissions.py`) — a peer mode
   like `000` can never lock the receiver out of its own storage.
 - **One-shot reconcile**: `converge_directory_permissions`
   (`sync.py`) compares the dedicated `GET /dirs` listing (exposed by both the

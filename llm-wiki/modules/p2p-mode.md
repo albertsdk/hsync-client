@@ -285,7 +285,7 @@ write-capable startup and every mutating HTTP route are denied unless the
 explicit dangerous opt-in is set. CID squatting can therefore affect
 availability/source hints but cannot authorize a filesystem mutation.
 | Connection pinning | `ssl_utils.py` | `create_fingerprint_ssl_context`, `FingerprintHTTPAdapter`, `verify_peer_cert_fingerprint` (no TOCTOU) |
-| Pinned session trust | `utils.py:get_http_session` | A fingerprint-pinned session sets `trust_env = False`: the pinned fingerprint is the whole trust anchor (TOFU), so `*_proxy`, `REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE` and `.netrc` must not add a second one — an environment proxy would route the pinned peer connection through a third party. Also removes `requests`'s per-request environment-proxy resolution (5 calls/file, ~0.85 ms CPU/file on a burst). Remote-mode sessions keep the default (`trust_env = True`) |
+| Pinned session trust | `utils/http.py:get_http_session` | A fingerprint-pinned session sets `trust_env = False`: the pinned fingerprint is the whole trust anchor (TOFU), so `*_proxy`, `REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE` and `.netrc` must not add a second one — an environment proxy would route the pinned peer connection through a third party. Also removes `requests`'s per-request environment-proxy resolution (5 calls/file, ~0.85 ms CPU/file on a burst). Remote-mode sessions keep the default (`trust_env = True`) |
 
 HTTPS/WSS is mandatory in p2p mode (no plaintext fallback). Write-capable no-key
 sync requires `--allow-unauthenticated-writes` or
