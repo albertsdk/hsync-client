@@ -199,11 +199,13 @@ or `export` / `source` variables in the shell before launching `hsync`.
 **not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `--once`,
 `--sync-direction`, or `--force-master`.
 
-Repo templates `dev.env` / `prod.env` are meant to be sourced or passed to
-`--env-file`; they are not read on their own.
+Repo templates `dev.env.example` / `prod.env.example` are meant to be copied to
+`dev.env` / `prod.env` (which are git-ignored) and then sourced or passed to
+`--env-file`; the templates are not read on their own.
 
 ```bash
 # Load recognised HSYNC_* keys, then pass CLI-only flags
+cp prod.env.example prod.env
 hsync server --env-file ./prod.env server.example.com -b documents -p ~/Documents
 ```
 

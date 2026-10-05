@@ -84,8 +84,8 @@ storage type). This is enabled by default and requires no configuration.
 
 ## Environment Variables
 
-Environment variables and the provided `dev.env` / `prod.env` templates are
-documented in the single configuration reference:
+Environment variables and the provided `dev.env.example` / `prod.env.example`
+templates are documented in the single configuration reference:
 
 - [Configuration](configuration.md) — shared options and `HSYNC_*` variables
 - [Configuration → Environment files](configuration.md#environment-files)
