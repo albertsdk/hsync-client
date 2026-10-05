@@ -63,6 +63,63 @@ class TestBuildDiscoveryPlan:
         assert bootnode.call_args.kwargs["bootnode_host"] == "node.example"
         assert bootnode.call_args.kwargs["bootnode_port"] == 443
 
+    def test_bootnode_mode_floors_the_peer_liveness_timeout(self):
+        """Regression: the liveness window must span >= 2 bootnode query cycles.
+
+        A bootnode peer is re-seen only when its CID is drawn in the node's
+        random sample, which arrives at the lease cadence. The shared
+        PeerManager otherwise used the mDNS-derived window (default 15 s) and
+        declared live cross-network peers stale between two samples, churning
+        the election. Both children of the one shared manager must carry the
+        same floored value.
+        """
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery") as mdns,
+            patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
+        ):
+            build_discovery_plan(
+                _config(BOOTNODE="node.example", BOOTNODE_PORT=443),
+                cert_fingerprint="aa",
+                port=9000,
+            )
+        # default PEER_TIMEOUT 15 < 2 * refresh 30 => floored to 60
+        assert bootnode.call_args.kwargs["peer_timeout"] == 60
+        assert mdns.call_args.kwargs["peer_timeout"] == 60
+        assert bootnode.call_args.kwargs["refresh_interval"] == 30
+
+    def test_bootnode_mode_floor_follows_a_custom_refresh_interval(self):
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery") as mdns,
+            patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
+        ):
+            build_discovery_plan(
+                _config(BOOTNODE="node.example", BOOTNODE_REFRESH_INTERVAL=10),
+                cert_fingerprint="aa",
+                port=9000,
+            )
+        # 2 * 10 = 20 > default 15 => floored to 20
+        assert bootnode.call_args.kwargs["peer_timeout"] == 20
+        assert mdns.call_args.kwargs["peer_timeout"] == 20
+
+    def test_bootnode_mode_preserves_an_explicitly_larger_timeout(self):
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery") as mdns,
+            patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
+        ):
+            build_discovery_plan(
+                _config(BOOTNODE="node.example", PEER_TIMEOUT=120),
+                cert_fingerprint="aa",
+                port=9000,
+            )
+        assert bootnode.call_args.kwargs["peer_timeout"] == 120
+        assert mdns.call_args.kwargs["peer_timeout"] == 120
+
+    def test_mdns_only_keeps_the_configured_timeout(self):
+        """Without a bootnode the mDNS cadence governs; no floor is applied."""
+        with patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery") as mdns:
+            build_discovery_plan(_config(PEER_TIMEOUT=20), cert_fingerprint="aa", port=9000)
+        assert mdns.call_args.kwargs["peer_timeout"] == 20
+
 
 class TestHybridLifecycle:
     def test_start_shares_one_peer_manager_between_both_plans(self):

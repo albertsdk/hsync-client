@@ -34,6 +34,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from hsync_common.protocol.tls_trust import TrustPolicy
+from loguru import logger as log
 
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
@@ -211,6 +212,25 @@ def build_discovery_plan(
     from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 
     resolved_port = config["P2P_LISTEN_PORT"] if port is None else port
+    bootnode = config.get("BOOTNODE")
+    bootnode_refresh = config.get("BOOTNODE_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL
+    peer_timeout: float = float(config.get("PEER_TIMEOUT") or PEER_TIMEOUT)
+    # A bootnode-discovered peer is only re-seen when its CID is drawn in the
+    # node's random sample, and samples arrive at the lease cadence
+    # (``BOOTNODE_REFRESH_INTERVAL``, spec ``boot-1.md``: 30 s). The shared
+    # PeerManager holds ONE liveness window for both sources, so with a bootnode
+    # that window must span at least two query cycles — mirroring the mDNS rule
+    # ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` — or a live cross-network peer
+    # is declared stale between two samples and the election churns. An explicit
+    # larger ``HSYNC_PEER_TIMEOUT`` is preserved (``max``).
+    if bootnode:
+        required_timeout = 2.0 * float(bootnode_refresh)
+        if peer_timeout < required_timeout:
+            log.warning(
+                f"Raising the peer liveness timeout to {required_timeout:.0f}s: "
+                f"bootnode discovery re-samples peers every {bootnode_refresh}s"
+            )
+            peer_timeout = required_timeout
     shared: dict[str, object] = {
         "cid": config["CID"],
         "bucket": config["REMOTE_BUCKET"],
@@ -221,10 +241,9 @@ def build_discovery_plan(
         "force_master": config["P2P_FORCE_MASTER"],
         "never_master": config["P2P_NEVER_MASTER"],
         "sync_direction": config["SYNC_DIRECTION"],
-        "peer_timeout": config.get("PEER_TIMEOUT") or PEER_TIMEOUT,
+        "peer_timeout": peer_timeout,
         "heartbeat_interval": config.get("HEARTBEAT_INTERVAL") or HEARTBEAT_INTERVAL,
     }
-    bootnode = config.get("BOOTNODE")
     if not bootnode:
         return MdnsDiscovery(**shared)  # type: ignore[arg-type]
     # The bootnode plan has its own lease cadence (spec ``boot-1.md``: refresh
@@ -233,7 +252,7 @@ def build_discovery_plan(
     bootnode_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
     bootnode_plan = BootnodeDiscovery(
         **bootnode_shared,  # type: ignore[arg-type]
-        refresh_interval=config.get("BOOTNODE_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL,
+        refresh_interval=bootnode_refresh,
         bootnode_host=bootnode,
         bootnode_port=config.get("BOOTNODE_PORT") or BOOTNODE_DEFAULT_PORT,
         p2p_key=config.get("P2P_KEY"),
