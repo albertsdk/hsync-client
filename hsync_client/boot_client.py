@@ -481,6 +481,29 @@ async def _read_line(reader: Any) -> bytes | None:
     return bytes(line).rstrip(b"\n")
 
 
+def _apply_optional(
+    frame: Any,
+    *,
+    group: str | None = None,
+    bucket_token: str | None = None,
+    connected: int | None = None,
+    limit: int | None = None,
+) -> None:
+    """Copy the optional wire fields that are present (non-``None``) onto *frame*.
+
+    Single point for the "omit when None" rule shared by every builder, so a new
+    optional field is wired in one place.
+    """
+    if group is not None:
+        frame["group"] = group
+    if bucket_token is not None:
+        frame["bucket_token"] = bucket_token
+    if connected is not None:
+        frame["connected"] = connected
+    if limit is not None:
+        frame["limit"] = limit
+
+
 def build_register_frame(
     *,
     cid: str,
@@ -521,12 +544,7 @@ def build_register_frame(
         startup_time=startup_time,
         sync_direction=sync_direction,
     )
-    if group is not None:
-        frame["group"] = group
-    if bucket_token is not None:
-        frame["bucket_token"] = bucket_token
-    if connected is not None:
-        frame["connected"] = connected
+    _apply_optional(frame, group=group, bucket_token=bucket_token, connected=connected)
     return frame
 
 
@@ -545,12 +563,7 @@ def build_refresh_frame(
         cid=cid,
         bucket=bucket,
     )
-    if group is not None:
-        frame["group"] = group
-    if bucket_token is not None:
-        frame["bucket_token"] = bucket_token
-    if connected is not None:
-        frame["connected"] = connected
+    _apply_optional(frame, group=group, bucket_token=bucket_token, connected=connected)
     return frame
 
 
@@ -567,8 +580,7 @@ def build_leave_frame(
         cid=cid,
         bucket=bucket,
     )
-    if bucket_token is not None:
-        frame["bucket_token"] = bucket_token
+    _apply_optional(frame, bucket_token=bucket_token)
     return frame
 
 
@@ -585,10 +597,5 @@ def build_query_frame(
         type="query",
         bucket=bucket,
     )
-    if group is not None:
-        frame["group"] = group
-    if bucket_token is not None:
-        frame["bucket_token"] = bucket_token
-    if limit is not None:
-        frame["limit"] = limit
+    _apply_optional(frame, group=group, bucket_token=bucket_token, limit=limit)
     return frame

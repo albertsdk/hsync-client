@@ -379,26 +379,26 @@ class TestSuppressInsecureWarning:
         """Calling _suppress_insecure_warning does not raise."""
         import hsync_client.utils as utils_mod
 
-        old_flag = utils_mod._insecure_warning_suppressed
+        old_flag = utils_mod.http._insecure_warning_suppressed
         try:
-            utils_mod._insecure_warning_suppressed = False
+            utils_mod.http._insecure_warning_suppressed = False
             _suppress_insecure_warning()
-            assert utils_mod._insecure_warning_suppressed is True
+            assert utils_mod.http._insecure_warning_suppressed is True
         finally:
-            utils_mod._insecure_warning_suppressed = old_flag
+            utils_mod.http._insecure_warning_suppressed = old_flag
 
     def test_idempotent(self):
         """Calling twice does not raise."""
         import hsync_client.utils as utils_mod
 
-        old_flag = utils_mod._insecure_warning_suppressed
+        old_flag = utils_mod.http._insecure_warning_suppressed
         try:
-            utils_mod._insecure_warning_suppressed = False
+            utils_mod.http._insecure_warning_suppressed = False
             _suppress_insecure_warning()
             _suppress_insecure_warning()
-            assert utils_mod._insecure_warning_suppressed is True
+            assert utils_mod.http._insecure_warning_suppressed is True
         finally:
-            utils_mod._insecure_warning_suppressed = old_flag
+            utils_mod.http._insecure_warning_suppressed = old_flag
 
 
 class TestGetHttpSession:
@@ -496,7 +496,7 @@ class TestGetSslVerifyWithFingerprint:
         import hsync_client.utils as utils_mod
 
         original = CONFIG.copy()
-        old_flag = utils_mod._insecure_warning_suppressed
+        old_flag = utils_mod.http._insecure_warning_suppressed
         try:
             CONFIG["NO_VERIFY_SSL"] = False
             CONFIG["CA_CERT"] = None
@@ -505,7 +505,7 @@ class TestGetSslVerifyWithFingerprint:
             assert result is False
         finally:
             set_config(original)
-            utils_mod._insecure_warning_suppressed = old_flag
+            utils_mod.http._insecure_warning_suppressed = old_flag
 
 
 # =========================================================================
@@ -666,9 +666,9 @@ class TestWarnIfInotifyWatchLimitLow:
     def test_no_warning_when_under_limit(self, tmp_path):
         """A small tree below the limit emits no warning."""
         with (
-            patch("hsync_client.utils.Path.exists", return_value=True),
-            patch("hsync_client.utils.Path.read_text", return_value="8192\n"),
-            patch("hsync_client.utils.log.warning") as mock_warn,
+            patch("hsync_client.utils.resources.Path.exists", return_value=True),
+            patch("hsync_client.utils.resources.Path.read_text", return_value="8192\n"),
+            patch("hsync_client.utils.resources.log.warning") as mock_warn,
         ):
             warn_if_inotify_watch_limit_low(str(tmp_path))
         mock_warn.assert_not_called()
@@ -680,10 +680,10 @@ class TestWarnIfInotifyWatchLimitLow:
             (tmp_path / f"sub{i}").mkdir()
 
         with (
-            patch("hsync_client.utils.Path.exists", return_value=True),
+            patch("hsync_client.utils.resources.Path.exists", return_value=True),
             # Tiny limit so the threshold (ratio * limit) is crossed quickly.
-            patch("hsync_client.utils.Path.read_text", return_value="2\n"),
-            patch("hsync_client.utils.log.warning") as mock_warn,
+            patch("hsync_client.utils.resources.Path.read_text", return_value="2\n"),
+            patch("hsync_client.utils.resources.log.warning") as mock_warn,
         ):
             warn_if_inotify_watch_limit_low(str(tmp_path))
         mock_warn.assert_called_once()
@@ -692,8 +692,8 @@ class TestWarnIfInotifyWatchLimitLow:
     def test_no_op_when_limit_file_absent(self, tmp_path):
         """When the limit file is absent (non-Linux) nothing happens."""
         with (
-            patch("hsync_client.utils.Path.exists", return_value=False),
-            patch("hsync_client.utils.log.warning") as mock_warn,
+            patch("hsync_client.utils.resources.Path.exists", return_value=False),
+            patch("hsync_client.utils.resources.log.warning") as mock_warn,
         ):
             warn_if_inotify_watch_limit_low(str(tmp_path))
         mock_warn.assert_not_called()
@@ -701,8 +701,8 @@ class TestWarnIfInotifyWatchLimitLow:
     def test_never_raises_on_error(self, tmp_path):
         """A malformed limit file must not raise."""
         with (
-            patch("hsync_client.utils.Path.exists", return_value=True),
-            patch("hsync_client.utils.Path.read_text", return_value="not-a-number"),
+            patch("hsync_client.utils.resources.Path.exists", return_value=True),
+            patch("hsync_client.utils.resources.Path.read_text", return_value="not-a-number"),
         ):
             warn_if_inotify_watch_limit_low(str(tmp_path))  # must not raise
 

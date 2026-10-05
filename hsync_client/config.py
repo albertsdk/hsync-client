@@ -448,9 +448,8 @@ def get_bootnode() -> str | None:
     return get_env_settings().bootnode
 
 
-def get_bootnode_fingerprints() -> tuple[str, ...]:
-    """Get the pinned bootnode fingerprints (validated, up to two, normalized)."""
-    raw = get_env_settings().bootnode_fingerprint
+def _parse_fingerprint_list(raw: str | None) -> tuple[str, ...]:
+    """Normalize a comma-separated pinned-fingerprint list, dropping invalid parts."""
     if not raw:
         return ()
     pins: list[str] = []
@@ -459,6 +458,11 @@ def get_bootnode_fingerprints() -> tuple[str, ...]:
         if normalized is not None:
             pins.append(normalized)
     return tuple(pins)
+
+
+def get_bootnode_fingerprints() -> tuple[str, ...]:
+    """Get the pinned bootnode fingerprints (validated, up to two, normalized)."""
+    return _parse_fingerprint_list(get_env_settings().bootnode_fingerprint)
 
 
 def get_bootnode_tofu() -> bool:
@@ -498,15 +502,7 @@ def get_server_trust() -> str | None:
 
 def get_server_fingerprints() -> tuple[str, ...]:
     """Get the pinned server fingerprints (validated, up to two, normalized)."""
-    raw = get_env_settings().server_fingerprint
-    if not raw:
-        return ()
-    pins: list[str] = []
-    for part in raw.split(","):
-        normalized = parse_fingerprint(part.strip())
-        if normalized is not None:
-            pins.append(normalized)
-    return tuple(pins)
+    return _parse_fingerprint_list(get_env_settings().server_fingerprint)
 
 
 def get_server_tofu() -> bool:
