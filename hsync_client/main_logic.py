@@ -748,7 +748,6 @@ def run_sync(
     # not pass --events-json-fd, so a plain CLI run is unaffected.
     init_emitter(events_json_fd)
 
-    # Load environment file if specified
     if env_file:
         try:
             load_env_file(env_file)
@@ -756,7 +755,6 @@ def run_sync(
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # Initialize logging
     log = setup_logging(
         debug=debug,
         quiet=quiet,
@@ -787,13 +785,11 @@ def run_sync(
     log.info(f"HSYNC Client v{HSYNC_VERSION}")
     log.info(runtime_summary())
 
-    # Validate local directory exists
     if not Path(local_path).exists():
         log.error(f"Directory '{local_path}' does not exist")
         emit_event(UiEventName.path_not_found, path=local_path)
         sys.exit(1)
 
-    # Validate log file path
     if logfile and not is_valid_logfile(logfile):
         log.error(f"Invalid output file '{logfile}'")
         sys.exit(1)
@@ -806,12 +802,10 @@ def run_sync(
     # (probing the placeholder would always fail with a spurious warning).
     using_p2p_placeholder = p2p_mode and not effective_server_url
 
-    # Validate server URL is provided (not required in P2P mode)
     if not effective_server_url and not p2p_mode:
         log.error("Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER)")
         sys.exit(1)
 
-    # In P2P mode without server URL, use placeholder
     if p2p_mode and not effective_server_url:
         effective_server_url = "http://localhost:9753"
 
@@ -1133,7 +1127,6 @@ def run_sync(
     # Hot-reload watcher: rebuild the matcher when .hsyncignore changes.
     _hsyncignore_observer = _start_hsyncignore_watcher(local_path, _matcher)
 
-    # Check for file deletion risk before syncing
     if not dryrun:
         _check_deletion_risk(
             local_path=local_path,
@@ -1154,7 +1147,6 @@ def run_sync(
             allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
         )
 
-    # Check disk space before syncing
     if not dryrun:
         _check_disk_space(local_path, min_free_disk_space, log)
 

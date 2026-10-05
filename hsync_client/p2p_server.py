@@ -1612,7 +1612,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 start = int(start_str)
                 end = int(end_str) + 1  # HTTP ranges are inclusive
 
-            # Validate range
             if start < 0 or start >= file_size:
                 return None
             end = min(end, file_size)
@@ -1811,7 +1810,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         partial_path = f"{file_path}{PARTIAL_DOWNLOAD_SUFFIX}"
 
-        # Check if complete file already exists with same SHA-256
         if sha256sum and is_sha256_hex(sha256sum) and Path(file_path).exists():
             actual_sha = compute_sha256(file_path)
             if hmac.compare_digest(actual_sha, sha256sum):
@@ -1825,7 +1823,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 )
                 return
 
-        # Check for partial file
         if Path(partial_path).exists():
             partial_size = Path(partial_path).stat().st_size
             if size > 0 and partial_size >= size:

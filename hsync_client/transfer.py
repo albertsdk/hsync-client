@@ -527,7 +527,6 @@ def download_file(
     Args:
         file: File object with remote metadata (filepath, sha256sum, etc.).
     """
-    # Validate required file attributes
     if not file.filepath or not file.name:
         log.error("Invalid file metadata: missing filepath or name")
         return
@@ -1239,7 +1238,6 @@ def is_file_stable(file: File, interval: float | None = None) -> bool:
     # Determine interval: explicit parameter > CONFIG > default
     if interval is None:
         interval = CONFIG.get("STABILITY_DELAY", FILE_STABILITY_INTERVAL_DEFAULT)
-    # Validate filepath before checking
     if not file.filepath:
         return True
 
@@ -1551,7 +1549,6 @@ def upload_file(
         _reschedules_left: Internal; remaining deferred attempts when this call
                            originates from a rescheduled Timer.
     """
-    # Validate required file attributes
     if not file.filepath:
         log.error("Cannot upload file: missing filepath")
         return
@@ -2016,7 +2013,6 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 f"{format_bytes(offset)}/{format_bytes(file.size)}"
             )
 
-        # Build form data with file metadata
         vclock_json, version_id, corrected_mtime = _upload_version_fields(file)
         data = {
             "cid": CONFIG["CID"],
@@ -2068,12 +2064,10 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                         f"({compression_ratio:.1f}%)"
                     )
 
-                # Add compression header and flag
                 headers["Content-Encoding"] = CONTENT_ENCODING_ZSTD
                 data["compressed"] = "true"
                 data["compressed_size"] = compressed_size
 
-                # Send compressed data as a streamed file part
                 with open(compressed_tmp, "rb") as fh:
                     ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
                     reader = _ThrottledFileReader(fh, ul_bw_limit) if ul_bw_limit else fh

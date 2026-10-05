@@ -212,7 +212,6 @@ class _StreamingMultipartParser:
                 return form_fields, file_meta
 
         while True:
-            # Parse part headers
             headers: dict[bytes, bytes] = {}
             while True:
                 line = self._read_line()

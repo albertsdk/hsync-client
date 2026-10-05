@@ -239,14 +239,10 @@ async def remote_events() -> None:
 
         log.info(f"Client ID (CID): {CONFIG['CID']}")
 
-        # Set up event queue for reliable message delivery
         loop = get_running_loop()
         event_queue = EventQueue(websocket)
-
-        # Start event queue processor as background task
         queue_task = create_task(event_queue.process())
 
-        # Set up local file system watcher with event queue
         watcher = WatcherManager(CONFIG["LOCAL_BUCKET"])
         event_handler = RemoteFileEventHandler(websocket, loop, event_queue, watcher)
         watcher.start(event_handler)
@@ -275,7 +271,6 @@ async def remote_events() -> None:
             log.error(f"Exception: {e}")
             emit_event(UiEventName.error, message=f"Exception: {e}")
         finally:
-            # Stop event queue processor
             event_queue.stop()
             queue_task.cancel()
             try:
@@ -284,7 +279,6 @@ async def remote_events() -> None:
                 pass  # Expected after cancellation
             except Exception:
                 pass  # Task was cancelled
-            # Clean up file system watcher
             watcher.stop()
 
 

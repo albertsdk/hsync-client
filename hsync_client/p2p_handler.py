@@ -332,7 +332,6 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
         emit_event(UiEventName.discovery, plan="mdns")
     if config["P2P_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")
-    # Start discovery and register service for peer discovery
     peer_manager = p2p_sync.start(register_service=True)
 
     seeder_attempted = False
@@ -952,7 +951,6 @@ def _run_as_slave(
         # startup probe is skipped when only the placeholder URL is known)
         _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
 
-        # Check if dry-run mode is enabled
         exit_code = int(ExitCode.OK)
         if config["DRYRUN"]:
             # In dry-run mode, only show preview without syncing

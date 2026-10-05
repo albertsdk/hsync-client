@@ -278,7 +278,6 @@ def _validate_shared_options(
 
     Returns the parsed upload/download bandwidth limits (bytes/s, or ``None``).
     """
-    # Validate numeric ranges
     if http_timeout is not None and (
         http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX
     ):
@@ -319,7 +318,6 @@ def _validate_shared_options(
             f"{MAX_INBOUND_SIZE_MB_MIN} and {MAX_INBOUND_SIZE_MB_MAX} MB."
         )
 
-    # Parse and validate bandwidth limits
     parsed_bw_upload = _parse_and_validate_bandwidth(
         max_bandwidth_upload, "--limit-upload", "Upload"
     )
@@ -327,7 +325,6 @@ def _validate_shared_options(
         max_bandwidth_download, "--limit-download", "Download"
     )
 
-    # Validate max-concurrent-transfers range
     if max_concurrent_transfers is not None and (
         max_concurrent_transfers < MAX_CONCURRENT_TRANSFERS_MIN
         or max_concurrent_transfers > MAX_CONCURRENT_TRANSFERS_MAX
@@ -337,13 +334,11 @@ def _validate_shared_options(
             f"{MAX_CONCURRENT_TRANSFERS_MIN} and {MAX_CONCURRENT_TRANSFERS_MAX}."
         )
 
-    # Validate mass-delete-threshold range
     if mass_delete_threshold is not None and mass_delete_threshold < 0:
         raise typer.BadParameter("--mass-delete-threshold must be >= 0 (0 = disabled).")
-    # Validate mass-delete-percent range
     if mass_delete_percent is not None and (mass_delete_percent < 0 or mass_delete_percent > 100):
         raise typer.BadParameter("--mass-delete-percent must be between 0 and 100 (0 = disabled).")
-    # Validate delta size floors (0 = delta for every file size)
+    # Delta size floors (0 = delta for every file size)
     if delta_min_file_size is not None and delta_min_file_size < 0:
         raise typer.BadParameter("--delta-min-file-size must be >= 0.")
     if delta_min_file_size_p2p is not None and delta_min_file_size_p2p < 0:

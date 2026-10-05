@@ -52,28 +52,19 @@ def is_valid_logfile(path_string: str) -> bool:
         if path.parent == Path("."):
             name = path.name
 
-            # Check for forbidden characters in the filename
             if has_forbidden_chars(name, FORBIDDEN_FILENAME_CHARS):
                 return False
-
-            # Check for control characters
             if has_control_chars(name):
                 return False
-
             # Check for Windows reserved names (including with extensions)
             if is_reserved_name(name):
                 return False
-
-            # Check for problematic trailing characters
             if has_problematic_trailing(name):
                 return False
 
         else:
-            # Check for absolute path if a directory is present
             if not path.is_absolute():
                 return False
-
-            # Check each part of the path for forbidden and control characters
             for part in path.parts:
                 if has_forbidden_chars(part, FORBIDDEN_PATH_CHARS):
                     return False

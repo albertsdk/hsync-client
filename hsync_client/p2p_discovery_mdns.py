@@ -158,7 +158,6 @@ class HsyncServiceListener(ServiceListener):
             use_https = _tx_bool(properties, b"https")
             cert_fp_bytes = properties.get(b"cert_fp", b"")
             cert_fingerprint = cert_fp_bytes.decode("utf-8") if cert_fp_bytes else None
-            # Optional transfer capabilities (advertised only when enabled)
             compression_enabled = _tx_bool(properties, b"compression")
             delta_enabled = _tx_bool(properties, b"delta")
             peer_download_enabled = _tx_bool(properties, b"peer_download")

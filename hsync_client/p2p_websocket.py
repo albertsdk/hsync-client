@@ -946,7 +946,6 @@ class P2PWebSocketServer:
         self._running = True
         self._publishing = True
 
-        # Start file watcher
         if watch_path is None:
             watch_path = CONFIG["LOCAL_BUCKET"]
 
@@ -991,7 +990,6 @@ class P2PWebSocketServer:
         self._running = False
         self._publishing = False
 
-        # Stop file watcher
         if self._watcher:
             self._watcher.stop()
             self._watcher = None
@@ -1327,7 +1325,6 @@ async def p2p_websocket_client(
 
     log.info(f"Connecting to master WebSocket: {uri}")
 
-    # Start local file watcher for bidirectional sync
     # The master serves the REST data plane and the WebSocket control plane on
     # the SAME port (unified listener).
     http_port = port
@@ -1569,7 +1566,6 @@ async def p2p_websocket_client(
             # files will be reconciled by the full sync on reconnect.
             _slave_event_handler.cancel_all_create_timers()
             _slave_event_handler.wait_pending(timeout=30.0)
-        # Stop the file watcher
         watcher.stop()
         _slave_event_handler = None
         log.info("Client file watcher stopped")
@@ -1925,7 +1921,6 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         future = _get_realtime_executor().submit(target, *args, **(kwargs or {}))
         future.add_done_callback(partial(log_future_error, label="Realtime operation failed"))
         with self._pending_ops_lock:
-            # Clean up completed futures
             self._pending_ops = [(f, b) for f, b in self._pending_ops if not f.done()]
             self._pending_ops.append((future, max(bytes_estimate, 0)))
         return future
@@ -2188,7 +2183,6 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 name=f"create-dir-{src_path}",
             )
         elif not event.is_directory and not is_hidden_file(src_path):
-            # Check if it's a symlink
             if Path(src_path).is_symlink():
                 # Symlink - skip if its target escapes the bucket (a
                 # file-symlink to /etc/passwd must never be dereferenced and

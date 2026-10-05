@@ -112,7 +112,6 @@ def get_throttle_delay(
         _bandwidth_tokens[transfer_key] = float(bandwidth_limit)
         _bandwidth_last_check[transfer_key] = current_time
 
-    # Add tokens based on elapsed time
     elapsed = current_time - _bandwidth_last_check[transfer_key]
     tokens_to_add = elapsed * bandwidth_limit
     _bandwidth_tokens[transfer_key] += tokens_to_add
@@ -122,14 +121,11 @@ def get_throttle_delay(
     max_tokens = bandwidth_limit * 2
     _bandwidth_tokens[transfer_key] = min(_bandwidth_tokens[transfer_key], max_tokens)
 
-    # Check if we have enough tokens
     if _bandwidth_tokens[transfer_key] >= bytes_transferred:
-        # Consume tokens
         _bandwidth_tokens[transfer_key] -= bytes_transferred
         return 0.0
-    # Calculate delay needed to regenerate tokens
     tokens_needed = bytes_transferred - _bandwidth_tokens[transfer_key]
     delay = tokens_needed / bandwidth_limit
-    # Consume all tokens (we'll wait)
+    # The caller waits for `delay`, so the drained bucket refills meanwhile.
     _bandwidth_tokens[transfer_key] = 0.0
     return delay
