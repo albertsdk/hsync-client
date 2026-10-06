@@ -222,4 +222,6 @@ automatically once the limit frees up. The client warns at startup when the
 watched tree approaches this limit; raise it with:
 
 ```bash
-sudo sysctl fs.inotify.max_user_watches=$(( $(cat /proc/sys/fs/inotify/max_user_watches) * 4 ))
+current=$(cat /proc/sys/fs/inotify/max_user_watches)
+sudo sysctl fs.inotify.max_user_watches=$((current * 4))
+```

@@ -17,7 +17,7 @@ Download the latest installer:
 Run it and follow the wizard, then open a **new** terminal (so the updated
 `PATH` is loaded) and verify:
 
-```bash
+```powershell
 hsync --help
 ```
 

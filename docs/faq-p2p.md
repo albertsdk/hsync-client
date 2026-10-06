@@ -59,11 +59,11 @@ control ("out of band") and record that fingerprint as a pin. Two ways:
 4. If they match, record the fingerprint as a pin on the slave:
 
    ```bash
-   hsync trust peer add AbCdEfGhIjKlMnOpQrStU sha256:a1b2c3d4e5f6… --bucket photos
+   hsync trust peer add AbCdEfGhIjKlMnOpQrStU sha256:FINGERPRINT --bucket photos
    ```
 
    `AbCdEfGhIjKlMnOpQrStU` is the master's device ID from the `[PAIRING NEEDED]`
-   line, `photos` is your bucket, and `a1b2c3d4e5f6…` is the verified
+   line, `photos` is your bucket, and `FINGERPRINT` is the verified
    64-character fingerprint. The pin is stored in the known-peers store
    (`$XDG_STATE_HOME/hsync/p2p_known_peers.json`, or
    `~/.local/state/hsync/p2p_known_peers.json` when `XDG_STATE_HOME` is unset;
@@ -323,10 +323,9 @@ They are harmless: zero bytes, hidden, and excluded from both sync and Git.
 The packaged unit runs `hsync p2p` on `ExecStart` in continuous mode (the
 client default). Edit
 `/etc/hsync/hsync.conf` (not `hsync.env`):
-```
+```ini
 HSYNC_BUCKET="mybucket"
 HSYNC_PATH="/path/to/sync"
-HSYNC_P2P_GROUP="mygroup"        # optional
 HSYNC_P2P_KEY="shared-secret"    # required for writes (a keyless p2p is read-only)
 ```
 `HSYNC_P2P_MODE` is ignored; do not add it. Then `systemctl restart hsync`.

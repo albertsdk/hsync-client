@@ -84,8 +84,8 @@ hsync server server.example.com -b docs --once -y || echo "sync failed"
    ```bash
    install -m 600 /dev/null /etc/hsync/hsync.env
    cat > /etc/hsync/hsync.env <<'EOF'
-   HSYNC_SERVER="https://server.example.com:9753"
-   HSYNC_API_KEY="change-me"
+   HSYNC_SERVER="https://server.example.com"
+   HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
    EOF
    ```
 
@@ -134,7 +134,7 @@ Notes:
 
   ```bash
   sudo -u hsyncuser hsync server -b newbucket -p /data/newbucket \
-      --env-file /etc/hsync/hsync.env --dry-run
+      --env-file /etc/hsync/hsync.env -n
   ```
 
 ### p2p one-shot via cron
@@ -145,8 +145,10 @@ the first peer and is what ends the run when no peer shows up (the default
 waits indefinitely, so a one-shot run never exits):
 
 ```cron
-0 2 * * * hsyncuser HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared \
-    -p /data/shared --once --discovery-timeout 30 -y
+# HSYNC_P2P_KEY lives in /etc/hsync/hsync.env (see the secret handling above)
+0 2 * * * hsyncuser hsync p2p -b shared \
+    -p /data/shared --once --discovery-timeout 30 -y \
+    --env-file /etc/hsync/hsync.env
 ```
 
 ## systemd timer

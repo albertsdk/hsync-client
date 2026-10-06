@@ -16,7 +16,7 @@ receives real-time file change events.
 
 ### Diagram
 
-```
+```text
 HSYNC Client                        HSYNC Server
   │                                       │
   │── WSS connect ───────────────────────▶│
@@ -63,7 +63,7 @@ incoming slave connection. The slave must present the correct key and its CID.
 
 ### Diagram
 
-```
+```text
 Slave                                Master
   │                                       │
   │── WSS connect ───────────────────────▶│
@@ -132,7 +132,7 @@ it runs `--sync-direction download-only` or the dangerous
 
 ### Diagram
 
-```
+```text
 Slave                                Master
   │                                       │
   │── WSS connect ───────────────────────▶│

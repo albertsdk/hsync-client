@@ -27,7 +27,7 @@ a bootnode banner), but the peer list stays empty and no sync happens.
 **Symptom.** The client log shows a parsable warning and the watcher switches
 from the kernel inotify backend to a polling backend:
 
-```
+```console
 [WATCHER FALLBACK] inotify watch limit reached (fs.inotify.max_user_watches): ...
 Switching to PollingObserver for '/path/to/bucket' (higher CPU usage, up to
 ~1 s event latency).
@@ -58,7 +58,7 @@ watcher might miss.
 inotify is available again. As soon as the limits free up it restores the inotify
 backend and logs:
 
-```
+```console
 [WATCHER RESTORE] file watcher restored to inotify for '/path/to/bucket'.
 ```
 
@@ -84,7 +84,8 @@ sudo sysctl fs.inotify.max_user_instances=512
 To make the change persistent across reboots:
 
 ```bash
-echo fs.inotify.max_user_instances=512 | sudo tee /etc/sysctl.d/99-hsync-inotify.conf
+echo fs.inotify.max_user_instances=512 \
+  | sudo tee /etc/sysctl.d/99-hsync-inotify.conf
 sudo sysctl --system
 ```
 
@@ -109,7 +110,7 @@ on its next probe.
 
 **Symptom.** The client log shows a descriptor-exhaustion warning:
 
-```
+```console
 [FD EXHAUSTED] file-descriptor limit reached (RLIMIT_NOFILE / fs.file-max): ...
 ```
 

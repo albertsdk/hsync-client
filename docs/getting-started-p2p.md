@@ -37,12 +37,14 @@ echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
 #    distinct devices, or discovery would ignore them as "self".
 #    Both terminals share the same p2p key: it authorizes writes, and a
 #    write-capable run without a key is refused with [AUTH REQUIRED].
-HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-p2p-a-device \
+HSYNC_P2P_KEY="demo-p2p-secret" \
+HSYNC_DEVICE_DIR=/tmp/hsync-p2p-a-device \
   hsync p2p -b demo-p2p -p /tmp/hsync-p2p-a --force-master
 
 # 4. Terminal 2 — start a second peer with its own device identity; it
 #    discovers the master via mDNS and downloads hello.txt
-HSYNC_P2P_KEY="demo-p2p-secret" HSYNC_DEVICE_DIR=/tmp/hsync-p2p-b-device \
+HSYNC_P2P_KEY="demo-p2p-secret" \
+HSYNC_DEVICE_DIR=/tmp/hsync-p2p-b-device \
   hsync p2p -b demo-p2p -p /tmp/hsync-p2p-b
 
 # 5. Verify the file arrived

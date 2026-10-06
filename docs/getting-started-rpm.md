@@ -26,13 +26,8 @@ The URL always points to the **latest stable** release; use `aarch64` instead of
 `x86_64` on ARM. To pin a version, use
 `https://github.com/albertsdk/hsync-client/releases/download/vX.Y.Z/hsync-client-<version>-1.el9.<arch>.rpm`.
 
-To build from the checkout instead:
-
-```bash
-poetry install --with build
-./compile.sh --target rpm        # host arch (RHEL-family)
-./compile.sh --target rpm-all    # x86_64 + aarch64 (Docker)
-```
+To build from the checkout instead, follow the build steps in
+[Contributing](../CONTRIBUTING.md).
 
 ## Run as a boot service (systemd)
 

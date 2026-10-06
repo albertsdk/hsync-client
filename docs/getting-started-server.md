@@ -29,7 +29,7 @@ admin account and prints its full token once — export it as `HSYNC_API_KEY`.
 #    It listens on https://localhost:9753 with a self-signed cert.
 
 # 2. Export the account token printed by the server at first start
-export HSYNC_API_KEY="hs_HsyncAdminBootstrap01_<secret>"
+export HSYNC_API_KEY="hs_HsyncAdminBootstrap01_SECRET"
 
 # 3. Create the bucket on the server (once; the creator becomes its owner)
 curl -k -X POST "https://localhost:9753/api/v1/buckets?bucket=demo" \
@@ -59,8 +59,8 @@ either folder — changes propagate within seconds.
 Set the required variables in your shell or export them in a `.env` file:
 
 ```bash
-export HSYNC_SERVER="https://server.example.com:9753"
-export HSYNC_API_KEY="hs_<id>_<secret>"
+export HSYNC_SERVER="https://server.example.com"
+export HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
 ```
 
 `HSYNC_API_KEY` holds the **full account token** (`hs_<id>_<secret>`) issued by

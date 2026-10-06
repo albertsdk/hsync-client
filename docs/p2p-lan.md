@@ -30,7 +30,7 @@ Nothing else is required: with no `BOOTNODE` hostname and no `HSYNC_BOOTNODE`,
 
 At startup the client logs the plan it selected:
 
-```
+```text
 Discovery: mDNS on the local network (no bootnode configured)
 ```
 
@@ -42,7 +42,7 @@ unset `HSYNC_BOOTNODE` (or drop the positional) to go back to mDNS.
 The bucket isolates the sync set; `--group` adds a label peers must share:
 
 ```bash
-hsync p2p -b mybucket -p /srv/hsync --group home
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --group home
 ```
 
 See [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options) for the
@@ -52,8 +52,8 @@ full option and environment-variable reference.
 
 ```bash
 # Always/never become the sync coordinator for this bucket.
-hsync p2p -b mybucket -p /srv/hsync --force-master
-hsync p2p -b mybucket -p /srv/hsync --never-master
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --force-master
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --never-master
 ```
 
 The mDNS plan also exposes `--discovery-timeout SECONDS` (default `0` = wait

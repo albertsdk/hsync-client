@@ -72,7 +72,7 @@ Preview what would change without modifying files (a dry run never writes, so
 no key is required):
 
 ```bash
-hsync p2p --dry-run -b mybucket -p ~/Sync
+hsync p2p -n -b mybucket -p ~/Sync
 ```
 
 ### Conflict Handling

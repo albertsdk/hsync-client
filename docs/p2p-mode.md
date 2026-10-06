@@ -145,7 +145,7 @@ suggested moment — a busy peer is never treated as a broken one.
 ### Example Flow
 
 ```console
-$ HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
 
 [INFO] p2p mode enabled
 [INFO] Continuous mode enabled - will wait indefinitely for peers
@@ -215,10 +215,10 @@ connection that carries the data.
   the `hsync` CLI; verify a fingerprint out of band before pinning it:
 
   ```bash
-  hsync trust peer list                                              # device-id|bucket fingerprint
-  hsync trust peer list --json                                       # machine-readable
+  hsync trust peer list    # device-id|bucket fingerprint
+  hsync trust peer list --json   # machine-readable
   hsync trust peer add DEVICE_ID sha256:FINGERPRINT --bucket BUCKET_NAME
-  hsync trust peer remove DEVICE_ID --bucket BUCKET_NAME             # like ssh-keygen -R
+  hsync trust peer remove DEVICE_ID --bucket BUCKET_NAME   # like ssh-keygen -R
   ```
 
   `hsync trust peer add` accepts a `sha256:<hex>` or bare-hex fingerprint and
@@ -274,7 +274,8 @@ Consequences:
   identity:
 
   ```bash
-  HSYNC_P2P_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
+  HSYNC_P2P_KEY="shared-secret" \
+  HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
     hsync p2p -b photos -p ~/Other
   ```
 
@@ -362,7 +363,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 ### Examples
 
 **Scenario 1**: Three peers, all bidirectional (classic behavior)
-```
+```text
 Peer A: CID=abc123, bidirectional, startup=10:00
 Peer B: CID=def456, bidirectional, startup=10:01
 Peer C: CID=xyz789, bidirectional, startup=10:00
@@ -370,14 +371,14 @@ Peer C: CID=xyz789, bidirectional, startup=10:00
 ```
 
 **Scenario 2**: Mixed sync directions
-```
+```text
 Peer A: CID=abc123, upload-only,    startup=10:00
 Peer B: CID=xyz789, bidirectional,  startup=10:05
 → Winner: Peer B (bidirectional preferred, even though A started earlier)
 ```
 
 **Scenario 3**: No bidirectional peers
-```
+```text
 Peer A: CID=abc123, upload-only,    startup=10:00
 Peer B: CID=def456, download-only,  startup=10:01
 → Winner: Peer A (both non-bidirectional, A started earlier)
@@ -385,14 +386,14 @@ Peer B: CID=def456, download-only,  startup=10:01
 ```
 
 **Scenario 4**: A peer opts out with `--never-master`
-```
+```text
 Peer A: CID=abc123, bidirectional, never_master=true,  startup=10:00
 Peer B: CID=def456, bidirectional, never_master=false, startup=10:01
 → Winner: Peer B (A is excluded from the candidate pool despite lower CID / earlier startup)
 ```
 
 **Scenario 5**: Every peer is `--never-master` (no master can be elected)
-```
+```text
 Peer A: CID=abc123, never_master=true, startup=10:00
 Peer B: CID=def456, never_master=true, startup=10:01
 → No master elected; candidate pool is empty

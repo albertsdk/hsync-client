@@ -35,10 +35,8 @@ curl -fLO "https://github.com/albertsdk/hsync-client/releases/latest/download/hs
 
 ```bash
 # Linux / macOS
-tar -xzf hsync-client-<version>-linux-amd64.tar.gz
-install -m 755 hsync ~/.local/bin/hsync
-
-# Windows (PowerShell): expand the zip and put hsync.exe on your PATH
+tar -xzf hsync-client-VERSION-linux-amd64.tar.gz
+install hsync ~/.local/bin/hsync
 ```
 
 Requires the standalone `hsync` binary to be executable and on your `PATH`.

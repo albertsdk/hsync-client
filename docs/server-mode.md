@@ -97,9 +97,12 @@ A **periodic full resync** runs every `-i` seconds (default 300, set `0` to
 disable) as a safety net: it catches any file-system events the watcher may
 have missed (e.g. the inotify watch limit on Linux, sleep/wake cycles).
 
+> The examples below assume `HSYNC_API_KEY` is exported (see
+> [Security](#security) below).
+
 ```bash
-# Continuous mode with a 5-minute resync interval
-hsync server server.example.com -b mybucket -p /path/to/dir -i 300
+# Continuous mode (the default)
+hsync server server.example.com -b mybucket -p /path/to/dir
 
 # Continuous mode with a longer stability delay (safe for slow storage)
 hsync server server.example.com -b media -p /srv/media --stability-delay 30
@@ -111,9 +114,11 @@ hsync server server.example.com --port 443 -b mybucket -p /path/to/dir
 For scheduled background sync (cron, systemd timer, Task Scheduler) use
 one-shot mode (`--once`; `-y` skips interactive prompts):
 
-```bash
+```cron
 # Cron entry: sync every hour
-0 * * * * HSYNC_API_KEY="hs_<id>_<secret>" hsync server server.example.com --once -b mybucket -p /path -y
+0 * * * * HSYNC_API_KEY=hs_ACCOUNT_ID_ACCOUNT_SECRET \
+  hsync server server.example.com --once \
+  -b mybucket -p /path -y
 ```
 
 ## Delta Transfer, Compression & Bandwidth
@@ -162,7 +167,7 @@ normally** — add them to `.hsyncignore` if you need to exclude them.
 Place a `.hsyncignore` file at the **root of the bucket directory** with
 gitignore-style patterns:
 
-```
+```text
 # Exclude build artefacts
 /dist/
 /build/
@@ -174,7 +179,10 @@ gitignore-style patterns:
 Or pass patterns directly on the command line without creating a file:
 
 ```bash
-hsync server server.example.com -b mybucket --ignore-pattern ".git/,*.log,/dist/"
+hsync server server.example.com -b mybucket \
+  --ignore-pattern ".git/" \
+  --ignore-pattern "*.log" \
+  --ignore-pattern "/dist/"
 ```
 
 > Full syntax, examples and the complete default-pattern list are in
@@ -223,7 +231,8 @@ remote bucket is **always blocked**, regardless of thresholds.
 hsync server server.example.com -b mybucket --no-mass-delete-guard
 
 # Tighter guard: pause deletions at 10 files or 10% of the tree
-hsync server server.example.com -b mybucket --mass-delete-threshold 10 --mass-delete-percent 10
+hsync server server.example.com -b mybucket \
+  --mass-delete-threshold 10 --mass-delete-percent 10
 ```
 
 > Full decision flowchart and the relationship with `--ignore-delete` and

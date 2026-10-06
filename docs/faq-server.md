@@ -135,5 +135,5 @@ are expanded by systemd into `--bucket` / `--path`; they are not client
 settings keys.
 
 To run server mode, override `ExecStart` (for example with `systemctl edit
-hsync`) so it calls `hsync` with `-s` / `-b` / `-p` and set
+hsync`) so it calls `hsync server` with `-b` / `-p` and set
 `HSYNC_API_KEY` in `hsync.conf`. See [Debian package](debian-package.md).

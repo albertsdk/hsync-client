@@ -71,7 +71,7 @@ and caveats to watch for.
 | P2P only (no central server) | Server mode + p2p mode |
 | Custom protocol (BEP) on port 22000 | HTTP/HTTPS on port 9753 or custom port |
 | Global discovery via relays | Central server or mDNS p2p discovery |
-| File versioning built-in | Conflict files (.hsyncconflict-*) |
+| File versioning built-in | Conflict files (`_conflicted_copy_*`) |
 | Web GUI for management | CLI + desktop GUI (hsync-desktop) |
 
 ### Migration steps
@@ -90,7 +90,7 @@ and caveats to watch for.
 
 2. **Export your Syncthing ignore patterns**. Syncthing's `.stignore` uses a
    similar syntax to `.gitignore`. Convert your patterns to `.hsyncignore`:
-   ```bash
+   ```text
    # Syncthing .stignore
    (?d).stfolder
    *.tmp
@@ -119,7 +119,7 @@ and caveats to watch for.
 
 - Syncthing's file versioning (staggered, trash can, etc.) has no direct
   equivalent. HSYNC preserves only the conflicting version as a
-  `.hsyncconflict-<date>` file. For version history, rely on filesystem
+  `_conflicted_copy_` file. For version history, rely on filesystem
   snapshots or external backup.
 - Syncthing's "Receive Only" folder type maps to HSYNC's `--sync-direction
   download-only`.
@@ -201,7 +201,7 @@ drives), HSYNC automates the entire process:
   rules)
 - [ ] Old sync tool has been stopped and uninstalled
 - [ ] Sync direction is configured correctly (`--sync-direction`)
-- [ ] Bandwidth limits are set if needed (`--max-bandwidth-*`)
+- [ ] Bandwidth limits are set if needed (`--limit-upload` / `--limit-download`)
 - [ ] Continuous mode is used on devices that need real-time sync
 - [ ] Backup strategy is in place (see [Operations Guide](https://github.com/albertsdk/hsync-server/blob/main/docs/operations.md))
 

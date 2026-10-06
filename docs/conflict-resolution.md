@@ -57,7 +57,7 @@ in dominance it equals the dominant clock; in a conflict it includes *both*
 histories, so third nodes recognise either side as an ancestor and no false
 conflict propagates downstream (convergence invariant, ADR-0022 §5).
 
-```
+```text
         ┌─────────────┐
         │  Common     │
         │  Ancestor   │  ← "base" (hash + vclock recorded after last sync)
@@ -289,7 +289,7 @@ losing copy — no conflict copy is made on the client side.
 
 ### Naming convention
 
-```
+```text
 <stem>_conflicted_copy_<YYYY-MM-DDTHHMMSSZ>_<cid>.<ext>
 ```
 

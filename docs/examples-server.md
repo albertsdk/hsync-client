@@ -17,7 +17,7 @@ The client does not load `./.env` by itself. Export the token, then pass the
 server host, bucket and path on the CLI:
 
 ```bash
-export HSYNC_API_KEY="hs_<id>_<secret>"
+export HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
 hsync server server.example.com -b documents -p "$HOME/Documents"
 ```
 
@@ -63,7 +63,7 @@ hsync server server.example.com -b shared -p ~/Shared --sync-direction download-
 ## 1.5 Periodic full re-sync alongside continuous mode
 
 ```bash
-hsync server server.example.com -b docs -p ~/Docs --interval 3600
+hsync server server.example.com -b docs -p ~/Docs -i 3600
 ```
 
 ## 1.6 Multi-device sync via central server

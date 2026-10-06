@@ -32,7 +32,9 @@ registering with a bootnode for a group spread across networks (see
 > directory, e.g.:
 >
 > ```bash
-> HSYNC_P2P_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt hsync p2p -b shared -p ~/Other
+> HSYNC_P2P_KEY="shared-secret" \
+HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
+  hsync p2p -b shared -p ~/Other
 > ```
 >
 > Otherwise the two instances share one device ID and ignore each other during

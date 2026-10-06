@@ -42,9 +42,9 @@ live in the known-hosts store and are managed like the bootnode store:
 
 ```bash
 hsync trust server fingerprint server.example.com
-hsync trust server add server.example.com sha256:FINGERPRINT --port 9753
+hsync trust server add server.example.com sha256:FINGERPRINT
 hsync trust server list
-hsync trust server remove server.example.com --port 9753
+hsync trust server remove server.example.com
 ```
 
 `hsync-server admin tls fingerprint` prints the server's own fingerprint for the
@@ -70,7 +70,7 @@ environment variables. Putting `HSYNC_BUCKET` in an env file has no effect.
 The client does **not** load `./.env` by itself. Pass a file explicitly:
 
 ```bash
-export HSYNC_API_KEY="hs_…"
+export HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
 hsync server --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 

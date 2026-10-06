@@ -15,19 +15,12 @@ want to modify it.
 
 ## Build the native binary
 
-Clone both repositories side by side, install dependencies, then compile:
+Clone both repositories side by side and install the dependencies with Poetry
+(which requires `hsync-common` as a sibling) — see
+[Contributing](../CONTRIBUTING.md). Then compile:
 
 ```bash
-# 1. Clone hsync-client and hsync-common as siblings
-git clone https://github.com/albertsdk/hsync-client.git
-git clone https://github.com/albertsdk/hsync-common.git
-
-# 2. Install dependencies (creates .venv, includes the PyInstaller build group)
-cd hsync-client
-poetry install
-
-# 3. Compile the standalone binary for the host platform
-./compile.sh        # output: dist/<os>-<arch>/hsync
+./compile.sh        # → dist/<os>-<arch>/hsync
 ```
 
 The compile script auto-detects the host platform. Additional cross-arch targets

@@ -70,10 +70,10 @@ is unset) and are managed like SSH's known hosts
 ```bash
 hsync trust bootnode fingerprint boot.example.net   # read the node's fingerprint (no trust)
 hsync trust bootnode add boot.example.net sha256:FINGERPRINT
-hsync trust bootnode list                            # show pinned nodes
-hsync trust bootnode list --json                     # machine-readable
+hsync trust bootnode list        # show pinned nodes
+hsync trust bootnode list --json # machine-readable
 hsync trust bootnode show boot.example.net
-hsync trust bootnode remove boot.example.net         # like ssh-keygen -R
+hsync trust bootnode remove boot.example.net   # like ssh-keygen -R
 ```
 
 Every pinned fingerprint — confirmed at the prompt or accepted on first use — is
@@ -117,7 +117,7 @@ retries discovery instead of failing the run.
 
 ## Confirm which plan is active
 
-```
+```text
 Discovery: bootnode boot.example.net:443 (cross-network; UPnP on)
 ```
 

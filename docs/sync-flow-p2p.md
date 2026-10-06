@@ -30,7 +30,7 @@ all connected slaves.
 
 ### Auth Flow (with P2P_KEY)
 
-```
+```text
 Slave                              Master
   │── WSS connect ───────────────────▶│
   │◀── {"type": "auth_required"} ─────│
@@ -44,7 +44,7 @@ Slave                              Master
 
 ### Hello Handshake (without P2P_KEY)
 
-```
+```text
 Slave                              Master
   │── WSS connect ───────────────────▶│
   │◀── {"type": "hello"} ─────────────│

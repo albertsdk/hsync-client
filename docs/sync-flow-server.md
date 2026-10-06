@@ -26,7 +26,7 @@ Once the initial sync completes, the client enters continuous mode (the default)
 
 ### Event Flow (Server Mode)
 
-```
+```text
 Local FS change (watchdog)
   │
   ├── file created/modified → upload to server (HTTP POST)

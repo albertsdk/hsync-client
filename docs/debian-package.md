@@ -49,7 +49,7 @@ sudo nano /etc/hsync/hsync.conf
 
 Change `HSYNC_PATH` to your desired directory:
 
-```bash
+```ini
 HSYNC_PATH="/home/alice/Documents"
 ```
 

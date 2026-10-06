@@ -67,7 +67,7 @@ hsync server server.example.com --once -b mybucket -p ~/Sync
 Preview what would change without modifying files:
 
 ```bash
-hsync server server.example.com --dry-run -b mybucket -p ~/Sync
+hsync server server.example.com -n -b mybucket -p ~/Sync
 ```
 
 ### Conflict Handling
