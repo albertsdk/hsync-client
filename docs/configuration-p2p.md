@@ -12,7 +12,7 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `p2p` subcommand | Enable p2p mode (selected with `hsync p2p`) | — (CLI only) |
 | `BOOTNODE` (positional) | Bootnode host for cross-network discovery (optional; omit for mDNS only). Accepts `HOST[:PORT]` | — |
 | `--port` | UDP (QUIC) port of the remote bootnode; refused without `BOOTNODE`; mutually exclusive with a port in `BOOTNODE` | `443` |
-| `--no-upnp` | Do not map the master TCP port with UPnP when a bootnode is used | `false` (`UPnP` on with a bootnode) |
+| `--upnp` | Map the master TCP port with UPnP when a bootnode is used (opt-in) | `false` (UPnP off; enable explicitly) |
 | `--bootnode-fingerprint` | Pin the bootnode certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two for a rotation window; refused without `BOOTNODE` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
 | `--bootnode-tofu` | Trust the bootnode certificate on first use; a later mismatch is refused | `false` |
 | `--bootnode-trust` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
@@ -82,7 +82,7 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_BOOTNODE_FINGERPRINT` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |
 | `HSYNC_BOOTNODE_TOFU` | Trust the bootnode certificate on first use (`1` = on) | `false` |
 | `HSYNC_BOOTNODE_TRUST` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
-| `HSYNC_UPNP_ENABLED` | Map the master TCP port with UPnP (`true`/`false`); unset = on only when a bootnode is used | — |
+| `HSYNC_UPNP_ENABLED` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_DEVICE_DIR` | Device identity dir (device ID + p2p keypair + per-folder sync-state DBs `syncstate/<uuid>.db`, `syncstate/index.db`) | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
 | `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |

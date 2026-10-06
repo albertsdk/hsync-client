@@ -84,6 +84,7 @@ from hsync_common.protocol.rest import (
     REST_SYMLINKS_SUFFIX,
     REST_TOMBSTONES_SUFFIX,
 )
+from hsync_common.ratelimit import TokenBucketLimiter
 from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
@@ -135,6 +136,46 @@ SEEDER_RETRY_AFTER_S = 0.25
 # chunk writes for ~262 s, so anything below that would kill a live transfer;
 # it stays comfortably above the client HTTP timeout (30 s default) too.
 P2P_HANDLER_IDLE_TIMEOUT_S = 300
+
+# Minimum sustained throughput (bytes/s) a live request must keep, averaged over
+# its lifetime once past the grace window. Any byte resets the per-I/O idle
+# timeout, so a peer trickling one byte per minute could otherwise pin a worker
+# slot and a dispatch slot forever; this floor aborts such a trickle. It is set
+# far below the 1 KB/s CLI bandwidth floor so a legitimately throttled transfer
+# (the reason the idle window is 300 s) is never killed.
+P2P_REQUEST_MIN_RATE_BPS = 64.0
+
+# Grace window (seconds) after the first byte moves before the throughput floor
+# applies, so a bursty but legitimate start is not mistaken for a trickle.
+P2P_REQUEST_GRACE_S = 60.0
+
+# Per-IP admissions: at most P2P_REQ_RATE_CAPACITY requests immediately, then
+# refilled at P2P_REQ_RATE_REFILL per window. Generous enough not to throttle a
+# legitimate small-file sync (a few hundred requests in a burst) while still
+# bounding a request flood from one host.
+P2P_REQ_RATE_CAPACITY = 1200
+P2P_REQ_RATE_REFILL = 1200
+P2P_REQ_RATE_WINDOW_S = 60.0
+
+# Per-IP cap on in-flight requests. HTTP/1.1 has no multiplexing, so this also
+# bounds how many of the P2P_SERVER_MAX_THREADS dispatch slots one peer can hold
+# (fairness: a single host cannot starve the others). Kept above the client's
+# maximum transfer concurrency (MAX_CONCURRENT_TRANSFERS_MAX = 20) plus room for
+# metadata requests, so a legitimate high-concurrency peer is never throttled.
+P2P_MAX_INFLIGHT_PER_IP = 32
+
+# Floor for the fair-share reduction of the per-IP cap: as more distinct peers
+# are active, the effective cap drops toward `P2P_SERVER_MAX_THREADS / active_ips`
+# but never below this, so no peer is starved.
+P2P_MIN_INFLIGHT_PER_IP = 4
+
+# Bound on the TLS handshake so a stalled handshake cannot hold a connection
+# (and its resources) for the asyncio default (60 s).
+P2P_TLS_HANDSHAKE_TIMEOUT_S = 15.0
+
+# Listen backlog: bounds the accept queue under a connection flood (established
+# connections are additionally capped per IP by P2P_MAX_INFLIGHT_PER_IP).
+P2P_SERVER_BACKLOG = 256
 
 # Chunk size (bytes) for streaming file reads on the download path. Mirrors
 # the client transfer module so the master never reads more than necessary
@@ -2366,6 +2407,13 @@ class _AiohttpTransport(P2PEndpointMixin):
         self._prepared = False
         self._written = 0
         self._declared_length: int | None = None
+        # Slowloris guard over the request body only: bytes read and when the
+        # first one arrived, sampled by _check_progress() against
+        # P2P_REQUEST_MIN_RATE_BPS. Response writes are deliberately excluded so
+        # a compute-bound handler (hashing a large file before its first write)
+        # is never mistaken for a trickle.
+        self._moved = 0
+        self._first_move_at: float | None = None
 
     # -- BaseHTTPRequestHandler surface ------------------------------------
 
@@ -2423,7 +2471,9 @@ class _AiohttpTransport(P2PEndpointMixin):
         request body" failures on a segmented transfer.
         """
         if size is None or size < 0:
-            return self._loop_run(self._request.content.read())
+            chunk = self._loop_run(self._request.content.read())
+            self._note_progress(len(chunk))
+            return chunk
         chunks: list[bytes] = []
         remaining = size
         while remaining > 0:
@@ -2432,7 +2482,39 @@ class _AiohttpTransport(P2PEndpointMixin):
                 break
             chunks.append(chunk)
             remaining -= len(chunk)
+            self._note_progress(len(chunk))
         return b"".join(chunks)
+
+    def _note_progress(self, count: int) -> None:
+        """Account request-body bytes read and run the throughput floor.
+
+        Only the read path calls this: a trickled request body is what pins a
+        worker slot, while response writes must not be compared against the
+        floor because a slow legitimate reader (or a long compute before the
+        first write) is not a slowloris.
+        """
+        if count <= 0:
+            return
+        self._moved += count
+        if self._first_move_at is None:
+            self._first_move_at = time.monotonic()
+        self._check_progress()
+
+    def _check_progress(self) -> None:
+        """Abort a request body whose sustained read throughput is below the floor.
+
+        The per-I/O timeout resets on every byte, so without this a peer
+        trickling the request body can pin a worker slot forever. Measured from
+        the first body byte so a slow legitimate transfer at the CLI bandwidth
+        floor passes while a trickle is killed; raises ``TimeoutError`` so the
+        request ends exactly like an I/O timeout (slot released, connection
+        closed).
+        """
+        if self._first_move_at is None:
+            return
+        elapsed = time.monotonic() - self._first_move_at
+        if elapsed > P2P_REQUEST_GRACE_S and self._moved / elapsed < P2P_REQUEST_MIN_RATE_BPS:
+            raise TimeoutError("P2P request throughput below the minimum")
 
     # -- Driver -------------------------------------------------------------
 
@@ -2487,6 +2569,45 @@ class _AiohttpTransport(P2PEndpointMixin):
 # =============================================================================
 # P2P Server
 # =============================================================================
+
+
+def _per_ip_inflight_cap(active_ips: int) -> int:
+    """Per-IP in-flight cap given ``active_ips`` distinct peers currently served.
+
+    The pool is shared fairly: the cap shrinks toward an equal split of the
+    dispatch pool as more peers are active, bounded by ``P2P_MAX_INFLIGHT_PER_IP``
+    above (a lone peer may use it fully) and ``P2P_MIN_INFLIGHT_PER_IP`` below (no
+    peer is starved).
+    """
+    fair_share = P2P_SERVER_MAX_THREADS // max(1, active_ips)
+    return min(P2P_MAX_INFLIGHT_PER_IP, max(P2P_MIN_INFLIGHT_PER_IP, fair_share))
+
+
+class _P2PSite(web.SockSite):
+    """``SockSite`` that bounds the TLS handshake duration.
+
+    ``web.SockSite`` does not expose ``ssl_handshake_timeout``, so a stalled
+    handshake would hold a connection for the asyncio default (60 s); under a
+    handshake flood that is a resource-exhaustion vector. This override
+    recreates the server with an explicit bound. ``BaseSite.start`` is called
+    directly (``super().start()`` would re-enter ``SockSite.start``).
+    """
+
+    async def start(self) -> None:
+        await web.BaseSite.start(self)
+        loop = asyncio.get_event_loop()
+        server = self._runner.server
+        assert server is not None
+        if self._ssl_context is not None:
+            self._server = await loop.create_server(
+                server,
+                sock=self._sock,
+                backlog=self._backlog,
+                ssl=self._ssl_context,
+                ssl_handshake_timeout=P2P_TLS_HANDSHAKE_TIMEOUT_S,
+            )
+        else:
+            self._server = await loop.create_server(server, sock=self._sock, backlog=self._backlog)
 
 
 class P2PServer:
@@ -2563,6 +2684,15 @@ class P2PServer:
         self._executor: ThreadPoolExecutor | None = None
         # In-flight request bound (created on the listener loop); see _serve.
         self._dispatch_slots: asyncio.Semaphore | None = None
+        # Per-IP fairness/flood guards. Both are touched only from the listener
+        # event loop (_handle_http), so no lock is needed.
+        self._ip_inflight: dict[str, int] = {}
+        self._request_limiter = TokenBucketLimiter(
+            capacity=P2P_REQ_RATE_CAPACITY,
+            refill=P2P_REQ_RATE_REFILL,
+            window=P2P_REQ_RATE_WINDOW_S,
+            max_keys=P2P_MAX_INFLIGHT_PER_IP * 64,
+        )
         self._stop_event: asyncio.Event | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
@@ -2755,7 +2885,12 @@ class P2PServer:
 
     async def _serve(self) -> None:
         assert self._loop is not None
-        app = web.Application(client_max_size=0)
+        # Bound the request body aiohttp itself will buffer: the endpoint layer
+        # streams with its own caps, but a bounded client_max_size makes the
+        # framework refuse an absurd declared body early (0 only when the
+        # operator disabled MAX_INBOUND_SIZE).
+        max_inbound = int(CONFIG.get("MAX_INBOUND_SIZE", 0) or 0)
+        app = web.Application(client_max_size=max_inbound if max_inbound > 0 else 0)
         # Always register the canonical realtime route: when no control plane is
         # attached (a read-only seeder) or the node is not serving, it answers
         # 503 rather than falling through to the REST router as a 404.
@@ -2795,7 +2930,7 @@ class P2PServer:
             self._actual_port = int(sock.getsockname()[1])
             if self._websocket_server is not None:
                 self._websocket_server.set_port(self._actual_port)
-            site = web.SockSite(self._runner, sock, ssl_context=ssl_context)
+            site = _P2PSite(self._runner, sock, ssl_context=ssl_context, backlog=P2P_SERVER_BACKLOG)
             await site.start()
         except BaseException:
             # Bind/setup failed before readiness: release the runner (which
@@ -2873,20 +3008,41 @@ class P2PServer:
         slots = self._dispatch_slots
         if context is None or executor is None or slots is None:
             raise web.HTTPServiceUnavailable(text="P2P server is not serving")
-        loop = asyncio.get_running_loop()
-        transport = _AiohttpTransport(request, loop, context)
+        remote = request.remote or ""
+        # Admission control before a slot is even considered: a request flood
+        # from one host is refused cheaply, and one host can hold at most
+        # P2P_MAX_INFLIGHT_PER_IP of the dispatch slots (fairness).
+        if not self._request_limiter.allow(remote):
+            raise web.HTTPTooManyRequests(text="P2P request rate exceeded")
+        inflight = self._ip_inflight.get(remote, 0)
+        # Fair-share the dispatch pool across active peers: as more distinct IPs
+        # are active the per-peer cap shrinks toward an equal split, never below
+        # the floor. A lone peer may still take P2P_MAX_INFLIGHT_PER_IP.
+        per_ip_cap = _per_ip_inflight_cap(len(self._ip_inflight))
+        if inflight >= per_ip_cap:
+            raise web.HTTPServiceUnavailable(text="P2P peer request limit reached")
+        self._ip_inflight[remote] = inflight + 1
         try:
-            # Wait for a dispatch slot before enqueuing: the executor's queue is
-            # unbounded, so this is what caps in-flight work under a peer flood.
-            async with slots:
-                await loop.run_in_executor(executor, transport.dispatch)
-        except (ConnectionError, TimeoutError) as exc:
-            # Routine peer teardown (reset/broken pipe) or an I/O timeout is not
-            # a handler crash: log it at debug and let finalize() end the request.
-            log.debug(f"P2P request ended early ({request.method} {request.path}): {exc}")
-        except Exception:
-            log.exception("P2P request handler crashed")
-        return await transport.finalize()
+            loop = asyncio.get_running_loop()
+            transport = _AiohttpTransport(request, loop, context)
+            try:
+                # Wait for a dispatch slot before enqueuing: the executor's queue is
+                # unbounded, so this is what caps in-flight work under a peer flood.
+                async with slots:
+                    await loop.run_in_executor(executor, transport.dispatch)
+            except (ConnectionError, TimeoutError) as exc:
+                # Routine peer teardown (reset/broken pipe) or an I/O timeout is not
+                # a handler crash: log it at debug and let finalize() end the request.
+                log.debug(f"P2P request ended early ({request.method} {request.path}): {exc}")
+            except Exception:
+                log.exception("P2P request handler crashed")
+            return await transport.finalize()
+        finally:
+            remaining = self._ip_inflight.get(remote, 0) - 1
+            if remaining > 0:
+                self._ip_inflight[remote] = remaining
+            else:
+                self._ip_inflight.pop(remote, None)
 
     async def _handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         """Serve the canonical realtime-events channel on the unified listener.

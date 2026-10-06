@@ -745,8 +745,8 @@ class TestCapabilitiesJson:
             assert flag in doc["cli_options"]["server"]
         assert "--listen-port" not in doc["cli_options"]["server"]
         # C2: the p2p subcommand owns --port (the bootnode UDP port) and
-        # --no-upnp; --listen-port is the master TCP port and stays p2p-only.
-        for flag in ("--port", "--no-upnp", "--insecure", "--ca-cert", "--listen-port"):
+        # --upnp; --listen-port is the master TCP port and stays p2p-only.
+        for flag in ("--port", "--upnp", "--insecure", "--ca-cert", "--listen-port"):
             assert flag in doc["cli_options"]["p2p"]
 
     def test_does_not_require_bucket(self):
@@ -769,7 +769,7 @@ class TestCapabilitiesJson:
         assert "--port" in options["server"]
         assert "--listen-port" not in options["server"]
         assert "--port" in options["p2p"]
-        assert "--no-upnp" in options["p2p"]
+        assert "--upnp" in options["p2p"]
 
 
 class TestBuildBootnode:
@@ -778,77 +778,91 @@ class TestBuildBootnode:
     def test_no_bootnode_selects_the_mdns_plan(self):
         from hsync_client.cli import _build_bootnode
 
-        assert _build_bootnode(None, None, no_upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
+        assert _build_bootnode(None, None, upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
 
-    def test_default_bootnode_port_is_443_and_upnp_defaults_on(self):
+    def test_default_bootnode_port_is_443_and_upnp_defaults_off(self):
         from hsync_client.cli import _build_bootnode
 
-        assert _build_bootnode("boot.example.net", None, no_upnp=False) == (
+        assert _build_bootnode("boot.example.net", None, upnp=False) == (
             "boot.example.net",
             443,
-            True,
+            False,
         )
 
-    def test_explicit_port_wins_and_no_upnp_disables_mapping(self):
+    def test_explicit_port_wins_and_upnp_enables_mapping(self):
         from hsync_client.cli import _build_bootnode
 
-        assert _build_bootnode("boot.example.net", 8443, no_upnp=True) == (
+        assert _build_bootnode("boot.example.net", 8443, upnp=True) == (
             "boot.example.net",
             8443,
-            False,
+            True,
         )
 
     def test_port_without_bootnode_is_refused(self):
         from hsync_client.cli import _build_bootnode
 
         with pytest.raises(typer.BadParameter):
-            _build_bootnode(None, 8443, no_upnp=False)
+            _build_bootnode(None, 8443, upnp=False)
 
     def test_url_and_path_are_refused(self):
         from hsync_client.cli import _build_bootnode
 
         for bad in ("https://boot.example.net", "boot.example.net/path"):
             with pytest.raises(typer.BadParameter):
-                _build_bootnode(bad, None, no_upnp=False)
+                _build_bootnode(bad, None, upnp=False)
 
     def test_host_port_shorthand_is_accepted(self):
         from hsync_client.cli import _build_bootnode
 
-        assert _build_bootnode("boot.example.net:8443", None, no_upnp=False) == (
+        assert _build_bootnode("boot.example.net:8443", None, upnp=False) == (
             "boot.example.net",
             8443,
-            True,
+            False,
         )
 
     def test_host_port_and_port_flag_are_mutually_exclusive(self):
         from hsync_client.cli import _build_bootnode
 
         with pytest.raises(typer.BadParameter):
-            _build_bootnode("boot.example.net:8443", 8443, no_upnp=False)
+            _build_bootnode("boot.example.net:8443", 8443, upnp=False)
 
     def test_out_of_range_port_is_refused(self):
         from hsync_client.cli import _build_bootnode
 
         with pytest.raises(typer.BadParameter):
-            _build_bootnode("boot.example.net", 70000, no_upnp=False)
+            _build_bootnode("boot.example.net", 70000, upnp=False)
 
     def test_ipv6_bracketed_is_returned_unbracketed(self):
         from hsync_client.cli import _build_bootnode
 
-        assert _build_bootnode("[::1]", None, no_upnp=False) == ("::1", 443, True)
+        assert _build_bootnode("[::1]", None, upnp=False) == ("::1", 443, False)
 
     def test_ipv6_bracketed_with_port_is_returned_unbracketed(self):
         from hsync_client.cli import _build_bootnode
 
-        assert _build_bootnode("[::1]:8443", None, no_upnp=False) == ("::1", 8443, True)
+        assert _build_bootnode("[::1]:8443", None, upnp=False) == ("::1", 8443, False)
 
     def test_env_bootnode_is_resolved_when_use_env(self, monkeypatch):
         from hsync_client.cli import _build_bootnode
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        monkeypatch.delenv("HSYNC_UPNP_ENABLED", raising=False)
         get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, no_upnp=False, use_env=True) == (
+        assert _build_bootnode(None, None, upnp=False, use_env=True) == (
+            "boot.example.net",
+            443,
+            False,
+        )
+
+    def test_env_upnp_enabled_opts_in(self, monkeypatch):
+        from hsync_client.cli import _build_bootnode
+        from hsync_client.config import get_env_settings
+
+        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        monkeypatch.setenv("HSYNC_UPNP_ENABLED", "true")
+        get_env_settings.cache_clear()
+        assert _build_bootnode(None, None, upnp=False, use_env=True) == (
             "boot.example.net",
             443,
             True,
@@ -860,11 +874,12 @@ class TestBuildBootnode:
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
+        monkeypatch.delenv("HSYNC_UPNP_ENABLED", raising=False)
         get_env_settings.cache_clear()
-        assert _build_bootnode(None, 9000, no_upnp=False, use_env=True) == (
+        assert _build_bootnode(None, 9000, upnp=False, use_env=True) == (
             "boot.example.net",
             9000,
-            True,
+            False,
         )
 
     def test_env_bootnode_port_without_flag(self, monkeypatch):
@@ -872,11 +887,12 @@ class TestBuildBootnode:
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
+        monkeypatch.delenv("HSYNC_UPNP_ENABLED", raising=False)
         get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, no_upnp=False, use_env=True) == (
+        assert _build_bootnode(None, None, upnp=False, use_env=True) == (
             "boot.example.net",
             8443,
-            True,
+            False,
         )
 
     def test_env_is_not_used_without_use_env(self, monkeypatch):
@@ -885,7 +901,7 @@ class TestBuildBootnode:
 
         monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
         get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, no_upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
+        assert _build_bootnode(None, None, upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
 
 
 class TestBootnodeTrustCommands:

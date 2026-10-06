@@ -169,8 +169,8 @@ each other. Devices with different groups (or no group) are isolated.
 **Q: Do I need to set up port forwarding on my router?**
 Not for local-network (mDNS) sync — discovery stays within the subnet and needs
 no router configuration. Cross-network groups that use a bootnode must expose
-the master's sync port: the client maps it with UPnP by default (`--no-upnp`
-disables that), otherwise forward it on the router.
+the master's sync port: the client can map it with UPnP when you opt in
+(`--upnp` / `HSYNC_UPNP_ENABLED=true`), otherwise forward it on the router.
 
 **Q: Can I sync over Wi-Fi and wired Ethernet?**
 Yes. As long as devices are on the same subnet, they will discover each other

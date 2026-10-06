@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-05" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-06" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -319,9 +319,9 @@ without it,
 is refused rather than ignored. Mutually exclusive with a port given in
 .BR BOOTNODE [\fI:PORT\fP] .
 .TP
-.B \-\-no\-upnp
-Do not try to map the master TCP port with UPnP. Without a bootnode the flag
-has no effect (mDNS discovery stays on the local network).
+.B \-\-upnp
+Map the master TCP port with UPnP (opt\-in; off by default). Without a bootnode
+the flag has no effect (mDNS discovery stays on the local network).
 .TP
 .BI \-\-bootnode\-fingerprint\fP= FINGERPRINT
 Pin the bootnode certificate fingerprint (canonical
@@ -683,8 +683,8 @@ when
 is unset).
 .TP
 .B HSYNC_UPNP_ENABLED
-Map the master TCP port with UPnP (true/false). Unset = on only when a bootnode
-is configured.
+Map the master TCP port with UPnP (true/false; default false = opt\-in only
+with a bootnode).
 .TP
 .B HSYNC_P2P_LISTEN_PORT
 Port to use when acting as p2p master (default: 0 = auto).

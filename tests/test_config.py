@@ -165,10 +165,10 @@ class TestEnvSettings:
         get_env_settings.cache_clear()
         assert get_bootnode_tofu() is True
 
-    def test_upnp_enabled_default_and_override(self, monkeypatch):
-        """Unset = plan default; an explicit value overrides it."""
+    def test_upnp_enabled_default_off_and_override(self, monkeypatch):
+        """Off by default; an explicit value opts in."""
         get_env_settings.cache_clear()
-        assert EnvSettings().upnp_enabled is None
+        assert EnvSettings().upnp_enabled is False
         monkeypatch.setenv("HSYNC_UPNP_ENABLED", "true")
         get_env_settings.cache_clear()
         assert EnvSettings().upnp_enabled is True

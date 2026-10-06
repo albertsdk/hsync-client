@@ -853,7 +853,6 @@ def _bootnode_start(port: int, ready_file: Path) -> subprocess.Popen:
             "127.0.0.1",
             "--port",
             str(port),
-            "--no-upnp",
             "--ready-file",
             str(ready_file),
         ],

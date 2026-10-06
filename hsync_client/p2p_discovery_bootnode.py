@@ -99,7 +99,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         fingerprints: tuple[str, ...] = (),
         policy: TrustPolicy = TrustPolicy.ask,
         prompt: TrustPrompt | None = None,
-        upnp_enabled: bool = True,
+        upnp_enabled: bool = False,
         capacity: int = 0,
         peer_download_enabled: bool = False,
         client_factory: Callable[..., BootnodeClient] = BootnodeClient,

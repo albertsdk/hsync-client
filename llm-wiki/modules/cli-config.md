@@ -74,7 +74,8 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | typed getters | `:154`–`:300` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_bootnode_tofu`), guard getters, delta getters, etc. |
 
 The `p2p` subcommand takes an optional positional `BOOTNODE` (`HOST[:PORT]`) plus
-`--port` (bootnode UDP, default 443) and `--no-upnp`; `_build_bootnode`
+`--port` (bootnode UDP, default 443) and `--upnp` (opt-in; off by default);
+`_build_bootnode`
 (`cli.py`) validates them, refuses `--port` without a host (never a silently
 ignored flag), and a port in `BOOTNODE` is mutually exclusive with `--port`.
 The source(s) are selected in `p2p_discovery.build_discovery_plan`
@@ -85,8 +86,8 @@ only sees the `DiscoveryPlan` surface.
 The bootnode endpoint is `HSYNC_BOOTNODE` (the `_validate_bootnode_host`
 validator accepts `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via the shared
 `parse_host_port` grammar and normalizes to the unbracketed host; no scheme or
-path), and UPnP is `HSYNC_UPNP_ENABLED` (`None` = plan default: on only with a
-bootnode). The p2p command resolves the bootnode CLI > env (`_build_bootnode`,
+path), and UPnP is `HSYNC_UPNP_ENABLED` (default `false`; opt-in). The p2p
+command resolves the bootnode CLI > env (`_build_bootnode`,
 `use_env=True`): a CLI `BOOTNODE[:PORT]` positional replaces the whole env
 endpoint, and an explicit `--port` overrides a port embedded in the env.
 `HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the

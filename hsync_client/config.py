@@ -191,11 +191,11 @@ class EnvSettings(BaseSettings):
             "is refused as a possible man-in-the-middle"
         ),
     )
-    upnp_enabled: bool | None = Field(
-        default=None,
+    upnp_enabled: bool = Field(
+        default=False,
         description=(
-            "Map the master TCP port with UPnP. Unset = plan default (on only with "
-            "a bootnode); set explicitly to override"
+            "Map the master TCP port with UPnP (opt-in; off by default). Only "
+            "meaningful with a bootnode."
         ),
     )
 

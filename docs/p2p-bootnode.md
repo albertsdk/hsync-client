@@ -102,9 +102,9 @@ without any bootnode is refused rather than silently ignored.
 ## Let the node be reachable
 
 To be dialable from outside, a device that should act as coordinator must
-publish a TCP endpoint. The client maps its master port with **UPnP** when a
-bootnode is in use (on by default; disable with `--no-upnp` or
-`HSYNC_UPNP_ENABLED=false`). If no mapping can be created and no public TCP
+publish a TCP endpoint. The client can map its master port with **UPnP** when a
+bootnode is in use (opt-in: enable with `--upnp` or `HSYNC_UPNP_ENABLED=true`).
+If no mapping can be created and no public TCP
 endpoint is known, the device stays **slave-only** instead of advertising an
 address that cannot be reached.
 

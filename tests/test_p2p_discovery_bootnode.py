@@ -168,7 +168,7 @@ class TestLease:
         assert plan._observed == ObservedAddress(host="203.0.113.9", port=51000)
 
     def test_publish_endpoint_maps_upnp_and_sends_candidates(self):
-        plan, fake_upnp = make_plan()
+        plan, fake_upnp = make_plan(upnp_enabled=True)
         plan.update_endpoint_ready(True)
         plan._publish_endpoint()
         assert fake_upnp.mapped == [8443]

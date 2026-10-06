@@ -219,7 +219,7 @@ The HSYNC Client provides robust, enterprise-grade capabilities tailored for res
 * **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
 * **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
 * **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
-* **NAT traversal:** Maps the master port with UPnP and uses the bootnode's STUN-style endpoint echo for cross-network reachability — no manual port forwarding in the common case.
+* **NAT traversal:** Can map the master port with UPnP (opt-in via `--upnp`/`HSYNC_UPNP_ENABLED`) and uses the bootnode's STUN-style endpoint echo for cross-network reachability — no manual port forwarding in the common case.
 * **Stable device identity:** A persistent device ID and keypair anchor trust pins across restarts; a rotated key is detected as a changed fingerprint.
 
 > **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode is a **stable v1** (Python).

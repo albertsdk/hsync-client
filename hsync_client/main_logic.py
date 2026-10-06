@@ -1019,7 +1019,7 @@ def run_sync(
             verify_ssl,
         ),
         "AUTO_CONFIRM": auto_confirm,
-        "UPNP_ENABLED": (p2p_upnp_enabled if p2p_upnp_enabled is not None else bool(p2p_bootnode)),
+        "UPNP_ENABLED": bool(p2p_upnp_enabled),
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
         "BOOTNODE_REFRESH_INTERVAL": get_bootnode_refresh_interval() or BOOTNODE_REFRESH_INTERVAL,

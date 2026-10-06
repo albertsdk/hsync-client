@@ -7,7 +7,7 @@
 """Black-box end-to-end: two clients discover and sync **through a bootnode**.
 
 The sibling ``hsync-bootnode`` runs on loopback; both clients point at it
-(``BOOTNODE 127.0.0.1 --port <p> --insecure --no-upnp``) instead of mDNS, so
+(``BOOTNODE 127.0.0.1 --port <p> --insecure``) instead of mDNS, so
 this exercises the whole bootnode discovery plan: register/lease, query, peer
 feed, endpoint publication and the readiness gate. Requires ``HSYNC_BB_P2P=1``
 and skips when the sibling bootnode is not built.
@@ -54,7 +54,6 @@ class TestBootnodeDiscovery:
                 "--port",
                 str(bootnode_port),
                 "--insecure",
-                "--no-upnp",
             )
 
             master = _p2p_start(

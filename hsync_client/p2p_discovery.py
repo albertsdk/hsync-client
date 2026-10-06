@@ -291,7 +291,7 @@ def build_discovery_plan(
         fingerprints=config.get("BOOTNODE_FINGERPRINT", ()),
         policy=config.get("BOOTNODE_TRUST", TrustPolicy.ask),
         prompt=build_trust_prompt(config),
-        upnp_enabled=bool(config.get("UPNP_ENABLED", True)),
+        upnp_enabled=bool(config.get("UPNP_ENABLED", False)),
         capacity=config.get("P2P_PEER_READ_CAP", 0),
         peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),
     )

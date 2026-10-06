@@ -6,15 +6,15 @@
 
 """Small network helpers shared by the discovery plans.
 
-Extracted because the local-source-IP probe is needed in three places (the mDNS
-advertiser, the UPnP mapper and the bootnode endpoint candidates); keeping one
-implementation avoids three subtly different answers. ``same_subnet`` is the
-shared LAN-adjacency test used by the peer-source ranking and by the dial-time
-candidate ordering (a same-subnet candidate is preferred over a NATed public
-one).
+Extracted because the local-source-IP probe is needed in several places (the
+mDNS advertiser, the bootnode endpoint candidates and the p2p handler);
+keeping one implementation avoids subtly different answers. ``same_subnet`` is
+the shared LAN-adjacency test used by the peer-source ranking and by the
+dial-time candidate ordering (a same-subnet candidate is preferred over a NATed
+public one).
 
-Consumers: ``hsync-client`` (p2p_discovery_mdns, p2p_discovery_bootnode, upnp,
-p2p_sources, p2p_peers).
+Consumers: ``hsync-client`` (p2p_discovery_mdns, p2p_discovery_bootnode,
+p2p_handler, p2p_sources, p2p_peers).
 """
 
 from __future__ import annotations

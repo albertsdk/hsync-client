@@ -127,12 +127,13 @@ the same port 8080. Set firewall rules for that single port accordingly.
 
 Devices on different networks (different sites, home ↔ office) meet through a
 `boot/1` bootstrap node instead of mDNS. Point every device of the group at the
-same node and let UPnP publish this device's master port when it serves:
+same node and opt in to UPnP so this device can publish its master port when it
+serves:
 
 ```bash
 # Same command on every device of the group.
 HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net
+  --upnp boot.example.net
 ```
 
 On a terminal the first contact is SSH-like: the client prints the node's

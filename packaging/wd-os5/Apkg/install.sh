@@ -122,9 +122,9 @@ HSYNC_BOOTNODE_FINGERPRINT=""
 # Trust the bootnode certificate on first use (TOFU).
 HSYNC_BOOTNODE_TOFU="false"
 # Map the master TCP port with UPnP so the bootnode can relay a dialable
-# endpoint. Only effective with HSYNC_BOOTNODE set; the client treats it as on
-# only with a bootnode by default.
-HSYNC_UPNP_ENABLED="true"
+# endpoint. Only effective with HSYNC_BOOTNODE set. Opt-in: set to "true" to
+# enable (default "false").
+HSYNC_UPNP_ENABLED="false"
 
 # Server options (used only when HSYNC_MODE=server)
 HSYNC_SERVER=""

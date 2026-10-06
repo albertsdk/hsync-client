@@ -201,7 +201,7 @@ def _build_bootnode(
     hostname: str | None,
     port: int | None,
     *,
-    no_upnp: bool,
+    upnp: bool,
     use_env: bool = False,
 ) -> tuple[str | None, int, bool]:
     """Resolve the bootnode plan inputs; return ``(host, port, upnp_enabled)``.
@@ -213,6 +213,8 @@ def _build_bootnode(
     both in the CLI ``HOST[:PORT]`` and via ``--port`` is a usage error. The
     bootnode host may be a bare hostname/IPv4, a ``HOST[:PORT]`` pair or a
     (bracketed) IPv6 literal; the returned host is always unbracketed.
+
+    UPnP is opt-in: it is enabled only by ``--upnp`` or ``HSYNC_UPNP_ENABLED``.
     """
     if port is not None and not 1 <= port <= 65535:
         raise typer.BadParameter("--port must be between 1 and 65535.")
@@ -230,12 +232,16 @@ def _build_bootnode(
                 "--port requires a bootnode hostname (or set the full host via HSYNC_BOOTNODE)."
             )
         return None, BOOTNODE_DEFAULT_PORT, False
+    if use_env and not upnp:
+        from hsync_client.config import get_env_settings
+
+        upnp = bool(get_env_settings().upnp_enabled)
     hp = _parse_host_port(hostname)
     effective_port = _merge_port(hostname.strip(), hp.port, port)
     return (
         hp.host,
         effective_port if effective_port is not None else BOOTNODE_DEFAULT_PORT,
-        not no_upnp,
+        upnp,
     )
 
 
@@ -811,13 +817,14 @@ BootnodePortOpt = Annotated[
     ),
 ]
 
-NoUpnpOpt = Annotated[
+UpnpOpt = Annotated[
     bool,
     typer.Option(
-        "--no-upnp",
+        "--upnp",
         help=(
-            "Do not try to map the master TCP port with UPnP. Only meaningful with "
-            "a bootnode: without one, mDNS already keeps discovery on the local network."
+            "Map the master TCP port with UPnP (opt-in; off by default). Only "
+            "meaningful with a bootnode: without one, mDNS already keeps discovery "
+            "on the local network."
         ),
         rich_help_panel="P2P Mode",
     ),
@@ -1039,7 +1046,7 @@ def p2p(
     allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
     p2p_key_fd: P2PKeyFdOpt = None,
     port: BootnodePortOpt = None,
-    no_upnp: NoUpnpOpt = False,
+    upnp: UpnpOpt = False,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
     bootnode_fingerprint: BootnodeFingerprintOpt = None,
@@ -1147,7 +1154,7 @@ def p2p(
             raise typer.Exit(1)
 
     bootnode_host, bootnode_port, upnp_enabled = _build_bootnode(
-        bootnode, port, no_upnp=no_upnp, use_env=True
+        bootnode, port, upnp=upnp, use_env=True
     )
 
     # Bootnode TLS trust (ADR-0034): --ca-cert is a server-mode knob, not a
@@ -1270,7 +1277,7 @@ def _trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
     """Resolve ``hostname``/``--port`` for the trust subcommands (host required)."""
     if hostname is None:
         raise typer.BadParameter("a bootnode hostname is required")
-    host, resolved_port, _ = _build_bootnode(hostname, port, no_upnp=False)
+    host, resolved_port, _ = _build_bootnode(hostname, port, upnp=False)
     if host is None:  # ``_build_bootnode`` only returns None for an absent host
         raise typer.BadParameter("a bootnode hostname is required")
     return host, resolved_port
