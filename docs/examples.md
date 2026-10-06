@@ -6,7 +6,7 @@ and log labels see [Usage](usage.md) and [Configuration](configuration.md).
 This document has been split by deployment mode:
 
 - **[Examples — Server Mode](examples-server.md)** — central server examples (sections 1.1–1.8)
-- **[Examples — p2p Mode](examples-p2p.md)** — peer-to-peer examples (sections 2.1–2.8)
+- **[Examples — p2p Mode](examples-p2p.md)** — peer-to-peer examples (sections 2.1–2.9)
 
 ## Common Operational Patterns
 
@@ -72,9 +72,13 @@ hsync server server.example.com -b large -p ~/Large
 ### 3.8 Backup mode (never delete)
 
 ```bash
-# Backup mode: sync uploads but never apply remote deletes locally
+# Never propagate deletions in either direction
 hsync server server.example.com --ignore-delete -b backup -p ~/Backup
 ```
+
+For a one-way backup (push only, destination never loses data), combine it with
+`--sync-direction upload-only` — see
+[Examples — Server Mode 1.3](examples-server.md#13-push-only-backup-to-a-remote-server).
 
 ### 3.9 Resync interval
 

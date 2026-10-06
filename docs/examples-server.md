@@ -51,8 +51,15 @@ hsync server server.example.com -b work -p ~/Work
 ## 1.3 Push-only backup to a remote server
 
 ```bash
-hsync server server.example.com -b backup -p ~/Backup --sync-direction upload-only
+# One-way push that never deletes on the destination
+hsync server server.example.com -b backup -p ~/Backup \
+  --sync-direction upload-only --ignore-delete
 ```
+
+`--sync-direction upload-only` sends local changes without pulling remote ones;
+`--ignore-delete` stops deletions from propagating in either direction, so a
+file removed on the source stays on the server. Drop `--ignore-delete` for a
+strict mirror that follows deletions.
 
 ## 1.4 Read-only mirror from the server
 
@@ -78,7 +85,11 @@ hsync server server.example.com -b team -p ~/Team
 hsync server server.example.com -b team -p ~/Team
 ```
 
-Changes made on one device propagate through the server to all others.
+Changes made on one device propagate through the server to all others, so a
+shared bucket doubles as a team **drop box**: anyone with write access can drop
+a file and every member receives it. Give each person their own account with
+bucket membership — see the server
+[Roles and Permissions](https://github.com/albertsdk/hsync-server/blob/main/docs/roles-and-permissions.md).
 
 ## 1.7 Bandwidth-limited sync over a slow connection
 

@@ -71,10 +71,13 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p /mnt/data/backup --force-ma
 
 On the laptop (slave):
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p ~/Backup --sync-direction upload-only
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p ~/Backup \
+  --sync-direction upload-only --ignore-delete
 ```
 
-Upload-only ensures files are never deleted from the laptop.
+`--sync-direction upload-only` pushes local changes without pulling remote ones;
+`--ignore-delete` keeps the NAS from following deletions, so a file removed on
+the laptop stays on the backup.
 
 ## 2.4 Keep a peer in sync but never let it become master
 
