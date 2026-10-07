@@ -1,8 +1,5 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at https://mozilla.org/MPL/2.0/.
-#
-# Copyright (C) 2025 Alberto Basso
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Alberto Basso
 
 """Shared helpers, fixtures and constants for P2P black-box tests.
 
