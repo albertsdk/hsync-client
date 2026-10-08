@@ -39,11 +39,11 @@ shown in a readonly `#hsync-connect-command` textarea (not `<code>`: the WD
 dashboard / remotewd injector can strip or hide `code` contents). It is
 recomputed live from the form fields (`#HSYNC_MODE`, `#HSYNC_BUCKET`,
 `#HSYNC_P2P_GROUP`, `#HSYNC_P2P_KEY`) on `input`/`change`/`keyup` — delegated
-on `document` so they survive dashboard node replacement (`app.js:396`) — and
+on `document` so they survive dashboard node replacement (`app.js::boot`) — and
 on mode switches (`syncModeVisibility`), and re-applied on delayed timeouts so
 a post-inject DOM replace cannot leave the field empty. After a successful
 **Save** the command is rebuilt from the persisted configuration
-(`applyConfig(await loadConfig())` + `renderConnectCommand()`, `app.js:420`):
+(`applyConfig(await loadConfig())` + `renderConnectCommand()`, `app.js::applyConfig`):
 `config_set.php` normalizes inputs (invalid bucket → fallback, booleans →
 `true`/`false`, invalid numerics → empty), so the section always reflects what
 `hsync.env` actually contains, not just the pre-save form values.
