@@ -547,6 +547,16 @@ class TestRefusals:
         assert excinfo.value.error == "token_required"
         assert excinfo.value.retry_after is None
 
+    def test_register_capacity_refusal_is_a_refusal(self, monkeypatch):
+        """``overloaded`` (node capacity) is a refusal, not a contract error."""
+        client = self._client_returning(monkeypatch, self._refusal_frame("overloaded", 60))
+        with pytest.raises(BootnodeRefused) as excinfo:
+            client.register(
+                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+            )
+        assert excinfo.value.error == "overloaded"
+        assert excinfo.value.retry_after == 60
+
     def test_response_without_an_error_is_still_a_protocol_error(self, monkeypatch):
         """A ``response`` to ``register`` without ``error`` violates boot/1."""
         malformed = {

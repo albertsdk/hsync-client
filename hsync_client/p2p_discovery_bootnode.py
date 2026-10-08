@@ -357,11 +357,12 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 log.error(exc.guidance or str(exc))
                 return
             except BootnodeRefused as exc:
-                # A uniform refusal (rate limit / token) is a valid boot/1 answer:
-                # keep the lease state and retry at the normal cadence instead of
-                # resetting to a full register (which would deepen the refusal).
-                # Honour the node's ``retry_after`` so a rate-limited client waits
-                # at least as long as the node asked, never less.
+                # A uniform refusal (token / rate limit / node capacity) is a valid
+                # boot/1 answer: keep the lease state and retry at the normal
+                # cadence instead of resetting to a full register (which would
+                # deepen a rate limit). Honour the node's ``retry_after`` so a
+                # rate-limited or overloaded client waits at least as long as the
+                # node asked, never less.
                 self._log_refusal(exc)
                 backoff = float(exc.retry_after or 0)
             except BootnodeError as exc:

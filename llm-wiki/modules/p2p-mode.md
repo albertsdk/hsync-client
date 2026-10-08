@@ -332,7 +332,7 @@ peer state:
 | ------ | ---- | ---- |
 | `BootnodeClient` | `boot_client.py::BootnodeClient` | synchronous `boot/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-boot/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
 | `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `boot_client.py::build_register_frame`–`boot_client.py::build_query_frame` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame). `build_register_frame` always emits the election advertisement |
-| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeRefused` / `BootnodeFingerprintMismatch` | `boot_client.py::BootnodeError`–`boot_client.py::BootnodeFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`rate_limited`/`token_required` answered to `register`/`refresh`) vs pin/TOFU mismatch (fatal) |
+| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeRefused` / `BootnodeFingerprintMismatch` | `boot_client.py::BootnodeError`–`boot_client.py::BootnodeFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (fatal) |
 | `observed_address` | `stun.py::observed_address` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
 | `BootnodeDiscovery` | `p2p_discovery_bootnode.py::BootnodeDiscovery` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh → query) at the `boot/1` cadence `BOOTNODE_REFRESH_INTERVAL` (default 30 s, spec `boot-1.md`; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_discovery` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `BootnodeFingerprintMismatch` stops the lease loop (never retried), is recorded as a fatal error and re-raised by `wait_for_discovery` as `DiscoveryFatalError` so `run_p2p_mode` exits with `ExitCode.FATAL`. Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and keep the full `endpoints[]` candidate list, promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin) |
@@ -384,8 +384,8 @@ unsent generation and re-`register`s (`_republish_advert`) until the node
 acknowledged the new value, so a promotion/yield is visible immediately and a
 failed re-register retries instead of stranding a stale role. `refresh` never
 carries or mutates the advertisement (a change requires a new `register`, like
-`capacity`/`endpoints`). A **uniform refusal** (`{error: "rate_limited"|
-"token_required"}` in a `response`) is a legitimate `boot/1` answer to
+`capacity`/`endpoints`). A **uniform refusal** (`{error: "token_required"|
+"rate_limited"|"overloaded"}` in a `response`) is a legitimate `boot/1` answer to
 `register`/`refresh`: `BootnodeClient` raises `BootnodeRefused` for it (a
 `response` without a valid `error` stays a `BootnodeProtocolError`), and the
 lease loop keeps its state instead of resetting to a full register — the first

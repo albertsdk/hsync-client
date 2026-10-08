@@ -97,13 +97,15 @@ class BootnodeProtocolError(BootnodeError):
 class BootnodeRefused(BootnodeError):
     """The node answered ``register``/``refresh`` with a uniform refusal frame.
 
-    ``boot/1`` replies to a rate-limited (or token-refused) ``register``/
-    ``refresh`` with the same ``response`` frame it uses for ``query`` refusals
-    (``{peers: [], count: 0, error: "rate_limited"|"token_required"}``). That is
-    a legitimate protocol outcome, not a contract violation and not a transport
-    failure: the lease loop must keep its state and retry at its normal cadence
-    instead of re-registering from scratch (which would only deepen the rate
-    limit). ``retry_after`` is the node's advisory backoff, in seconds.
+    ``boot/1`` replies to a rate-limited, token-refused or capacity-refused
+    ``register``/``refresh`` with the same ``response`` frame it uses for
+    ``query`` refusals
+    (``{peers: [], count: 0, error: "token_required"|"rate_limited"|"overloaded"}``).
+    That is a legitimate protocol outcome, not a contract violation and not a
+    transport failure: the lease loop must keep its state and retry at its normal
+    cadence instead of re-registering from scratch (which would only deepen the
+    rate limit). ``retry_after`` is the node's advisory backoff, in seconds; for
+    ``overloaded`` it is node-capacity backpressure, not a client abuse signal.
     """
 
     def __init__(self, error: str, retry_after: int | None = None) -> None:
@@ -229,8 +231,8 @@ class BootnodeClient:
         if raw is None:
             return None
         if raw["type"] == "response":
-            # A uniform refusal (rate limit / token) is a valid boot/1 answer to
-            # register/refresh — surface it as such instead of a contract error.
+            # A uniform refusal (token / rate limit / capacity) is a valid boot/1
+            # answer to register/refresh — surface it instead of a contract error.
             raise BootnodeRefused(raw["error"], raw.get("retry_after"))
         parsed = validate_boot_ack(raw)
         if parsed is None:
@@ -247,9 +249,9 @@ class BootnodeClient:
         """Run one request/response session on a fresh QUIC stream.
 
         ``refusal`` accepts the uniform ``response`` refusal frame the node uses
-        for rate-limited / token-refused ``register``/``refresh`` (the caller
-        maps it to :class:`BootnodeRefused`); any other unexpected reply type is
-        still a contract violation.
+        for token-refused / rate-limited / overloaded ``register``/``refresh``
+        (the caller maps it to :class:`BootnodeRefused`); any other unexpected
+        reply type is still a contract violation.
         """
         validated = validate_boot_frame(frame)
         if validated is None:

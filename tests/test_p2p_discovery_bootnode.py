@@ -459,6 +459,34 @@ class TestAdvertisement:
         plan._query_peers()
         assert len(queries) == 1
 
+    def test_query_overloaded_refusal_keeps_the_peers_already_known(self):
+        """``overloaded`` (node capacity) is handled like a rate-limit refusal."""
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._query_peers()
+        known = [p.cid for p in manager.get_alive_peers()]
+        assert known == [OTHER]
+
+        refused = {
+            "protocol_version": "boot/1",
+            "type": "response",
+            "peers": [],
+            "count": 0,
+            "ttl": 60,
+            "error": "overloaded",
+            "retry_after": 60,
+        }
+
+        def refused_query(frame):
+            return validate_boot_response(dict(refused))
+
+        plan._client.query = refused_query
+        plan._next_query_at = 0.0  # bypass the cadence gate; exercise the refusal
+        plan._query_peers()  # must not raise
+        assert [p.cid for p in manager.get_alive_peers()] == known
+        assert plan._next_query_at > time.monotonic(), "retry_after must arm a backoff"
+
 
 class TestQueryBudget:
     def test_queries_respect_the_cadence(self):
