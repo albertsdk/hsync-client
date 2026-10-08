@@ -6,7 +6,7 @@ it at boot.
 
 ## Prerequisites
 
-- Debian or Ubuntu, `amd64`, `arm64` or `armhf`
+- <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian or Ubuntu, `amd64`, `arm64` or `armhf`
 - A root shell or `sudo`
 
 ## Install

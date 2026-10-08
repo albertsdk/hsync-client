@@ -16,19 +16,19 @@ procedure.
 
 | Format | OS | Architecture | Asset name | Procedure |
 | ------ | -- | ------------ | ---------- | --------- |
-| Installer script | Linux/macOS | x86-64/ARM64 | `install.sh` | [Installer script](getting-started-script.md) |
-| Standalone binary | Linux | x86-64 | `hsync-client-<version>-linux-amd64.tar.gz` | [Standalone binary](getting-started-binary.md) |
-| Standalone binary | Linux | ARM64 | `hsync-client-<version>-linux-arm64.tar.gz` | [Standalone binary](getting-started-binary.md) |
-| Standalone binary | macOS | Apple Silicon | `hsync-client-<version>-darwin-arm64.tar.gz` | [Standalone binary](getting-started-binary.md) |
-| Standalone binary | macOS | Intel | `hsync-client-<version>-darwin-amd64.tar.gz` | [Standalone binary](getting-started-binary.md) |
-| Standalone binary | Windows | x86-64 | `hsync-client-<version>-windows-amd64.zip` | [Standalone binary](getting-started-binary.md) |
-| Windows installer | Windows | x86-64 | `hsync-client-<version>-windows-amd64-setup.exe` | [Windows installer](getting-started-windows.md) |
-| Debian package | Debian/Ubuntu | amd64 | `hsync-client_<version>_amd64.deb` | [Debian package](getting-started-deb.md) |
-| Debian package | Debian/Ubuntu | arm64 | `hsync-client_<version>_arm64.deb` | [Debian package](getting-started-deb.md) |
-| Debian package | Debian/Ubuntu | armhf | `hsync-client_<version>_armhf.deb` | [Debian package](getting-started-deb.md) |
-| RPM package | RHEL/Rocky/Alma/Fedora | x86_64 | `hsync-client-<version>-1.el9.x86_64.rpm` | [RPM package](getting-started-rpm.md) |
-| RPM package | RHEL/Rocky/Alma/Fedora | aarch64 | `hsync-client-<version>-1.el9.aarch64.rpm` | [RPM package](getting-started-rpm.md) |
-| WD OS5 installer | WD My Cloud OS5 | model-specific | `<MODEL>_hsync_<version>.bin` | [WD OS5 packaging](../packaging/wd-os5/README.md) |
+| Installer script | <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> Linux/macOS | x86-64/ARM64 | `install.sh` | [Installer script](getting-started-script.md) |
+| Standalone binary | <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | x86-64 | `hsync-client-<version>-linux-amd64.tar.gz` | [Standalone binary](getting-started-binary.md) |
+| Standalone binary | <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | ARM64 | `hsync-client-<version>-linux-arm64.tar.gz` | [Standalone binary](getting-started-binary.md) |
+| Standalone binary | <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | Apple Silicon | `hsync-client-<version>-darwin-arm64.tar.gz` | [Standalone binary](getting-started-binary.md) |
+| Standalone binary | <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | Intel | `hsync-client-<version>-darwin-amd64.tar.gz` | [Standalone binary](getting-started-binary.md) |
+| Standalone binary | <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows | x86-64 | `hsync-client-<version>-windows-amd64.zip` | [Standalone binary](getting-started-binary.md) |
+| Windows installer | <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows | x86-64 | `hsync-client-<version>-windows-amd64-setup.exe` | [Windows installer](getting-started-windows.md) |
+| Debian package | <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian/Ubuntu | amd64 | `hsync-client_<version>_amd64.deb` | [Debian package](getting-started-deb.md) |
+| Debian package | <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian/Ubuntu | arm64 | `hsync-client_<version>_arm64.deb` | [Debian package](getting-started-deb.md) |
+| Debian package | <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian/Ubuntu | armhf | `hsync-client_<version>_armhf.deb` | [Debian package](getting-started-deb.md) |
+| RPM package | <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> RHEL/Rocky/Alma/Fedora | x86_64 | `hsync-client-<version>-1.el9.x86_64.rpm` | [RPM package](getting-started-rpm.md) |
+| RPM package | <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> RHEL/Rocky/Alma/Fedora | aarch64 | `hsync-client-<version>-1.el9.aarch64.rpm` | [RPM package](getting-started-rpm.md) |
+| WD OS5 installer | <img src="assets/os/mycloud.svg" alt="WD My Cloud" width="16" height="16"> WD My Cloud OS5 | model-specific | `<MODEL>_hsync_<version>.bin` | [WD OS5 packaging](../packaging/wd-os5/README.md) |
 | Checksums | all | all | `SHA256SUMS` | [Verify the download](#verify-the-download) |
 
 > **Note**: all assets share the `hsync-client` prefix. Binary archives use

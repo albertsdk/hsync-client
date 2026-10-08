@@ -13,11 +13,11 @@ somewhere on your `PATH`.
 
 | OS | Architecture | Asset |
 | -- | ------------ | ----- |
-| Linux | x86-64 | `hsync-client-<version>-linux-amd64.tar.gz` |
-| Linux | ARM64 | `hsync-client-<version>-linux-arm64.tar.gz` |
-| macOS | Apple Silicon | `hsync-client-<version>-darwin-arm64.tar.gz` |
-| macOS | Intel | `hsync-client-<version>-darwin-amd64.tar.gz` |
-| Windows | x86-64 | `hsync-client-<version>-windows-amd64.zip` |
+| <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | x86-64 | `hsync-client-<version>-linux-amd64.tar.gz` |
+| <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | ARM64 | `hsync-client-<version>-linux-arm64.tar.gz` |
+| <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | Apple Silicon | `hsync-client-<version>-darwin-arm64.tar.gz` |
+| <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | Intel | `hsync-client-<version>-darwin-amd64.tar.gz` |
+| <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows | x86-64 | `hsync-client-<version>-windows-amd64.zip` |
 
 Download it from the [Releases page](https://github.com/albertsdk/hsync-client/releases)
 and verify it against `SHA256SUMS` — see

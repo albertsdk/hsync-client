@@ -7,7 +7,7 @@ checksum, installs it to `~/.local/share/hsync-client`, and creates a symlink in
 
 ## Prerequisites
 
-- Linux or macOS (`x86-64` or `arm64`)
+- <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> Linux or macOS (`x86-64` or `arm64`)
 - `curl`
 - A writable `~/.local` (the installer never invokes `sudo`)
 

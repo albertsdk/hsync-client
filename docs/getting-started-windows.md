@@ -6,7 +6,7 @@ terminal.
 
 ## Prerequisites
 
-- Windows 10/11 (x64)
+- <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows 10/11 (x64)
 
 ## Install
 
