@@ -183,7 +183,7 @@ def _p2p_start(
         bucket,
         "-p",
         local_path,
-        "--yes",
+        "--allow-deletions",
         "--min-free-disk-space",
         "0",
         "--no-autotune",

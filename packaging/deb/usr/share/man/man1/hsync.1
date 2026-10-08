@@ -421,8 +421,9 @@ Disable colored output.
 .\" --- General ---
 .SS General (both subcommands)
 .TP
-.BR \-y ", " \-\-yes
-Skip interactive confirmation prompts (warnings are still shown).
+.BR \-\-allow\-deletions
+Accept the deletion risk: a download-only sync may delete local-only files to
+mirror the source.
 .TP
 .BR \-\-env\-file =\fIPATH\fP
 Load environment variables from a file (KEY=VALUE, one per line).
@@ -728,6 +729,15 @@ range: 1\(en8).
 Dangerously permit LAN mutations without a shared key (default:
 .BR false ).
 Reads remain available when this setting is false.
+.TP
+.B HSYNC_P2P_ALLOW_UNAUTHENTICATED
+Explicitly acknowledge running P2P without a shared key (default:
+.BR false ).
+Peers are not authenticated and reads are open to the network.
+.TP
+.B HSYNC_ALLOW_DELETIONS
+Accept the deletion risk without an interactive confirmation (default:
+.BR false ).
 .TP
 .B HSYNC_IGNORE_DELETE
 Do not propagate file deletions (default:

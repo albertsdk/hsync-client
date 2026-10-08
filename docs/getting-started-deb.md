@@ -29,9 +29,11 @@ Configuration is read from `/etc/hsync/hsync.conf` (an environment file loaded
 by the unit). By default the service runs in **p2p mode** with continuous watch
 as the `_hsync` system user.
 
-> ⚠️ The service runs non-interactively (`--yes`) with bidirectional sync, so
-> `HSYNC_P2P_KEY` **must be set** in `/etc/hsync/hsync.conf` before enabling it —
-> otherwise the client aborts with `[AUTH REQUIRED]`. All peers in the same p2p
+> ⚠️ The service runs non-interactively (`--allow-deletions`) with bidirectional
+> sync, so `HSYNC_P2P_KEY` **must be set** in `/etc/hsync/hsync.conf` before
+> enabling it — otherwise the client aborts with `[AUTH REQUIRED]` (a keyless
+> read-only service must instead set `HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`).
+> All peers in the same p2p
 > group must share the same key. The default config also sets
 > `HSYNC_DEVICE_DIR=/var/lib/hsync/device`,
 > `HSYNC_LOCKS_DIR=/var/lib/hsync/locks`,

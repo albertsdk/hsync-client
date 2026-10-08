@@ -41,6 +41,8 @@
     "field.delta_enabled": "Enable delta transfer (rsync-style block sync)",
     "field.p2p_peer_download": "Enable peer-assisted p2p downloads",
     "field.p2p_unauthenticated_writes": "Dangerous: allow p2p writes without a shared key",
+    "field.p2p_unauthenticated": "Run p2p without a shared key (peers unauthenticated, reads open)",
+    "field.allow_deletions": "Accept the deletion risk without confirmation",
     "field.delta_min_size": "Delta min file size - server (bytes, 0 = default)",
     "field.delta_min_size_p2p": "Delta min file size - p2p (bytes, 0 = default)",
     "field.bw_upload": "Max upload bandwidth (e.g. 1MB)",

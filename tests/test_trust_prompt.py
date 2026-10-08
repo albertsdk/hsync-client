@@ -32,16 +32,12 @@ def test_ask_on_a_terminal_uses_the_ssh_style_prompt(tty):
     assert prompt is trust_prompt.terminal_trust_prompt
 
 
-def test_yes_auto_accepts_only_with_a_terminal(tty):
-    prompt = trust_prompt.build_trust_prompt(
-        {"BOOTNODE_TRUST": TrustPolicy.ask, "AUTO_CONFIRM": True}
-    )
-    assert prompt is not None and prompt("h", 443, "f" * 64) is True
+def test_ask_prompt_is_not_auto_accepted(tty):
+    """Policy ``ask`` always uses the SSH-style prompt; there is no auto-accept."""
+    prompt = trust_prompt.build_trust_prompt({"BOOTNODE_TRUST": TrustPolicy.ask})
+    assert prompt is trust_prompt.terminal_trust_prompt
     tty["isatty"] = False
-    assert (
-        trust_prompt.build_trust_prompt({"BOOTNODE_TRUST": TrustPolicy.ask, "AUTO_CONFIRM": True})
-        is None
-    )
+    assert trust_prompt.build_trust_prompt({"BOOTNODE_TRUST": TrustPolicy.ask}) is None
 
 
 def test_server_policy_key_and_prompt(tty):

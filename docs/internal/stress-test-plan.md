@@ -524,8 +524,8 @@ scale down for CI (`HSYNC_BB_STRESS_FILES=300 HSYNC_BB_STRESS_DIRS=50`,
      no process boot noise. For **wall-clock realism**, the suite ships a
      subprocess driver (`_subprocess_run` + the `sync_runner` fixture in
      `test_bb_server_stress.py`) modeled on `p2p_helpers._p2p_start`: the same
-     hostname/`--port` form, `-b <bucket>` and `-p <path>`, `--yes --insecure
-     --once --no-autotune --min-free-disk-space 0`, `HSYNC_API_KEY` in the
+      hostname/`--port` form, `-b <bucket>` and `-p <path>`, `--allow-deletions --insecure
+      --once --no-autotune --min-free-disk-space 0`, `HSYNC_API_KEY` in the
      scrubbed env, output to a log file (never an undrained pipe), and a run
      timeout from `HSYNC_BB_STRESS_TIMEOUT`. Default the stress suite to
      in-process for comparability; set `HSYNC_BB_STRESS_SUBPROCESS=1` for the

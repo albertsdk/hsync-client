@@ -25,6 +25,7 @@ from hsync_common.runtime import detect_container, is_tty_interactive, runtime_s
 from hsync_client.config import (
     CONFIG,
     HsyncConfig,
+    get_allow_deletions,
     get_api_key,
     get_autotune_enabled,
     get_bootnode_fingerprints,
@@ -45,6 +46,7 @@ from hsync_client.config import (
     get_mass_delete_threshold,
     get_max_concurrent_transfers,
     get_never_master,
+    get_p2p_allow_unauthenticated,
     get_p2p_allow_unauthenticated_writes,
     get_p2p_group,
     get_p2p_key,
@@ -90,6 +92,7 @@ from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.logger import flush_logs, set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
+from hsync_client.security_warnings import log_active_bypasses
 from hsync_client.server_trust import (
     default_server_trust_store,
     fetch_server_fingerprint,
@@ -261,14 +264,14 @@ def _check_deletion_risk(
     p2p_mode: bool,
     force_master: bool,
     sync_direction: str,
-    auto_confirm: bool,
+    allow_deletions: bool,
     logger: Any,
 ) -> None:
     """Check if sync settings could delete local files and warn the user.
 
     If the local directory is non-empty and the sync mode could cause
-    file deletions, a warning is printed and – unless *auto_confirm* is
-    True – the user is prompted for confirmation.  When *auto_confirm* is
+    file deletions, a warning is printed and – unless *allow_deletions* is
+    True – the user is prompted for confirmation.  When *allow_deletions* is
     True the warning is still logged but no interactive prompt is shown.
 
     Raises SystemExit if the user declines to continue.
@@ -328,8 +331,7 @@ def _check_deletion_risk(
     for line in warnings:
         logger.warning(line)
 
-    if auto_confirm:
-        logger.warning("--yes flag set – proceeding without confirmation.")
+    if allow_deletions:
         return
 
     # No operator can answer the prompt without an interactive terminal
@@ -338,7 +340,7 @@ def _check_deletion_risk(
     if not is_tty_interactive():
         error = (
             "Deletion-risk confirmation required but no interactive terminal is "
-            "available. Re-run with --yes to accept the risk and proceed."
+            "available. Re-run with --allow-deletions to accept the risk and proceed."
         )
         logger.error(error)
         # The loguru sinks are asynchronous (enqueue=True): a message written
@@ -392,6 +394,57 @@ def _check_p2p_write_policy(
         ),
     ):
         raise SystemExit(1)
+
+
+def _check_p2p_keyless_policy(
+    p2p_mode: bool,
+    p2p_key: str | None,
+    allow_unauthenticated_p2p: bool,
+    allow_unauthenticated_writes: bool,
+    logger: Any,
+) -> None:
+    """Confirm keyless P2P operation before any connection is made.
+
+    Without a shared key the transport hides traffic but authenticates nobody:
+    reads are open and a peer's identity cannot be verified. This gate prompts
+    (or fails closed) unless the operator explicitly acknowledged the posture
+    with ``--allow-unauthenticated-p2p``; the writes opt-in implies the same
+    acknowledgement.
+    """
+    if not p2p_mode:
+        return
+    if p2p_key:
+        return
+    if allow_unauthenticated_p2p or allow_unauthenticated_writes:
+        return
+
+    warnings = [
+        "P2P mode is running without a shared key (HSYNC_P2P_KEY).",
+        "Consequence: peers are not authenticated and reads are open to anyone",
+        "who can reach this node.",
+    ]
+    for line in warnings:
+        logger.warning(line)
+
+    # No operator can answer the prompt without an interactive terminal.
+    if not is_tty_interactive():
+        error = (
+            "Keyless P2P confirmation required but no interactive terminal is "
+            "available. Set HSYNC_P2P_KEY or re-run with --allow-unauthenticated-p2p "
+            "(env HSYNC_P2P_ALLOW_UNAUTHENTICATED) to accept the risk."
+        )
+        logger.error(error)
+        print("Error: " + " ".join([*warnings, error]), file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        response = input("Run P2P without a shared key? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        response = ""
+
+    if response not in ("y", "yes"):
+        logger.info("Sync cancelled by user.")
+        raise SystemExit(0)
 
 
 def _warn_if_p2p_in_container(logger: Any) -> None:
@@ -699,7 +752,8 @@ def run_sync(
     api_key_fd: int | None = None,
     p2p_key_fd: int | None = None,
     events_json_fd: int | None = None,
-    auto_confirm: bool = False,
+    allow_deletions: bool = False,
+    p2p_allow_unauthenticated: bool = False,
     min_free_disk_space: int = 500,
     max_inbound_size: int = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: list[str] | None = None,
@@ -839,6 +893,8 @@ def run_sync(
     allow_unauthenticated_p2p_writes = (
         p2p_allow_unauthenticated_writes or get_p2p_allow_unauthenticated_writes()
     )
+    allow_unauthenticated_p2p = p2p_allow_unauthenticated or get_p2p_allow_unauthenticated()
+    allow_deletions = allow_deletions or get_allow_deletions()
 
     # Fail fast on a missing API key: every authenticated server endpoint
     # requires a valid key, so an empty key can never sync. Reporting it here
@@ -1015,7 +1071,6 @@ def run_sync(
             bootnode_tofu or get_bootnode_tofu(),
             verify_ssl,
         ),
-        "AUTO_CONFIRM": auto_confirm,
         "UPNP_ENABLED": bool(p2p_upnp_enabled),
         "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
@@ -1033,6 +1088,8 @@ def run_sync(
         "P2P_PEER_READ_CAP": get_p2p_peer_read_cap(),
         "P2P_PEER_SOURCES_MAX": get_p2p_peer_sources_max(),
         "P2P_ALLOW_UNAUTHENTICATED_WRITES": allow_unauthenticated_p2p_writes,
+        "P2P_ALLOW_UNAUTHENTICATED": allow_unauthenticated_p2p,
+        "ALLOW_DELETIONS": allow_deletions,
         "MASTER_CERT_FINGERPRINT": None,
         # Server TLS trust (ADR-0036): resolved from flags/env; the pin itself is
         # set at connect time by _evaluate_server_trust.
@@ -1120,13 +1177,23 @@ def run_sync(
     # Hot-reload watcher: rebuild the matcher when .hsyncignore changes.
     _hsyncignore_observer = _start_hsyncignore_watcher(local_path, _matcher)
 
+    # Surface one concise warning per adopted security bypass, before any prompt.
+    log_active_bypasses(
+        log,
+        allow_deletions=config["ALLOW_DELETIONS"],
+        allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
+        allow_unauthenticated_p2p=config["P2P_ALLOW_UNAUTHENTICATED"],
+        bootnode_trust=config["BOOTNODE_TRUST"],
+        server_trust=config["SERVER_TRUST"],
+    )
+
     if not dryrun:
         _check_deletion_risk(
             local_path=local_path,
             p2p_mode=p2p_mode,
             force_master=force_master,
             sync_direction=sync_direction,
-            auto_confirm=auto_confirm,
+            allow_deletions=allow_deletions,
             logger=log,
         )
 
@@ -1139,6 +1206,17 @@ def run_sync(
             logger=log,
             allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
         )
+
+    # Keyless P2P confirmation: authorization is orthogonal to a dry-run, which
+    # still performs discovery/TLS/connection (and a keyless master still serves
+    # reads), so the gate applies even when no actions are executed.
+    _check_p2p_keyless_policy(
+        p2p_mode=config["P2P_MODE"],
+        p2p_key=config["P2P_KEY"],
+        allow_unauthenticated_p2p=config["P2P_ALLOW_UNAUTHENTICATED"],
+        allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
+        logger=log,
+    )
 
     if not dryrun:
         _check_disk_space(local_path, min_free_disk_space, log)

@@ -395,10 +395,10 @@ class TestP2PDeletionRiskGuard:
         self, p2p_bucket, local_dir, monkeypatch
     ):
         # Given a non-empty local dir and a download-only direction that could
-        # delete local files, with no --yes confirmation
+        # delete local files, with no --allow-deletions confirmation
         (Path(local_dir) / "keep.txt").write_bytes(b"keep")
 
-        # When running lan download-only without --yes
+        # When running lan download-only without --allow-deletions
         result = _invoke_p2p_cli(
             monkeypatch, p2p_bucket, local_dir, "--sync-direction", "download-only"
         )

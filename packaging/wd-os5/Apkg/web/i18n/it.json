@@ -41,6 +41,8 @@
     "field.delta_enabled": "Abilita trasferimento delta (sincronizzazione a blocchi stile rsync)",
     "field.p2p_peer_download": "Abilita download p2p assistiti dai peer",
     "field.p2p_unauthenticated_writes": "Pericoloso: consenti scritture p2p senza chiave condivisa",
+    "field.p2p_unauthenticated": "Esegui p2p senza chiave condivisa (peer non autenticati, letture aperte)",
+    "field.allow_deletions": "Accetta il rischio di cancellazione senza conferma",
     "field.delta_min_size": "Dimensione minima file delta - server (byte, 0 = default)",
     "field.delta_min_size_p2p": "Dimensione minima file delta - p2p (byte, 0 = default)",
     "field.bw_upload": "Banda massima in upload (es. 1MB)",

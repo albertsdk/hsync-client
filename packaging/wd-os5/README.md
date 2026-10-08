@@ -142,6 +142,8 @@ option to configure.
 | Strict pairing      | `--require-pairing`                            | off                              |
 | Peer-assisted p2p downloads | `--no-peer-download` (when disabled)    | enabled                          |
 | Unauthenticated LAN writes | `--allow-unauthenticated-writes`          | disabled                         |
+| Unauthenticated p2p | `--allow-unauthenticated-p2p`              | disabled                         |
+| Accept deletion risk | `--allow-deletions`                        | disabled                         |
 | Seeder read cap     | `HSYNC_P2P_PEER_READ_CAP`                      | `2`                              |
 | Peer attempts       | `HSYNC_P2P_PEER_SOURCES_MAX`                    | `3`                              |
 | Group               | `--group`                                  | _empty_                          |

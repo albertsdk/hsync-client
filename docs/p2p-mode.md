@@ -200,7 +200,7 @@ connection that carries the data.
   write-capable sync is refused and mutating HTTP endpoints return `403`.
 - **Dangerous explicit opt-in** — `--allow-unauthenticated-writes` or
   `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` permits no-key mutations on a
-  fully trusted network. A TTY or `--yes` does not grant this permission.
+  fully trusted network. A TTY does not grant this permission.
 - **Per-source trust** — each selected seeder is pinned independently by device
   ID and bucket before connecting. `--require-pairing` remains specific to the
   elected master; seeder trust uses persistent TOFU.

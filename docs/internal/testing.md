@@ -162,8 +162,8 @@ Used by `test_bb_server_remote_sync.py`, `test_bb_server_continuous_sync.py`,
 | `live_server` | module | Starts the **real `hsync-server`** as a separate subprocess on loopback HTTPS with a self‑signed certificate; readiness is probed via `GET /health`. Runs with isolated `HSYNC_BUCKETS`/`HSYNC_STATE_DIR`. Yields `(base_url, api_key)`. Disables rate‑limiting and docs. |
 | `bb_bucket` | function | Creates a uniquely‑named bucket on the live server for one test and deletes it afterwards. |
 | `local_dir` | function | Creates a temp directory used as the client's local sync path. |
-| `run_sync_once` | function | Returns a callable that runs a **one‑shot** client sync via `CliRunner` (Typer) with `--yes --insecure --min-free-disk-space 0`. Wraps the invocation in `_ClientGlobalsGuard`. |
-| `run_cli` | function | Like `run_sync_once` but adds no safety flags of its own — used by tests that must control `--yes` / `--sync-direction` / `--min-free-disk-space` precisely. |
+| `run_sync_once` | function | Returns a callable that runs a **one‑shot** client sync via `CliRunner` (Typer) with `--allow-deletions --insecure --min-free-disk-space 0`. Wraps the invocation in `_ClientGlobalsGuard`. |
+| `run_cli` | function | Like `run_sync_once` but adds no safety flags of its own — used by tests that must control `--allow-deletions` / `--sync-direction` / `--min-free-disk-space` precisely. |
 | `watch_sync` | function | Returns a callable that starts the client in **continuous mode** as a subprocess. The caller receives the `Popen` handle and must terminate it. |
 | `bb_server_upload` | function | Helper to upload a file directly to the live server (skips the client). |
 | `bb_server_files` | function | Helper to list files on the live server for a bucket. |

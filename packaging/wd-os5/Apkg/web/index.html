@@ -470,6 +470,14 @@
             <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES">
             <span data-i18n="field.p2p_unauthenticated_writes">Dangerous: allow LAN writes without a shared key</span>
         </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED">
+            <span data-i18n="field.p2p_unauthenticated">Run p2p without a shared key (peers unauthenticated, reads open)</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_ALLOW_DELETIONS" id="HSYNC_ALLOW_DELETIONS">
+            <span data-i18n="field.allow_deletions">Accept the deletion risk without confirmation</span>
+        </label>
         <input type="hidden" name="HSYNC_P2P_PEER_READ_CAP" id="HSYNC_P2P_PEER_READ_CAP" value="2">
         <input type="hidden" name="HSYNC_P2P_PEER_SOURCES_MAX" id="HSYNC_P2P_PEER_SOURCES_MAX" value="3">
         <label class="hsync-label">

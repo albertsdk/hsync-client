@@ -41,7 +41,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -55,7 +55,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=False,
             sync_direction="upload-only",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -69,7 +69,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=True,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -83,7 +83,7 @@ class TestCheckDeletionRisk:
             p2p_mode=False,
             force_master=False,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -96,7 +96,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=False,
             sync_direction="download-only",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -112,7 +112,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -128,7 +128,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -149,7 +149,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
@@ -164,7 +164,7 @@ class TestCheckDeletionRisk:
             p2p_mode=True,
             force_master=False,
             sync_direction="bidirectional",
-            auto_confirm=False,
+            allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
@@ -182,7 +182,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
@@ -202,7 +202,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=False,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
@@ -211,10 +211,10 @@ class TestCheckDeletionRisk:
         assert "DELETE" in warning_texts
         assert "download-only" in warning_texts
 
-    # ── auto_confirm behaviour ───────────────────────────────────────
+    # ── allow_deletions behaviour ───────────────────────────────────
 
-    def test_auto_confirm_skips_prompt(self, tmp_path):
-        """auto_confirm=True logs warning but doesn't prompt."""
+    def test_allow_deletions_skips_prompt(self, tmp_path):
+        """allow_deletions=True logs warning but doesn't prompt."""
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
 
@@ -225,12 +225,12 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=True,
+                allow_deletions=True,
                 logger=mock_logger,
             )
 
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
-        assert "--yes flag set" in warning_texts
+        assert "DELETE" in warning_texts
 
     # ── User response handling ───────────────────────────────────────
 
@@ -245,7 +245,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
         # No exception raised – test passes
@@ -261,7 +261,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
@@ -276,7 +276,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
@@ -294,7 +294,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
@@ -311,7 +311,7 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
@@ -331,14 +331,14 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
         assert exc_info.value.code == 0
 
-    def test_download_only_with_auto_confirm(self, tmp_path):
-        """download-only + auto_confirm logs warning and proceeds."""
+    def test_download_only_with_allow_deletions(self, tmp_path):
+        """download-only + allow_deletions logs warning and proceeds."""
         (tmp_path / "data.bin").write_bytes(b"\x00" * 100)
         mock_logger = MagicMock()
 
@@ -347,12 +347,11 @@ class TestCheckDeletionRisk:
             p2p_mode=False,
             force_master=False,
             sync_direction="download-only",
-            auto_confirm=True,
+            allow_deletions=True,
             logger=mock_logger,
         )
 
         warning_texts = " ".join(str(c) for c in mock_logger.warning.call_args_list)
-        assert "--yes flag set" in warning_texts
         assert "download-only" in warning_texts
 
     def test_non_interactive_prompt_exits_with_error(self, tmp_path):
@@ -370,13 +369,13 @@ class TestCheckDeletionRisk:
                 p2p_mode=True,
                 force_master=False,
                 sync_direction="download-only",
-                auto_confirm=False,
+                allow_deletions=False,
                 logger=mock_logger,
             )
 
         assert exc_info.value.code == 1
         error_texts = " ".join(str(c) for c in mock_logger.error.call_args_list)
-        assert "--yes" in error_texts
+        assert "--allow-deletions" in error_texts
 
 
 class TestCheckLanWritePolicy:

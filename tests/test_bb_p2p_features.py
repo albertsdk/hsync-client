@@ -269,10 +269,10 @@ class TestP2PKeyless:
 
         The write policy (``p2p_write_requires_key``) requires a shared
         ``HSYNC_P2P_KEY`` or the explicit dangerous opt-in whenever a run may
-        upload to a master. A ``--yes`` P2P run without either must therefore
+        upload to a master. An unattended P2P run without either must therefore
         exit immediately with the policy error.
         """
-        # Given a write-capable keyless master in unattended (--yes) mode
+        # Given a write-capable keyless master in unattended mode
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
@@ -293,18 +293,19 @@ class TestP2PKeyless:
             _terminate(master)
 
     def test_keyless_download_only_node_is_allowed(self, p2p_slave_dir, p2p_bucket):
-        """A keyless download-only node passes the write policy (nothing to upload).
+        """A keyless download-only node passes the write policy and, with the
+        explicit keyless acknowledgement, keeps running.
 
         The node starts, runs discovery and keeps waiting for peers — the
-        point is that the run is *allowed* without HSYNC_P2P_KEY (no
-        write-policy error) and stays alive instead of being refused.
+        point is that the run is *allowed* without HSYNC_P2P_KEY once the
+        posture is acknowledged (no write-policy error) and stays alive.
         """
-        # Given a keyless download-only node
+        # Given a keyless download-only node with the explicit acknowledgement
         node = _p2p_start(
             p2p_slave_dir,
             p2p_bucket,
             never_master=True,
-            extra_args=("--sync-direction", "download-only"),
+            extra_args=("--sync-direction", "download-only", "--allow-unauthenticated-p2p"),
             extra_env={"HSYNC_P2P_KEY": None},
         )
         try:

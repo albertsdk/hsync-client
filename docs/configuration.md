@@ -67,7 +67,8 @@ state dir, the `HSYNC_STATE_DB` override if set, instance-lock dir). Secrets
 
 | Option | Description | Default |
 |---|---|---|
-| `-y, --yes` | Non-interactive mode (skip confirmations) | `false` |
+| `--allow-deletions` | Accept the deletion risk: a download-only sync may delete local-only files to mirror the source | `false` |
+| `--allow-unauthenticated-p2p` | Run p2p without a shared key (peers unauthenticated, reads open) | `false` |
 | `--env-file` | Load recognised `HSYNC_*` keys from a file (does not load `./.env` by itself) | — |
 | `--capabilities-json` | Print the binary's capabilities document as JSON and exit | — |
 | `-V, --version` | Show version and exit | — |

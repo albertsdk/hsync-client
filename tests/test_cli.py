@@ -395,28 +395,30 @@ class TestTyperCli:
         assert mock_run_sync.call_args.kwargs["p2p_allow_unauthenticated_writes"] is True
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_yes_flag_long(self, mock_run_sync):
-        """CLI accepts --yes flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "--yes"])
+    def test_allow_deletions_flag(self, mock_run_sync):
+        """CLI accepts --allow-deletions flag."""
+        result = runner.invoke(
+            app, ["server", "-b", "test", "test.example.com", "--allow-deletions"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["auto_confirm"] is True
+        assert call_kwargs["allow_deletions"] is True
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_yes_flag_short(self, mock_run_sync):
-        """CLI accepts -y shorthand flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "-y"])
+    def test_allow_unauthenticated_p2p_flag(self, mock_run_sync):
+        """CLI accepts --allow-unauthenticated-p2p flag."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--allow-unauthenticated-p2p"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["auto_confirm"] is True
+        assert call_kwargs["p2p_allow_unauthenticated"] is True
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_yes_flag_defaults_false(self, mock_run_sync):
-        """--yes flag defaults to False when not provided."""
+    def test_allow_deletions_defaults_false(self, mock_run_sync):
+        """--allow-deletions flag defaults to False when not provided."""
         result = runner.invoke(app, ["server", "-b", "test", "test.example.com"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["auto_confirm"] is False
+        assert call_kwargs["allow_deletions"] is False
 
 
 class TestCLIValidation:

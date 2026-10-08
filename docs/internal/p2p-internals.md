@@ -317,7 +317,7 @@ The master exposes HTTP and WebSocket endpoints. All requests carry the shared
 secret (when configured) as a Bearer token: `Authorization: Bearer <key>`. With
 no key, read endpoints remain available but filesystem mutations return `403`
 unless `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` or the equivalent CLI
-opt-in was used. TTY state and `--yes` do not authorize writes.
+opt-in was used. TTY state does not authorize writes.
 
 ### HTTP API
 

@@ -65,7 +65,14 @@ class TestCliSurface:
         # rejects before any sync is attempted)
         # When invoking
         result = runner.invoke(
-            app, ["server", "-b", "valid-bucket_name", "https://server.example.com", "--yes"]
+            app,
+            [
+                "server",
+                "-b",
+                "valid-bucket_name",
+                "https://server.example.com",
+                "--allow-deletions",
+            ],
         )
 
         # Then the bucket name parses (no bucket validation error) and the

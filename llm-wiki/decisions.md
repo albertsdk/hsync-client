@@ -281,7 +281,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `{current, updated_at, first_seen, source}` and is managed with
   `hsync trust bootnode {list,show,add,remove,fingerprint}` (`fingerprint` reads a
   node's certificate without trusting it). The prompt is built by
-  `hsync_client/trust_prompt.py`: `--yes` auto-accepts, but only on a terminal.
+  `hsync_client/trust_prompt.py` and only prompts on a terminal under policy
+  `ask`; non-interactive acceptance is expressed with `accept-new` (TOFU).
 
 - **Discovery elects the local role at start**: each plan calls
   `PeerManager.elect()` (`p2p_peers.py`) once when discovery starts. The election

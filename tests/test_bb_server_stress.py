@@ -210,7 +210,7 @@ def _subprocess_run(live_server, bucket: str, local_path: str, *extra: str) -> _
         "-p",
         local_path,
         "--once",
-        "--yes",
+        "--allow-deletions",
         "--insecure",
         "--min-free-disk-space",
         "0",

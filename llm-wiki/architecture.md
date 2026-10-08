@@ -38,7 +38,7 @@ getters (`config.py:154`–`:265`). Input validation is inline in `cli.py`
 
 `run_sync` runs guards before touching files:
 - `_check_deletion_risk` (`main_logic.py:285`) — warns/prompts when settings could
-  delete local data (gated by `--yes`).
+  delete local data (gated by `--allow-deletions`).
 - `_check_p2p_write_policy` (`main_logic.py:379`) — requires a p2p key for
   write-capable p2p sync in non-interactive mode.
 - `_check_disk_space` (`main_logic.py:441`), `_check_server_connectivity`

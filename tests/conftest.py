@@ -1015,7 +1015,7 @@ def _start_watch_client(
         *bb_server_cli_args(base_url),
         "-p",
         local_path,
-        "--yes",
+        "--allow-deletions",
         "--insecure",
         "--min-free-disk-space",
         "0",
@@ -1158,7 +1158,7 @@ def run_sync_once(live_server):
                 "-p",
                 local_path,
                 "--once",
-                "--yes",
+                "--allow-deletions",
                 "--insecure",
                 "--min-free-disk-space",
                 "0",
@@ -1185,7 +1185,7 @@ def run_sync_once(live_server):
 def run_cli(live_server):
     """Like [run_sync_once] but adds no safety/cleanup flags of its own.
 
-    Used by safety-guard tests that need to control ``--yes`` /
+    Used by safety-guard tests that need to control ``--allow-deletions`` /
     ``--min-free-disk-space`` / ``--sync-direction`` precisely.
     """
     import os

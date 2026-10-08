@@ -41,6 +41,8 @@
     "field.delta_enabled": "Delta-Übertragung aktivieren (Block-Synchronisierung im rsync-Stil)",
     "field.p2p_peer_download": "Peer-unterstützte LAN-Downloads aktivieren",
     "field.p2p_unauthenticated_writes": "Gefährlich: LAN-Schreibvorgänge ohne gemeinsamen Schlüssel zulassen",
+    "field.p2p_unauthenticated": "p2p ohne gemeinsamen Schlüssel ausführen (Peers nicht authentifiziert, Lesezugriffe offen)",
+    "field.allow_deletions": "Löschrisiko ohne Bestätigung akzeptieren",
     "field.delta_min_size": "Min. Delta-Dateigröße - Server (Bytes, 0 = Standard)",
     "field.delta_min_size_p2p": "Min. Delta-Dateigröße - p2p (Bytes, 0 = Standard)",
     "field.bw_upload": "Max. Upload-Bandbreite (z. B. 1MB)",

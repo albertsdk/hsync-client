@@ -91,6 +91,8 @@ class TestEnvSettings:
         assert settings.p2p_peer_download is True
         assert settings.p2p_peer_read_cap == 2
         assert settings.p2p_allow_unauthenticated_writes is False
+        assert settings.p2p_allow_unauthenticated is False
+        assert settings.allow_deletions is False
 
     def test_no_persistent_setting_exists(self):
         """There is no persistence knob: continuous is the default, --once opts out."""
@@ -248,12 +250,16 @@ class TestEnvSettings:
         monkeypatch.setenv("HSYNC_P2P_PEER_DOWNLOAD", "false")
         monkeypatch.setenv("HSYNC_P2P_PEER_READ_CAP", "7")
         monkeypatch.setenv("HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES", "true")
+        monkeypatch.setenv("HSYNC_P2P_ALLOW_UNAUTHENTICATED", "true")
+        monkeypatch.setenv("HSYNC_ALLOW_DELETIONS", "true")
         get_env_settings.cache_clear()
         try:
             settings = EnvSettings()
             assert settings.p2p_peer_download is False
             assert settings.p2p_peer_read_cap == 7
             assert settings.p2p_allow_unauthenticated_writes is True
+            assert settings.p2p_allow_unauthenticated is True
+            assert settings.allow_deletions is True
         finally:
             get_env_settings.cache_clear()
 

@@ -50,8 +50,9 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `run_sync` | `main_logic.py:539` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: p2p mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
-| `_check_deletion_risk` | `:285` | warn/prompt on risky delete settings (`--yes` bypass; fails fast with exit 1 when no interactive TTY) |
-| `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key p2p run, independent of TTY/`--yes`; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
+| `_check_deletion_risk` | `:285` | warn/prompt on risky delete settings (`--allow-deletions` bypass; fails fast with exit 1 when no interactive TTY) |
+| `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key p2p run, independent of TTY; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
+| `_check_p2p_keyless_policy` | `main_logic.py` | confirm keyless p2p (no `HSYNC_P2P_KEY`); `--allow-unauthenticated-p2p` or the writes opt-in acknowledges; fails closed without a TTY |
 | `_warn_if_p2p_in_container` | `:424` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `:441` | min-free-disk guard |
 | `_check_server_connectivity` | `:1142` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |

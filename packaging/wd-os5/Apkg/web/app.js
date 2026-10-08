@@ -23,9 +23,11 @@
         'HSYNC_BOOTNODE_TOFU',
         'HSYNC_SERVER_TOFU',
         'HSYNC_P2P_PEER_DOWNLOAD', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES',
+        'HSYNC_P2P_ALLOW_UNAUTHENTICATED',
         'HSYNC_IGNORE_DELETE',
         'HSYNC_NO_COMPRESSION', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
         'HSYNC_AUTOTUNE',
+        'HSYNC_ALLOW_DELETIONS',
     ];
 
     // Fields whose values are interpolated into the generated connect command;

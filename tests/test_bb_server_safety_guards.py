@@ -27,7 +27,9 @@ class TestDiskSpaceGuard:
         (Path(local_dir) / "a.txt").write_bytes(b"a")
 
         # When running with --min-free-disk-space far above what is available
-        result = run_cli("anybucket", local_dir, "--yes", "--min-free-disk-space", "999999")
+        result = run_cli(
+            "anybucket", local_dir, "--allow-deletions", "--min-free-disk-space", "999999"
+        )
 
         # Then the sync aborts (non-zero exit) without proceeding
         assert result.exit_code != 0
@@ -65,7 +67,7 @@ class TestMassDeleteGuard:
         bb_server_upload(bb_bucket, "todel.txt", content)
 
         # Sync so the file reaches the local dir
-        result = run_cli(bb_bucket, local_dir, "--yes", "--min-free-disk-space", "0")
+        result = run_cli(bb_bucket, local_dir, "--allow-deletions", "--min-free-disk-space", "0")
         assert result.exit_code == 0
         assert (Path(local_dir) / "todel.txt").exists()
 
@@ -85,7 +87,7 @@ class TestMassDeleteGuard:
         result = run_cli(
             bb_bucket,
             local_dir,
-            "--yes",
+            "--allow-deletions",
             "--min-free-disk-space",
             "0",
             "--mass-delete-threshold",
@@ -108,7 +110,7 @@ class TestMassDeleteGuard:
         result = run_cli(
             bb_bucket,
             local_dir,
-            "--yes",
+            "--allow-deletions",
             "--min-free-disk-space",
             "0",
             "--mass-delete-threshold",
@@ -133,7 +135,7 @@ class TestMassDeletePercentGuard:
         result = run_cli(
             bb_bucket,
             local_dir,
-            "--yes",
+            "--allow-deletions",
             "--min-free-disk-space",
             "0",
             "--mass-delete-percent",
@@ -147,10 +149,10 @@ class TestDeletionRiskGuard:
         self, live_server, local_dir, run_cli
     ):
         # Given a non-empty local dir and a download-only direction that could
-        # delete local files, with no --yes confirmation
+        # delete local files, with no --allow-deletions confirmation
         (Path(local_dir) / "keep.txt").write_bytes(b"keep")
 
-        # When running download-only without --yes
+        # When running download-only without --allow-deletions
         result = run_cli("anybucket", local_dir, "--sync-direction", "download-only")
 
         # Then the guard aborts (no interactive terminal to confirm)
@@ -158,16 +160,16 @@ class TestDeletionRiskGuard:
         assert (Path(local_dir) / "keep.txt").exists()
 
     def test_download_only_with_yes_proceeds(self, live_server, bb_bucket, local_dir, run_cli):
-        # Given a non-empty local dir and download-only direction, with --yes
+        # Given a non-empty local dir and download-only direction, with --allow-deletions
         (Path(local_dir) / "keep.txt").write_bytes(b"keep")
 
-        # When running download-only with --yes
+        # When running download-only with --allow-deletions
         result = run_cli(
             bb_bucket,
             local_dir,
             "--sync-direction",
             "download-only",
-            "--yes",
+            "--allow-deletions",
             "--min-free-disk-space",
             "0",
         )
@@ -199,7 +201,9 @@ class TestInstanceLock:
             assert _wait_for_client_ready(proc, ready), "watch client did not become ready"
 
             # When a second client targets the same directory
-            result = run_cli(bb_bucket, local_dir, "--yes", "--min-free-disk-space", "0")
+            result = run_cli(
+                bb_bucket, local_dir, "--allow-deletions", "--min-free-disk-space", "0"
+            )
 
             # Then it refuses to start: non-zero exit and a clear message
             # naming the conflicting directory.

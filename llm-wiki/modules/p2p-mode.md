@@ -289,8 +289,11 @@ availability/source hints but cannot authorize a filesystem mutation.
 
 HTTPS/WSS is mandatory in p2p mode (no plaintext fallback). Write-capable no-key
 sync requires `--allow-unauthenticated-writes` or
-`HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true`; TTY state and `--yes` never
-authorize it (`main_logic._check_p2p_write_policy`).
+`HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true`; TTY state never authorizes it
+(`main_logic._check_p2p_write_policy`). A keyless (no `HSYNC_P2P_KEY`) run,
+read-only included, additionally requires `--allow-unauthenticated-p2p`
+(`HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`) or an interactive confirmation
+(`main_logic._check_p2p_keyless_policy`).
 
 The mDNS trust refusal is **not fatal** (unlike the bootnode lease loop): the
 discovery loop retries continuously, so `_evaluate_master_pin` dedupes both the

@@ -275,6 +275,14 @@ class EnvSettings(BaseSettings):
         default=False,
         description="Explicitly allow dangerous no-key P2P mutation requests",
     )
+    p2p_allow_unauthenticated: bool = Field(
+        default=False,
+        description="Explicitly acknowledge running P2P without a shared key",
+    )
+    allow_deletions: bool = Field(
+        default=False,
+        description="Explicitly accept the deletion-risk confirmation",
+    )
 
     # Sync Settings
     ignore_delete: bool = Field(
@@ -546,6 +554,16 @@ def get_p2p_allow_unauthenticated_writes() -> bool:
     return get_env_settings().p2p_allow_unauthenticated_writes
 
 
+def get_p2p_allow_unauthenticated() -> bool:
+    """Get the explicit acknowledgement for keyless P2P operation."""
+    return get_env_settings().p2p_allow_unauthenticated
+
+
+def get_allow_deletions() -> bool:
+    """Get the explicit acceptance of the deletion-risk confirmation."""
+    return get_env_settings().allow_deletions
+
+
 def get_ignore_delete() -> bool:
     """Get ignore delete setting from environment."""
     return get_env_settings().ignore_delete
@@ -744,12 +762,14 @@ class HsyncConfig(TypedDict):
     BOOTNODE_FINGERPRINT: tuple[str, ...]
     # Bootnode TLS trust policy (ADR-0035; default ask)
     BOOTNODE_TRUST: TrustPolicy
-    # ``--yes``: answer a TTY trust prompt affirmatively (never on a non-TTY)
-    AUTO_CONFIRM: bool
-    # Map the master TCP port with UPnP (plan default: on only with a bootnode)
-    UPNP_ENABLED: bool
     # Dangerous explicit opt-in: permit keyless mutation requests
     P2P_ALLOW_UNAUTHENTICATED_WRITES: bool
+    # Explicit acknowledgement: run P2P without a shared key
+    P2P_ALLOW_UNAUTHENTICATED: bool
+    # Explicit acceptance: bypass the deletion-risk confirmation
+    ALLOW_DELETIONS: bool
+    # Map the master TCP port with UPnP (plan default: on only with a bootnode)
+    UPNP_ENABLED: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Server TLS trust policy (ADR-0036; default chain) and explicit pins

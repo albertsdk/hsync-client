@@ -111,6 +111,8 @@ HSYNC_P2P_PEER_DOWNLOAD="true"
 HSYNC_P2P_PEER_READ_CAP="2"
 HSYNC_P2P_PEER_SOURCES_MAX="3"
 HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES="false"
+HSYNC_P2P_ALLOW_UNAUTHENTICATED="false"
+HSYNC_ALLOW_DELETIONS="false"
 HSYNC_DISCOVERY_TIMEOUT="0"
 # Optional bootnode host for cross-network discovery (bare hostname, no scheme
 # and no port; empty = discovery stays on the local network). Set the same host

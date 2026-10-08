@@ -74,6 +74,8 @@ fi
 : "${HSYNC_P2P_PEER_READ_CAP:=2}"
 : "${HSYNC_P2P_PEER_SOURCES_MAX:=3}"
 : "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES:=false}"
+: "${HSYNC_P2P_ALLOW_UNAUTHENTICATED:=false}"
+: "${HSYNC_ALLOW_DELETIONS:=false}"
 : "${HSYNC_DISCOVERY_TIMEOUT:=0}"
 : "${HSYNC_BOOTNODE:=}"
 : "${HSYNC_BOOTNODE_FINGERPRINT:=}"
@@ -120,8 +122,9 @@ esac
 
 set -- "${SUBCOMMAND}" \
     --bucket "${HSYNC_BUCKET}" \
-    --path "${HSYNC_PATH}" \
-    --yes
+    --path "${HSYNC_PATH}"
+
+[ "${HSYNC_ALLOW_DELETIONS}" = "true" ] && set -- "$@" --allow-deletions
 
 case "${HSYNC_MODE}" in
     p2p)
@@ -132,6 +135,7 @@ case "${HSYNC_MODE}" in
         [ "${HSYNC_P2P_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
         [ "${HSYNC_P2P_PEER_DOWNLOAD}" = "false" ]    && set -- "$@" --no-peer-download
         [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES}" = "true" ] && set -- "$@" --allow-unauthenticated-writes
+        [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED}" = "true" ] && set -- "$@" --allow-unauthenticated-p2p
         [ -n "${HSYNC_P2P_GROUP}" ]                   && set -- "$@" --group "${HSYNC_P2P_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in

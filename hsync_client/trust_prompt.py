@@ -66,15 +66,12 @@ def build_trust_prompt(
     """Return the terminal prompt to use, or ``None`` to fail closed.
 
     Only policy ``ask`` prompts, and only on a terminal: a non-interactive run
-    never prompts (SSH ``BatchMode``), so the client fails closed. ``--yes``
-    auto-accepts, but again only when a terminal exists. ``policy_key`` selects the
-    bootnode or server policy and ``prompt`` overrides the rendered prompt (the
-    server passes :func:`server_terminal_trust_prompt`).
+    never prompts (SSH ``BatchMode``), so the client fails closed. ``policy_key``
+    selects the bootnode or server policy and ``prompt`` overrides the rendered
+    prompt (the server passes :func:`server_terminal_trust_prompt`).
     """
     if config.get(policy_key) is not TrustPolicy.ask:
         return None
     if not is_tty_interactive():
         return None
-    if config.get("AUTO_CONFIRM", False):
-        return lambda host, port, fingerprint: True
     return prompt or terminal_trust_prompt

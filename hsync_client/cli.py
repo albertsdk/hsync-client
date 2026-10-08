@@ -654,12 +654,15 @@ NoColorOpt = Annotated[
         rich_help_panel="Output",
     ),
 ]
-YesOpt = Annotated[
+AllowDeletionsOpt = Annotated[
     bool,
     typer.Option(
-        "-y",
-        "--yes",
-        help="Skip interactive confirmation prompts (still shows warnings).",
+        "--allow-deletions",
+        help=(
+            "Accept the deletion risk: a download-only sync may delete local-only "
+            "files to mirror the source."
+        ),
+        rich_help_panel="Sync",
     ),
 ]
 EnvFileOpt = Annotated[
@@ -925,6 +928,17 @@ AllowUnauthenticatedWritesOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
+AllowUnauthenticatedP2POpt = Annotated[
+    bool,
+    typer.Option(
+        "--allow-unauthenticated-p2p",
+        help=(
+            "Run P2P without a shared key: peers are not authenticated and reads "
+            "are open to anyone who can reach this node."
+        ),
+        rich_help_panel="P2P Mode",
+    ),
+]
 P2PKeyFdOpt = Annotated[
     int | None,
     typer.Option(
@@ -1041,6 +1055,7 @@ def p2p(
     never_master: NeverMasterOpt = False,
     require_pairing: RequirePairingOpt = False,
     allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
+    allow_unauthenticated_p2p: AllowUnauthenticatedP2POpt = False,
     p2p_key_fd: P2PKeyFdOpt = None,
     port: BootnodePortOpt = None,
     upnp: UpnpOpt = False,
@@ -1079,7 +1094,7 @@ def p2p(
     quiet: QuietOpt = False,
     logfile: LogFileOpt = None,
     no_color: NoColorOpt = False,
-    yes: YesOpt = False,
+    allow_deletions: AllowDeletionsOpt = False,
     env_file: EnvFileOpt = None,
 ) -> None:
     """
@@ -1222,11 +1237,12 @@ def p2p(
         p2p_require_pairing=require_pairing,
         p2p_peer_download_enabled=not no_peer_download,
         p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
+        p2p_allow_unauthenticated=allow_unauthenticated_p2p,
         debug=verbose,
         quiet=quiet,
         logfile=logfile,
         no_color=no_color,
-        auto_confirm=yes,
+        allow_deletions=allow_deletions,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,
         ignore_patterns=[p.strip() for p in (ignore_patterns or []) if p.strip()],
@@ -1534,7 +1550,7 @@ def server(
     quiet: QuietOpt = False,
     logfile: LogFileOpt = None,
     no_color: NoColorOpt = False,
-    yes: YesOpt = False,
+    allow_deletions: AllowDeletionsOpt = False,
     env_file: EnvFileOpt = None,
 ) -> None:
     """
@@ -1662,7 +1678,7 @@ def server(
         quiet=quiet,
         logfile=logfile,
         no_color=no_color,
-        auto_confirm=yes,
+        allow_deletions=allow_deletions,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,
         ignore_patterns=[p.strip() for p in (ignore_patterns or []) if p.strip()],

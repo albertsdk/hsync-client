@@ -299,7 +299,7 @@ Before starting synchronization, the client runs a **deletion risk check** (`_ch
 | `--sync-direction download-only` | ⚠️ Risky | Warning + confirmation prompt |
 | Empty directory | ✅ Safe | No warning (nothing to delete) |
 
-When `-y` / `--yes` is passed, the warning is still logged but the interactive prompt is skipped. The desktop client (`hsync-desktop`) shows its own confirmation dialog and always passes `--yes` to the CLI process.
+When `--allow-deletions` is passed, the warning is still logged but the interactive prompt is skipped. The desktop client (`hsync-desktop`) shows its own confirmation dialog and always passes `--allow-deletions` to the CLI process.
 
 ## Parallel File Transfers
 
