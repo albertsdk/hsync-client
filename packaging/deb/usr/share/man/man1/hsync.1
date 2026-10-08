@@ -398,6 +398,11 @@ downloads may use a verified continuous slave before falling back to the master.
 Dangerous explicit opt-in: allow LAN mutations when no shared p2p key is
 configured. Without this option, no-key p2p groups are read-only.
 .TP
+.B \-\-allow\-unauthenticated\-p2p
+Explicitly acknowledge a keyless p2p run: peers are not authenticated and reads
+are open to anyone who can reach the node. Without it (or the writes opt-in) the
+client asks for confirmation on a terminal and fails closed otherwise.
+.TP
 .BR \-\-p2p\-key\-fd =\fIFD\fP
 Read the p2p shared secret from the given file descriptor. Hidden option.
 .

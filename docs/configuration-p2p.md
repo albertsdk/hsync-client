@@ -67,6 +67,15 @@ seeders are selected through that master and receive their own persistent
 | `--http-timeout` | HTTP request timeout in seconds | auto (or `30` with `--no-autotune`) |
 | `--min-free-disk-space` | Minimum free disk space (MB) before syncing stops | `500` (`0` = disabled) |
 
+## Security opt-ins
+
+| Option | Description | Default |
+|---|---|---|
+| `--allow-unauthenticated-writes` | Dangerous: allow p2p filesystem mutations with no shared key (`HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES`) | `false` |
+| `--allow-unauthenticated-p2p` | Acknowledge a keyless p2p run: peers are unauthenticated and reads are open (`HSYNC_P2P_ALLOW_UNAUTHENTICATED`) | `false` |
+
+Both must be explicit: a TTY or `--allow-deletions` never grants them.
+
 ## Environment Variables — p2p Mode
 
 | Variable | Description | Default |
@@ -77,6 +86,7 @@ seeders are selected through that master and receive their own persistent
 | `HSYNC_P2P_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder (announced on the handshake so requesters stay within it) | `2` |
 | `HSYNC_P2P_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow p2p filesystem mutations with no shared key | `false` |
+| `HSYNC_P2P_ALLOW_UNAUTHENTICATED` | Explicitly acknowledge running p2p without a shared key (peers unauthenticated, reads open) | `false` |
 | `HSYNC_P2P_LISTEN_PORT` | p2p master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
 | `HSYNC_BOOTNODE` | Bootnode endpoint for cross-network discovery (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme); unset = mDNS-only | — |
 | `HSYNC_BOOTNODE_FINGERPRINT` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |

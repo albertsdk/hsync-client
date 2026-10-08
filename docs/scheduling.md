@@ -65,14 +65,14 @@ failed transfers (`2`) > deletion guard (`3`) > conflicts (`4`).
 Check the code in a shell as usual:
 
 ```bash
-hsync server server.example.com -b docs --once -y
+hsync server server.example.com -b docs --once --allow-deletions
 echo $?
 ```
 
 or branch on it:
 
 ```bash
-hsync server server.example.com -b docs --once -y || echo "sync failed"
+hsync server server.example.com -b docs --once --allow-deletions || echo "sync failed"
 ```
 
 ## Best practices for automation
@@ -94,9 +94,10 @@ hsync server server.example.com -b docs --once -y || echo "sync failed"
    For systemd-adjacent integrations, the parent process can pass the key
    over a file descriptor with `--api-key-fd` so it never touches disk.
 
-2. **Always pass `-y`** in schedulers: prompts abort in non-interactive
-   contexts, which is correct, but a scheduled job should accept the
-   documented safety warnings and log them.
+2. **Always pass the required opt-in flag** in schedulers: without a terminal
+   the client fails closed on a confirmation, so a scheduled job must opt in
+   explicitly (e.g. `--allow-deletions` for the deletion-risk check,
+   `--allow-unauthenticated-p2p` for a keyless p2p run) and log the warnings.
 
 3. **Prevent overlapping jobs.** Two `hsync` processes on the same local
    directory corrupt each other's state, so the client refuses to start
@@ -117,7 +118,7 @@ file:
 ```cron
 # /etc/cron.d/hsync — hourly one-shot sync
 0 * * * * hsyncuser hsync server -b documents -p /data/documents \
-    --env-file /etc/hsync/hsync.env --once -y --log-file /var/log/hsync/documents.log
+    --env-file /etc/hsync/hsync.env --once --allow-deletions --log-file /var/log/hsync/documents.log
 ```
 
 Notes:
@@ -147,7 +148,7 @@ waits indefinitely, so a one-shot run never exits):
 ```cron
 # HSYNC_P2P_KEY lives in /etc/hsync/hsync.env (see the secret handling above)
 0 2 * * * hsyncuser hsync p2p -b shared \
-    -p /data/shared --once --discovery-timeout 30 -y \
+    -p /data/shared --once --discovery-timeout 30 --allow-deletions \
     --env-file /etc/hsync/hsync.env
 ```
 
@@ -170,7 +171,7 @@ Type=oneshot
 User=hsyncuser
 Group=hsyncuser
 EnvironmentFile=/etc/hsync/hsync.env
-ExecStart=/usr/local/bin/hsync server -b documents -p /data/documents --once -y
+ExecStart=/usr/local/bin/hsync server -b documents -p /data/documents --once --allow-deletions
 # Extra hardening (the service only touches its data directories)
 ProtectSystem=strict
 ProtectHome=read-only

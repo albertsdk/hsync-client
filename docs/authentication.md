@@ -128,7 +128,9 @@ explicit `(unauthenticated)` qualifier.
 A keyless p2p is **read-only for writes**: discovery, listings and downloads
 keep working, but a write-capable sync is refused with `[AUTH REQUIRED]` unless
 it runs `--sync-direction download-only` or the dangerous
-`--allow-unauthenticated-writes` opt-in is explicit on both sides.
+`--allow-unauthenticated-writes` opt-in is explicit on both sides. A keyless run
+also asks for confirmation at start-up (or requires
+`--allow-unauthenticated-p2p`) and fails closed without a terminal.
 
 ### Diagram
 

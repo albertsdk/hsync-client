@@ -112,13 +112,14 @@ hsync server server.example.com --port 443 -b mybucket -p /path/to/dir
 ```
 
 For scheduled background sync (cron, systemd timer, Task Scheduler) use
-one-shot mode (`--once`; `-y` skips interactive prompts):
+one-shot mode (`--once`; `--allow-deletions` accepts the deletion-risk
+confirmation):
 
 ```cron
 # Cron entry: sync every hour
 0 * * * * HSYNC_API_KEY=hs_ACCOUNT_ID_ACCOUNT_SECRET \
   hsync server server.example.com --once \
-  -b mybucket -p /path -y
+  -b mybucket -p /path --allow-deletions
 ```
 
 ## Delta Transfer, Compression & Bandwidth

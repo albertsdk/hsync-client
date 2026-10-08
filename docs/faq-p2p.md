@@ -259,10 +259,10 @@ HSYNC_P2P_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-
 > ID a peer declares is not verified, so a malicious peer could squat another
 > peer's ID and get it refused while it holds the connection. This is a marginal
 > availability risk in a mode where reads are open but writes are refused by
-> default (a no-key p2p run is read-only unless the dangerous
-> `--allow-unauthenticated-writes` opt-in is enabled on both sides); the far more
-> common case the check protects against is the *accidental* clone (a copied
-> configuration on a home network).
+> default (a no-key p2p run confirms the posture and is read-only unless the
+> dangerous `--allow-unauthenticated-writes` opt-in is enabled on both sides); the
+> far more common case the check protects against is the *accidental* clone (a
+> copied configuration on a home network).
 
 ## Files & Performance
 

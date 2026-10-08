@@ -198,6 +198,9 @@ connection that carries the data.
 - **No-key mode is read-only by default** — discovery, listings, downloads,
   exact-hash source lookup, and download delta remain available, but any
   write-capable sync is refused and mutating HTTP endpoints return `403`.
+- **Keyless runs are confirmed** — without `HSYNC_P2P_KEY` the client asks for
+  confirmation on a terminal and fails closed otherwise; proceed only with
+  `--allow-unauthenticated-p2p` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`.
 - **Dangerous explicit opt-in** — `--allow-unauthenticated-writes` or
   `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` permits no-key mutations on a
   fully trusted network. A TTY does not grant this permission.
@@ -417,8 +420,8 @@ export HSYNC_P2P_KEY="shared-secret"
 # The client will show a warning and ask for confirmation
 hsync p2p -b photos -p ~/Pictures
 
-# Skip the interactive confirmation (e.g. in scripts or systemd services)
-hsync p2p -b photos -p ~/Pictures -y
+# Accept the deletion-risk confirmation (e.g. in scripts or systemd services)
+hsync p2p -b photos -p ~/Pictures --allow-deletions
 ```
 
 The warning is **not shown** when:

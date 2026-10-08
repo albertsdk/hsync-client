@@ -100,11 +100,11 @@ hsync server server.example.com -b docs -p ~/Docs --limit-upload 1MB
 ## 1.8 Long-running unattended service
 
 ```bash
-hsync server server.example.com -b docs -p ~/Docs -y
+hsync server server.example.com -b docs -p ~/Docs --allow-deletions
 ```
 
-The `-y` flag skips confirmation prompts. Combine with a systemd service for
-production deployments.
+The `--allow-deletions` flag accepts the deletion-risk confirmation. Combine with
+a systemd service for production deployments.
 
 ## See also
 

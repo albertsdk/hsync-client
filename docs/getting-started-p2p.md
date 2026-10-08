@@ -79,7 +79,7 @@ a **deletion-risk warning** and asks for confirmation: files that exist only on
 this peer (and not on the elected master) are deleted during the initial sync.
 This is intentional — it lets deletions made on the master reach offline peers.
 
-- Use `-y` to skip the prompt in scripts/services.
+- Use `--allow-deletions` to accept the deletion-risk confirmation in scripts/services.
 - Use `--sync-direction upload-only` if you never want local files deleted.
 - Use `--force-master` on the device that already holds the data.
 
@@ -104,7 +104,9 @@ and read-only deltas keep working (a lightweight **hello handshake** lets the
 master log each slave's CID with an `(unauthenticated)` qualifier), but any
 write-capable sync is refused with `[AUTH REQUIRED]`. The only exceptions are
 `--sync-direction download-only` and the deliberate, dangerous
-`--allow-unauthenticated-writes` opt-in.
+`--allow-unauthenticated-writes` opt-in. A keyless run also asks for confirmation
+at start-up (or requires `--allow-unauthenticated-p2p`) and fails closed when no
+terminal is available.
 
 See [Authentication — Client-Side](authentication.md) for diagrams of both flows.
 

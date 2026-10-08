@@ -162,8 +162,9 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
   boot.example.net --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
-`-y` answers the prompt only when a terminal exists, so it is not enough for a
-service run. `--insecure` skips verification and is for loopback tests only.
+The `ask` trust prompt only appears on a terminal, so it is not enough for a
+service run: pin the fingerprint (as above) or use `--bootnode-trust accept-new`.
+`--insecure` skips verification and is for loopback tests only.
 
 A device that cannot map its port stays **slave-only** (it still syncs, it just
 never serves). Verify the plan in the log: `Discovery: bootnode

@@ -46,8 +46,8 @@ hsync server server.example.com -b mybucket -p ~/Sync \
 ### 3.5 CI/CD non-interactive sync
 
 ```bash
-# Non-interactive sync for CI/CD: -y skips confirmation prompts
-hsync server server.example.com -y -b artifacts -p ./build
+# Non-interactive sync for CI/CD: --allow-deletions accepts the deletion-risk confirmation
+hsync server server.example.com --allow-deletions -b artifacts -p ./build
 ```
 
 ### 3.6 Ignore patterns
