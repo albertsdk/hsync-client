@@ -5,45 +5,45 @@ framework; asyncio event loop + watchdog observer + a thread pool for transfers.
 
 ## Entry & orchestration
 
-`main.main` (`main.py:25`) invokes the Typer app (`cli.py`): a parent callback
-`cli.main` (`cli.py:938`) carrying the global options, plus two mutually
-exclusive subcommands `cli.p2p` (`cli.py:1025`) and `cli.server` (`cli.py:1470`).
-Each subcommand validates its options and calls `run_sync` (`main_logic.py:671`),
+`main.main` (`main.py::main`) invokes the Typer app (`cli.py`): a parent callback
+`cli.main` (`cli.py::main`) carrying the global options, plus two mutually
+exclusive subcommands `cli.p2p` (`cli.py::p2p`) and `cli.server` (`cli.py::server`).
+Each subcommand validates its options and calls `run_sync` (`main_logic.py::run_sync`),
 which validates inputs, runs pre-sync safety checks, then branches by mode and
-starts the watcher loop. Console script: `cli.run` (`cli.py:1650`).
+starts the watcher loop. Console script: `cli.run` (`cli.py::run`).
 
 ## The two run modes
 
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
-| **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py:98`) |
-| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or bootnode discovery + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`) |
+| **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py::remote_events`) |
+| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or bootnode discovery + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`) |
 
-p2p sub-roles: `_run_as_master` (`p2p_handler.py:273`) starts the **single**
-`P2PServer` (`p2p_server.py`) — one TLS listener serving the REST data plane and
-the WSS realtime control plane (`P2PWebSocketServer`, `p2p_websocket.py`) on the
+p2p sub-roles: `_run_as_master` (`p2p_handler.py::_run_as_master`) starts the **single**
+`P2PServer` (`p2p_server.py::P2PServer`) — one TLS listener serving the REST data plane and
+the WSS realtime control plane (`P2PWebSocketServer`, `p2p_websocket.py::P2PWebSocketServer`) on the
 same port — plus the master watcher; `_run_as_slave`
-(`p2p_handler.py:418`) connects to the elected master. Role is chosen by election
+(`p2p_handler.py::_run_as_slave`) connects to the elected master. Role is chosen by election
 (see [p2p-mode.md](modules/p2p-mode.md)).
 
 ## Config flow
 
-CLI flags + `HSYNC_*` env (pydantic `EnvSettings` `config.py:47`) merge into the
-global `CONFIG: HsyncConfig` TypedDict (`config.py:294`/`:391`) via `set_config`
-(`config.py:397`); modules read it through `get_config` (`config.py:422`) and typed
-getters (`config.py:154`–`:265`). Input validation is inline in `cli.py`
+CLI flags + `HSYNC_*` env (pydantic `EnvSettings` `config.py::EnvSettings`) merge into the
+global `CONFIG: HsyncConfig` TypedDict (`config.py::HsyncConfig`) via `set_config`
+(`config.py::set_config`); modules read it directly and through the typed
+getters (`config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait`). Input validation is inline in `cli.py`
 (Typer); defaults/bounds in `constants.py`.
 
 ## Pre-sync safety
 
 `run_sync` runs guards before touching files:
-- `_check_deletion_risk` (`main_logic.py:285`) — warns/prompts when settings could
+- `_check_deletion_risk` (`main_logic.py::_check_deletion_risk`) — warns/prompts when settings could
   delete local data (gated by `--allow-deletions`).
-- `_check_p2p_write_policy` (`main_logic.py:379`) — requires a p2p key for
+- `_check_p2p_write_policy` (`main_logic.py::_check_p2p_write_policy`) — requires a p2p key for
   write-capable p2p sync in non-interactive mode.
-- `_check_disk_space` (`main_logic.py:441`), `_check_server_connectivity`
-  (`main_logic.py:1142`).
-- Runtime mass-deletion guard during sync: `_mass_deletion_blocked` (`sync.py:94`).
+- `_check_disk_space` (`main_logic.py::_check_disk_space`), `_check_server_connectivity`
+  (`main_logic.py::_check_server_connectivity`).
+- Runtime mass-deletion guard during sync: `_mass_deletion_blocked` (`sync.py::_mass_deletion_blocked`).
 
 ## Readiness threshold (`[READY]`, shared label SSOT)
 
@@ -53,9 +53,9 @@ established:
 
 | Mode | Emission point |
 | ---- | -------------- |
-| Remote (continuous, default) | `remote_websocket.py:210` — after WS auth + `observer.start()` |
-| p2p master | `p2p_handler.py:346` — after HTTP + WS servers up, mDNS `server_ready`, watcher running |
-| p2p slave | `p2p_websocket.py:875` — after watcher start **and** completed master handshake (a failed auth never reaches it) |
+| Remote (continuous, default) | `remote_websocket.py::remote_events` — after WS auth + `observer.start()` |
+| p2p master | `p2p_handler.py::_run_as_master` — after HTTP + WS servers up, mDNS `server_ready`, watcher running |
+| p2p slave | `p2p_websocket.py::p2p_websocket_client` — after watcher start **and** completed master handshake (a failed auth never reaches it) |
 
 The label value is the SSOT member `hsync_common.labels.ActionLabel.READY`
 (category `create`, green); Android mirrors it in
@@ -66,21 +66,21 @@ threshold, so `[READY]` always means "reacting to events now".
 ## Watcher + transfer core (shared by both modes)
 
 ```
-WatcherManager (watcher.py:105) ──> BaseFileEventHandler (file_event_handler.py:79)
+WatcherManager (watcher.py::WatcherManager) ──> BaseFileEventHandler (file_event_handler.py::BaseFileEventHandler)
         │ on_created/on_closed/on_modified/on_deleted/on_moved
         ▼
- stability check (transfer._wait_for_stable_file) ──> upload_file (transfer.py)
+ stability check (transfer._wait_for_stable_file) ──> upload_file (transfer.py::upload_file)
         │
- inbound WS event ──> event_dispatch.apply_inbound_event (event_dispatch.py:103)
+ inbound WS event ──> event_dispatch.apply_inbound_event (event_dispatch.py::apply_inbound_event)
         │                         └─> download/delete/rename/symlink locally
         ▼
- sync.sync (sync.py:132): list local/remote, diff (get_sync_actions:684),
-                          execute in parallel (_execute_parallel_transfers:267)
+ sync.sync (sync.py::sync): list local/remote, diff (sync.py::get_sync_actions),
+                          execute in parallel (sync.py::_execute_parallel_transfers)
 ```
 
-Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py:487`) and
-`P2PMasterFileEventHandler` (`p2p_websocket.py:546`) subclass `BaseFileEventHandler`;
-`P2PSlaveFileEventHandler` (`p2p_websocket.py:1003`) is a separate watchdog
+Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py::RemoteFileEventHandler`) and
+`P2PMasterFileEventHandler` (`p2p_websocket.py::P2PMasterFileEventHandler`) subclass `BaseFileEventHandler`;
+`P2PSlaveFileEventHandler` (`p2p_websocket.py::P2PSlaveFileEventHandler`) is a separate watchdog
 `FileSystemEventHandler` for the slave→master upload path.
 
 ## Layering
@@ -99,7 +99,7 @@ remote_websocket | p2p_peers.py / p2p_discovery_mdns.py + p2p_server + p2p_webso
 main_logic (orchestration) ← cli ← main
 ```
 
-**Logger sinks are asynchronous** (`logger.py:setup_logging`, `enqueue=True`
+**Logger sinks are asynchronous** (`logger.py::setup_logging`, `enqueue=True`
 on both the `--log-file` and stdout sinks): formatting and the write syscall
 run on loguru's dedicated thread, so per-event lines (one `[LOCAL CREATE]`
 per file during a burst) never throttle the emitting engine thread — a
@@ -116,7 +116,7 @@ transferred file on a LAN burst, 6.5 µs each against 0.08 µs for the level
 check that now avoids them. Output is unchanged (those records were discarded
 either way); `--debug` raises the root to DEBUG and lets them through.
 
-**Exit paths flush the sinks** (`logger.py:flush_logs`, blocking `complete()`
+**Exit paths flush the sinks** (`logger.py::flush_logs`, blocking `complete()`
 wrapper, best-effort): an asynchronous sink writes from another thread, so a
 path that logs its reason and terminates lost that record — observed
 end-to-end as a bare non-zero exit with no explanation, because `CliRunner`
@@ -138,11 +138,11 @@ the `--version` / `--help` fast paths keep the minimal import surface pinned by
 | Sync base versions | `sync_state.py` | `<device_dir>/syncstate/<uuid>.db` (folder UUID) | three-way merge base (§7) |
 | Tombstones | `tombstones.py` | same DB, `tombstones` table | deletion propagation |
 | Folder identity | `state_backend.py` | `.hsyncfolder` at bucket root | UUIDv4 re-anchor |
-| TOFU pins | `pinning.py:62` | pin store (0o600) | p2p master fingerprint trust |
-| Bootnode trust | `bootnode_trust.py:68` | `$HSYNC_BOOTNODE_TRUST_FILE` (0o600) | bootnode fingerprint pin/TOFU (ADR-0034) |
-| p2p master identity | `ssl_utils.py:98` | persistent cert/key (0o600) | stable fingerprint across restarts |
+| TOFU pins | `pinning.py::PinStore` | pin store (0o600) | p2p master fingerprint trust |
+| Bootnode trust | `bootnode_trust.py::BootnodeTrustStore` | `$HSYNC_BOOTNODE_TRUST_FILE` (0o600) | bootnode fingerprint pin/TOFU (ADR-0034) |
+| p2p master identity | `ssl_utils.py::load_or_create_master_cert` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
-`resolve_bucket_folder` (`state_backend.py:39`) memoizes the
+`resolve_bucket_folder` (`state_backend.py::resolve_bucket_folder`) memoizes the
 `(folder_id, db_path)` resolution keyed by the raw `bucket_dir` string:
 `sync_state`/`tombstones` call it on every per-file operation, so the steady
 state pays a bare dict lookup, not a `.hsyncfolder` read + two SQLite statements
@@ -152,4 +152,4 @@ state pays a bare dict lookup, not a `.hsyncfolder` read + two SQLite statements
 into the test `reset_sync_state_stores` autouse fixture.
 
 > Human diagrams (modes, event processing, stability, bandwidth): `../docs/internal/architecture.md`.
-> Decision rationale: [decisions.md](decisions.md) → `https://github.com/albertsdk/hsync-common/blob/main/docs/adr/`.
+> Decision rationale: [decisions.md](decisions.md) → `https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/`.

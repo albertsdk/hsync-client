@@ -14,7 +14,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 > `faq-server`, `faq-p2p`, `internal/testing`,
 > `internal/stress-test-plan`). This wiki is the
 > **first search surface**:
-> start here, follow the `path/to/file.py:line` references to reach code directly.
+> start here, follow the `path::symbol` references to reach code directly.
 
 ## Map
 
@@ -33,25 +33,25 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
 ## Quick facts
 
-- Package root: `hsync_client/` (`hsync_client/__init__.py:1`).
-- Entry points: `main.main` (`main.py:26`) → Typer command `cli.main`
-  (`cli.py:750`); console script `cli.run` (`cli.py:1121`). `main` calls
+- Package root: `hsync_client/` (`hsync_client/__init__.py`).
+- Entry points: `main.main` (`main.py::main`) → Typer command `cli.main`
+  (`cli.py::main`); console script `cli.run` (`cli.py::run`). `main` calls
   `multiprocessing.freeze_support()` first, then imports the CLI lazily (see
   `decisions.md`: PyInstaller × loguru `enqueue=True` helper re-exec).
-- Orchestrator: `run_sync` (`main_logic.py:539`) — validates, branches to remote or
+- Orchestrator: `run_sync` (`main_logic.py::run_sync`) — validates, branches to remote or
   p2p, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.
-- Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py:98`);
-  p2p → `p2p_handler.run_p2p_mode` (`p2p_handler.py:109`).
+- Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py::remote_events`);
+  p2p → `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`).
 - Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
-  (`constants.py:21`); `CLIENT_NAME = "hsync-client"` (`:32`) feeds the
+  (`hsync_common/constants.py::HSYNC_VERSION`); `CLIENT_NAME = "hsync-client"` (`constants.py::CLIENT_NAME`) feeds the
   `X-Client-Name` REST header build in `main_logic.py`.
-- Config: env + CLI merged into the global `CONFIG: HsyncConfig` (`config.py:391`),
-  set via `set_config` (`config.py:397`), read via `get_config` (`config.py:422`).
+- Config: env + CLI merged into the global `CONFIG: HsyncConfig` (`config.py::CONFIG`),
+  set via `set_config` (`config.py::set_config`); modules read `CONFIG` directly.
 - Reuses `hsync_common.models` directly — there is **no** `hsync_client/models/`.
 
 ## Conventions used in this wiki
 
-- Every claim is anchored to code via `path/to/file.py:line`.
+- Every claim is anchored to code via `path::symbol`.
 - No large code blocks are duplicated; intent is described and the code referenced.
 - Kept in sync with `../docs/` per the Dual-Docs rule in `AGENTS.md`.

@@ -11,7 +11,7 @@ the *client-local* persisted state and how it wraps the common stores.
 | ---- | ------ | ------- |
 | `File` | `hsync_common.models.file` | `sync.py`, `transfer.py` (metadata, transfers) |
 | `Dir` / `is_hidden_dir` | `hsync_common.models.dir` | `sync.py` (tree scan) |
-| `SyncAction` / `SyncActionName` | `hsync_common.models.sync_action` | `get_sync_actions` (`sync.py:684`) |
+| `SyncAction` / `SyncActionName` | `hsync_common.models.sync_action` | `get_sync_actions` (`sync.py::get_sync_actions`) |
 | `TombstoneEntry` / `TombstoneStore` / `tombstone_key` | `hsync_common.models.tombstone` | `tombstones.py` |
 | `SyncStateStore` | `hsync_common.models.version` | `sync_state.py` |
 | `FileVersion` / `VersionInfo` / `SyncDecision` / `resolve_three_way` / `parse_version_info` / `merge_vclocks` / `tick_vclock` | `hsync_common.models.version` | `sync.py`, `transfer.py`, `arbitration.py` (causal three-way merge) |
@@ -33,20 +33,20 @@ engine file at the bucket root.
 
 ### sync_state.py (merge base)
 
-| Symbol | Line | Role |
-| ------ | ---- | ---- |
-| `get_sync_state_store` | `sync_state.py` | cached per-folder-id store (`_stores`, `_lock` RLock) |
-| `get_base_hash` | `:60` | read agreed base hash for a path |
-| `record_base` | `:69` | persist base after a successful sync |
-| `_corrected_mtime_of` | `:170` | corrected mtime of the on-disk file through `hsync_common.clock.correct_mtime` (ADR-0023); 0 when unreadable |
-| `local_version_for_compare` | `:133` | pure (no mutation) effective version for the causal matrix: ticks the stored clock by this node's cid when content differs from the recorded base; carries `corrected_mtime` on the fresh/ticked copy |
-| `merge_and_record` | `:211` | record agreed version with a merged clock (convergence invariant, ADR-0022 §5); records the remote corrected mtime, falling back to the disk file's when unknown |
-| `upload_version_fields` | `:202` | SSOT `(vclock_json, version_id, corrected_mtime)` 3-tuple wire form for upload + delta-apply, shared by `transfer.py` and `delta_transfer.py` |
-| `note_local_edit` | `:173` | persist a self-recorded local edit (anti-aliasing invariant), including the corrected mtime. **Deliberately NOT wired into the watcher**: a persistent pre-broadcast self-record would advance `base_hash` to the just-edited content, and if the subsequent upload fails the next reconcile would hit the base fast-path (`local == base` ⇒ download) and silently overwrite the local edit. The anti-aliasing guarantee is delivered by the **pure** `local_version_for_compare` tick at compare/upload time plus the post-success `record_base`/`merge_and_record` (upload accepted ⇒ store reflects the advertised clock) |
-| `get_vclock` | `:201` | read the stored vclock for a path |
-| `clear_base` | `:88` | drop base on delete |
-| `retain` | `:96` | GC bases not in the current path set |
-| `flush` | `sync_state.py` | single flush per sync (one SQLite transaction); test reset via `_stores.clear()` |
+| Symbol | Location | Role |
+| ------ | -------- | ---- |
+| `get_sync_state_store` | `sync_state.py::get_sync_state_store` | cached per-folder-id store (`_stores`, `_lock` RLock) |
+| `get_base_hash` | `sync_state.py::get_base_hash` | read agreed base hash for a path |
+| `record_base` | `sync_state.py::record_base` | persist base after a successful sync |
+| `_corrected_mtime_of` | `sync_state.py::_corrected_mtime_of` | corrected mtime of the on-disk file through `hsync_common.clock.correct_mtime` (ADR-0023); 0 when unreadable |
+| `local_version_for_compare` | `sync_state.py::local_version_for_compare` | pure (no mutation) effective version for the causal matrix: ticks the stored clock by this node's cid when content differs from the recorded base; carries `corrected_mtime` on the fresh/ticked copy |
+| `merge_and_record` | `sync_state.py::merge_and_record` | record agreed version with a merged clock (convergence invariant, ADR-0022 §5); records the remote corrected mtime, falling back to the disk file's when unknown |
+| `upload_version_fields` | `sync_state.py::upload_version_fields` | SSOT `(vclock_json, version_id, corrected_mtime)` 3-tuple wire form for upload + delta-apply, shared by `transfer.py` and `delta_transfer.py` |
+| `note_local_edit` | `sync_state.py::note_local_edit` | persist a self-recorded local edit (anti-aliasing invariant), including the corrected mtime. **Deliberately NOT wired into the watcher**: a persistent pre-broadcast self-record would advance `base_hash` to the just-edited content, and if the subsequent upload fails the next reconcile would hit the base fast-path (`local == base` ⇒ download) and silently overwrite the local edit. The anti-aliasing guarantee is delivered by the **pure** `local_version_for_compare` tick at compare/upload time plus the post-success `record_base`/`merge_and_record` (upload accepted ⇒ store reflects the advertised clock) |
+| `get_vclock` | `sync_state.py::get_vclock` | read the stored vclock for a path |
+| `clear_base` | `sync_state.py::clear_base` | drop base on delete |
+| `retain` | `sync_state.py::retain` | GC bases not in the current path set |
+| `flush` | `sync_state.py::flush` | single flush per sync (one SQLite transaction); test reset via `_stores.clear()` |
 
 Writes are RLock-guarded because transfers record their base from the parallel
 transfer pool; persistence is decoupled from mutation (one flush per sync).
@@ -55,13 +55,13 @@ The store cache (`_stores`) is keyed by folder UUID so tests that switch
 
 ### tombstones.py (deletion markers)
 
-| Symbol | Line | Role |
-| ------ | ---- | ---- |
-| `get_tombstone_store` | `tombstones.py:43` | cached store; `load()` + `prune()` on first use (TTL via `get_tombstone_ttl_days`) |
-| `record_deletion` | `:55` | add causal marker (path, sha256, origin cid, inherited vclock) and persist |
-| `clear_deletion` | `:71` | remove a marker (path re-created) |
-| `merge_payload` | `:82` | causal-merge master/peer markers (dominance + content tie-break, gossip) |
-| `get_payload` | `:92` | union to serve when this peer is master |
+| Symbol | Location | Role |
+| ------ | -------- | ---- |
+| `get_tombstone_store` | `tombstones.py::get_tombstone_store` | cached store; `load()` + `prune()` on first use (TTL via `get_tombstone_ttl_days`) |
+| `record_deletion` | `tombstones.py::record_deletion` | add causal marker (path, sha256, origin cid, inherited vclock) and persist |
+| `clear_deletion` | `tombstones.py::clear_deletion` | remove a marker (path re-created) |
+| `merge_payload` | `tombstones.py::merge_payload` | causal-merge master/peer markers (dominance + content tie-break, gossip) |
+| `get_payload` | `tombstones.py::get_payload` | union to serve when this peer is master |
 
 Tombstone semantics (causal merge, TTL storage GC, hashed keys) are SSOT in
 `hsync_common.models.tombstone` — see ADR 0003. The store cache (`_stores`)
@@ -70,8 +70,8 @@ is keyed by folder UUID, matching `sync_state`.
 ## Runtime config models
 
 `HsyncConfig` / `ApiEndpoints` TypedDicts and the global `CONFIG`
-(`config.py:294`/`:275`/`:391`) hold the merged runtime settings; see
-[cli-config.md](modules/cli-config.md). `EnvSettings` (`config.py:47`) is the
+(`config.py::HsyncConfig`/`config.py::ApiEndpoints`/`config.py::CONFIG`) hold the merged runtime settings; see
+[cli-config.md](modules/cli-config.md). `EnvSettings` (`config.py::EnvSettings`) is the
 pydantic-settings layer over `HSYNC_*` vars.
 
 > Human-facing config reference: `../docs/configuration.md`.

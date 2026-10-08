@@ -58,49 +58,49 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 
 | Scenario | Public API measured |
 | --- | --- |
-| `classify_network(mixed)` / `classify_bandwidth(mixed)` | `autotune.classify_network` (`hsync_client/autotune.py:179`), `classify_bandwidth` (`:265`) |
-| `derive_timeout(lan\|unknown)` | `autotune.derive_timeout` (`:460`) |
-| `derive_retry(lan)` | `autotune.derive_retry` (`:475`) |
-| `derive_concurrency(ssd,mid)` | `autotune.derive_concurrency` (`:493`) |
-| `derive_profile` | `autotune.derive_profile` (`:383`) |
-| `profile_queue(many_small\|few_large\|mixed)` | `autotune.profile_transfer_queue` (`:347`) |
-| `http_to_ws(http\|https)` | `utils.http_to_ws` (`hsync_client/utils/http.py:41`) |
-| `redact_headers(auth\|plain)` | `utils.redact_headers` (`:105`) — log-secret masking gate |
-| `request_headers` | `utils.request_headers` (`:73`) |
-| `inbound_size_cap(declared\|capped\|unknown)` | `utils.inbound_size_cap` (`:550`) — decompression-bomb bound |
-| `http_connect_timeout` / `upload_timeout` | `utils.http_connect_timeout` (`:95`), `upload_timeout` (`:100`) |
-| `is_same_paths` / `ensure_str_path` | `utils.is_same_paths` (`:347`), `ensure_str_path` (`:393`) |
-| `normalize_bucket_relpath(in\|out)` | `utils.normalize_bucket_relpath` (`:418`) — wire-path gate before upload |
-| `get_backoff_delay(mixed)` | `event_queue.QueuedEvent.get_backoff_delay` (`hsync_client/event_queue.py:103`) |
-| `enqueue` | `event_queue.EventQueue.enqueue` (`:149`) |
-| `send_event(success\|failure\|unserializable)` | `event_queue.EventQueue._send_event` (`:160`) — `json.dumps` + awaited send; transient raise → held for retry (`False`); permanent drop → `True` without touching the socket |
-| `PinStore.get(hit\|miss)` / `check_and_record(match\|changed\|first_use)` / `set(repin)` | `pinning.PinStore` (`hsync_client/pinning.py:83`,`:98`,`:88`) |
-| `get_sync_state_store(cached)` | `sync_state.get_sync_state_store` (`hsync_client/sync_state.py:50`) |
-| `get_base_hash(hit)` | `sync_state.get_base_hash` (`:69`) |
-| `record_base` | `sync_state.record_base` (`:78`) — includes `os.stat` corrected-mtime fallback |
-| `upload_version_fields(same\|ticked)` | `sync_state.upload_version_fields` (`:283`) → `local_version_for_compare` (`:164`) |
-| `local_version_and_base(same\|ticked)` | `sync_state.local_version_and_base` (`:175`) — effective version + stored base in one store read |
-| `merge_and_record` | `sync_state.merge_and_record` (`:317`) — convergence merge (ADR-0022 §5) |
-| `flush` | `sync_state.flush` (`:145`) — once-per-cycle SQLite save |
-| `get_tombstone_store(cached)` / `get_payload` | `tombstones.get_tombstone_store` (`hsync_client/tombstones.py:53`), `get_payload` (`:174`) |
-| `record_deletion(persist)` | `tombstones.record_deletion` (`:74`) — realtime, flushes per deletion |
-| `record_deletion_by_key(persist=False)` / `flush` | `tombstones.record_deletion_by_key` (`:103`), `flush` (`:140`) — deferred mint + batched persist |
+| `classify_network(mixed)` / `classify_bandwidth(mixed)` | `autotune.classify_network` (`hsync_client/autotune.py::classify_network`), `classify_bandwidth` (`hsync_client/autotune.py::classify_bandwidth`) |
+| `derive_timeout(lan\|unknown)` | `autotune.derive_timeout` (`hsync_client/autotune.py::derive_timeout`) |
+| `derive_retry(lan)` | `autotune.derive_retry` (`hsync_client/autotune.py::derive_retry`) |
+| `derive_concurrency(ssd,mid)` | `autotune.derive_concurrency` (`hsync_client/autotune.py::derive_concurrency`) |
+| `derive_profile` | `autotune.derive_profile` (`hsync_client/autotune.py::derive_profile`) |
+| `profile_queue(many_small\|few_large\|mixed)` | `autotune.profile_transfer_queue` (`hsync_client/autotune.py::profile_transfer_queue`) |
+| `http_to_ws(http\|https)` | `utils.http_to_ws` (`hsync_client/utils/http.py::http_to_ws`) |
+| `redact_headers(auth\|plain)` | `utils.redact_headers` (`hsync_client/utils/http.py::redact_headers`) — log-secret masking gate |
+| `request_headers` | `utils.request_headers` (`hsync_client/utils/http.py::request_headers`) |
+| `inbound_size_cap(declared\|capped\|unknown)` | `utils.inbound_size_cap` (`hsync_client/utils/paths.py::inbound_size_cap`) — decompression-bomb bound |
+| `http_connect_timeout` / `upload_timeout` | `utils.http_connect_timeout` (`hsync_client/utils/http.py::http_connect_timeout`), `upload_timeout` (`hsync_client/utils/http.py::upload_timeout`) |
+| `is_same_paths` / `ensure_str_path` | `utils.is_same_paths` (`hsync_client/utils/paths.py::is_same_paths`), `ensure_str_path` (`hsync_client/utils/paths.py::ensure_str_path`) |
+| `normalize_bucket_relpath(in\|out)` | `utils.normalize_bucket_relpath` (`hsync_client/utils/paths.py::normalize_bucket_relpath`) — wire-path gate before upload |
+| `get_backoff_delay(mixed)` | `event_queue.QueuedEvent.get_backoff_delay` (`hsync_client/event_queue.py::get_backoff_delay`) |
+| `enqueue` | `event_queue.EventQueue.enqueue` (`hsync_client/event_queue.py::enqueue`) |
+| `send_event(success\|failure\|unserializable)` | `event_queue.EventQueue._send_event` (`hsync_client/event_queue.py::EventQueue._send_event`) — `json.dumps` + awaited send; transient raise → held for retry (`False`); permanent drop → `True` without touching the socket |
+| `PinStore.get(hit\|miss)` / `check_and_record(match\|changed\|first_use)` / `set(repin)` | `pinning.PinStore` (`hsync_client/pinning.py::PinStore.get`,`hsync_client/pinning.py::PinStore.check_and_record`,`hsync_client/pinning.py::PinStore.set`) |
+| `get_sync_state_store(cached)` | `sync_state.get_sync_state_store` (`hsync_client/sync_state.py::get_sync_state_store`) |
+| `get_base_hash(hit)` | `sync_state.get_base_hash` (`hsync_client/sync_state.py::get_base_hash`) |
+| `record_base` | `sync_state.record_base` (`hsync_client/sync_state.py::record_base`) — includes `os.stat` corrected-mtime fallback |
+| `upload_version_fields(same\|ticked)` | `sync_state.upload_version_fields` (`hsync_client/sync_state.py::upload_version_fields`) → `local_version_for_compare` (`hsync_client/sync_state.py::local_version_for_compare`) |
+| `local_version_and_base(same\|ticked)` | `sync_state.local_version_and_base` (`hsync_client/sync_state.py::local_version_and_base`) — effective version + stored base in one store read |
+| `merge_and_record` | `sync_state.merge_and_record` (`hsync_client/sync_state.py::merge_and_record`) — convergence merge (ADR-0022 §5) |
+| `flush` | `sync_state.flush` (`hsync_client/sync_state.py::flush`) — once-per-cycle SQLite save |
+| `get_tombstone_store(cached)` / `get_payload` | `tombstones.get_tombstone_store` (`hsync_client/tombstones.py::get_tombstone_store`), `get_payload` (`hsync_client/tombstones.py::get_payload`) |
+| `record_deletion(persist)` | `tombstones.record_deletion` (`hsync_client/tombstones.py::record_deletion`) — realtime, flushes per deletion |
+| `record_deletion_by_key(persist=False)` / `flush` | `tombstones.record_deletion_by_key` (`hsync_client/tombstones.py::record_deletion_by_key`), `flush` (`hsync_client/tombstones.py::flush`) — deferred mint + batched persist |
 | `mint_50(memory)` / `mint_50_then_flush` | offline-deletion mint loop end-to-end (`record_deletion_by_key(persist=False)` × 50 + one `flush`) |
-| `merge_payload(dominant)` | `tombstones.merge_payload` (`:164`) — causal merge + persist |
-| `arbitrate_upload(first\|dominant\|superseded\|conflict)` | `arbitration.arbitrate_upload` (`hsync_client/arbitration.py:69`) — client store/cid binding over `resolve_three_way` |
-| `conflicted_copy_name` | `arbitration.conflicted_copy_name` (`:180`) — ADR-0021 loser-path builder |
-| `compare_files(in_sync\|download\|upload\|conflict_*)` | `sync._compare_files` (`hsync_client/sync.py:1721`) — per-file causal decision over `resolve_three_way` |
-| `tombstone_clock_dominates(dom\|sub\|invalid)` | `sync._tombstone_clock_dominates` (`:1328`) — deletion proof via `compare_vclocks` |
-| `tombstone_deletes_local(delete\|keep)` | `sync._tombstone_deletes_local` (`:1345`) |
-| `parse_advertised_version(valid\|absent\|malformed)` | `sync._parse_advertised_version` (`:1358`) — wire `version` decode |
-| `get_sync_actions(100 in_sync)` | `sync.get_sync_actions` (`:1466`, `persist_state=False`) — full steady-state diff (divisibile per 100 per il costo per-file) |
-| `identity(eligible_1KiB\|eligible_4KiB\|rejected_bad_hash)` | `p2p_sources.P2PSourceResolver._identity` (`hsync_client/p2p_sources.py:573`) — the lookup gate; size is deliberately not part of it (ADR-0030), so a 1 KiB and a 4 KiB file take the same branch |
-| `batch_split(10\|100\|500\|1000)` | `p2p_sources.P2PSourceResolver._source_batches` (`:474`) — identity, byte-budget and 500-per-request splitting |
-| `source_lookup(100\|500)` | `p2p_sources.P2PSourceResolver.resolve` (`:522`) against a live master (`p2p_server._handle_sources`, `hsync_client/p2p_server.py:649`) |
-| `telemetry_rank(4)` / `telemetry_record_success` | `p2p_sources.P2PSourceTelemetry.rank` (`:330`), `record_success` (`:358`) |
-| `peer_cold_*` / `peer_warm_*` / `master_warm_*` | `transfer.download_file` (`hsync_client/transfer.py:471`) with a real seeder (`transfer._download_file_attempt`, `:1104`) vs the master fallback |
+| `merge_payload(dominant)` | `tombstones.merge_payload` (`hsync_client/tombstones.py::merge_payload`) — causal merge + persist |
+| `arbitrate_upload(first\|dominant\|superseded\|conflict)` | `arbitration.arbitrate_upload` (`hsync_client/arbitration.py::arbitrate_upload`) — client store/cid binding over `resolve_three_way` |
+| `conflicted_copy_name` | `arbitration.conflicted_copy_name` (`hsync_client/arbitration.py::conflicted_copy_name`) — ADR-0021 loser-path builder |
+| `compare_files(in_sync\|download\|upload\|conflict_*)` | `sync._compare_files` (`hsync_client/sync.py::_compare_files`) — per-file causal decision over `resolve_three_way` |
+| `tombstone_clock_dominates(dom\|sub\|invalid)` | `sync._tombstone_clock_dominates` (`hsync_client/sync.py::_tombstone_clock_dominates`) — deletion proof via `compare_vclocks` |
+| `tombstone_deletes_local(delete\|keep)` | `sync._tombstone_deletes_local` (`hsync_client/sync.py::_tombstone_deletes_local`) |
+| `parse_advertised_version(valid\|absent\|malformed)` | `sync._parse_advertised_version` (`hsync_client/sync.py::_parse_advertised_version`) — wire `version` decode |
+| `get_sync_actions(100 in_sync)` | `sync.get_sync_actions` (`hsync_client/sync.py::get_sync_actions`, `persist_state=False`) — full steady-state diff (divisibile per 100 per il costo per-file) |
+| `identity(eligible_1KiB\|eligible_4KiB\|rejected_bad_hash)` | `p2p_sources.P2PSourceResolver._identity` (`hsync_client/p2p_sources.py::P2PSourceResolver._identity`) — the lookup gate; size is deliberately not part of it (ADR-0030), so a 1 KiB and a 4 KiB file take the same branch |
+| `batch_split(10\|100\|500\|1000)` | `p2p_sources.P2PSourceResolver._source_batches` (`hsync_client/p2p_sources.py::P2PSourceResolver._source_batches`) — identity, byte-budget and 500-per-request splitting |
+| `source_lookup(100\|500)` | `p2p_sources.P2PSourceResolver.resolve` (`hsync_client/p2p_sources.py::P2PSourceResolver.resolve`) against a live master (`p2p_server._handle_sources`, `hsync_client/p2p_server.py::_handle_sources`) |
+| `telemetry_rank(4)` / `telemetry_record_success` | `p2p_sources.P2PSourceTelemetry.rank` (`hsync_client/p2p_sources.py::P2PSourceTelemetry.rank`), `record_success` (`hsync_client/p2p_sources.py::P2PSourceTelemetry.record_success`) |
+| `peer_cold_*` / `peer_warm_*` / `master_warm_*` | `transfer.download_file` (`hsync_client/transfer.py::download_file`) with a real seeder (`transfer._download_file_attempt`, `hsync_client/transfer.py::_download_file_attempt`) vs the master fallback |
 | `peer_warm_4KiB_no_bookkeeping` | same, with `transfer._record_synced_base` patched out, to size the per-file sync-state write |
-| `seeder_readcap_batch(1\|2\|4\|8)` | `p2p_server` seeder route + read-cap semaphore (`P2PServer(peer_read_cap=…)`, `hsync_client/p2p_server.py:518-527`) |
+| `seeder_readcap_batch(1\|2\|4\|8)` | `p2p_server` seeder route + read-cap semaphore (`P2PServer(peer_read_cap=…)`, `hsync_client/p2p_server.py::P2PServer`) |
 | `peer_cap2_fallback(4 files)` | production `download_file` under the same cap: peer `503` → failure record → master fallback |
 | `latency_peer_{0\|40}ms(24f,2\|8w)` | the production peer path driven through ONE long-lived `ThreadPoolExecutor`, behind `p2p_peer_common.LatencyRelay` (counts accepted connections = TLS handshakes): the worker-to-seeder affinity question |
 | `latency_master_{0\|40}ms(24f,1\|4w)` | the production master path (API retargeted through the relay) on the same pool shape: prices bounded bulk parallelism against the sequential loop, the mobile sync's concurrency decision |
@@ -185,7 +185,7 @@ producing false positives. A scenario present in `before` but missing from
   `resolve_three_way` cost dominates, the outcome (accept/supersede/conflict)
   adds nothing measurable.
 * **Client hot-path micro-opts (`ed050a3`, `bench_result.txt` 2026-09-23)** —
-  `conflicted_copy_name` parses the path once (`arbitration.py:182`)
+  `conflicted_copy_name` parses the path once (`arbitration.py::conflicted_copy_name`)
   (~0.0052→0.0028 ms, **~1.9x**); autotune drops the per-call constants import
   and hoists the storage base-concurrency dict (`derive_profile` ~0.0023→0.0019 ms,
   `derive_concurrency(ssd,mid)` ~0.0005→0.0003 ms); `get_sync_actions` reuses the
@@ -221,7 +221,7 @@ producing false positives. A scenario present in `before` but missing from
   ~0.0002–0.0003 ms on the in-sync/download/upload branches (it routes straight
   through `resolve_three_way`); the conflict branches are ~0.0011–0.0014 ms
   (the corrected-mtime tie-break plus an **eager `log.debug` f-string** in the
-  conflict-download branch, `sync.py:1770` — a candidate lazy-logging fix). The
+  conflict-download branch, `sync.py::_compare_files` — a candidate lazy-logging fix). The
   tombstone and `parse_advertised_version` helpers are ~0.0001–0.0018 ms.
 * **The full steady-state reconcile is ~2.27 ms / 100 files ≈ ~23 µs/file**
   (`get_sync_actions(persist_state=False)` over an in-sync listing): the
@@ -231,7 +231,7 @@ producing false positives. A scenario present in `before` but missing from
 * **Double `sync_state` read folded (candidate D, fixed)** — the reconcile used
   `local_version_for_compare` *then* `get_base_hash` per file (two relpath
   resolutions + two lock acquisitions + two reads of the same store entry). A
-  single `sync_state.local_version_and_base` (`sync_state.py:175`) now returns
+  single `sync_state.local_version_and_base` (`sync_state.py::local_version_and_base`) now returns
   both the effective version and the stored base hash in one read;
   `get_sync_actions` and `update_file` use it (`sync.py`).
   `local_version_and_base(same)` costs ~0.0022 ms vs the old pair

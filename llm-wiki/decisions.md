@@ -9,14 +9,14 @@ implements it, plus client-only operational rules.
 
 | ADR | Client implementation |
 | --- | --------------------- |
-| [0001 server-vs-p2p-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-p2p-modes.md) | `run_sync` branch (`main_logic.py:539`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs P2P stack ([p2p-mode.md](modules/p2p-mode.md)) |
-| [0002 p2p-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-p2p-master-election.md) | `PeerManager._elect_master` (`p2p_peers.py / p2p_discovery_mdns.py:129`) → calls common `elect_master` |
-| [0003 tombstone-gossip](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py:566`/`:615` |
-| [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py:109`) |
-| [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py:170`); REST `X-Protocol-Version` (`utils/http.py`) — hard-fail on mismatch |
+| [0001 server-vs-p2p-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-p2p-modes.md) | `run_sync` branch (`main_logic.py::run_sync`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs P2P stack ([p2p-mode.md](modules/p2p-mode.md)) |
+| [0002 p2p-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-p2p-master-election.md) | `PeerManager._elect_master` (`p2p_peers.py::PeerManager._elect_master`) → calls common `elect_master` |
+| [0003 tombstone-gossip](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py::sync` |
+| [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py::capabilities_json_callback`) |
+| [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py::remote_connect`); REST `X-Protocol-Version` (`utils/http.py`) — hard-fail on mismatch |
 | [0017 p2p-slave-outbound-event-reliability](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0017-p2p-slave-outbound-event-reliability.md) | `P2PSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([p2p-mode.md](modules/p2p-mode.md)) |
-| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py:989`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py:1228`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
-| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `p2p_handler.run_p2p_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py:170`/`:202`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py:1044`, `delta_transfer.py:84`) and to the mirror master arbitration (`arbitration.py`, `p2p_server.py:1406`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py:1290`). |
+| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py::_compare_files`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py::_save_conflict_copy`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
+| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `p2p_handler.run_p2p_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py::_corrected_mtime_of`/`sync_state.py::upload_version_fields`) feeds `corrected_mtime` to upload + delta-apply (`transfer.py::_upload_version_fields`, `delta_transfer.py::_resolve_delta_version_fields`) and to the mirror master arbitration (`arbitration.py::arbitrate_upload`, `p2p_server.py::P2PServer`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py::_compare_files`). |
 | [0025 sqlite-external-state-store](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + per-folder DB under the device dir); `HSYNC_STATE_DIR` / `HSYNC_STATE_DB` |
 | [0030 p2p-seeder-capacity-advertisement](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0030-p2p-seeder-capacity-advertisement.md) | Seeder advertisement (`p2p_websocket.py` `p2p_websocket_client` handshake), master session storage (`p2p_inventory.py` `begin_session(serve_slots=…)`/`session_serve_slots`), candidate echo (`p2p_sources.py` `P2PSourceService`), requester admission + busy-as-scheduling (`p2p_sources.py` `acquire_slot`/`release_slot`, `transfer.py` `_parse_retry_after`), seeder `Retry-After` (`p2p_server.py`) |
 
@@ -37,7 +37,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   peers**). The finite discovery window ends a one-shot run even when the
   local role was resolved as MASTER at discovery start: with no live peer the
   discovery loop exits with `ExitCode.P2P_NO_PEER` (5)
-  (`p2p_handler.py:364`) instead of serving as a peer-less master, so a
+  (`exitcodes.py::ExitCode`) instead of serving as a peer-less master, so a
   scheduled `--once` run always terminates unless `--discovery-timeout 0`
   explicitly waits forever. Rationale: sync
   daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
@@ -115,15 +115,15 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Mandatory TLS in p2p mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
 - **Write-policy gate**: non-interactive write-capable p2p sync requires a p2p key
-  (`_check_p2p_write_policy`, `main_logic.py:379`).
+  (`_check_p2p_write_policy`, `main_logic.py::_check_p2p_write_policy`).
 - **Mass-deletion guard (§12)**: bulk deletes pause the cycle
-  (`_mass_deletion_blocked`, `sync.py:94`) unless explicitly allowed.
+  (`_mass_deletion_blocked`, `sync.py::_mass_deletion_blocked`) unless explicitly allowed.
 - **Per-path serialization (§14)**: all transfers take `utils.path_lock`
-  (`utils/paths.py:279`) to avoid concurrent writes to the same file.
+  (`utils/paths.py::path_lock`) to avoid concurrent writes to the same file.
 - **Failover via periodic staleness sweep**: a hard-crashed master sends no
   mDNS goodbye and no further announce, so election is also re-run on every
   discovery wake and on a slave WebSocket drop
-  (`PeerManager.reconcile_stale_peers`, `p2p_peers.py / p2p_discovery_mdns.py:430`), which demotes any peer
+  (`PeerManager.reconcile_stale_peers`, `p2p_peers.py::PeerManager.reconcile_stale_peers`), which demotes any peer
   whose heartbeat is older than `HSYNC_PEER_TIMEOUT`. The peer timeout must be
   ≥ 2× `HSYNC_HEARTBEAT_INTERVAL` (enforced in `config.EnvSettings`) so a
   single missed announce never flaps a live peer; the survivor only demotes a
@@ -133,18 +133,18 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   synchronized `packaging/wd-os5` update (see `AGENTS.md`).
 - **Containerized mksapkg**: `mksapkg-OS5` runs inside the
   `hsync-wdos5-mksapkg` image (`packaging/wd-os5/Dockerfile.mksapkg`) via
-  `_wdos5_run_mksapkg` (`compile.sh:1020`), not on the host — the prebuilt tool
+  `_wdos5_run_mksapkg` (`compile.sh::_wdos5_run_mksapkg`), not on the host — the prebuilt tool
   needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts.
 - **Host-uid container builds**: containerized build steps drop to the host
   `uid:gid` so artifacts under `build/`/`dist/` stay caller-owned — otherwise
   root-owned output breaks the `rm -rf build` cleanup of a later native build
   (`cleanup_temp_files`). Covers WD OS5 (`_wdos5_run_mksapkg`; PyInstaller
-  `_run_pyinstaller_in_docker` (`compile.sh:1074`)) and `deb-all`'s in-container
-  PyInstaller (`compile.sh:801`, with `HOME=/tmp` for the poetry/PyInstaller
+  `_run_pyinstaller_in_docker` (`compile.sh::_run_pyinstaller_in_docker`)) and `deb-all`'s in-container
+  PyInstaller (`compile.sh::build_deb_all`, with `HOME=/tmp` for the poetry/PyInstaller
   caches). The `deb-all` `dpkg-deb` step stays **root** (so the `.deb`'s
   internal `/usr`,`/etc` are owned `root:root`) and instead `chown`s the
   host-mounted stage + produced `.deb` back to the caller afterwards
-  (`compile.sh:906`); the archive's captured ownership is unaffected.
+  (`compile.sh::build_deb_all`); the archive's captured ownership is unaffected.
 - **Container builds install the `build` group by exclusion**: `deb-all`/`rpi`
   use `poetry install --no-root --without dev`, which keeps the `build` group
   (PyInstaller) — correct as written, and now protected by
@@ -187,15 +187,15 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `%LOCALAPPDATA%\Programs\HSYNC`; appends `{app}` to the user `PATH` and removes
   it on uninstall. The portable `.zip` remains the no-install alternative.
 - **Windows-portable `compile.sh`**: PyInstaller path is OS-aware
-  (`.venv/Scripts` vs `.venv/bin`, `compile.sh:106`) and `--strip` is omitted on
-  Windows (`STRIP_FLAG`, `compile.sh:112`) since binutils is unavailable there.
+  (`.venv/Scripts` vs `.venv/bin`, `compile.sh`) and `--strip` is omitted on
+  Windows (`STRIP_FLAG`, `compile.sh::STRIP_FLAG`) since binutils is unavailable there.
 - **Raspberry Pi target (`rpi`)**: `compile.sh --target rpi` cross-builds the
   onefile executable for Raspberry Pi OS 32-bit (armhf/armv7) and 64-bit
   (arm64/aarch64) via Docker + qemu, reusing `packaging/deb/Dockerfile.builder`
   as the cross-build image (Python 3.12 + Poetry + the armhf Rust/OpenSSL
   toolchain), and writing `dist/rpi/<arch>/hsync`. The onefile PyInstaller flags
   are shared between the host build and the container build through
-  `_onefile_pyi_flags` (`compile.sh:348`) so the two cannot drift. The
+  `_onefile_pyi_flags` (`compile.sh::_onefile_pyi_flags`) so the two cannot drift. The
   cross-build images pin their build inputs: the `qemu-user-static` binfmt image
   is referenced by digest (it runs `--privileged`) and the Rust toolchain is
   installed from a SHA256-verified, version-pinned `rustup-init` instead of
@@ -207,8 +207,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   The WD OS5 (Debian Buster) builder stays separate and still compiles Python
   from source.
 - **PyInstaller × multiprocessing (`freeze_support`)**: `main.main`
-  (`main.py:26`) calls `multiprocessing.freeze_support()` before importing the
-  CLI. The loguru sinks use `enqueue=True` (`logger.py:233`, `:251`), which makes
+  (`main.py::main`) calls `multiprocessing.freeze_support()` before importing the
+  CLI. The loguru sinks use `enqueue=True` (`logger.py::setup_logging`), which makes
   the stdlib start a `multiprocessing` helper (the resource tracker) by
   re-executing `sys.executable` — the frozen `hsync` — with the interpreter flags
   plus `-c 'from multiprocessing.resource_tracker import main; …'`. Without the
@@ -240,7 +240,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
   itself; a refused `query` arms a `retry_after` backoff. Rationale: the node
   rate-limits `query` to 5/min per (IP, bucket) and `register`/`refresh` to
-  10/min (`handler.py:132`), and this cadence keeps the client inside those
+  10/min (`hsync-bootnode/python/src/hsync_bootnode/handler.py::BootHandler`), and this cadence keeps the client inside those
   limits instead of burning the burst and being `rate_limited` for the rest of
   the window, which would starve real discovery.
   `HSYNC_BOOTNODE_REFRESH_INTERVAL` is documented in
