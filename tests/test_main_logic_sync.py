@@ -436,6 +436,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     no_color: bool
     api_key_fd: int | None
     p2p_key_fd: int | None
+    p2p_allow_unauthenticated: bool
 
 
 def _default_run_sync_kwargs(
@@ -551,6 +552,7 @@ class TestRunSync:
             tmp_path,
             server_url=None,
             p2p_mode=True,
+            p2p_allow_unauthenticated=True,
             sync_direction="download-only",
         )
 
@@ -577,6 +579,7 @@ class TestRunSync:
             tmp_path,
             server_url=None,
             p2p_mode=True,
+            p2p_allow_unauthenticated=True,
             discovery_timeout=None,
             sync_direction="download-only",
         )
@@ -606,6 +609,7 @@ class TestRunSync:
                 tmp_path,
                 server_url=None,
                 p2p_mode=True,
+                p2p_allow_unauthenticated=True,
                 continuous=continuous_value,
                 sync_direction="download-only",
             )
@@ -631,6 +635,7 @@ class TestRunSync:
             tmp_path,
             server_url=None,
             p2p_mode=True,
+            p2p_allow_unauthenticated=True,
             discovery_timeout=0,
             sync_direction="download-only",
         )

@@ -272,6 +272,9 @@ class TestRunSyncLanPlaceholder:
 
     def _run_p2p(self, tmp_path, **kwargs_overrides: Any):
         kwargs_overrides.setdefault("sync_direction", "download-only")
+        # The keyless P2P gate is exercised in test_p2p_keyless_policy; here the
+        # run must reach run_p2p_mode, so acknowledge the posture explicitly.
+        kwargs_overrides.setdefault("p2p_allow_unauthenticated", True)
         kwargs = _default_run_sync_kwargs(tmp_path, **kwargs_overrides)
         with (
             patch("hsync_client.main_logic.setup_logging", return_value=MagicMock()),
