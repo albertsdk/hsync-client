@@ -12,8 +12,7 @@ keep their own localized copies with the same meaning.
 
 from __future__ import annotations
 
-from logging import Logger
-from typing import Any
+from typing import Any, Protocol
 
 from hsync_common.protocol.tls_trust import TrustPolicy
 
@@ -38,8 +37,19 @@ BYPASS_WARNINGS: dict[str, str] = {
 }
 
 
+class _WarningLogger(Protocol):
+    """Any logger that can emit a warning line (``logging`` or ``loguru``).
+
+    The bypass warnings are logger-agnostic: the CLI passes a loguru logger and
+    tests pass a mock. Structural typing keeps the function decoupled from a
+    specific logging backend while still checking the one method it calls.
+    """
+
+    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
+
+
 def log_active_bypasses(
-    logger: Logger,
+    logger: _WarningLogger,
     *,
     allow_deletions: bool = False,
     allow_unauthenticated_writes: bool = False,

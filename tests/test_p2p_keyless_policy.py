@@ -136,3 +136,30 @@ class TestBypassWarnings:
         assert "Deletion-risk" in texts
         assert "without a shared key" in texts
         assert "accept-new" in texts
+
+    def test_accepts_the_production_loguru_logger(self):
+        """The CLI passes a loguru logger; the warnings must reach a real sink.
+
+        The original defect was a type mismatch (a ``logging.Logger`` annotation
+        while ``main`` passes a ``loguru.Logger``), so the regression guard is
+        mypy; this test locks the production logger through the real loguru sink
+        path so the integration cannot silently drift.
+        """
+        from loguru import logger as loguru_logger
+
+        records: list[str] = []
+        sink_id = loguru_logger.add(lambda message: records.append(str(message)), level="WARNING")
+        try:
+            log_active_bypasses(
+                loguru_logger,
+                allow_deletions=True,
+                allow_unauthenticated_p2p=True,
+                bootnode_trust=TrustPolicy.accept_new,
+            )
+        finally:
+            loguru_logger.remove(sink_id)
+        assert len(records) == 3
+        texts = " ".join(records)
+        assert "Deletion-risk" in texts
+        assert "without a shared key" in texts
+        assert "accept-new" in texts
