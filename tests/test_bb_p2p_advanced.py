@@ -15,6 +15,7 @@ import pytest
 
 from .p2p_helpers import (
     _p2p_start,
+    _reserve_port,
     _stderr_text,
     _terminate,
     _wait_for_file,
@@ -239,12 +240,10 @@ class TestOneShot:
 class TestP2PPortOverride:
     def test_p2p_listen_port_override(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """--listen-port on master: slave connects on the specified port."""
-        from hsync_client.p2p_peers import get_free_port
-
         # Use a free ephemeral port instead of a fixed one: a fixed port can
         # collide with a lingering listener from a previous run (or a parallel
         # CI job) and, unlike the P2P transport itself, has no fallback.
-        port = get_free_port()
+        port = _reserve_port()
         # Given a master listening on a custom port
         master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True, p2p_listen_port=port)
         try:

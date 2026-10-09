@@ -113,3 +113,71 @@ class TestP2PCompressedUpload:
             # Then the upload succeeds and the stored file decompresses to the original
             assert r.status_code == 201
             assert _p2p_download(base, p2p_bucket, "comp.bin") == original
+
+
+class TestP2PDownloadRange:
+    """The master's HTTP Range contract — the wire half of download resume.
+
+    ``transfer._download_from_source`` resumes an interrupted download by
+    sending ``Range: bytes=<offset>-`` when a ``.part`` prefix exists. The master
+    must answer 206 with the tail and a ``Content-Range`` header, and 416 for an
+    unsatisfiable range. This drives that public surface directly; the client's
+    own ``[RESUME]`` decision is covered by the unit suite.
+    """
+
+    def test_range_download_returns_206_and_the_tail(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, bb_sample
+    ):
+        import requests
+
+        # Given a random file uploaded to the serving master
+        sample = bb_sample(suffix=".bin", size=4096, prefix="range")
+        content = sample.payload
+        with _p2p_serving_master(p2p_master_dir, p2p_slave_dir, p2p_bucket) as p2p_listen_port:
+            base = f"https://127.0.0.1:{p2p_listen_port}"
+            r = _p2p_upload(base, p2p_bucket, sample.name, content, sha256sum=_sha(content))
+            assert r.status_code == 201, f"upload failed: {r.status_code} {r.text}"
+
+            offset = len(content) // 3
+            # When requesting only the tail with a Range header
+            rr = requests.get(
+                f"{base}/api/v1/buckets/{p2p_bucket}/files/download",
+                params={"filename": sample.name},
+                headers={**_p2p_auth_headers(), "Range": f"bytes={offset}-"},
+                timeout=30.0,
+                verify=False,
+            )
+
+            # Then the master answers 206 with exactly the remaining bytes
+            assert rr.status_code == 206, f"range download failed: {rr.status_code} {rr.text}"
+            assert rr.headers.get("Content-Range") == (
+                f"bytes {offset}-{len(content) - 1}/{len(content)}"
+            ), sample.ctx
+            assert rr.headers.get("Accept-Ranges") == "bytes"
+            assert rr.content == content[offset:], sample.ctx
+
+    def test_unsatisfiable_range_returns_416(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, bb_sample
+    ):
+        import requests
+
+        # Given a random file uploaded to the serving master
+        sample = bb_sample(suffix=".bin", size=2048, prefix="range416")
+        content = sample.payload
+        with _p2p_serving_master(p2p_master_dir, p2p_slave_dir, p2p_bucket) as p2p_listen_port:
+            base = f"https://127.0.0.1:{p2p_listen_port}"
+            r = _p2p_upload(base, p2p_bucket, sample.name, content, sha256sum=_sha(content))
+            assert r.status_code == 201, f"upload failed: {r.status_code} {r.text}"
+
+            # When the range starts at EOF (no byte left to serve)
+            rr = requests.get(
+                f"{base}/api/v1/buckets/{p2p_bucket}/files/download",
+                params={"filename": sample.name},
+                headers={**_p2p_auth_headers(), "Range": f"bytes={len(content)}-"},
+                timeout=30.0,
+                verify=False,
+            )
+
+            # Then it is unsatisfiable: 416 with a "*/size" Content-Range
+            assert rr.status_code == 416, f"expected 416, got {rr.status_code} {rr.text}"
+            assert rr.headers.get("Content-Range") == f"*/{len(content)}", sample.ctx

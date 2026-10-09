@@ -359,9 +359,9 @@ files:
 | `test_bb_p2p_auth_direction.py` | LAN authentication and sync‑direction enforcement. |
 | `test_bb_p2p_delta.py` | LAN delta transfer over the public REST surface (reconstruct, 404s). |
 | `test_bb_p2p_delta_apply.py` | LAN delta‑apply (upload‑side delta) over the public REST surface (reconstruct, missing‑base 404). |
-| `test_bb_p2p_features.py` | LAN feature flags (compression, delta, autotune). |
+| `test_bb_p2p_features.py` | LAN feature flags (compression, delta, autotune), group filtering and bucket isolation. |
 | `test_bb_p2p_files.py` | LAN file operations (create, modify, delete, rename). |
-| `test_bb_p2p_resumable.py` | LAN resumable upload over the public REST surface. |
+| `test_bb_p2p_resumable.py` | LAN resumable upload and HTTP Range (206/416) download over the public REST surface. |
 | `test_bb_p2p_security.py` | p2p security (TOFU pinning, certificate validation). |
 | `test_bb_p2p_upload_negatives.py` | p2p upload rejection paths over the public REST surface (checksum, traversal, engine artifacts, compressed+offset). |
 | `test_bb_p2p_websocket_relay.py` | p2p WebSocket relay, fan‑out, and handshake protocol. |

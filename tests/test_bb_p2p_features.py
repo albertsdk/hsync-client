@@ -318,3 +318,59 @@ class TestP2PKeyless:
             assert node.poll() is None, "The node should still be alive, waiting for peers"
         finally:
             _terminate(node)
+
+
+# =============================================================================
+# Bucket isolation (two buckets on one host must not cross-sync)
+# =============================================================================
+
+
+class TestP2PBucketIsolation:
+    def test_peers_in_different_buckets_do_not_cross_sync(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path, bb_sample
+    ):
+        """A file on bucket A never reaches a peer that is only on bucket B.
+
+        mDNS announces ``{bucket}-{cid}`` and the handshake filters by bucket, so
+        two peers that share a host but not a bucket must not discover or sync
+        each other. The positive half (bucket A's own slave receives the file)
+        proves the three peers share a reachable transport; the negative half
+        then shows the other bucket's peer stayed untouched well past the
+        convergence bucket A already observed.
+        """
+        import uuid
+
+        other_bucket = f"lan-bb-{uuid.uuid4().hex[:10]}"
+        other_dir = tmp_path / "other"
+
+        # Given a force-master and a never-master peer sharing bucket A
+        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        try:
+            _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+            slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
+            try:
+                # And an unrelated peer on a different bucket, on the same host
+                other_dir.mkdir()
+                other = _p2p_start(str(other_dir), other_bucket, never_master=True)
+                try:
+                    # When a file is created on the bucket-A master
+                    sample = bb_sample(prefix="isol")
+                    (Path(p2p_master_dir) / sample.name).write_bytes(b"bucket-a only\n")
+
+                    # Then it reaches the bucket-A slave...
+                    assert _wait_for_file(str(Path(p2p_slave_dir) / sample.name), timeout=30), (
+                        f"bucket-A file did not sync to its own slave. {sample.ctx}"
+                    )
+
+                    # ...but never the peer that is only on bucket B
+                    assert other.poll() is None, "the other-bucket peer exited early"
+                    assert not _wait_for_file(str(other_dir / sample.name), timeout=6), (
+                        "buckets are not isolated: the other-bucket peer received a "
+                        f"bucket-A file. {sample.ctx}"
+                    )
+                finally:
+                    _terminate(other)
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)

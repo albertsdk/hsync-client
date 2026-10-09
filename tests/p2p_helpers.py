@@ -107,17 +107,6 @@ def _p2p_log_path(local_path: str) -> str:
     return str(path.parent / f"{path.name}.log")
 
 
-def _free_port() -> int:
-    import socket
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-    finally:
-        sock.close()
-
-
 def _p2p_env(local_path: str, extra: dict[str, str | None] | None = None) -> dict[str, str]:
     """Subprocess environment for a P2P client: scrubbed and fully wired.
 
@@ -605,53 +594,6 @@ def _p2p_serving_master(
             _terminate(slave)
     finally:
         _terminate(master)
-
-
-def _p2p_upload(
-    base_url: str,
-    bucket: str,
-    filename: str,
-    content: bytes,
-    *,
-    path: str = "",
-    sha256sum: str | None = None,
-    permissions: str = "644",
-    offset: int = 0,
-    size: int = 0,
-    compressed: str = "false",
-    cid: str | None = None,
-    vclock: str = "",
-    version_id: str = "",
-):
-    """Upload a file to a serving P2P master over its public REST endpoint.
-
-    Mirrors the central server's multipart upload contract so the same wire
-    fields drive both modes. *cid* defaults to a wire-valid 21-char value.
-    """
-    import hashlib
-
-    import requests
-
-    return requests.post(
-        f"{base_url}/api/v1/buckets/{bucket}/files",
-        data={
-            "cid": cid or _p2p_cid("upld"),
-            "path": path,
-            "sha256sum": sha256sum
-            if sha256sum is not None
-            else hashlib.sha256(content).hexdigest(),
-            "permissions": permissions,
-            "offset": str(offset),
-            "size": str(size),
-            "compressed": compressed,
-            "vclock": vclock,
-            "version_id": version_id,
-        },
-        files={"file": (filename, content, "application/octet-stream")},
-        headers=_p2p_auth_headers(),
-        timeout=30.0,
-        verify=False,
-    )
 
 
 def _p2p_download(base_url: str, bucket: str, filename: str) -> bytes:
