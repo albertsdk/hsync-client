@@ -77,6 +77,7 @@ tests/
 ├── test_bb_p2p_files.py                # Black‑Box: p2p file operations
 ├── test_bb_p2p_resumable.py            # Black‑Box: p2p resumable upload (REST)
 ├── test_bb_p2p_security.py             # Black‑Box: p2p security (TOFU, certs)
+├── test_bb_security.py                 # Black‑Box: p2p master pentest probes (opt‑in)
 ├── test_bb_p2p_upload_negatives.py     # Black‑Box: p2p upload rejection paths (REST)
 ├── test_bb_p2p_websocket_relay.py      # Black‑Box: p2p WebSocket relay & handshake
 ├── test_bb_p2p_corrected_mtime.py      # Black‑Box: ADR-0023 tie‑break (p2p mode)
@@ -465,6 +466,29 @@ design).
 |----------|-------|---------|
 | `BB_API_KEY` | `test-bb-api-key-0123456789abcdef` | API key used by the live server and the client. |
 | `BB_CLIENT_CID` | `TestClientX1234567890` | Well‑formed 21‑character client ID for server uploads. |
+
+## Security probes (black‑box pentest)
+
+`tests/test_bb_security.py` drives the attack probes in `pentest/probes.py`
+against an in‑process p2p master: authentication, path confinement, upload
+integrity/DoS, tombstone gossip, WebSocket handshake and information
+disclosure. The probes speak only the public HTTP/WS contract (no
+`hsync_client` import), so the same code runs standalone against a live master
+via `pentest/run_pentest.py`. Adversarial by nature, the suite is **opt‑in**:
+
+```bash
+# CI suite (in-process master)
+cd hsync-client && HSYNC_BB_SECURITY=1 .venv/bin/python -m pytest -q tests/test_bb_pentest.py
+
+# standalone against a running master
+cd hsync-client && HSYNC_PENTEST_P2P_URL=https://127.0.0.1:8765 \
+  HSYNC_PENTEST_P2P_KEY='<shared p2p key>' \
+  HSYNC_PENTEST_P2P_BUCKET='<bucket>' \
+  .venv/bin/python -m pentest.run_pentest
+```
+
+`HSYNC_PENTEST_HEAVY=1` also runs the heavy (~19 MB) tombstone‑oversize probe.
+The full report and residual risks live in `pentest/SECURITY_FINDINGS.md`.
 
 ## Stress suites
 
