@@ -1298,3 +1298,68 @@ class TestRemoteTombstoneCatchUp:
         assert result.exit_code == 0
         assert not (Path(local_dir) / "catchup.txt").exists()
         assert "catchup.txt" not in bb_server_files(bb_bucket)
+
+
+# =============================================================================
+# Bucket isolation (a client must only ever see its own bucket)
+# =============================================================================
+
+
+class TestRemoteBucketIsolation:
+    def test_client_syncs_only_its_own_bucket(
+        self,
+        live_server,
+        bb_bucket,
+        local_dir,
+        run_sync_once,
+        bb_server_upload,
+        bb_server_files,
+        bb_sample,
+    ):
+        """A client syncing bucket A never pulls a file that lives only in bucket B.
+
+        The positive half (a file added to bucket A still syncs) proves the run
+        is a real, non-empty sync, so the negative half (bucket B's file never
+        appears locally) cannot pass vacuously.
+        """
+        # Given a second bucket — created and torn down here, like the bb_bucket
+        # fixture — holding a file the client must never see
+        base, api_key = live_server
+        other_bucket = f"bb-{uuid.uuid4().hex[:10]}"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        created = requests.post(
+            f"{base}/api/v1/buckets",
+            params={"bucket": other_bucket},
+            headers=headers,
+            timeout=15.0,
+            verify=False,
+        )
+        assert created.status_code == 201, created.text
+        try:
+            foreign = bb_sample(prefix="foreign")
+            bb_server_upload(other_bucket, foreign.name, b"bucket-b only\n")
+            assert foreign.name in bb_server_files(other_bucket)
+
+            # When the client syncs its own (still empty) bucket
+            result = run_sync_once(bb_bucket, local_dir)
+            assert result.exit_code == 0
+
+            # Then the other bucket's file was not pulled
+            assert not (Path(local_dir) / foreign.name).exists(), (
+                "the client pulled a file that lives only in another bucket"
+            )
+
+            # And its own bucket still syncs, so the check above is meaningful
+            own = bb_sample(prefix="own")
+            own_content = b"bucket-a only\n"
+            bb_server_upload(bb_bucket, own.name, own_content)
+            result = run_sync_once(bb_bucket, local_dir)
+            assert result.exit_code == 0
+            assert (Path(local_dir) / own.name).read_bytes() == own_content, own.ctx
+        finally:
+            requests.delete(
+                f"{base}/api/v1/buckets/{other_bucket}",
+                headers=headers,
+                timeout=15.0,
+                verify=False,
+            )

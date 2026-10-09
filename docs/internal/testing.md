@@ -333,7 +333,7 @@ poetry install --with blackbox
 
 | File | What it covers |
 |------|---------------|
-| `test_bb_server_remote_sync.py` | Full sync cycle: upload, download, deletion, rename, directory sync, Unicode filenames, feature flags (compression, delta, autotune), dry‑run, ignore patterns. |
+| `test_bb_server_remote_sync.py` | Full sync cycle: upload, download, deletion, rename, directory sync, Unicode filenames, feature flags (compression, delta, autotune), dry‑run, ignore patterns, bucket isolation. |
 | `test_bb_server_continuous_sync.py` | Continuous mode (default daemon): file creation, modification, and deletion are propagated while the client runs continuously. |
 | `test_bb_server_offline_changes.py` | Continuous-mode resilience: local changes made during a server outage are reconciled after reconnection. |
 | `test_bb_server_safety_guards.py` | Mass‑deletion guard, mass‑deletion percent guard, insufficient disk‑space abort, download‑only interactive prompts. |
