@@ -2,9 +2,11 @@
   <img src="docs/assets/hsync-logo-horizontal.svg" alt="HSYNC logo" width="300">
 </p>
 
-# HSYNC Client: Endpoint Synchronization Agent
+# HSYNC Client
 
-**HSYNC Client is the synchronization engine of HSYNC**: you install it on each device and it keeps a folder identical with the same folder on your other devices — in real time, over standard HTTP/HTTPS. It ships as a single self-contained binary: no Python (or any other) runtime is required on the machine.
+**HSYNC Client is the synchronization agent of HSYNC**: you install it on each device and it keeps a folder identical with the same folder on your other devices, in real-time, over standard HTTPS. It ships as a single self-contained binary: no Python (or any other) runtime is required on the machine.
+
+> New to HSYNC? Start with the [HSYNC Ecosystem](https://github.com/albertsdk/hsync/blob/main/README.md) for an overview of the platform before using the client.
 
 Point it at a folder and choose how the devices meet:
 
@@ -21,7 +23,7 @@ Files stay in their original format, directly browsable on disk, and there is no
 [![CI](https://github.com/albertsdk/hsync-client/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertsdk/hsync-client/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/albertsdk/hsync-client)](https://github.com/albertsdk/hsync-client/releases/latest)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_Windows_|_WD_My_Cloud-lightgrey.svg)](docs/installation.md)
+[![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_Windows_|_WD_My_Cloud_OS5-lightgrey.svg)](docs/installation.md)
 
 **Quick navigation:**
 
@@ -193,34 +195,34 @@ opaque internal formats.
 - 📖 **Open** — the wire protocol and file model are an open, versioned specification with shared schemas and fixtures (see the [protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/protocol.md) and [p2p protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md) references).
 - 📡 **No telemetry** — HSYNC sends no usage data or analytics anywhere.
 
-## Technical Capabilities
+## Key capabilities
 
-The HSYNC Client provides robust, enterprise-grade capabilities tailored for resilient data transfer.
+HSYNC Client focuses on reliable, fast transfers.
 
-**⚙️ Core Engine**
+**⚙️ Core sync**
 
-* **Bidirectional & Directional Sync:** Supports full two-way synchronization, as well as constrained Upload-Only or Download-Only pipelines.
-* **Zero-Delay Event Triggering:** Utilizing local filesystem watchdogs, file transfers initiate instantly upon file closure, bypassing legacy debounce delays.
-* **Block-Level Delta Transfer:** Implements rsync-style chunking for large files, transmitting only modified byte ranges to conserve bandwidth.
-* **Cryptographic Verification:** Enforces SHA-256 integrity checks post-transfer to prevent data corruption.
-* **Zstandard (zstd) Compression:** High-performance data compression applied automatically to outbound streams.
-* **Rule-Based Exclusion:** Native support for `.hsyncignore` pattern matching to exclude transient or sensitive files.
-* **Adaptive Resiliency:** Features intelligent retry backoffs, adaptive timeouts, and configurable parallel transfer concurrency.
+* **Two-way or one-way sync:** full bidirectional, or upload-only / download-only.
+* **Starts when you save:** a local filesystem watcher begins the transfer as soon as a file is closed, with no debounce delay.
+* **Block-level delta transfer:** for large files, only the changed byte ranges are sent (rsync-style).
+* **SHA-256 verification:** integrity is checked after every transfer.
+* **Zstandard (zstd) compression:** applied automatically to outbound data.
+* **Rule-based exclusions:** `.hsyncignore` patterns skip transient or sensitive files.
+* **Automatic retries:** smart backoff, adaptive timeouts, and configurable transfer concurrency.
 
-**🛰️ Centralized Connectivity (Server Mode)**
+**🛰️ Server mode (through a hub)**
 
-* **Live event channel:** Maintains WebSocket connections for sub-second remote event notifications and heartbeat monitoring.
-* **Secure Authentication:** Validates endpoints via API Key (Bearer token for REST operations, first-frame verification for WebSockets).
-* **TLS Enforcement:** Requires SSL/TLS encryption for all payload transmissions.
+* **Live updates:** a WebSocket connection delivers remote changes in under a second, with heartbeats.
+* **API-key authentication:** a Bearer token for REST, first-frame verification for WebSockets.
+* **TLS enforced:** all traffic is encrypted.
 
-**🔗 Decentralized Connectivity (P2P Mode)**
+**🔗 P2P mode (direct, no server)**
 
-* **Zero-Config Discovery:** Utilizes mDNS (Bonjour/Avahi) for automatic peer detection within broadcast domains.
-* **Dynamic Master Election:** Automatically nominates a transport coordinator based on sync capabilities and endpoint availability.
-* **Trust on First Use (TOFU):** Employs self-signed identity generation with connection-level certificate fingerprint pinning.
-* **Network Isolation:** Supports `HSYNC_P2P_KEY` authentication and `--group` partitioning to isolate distinct sync clusters on the same physical network.
-* **NAT traversal:** Can map the master port with UPnP (opt-in via `--upnp`/`HSYNC_UPNP_ENABLED`) and uses the bootnode's STUN-style endpoint echo for cross-network reachability — no manual port forwarding in the common case.
-* **Stable device identity:** A persistent device ID and keypair anchor trust pins across restarts; a rotated key is detected as a changed fingerprint.
+* **Zero-config discovery:** mDNS (Bonjour/Avahi) finds peers on the same network automatically.
+* **Automatic coordinator:** the client picks the master based on capabilities and reachability.
+* **Trust on first use (TOFU):** a self-signed identity pinned by certificate fingerprint.
+* **Network isolation:** `HSYNC_P2P_KEY` and `--group` keep distinct clusters apart on one network.
+* **NAT traversal:** optional UPnP port mapping and the bootnode's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
+* **Stable device identity:** a persistent device ID and keypair keep pins across restarts; a rotated key shows up as a changed fingerprint.
 
 > **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode is a **stable v1** (Python).
 
@@ -259,7 +261,7 @@ The other components of the HSYNC ecosystem:
 
 Security is a primary design pillar. To report potential security vulnerabilities or bypasses, utilize the private reporting channel:
 
-👉 **[Submit a Security Advisory](https://github.com/albertsdk/hsync-client/security/advisories/new)**
+👉 **[Report a vulnerability](https://github.com/albertsdk/hsync-client/security/advisories/new)**
 
 Review the [Security Policy](SECURITY.md) for compliance details and infrastructure hardening recommendations.
 
@@ -270,7 +272,7 @@ This project was born out of the need for a system capable of replicating the co
 Originally conceived as a hobby project, HSYNC has been under continuous development ever since. I believe it has now evolved to the point where its capabilities are comparable to those of commercial solutions, while also offering some distinctive features. As a result, it may also be suitable for deployment in certain production environments.
 
 HSYNC is a passion project that I primarily develop and maintain in my spare time. Please keep this in mind when interacting with the project: we're all doing our best to build something great together, but this is not a paid, full-time job for any of us.
-ù
+
 ## Disclaimer
 
 > [!WARNING]
