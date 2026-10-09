@@ -25,6 +25,16 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 `pinning.py` + `ssl_utils.py` ([p2p-mode.md](modules/p2p-mode.md)).
 
 ## Client-only operational rules
+- **Bootnode multi-port dial fallback**: `HSYNC_BOOTNODE_PORTS`
+  (`config.py::get_bootnode_ports`) adds extra UDP ports for the **same** bootnode;
+  `BootnodeClient._with_connection` (`boot_client.py`) dials the last working port
+  first (then the primary and extras) and falls back **only when the QUIC handshake
+  fails** — the blocked-port signal: the "port problem" is the **client's egress
+  firewall**, not the node (decision 57 in `hsync-bootnode`), so a blocked primary
+  is paid once, not on every exchange. A reply timeout or a trust/protocol error is
+  a real exchange failure and never re-dials (no duplicate frame is sent).
+  Trust stays a single pin (shared fleet identity), so the fallback never
+  re-prompts; the `boot/1` wire is unchanged.
 - **Continuous/daemon mode is the default in both topologies**: the client
   runs indefinitely, retries an unreachable server forever (`run_sync`
   connectivity gate is non-fatal in continuous mode; `remote_connect`

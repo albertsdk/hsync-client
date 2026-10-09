@@ -123,6 +123,10 @@ HSYNC_BOOTNODE=""
 HSYNC_BOOTNODE_FINGERPRINT=""
 # Trust the bootnode certificate on first use (TOFU).
 HSYNC_BOOTNODE_TOFU="false"
+# Extra UDP ports to try for the same bootnode (comma-separated, ordered),
+# e.g. "53" so a client whose egress firewall blocks UDP 443 reaches the node
+# on 53. Empty = single-port. The bootnode must listen on the same set.
+HSYNC_BOOTNODE_PORTS=""
 # Map the master TCP port with UPnP so the bootnode can relay a dialable
 # endpoint. Only effective with HSYNC_BOOTNODE set. Opt-in: set to "true" to
 # enable (default "false").

@@ -57,7 +57,7 @@ const KEYS = [
     'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
     'HSYNC_BOOTNODE', 'HSYNC_UPNP_ENABLED',
     'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU',
-    'HSYNC_BOOTNODE_TRUST',
+    'HSYNC_BOOTNODE_TRUST', 'HSYNC_BOOTNODE_PORTS',
     'HSYNC_NTP_HOSTS',
 ];
 
@@ -115,6 +115,19 @@ foreach (KEYS as $key) {
             break;
         case 'HSYNC_BUCKET':
             if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/', $val)) $val = 'hsync';
+            break;
+        case 'HSYNC_BOOTNODE_PORTS':
+            // Comma-separated UDP ports (1-65535), order preserved; invalid and
+            // duplicate entries are dropped (the client applies the same
+            // normalization on load). Empty = single-port dialing (only the
+            // bootnode/default port is tried).
+            $ports = [];
+            foreach (array_map('trim', explode(',', $val)) as $p) {
+                if ($p === '' || !preg_match('/^[0-9]{1,5}$/', $p)) continue;
+                $n = (int)$p;
+                if ($n >= 1 && $n <= 65535 && !in_array($n, $ports, true)) $ports[] = $n;
+            }
+            $val = implode(',', $ports);
             break;
         case 'HSYNC_BOOTNODE_TRUST':
             // Empty means "use the client default" (ask); otherwise a known policy.

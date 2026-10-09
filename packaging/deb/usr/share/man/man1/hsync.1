@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-06" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-10" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -306,7 +306,12 @@ Hidden option intended for GUI integration.
 Optional bootnode host for cross-network peer discovery: a bare hostname/IPv4,
 a bracketed IPv6 literal, or a
 .IR HOST : PORT
-pair (the QUIC scheme is implied); omit it to stay on mDNS only.
+pair (the QUIC scheme is implied); omit it to stay on mDNS only. Extra UDP ports
+to try for the
+.B same
+node (egress-firewall fallback) are set with
+.BR HSYNC_BOOTNODE_PORTS
+(see ENVIRONMENT).
 .TP
 .BR \-\-listen\-port =\fIPORT\fP
 Port to listen on when acting as p2p master (default: 0 = auto).
@@ -318,6 +323,8 @@ without it,
 .B \-\-port
 is refused rather than ignored. Mutually exclusive with a port given in
 .BR BOOTNODE [\fI:PORT\fP] .
+Additional ports for the same node are offered by
+.BR HSYNC_BOOTNODE_PORTS .
 .TP
 .B \-\-upnp
 Map the master TCP port with UPnP (opt\-in; off by default). Without a bootnode
@@ -664,6 +671,18 @@ No scheme or path. Unset keeps discovery on mDNS only. The QUIC port defaults to
 443; an explicit
 .B \-\-port
 overrides a port embedded here.
+.TP
+.B HSYNC_BOOTNODE_PORTS
+Comma-separated, ordered extra UDP ports to try for the
+.B same
+bootnode (multi-port dial fallback); e.g.
+.I 53
+so a client whose egress firewall blocks UDP 443 can still reach the node on
+port 53. Attempted after the bootnode/default port. The bootnode must listen on
+the same set
+.RI ( hsync\-bootnode
+.BR \-\-ports ).
+Unset keeps single-port dialing.
 .TP
 .B HSYNC_BOOTNODE_FINGERPRINT
 Comma-separated bootnode certificate fingerprint(s) to pin (up to two,

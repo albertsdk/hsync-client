@@ -284,6 +284,7 @@ def build_discovery_plan(
         refresh_interval=bootnode_refresh,
         bootnode_host=bootnode,
         bootnode_port=config.get("BOOTNODE_PORT") or BOOTNODE_DEFAULT_PORT,
+        bootnode_ports=tuple(config.get("BOOTNODE_PORTS") or ()),
         p2p_key=config.get("P2P_KEY"),
         fingerprints=config.get("BOOTNODE_FINGERPRINT", ()),
         policy=config.get("BOOTNODE_TRUST", TrustPolicy.ask),

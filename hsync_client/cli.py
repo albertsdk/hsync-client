@@ -798,7 +798,9 @@ BootnodeArg = Annotated[
     typer.Argument(
         help=(
             "Optional bootnode host for cross-network discovery, optionally "
-            "with a port (HOST[:PORT]); omit it to stay on mDNS only."
+            "with a port (HOST[:PORT]); omit it to stay on mDNS only. Extra UDP "
+            "ports to try for the SAME node (client-egress fallback, e.g. when "
+            "UDP 443 is blocked) go in HSYNC_BOOTNODE_PORTS."
         ),
         metavar="BOOTNODE[:PORT]",
     ),
@@ -810,7 +812,8 @@ BootnodePortOpt = Annotated[
         "--port",
         help=(
             f"UDP port of the remote bootnode (QUIC); default {BOOTNODE_DEFAULT_PORT}. "
-            "Mutually exclusive with a port in the BOOTNODE[:PORT] argument."
+            "Mutually exclusive with a port in the BOOTNODE[:PORT] argument. "
+            "HSYNC_BOOTNODE_PORTS adds extra ports to try for the same node."
         ),
         metavar="PORT",
         rich_help_panel="P2P Mode",
@@ -1116,6 +1119,9 @@ def p2p(
 
         [dim]# Discover peers across networks through a bootnode[/dim]
         $ hsync p2p boot.example.net -b shared
+
+        [dim]# Bootnode extra ports when your egress firewall blocks UDP 443[/dim]
+        $ HSYNC_BOOTNODE_PORTS=53 hsync p2p boot.example.net -b shared
     """
     parsed_bw_upload, parsed_bw_download = _validate_shared_options(
         http_timeout=http_timeout,

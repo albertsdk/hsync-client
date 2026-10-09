@@ -195,6 +195,145 @@ class TestLeave:
         assert "read" not in calls
 
 
+class TestMultiPort:
+    def test_candidate_ports_primary_first_deduped(self):
+        client = BootnodeClient("127.0.0.1", 443, ports=(53, 443, 80), policy=TrustPolicy.none)
+        assert client._candidate_ports() == (443, 53, 80)
+        assert BootnodeClient("127.0.0.1", 443, policy=TrustPolicy.none)._candidate_ports() == (
+            443,
+        )
+
+    def test_dial_falls_back_to_the_next_port(self, monkeypatch):
+        """A blocked UDP port (client egress firewall) falls back to the next one."""
+        attempts: list[int] = []
+
+        class _Writer:
+            def write(self, _data):
+                return None
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+        class _Manager:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def create_stream(self):
+                return object(), _Writer()
+
+        def _connect(_host, port, **_kwargs):
+            attempts.append(port)
+            if port == 443:
+                raise OSError("blocked by the egress firewall")
+            return _Manager()
+
+        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
+        client = BootnodeClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0)
+        client.leave(build_leave_frame(cid=CID, bucket="shared"))
+        assert attempts == [443, 53]
+
+    def test_working_port_is_remembered(self, monkeypatch):
+        """After a fallback succeeds, the next exchange tries that port first
+        (no re-dial of the blocked primary on every exchange)."""
+        attempts: list[int] = []
+
+        class _Writer:
+            def write(self, _data):
+                return None
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+        class _Manager:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def create_stream(self):
+                return object(), _Writer()
+
+        def _connect(_host, port, **_kwargs):
+            attempts.append(port)
+            if port == 443:
+                raise OSError("blocked by the egress firewall")
+            return _Manager()
+
+        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
+        client = BootnodeClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0)
+        client.leave(build_leave_frame(cid=CID, bucket="shared"))
+        client.leave(build_leave_frame(cid=CID, bucket="shared"))
+        # first exchange: 443 blocked then 53; second: 53 first (remembered)
+        assert attempts == [443, 53, 53]
+
+    def test_reply_timeout_does_not_fall_back(self, monkeypatch):
+        """A successful handshake pins the port: a reply timeout is a real
+        exchange failure, not a blocked-port signal. No other port is dialled
+        and no duplicate frame is sent to an already-reachable node."""
+        attempts: list[int] = []
+
+        class _Writer:
+            def write(self, _data):
+                return None
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+        class _BlockingReader:
+            async def readline(self):
+                await asyncio.sleep(3600)
+                return b""
+
+        class _Manager:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def create_stream(self):
+                return _BlockingReader(), _Writer()
+
+        def _connect(_host, port, **_kwargs):
+            attempts.append(port)
+            return _Manager()
+
+        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
+        client = BootnodeClient(
+            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=0.05
+        )
+        with pytest.raises(BootnodeUnreachable) as exc:
+            client.query(build_query_frame(bucket="shared"))
+        assert attempts == [443]  # handshake succeeded: no fallback re-dial
+        assert "timed out waiting for a response" in str(exc.value)
+
+    def test_handshake_timeout_reports_the_failed_port(self, monkeypatch):
+        """When every candidate times out in the handshake, the error names the
+        port that actually failed (not a stale/last candidate)."""
+
+        def _connect(_host, port, **_kwargs):
+            raise TimeoutError("handshake timed out")
+
+        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
+        client = BootnodeClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none)
+        with pytest.raises(BootnodeUnreachable) as exc:
+            client.query(build_query_frame(bucket="shared"))
+        assert ":53:" in str(exc.value)
+
+
 class TestQuicConfiguration:
     def test_alpn_and_no_verification_mode(self):
         # The bootnode is self-signed by contract: the handshake never verifies

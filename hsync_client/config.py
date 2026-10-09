@@ -18,6 +18,7 @@ from hsync_common.endpoint import (
     format_authority,
     parse_host_port,
     parse_https_url,
+    parse_port_list,
 )
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
@@ -172,6 +173,14 @@ class EnvSettings(BaseSettings):
         description=(
             "Bare bootnode host for cross-network discovery (QUIC/UDP, no scheme). "
             "Unset = mDNS-only discovery"
+        ),
+    )
+    bootnode_ports: str | None = Field(
+        default=None,
+        description=(
+            "Comma-separated extra UDP ports to try for the SAME bootnode (multi-port "
+            "dial fallback; e.g. '53' to also try DNS when UDP 443 is blocked by the "
+            "client egress firewall). Tried after the bootnode/default port"
         ),
     )
     bootnode_fingerprint: str | None = Field(
@@ -455,6 +464,22 @@ def get_bootnode_endpoint() -> HostPort | None:
     if not raw:
         return None
     return parse_host_port(raw)
+
+
+def get_bootnode_ports() -> tuple[int, ...]:
+    """Extra UDP ports to try for the same bootnode (multi-port dial fallback).
+
+    Parsed from ``HSYNC_BOOTNODE_PORTS`` with the shared
+    ``hsync_common.endpoint.parse_port_list`` SSOT (comma-separated, order
+    preserved, invalid/duplicate entries dropped — the lenient env policy).
+    Consumed by the bootnode client so a client whose egress firewall blocks UDP
+    443 can still reach the node on another port (e.g. 53) — the same node, one
+    routing table.
+    """
+    raw = get_env_settings().bootnode_ports
+    if not raw:
+        return ()
+    return parse_port_list(raw)
 
 
 def _parse_fingerprint_list(raw: str | None) -> tuple[str, ...]:
@@ -758,6 +783,8 @@ class HsyncConfig(TypedDict):
     BOOTNODE: str | None
     # UDP (QUIC) port of the remote bootnode
     BOOTNODE_PORT: int
+    # Extra UDP ports to try for the same bootnode (multi-port dial fallback)
+    BOOTNODE_PORTS: tuple[int, ...]
     # Bootnode certificate fingerprint(s) to pin (up to two for a rotation window)
     BOOTNODE_FINGERPRINT: tuple[str, ...]
     # Bootnode TLS trust policy (ADR-0035; default ask)

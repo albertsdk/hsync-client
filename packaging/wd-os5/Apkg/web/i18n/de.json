@@ -15,6 +15,7 @@
     "field.p2p_group": "LAN-Gruppe (optional)",
     "field.discovery_timeout": "Erkennungs-Zeitlimit (s)",
     "field.bootnode": "Bootnode (optional)",
+    "field.bootnode_ports": "Zusätzliche Bootnode-UDP-Ports (optional)",
     "field.bootnode_fingerprint": "Bootnode-Fingerprint (optional)",
     "field.bootnode_tofu": "Bootnode bei Erstnutzung vertrauen",
     "field.bootnode_trust": "Bootnode-Vertrauensrichtlinie",

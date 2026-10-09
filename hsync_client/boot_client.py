@@ -22,9 +22,9 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, TypeVar
 
 from aioquic.asyncio.client import connect
 from aioquic.quic.configuration import QuicConfiguration
@@ -150,6 +150,9 @@ def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachabl
     return BootnodeUnreachable(f"bootnode {format_authority(host, port)}: {detail}")
 
 
+_T = TypeVar("_T")
+
+
 @dataclass(frozen=True)
 class BootnodeClient:
     """Synchronous ``boot/1`` client for one bootnode.
@@ -173,6 +176,25 @@ class BootnodeClient:
     prompt: TrustPrompt | None = None
     timeout: float = 10.0
     idle_timeout: float = DEFAULT_QUIC_IDLE_TIMEOUT
+    # Ordered additional UDP ports to try for the SAME node (multi-port dial
+    # fallback): a client egress firewall may block one UDP port but allow
+    # another (BOOT_PORT_SET). ``port`` is always tried first; empty means
+    # single-port (unchanged behaviour). Declared last so the field order of the
+    # existing parameters is unchanged.
+    ports: tuple[int, ...] = ()
+    # Mutable holder for the last port on which an exchange succeeded (frozen
+    # dataclass, so the element is mutated in place). Tried first so a client
+    # behind a UDP-port-blocking egress firewall does not re-pay the QUIC idle
+    # timeout on every exchange. Excluded from eq/repr.
+    _preferred: list[int] = field(default_factory=list, compare=False, repr=False)
+
+    def _candidate_ports(self) -> tuple[int, ...]:
+        """Ordered ports to dial: the last working port first, then the rest."""
+        seen: list[int] = []
+        for candidate in (*self._preferred, self.port, *self.ports):
+            if candidate not in seen:
+                seen.append(candidate)
+        return tuple(seen)
 
     def register(self, frame: BootRegister) -> BootAck | None:
         """Send ``register``; return the ``ack`` (STUN-echo) or ``None`` if dropped."""
@@ -211,20 +233,78 @@ class BootnodeClient:
         except OSError as exc:
             raise _unreachable(self.host, self.port, exc) from exc
 
-    async def _fetch_fingerprint_async(self) -> str:
+    async def _with_connection(
+        self, action: Callable[[Any], Awaitable[_T]], *, what: str = "reply"
+    ) -> _T:
+        """Dial the first reachable candidate port and run *action* on it.
+
+        Candidates are tried in order (the last working port first, then the
+        configured set). Only a failed **connection** (handshake) falls back to
+        the next candidate: that is the client-egress-firewall case, where one
+        UDP port is blocked but another reaches the SAME node. Once the handshake
+        succeeds the port is reachable by definition, so an error or timeout
+        raised by *action* is a real exchange failure and is propagated without
+        re-dialling (no duplicate frame is sent to an already-reachable node).
+
+        The port on which *action* succeeds is remembered so a later exchange
+        skips a blocked one; a trust/protocol failure is never a fallback signal
+        either, because :class:`BootnodeError` is not ``OSError``/``TimeoutError``.
+        """
         configuration = self._quic_configuration()
-        async with connect(
-            self.host,
-            self.port,
-            configuration=configuration,
-            wait_connected=True,
-        ) as client:
+        candidates = self._candidate_ports()
+        last_exc: BaseException | None = None
+        failed_port: int | None = None
+        for port in candidates:
+            connected = False
+            try:
+                async with connect(
+                    self.host,
+                    port,
+                    configuration=configuration,
+                    wait_connected=True,
+                ) as client:
+                    connected = True
+                    result = await action(client)
+            except (OSError, TimeoutError) as exc:
+                if connected:
+                    # The handshake succeeded: the port is reachable, so this is
+                    # a real exchange failure, not a blocked-port signal. Never
+                    # fall back; keep the concise timeout message the caller had
+                    # before multi-port (a bare TimeoutError would lose ``what``).
+                    if isinstance(exc, TimeoutError):
+                        raise BootnodeUnreachable(
+                            f"bootnode {format_authority(self.host, port)}: "
+                            f"timed out waiting for a {what}"
+                        ) from exc
+                    raise
+                last_exc = exc
+                failed_port = port
+                continue
+            self._preferred[:] = [port]
+            return result
+        # Every candidate failed at the connection phase.
+        if last_exc is None:  # defensive: ``candidates`` always holds ``self.port``
+            raise BootnodeUnreachable(
+                f"bootnode {format_authority(self.host, self.port)}: no reachable port"
+            )
+        if isinstance(last_exc, TimeoutError):
+            port = failed_port if failed_port is not None else self.port
+            raise BootnodeUnreachable(
+                f"bootnode {format_authority(self.host, port)}: timed out waiting for a {what}"
+            ) from last_exc
+        raise last_exc
+
+    async def _fetch_fingerprint_async(self) -> str:
+        async def _read(client: Any) -> str:
             cert = _peer_certificate(client)
             if cert is None:
                 raise BootnodeFingerprintMismatch(
-                    f"bootnode {format_authority(self.host, self.port)}: could not read the peer certificate"
+                    f"bootnode {format_authority(self.host, self.port)}: "
+                    "could not read the peer certificate"
                 )
             return compute_cert_fingerprint(cert)
+
+        return await self._with_connection(_read)
 
     def _ack_exchange(self, frame: BootRegister | BootRefresh) -> BootAck | None:
         raw = self._exchange(frame, expect="ack", refusal=True)
@@ -290,41 +370,32 @@ class BootnodeClient:
         return raw
 
     async def _exchange_async(self, payload: bytes, *, expect: str | None) -> dict | None:
-        configuration = self._quic_configuration()
-        try:
-            async with connect(
-                self.host,
-                self.port,
-                configuration=configuration,
-                wait_connected=True,
-            ) as client:
-                # Verify the peer certificate *before* opening a stream: the
-                # bucket_token travels in the frame, so trust is decided pre-write.
-                self._verify_peer(client)
-                reader, writer = await client.create_stream()
-                writer.write(payload + b"\n")
-                await writer.drain()
-                if expect is None:
-                    # e.g. ``leave``: the spec defines no response frame, so the
-                    # server keeps the stream open and never writes. Do not wait
-                    # for a reply that will not come.
-                    writer.close()
-                    return None
-                line = await asyncio.wait_for(_read_line(reader), timeout=self.timeout)
+        async def _run(client: Any) -> dict | None:
+            # Verify the peer certificate *before* opening a stream: the
+            # bucket_token travels in the frame, so trust is decided pre-write.
+            self._verify_peer(client)
+            reader, writer = await client.create_stream()
+            writer.write(payload + b"\n")
+            await writer.drain()
+            if expect is None:
+                # e.g. ``leave``: the spec defines no response frame, so the
+                # server keeps the stream open and never writes. Do not wait
+                # for a reply that will not come.
                 writer.close()
-        except TimeoutError as exc:
-            raise BootnodeUnreachable(
-                f"bootnode {format_authority(self.host, self.port)}: timed out waiting for a {expect or 'reply'}"
-            ) from exc
-        if line is None:
-            return None
-        try:
-            decoded = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise BootnodeProtocolError("reply is not valid JSON") from exc
-        if not isinstance(decoded, dict):
-            raise BootnodeProtocolError("reply is not a JSON object")
-        return decoded
+                return None
+            line = await asyncio.wait_for(_read_line(reader), timeout=self.timeout)
+            writer.close()
+            if line is None:
+                return None
+            try:
+                decoded = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise BootnodeProtocolError("reply is not valid JSON") from exc
+            if not isinstance(decoded, dict):
+                raise BootnodeProtocolError("reply is not a JSON object")
+            return decoded
+
+        return await self._with_connection(_run, what=expect or "reply")
 
     def _quic_configuration(self) -> QuicConfiguration:
         configuration = QuicConfiguration(

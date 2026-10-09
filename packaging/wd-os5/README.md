@@ -150,6 +150,7 @@ option to configure.
 | Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
 | Bootnode (optional) | `HSYNC_BOOTNODE` env var                       | _empty_ (discovery stays on the local network; set the same host on every device) |
 | Bootnode fingerprint | `HSYNC_BOOTNODE_FINGERPRINT` env var           | _empty_ (no pin; the NAS has no terminal, so set a policy or a pin explicitly) |
+| Bootnode extra UDP ports | `HSYNC_BOOTNODE_PORTS` env var             | _empty_ (single-port dialing; e.g. `53` lets a client whose egress firewall blocks UDP 443 reach the same node on 53; the bootnode must listen on the same set with `--ports`) |
 | Bootnode TOFU       | `HSYNC_BOOTNODE_TOFU` env var                  | `false` (trust the bootnode certificate on first use when `true`) |
 | Bootnode trust policy | `HSYNC_BOOTNODE_TRUST` env var               | empty = client default (`ask`); one of `ask`, `accept-new`, `strict`, `none` |
 | UPnP port mapping   | `HSYNC_UPNP_ENABLED` env var                   | `false` (opt-in; only effective with a bootnode) |

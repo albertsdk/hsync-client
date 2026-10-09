@@ -15,6 +15,7 @@
     "field.p2p_group": "Groupe p2p (optionnel)",
     "field.discovery_timeout": "Délai de découverte (s)",
     "field.bootnode": "Bootnode (facultatif)",
+    "field.bootnode_ports": "Ports UDP supplémentaires du bootnode (facultatif)",
     "field.bootnode_fingerprint": "Empreinte du bootnode (facultatif)",
     "field.bootnode_tofu": "Faire confiance au bootnode au premier usage",
     "field.bootnode_trust": "Politique de confiance du bootnode",

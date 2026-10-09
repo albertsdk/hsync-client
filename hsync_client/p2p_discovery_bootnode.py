@@ -82,6 +82,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         *,
         bootnode_host: str,
         bootnode_port: int = BOOTNODE_DEFAULT_PORT,
+        bootnode_ports: tuple[int, ...] = (),
         port: int = HSYNC_P2P_LISTEN_PORT,
         group: str | None = None,
         use_https: bool = True,
@@ -130,6 +131,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._client: Any = client_factory(
             bootnode_host,
             bootnode_port,
+            ports=bootnode_ports,
             fingerprints=fingerprints,
             policy=policy,
             prompt=prompt,

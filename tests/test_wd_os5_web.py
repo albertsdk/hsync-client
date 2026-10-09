@@ -113,3 +113,28 @@ def test_i18n_has_server_field_in_all_locales() -> None:
     for locale in ("en", "it", "de", "es", "fr"):
         data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
         assert data.get("field.server"), locale
+
+
+def test_bootnode_ports_field_is_wired_end_to_end() -> None:
+    """``HSYNC_BOOTNODE_PORTS`` is exposed, whitelisted, validated and exported."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="HSYNC_BOOTNODE_PORTS"' in html
+
+    for name in ("config_get.php", "config_set.php"):
+        text = (WEB / name).read_text(encoding="utf-8")
+        assert "HSYNC_BOOTNODE_PORTS" in text, name
+
+    php = (WEB / "config_set.php").read_text(encoding="utf-8")
+    assert "case 'HSYNC_BOOTNODE_PORTS':" in php
+
+    start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
+    assert "export HSYNC_BOOTNODE_PORTS" in start
+
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "'HSYNC_BOOTNODE_PORTS'" in app  # CONNECT_FIELDS + generated env prefix
+
+    import json
+
+    for locale in ("en", "it", "de", "es", "fr"):
+        data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
+        assert data.get("field.bootnode_ports"), locale

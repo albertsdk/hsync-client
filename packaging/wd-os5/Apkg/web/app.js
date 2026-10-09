@@ -32,7 +32,7 @@
 
     // Fields whose values are interpolated into the generated connect command;
     // editing any of them must re-render the section.
-    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_BOOTNODE', 'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU', 'HSYNC_BOOTNODE_TRUST'];
+    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_BOOTNODE', 'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU', 'HSYNC_BOOTNODE_TRUST', 'HSYNC_BOOTNODE_PORTS'];
 
     function isConnectField(id) {
         return CONNECT_FIELDS.includes(id);
@@ -205,11 +205,14 @@
         const tofu = !!tofuEl && tofuEl.checked;
         const trustEl = $('#HSYNC_BOOTNODE_TRUST');
         const trust = trustEl ? trustEl.value : '';
+        const portsEl = $('#HSYNC_BOOTNODE_PORTS');
+        const ports = portsEl ? portsEl.value.trim() : '';
         let envPrefix = '';
         if (bootnode) envPrefix += 'HSYNC_BOOTNODE=' + shellQuote(bootnode) + ' ';
         if (fp) envPrefix += 'HSYNC_BOOTNODE_FINGERPRINT=' + shellQuote(fp) + ' ';
         if (tofu) envPrefix += 'HSYNC_BOOTNODE_TOFU=true ';
         if (trust) envPrefix += 'HSYNC_BOOTNODE_TRUST=' + shellQuote(trust) + ' ';
+        if (ports) envPrefix += 'HSYNC_BOOTNODE_PORTS=' + shellQuote(ports) + ' ';
         if (envPrefix) cmd = envPrefix + cmd;
 
         const showKey = key.length > 0;

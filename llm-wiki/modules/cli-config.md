@@ -72,7 +72,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `set_config` | `config.py::set_config` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
 | `set_debug` / `is_debug` | `config.py::set_debug` / `config.py::is_debug` | debug flag |
 | `load_env_file` | `config.py::load_env_file` | dotenv loader |
-| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_bootnode_tofu`), guard getters, delta getters, etc. |
+| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_bootnode_tofu`, `get_bootnode_ports`), guard getters, delta getters, etc. |
 
 The `p2p` subcommand takes an optional positional `BOOTNODE` (`HOST[:PORT]`) plus
 `--port` (bootnode UDP, default 443) and `--upnp` (opt-in; off by default);
@@ -83,6 +83,18 @@ The source(s) are selected in `p2p_discovery.build_discovery_plan`
 (`config["BOOTNODE"]` unset → mDNS only, set → `HybridDiscovery` running mDNS
 **and** bootnode over one shared `PeerManager`), so `p2p_handler.run_p2p_mode`
 only sees the `DiscoveryPlan` surface.
+
+Multi-port dial fallback: `HSYNC_BOOTNODE_PORTS`
+(`config.py::get_bootnode_ports`, a thin lenient wrapper over the shared
+`hsync_common.endpoint.parse_port_list` SSOT) adds extra UDP ports to try for the
+SAME bootnode; `BootnodeClient` (`boot_client.py::_with_connection`) dials the last
+working port first (then the primary and extras) and falls back only on a
+**handshake** failure — the blocked-port signal — so a client whose egress
+firewall blocks UDP 443 reaches the node on another port (e.g. 53) and every
+later exchange skips the blocked one. Once the handshake succeeds the port is
+reachable, so a reply timeout or a trust/protocol error propagates without
+re-dialling. The wire is unchanged and trust stays a single pin (shared fleet
+identity), so the fallback never re-prompts.
 
 The bootnode endpoint is `HSYNC_BOOTNODE` (the `_validate_bootnode_host`
 validator accepts `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via the shared

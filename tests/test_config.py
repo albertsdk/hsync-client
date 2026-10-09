@@ -137,6 +137,21 @@ class TestEnvSettings:
         get_env_settings.cache_clear()
         assert EnvSettings().bootnode == "::1"
 
+    def test_bootnode_ports_parsed_ordered_and_validated(self, monkeypatch):
+        """``HSYNC_BOOTNODE_PORTS`` is an ordered extra-port set; bad/dupes dropped."""
+        from hsync_client.config import get_bootnode_ports
+
+        monkeypatch.setenv("HSYNC_BOOTNODE_PORTS", "53, 8443, 53, nope, 0, 70000")
+        get_env_settings.cache_clear()
+        assert get_bootnode_ports() == (53, 8443)
+
+    def test_bootnode_ports_unset_is_empty(self, monkeypatch):
+        from hsync_client.config import get_bootnode_ports
+
+        monkeypatch.delenv("HSYNC_BOOTNODE_PORTS", raising=False)
+        get_env_settings.cache_clear()
+        assert get_bootnode_ports() == ()
+
     def test_bootnode_fingerprint_parses_and_validates(self, monkeypatch):
         from hsync_client.config import get_bootnode_fingerprints
 

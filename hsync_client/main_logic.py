@@ -29,6 +29,7 @@ from hsync_client.config import (
     get_api_key,
     get_autotune_enabled,
     get_bootnode_fingerprints,
+    get_bootnode_ports,
     get_bootnode_refresh_interval,
     get_bootnode_tofu,
     get_bootnode_trust,
@@ -1063,6 +1064,7 @@ def run_sync(
         "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
         "BOOTNODE": p2p_bootnode,
         "BOOTNODE_PORT": p2p_bootnode_port or BOOTNODE_DEFAULT_PORT,
+        "BOOTNODE_PORTS": get_bootnode_ports(),
         # Bootnode TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
         "BOOTNODE_FINGERPRINT": bootnode_fingerprints or get_bootnode_fingerprints(),
         "BOOTNODE_TRUST": _resolve_bootnode_trust(
