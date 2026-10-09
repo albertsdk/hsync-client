@@ -43,7 +43,7 @@ module attribute (`autotune_mod._bw_ema`), not via a value import, to avoid
 stale snapshots.
 
 **Active (startup fallback)**: `measure_bandwidth_active(server_url, size_bytes)`
-GETs `/health?size=<size_bytes>` (default 256 KB, server-capped at 1 MB) and
+GETs `/health?size=<size_bytes>` (default 256 KB, server-capped at 256 KB) and
 measures throughput from the returned payload. It runs **only at startup**,
 when the passive EMA has no data yet (`_bw_ema is None`) and a real server URL
 is configured (skipped for the LAN placeholder).
