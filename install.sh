@@ -19,6 +19,9 @@ Install the HSYNC client binary.
 
 Usage: ./install.sh [options]
 
+When installing from the release download, forward options to bash (not curl):
+  curl -fsSL "https://github.com/${REPO}/releases/latest/download/install.sh" | bash -s -- [options]
+
 Options:
   --version VERSION       Release version to install, or 'latest' to resolve the
                           latest stable release automatically (default: ${DEFAULT_VERSION})

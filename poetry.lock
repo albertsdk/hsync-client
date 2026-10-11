@@ -1122,7 +1122,7 @@ files = [
 
 [[package]]
 name = "hsync-common"
-version = "1.0.2"
+version = "1.0.3"
 description = "HSYNC Common - shared models, constants, and compression utilities"
 optional = false
 python-versions = ">=3.12,<3.15"
@@ -1144,7 +1144,7 @@ url = "../hsync-common"
 
 [[package]]
 name = "hsync-server"
-version = "1.0.2"
+version = "1.0.3"
 description = "HSYNC File Server"
 optional = false
 python-versions = ">=3.12,<3.15"
@@ -1156,7 +1156,7 @@ develop = true
 aiofiles = ">=25.1.0,<26.0.0"
 cryptography = ">=50.0.2,<51.0.0"
 fastapi = ">=0.141.1,<0.142.0"
-hsync-common = "1.0.2"
+hsync-common = "1.0.3"
 loguru = ">=0.7.3,<0.8.0"
 prometheus-fastapi-instrumentator = ">=8.1.0,<9.0.0"
 pydantic-settings = ">=2.12.0,<3.0.0"
@@ -3495,4 +3495,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "b43bc41b9f5484a257b4795d91a475aa3c962893bb61284f77ccbadf707dda3a"
+content-hash = "c92403e6ca3b0a7815092c17e26b10a72750e21753de2ab38116d523fb647630"
