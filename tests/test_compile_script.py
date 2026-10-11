@@ -131,3 +131,16 @@ def test_docs_latest_download_names_are_created_by_the_release() -> None:
     aliases = set(re.findall(r'\|([A-Za-z0-9._-]+)"', workflow))
     missing = sorted(n for n in names if n not in aliases)
     assert not missing, f"docs reference latest aliases the workflow does not create: {missing}"
+
+
+def test_pyinstaller_lookup_is_windows_aware() -> None:
+    """Windows venvs put console scripts under ``Scripts/`` (with a ``.exe``
+    suffix), not ``bin/``. A hardcoded ``bin/`` path made the native Windows
+    release build abort with "PyInstaller not found" although Poetry had
+    installed it: ``release.yml`` runs ``poetry install`` then ``./compile.sh``
+    without activating the venv, so the PATH fallback misses too.
+    """
+    script = _script()
+    assert 'if [[ "${OS_NAME}" == "windows" ]]; then' in script
+    assert 'PYINSTALLER="${VENV_DIR}/Scripts/pyinstaller.exe"' in script
+    assert 'PYINSTALLER="${VENV_DIR}/bin/pyinstaller"' in script
