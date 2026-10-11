@@ -119,8 +119,13 @@ jobs:
         working-directory: hsync-client
         shell: pwsh
         run: |
-          choco install innosetup imagemagick -y --no-progress
-          $magick = "C:\ProgramData\chocolatey\bin\magick.exe"
+          choco install innosetup -y --no-progress
+          # The runner image may already ship ImageMagick, leaving the
+          # Chocolatey shim absent; force a reinstall and resolve magick from
+          # the PATH instead of a hardcoded shim path.
+          choco install imagemagick -y --no-progress --force
+          $magick = (Get-Command magick.exe -ErrorAction SilentlyContinue).Source
+          if (-not $magick) { throw "ImageMagick (magick.exe) not found after install" }
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $magick "packaging/wd-os5/Apkg/web/hsync.png" -define icon:auto-resize=256,128,64,48,32,16 "packaging/windows/icon.ico"
           $vi = "${{ steps.version.outputs.version }}" -replace '-.*$','' -replace '\+.*$',''
