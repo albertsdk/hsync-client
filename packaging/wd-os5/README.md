@@ -224,9 +224,11 @@ explaining how to point another device at the same server and bucket.
 
 ## Locales
 
-The web UI ships with the same five locales as the desktop / Android clients:
-**EN, IT, DE, ES, FR**. Language is auto-detected from
-`navigator.language` and can be overridden from the UI header.
+The web UI ships with the same eleven locales as the desktop client:
+**EN, IT, DE, ES, FR, JA, NL, PL, PT, RU, ZH**. Language is auto-detected from
+`navigator.language` and can be overridden from the UI header. The language list
+is defined once in `Apkg/web/app.js` (`SUPPORTED`); every entry must have a
+matching `Apkg/web/i18n/<code>.json` dictionary (enforced by the test suite).
 
 ## Log viewer
 

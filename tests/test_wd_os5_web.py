@@ -42,6 +42,15 @@ def test_bucket_pattern_is_v_flag_safe() -> None:
 PKG = PROJECT_ROOT / "packaging" / "wd-os5"
 WEB = PKG / "Apkg" / "web"
 I18N = WEB / "i18n"
+APP_JS = WEB / "app.js"
+_SUPPORTED_RE = re.compile(r"const SUPPORTED = \[([^\]]*)\]")
+
+
+def _supported_locales() -> list[str]:
+    """Read the language list from app.js so the tests track the single source."""
+    match = _SUPPORTED_RE.search(APP_JS.read_text(encoding="utf-8"))
+    assert match is not None, "SUPPORTED not found in app.js"
+    return re.findall(r"'([^']+)'", match.group(1))
 
 
 def test_bootnode_fields_present_in_ui() -> None:
@@ -62,7 +71,7 @@ def test_php_config_whitelists_bootnode_keys() -> None:
 def test_i18n_has_bootnode_keys_in_all_locales() -> None:
     import json
 
-    for locale in ("en", "it", "de", "es", "fr"):
+    for locale in _supported_locales():
         data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
         assert data.get("field.bootnode"), locale
         assert data.get("field.upnp"), locale
@@ -110,7 +119,7 @@ def test_server_input_is_text_not_url() -> None:
 def test_i18n_has_server_field_in_all_locales() -> None:
     import json
 
-    for locale in ("en", "it", "de", "es", "fr"):
+    for locale in _supported_locales():
         data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
         assert data.get("field.server"), locale
 
@@ -135,6 +144,47 @@ def test_bootnode_ports_field_is_wired_end_to_end() -> None:
 
     import json
 
-    for locale in ("en", "it", "de", "es", "fr"):
+    for locale in _supported_locales():
         data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
         assert data.get("field.bootnode_ports"), locale
+
+
+def test_i18n_dictionaries_cover_every_supported_locale() -> None:
+    """Every language in app.js SUPPORTED has a complete i18n dictionary.
+
+    Guards against adding a language to the selector without shipping its
+    translations (the UI would fall back to the English ``data-i18n`` defaults)
+    and against a dictionary drifting from the English key set.
+    """
+    import json
+
+    locales = _supported_locales()
+    assert locales, "app.js exposes no supported languages"
+    assert "en" in locales, "English must remain a supported language"
+
+    reference = json.loads((I18N / "en.json").read_text(encoding="utf-8"))
+    assert reference, "en.json is empty"
+
+    for locale in locales:
+        path = I18N / f"{locale}.json"
+        assert path.exists(), f"missing i18n dictionary for {locale!r}"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        missing = sorted(set(reference) - set(data))
+        extra = sorted(set(data) - set(reference))
+        assert not missing and not extra, (
+            f"{locale}.json keys differ from en.json: missing={missing} extra={extra}"
+        )
+        empty = [
+            key for key, value in data.items() if not isinstance(value, str) or not value.strip()
+        ]
+        assert not empty, f"{locale}.json has empty values: {empty}"
+
+
+def test_language_selector_has_native_names_for_every_locale() -> None:
+    """The selector shows the desktop-style native names, one per language."""
+    app = APP_JS.read_text(encoding="utf-8")
+    match = re.search(r"const LANGUAGE_NAMES = \{(.*?)\n    \};", app, re.DOTALL)
+    assert match is not None, "LANGUAGE_NAMES not found in app.js"
+    names = dict(re.findall(r"(\w+):\s*'([^']*)'", match.group(1)))
+    for locale in _supported_locales():
+        assert names.get(locale), f"missing native name for {locale!r}"
