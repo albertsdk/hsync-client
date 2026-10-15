@@ -218,7 +218,9 @@ shows the decision flow each peer runs independently:
 ```mermaid
 flowchart TD
     START["All candidates"] --> NM["Exclude never_master peers"]
-    NM --> FM{"Any peer with<br/>prefer_master?"}
+    NM --> SR{"Any peer with<br/>server_ready?"}
+    SR -->|"Yes"| SR_WIN["Serving incumbent wins"]
+    SR -->|"No"| FM{"Any peer with<br/>prefer_master?"}
     FM -->|"Yes"| FM_WIN["prefer_master peer wins"]
     FM -->|"No"| BIDIR{"Any peer with<br/>bidirectional sync?"}
     BIDIR -->|"Yes"| BIDIR_POOL["Filter: bidirectional peers only"]
@@ -228,6 +230,7 @@ flowchart TD
     STARTUP -->|"Different"| EARLIEST["Earliest startup wins"]
     STARTUP -->|"Same"| CID["Lowest CID wins"]
 
+    style SR_WIN fill:#e8f5e9,stroke:#2e7d32
     style FM_WIN fill:#e8f5e9,stroke:#2e7d32
     style EARLIEST fill:#e8f5e9,stroke:#2e7d32
     style CID fill:#e8f5e9,stroke:#2e7d32

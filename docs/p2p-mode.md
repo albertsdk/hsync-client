@@ -343,7 +343,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 | Priority | Criterion | Description |
 |----------|-----------|-------------|
 | 1 | `server_ready` (incumbent) | An already-serving master keeps the role, so a newcomer never disrupts it |
-| 2 | `prefer_master` | An operator-pinned master wins over ordinary peers (but **not** over a serving incumbent) |
+| 2 | `prefer_master` | An operator-preferred master wins over ordinary peers (but **not** over a serving incumbent) |
 | 3 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
 | 4 | **Earliest startup** | Among equal peers, the one that started first wins |
 | 5 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
@@ -355,7 +355,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 
 **Rules:**
 - The `sync_direction`, `never_master`, `prefer_master`, `server_ready` and `startup_time` flags of each peer are shared during discovery — through mDNS TXT records on a local network, and through the bootnode when the group uses one — so the same election runs in both cases
-- A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--prefer-master`; the pin wins once both are at parity on readiness
+- A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--prefer-master`; the preference wins once both are at parity on readiness
 - `--prefer-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
 - `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)
 - `--never-master` is **incompatible** with `--prefer-master` — the client will refuse to start
