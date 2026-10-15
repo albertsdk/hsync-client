@@ -65,6 +65,7 @@ from hsync_client.config import (
     get_delta_min_file_size_p2p,
 )
 from hsync_client.exceptions import ServerError
+from hsync_client.progress import ProgressReporter
 from hsync_client.sync_state import get_base_hash, resolve_upload_version_fields
 from hsync_client.utils import (
     get_ssl_verify,
@@ -415,16 +416,24 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
                 declared_size if isinstance(declared_size, int) else 0,
                 CONFIG.get("MAX_INBOUND_SIZE", 0),
             )
+            # Progress tracks the literal payload crossing the wire (the
+            # peer-declared data_size), not the reconstructed file size: a delta
+            # only transfers the changed blocks.
+            reporter = ProgressReporter(
+                ctx.local_path, declared_size if isinstance(declared_size, int) else 0
+            )
             response.raw.decode_content = False
             try:
                 with open(payload_path, "wb") as payload_file:
+                    written = 0
                     if is_compressed:
                         for chunk in decompress_stream(
                             response.raw, max_output_size=write_cap if write_cap is not None else 0
                         ):
+                            written += len(chunk)
                             payload_file.write(chunk)
+                            reporter.update(written)
                     else:
-                        written = 0
                         for chunk in response.iter_content(chunk_size=256 * 1024):
                             if not chunk:
                                 break
@@ -432,6 +441,7 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
                             if write_cap is not None and written > write_cap:
                                 raise DeltaTransferError("payload exceeds size cap")
                             payload_file.write(chunk)
+                            reporter.update(written)
                     payload_file.flush()
                     fsync(payload_file.fileno())
             except zstd.ZstdError as exc:

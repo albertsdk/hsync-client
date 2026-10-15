@@ -369,11 +369,27 @@ class TestDownloadDelta:
         f = File(filepath="big.bin", size=len(new), sha256sum=sha256(bytes(new)).hexdigest())
         ctx = prepare_delta_download(f, abs_path)
         assert ctx is not None
+
+        events: list[tuple] = []
+        from hsync_client import progress as progress_mod
+
+        monkeypatch.setattr(
+            progress_mod, "emit_event", lambda name, **kw: events.append((name, kw))
+        )
         download_file_delta(f, ctx)
+
         assert Path(abs_path).read_bytes() == bytes(new)
         # No leftovers
         assert not Path(f"{abs_path}.delta.part").exists()
         assert not Path(f"{abs_path}.delta.part.lit").exists()
+
+        from hsync_client.events import UiEventName
+
+        progress_events = [kw for name, kw in events if name == UiEventName.progress]
+        assert progress_events, "delta download must emit progress"
+        assert progress_events[-1]["file"] == abs_path
+        assert progress_events[-1]["total"] == len(literals)
+        assert progress_events[-1]["transferred"] == len(literals)
 
     def test_delta_false_is_recoverable(self, client_config, tmp_path, monkeypatch):
         base = _base_bytes()
