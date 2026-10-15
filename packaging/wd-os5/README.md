@@ -136,7 +136,7 @@ option to configure.
 | ------------------- | ---------------------------------------------- | -------------------------------- |
 | Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
 | Mode                | `hsync p2p` vs `hsync server <hostname>`      | LAN                              |
-| Role                | `--force-master` + `--sync-direction`          | Master (NAS coordinates the group) |
+| Role                | `--prefer-master` + `--sync-direction`          | Master (NAS coordinates the group) |
 | Bucket              | `-b / --bucket`                                | `hsync`                          |
 | LAN shared key      | `HSYNC_P2P_KEY` env var                        | random 192-bit value generated at install |
 | Strict pairing      | `--require-pairing`                            | off                              |
@@ -185,7 +185,7 @@ The role selector maps to the existing CLI primitives:
 | Role        | Flags                                           | Meaning                              |
 | ----------- | ----------------------------------------------- | ------------------------------------ |
 | Auto        | _(none)_                                        | Bidirectional, automatic election    |
-| Master      | `--force-master`                                | NAS coordinates the sync group       |
+| Master      | `--prefer-master`                                | NAS coordinates the sync group       |
 | Slave       | `--sync-direction download-only`                | NAS is a read-only replica           |
 | Never master| `--never-master`                                | Syncs both ways but never becomes master |
 

@@ -893,11 +893,11 @@ GroupOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
-ForceMasterOpt = Annotated[
+PreferMasterOpt = Annotated[
     bool,
     typer.Option(
-        "--force-master",
-        help="Force this client to always be master in P2P mode.",
+        "--prefer-master",
+        help="Prefer this client as master in P2P mode.",
         rich_help_panel="P2P Mode",
     ),
 ]
@@ -1054,7 +1054,7 @@ def p2p(
     p2p_listen_port: ListenPortOpt = 0,
     discovery_timeout: DiscoveryTimeoutOpt = None,
     p2p_group: GroupOpt = None,
-    force_master: ForceMasterOpt = False,
+    prefer_master: PreferMasterOpt = False,
     never_master: NeverMasterOpt = False,
     require_pairing: RequirePairingOpt = False,
     allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
@@ -1111,8 +1111,8 @@ def p2p(
         [dim]# Basic P2P sync[/dim]
         $ hsync p2p -b shared
 
-        [dim]# Force this peer to be the master[/dim]
-        $ hsync p2p -b shared --force-master
+        [dim]# Prefer this peer as the master[/dim]
+        $ hsync p2p -b shared --prefer-master
 
         [dim]# Isolate a sync group and authenticate it[/dim]
         $ HSYNC_P2P_KEY=mysecret hsync p2p -b shared --group home
@@ -1145,18 +1145,18 @@ def p2p(
     if discovery_timeout is not None and discovery_timeout < 0:
         raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
 
-    # --force-master is incompatible with directional sync (upload/download-only)
-    if force_master and sync_direction != "bidirectional":
+    # --prefer-master is incompatible with directional sync (upload/download-only)
+    if prefer_master and sync_direction != "bidirectional":
         raise typer.BadParameter(
-            f"--force-master is incompatible with --sync-direction={sync_direction}. "
+            f"--prefer-master is incompatible with --sync-direction={sync_direction}. "
             f"The P2P master always operates in bidirectional mode."
         )
 
-    # --force-master and --never-master are mutually exclusive (contradictory)
-    if force_master and never_master:
+    # --prefer-master and --never-master are mutually exclusive (contradictory)
+    if prefer_master and never_master:
         raise typer.BadParameter(
-            "--force-master and --never-master are mutually exclusive: a client "
-            "cannot be forced to be master and forbidden from being master at once."
+            "--prefer-master and --never-master are mutually exclusive: a client "
+            "cannot both prefer the master role and be forbidden from it."
         )
 
     # Resolve the bootnode endpoint from the CLI positional, then the env
@@ -1238,7 +1238,7 @@ def p2p(
         bootnode_trust=bootnode_trust,
         discovery_timeout=discovery_timeout,
         p2p_group=p2p_group,
-        force_master=force_master,
+        prefer_master=prefer_master,
         never_master=never_master,
         p2p_require_pairing=require_pairing,
         p2p_peer_download_enabled=not no_peer_download,
@@ -1675,7 +1675,7 @@ def server(
         p2p_listen_port=0,
         discovery_timeout=None,
         p2p_group=None,
-        force_master=False,
+        prefer_master=False,
         never_master=False,
         p2p_require_pairing=False,
         p2p_peer_download_enabled=False,

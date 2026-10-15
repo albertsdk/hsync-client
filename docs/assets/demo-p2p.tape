@@ -4,7 +4,7 @@
 #   vhs docs/assets/demo-p2p.tape
 #
 # The tape simulates two devices on one machine (stacked tmux panes):
-#   top pane    = Device A (master, --force-master)
+#   top pane    = Device A (master, --prefer-master)
 #   bottom pane = Device B (client, discovers A via mDNS, receives the file)
 #
 # hello.txt is NOT created up front. demo-p2p.sh launches a background watcher
@@ -58,7 +58,7 @@ Sleep 400ms
 # command matches the documented quickstart. HSYNC_READY_FILE makes the master
 # write its PID to /tmp/hsync-a.ready once its HTTP+WSS servers and filesystem
 # watcher are up, which is what the watcher waits for before creating hello.txt.
-Type "hsync p2p -b mybucket -p /tmp/hsync-a --force-master" Enter
+Type "hsync p2p -b mybucket -p /tmp/hsync-a --prefer-master" Enter
 Sleep 6000ms
 
 # --- Device B (bottom pane): joins, discovers A via mDNS ----------------------

@@ -185,7 +185,7 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Typer forces a colored terminal whenever ``GITHUB_ACTIONS`` (or
     ``FORCE_COLOR``/``PY_COLORS``) is set, so on CI its Rich highlighter wraps
-    option names like ``--force-master`` in ANSI codes, splitting the substring
+    option names like ``--prefer-master`` in ANSI codes, splitting the substring
     and breaking assertions on ``result.output``. That decision is baked into
     ``typer.rich_utils.FORCE_TERMINAL`` at import time, so clearing the env vars
     later is useless; instead we override the module global, which

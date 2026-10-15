@@ -48,7 +48,7 @@ def _make_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "REMOTE_BUCKET": "test-bucket",
         "P2P_LISTEN_PORT": 9000,
         "P2P_GROUP": None,
-        "P2P_FORCE_MASTER": False,
+        "P2P_PREFER_MASTER": False,
         "P2P_NEVER_MASTER": False,
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),

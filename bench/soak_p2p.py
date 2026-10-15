@@ -64,7 +64,7 @@ def run(args: argparse.Namespace) -> int:
         master_dir.mkdir()
         slave_dir.mkdir()
         bucket = f"soak-lan-{uuid.uuid4().hex[:8]}"
-        master = _p2p_start(str(master_dir), bucket, force_master=True)
+        master = _p2p_start(str(master_dir), bucket, prefer_master=True)
         slave = None
         try:
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=30), (

@@ -45,7 +45,7 @@ class TestP2PGroupFiltering:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_args=("--group", "group-alpha"),
         )
         try:
@@ -82,7 +82,7 @@ class TestP2PGroupFiltering:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_args=("--group", "group-alpha"),
         )
         try:
@@ -128,7 +128,7 @@ class TestP2PCompression:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_args=("--no-compression",),
         )
         try:
@@ -158,7 +158,7 @@ class TestP2PDelta:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_args=("--no-delta",),
         )
         try:
@@ -186,7 +186,7 @@ class TestP2PPeriodicResync:
         """Slave with --interval triggers a periodic full resync after the
         configured interval, observable in its log output."""
         # Given a serving master and a slave with --interval 20
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -239,7 +239,7 @@ class TestP2PHiddenFiles:
         ``hsync_common.constants.DEFAULT_IGNORE_PATTERNS``.
         """
         # Given a master with one file per default-ignored family
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -276,7 +276,7 @@ class TestP2PKeyless:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_env={"HSYNC_P2P_KEY": None},
         )
         try:
@@ -343,8 +343,8 @@ class TestP2PBucketIsolation:
         other_bucket = f"lan-bb-{uuid.uuid4().hex[:10]}"
         other_dir = tmp_path / "other"
 
-        # Given a force-master and a never-master peer sharing bucket A
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        # Given a prefer-master and a never-master peer sharing bucket A
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
             slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)

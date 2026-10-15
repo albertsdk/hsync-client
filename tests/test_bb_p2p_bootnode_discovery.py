@@ -37,7 +37,7 @@ class TestBootnodeDiscovery:
     def test_peers_discover_and_sync_through_bootnode(
         self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
     ):
-        """A force-master and a never-master peer find each other via the bootnode."""
+        """A prefer-master and a never-master peer find each other via the bootnode."""
         bootnode_port = _reserve_udp_port()
         ready_file = tmp_path / "bootnode.ready"
         try:
@@ -54,7 +54,7 @@ class TestBootnodeDiscovery:
             )
 
             master = _p2p_start(
-                p2p_master_dir, p2p_bucket, force_master=True, extra_args=bootnode_args
+                p2p_master_dir, p2p_bucket, prefer_master=True, extra_args=bootnode_args
             )
             try:
                 # The banner proves the bootnode plan is the active one.

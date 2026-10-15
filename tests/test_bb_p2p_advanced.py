@@ -49,7 +49,7 @@ class TestP2PTombstone:
 
         (Path(p2p_master_dir) / "pre_delete.txt").write_bytes(b"to-be-deleted\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Phase 1: first slave syncs the file, then disconnects
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
@@ -111,7 +111,7 @@ class TestP2PTombstone:
         aaa.mkdir(parents=True)
         (aaa / "test.txt").write_bytes(b"delete-me\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             try:
@@ -133,7 +133,7 @@ class TestP2PTombstone:
 
                 # And the master restarts with the same identity, so the slave
                 # reconnects
-                master2 = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+                master2 = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
                 try:
                     # Then the slave mints a tombstone and deletes the stale
                     # remote copy instead of downloading it back.
@@ -169,7 +169,7 @@ class TestP2PMultiSlave:
         slave2_dir = str(tmp_path / "slave2")
         Path(slave2_dir).mkdir()
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Start both slaves first so the election runs (master only emits
             # "MASTER" after discovering a peer via mDNS).
@@ -245,7 +245,7 @@ class TestP2PPortOverride:
         # CI job) and, unlike the P2P transport itself, has no fallback.
         port = _reserve_port()
         # Given a master listening on a custom port
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True, p2p_listen_port=port)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True, p2p_listen_port=port)
         try:
             # Start a slave so the master discovers it and runs the election
             # (master only emits "MASTER" after add_peer triggers _elect_master).
@@ -298,7 +298,7 @@ class TestMasterFailover:
         Path(peer_a).mkdir()
         Path(peer_b).mkdir()
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             a = _p2p_start(peer_a, p2p_bucket)
             # Stagger peer_b so peer_a's startup_time is unambiguously earlier.
@@ -363,7 +363,7 @@ class TestMasterFailover:
         # HSYNC_PEER_TIMEOUT >= 2 * HSYNC_HEARTBEAT_INTERVAL).
         fast_env = {"HSYNC_HEARTBEAT_INTERVAL": "2", "HSYNC_PEER_TIMEOUT": "5"}
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True, extra_env=fast_env)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True, extra_env=fast_env)
         try:
             a = _p2p_start(peer_a, p2p_bucket, extra_env=fast_env)
             try:
@@ -385,7 +385,7 @@ class TestMasterFailover:
 
                     # Snapshot the pre-crash self-election count: a slave may
                     # self-elect once at startup before it discovers the
-                    # force_master peer and yields to it (a transient, not a
+                    # prefer_master peer and yields to it (a transient, not a
                     # split-brain). The "exactly one successor" assertion must
                     # only count elections that happen after the crash.
                     elected = "This client elected as MASTER"
@@ -456,7 +456,7 @@ class TestNoSplitBrainOnQuiescentPeer:
         # tightest valid HSYNC_PEER_TIMEOUT >= 2 * HSYNC_HEARTBEAT_INTERVAL).
         fast_env = {"HSYNC_HEARTBEAT_INTERVAL": "1", "HSYNC_PEER_TIMEOUT": "3"}
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True, extra_env=fast_env)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True, extra_env=fast_env)
         try:
             a = _p2p_start(peer_a, p2p_bucket, extra_env=fast_env)
             try:
@@ -471,7 +471,7 @@ class TestNoSplitBrainOnQuiescentPeer:
                 time.sleep(5)
 
                 # peer_a resolves its local role at discovery start, before it
-                # can know about the forced master, so its log legitimately
+                # can know about the preferred master, so its log legitimately
                 # carries one self-election line followed by a [MASTER YIELD].
                 # The split-brain guard is about a *new* election once peer_b
                 # joins, so snapshot the startup one first.
@@ -490,7 +490,7 @@ class TestNoSplitBrainOnQuiescentPeer:
                         "peer_a self-elected after peer_b joined (split-brain):\n" + a_log
                     )
                     assert "Master changed" not in _stderr_text(master), (
-                        "the force_master master churned its mastership:\n" + _stderr_text(master)
+                        "the prefer_master master churned its mastership:\n" + _stderr_text(master)
                     )
                 finally:
                     _terminate(b)
@@ -506,15 +506,15 @@ class TestNoSplitBrainOnQuiescentPeer:
 
 
 class TestMasterYield:
-    def test_force_master_takeover_yields_incumbent(self, p2p_master_dir, tmp_path, p2p_bucket):
-        """A force_master peer takes over, and the incumbent yields.
+    def test_prefer_master_takeover_yields_incumbent(self, p2p_master_dir, tmp_path, p2p_bucket):
+        """A prefer_master peer takes over, and the incumbent yields.
 
         The yield path (ADR-0027) fires when a live master loses the election
         to another ``server_ready`` peer, which in a healthy P2P only happens on
         network-partition heal — not simulatable on loopback mDNS. To exercise
         it deterministically, the incumbent is started with
         ``HSYNC_BB_MASTER_READY_DELAY`` (a test seam that widens the
-        "elected but not yet server_ready" window): the force_master peer wins
+        "elected but not yet server_ready" window): the prefer_master peer wins
         the election, becomes ``server_ready``, and the incumbent must then
         **yield** — log ``[MASTER YIELD]`` and revoke its ``server_ready``
         incumbency instead of remaining a "zombie incumbent".
@@ -522,7 +522,7 @@ class TestMasterYield:
         # Given a regular incumbent (with a readiness-delay seam) and a peer
         # to elect against
         regular = str(tmp_path / "regular")
-        fm_dir = str(tmp_path / "force_master")
+        fm_dir = str(tmp_path / "prefer_master")
         Path(regular).mkdir()
         Path(fm_dir).mkdir()
 
@@ -534,11 +534,11 @@ class TestMasterYield:
                     "regular node did not win the election and start serving"
                 )
 
-                # When a force_master peer joins and takes over the mastership
-                fm = _p2p_start(fm_dir, p2p_bucket, force_master=True)
+                # When a prefer_master peer joins and takes over the mastership
+                fm = _p2p_start(fm_dir, p2p_bucket, prefer_master=True)
                 try:
                     assert _wait_for_text_in_stderr(fm, "MASTER", timeout=45), (
-                        "force_master peer did not take over the mastership"
+                        "prefer_master peer did not take over the mastership"
                     )
 
                     # Then the incumbent yields its mastership
@@ -548,7 +548,7 @@ class TestMasterYield:
                         # the Popen in teardown and the log would otherwise be
                         # lost).
                         print(f"\n--- [DIAG] incumbent log ---\n{_stderr_text(reg)}")
-                        print(f"\n--- [DIAG] force_master log ---\n{_stderr_text(fm)}")
+                        print(f"\n--- [DIAG] prefer_master log ---\n{_stderr_text(fm)}")
                         pytest.fail("the incumbent did not yield (no [MASTER YIELD] marker)")
                 finally:
                     _terminate(fm)
@@ -575,7 +575,7 @@ class TestP2PFilterPath:
         sub_b.mkdir()
         (sub_b / "b.txt").write_bytes(b"in-b\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
@@ -612,7 +612,7 @@ class TestP2PBandwidthThrottle:
     def test_bandwidth_throttle_allows_sync(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """--limit-download with a generous limit still allows sync."""
         # Given a serving master
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
@@ -668,7 +668,7 @@ class TestP2PHsyncignore:
         (Path(p2p_master_dir) / "include_me.txt").write_bytes(b"visible\n")
         (Path(p2p_master_dir) / "exclude_me.log").write_bytes(b"hidden\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
@@ -727,7 +727,7 @@ class TestP2PPermissions:
         import stat
 
         # Given a serving master
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Start a slave so the master discovers it and runs the election.
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
@@ -767,7 +767,7 @@ class TestP2PMaxInboundSize:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_args=("--max-inbound-size", "1"),
         )
         try:

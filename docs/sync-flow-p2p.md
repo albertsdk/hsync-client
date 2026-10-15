@@ -13,7 +13,7 @@ peer-to-peer p2p mode.
 2. **Peer Discovery**: `Peermanager` collects all visible peers in the same group.
 3. **Master Election**: A deterministic algorithm selects the master:
    - `server_ready` (incumbent) beats newcomers
-   - `force_master` beats ordinary peers
+   - `prefer_master` beats ordinary peers
    - Bidirectional `sync_direction` preferred
    - Earliest `startup_time` wins
    - Lowest `cid` lexicographically breaks ties

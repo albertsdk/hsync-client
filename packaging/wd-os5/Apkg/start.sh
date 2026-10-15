@@ -140,7 +140,7 @@ case "${HSYNC_MODE}" in
         [ -n "${HSYNC_P2P_GROUP}" ]                   && set -- "$@" --group "${HSYNC_P2P_GROUP}"
         set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
         case "${HSYNC_ROLE}" in
-            master)       set -- "$@" --force-master ;;
+            master)       set -- "$@" --prefer-master ;;
             slave)        set -- "$@" --sync-direction download-only ;;
             never-master) set -- "$@" --never-master ;;
             *)            : ;;   # auto — no extra flag

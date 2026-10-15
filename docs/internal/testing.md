@@ -389,7 +389,7 @@ timeout will abort the stable remote suite. `--maxfail` keeps one flaky LAN
 file from masking the others.
 
 The LAN tests start two subprocesses with the `p2p` subcommand (and
-`--force-master` / `--never-master`) via the `_p2p_start` helper in
+`--prefer-master` / `--never-master`) via the `_p2p_start` helper in
 `tests/p2p_helpers.py`. They use the `_HSYNC_COMMON_DIR`
 constant to inject the `hsync-common` source directory into
 `PYTHONPATH` so the subprocess can import shared models.

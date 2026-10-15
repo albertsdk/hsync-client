@@ -28,7 +28,7 @@ Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_P2P_KEY`, or hidden
 parent process. `--env-file` is the only dotenv path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `p2p`/`server` subcommand
-selection/`--force-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
+selection/`--prefer-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
 (the `HSYNC_SERVER` env var accepts a bare `HOST[:PORT]`/`[IPv6]` or a full
 `https://…[/path]` URL; the CLI host wins when both are set). A server-mode run
 with neither a `HOSTNAME` nor a resolvable
@@ -138,7 +138,7 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
   `_validate_shared_options` (`cli.py::_validate_shared_options`); bucket naming
   via `_validate_bucket` (`cli.py::_validate_bucket`); p2p-only checks (discovery timeout,
-  `--force-master` exclusivity) live in the `p2p` subcommand. There is no
+  `--prefer-master` exclusivity) live in the `p2p` subcommand. There is no
   separate validators module.
 
 ## UI events (`events.py`)

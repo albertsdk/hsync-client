@@ -587,14 +587,14 @@ def build_register_frame(
     endpoints: list[dict[str, Any]] | None = None,
     connected: int | None = None,
     server_ready: bool = False,
-    force_master: bool = False,
+    prefer_master: bool = False,
     never_master: bool = False,
     startup_time: float = 0.0,
     sync_direction: str = "bidirectional",
 ) -> BootRegister:
     """Build a ``register`` frame (validated against the mirror before send).
 
-    ``server_ready``/``force_master``/``never_master``/``startup_time``/
+    ``server_ready``/``prefer_master``/``never_master``/``startup_time``/
     ``sync_direction`` are the election advertisement the node relays verbatim
     in its ``query`` peers (the same values the mDNS TXT record carries), so a
     bootnode-discovered peer ranks in the master election exactly like a
@@ -610,7 +610,7 @@ def build_register_frame(
         capacity=capacity,
         endpoints=list(endpoints or []),
         server_ready=server_ready,
-        force_master=force_master,
+        prefer_master=prefer_master,
         never_master=never_master,
         startup_time=startup_time,
         sync_direction=sync_direction,

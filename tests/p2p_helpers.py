@@ -146,7 +146,7 @@ def _p2p_start(
     local_path: str,
     bucket: str,
     *,
-    force_master: bool = False,
+    prefer_master: bool = False,
     never_master: bool = False,
     p2p_listen_port: int = 0,
     extra_args: tuple[str, ...] = (),
@@ -185,8 +185,8 @@ def _p2p_start(
         "--http-timeout",
         "10",
     ]
-    if force_master:
-        args.append("--force-master")
+    if prefer_master:
+        args.append("--prefer-master")
     if never_master:
         args.append("--never-master")
     if p2p_listen_port:
@@ -562,7 +562,7 @@ def _p2p_serving_master(
     master_extra: tuple[str, ...] = (),
     slave_extra: tuple[str, ...] = (),
 ):
-    """Start a force-master + slave so the master elects and serves HTTPS.
+    """Start a prefer-master + slave so the master elects and serves HTTPS.
 
     The P2P master only starts serving once it has won an election, which
     requires at least one peer via mDNS. A never-master slave is therefore kept
@@ -574,7 +574,7 @@ def _p2p_serving_master(
     master = _p2p_start(
         master_dir,
         bucket,
-        force_master=True,
+        prefer_master=True,
         p2p_listen_port=p2p_listen_port,
         extra_args=master_extra,
     )

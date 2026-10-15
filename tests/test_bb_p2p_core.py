@@ -34,10 +34,10 @@ pytestmark = pytest.mark.skipif(not _P2P_ENABLED, reason=_P2P_REASON)
 
 class TestP2PElection:
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
-    def test_force_master_wins_and_slave_syncs(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
-        """A force-master client becomes master; a never-master slave syncs to it."""
-        # Given a force-master peer (election needs at least two participants)
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+    def test_prefer_master_wins_and_slave_syncs(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
+        """A prefer-master client becomes master; a never-master slave syncs to it."""
+        # Given a prefer-master peer (election needs at least two participants)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             # Wait for the master to register its mDNS service before
             # starting the slave, so the election can proceed immediately
@@ -84,7 +84,7 @@ class TestP2PTofuPinning:
     def test_first_sight_trusts_and_syncs(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """On first sight the slave TOFU-pins the master cert and syncs."""
         # Given a serving master
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -124,7 +124,7 @@ class TestP2PTofuPinning:
         refuse the connection.
         """
         # Given a master whose certificate the slave has TOFU-pinned
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -141,7 +141,7 @@ class TestP2PTofuPinning:
             for pem in device_dir.glob("*.pem"):
                 pem.unlink()
 
-            master2 = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+            master2 = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
             try:
                 _wait_for_master(master2, p2p_slave_dir, p2p_bucket)
 
@@ -205,7 +205,7 @@ class TestP2PResilience:
     def test_slave_reconnects_after_disconnect(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Slave reconnects and catches up after being restarted."""
         # Given a serving master
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -236,7 +236,7 @@ class TestP2PResilience:
         """--require-pairing accepts a master whose cert was TOFU-pinned in a
         prior connection (the positive counterpart of the rejection test)."""
         # Given a serving master
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -308,7 +308,7 @@ class TestP2PStrictPairing:
     ):
         """--require-pairing without a pre-existing pin rejects the master."""
         # Given a serving master the slave has not yet pinned
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 

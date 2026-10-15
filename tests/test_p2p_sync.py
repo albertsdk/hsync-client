@@ -40,14 +40,14 @@ class TestLANSync:
         assert lan.use_https is True
         assert lan.cert_fingerprint == "abc123def456"
 
-    def test_p2p_sync_with_force_master(self):
-        """Test MdnsDiscovery with force_master."""
+    def test_p2p_sync_with_prefer_master(self):
+        """Test MdnsDiscovery with prefer_master."""
         from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 
         lan = MdnsDiscovery(
             cid="test123",
             bucket="photos",
-            force_master=True,
+            prefer_master=True,
             sync_direction="bidirectional",
         )
         assert lan.peer_manager is None  # Not started yet
@@ -340,7 +340,7 @@ class TestRegisterService:
                 b"https",
                 b"cert_fp",
                 b"server_ready",
-                b"force_master",
+                b"prefer_master",
                 b"never_master",
             ):
                 assert key not in props
@@ -372,7 +372,7 @@ class TestRegisterService:
             group="team-a",
             use_https=True,
             cert_fingerprint="ff00",
-            force_master=True,
+            prefer_master=True,
             sync_direction="upload-only",
         )
         try:
@@ -381,7 +381,7 @@ class TestRegisterService:
             # Endpoint material is dishonest until a listener has bound.
             assert b"https" not in props
             assert b"cert_fp" not in props
-            assert props[b"force_master"] == b"true"
+            assert props[b"prefer_master"] == b"true"
             assert props[b"sync_direction"] == b"upload-only"
             assert b"never_master" not in props
         finally:

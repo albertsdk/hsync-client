@@ -263,7 +263,7 @@ def _get_mass_delete_percent_value(cli_value: int | None) -> int:
 def _check_deletion_risk(
     local_path: str,
     p2p_mode: bool,
-    force_master: bool,
+    prefer_master: bool,
     sync_direction: str,
     allow_deletions: bool,
     logger: Any,
@@ -286,10 +286,10 @@ def _check_deletion_risk(
     if sync_direction == "upload-only":
         return
 
-    # force_master in P2P mode means this peer serves files to slaves — the
+    # prefer_master in P2P mode means this peer serves files to slaves — the
     # deletion-risk guard concerns serving, not authority (no peer is
     # authoritative under the causal model).
-    if p2p_mode and force_master:
+    if p2p_mode and prefer_master:
         return
 
     # Only download-only mode can wipe local-only files at the initial sync.
@@ -743,7 +743,7 @@ def run_sync(
     p2p_listen_port: int,
     discovery_timeout: int | None,
     p2p_group: str | None,
-    force_master: bool,
+    prefer_master: bool,
     never_master: bool,
     debug: bool,
     quiet: bool,
@@ -1083,7 +1083,7 @@ def run_sync(
         # One-shot is derived solely from --once: continuous is the default
         # and no env/flag knob for "persistence" exists.
         "ONE_SHOT": not continuous,
-        "P2P_FORCE_MASTER": force_master,
+        "P2P_PREFER_MASTER": prefer_master,
         "P2P_NEVER_MASTER": never_master or get_never_master(),
         "P2P_REQUIRE_PAIRING": p2p_require_pairing or get_p2p_require_pairing(),
         "P2P_PEER_DOWNLOAD": p2p_peer_download_enabled and get_p2p_peer_download(),
@@ -1193,7 +1193,7 @@ def run_sync(
         _check_deletion_risk(
             local_path=local_path,
             p2p_mode=p2p_mode,
-            force_master=force_master,
+            prefer_master=prefer_master,
             sync_direction=sync_direction,
             allow_deletions=allow_deletions,
             logger=log,

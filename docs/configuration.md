@@ -199,7 +199,7 @@ or `export` / `source` variables in the shell before launching `hsync`.
 `--env-file` only applies keys recognised by the settings model (the
 `HSYNC_*` variables listed in this page and the server/p2p guides). It does
 **not** set CLI-only options such as `-b/--bucket`, `-p/--path`, `--once`,
-`--sync-direction`, or `--force-master`.
+`--sync-direction`, or `--prefer-master`.
 
 Repo templates `dev.env.example` / `prod.env.example` are meant to be copied to
 `dev.env` / `prod.env` (which are git-ignored) and then sourced or passed to

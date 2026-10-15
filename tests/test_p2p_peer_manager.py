@@ -195,14 +195,14 @@ class TestPeerManager:
         assert pm.is_master() is False
         assert pm.get_master_cid() == "zzz999"
 
-    def test_force_master_overrides_sync_direction(self):
-        """Test that force_master takes priority over sync_direction preference."""
-        # Local is upload-only but has force_master — should still win
+    def test_prefer_master_overrides_sync_direction(self):
+        """Test that prefer_master takes priority over sync_direction preference."""
+        # Local is upload-only but has prefer_master — should still win
         pm = PeerManager(
             local_cid="zzz999",
             bucket="photos",
             startup_time=200.0,
-            force_master=True,
+            prefer_master=True,
             sync_direction="upload-only",
         )
         pm.add_peer(
@@ -318,17 +318,17 @@ class TestPeerManager:
         assert len(alive) == 1
         assert alive[0].cid == "alive1"
 
-    def test_force_master_conflict_detection(self):
-        """Test detection of force_master conflicts."""
+    def test_prefer_master_conflict_detection(self):
+        """Test detection of prefer_master conflicts."""
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
             local_cid="local",
             bucket="photos",
-            force_master=True,
+            prefer_master=True,
             startup_time=100.0,
         )
-        # Add another force_master peer that started later
+        # Add another prefer_master peer that started later
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
@@ -336,7 +336,7 @@ class TestPeerManager:
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    force_master=True,
+                    prefer_master=True,
                     startup_time=50.0,
                 )
             )
@@ -348,14 +348,14 @@ class TestPeerManager:
             ]
             assert len(warning_calls) > 0
 
-    def test_force_master_takeover_detection(self):
-        """Test detection of force_master takeover."""
+    def test_prefer_master_takeover_detection(self):
+        """Test detection of prefer_master takeover."""
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
             local_cid="local",
             bucket="photos",
-            force_master=False,
+            prefer_master=False,
             startup_time=100.0,
         )
         # First become master
@@ -365,13 +365,13 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                force_master=False,
+                prefer_master=False,
                 startup_time=200.0,
             )
         )
         assert pm.get_master_cid() == "local"
 
-        # Now a force_master peer joins
+        # Now a prefer_master peer joins
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
@@ -379,11 +379,11 @@ class TestPeerManager:
                     bucket="photos",
                     address="192.168.1.101",
                     port=9753,
-                    force_master=True,
+                    prefer_master=True,
                     startup_time=50.0,
                 )
             )
-            # New force_master should take over
+            # New prefer_master should take over
             assert pm.get_master_cid() == "new_force"
             # Should have logged takeover warning
             warning_calls = [
@@ -391,14 +391,14 @@ class TestPeerManager:
             ]
             assert len(warning_calls) > 0
 
-    def test_server_ready_incumbent_wins_over_force_master(self):
-        """An already-serving (server_ready) peer wins over a force_master newcomer."""
+    def test_server_ready_incumbent_wins_over_prefer_master(self):
+        """An already-serving (server_ready) peer wins over a prefer_master newcomer."""
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
             local_cid="local",
             bucket="photos",
-            force_master=True,
+            prefer_master=True,
             startup_time=10.0,
         )
         # A remote peer is already serving (incumbent master)
@@ -412,11 +412,11 @@ class TestPeerManager:
                 startup_time=200.0,
             )
         )
-        # Despite local force_master and earlier startup, the incumbent wins
+        # Despite local prefer_master and earlier startup, the incumbent wins
         assert pm.get_master_cid() == "incumbent"
 
     def test_local_incumbent_not_taken_over(self):
-        """A local incumbent master is not displaced by a force_master newcomer."""
+        """A local incumbent master is not displaced by a prefer_master newcomer."""
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
@@ -428,28 +428,28 @@ class TestPeerManager:
         pm.set_local_server_ready(True)
         assert pm.get_master_cid() == "local"
 
-        # A force_master peer joins later
+        # A prefer_master peer joins later
         pm.add_peer(
             Peer(
                 cid="new_force",
                 bucket="photos",
                 address="192.168.1.101",
                 port=9753,
-                force_master=True,
+                prefer_master=True,
                 startup_time=50.0,
             )
         )
         # Local incumbent keeps the master role (no takeover, no split-brain)
         assert pm.get_master_cid() == "local"
 
-    def test_local_is_master_logs_reason_force_master(self):
-        """Test that local becoming master logs correct reason for force_master."""
+    def test_local_is_master_logs_reason_prefer_master(self):
+        """Test that local becoming master logs correct reason for prefer_master."""
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
             local_cid="local",
             bucket="photos",
-            force_master=True,
+            prefer_master=True,
             startup_time=100.0,
         )
         with patch("hsync_client.p2p_peers.log") as mock_log:
@@ -462,13 +462,13 @@ class TestPeerManager:
                     startup_time=200.0,
                 )
             )
-            # Local should win due to force_master
+            # Local should win due to prefer_master
             assert pm.is_master() is True
             # Should log the reason
             info_calls = [
                 call
                 for call in mock_log.info.call_args_list
-                if "MASTER" in str(call) and "force_master" in str(call)
+                if "MASTER" in str(call) and "prefer_master" in str(call)
             ]
             assert len(info_calls) > 0
 
@@ -569,15 +569,15 @@ class TestPeerManagerProperties:
     """Tests for the simple property accessors."""
 
     def test_flag_properties(self):
-        """force_master/never_master/startup_time are exposed as properties."""
+        """prefer_master/never_master/startup_time are exposed as properties."""
         pm = PeerManager(
             local_cid="local123",
             bucket="photos",
-            force_master=True,
+            prefer_master=True,
             never_master=True,
             startup_time=1234.5,
         )
-        assert pm.force_master is True
+        assert pm.prefer_master is True
         assert pm.never_master is True
         assert pm.startup_time == 1234.5
 
@@ -633,7 +633,7 @@ class TestAddPeerUpdate:
                 compression_enabled=True,
                 delta_enabled=True,
                 server_ready=True,
-                force_master=True,
+                prefer_master=True,
                 never_master=False,
                 startup_time=42.0,
                 sync_direction="upload-only",
@@ -650,7 +650,7 @@ class TestAddPeerUpdate:
         assert peer.compression_enabled is True
         assert peer.delta_enabled is True
         assert peer.server_ready is True
-        assert peer.force_master is True
+        assert peer.prefer_master is True
         assert peer.startup_time == 42.0
         assert peer.sync_direction == "upload-only"
 
@@ -768,14 +768,14 @@ class TestMasterChangeCallback:
         assert callback_calls[-1] is None
 
 
-class TestForceMasterConflictWon:
-    """Cover the 'we won the force_master conflict' branch."""
+class TestPreferMasterConflictWon:
+    """Cover the 'we won the prefer_master conflict' branch."""
 
     def test_conflict_won_logs_and_emits(self):
         pm = PeerManager(
             local_cid="local",
             bucket="photos",
-            force_master=True,
+            prefer_master=True,
             startup_time=50.0,
         )
         with (
@@ -788,7 +788,7 @@ class TestForceMasterConflictWon:
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    force_master=True,
+                    prefer_master=True,
                     startup_time=100.0,
                 )
             )
@@ -835,8 +835,8 @@ class TestRemoteMasterLogging:
             ]
             assert len(warning_calls) > 0
 
-    def test_remote_force_master_logs_reason(self):
-        """A remote force_master master is logged with the force_master reason."""
+    def test_remote_prefer_master_logs_reason(self):
+        """A remote prefer_master master is logged with the prefer_master reason."""
         pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
@@ -846,14 +846,14 @@ class TestRemoteMasterLogging:
                     address="192.168.1.100",
                     port=9753,
                     startup_time=100.0,
-                    force_master=True,
+                    prefer_master=True,
                 )
             )
             assert pm.get_master_cid() == "aaa111"
             info_calls = [
                 c
                 for c in mock_log.info.call_args_list
-                if "Master changed" in str(c) and "force_master" in str(c)
+                if "Master changed" in str(c) and "prefer_master" in str(c)
             ]
             assert len(info_calls) > 0
 
@@ -1259,12 +1259,12 @@ class TestInitialElection:
     """Discovery elects once at start so a node resolves its role without peers.
 
     Regression: the election only ran on peer events, so a lone
-    ``--force-master`` node never became master and never served, and a joining
+    ``--prefer-master`` node never became master and never served, and a joining
     slave waited forever for a master that never started its server.
     """
 
-    def test_lone_force_master_serves_without_peers(self):
-        pm = PeerManager(local_cid="aaa111", bucket="photos", force_master=True)
+    def test_lone_prefer_master_serves_without_peers(self):
+        pm = PeerManager(local_cid="aaa111", bucket="photos", prefer_master=True)
         assert pm.is_master() is False  # not evaluated before the initial election
         pm.elect()
         assert pm.is_master() is True

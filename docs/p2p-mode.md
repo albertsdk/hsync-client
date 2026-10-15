@@ -43,7 +43,7 @@ flowchart TB
 |---------|-------------|
 | **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
-| **Automatic Master Election** | Priority: `server_ready` (incumbent) > `force_master` > bidirectional preference > earliest startup > lowest CID |
+| **Automatic Master Election** | Priority: `server_ready` (incumbent) > `prefer_master` > bidirectional preference > earliest startup > lowest CID |
 | **Passive Peers** | `--never-master` keeps a peer out of the election; it syncs but never becomes master |
 | **Real-Time Sync** | WebSocket-based instant event propagation (implicit; continuous mode is the default) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
@@ -162,14 +162,14 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
 ## Options & Environment Variables
 
 All p2p command-line options and `HSYNC_*` environment variables — including the
-master-election flags `--force-master`/`--never-master`, the discovery/heartbeat
+master-election flags `--prefer-master`/`--never-master`, the discovery/heartbeat
 timeouts, `HSYNC_P2P_KEY`, `HSYNC_DEVICE_DIR` and persistence — are documented
 in the single reference:
 [Configuration — p2p Mode](configuration-p2p.md).
 
 > **Key incompatibilities** (the client refuses to start otherwise):
-> - `--force-master` cannot be combined with `--sync-direction upload-only`/`download-only` — the master must stay bidirectional.
-> - `--force-master` and `--never-master` are mutually exclusive.
+> - `--prefer-master` cannot be combined with `--sync-direction upload-only`/`download-only` — the master must stay bidirectional.
+> - `--prefer-master` and `--never-master` are mutually exclusive.
 >
 > The p2p authentication key is only ever supplied via the `HSYNC_P2P_KEY`
 > environment variable, never as a CLI flag. That key is what authorizes writes:
@@ -343,7 +343,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 | Priority | Criterion | Description |
 |----------|-----------|-------------|
 | 1 | `server_ready` (incumbent) | An already-serving master keeps the role, so a newcomer never disrupts it |
-| 2 | `force_master` | An operator-pinned master wins over ordinary peers (but **not** over a serving incumbent) |
+| 2 | `prefer_master` | An operator-pinned master wins over ordinary peers (but **not** over a serving incumbent) |
 | 3 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
 | 4 | **Earliest startup** | Among equal peers, the one that started first wins |
 | 5 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
@@ -354,11 +354,11 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 > [p2p Internals → Master Election Algorithm](internal/p2p-internals.md#master-election-algorithm).
 
 **Rules:**
-- The `sync_direction`, `never_master`, `force_master`, `server_ready` and `startup_time` flags of each peer are shared during discovery — through mDNS TXT records on a local network, and through the bootnode when the group uses one — so the same election runs in both cases
-- A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--force-master`; the pin wins once both are at parity on readiness
-- `--force-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
+- The `sync_direction`, `never_master`, `prefer_master`, `server_ready` and `startup_time` flags of each peer are shared during discovery — through mDNS TXT records on a local network, and through the bootnode when the group uses one — so the same election runs in both cases
+- A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--prefer-master`; the pin wins once both are at parity on readiness
+- `--prefer-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
 - `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)
-- `--never-master` is **incompatible** with `--force-master` — the client will refuse to start
+- `--never-master` is **incompatible** with `--prefer-master` — the client will refuse to start
 - If a non-bidirectional peer is elected as master (no bidirectional peers available), a **WARNING** is logged
 - If **all** discovered peers are `--never-master`, no master is elected; after 60 s a `[NO MASTER]` warning is logged
 - If the master goes offline, a new election occurs among remaining peers
@@ -411,7 +411,7 @@ one-shot sync, read-only slaves, isolated groups and fixed ports — live in
 
 ### Deletion Risk Warning
 
-When running in p2p mode **without `--force-master`** and the shared directory is non-empty, the client warns that local files could be deleted — because the elected master serves the file listing the slave converges on, and files not present on the master will be removed during initial sync. The master is a transport coordinator, not an authority (ADR-0022): concurrent edits are resolved causally by every node.
+When running in p2p mode **without `--prefer-master`** and the shared directory is non-empty, the client warns that local files could be deleted — because the elected master serves the file listing the slave converges on, and files not present on the master will be removed during initial sync. The master is a transport coordinator, not an authority (ADR-0022): concurrent edits are resolved causally by every node.
 
 ```bash
 # The shared key authorizes writes (a keyless p2p is read-only)
@@ -426,7 +426,7 @@ hsync p2p -b photos -p ~/Pictures --allow-deletions
 
 The warning is **not shown** when:
 - The shared directory is empty (nothing to lose)
-- `--force-master` is set (this peer serves files — deletion risk is about the slave role)
+- `--prefer-master` is set (this peer serves files — deletion risk is about the slave role)
 - `--sync-direction upload-only` is set (local files are never deleted)
 
 See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sync-safety-check-deletion-risk)

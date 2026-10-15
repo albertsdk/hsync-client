@@ -26,7 +26,7 @@ def _make_p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "REMOTE_BUCKET": "test-bucket",
         "P2P_LISTEN_PORT": 9000,
         "P2P_GROUP": None,
-        "P2P_FORCE_MASTER": False,
+        "P2P_PREFER_MASTER": False,
         "P2P_NEVER_MASTER": False,
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
@@ -147,10 +147,10 @@ class TestRunAsMaster:
         """A node that lost the election mid-startup must not claim readiness.
 
         Regression (mastership flap / split-brain): the node self-elected and was
-        still starting its watcher and WebSocket server when a ``--force-master``
+        still starting its watcher and WebSocket server when a ``--prefer-master``
         peer joined and took over. The readiness advertisement was unconditional,
         so the node re-became the incumbent — ``server_ready`` out-ranks
-        ``force_master`` — and both nodes served the same bucket; a later
+        ``prefer_master`` — and both nodes served the same bucket; a later
         crash-failover could then never observe a *new* election, because the
         survivor had never stopped serving.
         """

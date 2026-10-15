@@ -31,7 +31,7 @@ mkdir -p /tmp/hsync-p2p-a /tmp/hsync-p2p-b
 # 2. Put a file in the first folder
 echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
 
-# 3. Terminal 1 — force this peer to be the master (it already holds the file,
+# 3. Terminal 1 — prefer this peer as the master (it already holds the file,
 #    so no deletion-risk warning is shown) and start p2p Mode. Give it its own
 #    device identity: the two peers run on the same machine but must be two
 #    distinct devices, or discovery would ignore them as "self".
@@ -39,7 +39,7 @@ echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
 #    write-capable run without a key is refused with [AUTH REQUIRED].
 HSYNC_P2P_KEY="demo-p2p-secret" \
 HSYNC_DEVICE_DIR=/tmp/hsync-p2p-a-device \
-  hsync p2p -b demo-p2p -p /tmp/hsync-p2p-a --force-master
+  hsync p2p -b demo-p2p -p /tmp/hsync-p2p-a --prefer-master
 
 # 4. Terminal 2 — start a second peer with its own device identity; it
 #    discovers the master via mDNS and downloads hello.txt
@@ -55,11 +55,11 @@ Continuous mode is **implicit** in p2p Mode: edit or create a file in either fol
 and the change propagates to the other peer in real time. Press `Ctrl+C` in
 both terminals to stop.
 
-> **Why `--force-master` here?** The first peer already holds the file, so
+> **Why `--prefer-master` here?** The first peer already holds the file, so
 > electing it as master avoids the initial
 > deletion-risk warning on a non-empty directory. The master is only the
 > transport hub — it holds no special authority over file contents. On a real
-> LAN with multiple devices, omit `--force-master` and let master election
+> LAN with multiple devices, omit `--prefer-master` and let master election
 > happen automatically
 > (see [p2p Mode → Master Election](p2p-mode.md#master-election)).
 >
@@ -81,7 +81,7 @@ This is intentional — it lets deletions made on the master reach offline peers
 
 - Use `--allow-deletions` to accept the deletion-risk confirmation in scripts/services.
 - Use `--sync-direction upload-only` if you never want local files deleted.
-- Use `--force-master` on the device that already holds the data.
+- Use `--prefer-master` on the device that already holds the data.
 
 See [p2p Mode → Deletion Risk Warning](p2p-mode.md#deletion-risk-warning) for
 the full explanation.

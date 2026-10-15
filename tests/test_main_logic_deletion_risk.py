@@ -39,7 +39,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=True,
-            force_master=False,
+            prefer_master=False,
             sync_direction="bidirectional",
             allow_deletions=False,
             logger=mock_logger,
@@ -53,21 +53,21 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=True,
-            force_master=False,
+            prefer_master=False,
             sync_direction="upload-only",
             allow_deletions=False,
             logger=mock_logger,
         )
         mock_logger.warning.assert_not_called()
 
-    def test_p2p_force_master_no_warning(self, tmp_path):
-        """No warning when P2P mode with force-master (this client is authoritative)."""
+    def test_p2p_prefer_master_no_warning(self, tmp_path):
+        """No warning when P2P mode with prefer-master (this client is authoritative)."""
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=True,
-            force_master=True,
+            prefer_master=True,
             sync_direction="bidirectional",
             allow_deletions=False,
             logger=mock_logger,
@@ -81,7 +81,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=False,
-            force_master=False,
+            prefer_master=False,
             sync_direction="bidirectional",
             allow_deletions=False,
             logger=mock_logger,
@@ -94,7 +94,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path / "nonexistent"),
             p2p_mode=True,
-            force_master=False,
+            prefer_master=False,
             sync_direction="download-only",
             allow_deletions=False,
             logger=mock_logger,
@@ -110,7 +110,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=True,
-            force_master=False,
+            prefer_master=False,
             sync_direction="bidirectional",
             allow_deletions=False,
             logger=mock_logger,
@@ -126,7 +126,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=True,
-            force_master=False,
+            prefer_master=False,
             sync_direction="bidirectional",
             allow_deletions=False,
             logger=mock_logger,
@@ -147,7 +147,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -162,7 +162,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=True,
-            force_master=False,
+            prefer_master=False,
             sync_direction="bidirectional",
             allow_deletions=False,
             logger=mock_logger,
@@ -180,7 +180,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -200,7 +200,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=False,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -223,7 +223,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=True,
                 logger=mock_logger,
@@ -243,7 +243,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -259,7 +259,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -274,7 +274,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -292,7 +292,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -309,7 +309,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -329,7 +329,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,
@@ -345,7 +345,7 @@ class TestCheckDeletionRisk:
         _check_deletion_risk(
             local_path=str(tmp_path),
             p2p_mode=False,
-            force_master=False,
+            prefer_master=False,
             sync_direction="download-only",
             allow_deletions=True,
             logger=mock_logger,
@@ -367,7 +367,7 @@ class TestCheckDeletionRisk:
             _check_deletion_risk(
                 local_path=str(tmp_path),
                 p2p_mode=True,
-                force_master=False,
+                prefer_master=False,
                 sync_direction="download-only",
                 allow_deletions=False,
                 logger=mock_logger,

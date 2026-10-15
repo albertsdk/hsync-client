@@ -64,9 +64,9 @@ All devices on the same LAN with the same bucket name will sync photos directly.
 
 ## 2.3 Backup laptop to a local NAS / always-on PC
 
-On the NAS (force it to be master):
+On the NAS (prefer it as master):
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p /mnt/data/backup --force-master
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p /mnt/data/backup --prefer-master
 ```
 
 On the laptop (slave):

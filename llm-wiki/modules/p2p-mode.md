@@ -54,9 +54,9 @@ configured `HybridDiscovery` runs **both** over one shared `PeerManager`:
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.p2p.elect_master`
-(bidirectional peers preferred; `--force-master`/`--never-master` honored). Each
+(bidirectional peers preferred; `--prefer-master`/`--never-master` honored). Each
 discovery plan calls `PeerManager.elect()` once at start, so a node with no peers
-yet still resolves its role (a lone `--force-master` node serves immediately,
+yet still resolves its role (a lone `--prefer-master` node serves immediately,
 which is what lets a joining slave connect) — the election otherwise runs only on
 peer add/remove, a local readiness change and the stale sweep. TXT
 records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
@@ -374,12 +374,12 @@ falls back to a full `register`. Relayed peers are fed to `PeerManager` only
 when `reachable` is true and `proto == "tcp"`; the local CID is never re-added.
 
 Election advertisement: every `register` carries the local
-`server_ready`/`force_master`/`never_master`/`startup_time`/`sync_direction`
+`server_ready`/`prefer_master`/`never_master`/`startup_time`/`sync_direction`
 (decision #31 in `hsync-bootnode`), the node echoes them verbatim on every
 `query` peer, and `_peer_from_wire` maps **those** values into the shared
 election — the old fabrication (`server_ready=True`, `startup_time=0.0`,
 `never_master=False` for every reachable peer) made a read-only seeder look like
-a serving master, so a `--force-master` node demoted itself, a `--never-master`
+a serving master, so a `--prefer-master` node demoted itself, a `--never-master`
 seeder became electable and the roles flapped. Roles now reach the bootnode two
 ways: `update_server_ready`/`update_server_not_ready` mirror the incumbency into
 the shared `PeerManager` (`set_local_server_ready`, exactly like

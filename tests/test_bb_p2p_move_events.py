@@ -69,7 +69,7 @@ class TestP2PMoveEvents:
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_move_in_from_outside_syncs(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """A file moved into the tree root (regression) or a subdir reaches the slave."""
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"
@@ -105,7 +105,7 @@ class TestP2PMoveEvents:
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_move_out_of_tree_deletes_on_slave(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """A file moved out of the tree is deleted on the slave."""
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"

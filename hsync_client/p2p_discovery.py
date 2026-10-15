@@ -146,7 +146,7 @@ class DiscoveryPlanState:
     _cid: str
     _bucket: str
     _group: str | None
-    _force_master: bool
+    _prefer_master: bool
     _never_master: bool
     _startup_time: float
     _sync_direction: str
@@ -163,7 +163,7 @@ class DiscoveryPlanState:
         group: str | None,
         use_https: bool,
         cert_fingerprint: str | None,
-        force_master: bool,
+        prefer_master: bool,
         never_master: bool,
         startup_time: float,
         sync_direction: str,
@@ -179,7 +179,7 @@ class DiscoveryPlanState:
         self._group = group
         self._use_https = use_https
         self._cert_fingerprint = cert_fingerprint
-        self._force_master = force_master
+        self._prefer_master = prefer_master
         self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
@@ -210,7 +210,7 @@ class DiscoveryPlanState:
             local_cid=self._cid,
             bucket=self._bucket,
             group=self._group,
-            force_master=self._force_master,
+            prefer_master=self._prefer_master,
             never_master=self._never_master,
             startup_time=self._startup_time,
             sync_direction=self._sync_direction,
@@ -267,7 +267,7 @@ def build_discovery_plan(
         "group": config["P2P_GROUP"],
         "use_https": True,
         "cert_fingerprint": cert_fingerprint,
-        "force_master": config["P2P_FORCE_MASTER"],
+        "prefer_master": config["P2P_PREFER_MASTER"],
         "never_master": config["P2P_NEVER_MASTER"],
         "sync_direction": config["SYNC_DIRECTION"],
         "peer_timeout": peer_timeout,

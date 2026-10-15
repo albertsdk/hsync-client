@@ -54,7 +54,7 @@ Readings:
 ## p2p Mode (peer-to-peer)
 
 6000 files / 400 dirs (~1.5 GiB), master and slave on the same host, master
-elected with `--force-master`, replica connected over the pinned WSS+HTTPS
+elected with `--prefer-master`, replica connected over the pinned WSS+HTTPS
 channel. Medians of 6 runs (two sessions; t_sync varies with host state across
 sessions):
 
