@@ -107,7 +107,7 @@ documentation-engineering rules:
   * i18n translations `Apkg/web/i18n/*.json`
   * `README.md`
 
-  Keep flags, key whitelists, and i18n strings strictly aligned across all five languages (EN, IT, DE, ES, FR).
+  Keep flags, key whitelists, and i18n strings strictly aligned across all eleven supported languages (EN, IT, DE, ES, FR, JA, NL, PL, PT, RU, ZH); the authoritative list is `SUPPORTED` in `Apkg/web/app.js`.
 
 * **Debian Man Page**
   Any change to CLI flags, environment variables (`HSYNC_*`), option defaults,

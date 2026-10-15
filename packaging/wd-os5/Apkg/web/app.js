@@ -16,7 +16,22 @@
     // would resolve against the dashboard origin instead of /apps/hsync/.
     const BASE = '/apps/hsync';
 
-    const SUPPORTED = ['en', 'it', 'de', 'es', 'fr'];
+    const SUPPORTED = ['en', 'it', 'de', 'fr', 'es', 'pt', 'zh', 'ru', 'nl', 'pl', 'ja'];
+    // Native language names for the selector, mirroring the desktop client's
+    // SUPPORTED_LANGUAGES so the two front-ends present the same list.
+    const LANGUAGE_NAMES = {
+        en: 'English',
+        it: 'Italiano',
+        de: 'Deutsch',
+        fr: 'Français',
+        es: 'Español',
+        pt: 'Português (Brasil)',
+        zh: '中文（简体）',
+        ru: 'Русский',
+        nl: 'Nederlands',
+        pl: 'Polski',
+        ja: '日本語',
+    };
     const CHECKBOX_KEYS = [
         'HSYNC_P2P_REQUIRE_PAIRING',
         'HSYNC_UPNP_ENABLED',
@@ -114,7 +129,7 @@
         SUPPORTED.forEach((code) => {
             const opt = document.createElement('option');
             opt.value = code;
-            opt.textContent = code.toUpperCase();
+            opt.textContent = LANGUAGE_NAMES[code] || code.toUpperCase();
             sel.appendChild(opt);
         });
         sel.value = pickLang();
