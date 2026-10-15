@@ -1371,6 +1371,9 @@ async def p2p_websocket_client(
     # Bound so the teardown path below can drain pending event downloads even
     # when the connection failed before the dispatch context was built.
     ctx: EventDispatchContext | None = None
+    # Tracks whether the slave→master link was established, so the teardown can
+    # report the drop back to the UI (continuous mode reconnects afterwards).
+    connected = False
 
     try:
         async with websockets.connect(
@@ -1507,6 +1510,11 @@ async def p2p_websocket_client(
                 f"'{CONFIG['LOCAL_BUCKET']}', master at {format_authority(host, port)}"
             )
 
+            # The slave is linked to the master and reacting to events: flip the
+            # desktop status from "connecting" to "connected".
+            emit_event(UiEventName.status, status="connected")
+            connected = True
+
             # One dispatch context per connection: the inbound directory
             # dedup cache must persist across events (a per-event context
             # would reset the cache each time and the duplicate added/
@@ -1569,6 +1577,10 @@ async def p2p_websocket_client(
         watcher.stop()
         _slave_event_handler = None
         log.info("Client file watcher stopped")
+        if connected:
+            # The link dropped; continuous mode returns to discovery and will
+            # emit "connected" again once a master is reached.
+            emit_event(UiEventName.status, status="connecting")
 
 
 async def _p2p_periodic_resync(

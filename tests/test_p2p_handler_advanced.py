@@ -116,6 +116,33 @@ class TestRunAsMaster:
         ws.start.assert_called_once_with(watch_path=str(tmp_path))
         sync.update_server_ready.assert_called_once()
 
+    def test_run_as_master_emits_connected_status(self, tmp_path):
+        """Serving as master reports the link up to the desktop."""
+        from hsync_client.events import UiEventName
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _make_p2p_config(tmp_path)
+        sync = self._mock_sync()
+        sync.peer_manager.is_master.return_value = True
+        server, ws = self._mock_servers()
+
+        with (
+            patch("time.sleep"),
+            patch("hsync_client.p2p_handler.emit_event") as emit,
+        ):
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+
+        assert any(
+            c.args and c.args[0] is UiEventName.status and c.kwargs.get("status") == "connected"
+            for c in emit.call_args_list
+        )
+
     def test_master_lost_while_starting_up_does_not_advertise_readiness(self, tmp_path):
         """A node that lost the election mid-startup must not claim readiness.
 

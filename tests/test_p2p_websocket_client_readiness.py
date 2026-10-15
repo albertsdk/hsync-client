@@ -124,3 +124,22 @@ class TestP2PWebsocketClientReadiness:
             if c.args and "[READY]" in str(c.args[0])
         ]
         assert ready_msgs == [], f"no [READY] expected on failed auth, got {ready_msgs!r}"
+
+    @pytest.mark.asyncio
+    async def test_status_connected_then_connecting(self, tmp_path):
+        """The slave reports the link up (connected) and the drop (connecting)."""
+        import hsync_client.p2p_websocket as ws
+        from hsync_client.events import UiEventName
+
+        socket = self._make_socket(json.dumps({"type": "hello"}))
+        mock_log = MagicMock()
+        events: list = []
+
+        with (
+            self._client_patches(tmp_path, mock_log, socket),
+            patch.object(ws, "emit_event", lambda name, **kw: events.append((name, kw))),
+        ):
+            await ws.p2p_websocket_client("master.local", 9000)
+
+        statuses = [kw.get("status") for name, kw in events if name == UiEventName.status]
+        assert statuses == ["connected", "connecting"]
