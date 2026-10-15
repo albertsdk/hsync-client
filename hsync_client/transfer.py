@@ -2082,7 +2082,11 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                         f"({compression_ratio:.1f}%)"
                     )
 
-                headers["Content-Encoding"] = CONTENT_ENCODING_ZSTD
+                # Do NOT send ``Content-Encoding: zstd``: only the multipart file
+                # part is compressed, not the request body, and both servers key
+                # decompression off the ``compressed`` form field. A
+                # Content-Encoding on the multipart envelope makes aiohttp (the
+                # p2p master) decode the whole body and fail with 400.
                 data["compressed"] = "true"
                 data["compressed_size"] = compressed_size
 

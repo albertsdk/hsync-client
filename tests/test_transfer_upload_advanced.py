@@ -62,8 +62,14 @@ class TestUploadCompressed:
         ):
             upload_file(file, check_size=False)
 
-    def test_compressed_branch_sends_zstd_header(self, tmp_path):
-        """When should_compress() is True the body is zstd-compressed (201 path)."""
+    def test_compressed_branch_signals_via_form_field_not_header(self, tmp_path):
+        """The compressed branch must NOT set ``Content-Encoding``.
+
+        Only the multipart *file part* is zstd-compressed, not the request body,
+        and both servers key decompression off the ``compressed`` form field. A
+        ``Content-Encoding`` on the multipart envelope makes aiohttp (the p2p
+        master) try to decode the whole body and fail with 400.
+        """
         test_file = tmp_path / "file.txt"
         test_file.write_text("compress me " * 50)
 
@@ -100,7 +106,7 @@ class TestUploadCompressed:
         ):
             upload_file(file, check_size=False)
             kwargs = mock_post.call_args.kwargs
-            assert kwargs["headers"].get("Content-Encoding") == "zstd"
+            assert "Content-Encoding" not in kwargs["headers"]
             assert kwargs["data"]["compressed"] == "true"
             assert kwargs["data"]["compressed_size"] > 0
 
