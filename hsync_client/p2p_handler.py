@@ -408,6 +408,22 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 _stop_slave_seeder(p2p_sync, inventory_publisher)
                 inventory_publisher = None
                 seeder_attempted = False
+
+                # Wire the master's live WebSocket client count into discovery
+                # presence BEFORE serving: the provider feeds wait_for_discovery
+                # (the single owner of the peers event) and the callback refreshes
+                # this node's mDNS ``connected`` TXT value on every join/leave.
+                # Wiring it only after ``_run_as_master`` would let the master
+                # advertise ``connected=0`` and miss clients that connect while it
+                # is serving, so peers would keep reading a stale 0.
+                ws_server = p2p_ws_server
+
+                def ws_connected_count(server: P2PWebSocketServer = ws_server) -> int:
+                    return server.connected_clients
+
+                p2p_sync.set_connected_clients_provider(ws_connected_count)
+                p2p_ws_server.set_clients_changed_callback(p2p_sync.set_connected_clients)
+
                 p2p_server, p2p_ws_server = _run_as_master(
                     config=config,
                     log=log,
@@ -419,17 +435,6 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 # A watcher-failure return leaves the control plane not running:
                 # the flag must reflect whether the master is actually serving.
                 master_serving = p2p_ws_server.running
-                # Wire the master's live WebSocket client count into discovery
-                # presence: the provider feeds wait_for_discovery (the single
-                # owner of the peers event), and the callback refreshes this
-                # node's mDNS ``connected`` TXT value on every join/leave.
-                ws_server = p2p_ws_server
-
-                def ws_connected_count(server: P2PWebSocketServer = ws_server) -> int:
-                    return server.connected_clients
-
-                p2p_sync.set_connected_clients_provider(ws_connected_count)
-                p2p_ws_server.set_clients_changed_callback(p2p_sync.set_connected_clients)
                 # Check if we're still master after _run_as_master returns
                 if not peer_manager.is_master():
                     # We lost mastership: retire the serving role, then revoke our

@@ -93,7 +93,12 @@ on change, and the operator-facing status log uses three states: `Discovered N
 peer(s)`, `No other peers discovered - N client(s) connected`, or `No other
 peers discovered - this client is alone`. The master re-registers its mDNS
 record whenever the WS count changes (`MdnsDiscovery.set_connected_clients`), so
-slaves observe presence without a server round-trip.
+slaves observe presence without a server round-trip. The WS-server provider and
+the `set_clients_changed` callback are wired by `p2p_handler.run_p2p_mode`
+**before** `_run_as_master` starts serving: wiring them only afterwards would
+let the master advertise `connected=0` and miss a client that connects while it
+is serving, leaving slaves reading a stale `0` (a `1/N` count with both peers
+connected).
 
 The wait is **event-driven**, not a fixed sleep: `PeerManager` keeps a
 generation counter + `threading.Condition` (`_change_generation` /
