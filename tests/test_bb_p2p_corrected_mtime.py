@@ -61,7 +61,7 @@ class TestBlackBoxCorrectedMtimeLan:
         (Path(p2p_master_dir) / name).write_bytes(base)
         os.utime(Path(p2p_master_dir) / name, (base_time, base_time))
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
             slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
@@ -112,7 +112,7 @@ class TestBlackBoxCorrectedMtimeLan:
         """With an unreachable NTP host the P2P sync still completes (offset 0,
         degraded temporal mode) and files propagate normally."""
         # Given a serving master and a slave pointed at an unreachable NTP host
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
             slave = _p2p_start(

@@ -68,7 +68,7 @@ class TestFrameBuilders:
         assert frame["capacity"] == 5
         # The election advertisement is always part of the frame (defaults).
         assert frame["server_ready"] is False
-        assert frame["force_master"] is False
+        assert frame["prefer_master"] is False
         assert frame["never_master"] is False
         assert frame["startup_time"] == 0.0
         assert frame["sync_direction"] == "bidirectional"

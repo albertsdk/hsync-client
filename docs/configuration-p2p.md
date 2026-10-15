@@ -18,7 +18,7 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--bootnode-trust` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
-| `--force-master` | Force this device to be the master | `false` (CLI only) |
+| `--prefer-master` | Prefer this device as the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
 | `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
@@ -37,13 +37,13 @@ the bootnode credential: the client derives the `bucket_token`
 bucket** or a **private node**, so it has to match the operator's `bucket=<key>`
 entry.
 
-The `p2p` subcommand and `--force-master` have no environment-variable equivalents.
+The `p2p` subcommand and `--prefer-master` have no environment-variable equivalents.
 
 ## Master Election Controls
 
 | Option | Description |
 |---|---|
-| `--force-master` | This device wins elections against non-force-master peers. Multiple force-master peers are resolved by the deterministic election algorithm. |
+| `--prefer-master` | This device is preferred in the election; a primary that is already serving keeps the role. When several peers prefer the role, the deterministic election algorithm breaks the tie. |
 | `--never-master` | This device always stays a slave. If all peers are never-master, no master is elected and syncing stops. |
 
 `--require-pairing` applies to the elected master only: a first-seen master
@@ -107,8 +107,8 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_P2P` | Min file size for delta transfer in p2p mode | `1048576` (1 MB) |
 
-`HSYNC_P2P_MODE` and `HSYNC_P2P_FORCE_MASTER` are **not** read. Enable p2p mode
-with the `p2p` subcommand; pin a master with `--force-master`.
+`HSYNC_P2P_MODE` and `HSYNC_P2P_PREFER_MASTER` are **not** read. Enable p2p mode
+with the `p2p` subcommand; prefer a primary with `--prefer-master`.
 
 `--no-peer-download` is a final opt-out: when present, peer downloading stays
 disabled even if `HSYNC_P2P_PEER_DOWNLOAD=true`. One-shot slaves may request
@@ -125,7 +125,7 @@ hsync p2p --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 
 `--env-file` only applies recognised `HSYNC_*` keys (see the table above and
-[Configuration](configuration.md)). The `p2p` subcommand, `--force-master`,
+[Configuration](configuration.md)). The `p2p` subcommand, `--prefer-master`,
 bucket, and path remain CLI arguments.
 
 ## See also

@@ -639,7 +639,7 @@ def _run_as_master(
         # Update mDNS service to indicate server is ready.
         #
         # Test seam (black-box tests only): HSYNC_BB_MASTER_READY_DELAY widens
-        # the "elected but not yet server_ready" window so a force_master peer
+        # the "elected but not yet server_ready" window so a prefer_master peer
         # can deterministically take over and exercise the yield path
         # (ADR-0027). It is read directly from the environment — not via
         # EnvSettings — so it never affects packaged deployments or the
@@ -648,10 +648,10 @@ def _run_as_master(
         if ready_delay > 0:
             time.sleep(ready_delay)
         # A peer may have won the election while this node was starting up: a
-        # --force-master peer that joined after we self-elected but before we
+        # --prefer-master peer that joined after we self-elected but before we
         # advertised server_ready (or an earlier-started peer that was only just
         # announced). Advertising the incumbency now would out-rank that winner —
-        # server_ready beats force_master — and re-elect this node, so two nodes
+        # server_ready beats prefer_master — and re-elect this node, so two nodes
         # would serve the same bucket and a later crash-failover could never
         # converge on a single successor. Yield instead of claiming readiness:
         # returning here lets the caller's yield path retire the serving role and

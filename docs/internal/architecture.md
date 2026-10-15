@@ -136,7 +136,7 @@ The `--sync-direction` option controls which operations are executed. Filtering 
 
 The Observer (watchdog) continues running in all modes — events are filtered inline rather than stopping the Observer. This allows the sync direction to be changed dynamically at runtime via stdin command without restarting the process.
 
-> **p2p Mode note**: In p2p mode, the `sync_direction` is also published via mDNS TXT records and used during master election — peers with **bidirectional** sync are preferred as master. Using `--force-master` with a non-bidirectional direction is an error. See [p2p Mode > Master Election](../p2p-mode.md#master-election) for details.
+> **p2p Mode note**: In p2p mode, the `sync_direction` is also published via mDNS TXT records and used during master election — peers with **bidirectional** sync are preferred as master. Using `--prefer-master` with a non-bidirectional direction is an error. See [p2p Mode > Master Election](../p2p-mode.md#master-election) for details.
 
 ## Event Processing
 
@@ -293,9 +293,9 @@ Before starting synchronization, the client runs a **deletion risk check** (`_ch
 | Condition | Risk Level | Behavior |
 |-----------|------------|----------|
 | `--sync-direction upload-only` | ✅ Safe | No warning |
-| p2p mode + `--force-master` | ✅ Safe | No warning |
+| p2p mode + `--prefer-master` | ✅ Safe | No warning |
 | Bidirectional server mode | ✅ Safe | No warning (normal behavior) |
-| p2p mode without `--force-master` | ⚠️ Risky | Warning + confirmation prompt |
+| p2p mode without `--prefer-master` | ⚠️ Risky | Warning + confirmation prompt |
 | `--sync-direction download-only` | ⚠️ Risky | Warning + confirmation prompt |
 | Empty directory | ✅ Safe | No warning (nothing to delete) |
 

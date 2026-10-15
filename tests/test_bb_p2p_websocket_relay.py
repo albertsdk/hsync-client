@@ -133,7 +133,7 @@ class TestP2PWsRelay:
         slave2_dir = str(tmp_path / "slave2")
         Path(slave2_dir).mkdir()
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             slave2 = _p2p_start(slave2_dir, p2p_bucket, never_master=True)
@@ -183,7 +183,7 @@ class TestP2PWsRelay:
         slave2_dir = str(tmp_path / "slave2")
         Path(slave2_dir).mkdir()
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             slave2 = _p2p_start(slave2_dir, p2p_bucket, never_master=True)

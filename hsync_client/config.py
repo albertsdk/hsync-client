@@ -769,8 +769,8 @@ class HsyncConfig(TypedDict):
     P2P_GROUP: str | None
     # One-shot run: a single sync cycle then exit (False = continuous, the default)
     ONE_SHOT: bool
-    # Force this client to be master in P2P mode
-    P2P_FORCE_MASTER: bool
+    # Prefer this client as master in P2P mode
+    P2P_PREFER_MASTER: bool
     # Never let this client become master in P2P mode (always client/slave)
     P2P_NEVER_MASTER: bool
     # Strict pairing: refuse a first-seen master cert until confirmed out of band

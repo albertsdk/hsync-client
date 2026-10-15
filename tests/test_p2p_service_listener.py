@@ -38,7 +38,7 @@ def _full_props(overrides: dict[bytes, bytes] | None = None) -> dict[bytes, byte
         b"delta": b"true",
         b"peer_download": b"true",
         b"server_ready": b"true",
-        b"force_master": b"true",
+        b"prefer_master": b"true",
         b"never_master": b"false",
         b"startup_time": b"1234.5",
         b"sync_direction": b"upload-only",
@@ -82,7 +82,7 @@ class TestRegisterPeerFromInfo:
         assert peer.delta_enabled is True
         assert peer.peer_download_enabled is True
         assert peer.server_ready is True
-        assert peer.force_master is True
+        assert peer.prefer_master is True
         assert peer.never_master is False
         assert peer.startup_time == 1234.5
         assert peer.sync_direction == "upload-only"
@@ -105,7 +105,7 @@ class TestRegisterPeerFromInfo:
         assert peer.delta_enabled is False
         assert peer.peer_download_enabled is False
         assert peer.server_ready is False
-        assert peer.force_master is False
+        assert peer.prefer_master is False
         assert peer.never_master is False
         assert peer.startup_time == 0.0
         assert peer.sync_direction == "bidirectional"

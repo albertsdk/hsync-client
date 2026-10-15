@@ -160,8 +160,8 @@ class HsyncServiceListener(ServiceListener):
             peer_download_enabled = _tx_bool(properties, b"peer_download")
             # Server ready flag (indicates HTTP server is listening)
             server_ready = _tx_bool(properties, b"server_ready")
-            # Force master flag (for master election)
-            force_master = _tx_bool(properties, b"force_master")
+            # Prefer master flag (for master election)
+            prefer_master = _tx_bool(properties, b"prefer_master")
             # Never-master flag (peer refuses to ever be master)
             never_master = _tx_bool(properties, b"never_master")
             # Startup time for master election (earlier startup wins)
@@ -233,7 +233,7 @@ class HsyncServiceListener(ServiceListener):
                 capabilities_known=True,
                 server_ready=server_ready,
                 connected=connected,
-                force_master=force_master,
+                prefer_master=prefer_master,
                 never_master=never_master,
                 startup_time=startup_time,
                 sync_direction=sync_direction,
@@ -296,7 +296,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         group: str | None = None,
         use_https: bool = False,
         cert_fingerprint: str | None = None,
-        force_master: bool = False,
+        prefer_master: bool = False,
         never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
@@ -313,7 +313,7 @@ class MdnsDiscovery(DiscoveryPlanState):
             group: Optional group name for peer filtering.
             use_https: Whether to use HTTPS for communication.
             cert_fingerprint: SHA-256 fingerprint of the SSL certificate (if HTTPS).
-            force_master: If True, this client will always try to be master.
+            prefer_master: If True, this client will always try to be master.
             startup_time: Unix timestamp when this client started.
             sync_direction: This client's sync direction
                 ("bidirectional", "upload-only", "download-only").
@@ -331,7 +331,7 @@ class MdnsDiscovery(DiscoveryPlanState):
             group=group,
             use_https=use_https,
             cert_fingerprint=cert_fingerprint,
-            force_master=force_master,
+            prefer_master=prefer_master,
             never_master=never_master,
             startup_time=startup_time,
             sync_direction=sync_direction,
@@ -429,7 +429,7 @@ class MdnsDiscovery(DiscoveryPlanState):
 
         # Initialize (or adopt the shared) peer manager
         self._peer_manager = peer_manager or self.create_peer_manager()
-        # Resolve the local role before the first wait: a lone --force-master
+        # Resolve the local role before the first wait: a lone --prefer-master
         # node must become master and serve immediately so a joining slave can
         # connect (the election otherwise runs only on peer events).
         self._peer_manager.elect()
@@ -733,9 +733,9 @@ class MdnsDiscovery(DiscoveryPlanState):
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"
-        # Add force_master flag for master election
-        if self._force_master:
-            properties["force_master"] = "true"
+        # Add prefer_master flag for master election
+        if self._prefer_master:
+            properties["prefer_master"] = "true"
         # Add never_master flag so other peers never elect this node
         if self._never_master:
             properties["never_master"] = "true"

@@ -141,7 +141,7 @@ node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md).
 **Q: How does master election work?**
 A deterministic algorithm picks the master based on:
 1. Already-serving incumbent keeps the role
-2. `force_master` flag wins over ordinary peers
+2. `prefer_master` flag wins over ordinary peers
 3. Bidirectional sync direction is preferred
 4. Earliest startup time wins
 5. Lowest CID lexicographically breaks ties
@@ -155,9 +155,9 @@ tombstones, see [Conflict Resolution](conflict-resolution.md)): when the
 master comes back, the deletion propagates to it instead of the deleted file
 being downloaded again.
 
-**Q: Can I force a specific device to always be the master?**
-Yes. Set `--force-master` on that device. It will win elections against
-non-force-master peers.
+**Q: Can I prefer a specific device as the master?**
+Yes. Set `--prefer-master` on that device: it is preferred in the election over
+peers that do not set it (a primary that is already serving keeps the role).
 
 **Q: Can a device never become master?**
 Yes. Set `--never-master`. That device always stays a slave.

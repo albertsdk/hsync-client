@@ -559,40 +559,40 @@ class TestCLIValidation:
         assert result.exit_code != 0
         assert "sync-direction" in result.output.lower()
 
-    def test_rejects_force_master_with_upload_only(self):
-        """CLI rejects --force-master with --sync-direction=upload-only."""
+    def test_rejects_prefer_master_with_upload_only(self):
+        """CLI rejects --prefer-master with --sync-direction=upload-only."""
         result = runner.invoke(
             app,
             [
                 "p2p",
                 "-b",
                 "test",
-                "--force-master",
+                "--prefer-master",
                 "--sync-direction",
                 "upload-only",
             ],
         )
         assert result.exit_code != 0
-        assert "force-master" in result.output.lower()
+        assert "prefer-master" in result.output.lower()
 
-    def test_rejects_force_master_with_download_only(self):
-        """CLI rejects --force-master with --sync-direction=download-only."""
+    def test_rejects_prefer_master_with_download_only(self):
+        """CLI rejects --prefer-master with --sync-direction=download-only."""
         result = runner.invoke(
             app,
             [
                 "p2p",
                 "-b",
                 "test",
-                "--force-master",
+                "--prefer-master",
                 "--sync-direction",
                 "download-only",
             ],
         )
         assert result.exit_code != 0
-        assert "force-master" in result.output.lower()
+        assert "prefer-master" in result.output.lower()
 
-    def test_accepts_force_master_with_bidirectional(self):
-        """CLI accepts --force-master with --sync-direction=bidirectional."""
+    def test_accepts_prefer_master_with_bidirectional(self):
+        """CLI accepts --prefer-master with --sync-direction=bidirectional."""
         from unittest.mock import patch as mock_patch
 
         with mock_patch("hsync_client.main_logic.run_sync"):
@@ -602,7 +602,7 @@ class TestCLIValidation:
                     "p2p",
                     "-b",
                     "test",
-                    "--force-master",
+                    "--prefer-master",
                     "--sync-direction",
                     "bidirectional",
                 ],
@@ -734,7 +734,7 @@ class TestCapabilitiesJson:
         assert doc is not None
         for flag in (
             "--never-master",
-            "--force-master",
+            "--prefer-master",
             "--require-pairing",
             "--no-peer-download",
             "--allow-unauthenticated-writes",

@@ -113,7 +113,7 @@ class TestP2PStress:
         iteration: int,
     ) -> None:
         seed = int(_K["seed"]) + iteration  # derived seed, plan §7
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"

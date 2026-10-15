@@ -69,10 +69,10 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **A node that lost the election while starting up yields instead of claiming
   readiness**: `_run_as_master` advertises `server_ready` only after
   re-checking `peer_manager.is_master()`; if a peer won during the startup
-  window (typically a `--force-master` peer that joined after this node
+  window (typically a `--prefer-master` peer that joined after this node
   self-elected but before its watcher/WebSocket server were up) it returns
   early and the outer loop's yield path retires the role and revokes the
-  incumbency. Rationale: `server_ready` out-ranks `force_master` in the shared
+  incumbency. Rationale: `server_ready` out-ranks `prefer_master` in the shared
   election, so an unconditional advertisement made the loser the incumbent
   again — two nodes served the same bucket, and a later crash-failover could
   never converge on a single successor because the survivor had never stopped
@@ -298,7 +298,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `PeerManager.elect()` (`p2p_peers.py`) once when discovery starts. The election
   previously ran only on peer add/remove, a local readiness change and the stale
   sweep, so a node with **no peers yet** never resolved its role: a lone
-  `--force-master` node (the documented single-device master,
+  `--prefer-master` node (the documented single-device master,
   `docs/getting-started-p2p.md`) never advertised `server_ready`, and a joining
   slave looped on "Waiting for master … to start server" forever. Evaluating the
   local candidate up front makes a lone eligible node claim mastership

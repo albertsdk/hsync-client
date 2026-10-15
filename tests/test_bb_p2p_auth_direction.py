@@ -46,7 +46,7 @@ class TestP2PKeyAuth:
     def test_p2p_key_mismatch_rejected(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Master with P2P key A, slave with P2P key B → connection refused."""
         # Given a serving master
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -77,7 +77,7 @@ class TestP2PSyncDirection:
     def test_download_only_prevents_upload(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Slave with --sync-direction download-only: its files don't reach master."""
         # Given a serving master and a download-only slave
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -108,7 +108,7 @@ class TestP2PSyncDirection:
     def test_upload_only_prevents_download(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Slave with --sync-direction upload-only: master files don't reach slave."""
         # Given a serving master and an upload-only slave
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -147,7 +147,7 @@ class TestP2PMasterRestart:
     def test_master_restart_slave_recovers(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """After master crash + restart, slave rediscovers and resumes syncing."""
         # Given a first master session and a slave that has completed initial sync
-        master1 = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master1 = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master1, p2p_slave_dir, p2p_bucket)
 
@@ -166,7 +166,7 @@ class TestP2PMasterRestart:
                 )
 
                 # When the master is restarted on the same directory
-                master2 = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+                master2 = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
                 try:
                     # Then the restarted master becomes ready
                     assert _wait_for_client_ready(
@@ -203,7 +203,7 @@ class TestP2PSlaveRestart:
         identity and TOFU pin, and resumes syncing."""
 
         # Given a master and a live slave that have completed their initial sync
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -269,7 +269,7 @@ class TestP2PConflict:
 
         # Given a shared file both peers already agreed on, synced before the
         # slave session starts
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             (Path(p2p_master_dir) / "shared.txt").write_bytes(b"base\n")
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
@@ -396,7 +396,7 @@ class TestP2PConflict:
         true three-way conflict).
         """
         # Given a shared file synced before the slave session starts
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             (Path(p2p_master_dir) / "shared.txt").write_bytes(b"base\n")
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
@@ -492,7 +492,7 @@ class TestP2PConcurrency:
     def test_concurrent_file_writes_on_both_peers(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Master and slave write different files concurrently → both converge."""
         # Given a serving master and a slave with a live event channel
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 

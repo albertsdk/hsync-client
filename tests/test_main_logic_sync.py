@@ -428,7 +428,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     p2p_listen_port: int
     discovery_timeout: int | None
     p2p_group: str | None
-    force_master: bool
+    prefer_master: bool
     never_master: bool
     debug: bool
     quiet: bool
@@ -467,7 +467,7 @@ def _default_run_sync_kwargs(
         "p2p_listen_port": 0,
         "discovery_timeout": 5,
         "p2p_group": None,
-        "force_master": False,
+        "prefer_master": False,
         "never_master": False,
         "debug": False,
         "quiet": False,

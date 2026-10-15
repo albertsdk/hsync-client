@@ -49,7 +49,7 @@ class TestP2PPeerDownload:
         content = (b"peer-assisted-download\n" * 65536)[: 2 * 1024 * 1024]
         source_path = Path(p2p_master_dir) / "peer-source.bin"
         source_path.write_bytes(content)
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
             seeder = _p2p_start(
@@ -100,7 +100,7 @@ class TestP2PFileDeletion:
     def test_file_deletion_propagates(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """File deleted on master → deleted on slave."""
         # Given a serving master with a synced file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -131,7 +131,7 @@ class TestP2PIgnoreDelete:
     def test_ignore_delete_flag_preserves_file(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """--ignore-delete keeps the file on the slave when deleted on the master."""
         # Given a serving master with a synced file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -166,7 +166,7 @@ class TestP2PFileRename:
     def test_file_rename_propagates(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """File renamed on master → renamed on slave."""
         # Given a serving master with a synced file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -200,7 +200,7 @@ class TestP2PLargeFile:
     def test_large_file_sync(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """A 1 MB file syncs correctly."""
         # Given a serving master with a 1 MB file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -224,7 +224,7 @@ class TestP2PEmptyFile:
     def test_empty_file_sync(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """An empty file syncs correctly."""
         # Given a serving master with an empty file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -247,7 +247,7 @@ class TestP2PUnicodeFilename:
     def test_unicode_filename_sync(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """File with Unicode characters in name syncs correctly."""
         # Given a serving master with a Unicode-named file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -269,7 +269,7 @@ class TestP2PNestedDirectory:
     def test_nested_directory_sync(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Deeply nested directory structure syncs correctly."""
         # Given a serving master with a deeply nested directory
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -293,7 +293,7 @@ class TestP2PSymlink:
     def test_symlink_sync(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Symlinked file on master → regular file on slave (symlink resolved)."""
         # Given a serving master with a target file and an in-bucket symlink
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -324,7 +324,7 @@ class TestP2PSymlink:
         peer.
         """
         # Given a synced link and its target on both peers
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -366,7 +366,7 @@ class TestP2PSymlink:
         unbounded stream of ``[REMOTE SYMLINK]``/``[REMOTE DELETE]`` lines).
         """
         # Given a synced link on both peers
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -405,7 +405,7 @@ class TestP2PFileModification:
     def test_file_modification_propagates(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """File modified on master → updated on slave."""
         # Given a serving master with a synced file at version v1
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 

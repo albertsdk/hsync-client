@@ -64,7 +64,7 @@ def relayed_peer(
         "capacity": capacity,
         "reachable": reachable,
         "server_ready": False,
-        "force_master": False,
+        "prefer_master": False,
         "never_master": False,
         "startup_time": 0.0,
         "sync_direction": "bidirectional",
@@ -77,14 +77,14 @@ RESPONSE = {
     "protocol_version": "boot/1",
     "type": "response",
     "peers": [
-        # A serving, force-master peer: every election input is relayed.
+        # A serving, prefer-master peer: every election input is relayed.
         relayed_peer(
             OTHER,
             ip="203.0.113.10",
             port=8443,
             capacity=4,
             server_ready=True,
-            force_master=True,
+            prefer_master=True,
             startup_time=1760000000.5,
             sync_direction="download-only",
         ),
@@ -230,9 +230,9 @@ class TestPeerFeed:
         # The election advertisement is relayed verbatim: the peer enters the
         # shared election with its real values, instead of the old fabricated
         # "reachable ⇒ serving master" mapping that let a read-only seeder
-        # outrank a force-master node and made a never-master peer electable.
+        # outrank a prefer-master node and made a never-master peer electable.
         assert peers[0].server_ready is True
-        assert peers[0].force_master is True
+        assert peers[0].prefer_master is True
         assert peers[0].never_master is False
         assert peers[0].startup_time == 1760000000.5
         assert peers[0].sync_direction == "download-only"
@@ -300,7 +300,7 @@ class TestAdvertisement:
 
     def test_register_carries_the_local_advertisement(self):
         plan, _ = make_plan(
-            force_master=True,
+            prefer_master=True,
             startup_time=1760000001.0,
             sync_direction="upload-only",
         )
@@ -308,7 +308,7 @@ class TestAdvertisement:
         kind, frame = plan._client.calls[-1]
         assert kind == "register"
         assert frame["server_ready"] is False
-        assert frame["force_master"] is True
+        assert frame["prefer_master"] is True
         assert frame["never_master"] is False
         assert frame["startup_time"] == 1760000001.0
         assert frame["sync_direction"] == "upload-only"
@@ -329,12 +329,12 @@ class TestAdvertisement:
         demoted the local master and the roles ping-ponged until the data plane
         looped on the other node's read-only seeder endpoint.
         """
-        plan, _ = make_plan(force_master=True)
+        plan, _ = make_plan(prefer_master=True)
         manager = PeerManager(
             local_cid=CID,
             bucket="shared",
             group="home",
-            force_master=True,
+            prefer_master=True,
             startup_time=plan._startup_time,
         )
         plan._peer_manager = manager
@@ -351,7 +351,7 @@ class TestAdvertisement:
                 startup_time=plan._startup_time - 60,  # and started earlier
             )
         )
-        # Not serving yet: the incumbent peer outranks the local force_master.
+        # Not serving yet: the incumbent peer outranks the local prefer_master.
         assert manager.is_master() is False
 
         plan.update_server_ready()

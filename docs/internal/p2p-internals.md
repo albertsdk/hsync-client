@@ -218,8 +218,8 @@ shows the decision flow each peer runs independently:
 ```mermaid
 flowchart TD
     START["All candidates"] --> NM["Exclude never_master peers"]
-    NM --> FM{"Any peer with<br/>force_master?"}
-    FM -->|"Yes"| FM_WIN["force_master peer wins"]
+    NM --> FM{"Any peer with<br/>prefer_master?"}
+    FM -->|"Yes"| FM_WIN["prefer_master peer wins"]
     FM -->|"No"| BIDIR{"Any peer with<br/>bidirectional sync?"}
     BIDIR -->|"Yes"| BIDIR_POOL["Filter: bidirectional peers only"]
     BIDIR -->|"No"| ALL_POOL["All peers remain candidates"]
@@ -537,13 +537,13 @@ p2p mode uses mDNS (Multicast DNS) for peer discovery:
 - **TXT Records**: the canonical key set of the
   [p2p protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md)
   (`P2P_TXT_KEYS`) — `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
-  `server_ready`, `force_master`, `never_master`, `startup_time`, `group`,
+  `server_ready`, `prefer_master`, `never_master`, `startup_time`, `group`,
   `delta`, `peer_download`, `connected`, `compression`, `https` — boolean flags
   only when true
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
 
 When the group uses a bootnode instead, the same election inputs (`server_ready`,
-`force_master`, `never_master`, `startup_time`, `sync_direction`) travel in the
+`prefer_master`, `never_master`, `startup_time`, `sync_direction`) travel in the
 `register` frame and come back on every relayed peer of a `query`, so the master
 election is identical whether mDNS runs alone or alongside the bootnode. They are
 unauthenticated hints, exactly like the TXT flags: the data plane pins the peer

@@ -42,7 +42,7 @@ class TestP2PDryRun:
         # Given a master with a file and a dry-run slave
         (Path(p2p_master_dir) / "dry_test.txt").write_bytes(b"dry\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -77,7 +77,7 @@ class TestP2PPreExistingData:
         # Given a master with pre-existing data
         (Path(p2p_master_dir) / "pre_existing.txt").write_bytes(b"pre-existing\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -103,7 +103,7 @@ class TestP2PUnicodePath:
     def test_unicode_filename_syncs(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Unicode filename syncs correctly."""
         # Given a master with a Unicode-named file
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -125,7 +125,7 @@ class TestP2PDeepPath:
     def test_nested_deep_directory_syncs(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """Deeply nested directory syncs correctly."""
         # Given a master with a deeply nested directory
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -175,7 +175,7 @@ class TestP2PMassDelete:
         for i in range(20):
             (Path(p2p_master_dir) / f"md{i:02d}.txt").write_bytes(b"mass-delete\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -197,7 +197,7 @@ class TestP2PMassDelete:
 
                 # And the master restarts with the same identity, so the slave
                 # reconnects and reconciles the 20 deletions
-                master2 = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+                master2 = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
                 try:
                     # Then the mass-deletion guard trips
                     assert _wait_for_text_in_stderr(
@@ -226,7 +226,7 @@ class TestP2PSymlinkEscape:
         outside = Path("/tmp") / f"hsync-esc-{p2p_bucket}"
         outside.write_bytes(b"outside\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -259,7 +259,7 @@ class TestP2PIgnorePatterns:
         (Path(p2p_master_dir) / "keep.me").write_bytes(b"keep\n")
         (Path(p2p_master_dir) / "drop.tmp").write_bytes(b"drop\n")
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
@@ -304,7 +304,7 @@ class TestP2PLogfile:
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
-            force_master=True,
+            prefer_master=True,
             extra_args=("--log-file", str(logfile)),
         )
         try:
@@ -421,7 +421,7 @@ class TestP2PInstanceLock:
         a clear error (the per-directory flock is held for the whole run and
         released by the kernel even on SIGKILL)."""
         # Given a P2P client already running on a directory (waiting for peers)
-        first = _p2p_start(p2p_master_dir, p2p_bucket, force_master=True)
+        first = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             held = False
             deadline = time.time() + 5

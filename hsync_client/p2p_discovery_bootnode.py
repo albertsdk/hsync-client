@@ -87,7 +87,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         group: str | None = None,
         use_https: bool = True,
         cert_fingerprint: str | None = None,
-        force_master: bool = False,
+        prefer_master: bool = False,
         never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
@@ -112,7 +112,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             group=group,
             use_https=use_https,
             cert_fingerprint=cert_fingerprint,
-            force_master=force_master,
+            prefer_master=prefer_master,
             never_master=never_master,
             startup_time=startup_time,
             sync_direction=sync_direction,
@@ -188,7 +188,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         """
         manager = peer_manager or self.create_peer_manager()
         self._peer_manager = manager
-        # Resolve the local role before the first wait: a lone --force-master
+        # Resolve the local role before the first wait: a lone --prefer-master
         # node must become master and serve immediately so a joining slave can
         # connect (the election otherwise runs only on peer events).
         manager.elect()
@@ -443,7 +443,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 endpoints=endpoints,
                 connected=self._current_connected() if self._server_ready else None,
                 server_ready=self._server_ready,
-                force_master=self._force_master,
+                prefer_master=self._prefer_master,
                 never_master=self._never_master,
                 startup_time=self._startup_time,
                 sync_direction=self._sync_direction,
@@ -520,7 +520,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
 
         ``reachable=false`` entries carry no dialable data-plane endpoint (a
         bootstrap-only register), so they are not peers yet. Every other field —
-        including the election advertisement (``server_ready``/``force_master``/
+        including the election advertisement (``server_ready``/``prefer_master``/
         ``never_master``/``startup_time``/``sync_direction``) — is relayed
         verbatim by the node, so a bootnode-discovered peer enters the shared
         election with the same inputs as a mDNS-discovered one. They are
@@ -558,7 +558,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             cert_fingerprint=wire.get("cert_fp"),
             peer_download_enabled=False,
             server_ready=wire["server_ready"],
-            force_master=wire["force_master"],
+            prefer_master=wire["prefer_master"],
             never_master=wire["never_master"],
             startup_time=wire["startup_time"],
             sync_direction=wire["sync_direction"],

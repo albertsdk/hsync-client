@@ -127,7 +127,7 @@ class Peer:
     server_ready: bool = False  # True when HTTP server is listening
     connected: int = 0  # slaves currently connected to the master's WebSocket
     last_seen: float = field(default_factory=time.time)
-    force_master: bool = False  # True if peer wants to force master role
+    prefer_master: bool = False  # True if peer wants to prefer master role
     never_master: bool = False  # True if peer refuses to ever be master
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
@@ -176,7 +176,7 @@ class PeerManager:
     Thread-safe peer tracking with automatic master election.
 
     Election priority (highest to lowest):
-    1. force_master flag (if set, that peer wins)
+    1. prefer_master flag (if set, that peer wins)
     2. Bidirectional sync_direction preference (bidirectional wins)
     3. Earliest startup_time (first started wins)
     4. Lowest CID lexicographically (tiebreaker)
@@ -187,7 +187,7 @@ class PeerManager:
         local_cid: str,
         bucket: str,
         group: str | None = None,
-        force_master: bool = False,
+        prefer_master: bool = False,
         never_master: bool = False,
         startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
@@ -202,7 +202,7 @@ class PeerManager:
             local_cid: This client's CID.
             bucket: The bucket name for filtering peers.
             group: Optional group name for filtering peers.
-            force_master: If True, this client will always try to be master.
+            prefer_master: If True, this client will always try to be master.
             never_master: If True, this client is excluded from master election
                 and always remains a client/slave.
             startup_time: Unix timestamp when this client started.
@@ -222,7 +222,7 @@ class PeerManager:
         self._local_cid = local_cid
         self._bucket = bucket
         self._group = group
-        self._force_master = force_master
+        self._prefer_master = prefer_master
         self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
         self._sync_direction = sync_direction
@@ -259,7 +259,7 @@ class PeerManager:
         """Mark the local node as actively serving (incumbent master).
 
         A node that is already serving its bucket wins master election over
-        newcomers (even ``force_master`` ones), preventing takeover and
+        newcomers (even ``prefer_master`` ones), preventing takeover and
         split-brain for the same bucket.
         """
         with self._lock:
@@ -285,9 +285,9 @@ class PeerManager:
         return self._group
 
     @property
-    def force_master(self) -> bool:
-        """Get the force_master flag."""
-        return self._force_master
+    def prefer_master(self) -> bool:
+        """Get the prefer_master flag."""
+        return self._prefer_master
 
     @property
     def never_master(self) -> bool:
@@ -351,7 +351,7 @@ class PeerManager:
                 # master outcome, far less work.
                 election_changed = (
                     existing.server_ready != peer.server_ready
-                    or existing.force_master != peer.force_master
+                    or existing.prefer_master != peer.prefer_master
                     or existing.never_master != peer.never_master
                     or existing.startup_time != peer.startup_time
                     or existing.sync_direction != peer.sync_direction
@@ -400,7 +400,7 @@ class PeerManager:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
                 existing.connected = peer.connected
-                existing.force_master = peer.force_master
+                existing.prefer_master = peer.prefer_master
                 existing.never_master = peer.never_master
                 existing.startup_time = peer.startup_time
                 existing.sync_direction = peer.sync_direction
@@ -511,7 +511,7 @@ class PeerManager:
         Discovery calls this once when it starts. The election otherwise runs
         only on a peer add/remove, a local readiness change or a stale sweep, so
         a node with no peers yet never resolves its role: a lone
-        ``--force-master`` node (the documented single-device master) would never
+        ``--prefer-master`` node (the documented single-device master) would never
         serve and a joining slave would wait for a master that never starts its
         server. Evaluating the local candidate up front lets a lone eligible node
         claim mastership immediately, exactly like the peer-driven elections.
@@ -602,7 +602,7 @@ class PeerManager:
         Election priority (highest to lowest):
         1. server_ready flag (an already-serving incumbent master wins;
            prevents takeover and split-brain for the same bucket)
-        2. force_master flag (if set, that peer wins)
+        2. prefer_master flag (if set, that peer wins)
         3. Bidirectional sync_direction preference (bidirectional wins)
         4. Earliest startup_time (first started wins)
         5. Lowest CID lexicographically (tiebreaker)
@@ -616,12 +616,12 @@ class PeerManager:
         # the ranking to the shared, cross-language algorithm in hsync_common so
         # the Python client and Android never diverge. ``never_master`` nodes are
         # carried through and filtered by the shared ranking helper, which also
-        # yields the full ranked list needed for the force_master conflict report
+        # yields the full ranked list needed for the prefer_master conflict report
         # below.
         candidates: list[ElectionCandidate] = [
             ElectionCandidate(
                 cid=self._local_cid,
-                force_master=self._force_master,
+                prefer_master=self._prefer_master,
                 startup_time=self._startup_time,
                 sync_direction=self._sync_direction,
                 server_ready=self._local_server_ready,
@@ -631,7 +631,7 @@ class PeerManager:
         candidates.extend(
             ElectionCandidate(
                 cid=peer.cid,
-                force_master=peer.force_master,
+                prefer_master=peer.prefer_master,
                 startup_time=peer.startup_time,
                 sync_direction=peer.sync_direction,
                 server_ready=peer.server_ready,
@@ -644,19 +644,19 @@ class PeerManager:
         ranked = rank_election_candidates(candidates)
         new_master_cid = ranked[0].cid if ranked else None
 
-        # Detect force_master conflicts
-        force_master_candidates = [c for c in ranked if c.force_master]
-        if len(force_master_candidates) > 1:
-            winner_cid = force_master_candidates[0].cid
-            for loser in force_master_candidates[1:]:
+        # Detect prefer_master conflicts
+        prefer_master_candidates = [c for c in ranked if c.prefer_master]
+        if len(prefer_master_candidates) > 1:
+            winner_cid = prefer_master_candidates[0].cid
+            for loser in prefer_master_candidates[1:]:
                 loser_cid = loser.cid
                 loser_peer = self._peers.get(loser_cid)
                 winner_peer = self._peers.get(winner_cid)
                 if loser_cid == self._local_cid:
-                    # We lost: another force_master peer won
+                    # We lost: another prefer_master peer won
                     winner_addr = winner_peer.address if winner_peer else "unknown"
                     log.warning(
-                        f"{ActionLabel.MASTER_CONFLICT} force_master conflict: "
+                        f"{ActionLabel.MASTER_CONFLICT} prefer_master conflict: "
                         f"another master {winner_cid} at {winner_addr} "
                         f"has priority (started earlier). "
                         f"This client will operate as client."
@@ -668,12 +668,12 @@ class PeerManager:
                         peer_address=winner_addr,
                     )
                 elif winner_cid == self._local_cid:
-                    # We won: a remote force_master peer lost
+                    # We won: a remote prefer_master peer lost
                     loser_addr = loser_peer.address if loser_peer else "unknown"
                     log.warning(
-                        f"{ActionLabel.MASTER_CONFLICT} force_master conflict: "
+                        f"{ActionLabel.MASTER_CONFLICT} prefer_master conflict: "
                         f"peer {loser_cid} at {loser_addr} also has "
-                        f"force_master enabled. This client wins "
+                        f"prefer_master enabled. This client wins "
                         f"(started earlier)."
                     )
                     emit_event(
@@ -683,19 +683,19 @@ class PeerManager:
                         peer_address=loser_addr,
                     )
 
-        # Detect force_master takeover: remote force_master peer overrides
-        # local non-force_master master
+        # Detect prefer_master takeover: remote prefer_master peer overrides
+        # local non-prefer_master master
         if (
             new_master_cid is not None
             and new_master_cid != self._local_cid
-            and not self._force_master
+            and not self._prefer_master
             and self._master_cid == self._local_cid
         ):
             new_peer = self._peers.get(new_master_cid)
-            if new_peer and new_peer.force_master:
+            if new_peer and new_peer.prefer_master:
                 log.warning(
                     f"{ActionLabel.MASTER_TAKEOVER} peer {new_master_cid} at "
-                    f"{new_peer.address} has force_master enabled "
+                    f"{new_peer.address} has prefer_master enabled "
                     f"and is taking over as master. "
                     f"This client will switch to client."
                 )
@@ -713,8 +713,8 @@ class PeerManager:
             if new_master_cid == self._local_cid:
                 if self._local_server_ready:
                     reason = "server_ready"
-                elif self._force_master:
-                    reason = "force_master"
+                elif self._prefer_master:
+                    reason = "prefer_master"
                 elif self._sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
                     reason = "bidirectional preference"
                 else:
@@ -734,8 +734,8 @@ class PeerManager:
                 if master_peer:
                     if master_peer.server_ready:
                         reason = "server_ready"
-                    elif master_peer.force_master:
-                        reason = "force_master"
+                    elif master_peer.prefer_master:
+                        reason = "prefer_master"
                     elif master_peer.sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
                         reason = "bidirectional preference"
                     else:

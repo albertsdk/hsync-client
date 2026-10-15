@@ -52,7 +52,7 @@ full option and environment-variable reference.
 
 ```bash
 # Always/never become the sync coordinator for this bucket.
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --force-master
+HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --prefer-master
 HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --never-master
 ```
 
@@ -62,7 +62,7 @@ indefinitely) for one-shot runs.
 ## Verify it works
 
 - The peer list grows in the logs as mDNS records arrive.
-- `--force-master` on one side and `--never-master` on the other gives a
+- `--prefer-master` on one side and `--never-master` on the other gives a
   deterministic coordinator; the slave logs the master it elected.
 - A file created on the coordinator appears on the other device.
 

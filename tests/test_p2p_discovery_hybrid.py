@@ -22,7 +22,7 @@ def _config(**overrides):
         "REMOTE_BUCKET": "shared",
         "P2P_LISTEN_PORT": 0,
         "P2P_GROUP": None,
-        "P2P_FORCE_MASTER": False,
+        "P2P_PREFER_MASTER": False,
         "P2P_NEVER_MASTER": False,
         "SYNC_DIRECTION": "bidirectional",
     }
