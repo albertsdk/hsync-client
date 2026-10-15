@@ -276,3 +276,44 @@ class TestRunPreview:
             ]
             assert len(summary_calls) == 1
             assert "1 synced, 1 downloads, 1 uploads, 0 deletes, 0 renames" in summary_calls[0]
+
+
+class TestRunPreviewAuthErrors:
+    """Authentication failures surface as ``auth_error`` (not a generic error)
+    so the GUI can prompt for the shared password; other failures stay generic."""
+
+    @staticmethod
+    def _emitted(exc: Exception) -> list:
+        mock_logger = MagicMock()
+        emitted: list = []
+        with (
+            patch("hsync_client.preview.CONFIG", {"P2P_MODE": True}),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", side_effect=exc),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[]),
+            patch(
+                "hsync_client.preview.emit_event",
+                side_effect=lambda name, **kw: emitted.append(name),
+            ),
+        ):
+            _run_preview(mock_logger)
+        return emitted
+
+    def test_authentication_error_emits_auth_error(self):
+        from hsync_client.events import UiEventName
+        from hsync_client.exceptions import AuthenticationError
+
+        emitted = self._emitted(AuthenticationError(message="Invalid API key"))
+
+        assert UiEventName.auth_error in emitted
+        assert UiEventName.error not in emitted
+
+    def test_generic_error_stays_generic(self):
+        from hsync_client.events import UiEventName
+
+        emitted = self._emitted(RuntimeError("boom"))
+
+        assert UiEventName.error in emitted
+        assert UiEventName.auth_error not in emitted

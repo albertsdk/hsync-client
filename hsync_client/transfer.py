@@ -12,7 +12,7 @@ import hashlib
 import hmac
 import re
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from os import close, fsync, remove, replace, stat_result, utime
 from pathlib import Path
@@ -83,6 +83,7 @@ from hsync_client.p2p_sources import (
     P2PSourceResolver,
     PeerFailureKind,
 )
+from hsync_client.progress import ProgressReporter
 from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.sync_state import (
     abs_in_bucket,
@@ -212,10 +213,18 @@ class _ThrottledFileReader:
     delay after each chunk without modifying the upload flow.
     """
 
-    def __init__(self, fp, bandwidth_limit: int | None, transfer_key: str = "upload"):
+    def __init__(
+        self,
+        fp,
+        bandwidth_limit: int | None,
+        transfer_key: str = "upload",
+        on_progress: Callable[[int], None] | None = None,
+    ):
         self._fp = fp
         self._bw_limit = bandwidth_limit
         self._key = transfer_key
+        self._on_progress = on_progress
+        self._sent = 0
 
     # Proxy every attribute to the inner file …
     def __getattr__(self, name: str):
@@ -223,10 +232,14 @@ class _ThrottledFileReader:
 
     def read(self, size: int = -1) -> bytes:
         data = self._fp.read(size)
-        if data and self._bw_limit:
-            delay = get_throttle_delay(len(data), self._bw_limit, self._key)
-            if delay > 0:
-                time_sleep(delay)
+        if data:
+            if self._bw_limit:
+                delay = get_throttle_delay(len(data), self._bw_limit, self._key)
+                if delay > 0:
+                    time_sleep(delay)
+            if self._on_progress is not None:
+                self._sent += len(data)
+                self._on_progress(self._sent)
         return data
 
 
@@ -298,6 +311,7 @@ def _build_multipart_streaming(
     filename: str | None = None,
     offset: int = 0,
     bandwidth_limit: int | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ):
     """Construct a streaming multipart/form-data body.
 
@@ -348,6 +362,7 @@ def _build_multipart_streaming(
     def _generator():
         yield from field_parts
         yield file_header
+        sent = 0
         with open(file_path, "rb") as fh:
             if offset > 0:
                 fh.seek(offset)
@@ -356,6 +371,9 @@ def _build_multipart_streaming(
                 if not chunk:
                     break
                 yield chunk
+                sent += len(chunk)
+                if on_progress is not None:
+                    on_progress(sent)
                 if bandwidth_limit:
                     delay = get_throttle_delay(len(chunk), bandwidth_limit, "upload")
                     if delay > 0:
@@ -953,6 +971,7 @@ def _download_from_source_attempt(
         # exact zero-byte file. MAX_INBOUND_SIZE is enforced above as a policy
         # ceiling; it must never turn size=0 into an "unknown" multi-GB cap.
         write_cap = file.size
+        reporter = ProgressReporter(full_save_path, write_cap)
         with _open_partial_no_follow(partial_file_path, write_mode) as output:
             if is_compressed:
                 response.raw.decode_content = False
@@ -965,6 +984,7 @@ def _download_from_source_attempt(
                     output.write(chunk)
                     sha256.update(chunk)
                     written += len(chunk)
+                    reporter.update(written)
             else:
                 dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -972,6 +992,7 @@ def _download_from_source_attempt(
                         continue
                     written += len(chunk)
                     wire_bytes += len(chunk)
+                    reporter.update(written)
                     if written > write_cap:
                         if source is not None:
                             raise _PeerSourceFailure(
@@ -2067,7 +2088,8 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
 
                 with open(compressed_tmp, "rb") as fh:
                     ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-                    reader = _ThrottledFileReader(fh, ul_bw_limit) if ul_bw_limit else fh
+                    reporter = ProgressReporter(file.filepath, compressed_size)
+                    reader = _ThrottledFileReader(fh, ul_bw_limit, on_progress=reporter.update)
                     files = {"file": (Path(file.filepath).name, reader)}
                     response = post(
                         uri,
@@ -2087,6 +2109,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
 
             boundary = uuid4().hex
+            reporter = ProgressReporter(file.filepath, file.size or 0)
             body, content_type = _build_multipart_streaming(
                 file.filepath,
                 dict(data),
@@ -2094,6 +2117,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 filename=Path(file.filepath).name,
                 offset=offset,
                 bandwidth_limit=ul_bw_limit,
+                on_progress=lambda sent: reporter.update(offset + sent),
             )
             # Content-Length is derived by requests from body.__len__; setting it
             # here as well would coexist with the chunked framing requests adds

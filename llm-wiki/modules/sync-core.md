@@ -89,6 +89,21 @@ after a successful sync (`merge_and_record` on `in_sync`, `_record_synced_base`
 on transfer). `get_sync_actions(persist_state=False)` skips the
 `merge_and_record` step so a dry-run/preview never mutates the state DB.
 
+Preview (`preview.py::_run_preview`) and sync (`sync.py`) report failures through
+the UI-event channel: an `AuthenticationError` is emitted as
+`UiEventName.auth_error` (so the desktop prompts for the shared password), while
+any other failure stays a generic `UiEventName.error`.
+
+In-flight transfers emit throttled `UiEventName.progress` events
+(`progress.py::ProgressReporter`, coalesced to at most one per 0.5 s plus a
+final update at completion) from the full-file download loops
+(`transfer.py::_download_from_source_attempt`), the delta download payload stream
+(`delta_transfer.py::download_file_delta`, measured against the peer-declared
+literal size) and the upload stream (`transfer.py::_build_multipart_streaming` /
+`transfer.py::_ThrottledFileReader`), so the desktop file panel can show transfer
+progress and ETA. The delta *upload* posts its payload as a single in-memory body,
+so it emits no intermediate progress.
+
 No node is authoritative: the server and the elected p2p master are transport
 hubs. Upload arbitration mirrors `hsync_server.arbitration` (client side in
 `hsync_client/arbitration.py`); the tie-break is deterministic by highest
