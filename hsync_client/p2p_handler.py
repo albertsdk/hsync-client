@@ -447,6 +447,9 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                         f"the deterministic election picked "
                         f"{peer_manager.get_master_cid() or 'no eligible peer'}."
                     )
+                    # Back to the discovery loop: the desktop status drops to
+                    # "connecting" until the new master link is established.
+                    emit_event(UiEventName.status, status="connecting")
                 # NOTE: the master role is inherently continuous: it must
                 # stay available to serve peers regardless of the one-shot
                 # flag (which only applies to slaves). The loop only exits
@@ -619,6 +622,9 @@ def _run_as_master(
             time.sleep(WATCHER_START_RETRY_DELAY_S)
             return p2p_server, p2p_ws_server
         log.info(f"Master realtime channel on port {p2p_sync.port} (WSS)")
+
+        # This node now serves the bucket: the desktop link is up.
+        emit_event(UiEventName.status, status="connected")
 
         if config["P2P_KEY"]:
             log.info("Authentication enabled (HSYNC_P2P_KEY)")

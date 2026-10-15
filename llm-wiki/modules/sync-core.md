@@ -104,6 +104,12 @@ literal size) and the upload stream (`transfer.py::_build_multipart_streaming` /
 progress and ETA. The delta *upload* posts its payload as a single in-memory body,
 so it emits no intermediate progress.
 
+Status (`UiEventName.status`): remote mode emits `connected`/`waiting`
+(`remote_websocket.py`); p2p mode emits `connecting` on connection teardown and
+`connected` once the slave link is ready
+(`p2p_websocket.py::p2p_websocket_client`) or the node serves as master
+(`p2p_handler.py::_run_as_master`), so the desktop status bar tracks the p2p link.
+
 No node is authoritative: the server and the elected p2p master are transport
 hubs. Upload arbitration mirrors `hsync_server.arbitration` (client side in
 `hsync_client/arbitration.py`); the tie-break is deterministic by highest
