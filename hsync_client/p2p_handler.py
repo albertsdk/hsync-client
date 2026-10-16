@@ -76,6 +76,21 @@ if TYPE_CHECKING:
 # ``[NO MASTER]`` warning so front-ends (desktop UI) can surface a notification.
 NO_MASTER_WARNING_TIMEOUT = 60.0
 
+# Message carried by the ``no_peers`` event when a p2p one-shot aborts because no
+# peer was discovered (exit code ``P2P_NO_PEER``).
+NO_PEERS_MESSAGE = "No other device was found on the network"
+
+
+def _p2p_status(connected_clients: int) -> str:
+    """p2p link status: an active peer connection is required to be "connected".
+
+    A serving master with no connected slave is ``waiting`` for a device, not a
+    live link (so the status bar stays honest and no "connection lost" fires when
+    nobody was ever connected).
+    """
+    return "connected" if connected_clients > 0 else "waiting"
+
+
 # Upper bound on how long the bootnode plan may delay the master's [READY]
 # while it waits for the endpoint publication (second register). UPnP is
 # best-effort, so publication happens even when no mapping could be created;
@@ -389,6 +404,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 and not peer_manager.get_alive_peers()
             ):
                 log.warning("No master elected - this client is alone, nothing to sync")
+                emit_event(UiEventName.no_peers, message=NO_PEERS_MESSAGE)
                 return int(ExitCode.P2P_NO_PEER)
 
             # A finite one-shot window must not end merely because an
@@ -421,8 +437,14 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 def ws_connected_count(server: P2PWebSocketServer = ws_server) -> int:
                     return server.connected_clients
 
+                def on_clients_changed(count: int) -> None:
+                    p2p_sync.set_connected_clients(count)
+                    # "connected" means an active peer link: a lone serving
+                    # master is "waiting" for a device to connect.
+                    emit_event(UiEventName.status, status=_p2p_status(count))
+
                 p2p_sync.set_connected_clients_provider(ws_connected_count)
-                p2p_ws_server.set_clients_changed_callback(p2p_sync.set_connected_clients)
+                p2p_ws_server.set_clients_changed_callback(on_clients_changed)
 
                 p2p_server, p2p_ws_server = _run_as_master(
                     config=config,
@@ -446,6 +468,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     master_serving = False
                     inventory_publisher = None
                     p2p_sync.set_connected_clients_provider(None)
+                    p2p_ws_server.set_clients_changed_callback(None)
                     p2p_sync.update_server_not_ready()
                     log.warning(
                         f"{ActionLabel.MASTER_YIELD} this client yielded mastership; "
@@ -628,8 +651,12 @@ def _run_as_master(
             return p2p_server, p2p_ws_server
         log.info(f"Master realtime channel on port {p2p_sync.port} (WSS)")
 
-        # This node now serves the bucket: the desktop link is up.
-        emit_event(UiEventName.status, status="connected")
+        # Serving with no connected slave is "waiting for devices", not a live
+        # link: "connected" means at least one active peer connection.
+        emit_event(
+            UiEventName.status,
+            status=_p2p_status(p2p_ws_server.connected_clients),
+        )
 
         if config["P2P_KEY"]:
             log.info("Authentication enabled (HSYNC_P2P_KEY)")
@@ -1076,4 +1103,5 @@ def _run_as_slave(
         log.info("Waiting for peers to join...")
         return True, int(ExitCode.OK)  # Continue the discovery loop
     log.warning("No master elected - this client is alone, nothing to sync")
+    emit_event(UiEventName.no_peers, message=NO_PEERS_MESSAGE)
     return False, int(ExitCode.P2P_NO_PEER)

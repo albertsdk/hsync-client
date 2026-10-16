@@ -105,10 +105,19 @@ progress and ETA. The delta *upload* posts its payload as a single in-memory bod
 so it emits no intermediate progress.
 
 Status (`UiEventName.status`): remote mode emits `connected`/`waiting`
-(`remote_websocket.py`); p2p mode emits `connecting` on connection teardown and
+(`remote_websocket.py`); p2p mode emits `connecting` on connection teardown,
 `connected` once the slave link is ready
-(`p2p_websocket.py::p2p_websocket_client`) or the node serves as master
-(`p2p_handler.py::_run_as_master`), so the desktop status bar tracks the p2p link.
+(`p2p_websocket.py::p2p_websocket_client`) and, for a serving master, `connected`
+only when at least one slave is linked — a lone master is `waiting`
+(`p2p_handler.py::_p2p_status`, kept in sync by the WS client-count callback), so
+the desktop status bar tracks the real p2p link.
+
+`no_peers` (`UiEventName.no_peers`, `p2p_handler.py::NO_PEERS_MESSAGE`) is emitted
+when a p2p one-shot aborts because no peer was discovered (`ExitCode.P2P_NO_PEER`)
+so a GUI can say "no devices to send to" instead of inferring from the exit code.
+The generic `error` event carries `reason="connection"` for a connection-level
+failure (`NetworkError`, not `ServerError`) in preview/sync, so a GUI can name the
+cause ("could not reach the server"); `auth_error` stays separate.
 
 No node is authoritative: the server and the elected p2p master are transport
 hubs. Upload arbitration mirrors `hsync_server.arbitration` (client side in

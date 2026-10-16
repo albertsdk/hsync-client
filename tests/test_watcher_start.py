@@ -555,6 +555,7 @@ class TestRunAsMasterWatcherBackoff:
         server = MagicMock()
         ws = MagicMock()
         ws.running = False
+        ws.connected_clients = 0
         ws.start.side_effect = lambda **kwargs: setattr(ws, "running", True)
 
         with patch("time.sleep"):

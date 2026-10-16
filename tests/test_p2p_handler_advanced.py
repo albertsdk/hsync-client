@@ -66,6 +66,7 @@ def _patch_p2p_listener(port: int = 9000) -> tuple[MagicMock, MagicMock]:
     server.cid_guard = MagicMock()
     ws = MagicMock()
     ws.running = False
+    ws.connected_clients = 0
     server.websocket_server = ws
     return server, ws
 
@@ -84,6 +85,7 @@ class TestRunAsMaster:
         server = MagicMock()
         ws = MagicMock()
         ws.running = False
+        ws.connected_clients = 0
         ws.start.side_effect = lambda **kwargs: setattr(ws, "running", True)
         return server, ws
 
@@ -116,8 +118,8 @@ class TestRunAsMaster:
         ws.start.assert_called_once_with(watch_path=str(tmp_path))
         sync.update_server_ready.assert_called_once()
 
-    def test_run_as_master_emits_connected_status(self, tmp_path):
-        """Serving as master reports the link up to the desktop."""
+    def test_run_as_master_reports_connected_with_a_client(self, tmp_path):
+        """Serving as master with a connected slave reports "connected"."""
         from hsync_client.events import UiEventName
         from hsync_client.p2p_handler import _run_as_master
 
@@ -125,6 +127,7 @@ class TestRunAsMaster:
         sync = self._mock_sync()
         sync.peer_manager.is_master.return_value = True
         server, ws = self._mock_servers()
+        ws.connected_clients = 1
 
         with (
             patch("time.sleep"),
@@ -142,6 +145,37 @@ class TestRunAsMaster:
             c.args and c.args[0] is UiEventName.status and c.kwargs.get("status") == "connected"
             for c in emit.call_args_list
         )
+
+    def test_run_as_master_waits_when_alone(self, tmp_path):
+        """A lone serving master reports "waiting" — no peer link is up."""
+        from hsync_client.events import UiEventName
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _make_p2p_config(tmp_path)
+        sync = self._mock_sync()
+        sync.peer_manager.is_master.return_value = True
+        server, ws = self._mock_servers()
+        ws.connected_clients = 0
+
+        with (
+            patch("time.sleep"),
+            patch("hsync_client.p2p_handler.emit_event") as emit,
+        ):
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+
+        statuses = [
+            c.kwargs.get("status")
+            for c in emit.call_args_list
+            if c.args and c.args[0] is UiEventName.status
+        ]
+        assert "waiting" in statuses
+        assert "connected" not in statuses
 
     def test_master_lost_while_starting_up_does_not_advertise_readiness(self, tmp_path):
         """A node that lost the election mid-startup must not claim readiness.
@@ -363,6 +397,7 @@ class TestRunAsMasterContinuousSemantics:
         server = MagicMock()
         ws = MagicMock()
         ws.running = False
+        ws.connected_clients = 0
         ws.start.side_effect = lambda **kwargs: setattr(ws, "running", True)
 
         sleep_calls: list[float] = []
@@ -468,12 +503,17 @@ class TestRunLanModeOuterLoopMasterPath:
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch("hsync_client.p2p_handler.time.monotonic", side_effect=lambda: next(monotonic)),
             patch("hsync_client.timesync.start_ntp_clock_offset_probe", return_value=None),
+            patch("hsync_client.p2p_handler.emit_event") as emit,
         ):
             exit_code = p2p_handler.run_p2p_mode(config, mock_log)
 
         assert exit_code == int(ExitCode.P2P_NO_PEER)
         assert mock_p2p_sync.wait_for_discovery.call_count == 1
         assert any("this client is alone" in str(c) for c in mock_log.warning.call_args_list)
+        # The GUI needs a typed signal to say "no devices to send to".
+        from hsync_client.events import UiEventName
+
+        assert any(c.args and c.args[0] is UiEventName.no_peers for c in emit.call_args_list)
 
 
 class TestRunLanModeNoMasterWarning:
@@ -1414,3 +1454,18 @@ class TestMasterPinMessaging:
             assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
         assert emit2.call_count == 1
         assert len(log.error.call_args_list) == 2
+
+
+class TestP2PStatus:
+    """Only an active peer link is "connected"; a lone master is "waiting"."""
+
+    def test_lone_master_is_waiting(self):
+        from hsync_client.p2p_handler import _p2p_status
+
+        assert _p2p_status(0) == "waiting"
+
+    def test_connected_with_a_client(self):
+        from hsync_client.p2p_handler import _p2p_status
+
+        assert _p2p_status(1) == "connected"
+        assert _p2p_status(3) == "connected"

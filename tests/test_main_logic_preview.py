@@ -283,9 +283,9 @@ class TestRunPreviewAuthErrors:
     so the GUI can prompt for the shared password; other failures stay generic."""
 
     @staticmethod
-    def _emitted(exc: Exception) -> list:
+    def _emitted(exc: Exception) -> list[tuple]:
         mock_logger = MagicMock()
-        emitted: list = []
+        emitted: list[tuple] = []
         with (
             patch("hsync_client.preview.CONFIG", {"P2P_MODE": True}),
             patch("hsync_client.preview.ensure_hsynckeep_files"),
@@ -295,25 +295,48 @@ class TestRunPreviewAuthErrors:
             patch("hsync_client.preview.get_sync_actions", return_value=[]),
             patch(
                 "hsync_client.preview.emit_event",
-                side_effect=lambda name, **kw: emitted.append(name),
+                side_effect=lambda name, **kw: emitted.append((name, kw)),
             ),
         ):
             _run_preview(mock_logger)
         return emitted
 
+    @staticmethod
+    def _names(emitted: list[tuple]) -> list:
+        return [name for name, _kw in emitted]
+
     def test_authentication_error_emits_auth_error(self):
         from hsync_client.events import UiEventName
         from hsync_client.exceptions import AuthenticationError
 
-        emitted = self._emitted(AuthenticationError(message="Invalid API key"))
+        names = self._names(self._emitted(AuthenticationError(message="Invalid API key")))
 
-        assert UiEventName.auth_error in emitted
-        assert UiEventName.error not in emitted
+        assert UiEventName.auth_error in names
+        assert UiEventName.error not in names
 
     def test_generic_error_stays_generic(self):
         from hsync_client.events import UiEventName
 
-        emitted = self._emitted(RuntimeError("boom"))
+        names = self._names(self._emitted(RuntimeError("boom")))
 
-        assert UiEventName.error in emitted
-        assert UiEventName.auth_error not in emitted
+        assert UiEventName.error in names
+        assert UiEventName.auth_error not in names
+
+    def test_connection_failure_is_tagged(self):
+        """A connection-level failure is tagged so the GUI can name the cause."""
+        from hsync_client.events import UiEventName
+        from hsync_client.exceptions import NetworkError
+
+        emitted = self._emitted(NetworkError("connection refused"))
+        error_kw = next(kw for name, kw in emitted if name == UiEventName.error)
+
+        assert error_kw["reason"] == "connection"
+
+    def test_server_error_is_not_tagged_as_a_connection_failure(self):
+        from hsync_client.events import UiEventName
+        from hsync_client.exceptions import ServerError
+
+        emitted = self._emitted(ServerError("500"))
+        error_kw = next(kw for name, kw in emitted if name == UiEventName.error)
+
+        assert error_kw["reason"] == ""

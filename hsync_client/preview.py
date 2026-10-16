@@ -19,7 +19,7 @@ from hsync_common.protocol.pairing import p2p_write_requires_key
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, SYNC_DIRECTIONS, ActionLabel
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.exceptions import AuthenticationError
+from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
 from hsync_client.p2p_inventory import InventoryObserver
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.presence import reemit_presence
@@ -205,10 +205,20 @@ def _run_preview(log) -> None:
         )
     except Exception as e:
         log.error(f"Preview failed: {e}")
-        # An authentication failure is not a generic preview error: surface it
-        # as ``auth_error`` so the GUI can prompt for the shared password.
-        event = UiEventName.auth_error if isinstance(e, AuthenticationError) else UiEventName.error
-        emit_event(event, message=f"Preview failed: {e}")
+        if isinstance(e, AuthenticationError):
+            # An authentication failure is not a generic preview error: surface
+            # it as ``auth_error`` so the GUI can prompt for the shared password.
+            emit_event(UiEventName.auth_error, message=f"Preview failed: {e}")
+        else:
+            # A connection-level failure (not a server 5xx, not auth) is tagged
+            # so the GUI can say "could not reach the server" instead of a
+            # generic error.
+            reason = (
+                "connection"
+                if isinstance(e, NetworkError) and not isinstance(e, ServerError)
+                else ""
+            )
+            emit_event(UiEventName.error, message=f"Preview failed: {e}", reason=reason)
     log.info("--- End Preview ---")
     emit_event(UiEventName.preview_end)
 

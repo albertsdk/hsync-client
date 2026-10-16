@@ -154,6 +154,7 @@ class TestRunLanMode:
         # The unified design gates the watcher start on the control plane not
         # already running; a bare MagicMock would look "running" and skip it.
         mock_ws_server.running = False
+        mock_ws_server.connected_clients = 0
 
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),

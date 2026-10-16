@@ -710,10 +710,19 @@ async def sync(
 
     except (AuthenticationError, NetworkError, ServerError) as e:
         log.error(f"Sync failed: {e}")
-        # Authentication failures get a dedicated event so the GUI prompts for
-        # the shared password instead of only logging a generic error.
-        event = UiEventName.auth_error if isinstance(e, AuthenticationError) else UiEventName.error
-        emit_event(event, message=f"Sync failed: {e}")
+        if isinstance(e, AuthenticationError):
+            # Authentication failures get a dedicated event so the GUI prompts
+            # for the shared password instead of only logging a generic error.
+            emit_event(UiEventName.auth_error, message=f"Sync failed: {e}")
+        else:
+            # Tag a connection-level failure so the GUI can say "could not reach
+            # the server" instead of a generic error.
+            reason = (
+                "connection"
+                if isinstance(e, NetworkError) and not isinstance(e, ServerError)
+                else ""
+            )
+            emit_event(UiEventName.error, message=f"Sync failed: {e}", reason=reason)
         if is_debug():
             exc_tb = exc_info()[2]
             if exc_tb:
