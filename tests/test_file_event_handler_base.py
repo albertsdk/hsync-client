@@ -6,6 +6,7 @@
 from asyncio import new_event_loop
 from unittest.mock import MagicMock, patch
 
+from hsync_client.events import UiEventName
 from hsync_client.remote_websocket import RemoteFileEventHandler
 
 
@@ -481,6 +482,79 @@ class TestFileEventHandler:
         ):
             self.handler.on_moved(event)
             mock_run.assert_not_called()
+
+    def test_on_moved_file_rename_emits_ui_rename(self):
+        """A local file rename publishes the UI rename with absolute paths."""
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/old.txt"
+        event.dest_path = "/bucket/new.txt"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=MagicMock()),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch("hsync_client.file_event_handler.emit_event") as mock_emit,
+        ):
+            self.handler.on_moved(event)
+            mock_emit.assert_called_once_with(
+                UiEventName.rename, src="/bucket/old.txt", dst="/bucket/new.txt"
+            )
+
+    def test_on_moved_dir_rename_emits_ui_rename(self):
+        """A local directory rename publishes the UI rename with absolute paths."""
+        event = MagicMock()
+        event.is_directory = True
+        event.src_path = "/bucket/old_dir"
+        event.dest_path = "/bucket/new_dir"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch("hsync_client.file_event_handler.emit_event") as mock_emit,
+        ):
+            self.handler.on_moved(event)
+            mock_emit.assert_called_once_with(
+                UiEventName.rename, src="/bucket/old_dir", dst="/bucket/new_dir"
+            )
+
+    def test_on_moved_rename_without_message_emits_nothing(self):
+        """No rename message (File.get None) means no UI rename either."""
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = "/bucket/old.txt"
+        event.dest_path = "/bucket/new.txt"
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch("hsync_client.file_event_handler.File.get", return_value=None),
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch("hsync_client.file_event_handler.emit_event") as mock_emit,
+        ):
+            self.handler.on_moved(event)
+            mock_emit.assert_not_called()
 
     # -- on_moved safe-save (editor temp → final) --
 

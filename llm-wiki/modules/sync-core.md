@@ -412,6 +412,17 @@ was silently dropped: the standard emitter produced a `FileCreatedEvent`, which
 the file is still being written — content propagates via `on_closed`, which a
 move-in never emits).
 
+**Local rename UI event** (`on_moved`, `file_event_handler.py::BaseFileEventHandler.on_moved`): when a
+real rename is broadcast to peers/server, the originating side also emits
+`UiEventName.rename` with the **absolute** `src_path`/`dst_path`
+(`events.py::emit_event`) — mirroring what the receiver emits when it applies the
+event (`event_dispatch.py::_rename_path`). Without it the sender's own UI saw no
+rename (only inbound renames reached the desktop), so consumers tracking file
+identity could count a locally renamed-then-edited file twice. `Event.__init__`
+already strips the bucket prefix from `message.src`/`dst`, hence the raw
+`src_path`/`dst_path` are used. Emitted for files and directories alike; a no-op
+when no events fd is attached.
+
 **Stdin command reader guard** (`stdin_commands.py::_BoundedLineReader`): `epoll` cannot
 register every file type — `/dev/null` and regular files fail with `EPERM`,
 and since Python 3.14 the pipe transport no longer swallows that failure (it

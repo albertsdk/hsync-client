@@ -45,6 +45,7 @@ from watchdog.events import (
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.utils import cid_suffix, ensure_str_path, is_same_paths, path_present
 
 if TYPE_CHECKING:
@@ -889,6 +890,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 self._invalidate_dedup(src_path)
 
         if message:
+            # The originating side must publish the same rename to its own UI as
+            # the receiver does when it applies the event (event_dispatch), so
+            # consumers that track file identity (the desktop distinct-file
+            # counters and the file panel) follow a locally renamed file too.
+            # Use the absolute paths: Event.__init__ has already stripped the
+            # bucket prefix from message.src/dst.
+            if message.name == EventName.renamed:
+                emit_event(UiEventName.rename, src=src_path, dst=dest_path)
             self._broadcast_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
 
     def _flush_pending_deletes(self) -> None:
