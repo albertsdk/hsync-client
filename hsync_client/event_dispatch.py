@@ -533,9 +533,12 @@ async def _rename_path(
     try:
         if path_present(src_path):
             log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{cid_suffix(origin_cid)}')
-            emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             _ensure_parent_dir(dst_path)
             await asyncio.to_thread(rename, src_path, dst_path)
+            # Emit only after the rename is applied: consumers that observe the
+            # filesystem (e.g. the desktop reading the destination mtime) must
+            # see the file at its new path, not a transient missing state.
+            emit_event(UiEventName.rename, src=src_path, dst=dst_path)
             if ctx.record_inbound_rename:
                 ctx.record_inbound_rename(src_path, dst_path)
             if is_directory:

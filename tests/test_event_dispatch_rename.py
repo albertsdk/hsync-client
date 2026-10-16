@@ -6,6 +6,7 @@
 from unittest.mock import patch
 
 from hsync_client.event_dispatch import apply_inbound_event
+from hsync_client.events import UiEventName
 from hsync_client.remote_websocket import REMOTE_DISPATCH_CTX
 
 
@@ -96,6 +97,37 @@ class TestApplyInboundRenameEvent:
 
         assert dst_file.exists()
         assert not src_file.exists()
+
+    async def test_rename_event_is_emitted_after_the_local_rename(self, tmp_path):
+        """Consumers observing the filesystem see the destination on emit."""
+        src_file = tmp_path / "source.txt"
+        src_file.write_text("content")
+        file_attrs = {
+            "sha256sum": "abc123",
+            "mtime": 1000,
+            "ctime": 1000,
+            "size": 7,
+            "permissions": "644",
+        }
+        event = {
+            "name": "renamed",
+            "src": {"filepath": "source.txt", **file_attrs},
+            "dst": {"filepath": "dest.txt", **file_attrs},
+        }
+        config = {"LOCAL_BUCKET": str(tmp_path)}
+        seen: dict[str, bool] = {}
+
+        def _capture(name, **kw):
+            if name == UiEventName.rename:
+                seen["dst_exists"] = (tmp_path / "dest.txt").exists()
+
+        with (
+            patch("hsync_client.event_dispatch.CONFIG", config),
+            patch("hsync_client.event_dispatch.emit_event", side_effect=_capture),
+        ):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert seen == {"dst_exists": True}
 
     async def test_rename_file_source_not_found(self, tmp_path):
         """Recovers a missing source file by downloading the destination."""

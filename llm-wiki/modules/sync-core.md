@@ -206,6 +206,10 @@ locked via `_remove_locked:67`), `_apply_symlink` (`event_dispatch.py::_apply_sy
 the `EventDispatchContext` (`event_dispatch.py::EventDispatchContext`) marking (`_mark:218`/`_unmark:223`).
 Path resolution: `_resolve_local_path` (`event_dispatch.py::_resolve_local_path`).
 
+`_apply_rename` emits the `rename` UI event **after** the local rename is applied,
+so consumers that read the destination from the filesystem (e.g. the desktop's
+modified-date column) never observe a transiently missing file.
+
 **Bounded file-download fan-out** (`_spawn_file_download:238` +
 `drain_file_downloads:296`): when the context carries a
 `file_download_semaphore` (set by the p2p slave ctx), the `added`/`modified`
