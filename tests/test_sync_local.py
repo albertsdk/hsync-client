@@ -112,6 +112,29 @@ class TestGetFilesLocal:
             assert any("file1.txt" in fp for fp in filepaths)
             assert any("file2.txt" in fp for fp in filepaths)
 
+    def test_subdir_filter_scopes_the_local_scan(self, tmp_path):
+        """``--subdir`` (FILTER_PATH) must trim the local listing too."""
+        (tmp_path / "keep").mkdir()
+        (tmp_path / "keep" / "a.txt").write_text("a")
+        (tmp_path / "keep" / "sub").mkdir()
+        (tmp_path / "keep" / "sub" / "b.txt").write_text("b")
+        (tmp_path / "other").mkdir()
+        (tmp_path / "other" / "c.txt").write_text("c")
+        (tmp_path / "keep2.txt").write_text("keep2")  # shares the "keep" prefix
+
+        with patch(
+            "hsync_client.sync.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "FILTER_PATH": "keep"},
+        ):
+            result = get_files_local()
+
+        joined = "\n".join(f["filepath"].replace(os.sep, "/") for f in result)
+        assert len(result) == 2
+        assert "keep/a.txt" in joined
+        assert "keep/sub/b.txt" in joined
+        assert "keep2.txt" not in joined  # component-aware, not a string prefix
+        assert "other/c.txt" not in joined
+
     def test_skips_os_cache_files(self, tmp_path):
         """OS cache files (.DS_Store, Thumbs.db) are skipped."""
         (tmp_path / "visible.txt").write_text("visible")

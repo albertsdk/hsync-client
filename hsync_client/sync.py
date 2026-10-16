@@ -1154,6 +1154,23 @@ def iter_bucket_entries(bucket: str) -> Iterator[tuple[str, Symlink | None]]:
                 yield file_path, None
 
 
+def _in_subdir(abs_path: str, filter_path: str) -> bool:
+    """Return whether ``abs_path`` sits inside the ``--subdir`` scope.
+
+    ``filter_path`` is a bucket-relative prefix; a path matches when it is the
+    subdirectory itself or a descendant (component-aware, so ``media`` never
+    matches ``media2``). An empty prefix keeps every path.
+    """
+    prefix = str(filter_path).replace(os.sep, "/").strip("/")
+    if not prefix:
+        return True
+    rel = relpath_in_bucket(abs_path, CONFIG["LOCAL_BUCKET"])
+    if rel is None:
+        return False
+    rel = rel.replace(os.sep, "/").lstrip("/")
+    return rel == prefix or rel.startswith(prefix + "/")
+
+
 def get_files_local() -> list[dict]:
     """
     Get list of all local files with their metadata.
@@ -1178,6 +1195,13 @@ def get_files_local() -> list[dict]:
 
     # First pass: collect all file paths (no checksum computation)
     file_paths = [abs_path for abs_path, _link in iter_bucket_entries(CONFIG["LOCAL_BUCKET"])]
+
+    # ``--subdir`` scopes the scan to a subdirectory. Without this the filter
+    # would only trim the *remote* listing, so an upload/bidirectional run
+    # would still push local files outside the requested subtree.
+    filter_path = CONFIG.get("FILTER_PATH")
+    if filter_path:
+        file_paths = [p for p in file_paths if _in_subdir(p, filter_path)]
 
     # Early return if no files
     if not file_paths:
