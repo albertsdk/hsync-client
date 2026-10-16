@@ -69,11 +69,29 @@ class TestPinStore:
         store.set("cid-b", "bucket", "b" * 64)
         store.set("cid-a", "bucket", "a" * 64)
         store.set("cid-a", "alpha", "c" * 64)
-        assert store.entries() == [
-            {"cid": "cid-a", "bucket": "alpha", "fingerprint": "c" * 64},
-            {"cid": "cid-a", "bucket": "bucket", "fingerprint": "a" * 64},
-            {"cid": "cid-b", "bucket": "bucket", "fingerprint": "b" * 64},
+        entries = store.entries()
+        assert [(e["cid"], e["bucket"], e["fingerprint"]) for e in entries] == [
+            ("cid-a", "alpha", "c" * 64),
+            ("cid-a", "bucket", "a" * 64),
+            ("cid-b", "bucket", "b" * 64),
         ]
+        assert all(e["first_seen"] for e in entries)
+
+    def test_first_seen_is_recorded_and_preserved_on_repin(self, tmp_path):
+        store = PinStore(tmp_path / "pins.json")
+        store.set("cid-1", "bucket", "a" * 64)
+        first = store.entries()[0]["first_seen"]
+        assert first
+        store.set("cid-1", "bucket", "b" * 64)  # a documented repin
+        assert store.entries()[0]["first_seen"] == first
+        assert store.get("cid-1", "bucket") == "b" * 64
+
+    def test_legacy_flat_entry_fails_closed(self, tmp_path):
+        """A bare fingerprint value (no record) is not a valid pin entry."""
+        path = tmp_path / "pins.json"
+        path.write_text(json.dumps({"cid-1|bucket": "a" * 64}), encoding="utf-8")
+        with pytest.raises(PinStoreError, match="corrupt"):
+            PinStore(path).get("cid-1", "bucket")
 
     def test_entries_empty(self, tmp_path):
         assert PinStore(tmp_path / "pins.json").entries() == []

@@ -1013,9 +1013,11 @@ class TestPeerTrustCommands:
         runner.invoke(app, ["trust", "peer", "add", "--bucket", "photos", "master-1", "a" * 64])
         listed = runner.invoke(app, ["trust", "peer", "list", "--json"])
         assert listed.exit_code == 0
-        assert json.loads(listed.output) == [
-            {"cid": "master-1", "bucket": "photos", "fingerprint": "a" * 64}
+        entries = json.loads(listed.output)
+        assert [(e["cid"], e["bucket"], e["fingerprint"]) for e in entries] == [
+            ("master-1", "photos", "a" * 64)
         ]
+        assert entries[0]["first_seen"]
 
 
 class TestServerTrustCommands:
