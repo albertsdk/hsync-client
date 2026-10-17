@@ -119,6 +119,15 @@ The generic `error` event carries `reason="connection"` for a connection-level
 failure (`NetworkError`, not `ServerError`) in preview/sync, so a GUI can name the
 cause ("could not reach the server"); `auth_error` stays separate.
 
+`folder_size` (`UiEventName.folder_size`, `sync.py::emit_folder_size`) is emitted
+after a full-share sync/preview fetches both listings: `local_bytes` is the sum of
+the local regular files and `total_bytes` is the sync-set union (remote/master
+listing sizes plus local-only files pending upload). For a path present on both
+sides the remote size wins, so the total is an approximate indicator on size
+conflicts. Symlinks and `.hsynckeep` sentinels are excluded. Scoped runs
+(`FILTER_PATH` set) skip it, so a subfolder total never replaces the full-share
+values; identical pairs are deduplicated (`sync.py::_last_folder_size`).
+
 No node is authoritative: the server and the elected p2p master are transport
 hubs. Upload arbitration mirrors `hsync_server.arbitration` (client side in
 `hsync_client/arbitration.py`); the tie-break is deterministic by highest

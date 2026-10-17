@@ -25,6 +25,7 @@ from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.presence import reemit_presence
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
+    emit_folder_size,
     ensure_hsynckeep_files,
     get_files_local,
     get_files_remote,
@@ -116,6 +117,7 @@ def _run_preview(log) -> None:
 
         local_files = get_files_local()
         remote_files = get_files_remote()
+        emit_folder_size(local_files, remote_files)
         tombstones = get_tombstones_remote()
         p2p_mode = CONFIG.get("P2P_MODE", False)
         sync_actions = get_sync_actions(

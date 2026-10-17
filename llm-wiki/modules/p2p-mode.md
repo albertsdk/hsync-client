@@ -98,7 +98,12 @@ the `set_clients_changed` callback are wired by `p2p_handler.run_p2p_mode`
 **before** `_run_as_master` starts serving: wiring them only afterwards would
 let the master advertise `connected=0` and miss a client that connects while it
 is serving, leaving slaves reading a stale `0` (a `1/N` count with both peers
-connected).
+connected). Because the discovery loop that owns the `peers` event is blocked
+inside `_run_as_master` while serving, the master re-emits its own pair on every
+join/leave through `p2p_handler._emit_master_presence(count, peer_manager)`
+(called from the `set_clients_changed` callback): `total = 1 + max(alive peers,
+connected clients)`, `connected = min(1 + clients, total)`, so a two-node group
+reads `2/2` even before the mDNS peer entry catches up with the WS join.
 
 The wait is **event-driven**, not a fixed sleep: `PeerManager` keeps a
 generation counter + `threading.Condition` (`_change_generation` /

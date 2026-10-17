@@ -1469,3 +1469,44 @@ class TestP2PStatus:
 
         assert _p2p_status(1) == "connected"
         assert _p2p_status(3) == "connected"
+
+
+class TestEmitMasterPresence:
+    """The master re-emits the peers pair while serving (loop is blocked)."""
+
+    @staticmethod
+    def _manager(alive_peers: list):
+        manager = MagicMock()
+        manager.get_alive_peers.return_value = alive_peers
+        return manager
+
+    def test_join_reports_the_group_total(self, monkeypatch):
+        import hsync_client.p2p_handler as handler
+
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+
+        handler._emit_master_presence(1, self._manager(["peer"]))
+
+        assert calls == [(2, 2)]
+
+    def test_leave_keeps_the_discovered_peer_in_the_total(self, monkeypatch):
+        import hsync_client.p2p_handler as handler
+
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+
+        handler._emit_master_presence(0, self._manager(["peer"]))
+
+        assert calls == [(1, 2)]
+
+    def test_a_connected_client_without_a_discovered_peer_still_counts(self, monkeypatch):
+        import hsync_client.p2p_handler as handler
+
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+
+        # The WS join can precede the mDNS peer entry: count still yields 2/2.
+        handler._emit_master_presence(1, self._manager([]))
+
+        assert calls == [(2, 2)]

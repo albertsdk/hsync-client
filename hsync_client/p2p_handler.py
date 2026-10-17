@@ -57,6 +57,7 @@ from hsync_client.p2p_server import P2PServer, P2PServerMode
 from hsync_client.p2p_sources import P2PSourceResolver, P2PSourceService
 from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry, p2p_websocket_client
 from hsync_client.pinning import default_pin_store
+from hsync_client.presence import record_presence
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.ssl_utils import create_fingerprint_ssl_context, verify_peer_cert_fingerprint
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
@@ -69,6 +70,7 @@ from hsync_client.utils import http_to_ws
 
 if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
+    from hsync_client.p2p_peers import PeerManager
 
 
 # Seconds to wait before warning that no master has been elected (e.g. when every
@@ -89,6 +91,19 @@ def _p2p_status(connected_clients: int) -> str:
     nobody was ever connected).
     """
     return "connected" if connected_clients > 0 else "waiting"
+
+
+def _emit_master_presence(count: int, peer_manager: PeerManager) -> None:
+    """Re-emit the local ``peers`` pair while the master serves.
+
+    The discovery loop that normally owns the ``peers`` event is blocked inside
+    ``_run_as_master``, so a client joining/leaving must refresh the master's own
+    presence too (the mDNS TXT record is updated separately). ``connected``
+    includes this node; ``max`` keeps ``2/2`` even when the mDNS peer entry lags
+    the WebSocket join.
+    """
+    total = max(1 + len(peer_manager.get_alive_peers()), 1 + count)
+    record_presence(min(1 + count, total), total)
 
 
 # Upper bound on how long the bootnode plan may delay the master's [READY]
@@ -439,6 +454,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
 
                 def on_clients_changed(count: int) -> None:
                     p2p_sync.set_connected_clients(count)
+                    manager = p2p_sync.peer_manager
+                    if manager is not None:
+                        # The discovery loop is blocked while serving; refresh the
+                        # master's own presence on join/leave.
+                        _emit_master_presence(count, manager)
                     # "connected" means an active peer link: a lone serving
                     # master is "waiting" for a device to connect.
                     emit_event(UiEventName.status, status=_p2p_status(count))

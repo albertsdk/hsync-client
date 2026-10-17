@@ -338,6 +338,54 @@ def log_initial_sync_start() -> None:
     log.info(f"{ActionLabel.INITIAL_SYNC} Initial sync started")
 
 
+_last_folder_size: tuple[int, int] | None = None
+
+
+def folder_size_totals(local_files: list[dict], remote_files: list[dict]) -> tuple[int, int]:
+    """Return ``(local_bytes, total_bytes)`` for a fetched listing pair.
+
+    ``total_bytes`` is the sync-set union: remote listing sizes plus local-only
+    files pending upload. For a path present on both sides the remote size is
+    used (the served set), so a size conflict makes the number approximate.
+    Symlinks carry no payload and ``.hsynckeep`` sentinels are internal: both
+    are skipped.
+    """
+    remote_paths: set[str] = set()
+    remote_total = 0
+    for entry in remote_files:
+        path = str(entry.get("filepath", "") or "")
+        if not path or entry.get("type") == "symlink" or basename(path) == HSYNCKEEP_FILENAME:
+            continue
+        remote_paths.add(path)
+        remote_total += max(int(entry.get("size", 0) or 0), 0)
+
+    local_total = 0
+    local_only = 0
+    for entry in local_files:
+        path = str(entry.get("filepath", "") or "")
+        if not path or entry.get("type") == "symlink" or basename(path) == HSYNCKEEP_FILENAME:
+            continue
+        size = max(int(entry.get("size", 0) or 0), 0)
+        local_total += size
+        if path not in remote_paths:
+            local_only += size
+
+    return local_total, remote_total + local_only
+
+
+def emit_folder_size(local_files: list[dict], remote_files: list[dict]) -> None:
+    """Emit the aggregate folder sizes once per distinct value."""
+    global _last_folder_size
+    if CONFIG.get("FILTER_PATH") is not None:
+        # Scoped run: a subfolder total must not replace the full-share values.
+        return
+    totals = folder_size_totals(local_files, remote_files)
+    if totals == _last_folder_size:
+        return
+    _last_folder_size = totals
+    emit_event(UiEventName.folder_size, local_bytes=totals[0], total_bytes=totals[1])
+
+
 async def sync(
     p2p_mode: bool = False,
     inventory_observer: InventoryObserver | None = None,
@@ -403,6 +451,7 @@ async def sync(
         local_files = get_files_local()
         inventory_observer.replace_snapshot(local_files)
         remote_files = get_files_remote()
+        emit_folder_size(local_files, remote_files)
 
         # Fetch deletion markers so files deleted while this peer was offline
         # are not resurrected during the full reconciliation below.
