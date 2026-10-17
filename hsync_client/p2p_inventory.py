@@ -56,7 +56,7 @@ P2P_INVENTORY_GLOBAL_QUOTA = 20_000_000
 P2P_INVENTORY_MAX_SESSIONS = 64
 P2P_INVENTORY_STAGING_TTL_S = 5 * 60.0
 P2P_INVENTORY_ACK_TIMEOUT_S = 15.0
-P2P_INVENTORY_SCHEMA_VERSION = 2
+P2P_INVENTORY_SCHEMA_VERSION = 1
 
 
 def _canonical_snapshot_digest(frame: P2PInventoryFrame) -> str:
@@ -227,7 +227,7 @@ class P2PInventoryStore:
         current_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
         if current_version != P2P_INVENTORY_SCHEMA_VERSION:
             # The routing index is role-local and rebuilt from peer snapshots;
-            # recreating it is safer and simpler than migrating stale state.
+            # recreating it is safer than reading a different table shape.
             self._conn.executescript(
                 """
                 DROP TABLE IF EXISTS inventory_staging;

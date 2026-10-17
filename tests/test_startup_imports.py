@@ -79,6 +79,8 @@ def test_import_main_logic_leaves_mode_stacks_unimported() -> None:
 
 def test_capabilities_json_lazy_import_emits_document() -> None:
     """--capabilities-json still builds the document via its lazy import."""
+    from hsync_common.protocol.capabilities import CAPABILITIES_SCHEMA_VERSION
+
     proc = subprocess.run(
         [sys.executable, "-m", "hsync_client", "--capabilities-json"],
         capture_output=True,
@@ -87,5 +89,5 @@ def test_capabilities_json_lazy_import_emits_document() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     doc = json.loads(proc.stdout)
-    assert doc["schema_version"] == 3
+    assert doc["schema_version"] == CAPABILITIES_SCHEMA_VERSION
     assert isinstance(doc["subcommands"], list)
