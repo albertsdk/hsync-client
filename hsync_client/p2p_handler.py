@@ -93,7 +93,7 @@ def _p2p_status(connected_clients: int) -> str:
     return "connected" if connected_clients > 0 else "waiting"
 
 
-def _emit_master_presence(count: int, peer_manager: PeerManager) -> None:
+def _emit_master_presence(count: int, peer_manager: "PeerManager") -> None:
     """Re-emit the local ``peers`` pair while the master serves.
 
     The discovery loop that normally owns the ``peers`` event is blocked inside
