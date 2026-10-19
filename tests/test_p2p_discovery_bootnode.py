@@ -294,6 +294,19 @@ class TestPeerFeed:
         assert peer is not None
         assert (peer.address, peer.port) == ("203.0.113.10", 8443)
 
+    def test_relayed_connected_count_is_mapped(self):
+        """The relayed connected count feeds the slave's presence display."""
+        plan, _ = make_plan()
+        peer = plan._peer_from_wire(relayed_peer(OTHER, ip="203.0.113.10", port=8443, connected=2))
+        assert peer is not None
+        assert peer.connected == 2
+
+    def test_missing_relayed_connected_count_defaults_to_zero(self):
+        plan, _ = make_plan()
+        peer = plan._peer_from_wire(relayed_peer(OTHER, ip="203.0.113.10", port=8443))
+        assert peer is not None
+        assert peer.connected == 0
+
 
 class TestAdvertisement:
     """The local election advertisement is published on ``register``."""

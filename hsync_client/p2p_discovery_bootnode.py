@@ -558,6 +558,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             cert_fingerprint=wire.get("cert_fp"),
             peer_download_enabled=False,
             server_ready=wire["server_ready"],
+            connected=int(wire.get("connected") or 0),
             prefer_master=wire["prefer_master"],
             never_master=wire["never_master"],
             startup_time=wire["startup_time"],

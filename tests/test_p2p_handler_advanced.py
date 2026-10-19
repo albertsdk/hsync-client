@@ -1151,7 +1151,7 @@ class TestStdinCommands:
         ):
             asyncio.run(_run_stdin_wait(MagicMock()))
 
-            assert set(registered) == {"PREVIEW", "PEERS", "SYNC"}
+            assert set(registered) == {"PREVIEW", "PEERS", "SYNC", "SET_BANDWIDTH"}
             asyncio.run(registered["SYNC"]())
 
         assert fake_config["DRYRUN"] is False

@@ -811,7 +811,13 @@ class MdnsDiscovery(DiscoveryPlanState):
         elif self._peer_manager.get_master_cid() != self._cid:
             master_peer = self._peer_manager.get_master()
             if master_peer is not None:
-                self._connected_clients = master_peer.connected
+                published = master_peer.connected
+                # A live WebSocket to the master proves at least one slave (this
+                # node) is connected, even while the master's mDNS/TXT count is
+                # still converging right after a join.
+                if self._peer_manager.is_wss_connected(master_peer.cid):
+                    published = max(published, 1)
+                self._connected_clients = published
         connected = 1 + self._connected_clients
         # Guard the display invariant: a stale mDNS count can exceed the
         # currently-known total, so connected is clamped to total.

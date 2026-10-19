@@ -97,7 +97,12 @@ from hsync_client.multipart import (
     _CappedBytesWriter,
     _StreamingMultipartParser,
 )
-from hsync_client.utils import cid_suffix, inbound_size_cap, open_partial_no_follow
+from hsync_client.utils import (
+    cid_suffix,
+    get_throttle_delay,
+    inbound_size_cap,
+    open_partial_no_follow,
+)
 
 if TYPE_CHECKING:
     from hsync_client.p2p_inventory import P2PInventoryStore
@@ -184,6 +189,16 @@ _P2P_UPLOAD_CHUNK_SIZE = 256 * 1024
 # headers; larger files use identity streaming so resume stays available and
 # temporary-disk use remains bounded.
 P2P_COMPRESSION_MAX_FILE_BYTES = 256 * 1024 * 1024
+
+
+def _throttle_upload(nbytes: int) -> None:
+    """Apply the configured upload limit to bytes served to a peer."""
+    limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
+    if not limit:
+        return
+    delay = get_throttle_delay(nbytes, limit, "upload")
+    if delay > 0:
+        time.sleep(delay)
 
 
 class P2PServerMode(StrEnum):
@@ -1735,6 +1750,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                             self.close_connection = True
                             return
                         self.wfile.write(chunk)
+                        _throttle_upload(len(chunk))
                         remaining -= len(chunk)
                     return
 
@@ -1777,6 +1793,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                                     self.close_connection = True
                                     return
                                 self.wfile.write(chunk)
+                                _throttle_upload(len(chunk))
                                 remaining -= len(chunk)
                         return
                     if not _same_open_file(opened, os.fstat(stream.fileno())):
@@ -1799,6 +1816,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                         self.close_connection = True
                         return
                     self.wfile.write(chunk)
+                    _throttle_upload(len(chunk))
                 if not _same_open_file(opened, os.fstat(stream.fileno())):
                     self.close_connection = True
                 return

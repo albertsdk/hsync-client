@@ -93,6 +93,33 @@ def _apply_bandwidth(value: object, key: _BANDWIDTH_KEY, name: str, log) -> bool
     return True
 
 
+async def _handle_set_bandwidth(log, **kw: object) -> None:
+    """Apply runtime upload/download limits from a ``SET_BANDWIDTH`` command."""
+    upload = kw.get("upload")
+    download = kw.get("download")
+
+    if upload is not None and not _apply_bandwidth(upload, "MAX_BANDWIDTH_UPLOAD", "upload", log):
+        return
+    if download is not None and not _apply_bandwidth(
+        download, "MAX_BANDWIDTH_DOWNLOAD", "download", log
+    ):
+        return
+
+    upload_str = (
+        format_bytes(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"
+        if CONFIG["MAX_BANDWIDTH_UPLOAD"]
+        else "unlimited"
+    )
+    download_str = (
+        format_bytes(CONFIG["MAX_BANDWIDTH_DOWNLOAD"]) + "/s"
+        if CONFIG["MAX_BANDWIDTH_DOWNLOAD"]
+        else "unlimited"
+    )
+    log.info(f"Bandwidth limits updated: upload={upload_str}, download={download_str}")
+    # Reset throttle state to apply new limits.
+    reset_bandwidth_throttle()
+
+
 def _run_preview(log) -> None:
     """
     Run a preview (dry-run) showing pending sync actions.
@@ -280,34 +307,10 @@ async def _with_stdin_commands(
 
     handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
 
-    async def _handle_set_bandwidth(**kw: object) -> None:
-        upload = kw.get("upload")
-        download = kw.get("download")
+    async def _on_set_bandwidth(**kw: object) -> None:
+        await _handle_set_bandwidth(log, **kw)
 
-        if upload is not None and not _apply_bandwidth(
-            upload, "MAX_BANDWIDTH_UPLOAD", "upload", log
-        ):
-            return
-        if download is not None and not _apply_bandwidth(
-            download, "MAX_BANDWIDTH_DOWNLOAD", "download", log
-        ):
-            return
-
-        upload_str = (
-            format_bytes(CONFIG["MAX_BANDWIDTH_UPLOAD"]) + "/s"
-            if CONFIG["MAX_BANDWIDTH_UPLOAD"]
-            else "unlimited"
-        )
-        download_str = (
-            format_bytes(CONFIG["MAX_BANDWIDTH_DOWNLOAD"]) + "/s"
-            if CONFIG["MAX_BANDWIDTH_DOWNLOAD"]
-            else "unlimited"
-        )
-        log.info(f"Bandwidth limits updated: upload={upload_str}, download={download_str}")
-        # Reset throttle state to apply new limits
-        reset_bandwidth_throttle()
-
-    handler.register("SET_BANDWIDTH", _handle_set_bandwidth)
+    handler.register("SET_BANDWIDTH", _on_set_bandwidth)
 
     stdin_task = asyncio.create_task(handler.run())
 
@@ -348,4 +351,9 @@ async def _run_stdin_wait(
         handler.stop()
 
     handler.register("SYNC", _handle_sync)
+
+    async def _on_set_bandwidth(**kw: object) -> None:
+        await _handle_set_bandwidth(log, **kw)
+
+    handler.register("SET_BANDWIDTH", _on_set_bandwidth)
     await handler.run()

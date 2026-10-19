@@ -452,16 +452,25 @@ class _RestartMasterDownload(Exception):
 
 
 class _CountingReader:
-    """Count compressed wire bytes consumed by the zstd stream reader."""
+    """Count and throttle compressed wire bytes consumed by the zstd reader."""
 
-    def __init__(self, stream: Any) -> None:
+    def __init__(self, stream: Any, bandwidth_limit: int | None = None) -> None:
         self._stream = stream
+        self._bw_limit = bandwidth_limit
         self.bytes_read = 0
+
+    def _throttle(self, nbytes: int) -> None:
+        if not self._bw_limit:
+            return
+        delay = get_throttle_delay(nbytes, self._bw_limit, "download")
+        if delay > 0:
+            time_sleep(delay)
 
     def read(self, size: int = -1) -> bytes:
         data = self._stream.read(size)
         if data:
             self.bytes_read += len(data)
+            self._throttle(len(data))
         return data
 
     def readinto(self, buffer: Any) -> int:
@@ -473,6 +482,8 @@ class _CountingReader:
             return count
         count = readinto(buffer) or 0
         self.bytes_read += count
+        if count:
+            self._throttle(count)
         return count
 
     def __getattr__(self, name: str) -> Any:
@@ -975,7 +986,9 @@ def _download_from_source_attempt(
         with _open_partial_no_follow(partial_file_path, write_mode) as output:
             if is_compressed:
                 response.raw.decode_content = False
-                counter = _CountingReader(response.raw)
+                counter = _CountingReader(
+                    response.raw, bandwidth_limit=CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
+                )
                 for chunk in decompress_stream(
                     counter,
                     max_output_size=write_cap,
