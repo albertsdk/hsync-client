@@ -372,23 +372,23 @@
             <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="1" max="600">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.bootnode">Bootnode (optional)</span>
+            <span data-i18n="field.bootnode">Discovery server (optional)</span>
             <input type="text" name="HSYNC_BOOTNODE" id="HSYNC_BOOTNODE" placeholder="boot.example.net:443">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.bootnode_ports">Extra bootnode UDP ports (optional)</span>
+            <span data-i18n="field.bootnode_ports">Extra discovery server UDP ports (optional)</span>
             <input type="text" name="HSYNC_BOOTNODE_PORTS" id="HSYNC_BOOTNODE_PORTS" placeholder="53">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.bootnode_fingerprint">Bootnode fingerprint (optional)</span>
+            <span data-i18n="field.bootnode_fingerprint">Discovery server fingerprint (optional)</span>
             <input type="text" name="HSYNC_BOOTNODE_FINGERPRINT" id="HSYNC_BOOTNODE_FINGERPRINT" placeholder="sha256:...">
         </label>
         <label class="hsync-label hsync-check">
             <input type="checkbox" name="HSYNC_BOOTNODE_TOFU" id="HSYNC_BOOTNODE_TOFU">
-            <span data-i18n="field.bootnode_tofu">Trust the bootnode on first use</span>
+            <span data-i18n="field.bootnode_tofu">Trust the discovery server on first use</span>
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.bootnode_trust">Bootnode trust policy</span>
+            <span data-i18n="field.bootnode_trust">Discovery server trust policy</span>
             <select name="HSYNC_BOOTNODE_TRUST" id="HSYNC_BOOTNODE_TRUST">
                 <option value="" data-i18n="field.bootnode_trust_default">Default (ask on first use)</option>
                 <option value="ask" data-i18n="field.bootnode_trust_ask">Ask on first use</option>

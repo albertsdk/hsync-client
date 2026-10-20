@@ -9,7 +9,7 @@ methodology, measurement pitfalls), see the
 
 > **Terminology:** in this page **LAN** denotes the p2p lane measured over mDNS
 > on the reference host. p2p mode also supports the bootnode discovery plan,
-> which reuses the same data plane (its cost is discovery/relay, not the transfer
+> which reuses the same data plane (its cost is discovery, not the transfer
 > path measured below).
 
 > Figures are medians over the runs noted in each table, on the reference host

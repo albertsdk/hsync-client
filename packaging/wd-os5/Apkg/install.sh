@@ -127,8 +127,8 @@ HSYNC_BOOTNODE_TOFU="false"
 # e.g. "53" so a client whose egress firewall blocks UDP 443 reaches the node
 # on 53. Empty = single-port. The bootnode must listen on the same set.
 HSYNC_BOOTNODE_PORTS=""
-# Map the master TCP port with UPnP so the bootnode can relay a dialable
-# endpoint. Only effective with HSYNC_BOOTNODE set. Opt-in: set to "true" to
+# Map the master TCP port with UPnP so peers on other networks can dial this
+# device. Only effective with HSYNC_BOOTNODE set. Opt-in: set to "true" to
 # enable (default "false").
 HSYNC_UPNP_ENABLED="false"
 
